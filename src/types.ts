@@ -1,0 +1,291 @@
+
+export enum FileType {
+  IMAGE = 'image',
+  FOLDER = 'folder',
+  UNKNOWN = 'unknown'
+}
+
+export interface ImageMeta {
+  width: number;
+  height: number;
+  sizeKb: number;
+  created: string;
+  modified: string;
+  format: string;
+  palette?: string[];
+}
+
+export interface AiFace {
+  id: string;
+  personId: string;
+  name: string;
+  confidence: number;
+  box: { x: number; y: number; w: number; h: number };
+}
+
+export interface AiData {
+  analyzed: boolean;
+  analyzedAt: string;
+  description: string;
+  tags: string[];
+  faces: AiFace[];
+  sceneCategory: string;
+  confidence: number;
+  dominantColors: string[];
+  objects: string[];
+  extractedText?: string;
+  translatedText?: string;
+}
+
+export interface FileNode {
+  id: string;
+  parentId: string | null;
+  name: string;
+  type: FileType;
+  path: string;
+  size?: number; // Size in bytes for cache key generation
+  children?: string[];
+  
+  category?: 'general' | 'book' | 'sequence';
+  author?: string;
+
+  url?: string;
+  previewUrl?: string;
+  tags: string[];
+  description?: string;
+  sourceUrl?: string;
+  meta?: ImageMeta;
+  aiData?: AiData;
+
+  createdAt?: string;
+  updatedAt?: string;
+  lastRefresh?: number;
+}
+
+export interface Person {
+  id: string;
+  name: string;
+  coverFileId: string;
+  count: number;
+  description?: string;
+  descriptor?: number[];
+  faceBox?: { x: number; y: number; w: number; h: number }; // Percentages 0-100
+}
+
+export interface UserProfile {
+  name: string;
+  avatarUrl: string;
+  ip: string;
+}
+
+export interface TaskProgress {
+  id: string;
+  type: 'ai' | 'copy' | 'move';
+  title: string;
+  total: number;
+  current: number;
+  startTime: number;
+  status: 'running' | 'completed';
+  minimized: boolean;
+  currentStep?: string;
+}
+
+export interface DeletionTask {
+  id: string;
+  files: FileNode[];
+}
+
+export interface SlideshowConfig {
+  interval: number;
+  transition: 'fade' | 'slide' | 'none';
+  isRandom: boolean;
+  enableZoom: boolean;
+}
+
+export interface SearchSettings {
+  isAISearchEnabled: boolean;
+}
+
+export type AIProvider = 'openai' | 'ollama' | 'lmstudio';
+
+export interface AIConfig {
+  provider: AIProvider;
+  openai: {
+    apiKey: string;
+    endpoint: string;
+    model: string;
+  };
+  ollama: {
+    endpoint: string;
+    model: string;
+  };
+  lmstudio: {
+    endpoint: string;
+    model: string;
+  };
+  autoTag: boolean;
+  autoDescription: boolean;
+  enhancePersonDescription: boolean;
+  enableFaceRecognition: boolean;
+  autoAddPeople: boolean; 
+  enableOCR: boolean;
+  enableTranslation: boolean;
+  targetLanguage: 'zh' | 'en' | 'ja' | 'ko';
+  confidenceThreshold: number;
+}
+
+export interface AppSettings {
+  theme: 'light' | 'dark' | 'system';
+  language: 'zh' | 'en';
+  autoStart: boolean;
+  exitAction: 'ask' | 'minimize' | 'exit';
+  animateOnHover: boolean;
+  paths: {
+    resourceRoot: string;
+    cacheRoot: string;
+  };
+  search: SearchSettings;
+  ai: AIConfig;
+}
+
+export interface DateFilter {
+  start: string | null;
+  end: string | null;
+  mode: 'created' | 'updated';
+}
+
+export interface AiSearchFilter {
+  keywords: string[];
+  colors: string[];
+  people: string[];
+  originalQuery: string;
+  description?: string;
+}
+
+export type SearchScope = 'all' | 'file' | 'tag' | 'folder';
+export type SortOption = 'name' | 'date' | 'size';
+export type SortDirection = 'asc' | 'desc';
+export type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry';
+export type GroupByOption = 'none' | 'type' | 'date' | 'size';
+
+export interface FileGroup {
+  id: string;
+  title: string;
+  fileIds: string[];
+}
+
+export interface HistoryItem {
+  folderId: string;
+  viewingId: string | null;
+  viewMode: 'browser' | 'tags-overview' | 'people-overview';
+  searchQuery: string;
+  searchScope: SearchScope;
+  activeTags: string[];
+  activePersonId: string | null;
+  aiFilter?: AiSearchFilter | null;
+}
+
+export interface TabState {
+  id: string;
+  folderId: string;
+  viewingFileId: string | null;
+  viewMode: 'browser' | 'tags-overview' | 'people-overview'; 
+  layoutMode: LayoutMode;
+  searchQuery: string;
+  searchScope: SearchScope;
+  aiFilter?: AiSearchFilter | null;
+  activeTags: string[];
+  activePersonId: string | null;
+  dateFilter: DateFilter;
+  selectedFileIds: string[];
+  lastSelectedId: string | null;
+  selectedTagIds: string[];
+  selectedPersonIds: string[];
+  history: {
+    stack: HistoryItem[];
+    currentIndex: number;
+  };
+  scrollTop: number;
+}
+
+export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai';
+
+export interface AppState {
+  roots: string[];
+  files: Record<string, FileNode>;
+  people: Record<string, Person>;
+  expandedFolderIds: string[];
+  tabs: TabState[];
+  activeTabId: string;
+  sortBy: SortOption;
+  sortDirection: SortDirection;
+  thumbnailSize: number;
+  renamingId: string | null;
+  clipboard: {
+    action: 'copy' | 'move' | null;
+    items: { type: 'file' | 'tag', ids: string[] }; 
+  };
+  customTags: string[];
+  layout: {
+    isSidebarVisible: boolean;
+    isMetadataVisible: boolean;
+  };
+  slideshowConfig: SlideshowConfig;
+  settings: AppSettings;
+  isSettingsOpen: boolean;
+  settingsCategory: SettingsCategory;
+  tasks: TaskProgress[];
+  activeModal: {
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | null;
+    data?: any;
+  };
+  aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
+}
+
+declare global {
+  interface Window {
+    electron?: {
+      openDirectory: () => Promise<string | null>;
+      scanDirectory: (path: string, forceRefresh?: boolean) => Promise<{ roots: string[], files: Record<string, FileNode> }>;
+      copyExternalFiles: (targetFolderId: string, externalPaths: string[]) => Promise<void>;
+      moveExternalFiles: (targetFolderId: string, externalPaths: string[]) => Promise<void>;
+      openPath: (path: string) => void;
+      openExternal: (url: string) => void;
+      copyImage: (path: string) => Promise<void>;
+      copyFilesToClipboard: (paths: string[]) => Promise<boolean>;
+      startDrag: (paths: string[]) => void;
+      getThumbnail: (path: string, modified: string) => Promise<string>;
+      saveThumbnail: (path: string, thumbnailData: string) => Promise<boolean>;
+      queueThumbnail: (path: string, modified: string) => Promise<boolean>;
+      getFileDetails: (path: string) => Promise<{ width: number; height: number } | null>;
+      setAutoLaunch: (enabled: boolean) => void;
+      minimize: () => void;
+      maximize: () => void;
+      close: () => void;
+      toggleControls: (show: boolean) => void;
+      onCloseRequest: (callback: () => void) => void;
+      sendCloseAction: (action: 'minimize' | 'exit') => void;
+      // New File System Operations
+      createFolder: (path: string) => Promise<boolean>;
+      renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
+      deleteFile: (path: string) => Promise<boolean>;
+      moveFile: (srcPath: string, destPath: string) => Promise<boolean>;
+      copyFile: (srcPath: string, destPath: string) => Promise<boolean>;
+      // New AI & Utils
+      readFileAsBase64: (path: string) => Promise<string>;
+      chatRequest: (url: string, options: any) => Promise<any>;
+      // Persistence
+      saveUserData: (data: any) => Promise<boolean>;
+      loadUserData: () => Promise<any>;
+      // Theme
+      setTheme: (theme: 'light' | 'dark') => void;
+      // Settings
+      setCachePath: (path: string) => Promise<boolean>;
+      getDefaultPaths: () => Promise<{ resourceRoot: string, cacheRoot: string }>;
+    };
+  }
+}
+
+export const SUPPORTED_EXTENSIONS = [
+  'jpg', 'jpeg', 'tga', 'jft', 'png', 'bmp', 'webp', 'gif', 'psd', 'tif', 'tiff', 'raw', 'arw', 'dng', 'exr', 'hdr'
+];
