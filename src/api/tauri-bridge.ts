@@ -136,10 +136,17 @@ export const openDirectory = async (): Promise<string | null> => {
  */
 export const getThumbnail = async (filePath: string, modified?: string): Promise<string | null> => {
   try {
+    // 验证 filePath 参数
+    if (!filePath || filePath.trim() === '') {
+      const errorMsg = 'getThumbnail: filePath is empty or invalid';
+      console.error(errorMsg, { filePath });
+      return null;
+    }
+    
     const { invoke } = await import('@tauri-apps/api/core');
     
+    // Tauri 2.0 会自动将 TypeScript 的 camelCase (filePath) 转换为 Rust 的 snake_case (file_path)
     const thumbnail = await invoke<string | null>('get_thumbnail', { filePath });
-    
     // Validate that we got a base64 data URL, not a thumbnail:// protocol URL
     if (thumbnail && !thumbnail.startsWith('data:image')) {
       return null;
@@ -159,7 +166,14 @@ export const getThumbnail = async (filePath: string, modified?: string): Promise
  */
 export const readFileAsBase64 = async (filePath: string): Promise<string | null> => {
   try {
+    // 验证 filePath 参数
+    if (!filePath || filePath.trim() === '') {
+      console.error('readFileAsBase64: filePath is empty or invalid');
+      return null;
+    }
+    
     const { invoke } = await import('@tauri-apps/api/core');
+    // Tauri 2.0 会自动将 TypeScript 的 camelCase (filePath) 转换为 Rust 的 snake_case (file_path)
     const dataUrl = await invoke<string | null>('read_file_as_base64', { filePath });
     return dataUrl;
   } catch (error) {

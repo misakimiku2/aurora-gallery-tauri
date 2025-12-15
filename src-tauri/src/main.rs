@@ -573,7 +573,6 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
 
 #[tauri::command]
 async fn get_thumbnail(file_path: String) -> Result<Option<String>, String> {
-    
     // Check if file exists
     if !Path::new(&file_path).exists() {
         return Ok(None);
