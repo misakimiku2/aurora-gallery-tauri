@@ -4,7 +4,7 @@
   "identifier": "com.aurora.gallery",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1421",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -22,7 +22,8 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:* thumbnail:; connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*; img-src 'self' data: blob: https: local-resource: thumbnail:; media-src 'self' data: blob: https: local-resource:;",
+      "dangerousDisableAssetCspModification": false
     }
   },
   "bundle": {
@@ -37,4 +38,3 @@
     ]
   }
 }
-

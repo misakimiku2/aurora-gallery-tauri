@@ -58,6 +58,9 @@ export const scanDirectory = async (
         fileType = FileType.FOLDER;
       }
       
+      // Note: In Tauri, node.url is a file path, not a usable URL
+      // We should not use it directly as an image src to avoid thumbnail:// protocol errors
+      
       const fileNode: FileNode = {
         id: node.id,
         parentId: node.parentId || null,
@@ -69,7 +72,8 @@ export const scanDirectory = async (
         tags: node.tags || [],
         createdAt: node.createdAt || undefined,
         updatedAt: node.updatedAt || undefined,
-        url: node.url || undefined,
+        // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
+        url: undefined, // Don't use file path as URL - use getThumbnail() instead
         meta: node.meta ? {
           width: node.meta.width || 0,
           height: node.meta.height || 0,
@@ -119,6 +123,108 @@ export const openDirectory = async (): Promise<string | null> => {
   } catch (error) {
     console.error('Failed to open directory dialog:', error);
     return null;
+  }
+};
+
+/**
+ * 获取图片缩略图
+ * @param filePath 图片文件路径
+ * @param modified 文件修改时间（可选，用于缓存）
+ * @returns Base64 编码的缩略图数据 URL，如果失败则返回 null
+ */
+export const getThumbnail = async (filePath: string, modified?: string): Promise<string | null> => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    
+    const thumbnail = await invoke<string | null>('get_thumbnail', { filePath });
+    
+    // Validate that we got a base64 data URL, not a thumbnail:// protocol URL
+    if (thumbnail && !thumbnail.startsWith('data:image')) {
+      return null;
+    }
+    
+    return thumbnail;
+  } catch (error) {
+    console.error('Failed to get thumbnail:', error);
+    return null;
+  }
+};
+
+/**
+ * 读取完整图片文件并转换为 Base64 数据 URL
+ * @param filePath 图片文件路径
+ * @returns Base64 编码的完整图片数据 URL，如果失败则返回 null
+ */
+export const readFileAsBase64 = async (filePath: string): Promise<string | null> => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const dataUrl = await invoke<string | null>('read_file_as_base64', { filePath });
+    return dataUrl;
+  } catch (error) {
+    console.error('Failed to read file as base64:', error);
+    return null;
+  }
+};
+
+/**
+ * 保存用户数据到持久化存储
+ * @param data 要保存的用户数据（JSON 对象）
+ * @returns 是否保存成功
+ */
+export const saveUserData = async (data: any): Promise<boolean> => {
+  try {
+    console.log('[TAURI_SAVE] Entry:', {
+      dataKeys: Object.keys(data),
+      rootPaths: data.rootPaths,
+      settingsPaths: data.settings?.paths
+    });
+    
+    const { invoke } = await import('@tauri-apps/api/core');
+    console.log('[TAURI_SAVE] Calling invoke save_user_data...');
+    const result = await invoke<boolean>('save_user_data', { data });
+    
+    console.log('[TAURI_SAVE] invoke result:', result);
+    
+    return result;
+  } catch (error) {
+    console.error('[TAURI_SAVE] Failed to save user data:', error);
+    return false;
+  }
+};
+
+/**
+ * 从持久化存储加载用户数据
+ * @returns 用户数据，如果不存在则返回 null
+ */
+export const loadUserData = async (): Promise<any | null> => {
+  try {
+
+    
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<any | null>('load_user_data');
+    
+
+    
+    return result;
+  } catch (error) {
+    console.error('Failed to load user data:', error);
+
+    return null;
+  }
+};
+
+/**
+ * 获取默认路径配置
+ * @returns 包含默认路径的对象
+ */
+export const getDefaultPaths = async (): Promise<Record<string, string>> => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const result = await invoke<Record<string, string>>('get_default_paths');
+    return result;
+  } catch (error) {
+    console.error('Failed to get default paths:', error);
+    return {};
   }
 };
 

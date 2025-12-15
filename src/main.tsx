@@ -3,6 +3,10 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import '../index.css';
 import './utils/electron-mock'; // Import electron mock to prevent errors
+import { clearInvalidCacheEntries } from './utils/thumbnailCache';
+
+// Clear invalid cache entries on startup
+clearInvalidCacheEntries();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

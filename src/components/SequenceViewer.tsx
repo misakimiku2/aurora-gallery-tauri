@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FileNode, FileType } from '../types';
 import { 
   X, ChevronLeft, ChevronRight, Play, Pause, Film, Sidebar, PanelRight, 
-  Settings, Repeat, Repeat1, Clock, FileText, Info, Minimize, Maximize, Trash2, AlertTriangle
+  Settings, Repeat, Repeat1, Clock, FileText, Info, Minimize, Maximize, Trash2, AlertTriangle, Loader2
 } from 'lucide-react';
 
 interface SequenceViewerProps {
@@ -46,6 +46,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
   // UI State
   const [contextMenu, setContextMenu] = useState<{ visible: boolean, x: number, y: number }>({ visible: false, x: 0, y: 0 });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [currentImageUrl, setCurrentImageUrl] = useState<string>('');
 
   // Context menu close handlers
   useEffect(() => {
@@ -143,19 +144,44 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
     return () => clearInterval(intervalId);
   }, [isPlaying, fps, isLooping, currentIndex, totalFrames, validFileIds, onNavigate]);
 
-  // Preloading
+  // Load current image as base64
   useEffect(() => {
-    if (!isPlaying) return;
-    const preloadCount = 5;
-    for (let i = 1; i <= preloadCount; i++) {
-      const nextIdx = (currentIndex + i) % totalFrames;
-      const nextFile = files[validFileIds[nextIdx]];
-      if (nextFile?.url) {
-        const img = new Image();
-        img.src = nextFile.url;
+    const loadImage = async () => {
+      if (!currentFile?.path) {
+        setCurrentImageUrl('');
+        return;
       }
-    }
-  }, [currentIndex, isPlaying, totalFrames, validFileIds, files]);
+      
+      try {
+        const { readFileAsBase64 } = await import('../api/tauri-bridge');
+        const dataUrl = await readFileAsBase64(currentFile.path);
+        if (dataUrl) {
+          setCurrentImageUrl(dataUrl);
+        } else {
+          setCurrentImageUrl('');
+        }
+      } catch (error) {
+        console.error('Failed to load image:', error);
+        setCurrentImageUrl('');
+      }
+    };
+    
+    loadImage();
+  }, [currentFile?.path, currentFile?.id]);
+
+  // Preloading - Note: Disabled in Tauri as file.url is not a usable URL
+  // useEffect(() => {
+  //   if (!isPlaying) return;
+  //   const preloadCount = 5;
+  //   for (let i = 1; i <= preloadCount; i++) {
+  //     const nextIdx = (currentIndex + i) % totalFrames;
+  //     const nextFile = files[validFileIds[nextIdx]];
+  //     if (nextFile?.url) {
+  //       const img = new Image();
+  //       img.src = nextFile.url;
+  //     }
+  //   }
+  // }, [currentIndex, isPlaying, totalFrames, validFileIds, files]);
 
   // Keyboard controls
   useEffect(() => {
@@ -338,9 +364,9 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
             onMouseLeave={handleMouseUp}
             onContextMenu={handleContextMenu}
         >
-           {currentFile && (
+           {currentFile && currentImageUrl ? (
                <img 
-                 src={currentFile.url} 
+                 src={currentImageUrl} 
                  className="max-h-full max-w-full object-contain shadow-lg pointer-events-none transition-transform duration-75"
                  style={{
                     transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
@@ -349,7 +375,11 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                  alt="Frame"
                  draggable={false}
                />
-           )}
+           ) : currentFile ? (
+               <div className="flex items-center justify-center">
+                 <Loader2 className="animate-spin text-gray-400" size={32} />
+               </div>
+           ) : null}
         </div>
 
         {/* Bottom Control Bar */}

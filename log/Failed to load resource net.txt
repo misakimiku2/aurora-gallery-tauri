@@ -1,0 +1,8 @@
+请求 URL
+thumbnail://42ad080e9c0df7d8dd4e32aa1cde22d3.jpg?path=C%3A%2FUsers%2FMisaki%2FPictures%2F%E7%94%B5%E5%95%86%E5%9B%BE%E7%89%87%2FDX2011C2%2FIMG_20251120_145817.jpg&t=0
+引用站点策略
+strict-origin-when-cross-origin
+referer
+http://tauri.localhost/
+user-agent
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0

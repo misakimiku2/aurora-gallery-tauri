@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon } from 'lucide-react';
 
 interface TreeProps {
   files: Record<string, FileNode>;
@@ -193,23 +193,11 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSe
                            >
                               <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
                                  {coverFile ? (
-                                   person.faceBox ? (
-                                      <div 
-                                          className="w-full h-full transition-transform duration-300"
-                                          style={{
-                                              backgroundImage: `url("${coverFile.previewUrl || coverFile.url}")`,
-                                              backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
-                                              backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
-                                              backgroundRepeat: 'no-repeat'
-                                          }}
-                                      />
-                                   ) : (
-                                      <img 
-                                        src={coverFile.previewUrl || coverFile.url} 
-                                        alt={person.name} 
-                                        className="w-full h-full object-cover transition-transform duration-300" 
-                                      />
-                                   )
+                                   // Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs
+                                   // Use placeholder for now - could be enhanced to load thumbnail separately
+                                   <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
+                                     <User size={16} className="text-gray-400 dark:text-gray-500" />
+                                   </div>
                                  ) : (
                                    <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={16}/></div>
                                  )}
@@ -456,7 +444,10 @@ const TagSection: React.FC<TagSectionProps> = ({
                   <div className="grid grid-cols-3 gap-2">
                     {previewImages.map(img => (
                       <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
-                         <img src={img.url} className="w-full h-full object-cover" />
+                         {/* Note: In Tauri, file.url is a file path, not a usable URL. Use placeholder for now. */}
+                         <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                           <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                         </div>
                       </div>
                     ))}
                   </div>

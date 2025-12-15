@@ -3,12 +3,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::fs;
 use std::io::Cursor;
+use std::sync::Mutex;
 use walkdir::WalkDir;
 use tauri::Manager;
-use image::{ImageReader, DynamicImage, ImageOutputFormat};
+use image::{ImageOutputFormat, GenericImageView, RgbaImage};
+use fast_image_resize::{Resizer, ResizeAlg, FilterType, PixelType};
+use std::num::NonZeroU32;
 use base64::{Engine as _, engine::general_purpose};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +74,95 @@ fn normalize_path(path: &str) -> String {
 // Check if file extension is supported
 fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
+}
+
+// Global state to store thumbnail hash -> file path mapping
+type ThumbnailMap = Mutex<HashMap<String, String>>;
+
+// Helper function to generate thumbnail data
+fn generate_thumbnail_data(file_path: &str) -> Option<Vec<u8>> {
+    // Load image
+    let img = image::open(file_path).ok()?;
+    
+    let (width, height) = img.dimensions();
+    let target_size = 256u32;
+    
+    // Don't upscale if image is already smaller
+    if width <= target_size && height <= target_size {
+        let mut buffer = Vec::new();
+        let mut cursor = Cursor::new(&mut buffer);
+        if img.write_to(&mut cursor, ImageOutputFormat::Jpeg(85)).is_ok() {
+            return Some(buffer);
+        }
+        return None;
+    }
+    
+    // Calculate new dimensions
+    let (new_width, new_height) = if width <= height {
+        let ratio = height as f32 / width as f32;
+        (target_size, (target_size as f32 * ratio) as u32)
+    } else {
+        let ratio = width as f32 / height as f32;
+        ((target_size as f32 * ratio) as u32, target_size)
+    };
+    
+    // Convert to RGBA
+    let rgba_img = img.to_rgba8();
+    
+    // Convert dimensions to NonZeroU32
+    let src_width = NonZeroU32::new(width)?;
+    let src_height = NonZeroU32::new(height)?;
+    let dst_width = NonZeroU32::new(new_width)?;
+    let dst_height = NonZeroU32::new(new_height)?;
+    
+    // Create source image
+    let src_image = fast_image_resize::Image::from_vec_u8(
+        src_width,
+        src_height,
+        rgba_img.into_raw(),
+        PixelType::U8x4,
+    ).ok()?;
+    
+    // Create destination image
+    let mut dst_image = fast_image_resize::Image::new(
+        dst_width,
+        dst_height,
+        PixelType::U8x4,
+    );
+    
+    // Resize
+    let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
+    if resizer.resize(&src_image.view(), &mut dst_image.view_mut()).is_err() {
+        return None;
+    }
+    
+    // Convert back to image format
+    let resized_rgba = RgbaImage::from_raw(
+        new_width,
+        new_height,
+        dst_image.buffer().to_vec(),
+    )?;
+    
+    // Encode as JPEG
+    let mut buffer = Vec::new();
+    let mut cursor = Cursor::new(&mut buffer);
+    if image::DynamicImage::ImageRgba8(resized_rgba)
+        .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
+        .is_ok()
+    {
+        Some(buffer)
+    } else {
+        None
+    }
+}
+
+// Register thumbnail hash mapping
+#[tauri::command]
+async fn register_thumbnail_hash(app: tauri::AppHandle, hash: String, file_path: String) -> Result<(), String> {
+    let state: tauri::State<'_, ThumbnailMap> = app.state();
+    let mut map = state.lock().map_err(|e| format!("Failed to lock state: {}", e))?;
+    map.insert(hash, file_path);
+    Ok(())
 }
 
 #[tauri::command]
@@ -272,7 +364,7 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
                             chrono::DateTime::from_timestamp(secs as i64, 0)
                                 .map(|dt| dt.to_rfc3339())
                         }),
-                    url: Some(format!("local-resource://{}", full_path)),
+                    url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
                     meta: Some(ImageMeta {
                         width: 0,
                         height: 0,
@@ -403,8 +495,41 @@ fn greet(name: &str) -> String {
 async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<bool, String> {
     use std::io::Write;
     
+    // #region agent log
+    let root_paths = data.get("rootPaths").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let settings_paths = data.get("settings").and_then(|s| s.get("paths"));
+    let log_entry = serde_json::json!({
+        "location": "main.rs:496",
+        "message": "save_user_data entry",
+        "data": {
+            "rootPaths_count": root_paths,
+            "has_settings_paths": settings_paths.is_some(),
+            "resourceRoot": settings_paths.and_then(|p| p.get("resourceRoot")).and_then(|v| v.as_str()),
+            "cacheRoot": settings_paths.and_then(|p| p.get("cacheRoot")).and_then(|v| v.as_str())
+        },
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "C"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
+    
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    
+    // #region agent log
+    let log_entry = serde_json::json!({
+        "location": "main.rs:520",
+        "message": "app_data_dir path",
+        "data": {"path": app_data_dir.to_string_lossy()},
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "C"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
     
     // Create directory if it doesn't exist
     fs::create_dir_all(&app_data_dir)
@@ -415,23 +540,91 @@ async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Resul
     let json_string = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("Failed to serialize data: {}", e))?;
     
+    // #region agent log
+    let log_entry = serde_json::json!({
+        "location": "main.rs:535",
+        "message": "Before write file",
+        "data": {"data_file": data_file.to_string_lossy(), "json_size": json_string.len()},
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "C"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
+    
     let mut file = fs::File::create(&data_file)
         .map_err(|e| format!("Failed to create data file: {}", e))?;
     
     file.write_all(json_string.as_bytes())
         .map_err(|e| format!("Failed to write data file: {}", e))?;
     
+    // #region agent log
+    let log_entry = serde_json::json!({
+        "location": "main.rs:545",
+        "message": "save_user_data success",
+        "data": {"success": true},
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "C"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
+    
     Ok(true)
 }
 
 #[tauri::command]
 async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    // #region agent log
+    let log_entry = serde_json::json!({
+        "location": "main.rs:520",
+        "message": "load_user_data entry",
+        "data": {},
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "B"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
+    
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
     
     let data_file = app_data_dir.join("user_data.json");
     
+    // #region agent log
+    let log_entry = serde_json::json!({
+        "location": "main.rs:530",
+        "message": "load_user_data check file",
+        "data": {
+            "app_data_dir": app_data_dir.to_string_lossy(),
+            "data_file": data_file.to_string_lossy(),
+            "file_exists": data_file.exists()
+        },
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "B"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
+    
     if !data_file.exists() {
+        // #region agent log
+        let log_entry = serde_json::json!({
+            "location": "main.rs:540",
+            "message": "load_user_data file not exists",
+            "data": {},
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+            "sessionId": "debug-session",
+            "runId": "run1",
+            "hypothesisId": "B"
+        });
+        println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+        // #endregion
         return Ok(None);
     }
     
@@ -440,6 +633,28 @@ async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Valu
     
     let data: serde_json::Value = serde_json::from_str(&contents)
         .map_err(|e| format!("Failed to parse data file: {}", e))?;
+    
+    // #region agent log
+    let root_paths = data.get("rootPaths").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    let settings_paths = data.get("settings").and_then(|s| s.get("paths"));
+    let log_entry = serde_json::json!({
+        "location": "main.rs:555",
+        "message": "load_user_data success",
+        "data": {
+            "rootPaths_count": root_paths,
+            "rootPaths": data.get("rootPaths"),
+            "has_settings": data.get("settings").is_some(),
+            "has_settings_paths": settings_paths.is_some(),
+            "resourceRoot": settings_paths.and_then(|p| p.get("resourceRoot")).and_then(|v| v.as_str()),
+            "cacheRoot": settings_paths.and_then(|p| p.get("cacheRoot")).and_then(|v| v.as_str())
+        },
+        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
+        "sessionId": "debug-session",
+        "runId": "run1",
+        "hypothesisId": "B"
+    });
+    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
+    // #endregion
     
     Ok(Some(data))
 }
@@ -479,9 +694,173 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     Ok(paths)
 }
 
+#[tauri::command]
+async fn get_thumbnail(file_path: String) -> Result<Option<String>, String> {
+    
+    // Check if file exists
+    if !Path::new(&file_path).exists() {
+        return Ok(None);
+    }
+    
+    // Try to load image using image crate
+    match image::open(&file_path) {
+        Ok(img) => {
+            // Get original dimensions
+            let (width, height) = img.dimensions();
+            
+            // Calculate target dimensions: smallest dimension should be 256px
+            let target_size = 256u32;
+            
+            // Don't upscale if image is already smaller
+            if width <= target_size && height <= target_size {
+                // Image is already small enough, use original
+                let mut buffer = Vec::new();
+                let mut cursor = Cursor::new(&mut buffer);
+                img.write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
+                    .map_err(|e| format!("Failed to encode image: {}", e))?;
+                
+                let base64_str = general_purpose::STANDARD.encode(&buffer);
+                return Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)));
+            }
+            
+            // Calculate new dimensions maintaining aspect ratio
+            let (new_width, new_height) = if width <= height {
+                // Width is smaller, scale based on width
+                let ratio = height as f32 / width as f32;
+                (target_size, (target_size as f32 * ratio) as u32)
+            } else {
+                // Height is smaller, scale based on height
+                let ratio = width as f32 / height as f32;
+                ((target_size as f32 * ratio) as u32, target_size)
+            };
+            
+            // Convert image to RGBA format for fast_image_resize
+            let rgba_img = img.to_rgba8();
+            
+            // Convert dimensions to NonZeroU32
+            let src_width = NonZeroU32::new(width)
+                .ok_or_else(|| "Image width is zero".to_string())?;
+            let src_height = NonZeroU32::new(height)
+                .ok_or_else(|| "Image height is zero".to_string())?;
+            let dst_width = NonZeroU32::new(new_width)
+                .ok_or_else(|| "Target width is zero".to_string())?;
+            let dst_height = NonZeroU32::new(new_height)
+                .ok_or_else(|| "Target height is zero".to_string())?;
+            
+            let src_image = fast_image_resize::Image::from_vec_u8(
+                src_width,
+                src_height,
+                rgba_img.into_raw(),
+                PixelType::U8x4,
+            ).map_err(|e| format!("Failed to create source image: {}", e))?;
+            
+            // Create destination image
+            let mut dst_image = fast_image_resize::Image::new(
+                dst_width,
+                dst_height,
+                PixelType::U8x4,
+            );
+            
+            // Create resizer and resize
+            let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
+            
+            resizer.resize(&src_image.view(), &mut dst_image.view_mut())
+                .map_err(|e| format!("Failed to resize image: {}", e))?;
+            
+            // Convert back to image crate format
+            let resized_rgba = RgbaImage::from_raw(
+                new_width,
+                new_height,
+                dst_image.buffer().to_vec(),
+            ).ok_or_else(|| "Failed to create resized image".to_string())?;
+            
+            // Encode as JPEG
+            let mut buffer = Vec::new();
+            let mut cursor = Cursor::new(&mut buffer);
+            image::DynamicImage::ImageRgba8(resized_rgba)
+                .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
+                .map_err(|e| format!("Failed to encode image: {}", e))?;
+            
+            // Convert to base64
+            let base64_str = general_purpose::STANDARD.encode(&buffer);
+            Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)))
+        },
+        Err(_e) => {
+            // If image::open fails (e.g., for some PNG files), try to read file directly as base64
+            use std::fs;
+            
+            // Read file as bytes
+            let file_bytes = fs::read(&file_path)
+                .map_err(|read_err| format!("Failed to read file: {}", read_err))?;
+            
+            // Detect image format from file extension
+            let extension = Path::new(&file_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+            
+            // Determine MIME type based on extension
+            let mime_type = match extension.as_str() {
+                "jpg" | "jpeg" => "image/jpeg",
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                "tiff" | "tif" => "image/tiff",
+                _ => "image/jpeg", // Default to JPEG
+            };
+            
+            // Convert to base64
+            let base64_str = general_purpose::STANDARD.encode(&file_bytes);
+            Ok(Some(format!("data:{};base64,{}", mime_type, base64_str)))
+        }
+    }
+}
+
+#[tauri::command]
+async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String> {
+    use std::fs;
+    
+    // Check if file exists
+    if !Path::new(&file_path).exists() {
+        return Ok(None);
+    }
+    
+    // Read file as bytes
+    let file_bytes = fs::read(&file_path)
+        .map_err(|e| format!("Failed to read file: {}", e))?;
+    
+    // Detect image format from file extension
+    let extension = Path::new(&file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
+    
+    // Determine MIME type based on extension
+    let mime_type = match extension.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "tiff" | "tif" => "image/tiff",
+        _ => "image/jpeg", // Default to JPEG
+    };
+    
+    // Encode to base64
+    let base64_str = general_purpose::STANDARD.encode(&file_bytes);
+    Ok(Some(format!("data:{};base64,{}", mime_type, base64_str)))
+}
+
 fn main() {
+    
+    let thumbnail_map: ThumbnailMap = Mutex::new(HashMap::new());
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(thumbnail_map)
         .invoke_handler(tauri::generate_handler![
             greet, 
             scan_directory, 
@@ -489,9 +868,63 @@ fn main() {
             load_user_data,
             get_default_paths,
             get_thumbnail,
-            save_thumbnail,
-            queue_thumbnail
+            register_thumbnail_hash,
+            read_file_as_base64
         ])
+        .register_uri_scheme_protocol("thumbnail", move |_app_handle, request| {
+            use tauri::http::{Response, StatusCode};
+            
+            let uri = request.uri();
+            
+            // Get file path from query parameter (e.g., thumbnail://hash.jpg?path=...)
+            let file_path = if let Some(query) = uri.query() {
+                // Parse query parameters
+                let params: std::collections::HashMap<String, String> = query
+                    .split('&')
+                    .filter_map(|p| {
+                        let mut parts = p.splitn(2, '=');
+                        Some((parts.next()?.to_string(), parts.next()?.to_string()))
+                    })
+                    .collect();
+                
+                if let Some(path) = params.get("path") {
+                    // URL decode the path
+                    let decoded = urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed(path));
+                    Some(decoded.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            
+            let file_path = match file_path {
+                Some(path) => path,
+                None => {
+                    return Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(vec![])
+                        .unwrap();
+                }
+            };
+            
+            // Generate thumbnail synchronously
+            let thumbnail_data = match generate_thumbnail_data(&file_path) {
+                Some(data) => data,
+                None => {
+                    return Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .body(vec![])
+                        .unwrap();
+                }
+            };
+            
+            Response::builder()
+                .header("Content-Type", "image/jpeg")
+                .status(StatusCode::OK)
+                .body(thumbnail_data)
+                .unwrap()
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

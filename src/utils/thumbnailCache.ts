@@ -17,6 +17,11 @@ export const generateCacheKey = (path: string, modified: string | undefined) => 
 export const getCachedThumbnail = (key: string): string | undefined => {
     const val = cache.get(key);
     if (val) {
+        // Validate cached value - remove invalid entries
+        if (val && !val.startsWith('data:image')) {
+            cache.delete(key);
+            return undefined;
+        }
         cacheHits++;
         // Refresh item usage (move to end of Map)
         cache.delete(key);
@@ -44,7 +49,23 @@ export const clearCache = () => {
     cacheMisses = 0;
 };
 
+// Clear invalid cache entries (thumbnail://, local-resource://, etc.)
+export const clearInvalidCacheEntries = () => {
+    let clearedCount = 0;
+    for (const [key, value] of cache.entries()) {
+        if (value && !value.startsWith('data:image')) {
+            cache.delete(key);
+            clearedCount++;
+        }
+    }
+    return clearedCount;
+};
+
 export const setCachedThumbnail = (key: string, data: string) => {
+    // Only cache base64 data URLs
+    if (!data || !data.startsWith('data:image')) {
+        return;
+    }
     if (cache.has(key)) {
         // Refresh
         cache.delete(key);

@@ -244,6 +244,7 @@ export interface AppState {
 
 declare global {
   interface Window {
+    __TAURI__?: any;
     electron?: {
       openDirectory: () => Promise<string | null>;
       scanDirectory: (path: string, forceRefresh?: boolean) => Promise<{ roots: string[], files: Record<string, FileNode> }>;

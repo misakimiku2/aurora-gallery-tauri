@@ -264,7 +264,9 @@ export const getFolderPreviewImages = (files: Record<string, FileNode>, folderId
     const node = files[id];
     if (!node) continue;
 
-    if (node.type === FileType.IMAGE && node.url) {
+    // Note: In Tauri, file.url is a file path, not a usable URL
+    // Only use URLs that are valid (data: or http/https)
+    if (node.type === FileType.IMAGE && node.url && (node.url.startsWith('data:') || node.url.startsWith('http'))) {
       found.push(node.previewUrl || node.url);
     } else if (node.type === FileType.FOLDER && node.children) {
        for (const childId of node.children) {

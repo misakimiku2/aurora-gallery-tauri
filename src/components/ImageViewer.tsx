@@ -114,6 +114,33 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [animationClass, setAnimationClass] = useState('animate-zoom-in');
   const lastFileIdRef = useRef(file.id);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [imageUrl, setImageUrl] = useState<string>('');
+
+  // Load full image as base64 data URL
+  useEffect(() => {
+    const loadImage = async () => {
+      if (!file.path) {
+        setImageUrl('');
+        return;
+      }
+      
+      try {
+        const { readFileAsBase64 } = await import('../api/tauri-bridge');
+        const dataUrl = await readFileAsBase64(file.path);
+        if (dataUrl) {
+          setImageUrl(dataUrl);
+          setIsLoaded(false); // Reset loaded state when image changes
+        } else {
+          setImageUrl('');
+        }
+      } catch (error) {
+        console.error('Failed to load image:', error);
+        setImageUrl('');
+      }
+    };
+    
+    loadImage();
+  }, [file.path, file.id]);
 
   // --- Calculate Preload Nodes ---
   const preloadImages = useMemo(() => {
@@ -127,13 +154,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           return files[sortedFileIds[idx]];
       };
 
-      // Preload previous 2 and next 2
+      // Preload previous 2 and next 2 (only if they have paths)
       const nodes = [
           getNeighbor(-2),
           getNeighbor(-1),
           getNeighbor(1),
           getNeighbor(2)
-      ].filter(node => node && node.url && node.id !== file.id);
+      ].filter(node => node && node.path && node.id !== file.id);
 
       return nodes;
   }, [file.id, sortedFileIds, files]);
@@ -265,7 +292,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   const handleCopyImage = async () => {
       try {
-          const response = await fetch(file.url!);
+          if (!file.path) return;
+          
+          // Read file as base64 and convert to blob
+          const { readFileAsBase64 } = await import('../api/tauri-bridge');
+          const dataUrl = await readFileAsBase64(file.path);
+          if (!dataUrl) return;
+          
+          // Convert data URL to blob
+          const response = await fetch(dataUrl);
           const blob = await response.blob();
           await navigator.clipboard.write([
               new ClipboardItem({
@@ -396,12 +431,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       className={`flex-1 flex flex-col h-full relative select-none overflow-hidden transition-colors duration-300 ${slideshowActive ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
       onClick={() => setContextMenu({ ...contextMenu, visible: false })}
     >
-      {/* Background Preloading of 4 neighbors */}
-      <div className="hidden">
+      {/* Background Preloading of 4 neighbors - Note: Preloading disabled in Tauri as file.url is not a usable URL */}
+      {/* <div className="hidden">
          {preloadImages.map(node => (
              node?.url && <img key={node.id} src={node.url} alt="preload" />
          ))}
-      </div>
+      </div> */}
 
       <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
         
@@ -546,27 +581,33 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         )}
 
         <div className={`w-full h-full flex items-center justify-center pointer-events-none ${animationClass}`}>
-           <img 
-             ref={imgRef}
-             key={file.id} 
-             src={file.url} 
-             alt={file.name}
-             className={`max-w-none transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''}`}
-             onLoad={() => setIsLoaded(true)}
-             loading="eager"
-             decoding="async"
-             style={{
-               width: '100%',
-               height: '100%',
-               objectFit: 'contain',
-               transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
-               pointerEvents: slideshowActive ? 'none' : 'auto',
-               transformOrigin: 'center center',
-               ...filterStyle
-             }}
-             draggable={false}
-           />
+           {imageUrl ? (
+             <img 
+               ref={imgRef}
+               key={file.id} 
+               src={imageUrl} 
+               alt={file.name}
+               className={`max-w-none transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''}`}
+               onLoad={() => setIsLoaded(true)}
+               loading="eager"
+               decoding="async"
+               style={{
+                 width: '100%',
+                 height: '100%',
+                 objectFit: 'contain',
+                 transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                 transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+                 pointerEvents: slideshowActive ? 'none' : 'auto',
+                 transformOrigin: 'center center',
+                 ...filterStyle
+               }}
+               draggable={false}
+             />
+           ) : (
+             <div className="flex items-center justify-center">
+               <Loader2 className="animate-spin text-gray-400" size={32} />
+             </div>
+           )}
         </div>
 
         {!slideshowActive && (

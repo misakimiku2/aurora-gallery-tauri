@@ -17,7 +17,13 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
     
     const Icon = category === 'book' ? Book : (category === 'sequence' ? Film : Folder);
 
-    const images = previewSrcs || [];
+    // Filter out invalid URLs (thumbnail://, local-resource://, etc.) - only use base64 data URLs
+    const images = (previewSrcs || []).filter(src => {
+      if (!src) return false;
+      // Only allow base64 data URLs
+      if (src.startsWith('data:image')) return true;
+      return false;
+    });
     
     return (
         <div className={`relative w-full h-full group select-none ${className}`}>
@@ -28,7 +34,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
 
              {/* Preview Images */}
              <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
-                 {images[2] && (
+                 {images[2] && images[2].startsWith('data:image') && (
                      <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
                          <img 
                              src={images[2]} 
@@ -39,7 +45,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                          />
                      </div>
                  )}
-                 {images[1] && (
+                 {images[1] && images[1].startsWith('data:image') && (
                      <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
                          <img 
                              src={images[1]} 
@@ -50,7 +56,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                          />
                      </div>
                  )}
-                 {images[0] && (
+                 {images[0] && images[0].startsWith('data:image') && (
                      <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
                          <img 
                              src={images[0]} 
@@ -146,77 +152,56 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   fileMeta?: { format?: string };
 }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
-  const [retryTimestamp, setRetryTimestamp] = useState(0);
+  const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
   const [hasError, setHasError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const [thumbnailGenerated, setThumbnailGenerated] = useState(false);
-
-  // Generate stable thumbnail URL based on content (size + modified)
-  // Fallback to path + modified if size is missing (backward compatibility)
-  const thumbnailUrl = useMemo(() => {
-    if (!filePath || !modified) return '';
-    const hashContent = size ? `${size}${modified}` : `${filePath}${modified}`;
-    const hash = md5(hashContent);
-    // Only add retryTimestamp for actual retries (when hasError is true)
-    // This prevents unnecessary URL changes and reloading
-    const timestampParam = hasError ? `?t=${retryTimestamp}` : '';
-    return `thumbnail://${hash}.jpg${timestampParam}`;
-  }, [filePath, modified, size, retryTimestamp, hasError]);
-
-  // Queue thumbnail generation only when the item comes into view
+  const [isLoading, setIsLoading] = useState(true);
+  
+  // Get thumbnail data using getThumbnail function
   useEffect(() => {
-    if ((isInView || wasInView) && filePath && modified && window.electron?.queueThumbnail && !thumbnailGenerated) {
-      // Queue thumbnail generation with lower priority for offscreen items
-      // Use requestIdleCallback if available, otherwise setTimeout with delay
-      if (typeof requestIdleCallback !== 'undefined') {
-        requestIdleCallback(() => {
-          window.electron.queueThumbnail(filePath, modified);
-        }, { timeout: 1000 });
-      } else {
-        setTimeout(() => {
-          window.electron.queueThumbnail(filePath, modified);
-        }, 50);
-      }
-    }
-  }, [isInView, wasInView, filePath, modified, thumbnailGenerated]);
-
-  // Handle thumbnail generated event from main process
-  useEffect(() => {
-    const handleThumbnailGenerated = (event: any) => {
-      const data = event.detail;
-      if (data && filePath && data.filePath === filePath) {
-        // Thumbnail generated! Just mark it as generated, no need to reload
-        setHasError(false);
-        setRetryCount(0); // Reset retry count
-        setThumbnailGenerated(true);
-        // Don't update retryTimestamp - it causes flickering
-        // Instead, rely on the browser's cache and the thumbnail URL being stable
+    const loadThumbnail = async () => {
+      if (!filePath) return;
+      
+      setIsLoading(true);
+      setHasError(false);
+      
+      try {
+        // Import dynamically to avoid circular dependencies
+        const { getThumbnail } = await import('../api/tauri-bridge');
+        
+        const thumbnailData = await getThumbnail(filePath);
+        
+        if (thumbnailData) {
+          // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
+          if (thumbnailData.startsWith('data:image')) {
+            setThumbnailUrl(thumbnailData);
+            setHasError(false);
+            setRetryCount(0);
+          } else {
+            throw new Error('Invalid thumbnail data format');
+          }
+        } else {
+          throw new Error('Failed to get thumbnail data');
+        }
+      } catch (error) {
+        console.error('Failed to load thumbnail:', error);
+        setHasError(true);
+        
+        // Retry with exponential backoff
+        if (retryCount < 2) {
+          setTimeout(() => {
+            setRetryCount(prev => prev + 1);
+          }, 1000 * Math.pow(2, retryCount));
+        }
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    window.addEventListener('thumbnail:generated', handleThumbnailGenerated as EventListener);
-    return () => {
-      window.removeEventListener('thumbnail:generated', handleThumbnailGenerated as EventListener);
-    };
-  }, [filePath]);
-
-  // Handle image load error - reduced retry count and longer delay
-  const handleImageError = () => {
-    if (retryCount >= 2) { // Reduce from 3 to 2 retry attempts
-      // Give up after 2 failed attempts to avoid infinite loops
-      return;
+    if ((isInView || wasInView) && filePath) {
+      loadThumbnail();
     }
-    
-    setHasError(true);
-    setRetryCount(prev => prev + 1);
-    
-    if (filePath && modified && window.electron?.queueThumbnail) {
-      // Trigger backend generation if missing, with exponential backoff
-      setTimeout(() => {
-          window.electron.queueThumbnail(filePath, modified);
-      }, 1000 * Math.pow(2, retryCount)); // Exponential backoff
-    }
-  };
+  }, [filePath, isInView, wasInView, retryCount]);
 
   if (!filePath || !modified) {
     return (
@@ -234,32 +219,37 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   return (
     <div ref={ref} className="w-full h-full relative overflow-hidden">
       {/* Placeholder Icon (visible when loading or error) */}
-      <div className={`absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center pointer-events-none transition-opacity duration-300 ${hasError ? 'opacity-100' : 'opacity-0'}`}>
+      <div className={`absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center pointer-events-none transition-opacity duration-300 ${(hasError || isLoading) ? 'opacity-100' : 'opacity-0'}`}>
         <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
       </div>
       
-      {shouldRenderImage && (
+      {shouldRenderImage && thumbnailUrl && (
         <>
           {/* Thumbnail Image (always visible except when animation is playing) */}
-          <img
-              key={thumbnailUrl}
-              src={thumbnailUrl}
-              alt={alt}
-              loading="lazy"
-              decoding="async"
-              draggable="false"
-              className={`w-full h-full object-cover transition-all duration-300 ease-out absolute inset-0 ${isSelected ? 'scale-110' : 'group-hover:scale-105'} ${hasError ? 'opacity-0' : 'opacity-100'} ${isHovering && (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') ? 'opacity-0' : 'opacity-100'}`}
-              onError={handleImageError}
-              onLoad={() => setHasError(false)}
-          />
+          {thumbnailUrl.startsWith('data:image') ? (
+            <img
+                key={thumbnailUrl}
+                src={thumbnailUrl}
+                alt={alt}
+                loading="lazy"
+                decoding="async"
+                draggable="false"
+                className={`w-full h-full object-cover transition-all duration-300 ease-out absolute inset-0 ${isSelected ? 'scale-110' : 'group-hover:scale-105'} ${hasError ? 'opacity-0' : 'opacity-100'} ${isHovering && (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') ? 'opacity-0' : 'opacity-100'}`}
+                onError={() => {
+                  setHasError(true);
+                }}
+                onLoad={() => setHasError(false)}
+            />
+          ) : null}
           
           {/* Animation Image (only visible when hovering and for supported formats) */}
-          {(fileMeta?.format === 'gif' || fileMeta?.format === 'webp') && (
+          {/* Note: For Tauri, we use the same thumbnail URL for animation since file.url is a file path, not a usable URL */}
+          {(fileMeta?.format === 'gif' || fileMeta?.format === 'webp') && thumbnailUrl && thumbnailUrl.startsWith('data:image') && (
             <img
-                key={`${src}-animation`}
-                src={src}
+                key={`${thumbnailUrl}-animation`}
+                src={thumbnailUrl}
                 alt={alt}
-                loading="lazy" // Change from eager to lazy loading for animations
+                loading="lazy"
                 decoding="async"
                 draggable="false"
                 className={`w-full h-full object-cover transition-all duration-300 ease-out absolute inset-0 ${isSelected ? 'scale-110' : 'group-hover:scale-105'} opacity-0 ${isHovering ? 'opacity-100' : 'opacity-0'}`}
@@ -277,7 +267,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
 export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
-  const [retryTimestamp, setRetryTimestamp] = useState(0);
+  const [thumbnailUrls, setThumbnailUrls] = useState<string[]>([]);
+  const [loadingStates, setLoadingStates] = useState<boolean[]>([true, true, true]);
   
   const shouldProcessPreview = isInView || wasInView;
   
@@ -323,47 +314,75 @@ export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNo
     return imageFiles;
   }, [shouldProcessPreview, file, files]);
 
-  // Listen for generation events to update folder previews too
+  // Load thumbnails for folder preview images
   useEffect(() => {
-    const handleThumbnailGenerated = (event: any) => {
-        const data = event.detail;
-        // If any of the preview images was generated, trigger a re-render
-        if (data && getImageFilesForPreview.some(img => img.path === data.filePath)) {
-            setRetryTimestamp(Date.now());
+    const loadThumbnails = async () => {
+      const imageFiles = getImageFilesForPreview.slice(0, 3);
+      const newThumbnailUrls: string[] = [];
+      const newLoadingStates: boolean[] = [];
+      
+      for (const img of imageFiles) {
+        if (img.path) {
+          try {
+            const { getThumbnail } = await import('../api/tauri-bridge');
+            const thumbnailData = await getThumbnail(img.path);
+            
+            // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
+            if (thumbnailData && thumbnailData.startsWith('data:image')) {
+              newThumbnailUrls.push(thumbnailData);
+              newLoadingStates.push(false);
+            } else {
+              newThumbnailUrls.push('');
+              newLoadingStates.push(false);
+            }
+          } catch (error) {
+            console.error('Failed to load folder preview thumbnail:', error);
+            newThumbnailUrls.push('');
+            newLoadingStates.push(false);
+          }
+        } else {
+          newThumbnailUrls.push('');
+          newLoadingStates.push(false);
         }
+      }
+      
+      setThumbnailUrls(newThumbnailUrls);
+      setLoadingStates(newLoadingStates);
     };
-    window.addEventListener('thumbnail:generated', handleThumbnailGenerated as EventListener);
-    return () => window.removeEventListener('thumbnail:generated', handleThumbnailGenerated as EventListener);
-  }, [getImageFilesForPreview]);
-
-  // Generate thumbnail URL using md5 hash
-  const getThumbnailUrl = (fileNode: FileNode) => {
-    if (!fileNode.path || !fileNode.updatedAt) return '';
-    const hashContent = fileNode.size ? `${fileNode.size}${fileNode.updatedAt}` : `${fileNode.path}${fileNode.updatedAt}`;
-    const hash = md5(hashContent);
-    return `thumbnail://${hash}.jpg?t=${retryTimestamp}`;
-  };
+    
+    if ((isInView || wasInView) && getImageFilesForPreview.length > 0) {
+      loadThumbnails();
+    }
+  }, [getImageFilesForPreview, isInView, wasInView]);
 
   // Handle image load error for folder previews
-  const handlePreviewError = (index: number) => {
+  const handlePreviewError = async (index: number) => {
     const img = getImageFilesForPreview[index];
-    if (img && img.path && img.updatedAt && window.electron?.queueThumbnail) {
-      window.electron.queueThumbnail(img.path, img.updatedAt);
+    if (img && img.path) {
+      try {
+        const { getThumbnail } = await import('../api/tauri-bridge');
+        const thumbnailData = await getThumbnail(img.path);
+        
+        // Ensure we only use base64 data URLs
+        if (thumbnailData && thumbnailData.startsWith('data:image')) {
+          setThumbnailUrls(prev => {
+            const newUrls = [...prev];
+            newUrls[index] = thumbnailData;
+            return newUrls;
+          });
+        }
+      } catch (error) {
+        console.error('Failed to reload folder preview thumbnail:', error);
+      }
     }
   };
-
-  const images = useMemo(() => {
-    return getImageFilesForPreview.slice(0, 3).map(img => {
-      return getThumbnailUrl(img);
-    });
-  }, [getImageFilesForPreview, retryTimestamp]);
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       {(isInView || wasInView) && (
           <div className="relative w-full h-full p-2">
              <Folder3DIcon  
-                previewSrcs={images} 
+                previewSrcs={thumbnailUrls}
                 count={file.children?.length} 
                 category={file.category} 
                 onImageError={handlePreviewError}
@@ -587,7 +606,10 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
           <div className="grid grid-cols-3 gap-2">
             {previewImages.map((f: any) => (
               <div key={f.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
-                 <img src={f.previewUrl || f.url} className="w-full h-full object-cover" loading="lazy" draggable="false" />
+                 {/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */}
+                 <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                   <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                 </div>
               </div>
             ))}
           </div>
@@ -700,7 +722,10 @@ const FileListItem = React.memo(({
             <Folder className="text-blue-500 mr-3 shrink-0" size={18} />
             ) : (
             <div className="w-6 h-6 mr-3 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden shrink-0">
-                <img src={file.url} className="w-full h-full object-cover" loading="lazy" draggable="false"/>
+                {/* Note: file.url is a file path in Tauri, not a usable URL. We'll use a placeholder or load thumbnail separately if needed */}
+                <div className="w-full h-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                    <ImageIcon className="text-gray-400 dark:text-gray-500" size={14} />
+                </div>
             </div>
             )}
             {renamingId === file.id ? (
@@ -750,7 +775,7 @@ const PersonCard = React.memo(({
   isSelected: boolean;
   onPersonClick: (id: string, e: React.MouseEvent) => void;
   onPersonDoubleClick: (id: string) => void;
-  onStartRenamePerson: (id: string) => void;
+  onStartRenamePerson?: (id: string) => void;
   onPersonContextMenu: (e: React.MouseEvent, id: string) => void;
   t: (key: string) => string;
   style: any;
@@ -785,20 +810,19 @@ const PersonCard = React.memo(({
               <div 
                 className="w-full h-full"
                 style={{
-                  backgroundImage: `url("${coverFile.previewUrl || coverFile.url}")`,
+                  // Note: In Tauri, file.url is a file path. We need to load thumbnail separately.
+                  // For now, use a placeholder background
                   backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
                   backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
-                  backgroundRepeat: 'no-repeat'
+                  backgroundRepeat: 'no-repeat',
+                  backgroundColor: 'rgba(0,0,0,0.1)'
                 }}
               />
             ) : (
-              <img 
-                src={coverFile.previewUrl || coverFile.url} 
-                alt={person.name}
-                className="w-full h-full object-cover"
-                loading="lazy"
-                draggable="false"
-              />
+              // Note: In Tauri, file.url is a file path, not a usable URL. Use placeholder for now.
+              <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                <User size={avatarSize * 0.4} className="text-gray-400 dark:text-gray-500" />
+              </div>
             )
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
@@ -818,7 +842,7 @@ const PersonCard = React.memo(({
       <div className="mt-4 text-center w-full px-2">
         <div 
           className={`font-bold text-base truncate transition-colors px-2 rounded-md ${isSelected ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}
-          onDoubleClick={() => onStartRenamePerson(person.id)}
+          onDoubleClick={() => onStartRenamePerson?.(person.id)}
         >
           {person.name}
         </div>
@@ -955,7 +979,7 @@ const FileCard = React.memo(({
             <FolderThumbnail file={file} files={files} mode={layoutMode} />
             ) : (
             <ImageThumbnail
-                src={file.url || ''}
+                src={''}
                 alt={file.name}
                 isSelected={isSelected}
                 filePath={file.path}
@@ -1049,7 +1073,7 @@ const GroupContent = React.memo(({
       {activeTab.layoutMode === 'list' ? (
         // List layout
         <div className="overflow-hidden">
-          {group.fileIds.map((id) => {
+          {group.fileIds.map((id: string) => {
             const file = files[id];
             if (!file) return null;
             return (
@@ -1066,8 +1090,8 @@ const GroupContent = React.memo(({
                   onRenameCancel={handleRenameCancel}
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
-                  onDragOver={(e) => handleDragOverFolder(e, file.id)}
-                  onDragLeave={(e) => handleDragLeaveFolder(e, file.id)}
+                  onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
+                  onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
                   onDropOnFolder={handleDropOnFolderWrapper}
                   onDropExternal={null}
                   t={t}
@@ -1108,8 +1132,8 @@ const GroupContent = React.memo(({
                     onSetHoverPlayingId={handleSetHoverPlayingId}
                     onDragStart={handleDragStart}
                     onDragEnd={handleDragEnd}
-                    onDragOver={(e) => handleDragOverFolder(e, file.id)}
-                    onDragLeave={(e) => handleDragLeaveFolder(e, file.id)}
+                    onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
+                    onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
                     onDropOnFolder={handleDropOnFolderWrapper}
                     onDropExternal={null}
                     style={item}
@@ -1340,7 +1364,7 @@ interface FileGridProps {
   collapsedGroups?: Record<string, boolean>;
   onToggleGroup?: (id: string) => void;
   isSelecting?: boolean;
-  selectionBox?: { startX: number; startY: number; currentX: number; currentY: number };
+  selectionBox?: { startX: number; startY: number; currentX: number; currentY: number } | null;
   t: (key: string) => string;
   onThumbnailSizeChange?: (size: number) => void;
   onUpdateFile?: (id: string, updates: Partial<FileNode>) => void;
@@ -1659,7 +1683,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       isSelected={activeTab.selectedPersonIds.includes(person.id)}
                                       onPersonClick={handlePersonClick}
                                       onPersonDoubleClick={handlePersonDoubleClick}
-                                      onStartRenamePerson={onStartRenamePerson}
+                                      onStartRenamePerson={onStartRenamePerson || (() => {})}
                                       onPersonContextMenu={handlePersonContextMenu}
                                       t={t}
                                       style={item}
@@ -1727,8 +1751,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onRenameCancel={handleRenameCancel}
                                   onDragStart={handleDragStart}
                                   onDragEnd={handleDragEnd}
-                                  onDragOver={(e) => handleDragOverFolder(e, file.id)}
-                                  onDragLeave={(e) => handleDragLeaveFolder(e, file.id)}
+                                  onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
+                                  onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
                                   onDropOnFolder={handleDropOnFolderWrapper}
                                   onDropExternal={handleDropExternalWrapper}
                                   t={t}
@@ -1772,7 +1796,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       onSetHoverPlayingId={handleSetHoverPlayingId}
                                       onDragStart={handleDragStart}
                                       onDragEnd={handleDragEnd}
-                                      onDragOver={(e) => handleDragOverFolder(e, file.id)}
+                                      onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
                                       onDragLeave={handleDragLeaveFolder}
                                       onDropOnFolder={handleDropOnFolderWrapper}
                                       onDropExternal={handleDropExternalWrapper}

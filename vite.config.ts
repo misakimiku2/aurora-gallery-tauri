@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: './',
+  base: '/',
   clearScreen: false,
   resolve: {
     alias: {
@@ -16,8 +16,14 @@ export default defineConfig({
     },
   },
   server: {
-    port: 1420,
+    port: 1421,
     strictPort: true,
+    host: 'localhost',
+    hmr: {
+      protocol: 'ws',
+      host: 'localhost',
+      port: 1421,
+    },
     watch: {
       ignored: ['**/src-tauri/**'],
     },

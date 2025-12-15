@@ -19,6 +19,59 @@ interface MetadataProps {
   activeTab: TabState;
 }
 
+// Image Preview Component for Tauri
+const ImagePreview = ({ file }: { file: FileNode }) => {
+  const [imageUrl, setImageUrl] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
+  
+  useEffect(() => {
+    const loadImage = async () => {
+      if (!file.path) {
+        setImageUrl('');
+        setIsLoading(false);
+        return;
+      }
+      
+      setIsLoading(true);
+      try {
+        // Use getThumbnail for preview (smaller, faster)
+        const { getThumbnail } = await import('../api/tauri-bridge');
+        const dataUrl = await getThumbnail(file.path);
+        if (dataUrl) {
+          setImageUrl(dataUrl);
+        } else {
+          setImageUrl('');
+        }
+      } catch (error) {
+        console.error('Failed to load preview image:', error);
+        setImageUrl('');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadImage();
+  }, [file.path, file.id]);
+  
+  return (
+    <div className="flex flex-col items-center">
+      <div className="w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-black/40 border border-gray-200 dark:border-gray-800 flex justify-center items-center p-2 mb-2 shadow-sm min-h-[200px]">
+        {isLoading ? (
+          <div className="flex items-center justify-center">
+            <ImageIcon className="animate-pulse text-gray-400" size={32} />
+          </div>
+        ) : imageUrl ? (
+          <img src={imageUrl} className="max-w-full max-h-[300px] object-contain rounded" alt={file.name} />
+        ) : (
+          <div className="flex items-center justify-center">
+            <ImageIcon className="text-gray-400" size={32} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const extractPalette = async (url: string): Promise<string[]> => {
     return new Promise((resolve) => {
         const img = new Image();
@@ -292,18 +345,25 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         }
 
         // Only run if we haven't already processed this file in this session
-        if (shouldExtract && !extractedCache.current.has(file.id)) {
-           const targetUrl = file.previewUrl || file.url;
-           if (targetUrl) {
-               extractedCache.current.add(file.id); // Mark as processing/processed
-               extractPalette(targetUrl).then(palette => {
-                   if (palette && palette.length > 0) {
-                       onUpdate(file.id, {
-                           meta: { ...file.meta!, palette }
-                       });
-                   }
-               });
-           }
+        if (shouldExtract && !extractedCache.current.has(file.id) && file.path) {
+           extractedCache.current.add(file.id); // Mark as processing/processed
+           // In Tauri, we need to read the file as base64 first
+           (async () => {
+             try {
+               const { readFileAsBase64 } = await import('../api/tauri-bridge');
+               const dataUrl = await readFileAsBase64(file.path!);
+               if (dataUrl) {
+                 const palette = await extractPalette(dataUrl);
+                 if (palette && palette.length > 0) {
+                   onUpdate(file.id, {
+                     meta: { ...file.meta!, palette }
+                   });
+                 }
+               }
+             } catch (err) {
+               console.error('Failed to extract palette:', err);
+             }
+           })();
         }
       }
     } else if (isMulti) {
@@ -588,7 +648,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
   if (person) {
       const coverFile = files[person.coverFileId];
-      const coverUrl = coverFile ? (coverFile.previewUrl || coverFile.url) : null;
+      // Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs
+      const coverUrl = null; // Disabled in Tauri - would need to load thumbnail separately
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
@@ -740,11 +801,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
         {/* Large Preview Image (Single Image Only) */}
         {!isMulti && file && file.type === FileType.IMAGE && (
-            <div className="flex flex-col items-center">
-                <div className="w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-black/40 border border-gray-200 dark:border-gray-800 flex justify-center items-center p-2 mb-2 shadow-sm">
-                    <img src={file.previewUrl || file.url} className="max-w-full max-h-[300px] object-contain rounded" />
-                </div>
-            </div>
+            <ImagePreview file={file} />
         )}
 
         {/* Color Palette (8 Card Grid) */}
@@ -1232,7 +1289,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 />
                 {(isMulti ? batchSource : source) && (
                     <button 
-                      onClick={() => window.electron.openExternal(isMulti ? batchSource : source)}
+                      onClick={() => window.electron?.openExternal(isMulti ? batchSource : source)}
                       className="p-2 text-gray-400 hover:text-blue-500"
                       title={t('meta.openSource')}
                     >
@@ -1249,7 +1306,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             <div key={id} className="flex items-center text-xs group bg-gray-50 dark:bg-gray-800/50 p-1.5 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors">
                                 <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
                                 <button 
-                                    onClick={() => window.electron.openExternal(f.sourceUrl)}
+                                    onClick={() => f.sourceUrl && window.electron?.openExternal(f.sourceUrl)}
                                     className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
                                     title={f.sourceUrl}
                                 >

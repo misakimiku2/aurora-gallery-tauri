@@ -11,8 +11,8 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask } from './types';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths } from './api/tauri-bridge';
+import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
 // ... (helper components remain unchanged)
@@ -36,7 +36,7 @@ const ConfirmModal = ({ title, message, subMessage, confirmText, confirmIcon: Ic
 const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('settings.namePattern')}</label><input className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('settings.startNumber')}</label><input type="number" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (p.faceBox ? (<div className="w-full h-full" style={{ backgroundImage: `url("${coverFile.previewUrl || coverFile.url}")`, backgroundSize: `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%`, backgroundPosition: `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%`, backgroundRepeat: 'no-repeat' }} />) : (<img src={coverFile.previewUrl || coverFile.url} className="w-full h-full object-cover" />)) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
+const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
 
 const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any) => { 
   // Get all unique people from selected files 
@@ -84,19 +84,10 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
           const isSelected = selectedPeople.includes(p.id); 
           return ( 
             <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30 border-l-2 border-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}> 
-              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center"> 
-                {hasCover ? (p.faceBox ? ( 
-                  <div className="w-full h-full" style={{ 
-                    backgroundImage: `url("${coverFile.previewUrl || coverFile.url}")`, 
-                    backgroundSize: `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%`, 
-                    backgroundPosition: `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%`, 
-                    backgroundRepeat: 'no-repeat' 
-                  }} /> 
-                ) : ( 
-                  <img src={coverFile.previewUrl || coverFile.url} className="w-full h-full object-cover" /> 
-                )) : ( 
-                  <User size={14} className="text-gray-400 dark:text-gray-500" /> 
-                )} 
+              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">
+                {hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (
+                  <User size={14} className="text-gray-400 dark:text-gray-500" />
+                )}
               </div> 
               <span className="text-sm text-gray-800 dark:text-gray-200 flex-1">{p.name}</span> 
               <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'}`}> 
@@ -151,7 +142,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
       const matches = node.name.toLowerCase().includes(query);
       
       // 获取子文件夹
-      const folderChildren = node.children?.filter(childId => files[childId]?.type === FileType.FOLDER) || [];
+      const folderChildren = node.children?.filter((childId: string) => files[childId]?.type === FileType.FOLDER) || [];
       
       // 检查是否有子文件夹匹配
       let hasMatchingChild = false;
@@ -169,7 +160,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
     };
     
     // 从所有根目录开始遍历
-    roots.forEach(rootId => traverse(rootId));
+    roots.forEach((rootId: string) => traverse(rootId));
     
     return matchingFolders;
   };
@@ -185,7 +176,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
     if (!shouldShow) return null;
     
     const expanded = expandedIds.includes(nodeId);
-    const folderChildren = node.children?.filter(childId => files[childId]?.type === FileType.FOLDER) || [];
+    const folderChildren = node.children?.filter((childId: string) => files[childId]?.type === FileType.FOLDER) || [];
     
     return (
       <div key={nodeId}>
@@ -207,7 +198,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
           <span className="truncate">{node.name}</span>
         </div>
         {/* 只渲染展开的文件夹 */}
-        {expanded && folderChildren.map(childId => renderTree(childId, depth + 1, matchingFolders))}
+        {expanded && folderChildren.map((childId: string) => renderTree(childId, depth + 1, matchingFolders))}
       </div>
     );
   };
@@ -627,13 +618,51 @@ export const App: React.FC = () => {
 
   // ... (keep persistence logic, init effect, exit logic, etc.)
   const saveUserData = async (data: any) => {
+      console.log('[SAVE_USER_DATA] Entry:', {
+          isElectron: !!window.electron,
+          isTauri: '__TAURI__' in window,
+          dataKeys: Object.keys(data),
+          rootPaths: data.rootPaths,
+          settingsPaths: data.settings?.paths
+      });
+      
       if (window.electron) {
+          console.log('[SAVE_USER_DATA] Using Electron API');
           await window.electron.saveUserData(data);
+          return true;
+      } else {
+          // Tauri 环境
+          try {
+              console.log('[SAVE_USER_DATA] Using Tauri API');
+              const result = await tauriSaveUserData(data);
+              console.log('[SAVE_USER_DATA] Tauri API result:', result);
+              return result;
+          } catch (error) {
+              console.error('[SAVE_USER_DATA] Failed to save user data in Tauri:', error);
+              return false;
+          }
       }
   };
 
   useEffect(() => {
-      if (!isElectron || !window.electron) return;
+      // 只在 Electron 或 Tauri 环境下保存数据
+      const isTauri = '__TAURI__' in window;
+      console.log('[AUTO_SAVE] useEffect triggered:', {
+          isElectron,
+          isTauri,
+          hasRoots: state.roots.length > 0,
+          settingsTheme: state.settings.theme,
+          settingsLanguage: state.settings.language,
+          settingsPaths: state.settings.paths
+      });
+      
+      if (!isElectron && !isTauri) {
+          console.log('[AUTO_SAVE] Skipping - not Electron or Tauri');
+          return;
+      }
+      
+      console.log('[AUTO_SAVE] State changed, preparing to save...');
+      
       const rootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
       
       const fileMetadata: Record<string, any> = {};
@@ -670,8 +699,20 @@ export const App: React.FC = () => {
           fileMetadata
       };
       
+      console.log('[AUTO_SAVE] Data to save:', {
+          rootPaths,
+          settingsPaths: state.settings.paths,
+          customTagsCount: state.customTags.length,
+          peopleCount: Object.keys(state.people).length
+      });
+      
       const timer = setTimeout(() => {
-          window.electron!.saveUserData(dataToSave);
+          console.log('[AUTO_SAVE] Executing saveUserData...');
+          saveUserData(dataToSave).then(result => {
+              console.log('[AUTO_SAVE] saveUserData completed:', result);
+          }).catch(err => {
+              console.error('[AUTO_SAVE] saveUserData failed:', err);
+          });
       }, 1000);
       return () => clearTimeout(timer);
   }, [state.roots, state.files, state.customTags, state.people, state.settings, isElectron]);
@@ -787,18 +828,241 @@ export const App: React.FC = () => {
                 console.error("Initialization failed", e);
             }
             
-            const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: '' };
-            setState(prev => ({ ...prev, roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [defaultTab], activeTabId: defaultTab.id }));
+            // 初始化一个空文件夹作为默认根目录
+            const rootId = Math.random().toString(36).substr(2, 9);
+            const rootFolder: FileNode = {
+                id: rootId,
+                parentId: null,
+                name: '我的图片',
+                type: FileType.FOLDER,
+                path: '',
+                children: [],
+                tags: [],
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            const defaultTab: TabState = { 
+                ...DUMMY_TAB, 
+                id: 'tab-default', 
+                folderId: rootId,
+                history: { 
+                    stack: [{ 
+                        folderId: rootId, 
+                        viewingId: null, 
+                        viewMode: 'browser', 
+                        searchQuery: '', 
+                        searchScope: 'all', 
+                        activeTags: [], 
+                        activePersonId: null 
+                    }], 
+                    currentIndex: 0 
+                }
+            };
+            
+            setState(prev => ({ 
+                ...prev, 
+                roots: [rootId], 
+                files: { [rootId]: rootFolder }, 
+                people: {}, 
+                expandedFolderIds: [rootId], 
+                tabs: [defaultTab], 
+                activeTabId: defaultTab.id 
+            }));
             setIsLoading(false);
             // 初始化完成，隐藏启动界面
             setTimeout(() => {
                 setShowSplash(false);
             }, 500);
         } else {
-            const { roots, files } = initializeFileSystem(); 
-            const initialFolder = roots[0];
-            const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder, history: { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 } };
-            setState(prev => ({ ...prev, roots, files, people: {}, expandedFolderIds: roots, tabs: [defaultTab], activeTabId: defaultTab.id }));
+            // Tauri 环境或浏览器环境
+            const isTauriEnv = '__TAURI__' in window;
+            let isSavedDataLoaded = false;
+            
+            if (isTauriEnv) {
+                // Tauri 环境：尝试加载保存的数据
+                try {
+                    // 先获取默认路径
+                    const defaults = await tauriGetDefaultPaths();
+                    
+                    // 然后获取保存的数据
+                    const savedData = await tauriLoadUserData();
+                    
+                    console.log('[INIT] Loaded savedData:', {
+                        hasSavedData: !!savedData,
+                        savedDataKeys: savedData ? Object.keys(savedData) : [],
+                        rootPaths: savedData?.rootPaths,
+                        settingsPaths: savedData?.settings?.paths
+                    });
+                    
+                    // 合并设置：保存的数据优先于默认数据
+                    let finalSettings = {
+                        ...state.settings,
+                        paths: {
+                            ...state.settings.paths,
+                            ...defaults,
+                        }
+                    };
+                    
+                    if (savedData) {
+                        isSavedDataLoaded = true;
+                        
+                        // 如果有保存的数据，合并保存的数据，保存的数据优先
+                        finalSettings = {
+                            ...finalSettings,
+                            ...savedData.settings,
+                            paths: {
+                                ...finalSettings.paths,
+                                ...(savedData.settings?.paths || {})
+                            },
+                            ai: {
+                                ...finalSettings.ai,
+                                ...(savedData.settings?.ai || {})
+                            }
+                        };
+                        
+                        // 更新 state 中的 customTags 和 people
+                        setState(prev => ({
+                            ...prev,
+                            customTags: savedData.customTags || [],
+                            people: savedData.people || {},
+                            settings: finalSettings
+                        }));
+                    } else {
+                        // 只有默认路径，更新 state
+                        setState(prev => ({
+                            ...prev,
+                            settings: finalSettings
+                        }));
+                    }
+                    
+
+                    
+                    // 确定要扫描的路径列表
+                    let pathsToScan: string[] = [];
+                    if (savedData?.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
+                        pathsToScan = savedData.rootPaths;
+                        console.log('[INIT] Using saved rootPaths:', pathsToScan);
+                    } else if (finalSettings.paths.resourceRoot) {
+                        // 如果 rootPaths 为空但 resourceRoot 存在，使用 resourceRoot
+                        pathsToScan = [finalSettings.paths.resourceRoot];
+                        console.log('[INIT] rootPaths empty, using resourceRoot:', pathsToScan);
+                    }
+                    
+                    console.log('[INIT] pathsToScan determined:', {
+                        pathsToScan,
+                        length: pathsToScan.length,
+                        hasSavedData: !!savedData,
+                        hasRootPaths: !!savedData?.rootPaths,
+                        rootPathsLength: savedData?.rootPaths?.length || 0,
+                        hasResourceRoot: !!finalSettings.paths.resourceRoot,
+                        resourceRoot: finalSettings.paths.resourceRoot
+                    });
+                    
+                    if (pathsToScan.length > 0) {
+                        let allFiles: Record<string, FileNode> = {};
+                        let allRoots: string[] = [];
+                        const savedMetadata = savedData?.fileMetadata || {};
+                        
+                        // #region agent log
+                        
+                        // #endregion
+                        
+                        for (const p of pathsToScan) {
+                            try {
+                                console.log('[INIT] Starting scanDirectory for:', p);
+                                
+                                const result = await scanDirectory(p);
+                                
+                                console.log('[INIT] scanDirectory completed:', {
+                                    path: p,
+                                    rootsCount: result.roots.length,
+                                    filesCount: Object.keys(result.files).length,
+                                    roots: result.roots
+                                });
+                                
+                                Object.values(result.files).forEach((f: any) => {
+                                    const saved = savedMetadata[f.path];
+                                    if (saved) {
+                                        if (saved.tags) f.tags = saved.tags;
+                                        if (saved.description) f.description = saved.description;
+                                        if (saved.sourceUrl) f.sourceUrl = saved.sourceUrl;
+                                        if (saved.aiData) f.aiData = saved.aiData;
+                                        if (saved.category) f.category = saved.category;
+                                        if (saved.meta && f.meta) {
+                                            if (saved.meta.width) f.meta.width = saved.meta.width;
+                                            if (saved.meta.height) f.meta.height = saved.meta.height;
+                                            if (saved.meta.palette) f.meta.palette = saved.meta.palette;
+                                        }
+                                    }
+                                });
+
+                                Object.assign(allFiles, result.files);
+                                allRoots.push(...result.roots);
+                            } catch (err) {
+                                console.error(`[INIT] Failed to reload root: ${p}`, err);
+                            }
+                        }
+                        
+                        console.log('[INIT] After scanning all paths:', {
+                            allRootsCount: allRoots.length,
+                            allFilesCount: Object.keys(allFiles).length,
+                            allRoots: allRoots
+                        });
+                        
+                        if (allRoots.length > 0) {
+                            console.log('[INIT] Setting state with loaded roots');
+                            
+                            setState(prev => {
+                                 const initialFolder = allRoots[0];
+                                 const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder };
+                                 defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+                                 
+                                 return {
+                                    ...prev,
+                                    roots: allRoots,
+                                    files: allFiles,
+                                    expandedFolderIds: allRoots,
+                                    tabs: [defaultTab],
+                                    activeTabId: defaultTab.id
+                                 };
+                            });
+                            setIsLoading(false);
+                            // 根目录加载完毕，隐藏启动界面
+                            setTimeout(() => {
+                                setShowSplash(false);
+                            }, 500);
+                            return; 
+                        } else {
+                            console.log('[INIT] allRoots is empty after scanning, will use default init');
+                            // 虽然有保存的数据，但是没有有效的根目录，需要使用默认初始化
+                            isSavedDataLoaded = false;
+                        }
+                    } else {
+                        console.log('[INIT] pathsToScan is empty:', {
+                            hasSavedData: !!savedData,
+                            hasRootPaths: !!savedData?.rootPaths,
+                            rootPaths: savedData?.rootPaths,
+                            hasResourceRoot: !!finalSettings.paths.resourceRoot,
+                            resourceRoot: finalSettings.paths.resourceRoot
+                        });
+                    }
+                } catch (e) {
+                    console.error("[INIT] Tauri initialization failed", e);
+                    // 初始化失败，使用默认初始化
+                    isSavedDataLoaded = false;
+                }
+            }
+            
+            if (!isSavedDataLoaded) {
+                console.log('[INIT] Using default initialization (isSavedDataLoaded = false)');
+                // 如果没有加载到保存的数据，使用默认初始化
+                const { roots, files } = initializeFileSystem(); 
+                const initialFolder = roots[0];
+                const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder, history: { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 } };
+                setState(prev => ({ ...prev, roots, files, people: {}, expandedFolderIds: roots, tabs: [defaultTab], activeTabId: defaultTab.id }));
+            }
+            
             setIsLoading(false);
             // 初始化完成，隐藏启动界面
             setTimeout(() => {
@@ -2533,22 +2797,43 @@ export const App: React.FC = () => {
   const toggleSettings = () => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }));
   
   const handleChangePath = async (type: 'resource' | 'cache') => {
+      console.log('[HANDLE_CHANGE_PATH] ========== ENTRY ==========', type);
+      console.trace('[HANDLE_CHANGE_PATH] Call stack');
       try {
+          console.log('[HANDLE_CHANGE_PATH] Calling openDirectory...');
           const selectedPath = await openDirectory();
-          if (!selectedPath) return;
+          console.log('[HANDLE_CHANGE_PATH] Selected path:', selectedPath);
+          if (!selectedPath) {
+              console.log('[HANDLE_CHANGE_PATH] No path selected, returning');
+              return;
+          }
+          
           if (type === 'resource') {
+              console.log('[HANDLE_CHANGE_PATH] Processing resource path');
+              
+              const newSettings = {
+                  ...state.settings,
+                  paths: {
+                      ...state.settings.paths,
+                      resourceRoot: selectedPath
+                  }
+              };
+              
+              console.log('[HANDLE_CHANGE_PATH] New settings:', newSettings);
+              
               setState(prev => ({
                   ...prev,
-                  settings: {
-                      ...prev.settings,
-                      paths: {
-                          ...prev.settings.paths,
-                          resourceRoot: selectedPath
-                      }
-                  }
+                  settings: newSettings
               }));
+              
               startTask('ai', [], t('tasks.processing')); 
+              console.log('[HANDLE_CHANGE_PATH] Starting scanDirectory...');
               const result = await scanDirectory(selectedPath);
+              console.log('[HANDLE_CHANGE_PATH] scanDirectory completed:', {
+                  rootsCount: result.roots.length,
+                  filesCount: Object.keys(result.files).length
+              });
+              
               setState(prev => {
                    const newRoots = result.roots;
                    const newFiles = result.files;
@@ -2580,6 +2865,39 @@ export const App: React.FC = () => {
                        activeTabId: newTab.id
                    };
               });
+              
+              // 重要：在扫描目录并更新 state 后，再保存数据
+              // 使用扫描结果中的路径，确保包含新设置的目录
+              const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
+              // 如果扫描结果中没有路径，使用 selectedPath
+              const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
+              
+              console.log('[HANDLE_CHANGE_PATH] Preparing to save:', {
+                  selectedPath,
+                  resultRoots: result.roots,
+                  resultRootPaths,
+                  updatedRootPaths,
+                  newSettingsPaths: newSettings.paths
+              });
+              
+              const dataToSave = {
+                  rootPaths: updatedRootPaths,
+                  customTags: state.customTags,
+                  people: state.people,
+                  settings: newSettings,
+                  fileMetadata: {}
+              };
+              
+              console.log('[HANDLE_CHANGE_PATH] Calling saveUserData with:', JSON.stringify(dataToSave, null, 2));
+              
+              const saveResult = await saveUserData(dataToSave);
+              
+              console.log('[HANDLE_CHANGE_PATH] saveUserData result:', saveResult);
+              
+              if (!saveResult) {
+                  console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
+              }
+              
               showToast(t('settings.success'));
           } else if (type === 'cache') {
               let finalCachePath = selectedPath;
@@ -2588,17 +2906,41 @@ export const App: React.FC = () => {
                   const isWin = trimmedPath.includes('\\');
                   finalCachePath = `${trimmedPath}${isWin ? '\\' : '/'}.Aurora_Cache`;
               }
-              await window.electron.setCachePath(finalCachePath);
+              if (window.electron) {
+                  await window.electron.setCachePath(finalCachePath);
+              }
+              
+              const newSettings = {
+                  ...state.settings,
+                  paths: {
+                      ...state.settings.paths,
+                      cacheRoot: finalCachePath
+                  }
+              };
+              
               setState(prev => ({
                   ...prev,
-                  settings: {
-                      ...prev.settings,
-                      paths: {
-                          ...prev.settings.paths,
-                          cacheRoot: finalCachePath
-                      }
-                  }
+                  settings: newSettings
               }));
+              
+              // 保存设置到持久化存储
+              const currentRootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
+
+              
+              const dataToSave = {
+                  rootPaths: currentRootPaths,
+                  customTags: state.customTags,
+                  people: state.people,
+                  settings: newSettings,
+                  fileMetadata: {}
+              };
+              
+
+              
+              const saveResult = await saveUserData(dataToSave);
+              
+
+              
               showToast(t('settings.success'));
           }
       } catch (e) {
@@ -2608,7 +2950,7 @@ export const App: React.FC = () => {
   };
   
   // Navigation helpers
-  const pushHistory = (folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, scrollTop: number = 0, aiFilter = null) => { 
+  const pushHistory = (folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, scrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null) => { 
       updateActiveTab(prevTab => { 
           const newStack = [...prevTab.history.stack.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter }]; 
           return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
@@ -2834,7 +3176,7 @@ export const App: React.FC = () => {
         
         const updatedTabs = prev.tabs.map(t => {
             // 如果当前标签页正在查看被删除的文件，清除 viewingFileId
-            const isViewingDeletedFile = ids.includes(t.viewingFileId);
+            const isViewingDeletedFile = t.viewingFileId && ids.includes(t.viewingFileId);
             return {
                 ...t,
                 selectedFileIds: t.selectedFileIds.filter(fid => !ids.includes(fid)),
@@ -3616,21 +3958,17 @@ export const App: React.FC = () => {
               let base64Data = '';
               if (window.electron && file.path) {
                   base64Data = await window.electron.readFileAsBase64(file.path);
-              } else if (file.url) {
-                   try {
-                       const response = await fetch(file.url);
-                       const blob = await response.blob();
-                       base64Data = await new Promise<string>((resolve) => {
-                           const reader = new FileReader();
-                           reader.onloadend = () => {
-                               const res = reader.result as string;
-                               resolve(res.split(',')[1]);
-                           };
-                           reader.readAsDataURL(blob);
-                       });
-                   } catch (e) {
-                       console.warn("Failed to fetch image url for AI", e);
-                   }
+              } else if (file.path) {
+                  // In Tauri, use readFileAsBase64 instead of file.url
+                  try {
+                      const { readFileAsBase64 } = await import('./api/tauri-bridge');
+                      const dataUrl = await readFileAsBase64(file.path);
+                      if (dataUrl) {
+                          base64Data = dataUrl.split(',')[1]; // Extract base64 part
+                      }
+                  } catch (e) {
+                      console.warn("Failed to read file as base64 for AI", e);
+                  }
               }
 
               if (!base64Data) continue;
@@ -3877,7 +4215,7 @@ export const App: React.FC = () => {
                                   .join(' ');
                               
                               // Extract all texts
-                              const allTexts = [];
+                              const allTexts: string[] = [];
                               allResults.forEach(r => {
                                   if (r.translatedText) allTexts.push(r.translatedText);
                                   else if (r.extractedText) allTexts.push(r.extractedText);
@@ -3908,7 +4246,7 @@ export const App: React.FC = () => {
                               .join(' ');
                           
                           // Extract all texts
-                          const allTexts = [];
+                          const allTexts: string[] = [];
                           allResults.forEach(r => {
                               if (r.translatedText) allTexts.push(r.translatedText);
                               else if (r.extractedText) allTexts.push(r.extractedText);
@@ -4379,7 +4717,7 @@ export const App: React.FC = () => {
               files={state.files}
               fileIds={state.activeModal.data.fileIds}
               people={state.people}
-              onConfirm={(personIds) => {
+              onConfirm={(personIds: string[]) => {
                   handleClearPersonInfo(state.activeModal.data.fileIds, personIds);
                   setState(s => ({ ...s, activeModal: { type: null } }));
                   showToast(t('context.saved'));
@@ -4390,7 +4728,17 @@ export const App: React.FC = () => {
       )}
       </div>)}
       
-      {state.isSettingsOpen && ( <SettingsModal state={state} onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))} onUpdateSettings={(updates) => setState(s => ({ ...s, ...updates }))} onUpdateSettingsData={(updates) => setState(s => ({ ...s, settings: { ...s.settings, ...updates } }))} onUpdatePath={handleChangePath} onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} t={t} /> )}
+      {state.isSettingsOpen && ( <SettingsModal state={state} onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))} onUpdateSettings={(updates) => {
+          console.log('[SETTINGS] onUpdateSettings called:', updates);
+          setState(s => ({ ...s, ...updates }));
+      }} onUpdateSettingsData={(updates) => {
+          console.log('[SETTINGS] onUpdateSettingsData called:', updates);
+          setState(s => {
+              const newSettings = { ...s.settings, ...updates };
+              console.log('[SETTINGS] New settings:', newSettings);
+              return { ...s, settings: newSettings };
+          });
+      }} onUpdatePath={handleChangePath} onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} t={t} /> )}
       
       <WelcomeModal 
         show={showWelcome} 
