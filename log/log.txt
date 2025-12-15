@@ -1,0 +1,25 @@
+index-vSTPXNwn.js:666 === MAIN.TSX STARTED ===
+index-vSTPXNwn.js:666 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 === APP STARTED ===
+index-vSTPXNwn.js:521 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 [AUTO_SAVE] useEffect triggered: {isElectron: false, isTauri: false, isElectronReal: false, hasRoots: false, settingsTheme: 'system', …}
+index-vSTPXNwn.js:521 [AUTO_SAVE] Skipping - not Electron or Tauri
+index-vSTPXNwn.js:521 [INIT] Environment detection: {isTauriEnv: false, isElectronEnv: true, hasWindowElectron: true, hasWindowTauri: false}
+index-vSTPXNwn.js:521 === APP STARTED ===
+index-vSTPXNwn.js:521 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 [AUTO_SAVE] useEffect triggered: {isElectron: true, isTauri: false, isElectronReal: true, hasRoots: false, settingsTheme: 'system', …}
+index-vSTPXNwn.js:521 [AUTO_SAVE] State changed, preparing to save...
+index-vSTPXNwn.js:521 [AUTO_SAVE] Data to save: {rootPaths: Array(0), settingsPaths: {…}, customTagsCount: 0, peopleCount: 0}
+index-vSTPXNwn.js:521 === APP STARTED ===
+index-vSTPXNwn.js:521 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 [AUTO_SAVE] useEffect triggered: {isElectron: true, isTauri: false, isElectronReal: true, hasRoots: true, settingsTheme: 'system', …}
+index-vSTPXNwn.js:521 [AUTO_SAVE] State changed, preparing to save...
+index-vSTPXNwn.js:521 [AUTO_SAVE] Data to save: {rootPaths: Array(0), settingsPaths: {…}, customTagsCount: 0, peopleCount: 0}
+index-vSTPXNwn.js:521 === APP STARTED ===
+index-vSTPXNwn.js:521 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 === APP STARTED ===
+index-vSTPXNwn.js:521 Environment check: {hasWindow: true, hasTauri: false, hasElectron: true, userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb…cko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0'}
+index-vSTPXNwn.js:521 [AUTO_SAVE] Executing saveUserData...
+index-vSTPXNwn.js:521 [SAVE_USER_DATA] Entry: {isElectron: true, isTauri: false, isElectronReal: true, dataKeys: Array(5), rootPaths: Array(0), …}
+index-vSTPXNwn.js:521 [SAVE_USER_DATA] Using Electron API
+index-vSTPXNwn.js:521 [AUTO_SAVE] saveUserData completed: true

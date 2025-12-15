@@ -1,273 +1,65 @@
-index-ioVhHMnd.js:521 [DEBUG] Adding file:dimensions-updated event listener
-index-ioVhHMnd.js:521 [DEBUG] Adding debug-info event listener
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-(索引):1 [Intervention]Images loaded lazily and replaced with placeholders. Load events are deferred. See https://go.microsoft.com/fwlink/?linkid=2048113
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Connecting to 'http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628' violates the following Content Security Policy directive: "connect-src 'self' http://localhost:* http://ipc.localhost:* ws://localhost:* wss://localhost:*". The action has been blocked.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
-index-ioVhHMnd.js:521  Fetch API cannot load http://127.0.0.1:7243/ingest/8905d560-26fb-4950-a247-31a5596c7628. Refused to connect because it violates the document's Content Security Policy.
-qf @ index-ioVhHMnd.js:521
-await in qf
-onClick @ index-ioVhHMnd.js:521
-qg @ index-ioVhHMnd.js:37
-Jg @ index-ioVhHMnd.js:37
-Xg @ index-ioVhHMnd.js:37
-id @ index-ioVhHMnd.js:37
-h0 @ index-ioVhHMnd.js:37
-(匿名) @ index-ioVhHMnd.js:37
-ac @ index-ioVhHMnd.js:40
-Ru @ index-ioVhHMnd.js:37
-io @ index-ioVhHMnd.js:37
-Pi @ index-ioVhHMnd.js:37
-hh @ index-ioVhHMnd.js:37
+index-BaJM1OYH.js:668 [DEBUG_MAIN] main.tsx loaded - NEW CODE V2
+index-BaJM1OYH.js:668 === MAIN.TSX STARTED ===
+index-BaJM1OYH.js:521 [ENV] Environment check: Object
+index-BaJM1OYH.js:668 [DEBUG_MAIN] fetch failed: TypeError: Failed to fetch. Refused to connect because it violates the document's Content Security Policy.
+    at index-BaJM1OYH.js:668:32745
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] useEffect triggered: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] State changed, preparing to save...
+index-BaJM1OYH.js:523 [AUTO_SAVE] Data to save: Object
+index-BaJM1OYH.js:521 [ENV] Using cached TRUE result
+index-BaJM1OYH.js:523 [INIT] ========== ENVIRONMENT DETECTION ==========
+index-BaJM1OYH.js:523 [INIT] isTauriEnv (async): true
+index-BaJM1OYH.js:523 [INIT] isElectronEnv: false
+index-BaJM1OYH.js:523 [INIT] hasWindowElectron: false
+index-BaJM1OYH.js:523 [INIT] window.isTauri: true
+index-BaJM1OYH.js:523 [INIT] window.__TAURI__: false
+index-BaJM1OYH.js:523 [INIT] window.__TAURI__?.window?.isTauri: false
+index-BaJM1OYH.js:523 [INIT] userAgent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0
+index-BaJM1OYH.js:523 [INIT] ===========================================
+index-BaJM1OYH.js:523 [INIT] Tauri branch - isTauriEnv: true
+index-BaJM1OYH.js:523 [INIT] Tauri environment detected, starting initialization...
+index-BaJM1OYH.js:523 [INIT] Getting default paths...
+index-BaJM1OYH.js:668 === TAURI LOG PLUGIN CONFIGURED ===
+index-BaJM1OYH.js:523 [INIT] Default paths: Object
+index-BaJM1OYH.js:523 [INIT] Loading saved data...
+index-BaJM1OYH.js:521 [TAURI_LOAD] Entry - checking Tauri environment...
+index-BaJM1OYH.js:521 [TAURI_LOAD] isTauriEnvironment: true
+index-BaJM1OYH.js:521 [TAURI_LOAD] Calling invoke load_user_data...
+index-BaJM1OYH.js:521 [TAURI_LOAD] invoke result: Object
+index-BaJM1OYH.js:523 [INIT] Saved data loaded: Object
+index-BaJM1OYH.js:523 [INIT] Loaded savedData: Object
+index-BaJM1OYH.js:523 [INIT] Using saved rootPaths: Array(1)
+index-BaJM1OYH.js:523 [INIT] pathsToScan determined: Object
+index-BaJM1OYH.js:523 [INIT] Starting scanDirectory for: C:/Users/Misaki/Pictures
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] useEffect triggered: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] State changed, preparing to save...
+index-BaJM1OYH.js:523 [AUTO_SAVE] Data to save: Object
+index-BaJM1OYH.js:523 [INIT] scanDirectory completed: Object
+index-BaJM1OYH.js:523 [INIT] After scanning all paths: Object
+index-BaJM1OYH.js:523 [INIT] Setting state with loaded roots
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] useEffect triggered: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] State changed, preparing to save...
+index-BaJM1OYH.js:523 [AUTO_SAVE] Data to save: Object
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 [AUTO_SAVE] Executing saveUserData...
+index-BaJM1OYH.js:521 [ENV] Using cached TRUE result
+index-BaJM1OYH.js:523 [SAVE_USER_DATA] Entry: Object
+index-BaJM1OYH.js:523 [SAVE_USER_DATA] Using Tauri API
+index-BaJM1OYH.js:521 [TAURI_SAVE] Entry: Object
+index-BaJM1OYH.js:521 [TAURI_SAVE] Calling invoke save_user_data...
+index-BaJM1OYH.js:521 [TAURI_SAVE] invoke result: true
+index-BaJM1OYH.js:523 [SAVE_USER_DATA] Tauri API result: true
+index-BaJM1OYH.js:523 [AUTO_SAVE] saveUserData completed: true
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object
+index-BaJM1OYH.js:523 === APP STARTED ===
+index-BaJM1OYH.js:523 [ENV] Environment check: Object

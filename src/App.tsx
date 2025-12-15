@@ -33,10 +33,10 @@ const TaskProgressModal = ({ tasks, onMinimize, onClose, t }: any) => {
 
 const AlertModal = ({ message, onClose, t }: any) => ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl max-w-sm w-full animate-zoom-in"><div className="flex items-center mb-4 text-orange-500"><AlertTriangle className="mr-2" /><h3 className="font-bold text-lg">{t('settings.title')}</h3></div><p className="mb-6 text-gray-700 dark:text-gray-300">{message}</p><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm font-medium">{t('settings.confirm')}</button></div></div> );
 const ConfirmModal = ({ title, message, subMessage, confirmText, confirmIcon: Icon, onClose, onConfirm, t }: any) => ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl max-w-sm w-full animate-zoom-in"><h3 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">{title}</h3><p className="text-gray-700 dark:text-gray-300 mb-2 text-sm">{message}</p>{subMessage && <p className="text-sm text-gray-500 mb-6 bg-gray-50 dark:bg-gray-900/50 p-2 rounded border border-gray-100 dark:border-gray-700">{subMessage}</p>}<div className="flex justify-end space-x-3"><button onClick={onClose} className="px-4 py-2 rounded text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm">{t('settings.cancel')}</button><button onClick={onConfirm} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center text-sm font-medium">{Icon && <Icon size={16} className="mr-2"/>}{confirmText || t('settings.confirm')}</button></div></div> );
-const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('settings.namePattern')}</label><input className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{t('settings.startNumber')}</label><input type="number" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
+const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input id="rename-tag-input" name="rename-tag-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
+const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input id="rename-person-input" name="rename-person-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
+const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-pattern">{t('settings.namePattern')}</label><input id="batch-rename-pattern" name="batch-rename-pattern" className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-start">{t('settings.startNumber')}</label><input type="number" id="batch-rename-start" name="batch-rename-start" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
+const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
 
 const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any) => { 
   // Get all unique people from selected files 
@@ -104,7 +104,7 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
     </div> 
   ); 
 };
-const TagEditor = ({ file, files, onUpdate, onClose, t }: any) => { const [input, setInput] = useState(''); const allTags = new Set<string>(); Object.values(files as Record<string, FileNode>).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t))); const allTagsList = Array.from(allTags); const addTag = (tag: string) => { if (!file.tags.includes(tag)) { onUpdate(file.id, { tags: [...file.tags, tag] }); } setInput(''); }; return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.editTags')}</h3><div className="flex flex-wrap gap-2 mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-100 dark:border-gray-700 min-h-[40px]">{file.tags.map((tag: string) => ( <span key={tag} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs flex items-center">{tag}<button onClick={() => onUpdate(file.id, { tags: file.tags.filter((t: string) => t !== tag) })} className="ml-1 hover:text-red-500"><X size={10}/></button></span> ))}</div><div className="relative mb-4"><input className="w-full border dark:border-gray-600 rounded p-2 bg-transparent text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 ring-blue-500" placeholder={t('meta.addTagPlaceholder')} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if(e.key === 'Enter') addTag(input); }} autoFocus />{input && ( <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 shadow-lg z-50 max-h-32 overflow-y-auto">{allTagsList.filter(t => t.toLowerCase().includes(input.toLowerCase())).map(t => ( <div key={t} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs cursor-pointer" onClick={() => addTag(t)}>{t}</div> ))}</div> )}</div><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">{t('viewer.done')}</button></div></div> ); };
+const TagEditor = ({ file, files, onUpdate, onClose, t }: any) => { const [input, setInput] = useState(''); const allTags = new Set<string>(); Object.values(files as Record<string, FileNode>).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t))); const allTagsList = Array.from(allTags); const addTag = (tag: string) => { if (!file.tags.includes(tag)) { onUpdate(file.id, { tags: [...file.tags, tag] }); } setInput(''); }; return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.editTags')}</h3><div className="flex flex-wrap gap-2 mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-100 dark:border-gray-700 min-h-[40px]">{file.tags.map((tag: string) => ( <span key={tag} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs flex items-center">{tag}<button onClick={() => onUpdate(file.id, { tags: file.tags.filter((t: string) => t !== tag) })} className="ml-1 hover:text-red-500"><X size={10}/></button></span> ))}</div><div className="relative mb-4"><input id="add-tag-input" name="add-tag-input" className="w-full border dark:border-gray-600 rounded p-2 bg-transparent text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 ring-blue-500" placeholder={t('meta.addTagPlaceholder')} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if(e.key === 'Enter') addTag(input); }} autoFocus />{input && ( <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 shadow-lg z-50 max-h-32 overflow-y-auto">{allTagsList.filter(t => t.toLowerCase().includes(input.toLowerCase())).map(t => ( <div key={t} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs cursor-pointer" onClick={() => addTag(t)}>{t}</div> ))}</div> )}</div><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">{t('viewer.done')}</button></div></div> ); };
 const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onConfirm, t }: any) => {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState(''); // 搜索状态
@@ -216,6 +216,8 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
         <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/>
         <input
           type="text"
+          id="folder-picker-search"
+          name="folder-picker-search"
           className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm"
           placeholder={t('search.placeholder')}
           value={searchQuery}
@@ -470,22 +472,24 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
                 <div className="flex items-center space-x-3">
                     <Minus size={16} className="text-gray-500"/>
                     <input 
-                        type="range" 
-                        min="0.1" 
-                        max="5" 
-                        step="0.01" 
-                        value={scale}
-                        onChange={(e) => {
-                            const newScale = parseFloat(e.target.value);
-                            if (imgRef.current) {
-                                const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
-                                if (newScale >= minScale) setScale(newScale);
-                            } else {
-                                setScale(newScale);
-                            }
-                        }}
-                        className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                    />
+                    type="range" 
+                    id="crop-zoom-slider"
+                    name="crop-zoom-slider"
+                    min="0.1" 
+                    max="5" 
+                    step="0.01" 
+                    value={scale}
+                    onChange={(e) => {
+                        const newScale = parseFloat(e.target.value);
+                        if (imgRef.current) {
+                            const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
+                            if (newScale >= minScale) setScale(newScale);
+                        } else {
+                            setScale(newScale);
+                        }
+                    }}
+                    className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                />
                     <Plus size={16} className="text-gray-500"/>
                 </div>
                 <div className="flex justify-end space-x-3">
@@ -499,6 +503,9 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
 };
 
 import SplashScreen from './components/SplashScreen';
+
+// 导入统一的环境检测工具
+import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
 
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
@@ -572,7 +579,6 @@ export const App: React.FC = () => {
       const handleGlobalMouseUp = () => {
           // 只有当内部拖拽标记为 true 时才执行重置
           if (isInternalDragRef.current) {
-              console.log('[DEBUG] Global MouseUp: Resetting internal drag flag on mouse release');
               isInternalDragRef.current = false;
           }
       };
@@ -580,7 +586,6 @@ export const App: React.FC = () => {
       // 2. 监听标准的 dragend 事件作为辅助（它应该在拖拽操作结束时触发）
       const handleGlobalDragEnd = () => {
           if (isInternalDragRef.current) {
-              console.log('[DEBUG] Global DragEnd: Resetting internal drag flag');
               isInternalDragRef.current = false;
           }
       };
@@ -618,50 +623,42 @@ export const App: React.FC = () => {
 
   // ... (keep persistence logic, init effect, exit logic, etc.)
   const saveUserData = async (data: any) => {
-      console.log('[SAVE_USER_DATA] Entry:', {
-          isElectron: !!window.electron,
-          isTauri: '__TAURI__' in window,
-          dataKeys: Object.keys(data),
-          rootPaths: data.rootPaths,
-          settingsPaths: data.settings?.paths
-      });
-      
-      if (window.electron) {
-          console.log('[SAVE_USER_DATA] Using Electron API');
-          await window.electron.saveUserData(data);
-          return true;
-      } else {
-          // Tauri 环境
+      // 优先检测 Tauri 环境（异步检测，通过实际调用 API）
+      const isTauriEnv = await detectTauriEnvironmentAsync();
+      const isElectronReal = !isTauriEnv && !!window.electron;
+
+      if (isTauriEnv) {
+          // Tauri 环境 - 使用 Tauri API
           try {
-              console.log('[SAVE_USER_DATA] Using Tauri API');
-              const result = await tauriSaveUserData(data);
-              console.log('[SAVE_USER_DATA] Tauri API result:', result);
-              return result;
+              return await tauriSaveUserData(data);
           } catch (error) {
-              console.error('[SAVE_USER_DATA] Failed to save user data in Tauri:', error);
+              console.error('Failed to save user data in Tauri:', error);
               return false;
           }
+      } else if (isElectronReal && window.electron && window.electron.saveUserData) {
+          // 真正的 Electron 环境
+          try {
+              await window.electron.saveUserData(data);
+              return true;
+          } catch (error) {
+              console.error('Electron API failed:', error);
+              return false;
+          }
+      } else {
+          return false;
       }
   };
 
   useEffect(() => {
       // 只在 Electron 或 Tauri 环境下保存数据
-      const isTauri = '__TAURI__' in window;
-      console.log('[AUTO_SAVE] useEffect triggered:', {
-          isElectron,
-          isTauri,
-          hasRoots: state.roots.length > 0,
-          settingsTheme: state.settings.theme,
-          settingsLanguage: state.settings.language,
-          settingsPaths: state.settings.paths
-      });
+      // 注意：这里使用同步检测，因为 useEffect 不能是 async
+      // 但 saveUserData 内部会进行异步检测
+      const isTauriEnv = isTauriEnvironment();
+      const isElectronReal = !isTauriEnv && isElectron;
       
-      if (!isElectron && !isTauri) {
-          console.log('[AUTO_SAVE] Skipping - not Electron or Tauri');
+      if (!isElectronReal && !isTauriEnv) {
           return;
       }
-      
-      console.log('[AUTO_SAVE] State changed, preparing to save...');
       
       const rootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
       
@@ -699,29 +696,22 @@ export const App: React.FC = () => {
           fileMetadata
       };
       
-      console.log('[AUTO_SAVE] Data to save:', {
-          rootPaths,
-          settingsPaths: state.settings.paths,
-          customTagsCount: state.customTags.length,
-          peopleCount: Object.keys(state.people).length
-      });
-      
-      const timer = setTimeout(() => {
-          console.log('[AUTO_SAVE] Executing saveUserData...');
-          saveUserData(dataToSave).then(result => {
-              console.log('[AUTO_SAVE] saveUserData completed:', result);
-          }).catch(err => {
-              console.error('[AUTO_SAVE] saveUserData failed:', err);
-          });
+      const timer = setTimeout(async () => {
+          try {
+              await saveUserData(dataToSave);
+          } catch (err) {
+              console.error('Auto save failed:', err);
+          }
       }, 1000);
       return () => clearTimeout(timer);
   }, [state.roots, state.files, state.customTags, state.people, state.settings, isElectron]);
 
   useEffect(() => {
     const init = async () => {
-        const isElectronEnv = !!window.electron;
+        // 优先检测 Tauri 环境（异步检测，通过实际调用 API）
+        const isTauriEnv = await detectTauriEnvironmentAsync();
+        const isElectronEnv = !isTauriEnv && !!window.electron;
         setIsElectron(isElectronEnv);
-        
         if (isElectronEnv && window.electron) {
             window.electron.onCloseRequest(() => {
                 setState(prev => ({ 
@@ -876,7 +866,7 @@ export const App: React.FC = () => {
             }, 500);
         } else {
             // Tauri 环境或浏览器环境
-            const isTauriEnv = '__TAURI__' in window;
+            const isTauriEnv = isTauriEnvironment();
             let isSavedDataLoaded = false;
             
             if (isTauriEnv) {
@@ -884,16 +874,8 @@ export const App: React.FC = () => {
                 try {
                     // 先获取默认路径
                     const defaults = await tauriGetDefaultPaths();
-                    
                     // 然后获取保存的数据
                     const savedData = await tauriLoadUserData();
-                    
-                    console.log('[INIT] Loaded savedData:', {
-                        hasSavedData: !!savedData,
-                        savedDataKeys: savedData ? Object.keys(savedData) : [],
-                        rootPaths: savedData?.rootPaths,
-                        settingsPaths: savedData?.settings?.paths
-                    });
                     
                     // 合并设置：保存的数据优先于默认数据
                     let finalSettings = {
@@ -942,45 +924,18 @@ export const App: React.FC = () => {
                     let pathsToScan: string[] = [];
                     if (savedData?.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
                         pathsToScan = savedData.rootPaths;
-                        console.log('[INIT] Using saved rootPaths:', pathsToScan);
                     } else if (finalSettings.paths.resourceRoot) {
                         // 如果 rootPaths 为空但 resourceRoot 存在，使用 resourceRoot
                         pathsToScan = [finalSettings.paths.resourceRoot];
-                        console.log('[INIT] rootPaths empty, using resourceRoot:', pathsToScan);
                     }
-                    
-                    console.log('[INIT] pathsToScan determined:', {
-                        pathsToScan,
-                        length: pathsToScan.length,
-                        hasSavedData: !!savedData,
-                        hasRootPaths: !!savedData?.rootPaths,
-                        rootPathsLength: savedData?.rootPaths?.length || 0,
-                        hasResourceRoot: !!finalSettings.paths.resourceRoot,
-                        resourceRoot: finalSettings.paths.resourceRoot
-                    });
                     
                     if (pathsToScan.length > 0) {
                         let allFiles: Record<string, FileNode> = {};
                         let allRoots: string[] = [];
                         const savedMetadata = savedData?.fileMetadata || {};
-                        
-                        // #region agent log
-                        
-                        // #endregion
-                        
                         for (const p of pathsToScan) {
                             try {
-                                console.log('[INIT] Starting scanDirectory for:', p);
-                                
                                 const result = await scanDirectory(p);
-                                
-                                console.log('[INIT] scanDirectory completed:', {
-                                    path: p,
-                                    rootsCount: result.roots.length,
-                                    filesCount: Object.keys(result.files).length,
-                                    roots: result.roots
-                                });
-                                
                                 Object.values(result.files).forEach((f: any) => {
                                     const saved = savedMetadata[f.path];
                                     if (saved) {
@@ -1000,19 +955,10 @@ export const App: React.FC = () => {
                                 Object.assign(allFiles, result.files);
                                 allRoots.push(...result.roots);
                             } catch (err) {
-                                console.error(`[INIT] Failed to reload root: ${p}`, err);
+                                console.error(`Failed to reload root: ${p}`, err);
                             }
                         }
-                        
-                        console.log('[INIT] After scanning all paths:', {
-                            allRootsCount: allRoots.length,
-                            allFilesCount: Object.keys(allFiles).length,
-                            allRoots: allRoots
-                        });
-                        
                         if (allRoots.length > 0) {
-                            console.log('[INIT] Setting state with loaded roots');
-                            
                             setState(prev => {
                                  const initialFolder = allRoots[0];
                                  const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder };
@@ -1034,28 +980,19 @@ export const App: React.FC = () => {
                             }, 500);
                             return; 
                         } else {
-                            console.log('[INIT] allRoots is empty after scanning, will use default init');
                             // 虽然有保存的数据，但是没有有效的根目录，需要使用默认初始化
                             isSavedDataLoaded = false;
                         }
                     } else {
-                        console.log('[INIT] pathsToScan is empty:', {
-                            hasSavedData: !!savedData,
-                            hasRootPaths: !!savedData?.rootPaths,
-                            rootPaths: savedData?.rootPaths,
-                            hasResourceRoot: !!finalSettings.paths.resourceRoot,
-                            resourceRoot: finalSettings.paths.resourceRoot
-                        });
                     }
                 } catch (e) {
-                    console.error("[INIT] Tauri initialization failed", e);
+                    console.error("Tauri initialization failed", e);
                     // 初始化失败，使用默认初始化
                     isSavedDataLoaded = false;
                 }
             }
             
             if (!isSavedDataLoaded) {
-                console.log('[INIT] Using default initialization (isSavedDataLoaded = false)');
                 // 如果没有加载到保存的数据，使用默认初始化
                 const { roots, files } = initializeFileSystem(); 
                 const initialFolder = roots[0];
@@ -1183,13 +1120,11 @@ export const App: React.FC = () => {
       
       const handleDimensionsUpdated = (event: Event) => {
           const data = (event as CustomEvent).detail;
-          console.log('[DEBUG] Received file:dimensions-updated event:', data);
           if (data && data.fileId && data.width && data.height && data.width > 0 && data.height > 0) {
               // Use functional update to get the latest state
               setState(prevState => {
                   const currentFile = prevState.files[data.fileId];
                   if (currentFile && currentFile.meta) {
-                      console.log(`[DEBUG] Updating file ${data.fileId} dimensions to ${data.width}x${data.height}`);
                       return {
                           ...prevState,
                           files: {
@@ -1210,11 +1145,10 @@ export const App: React.FC = () => {
           }
       };
       
-      console.log('[DEBUG] Adding file:dimensions-updated event listener');
+
       window.addEventListener('file:dimensions-updated', handleDimensionsUpdated as EventListener);
       
       return () => {
-          console.log('[DEBUG] Removing file:dimensions-updated event listener');
           window.removeEventListener('file:dimensions-updated', handleDimensionsUpdated as EventListener);
       };
   }, [isElectron]);
@@ -1227,7 +1161,6 @@ export const App: React.FC = () => {
           let data = (event as CustomEvent).detail;
           // Remove [DEBUG] prefix from the message
           data = data.replace(/^\[DEBUG\]\s*/, '');
-          console.log('[DEBUG] Received debug-info event:', data);
           setLoadingInfo(prev => {
               const newInfo = [...prev, data];
               // Keep only the last 20 messages to prevent overflow
@@ -1238,11 +1171,9 @@ export const App: React.FC = () => {
           });
       };
       
-      console.log('[DEBUG] Adding debug-info event listener');
       window.addEventListener('debug-info', handleDebugInfo as EventListener);
       
       return () => {
-          console.log('[DEBUG] Removing debug-info event listener');
           window.removeEventListener('debug-info', handleDebugInfo as EventListener);
       };
   }, [isElectron]);
@@ -1770,11 +1701,6 @@ export const App: React.FC = () => {
   const handleExternalFileDrop = async (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      
-      console.log('[DEBUG] handleExternalFileDrop called');
-      console.log('[DEBUG] activeTab.folderId:', activeTab.folderId);
-      console.log('[DEBUG] dragAction:', dragAction);
-      
       // Reset drag state
       setIsDragOver(false);
       setDragAction(null);
@@ -1785,30 +1711,23 @@ export const App: React.FC = () => {
       }
       
       const files = Array.from(e.dataTransfer.files);
-      console.log('[DEBUG] files:', files);
       
       if (files.length === 0) return;
       
       const paths = files.map((f: any) => f.path).filter(p => p);
-      console.log('[DEBUG] paths:', paths);
       
       if (paths.length > 0) {
           try {
               // Determine action based on drag position or default to copy
               const action = dragAction || 'copy';
-              console.log('[DEBUG] Selected action:', action);
               
               startTask(action, [], t(`tasks.${action}ing`));
               
               if (action === 'copy') {
-                  console.log('[DEBUG] Calling copyExternalFiles with activeTab.folderId:', activeTab.folderId, 'and paths:', paths);
                   await window.electron.copyExternalFiles(activeTab.folderId, paths);
-                  console.log('[DEBUG] copyExternalFiles completed successfully');
                   showToast(t('context.copied'));
               } else {
-                  console.log('[DEBUG] Calling moveExternalFiles with activeTab.folderId:', activeTab.folderId, 'and paths:', paths);
                   await window.electron.moveExternalFiles(activeTab.folderId, paths);
-                  console.log('[DEBUG] moveExternalFiles completed successfully');
                   showToast(t('context.moved'));
               }
               
@@ -1881,13 +1800,10 @@ export const App: React.FC = () => {
   };
 
   const handleMouseDown = (e: React.MouseEvent) => {
-    console.log('handleMouseDown:', e);
-    
     // 关闭右键菜单
     closeContextMenu();
     
     if ((e.target as HTMLElement).closest('.file-item') || (e.target as HTMLElement).closest('.tag-item')) {
-        console.log('Clicked on file/item, skipping selection box');
         return;
     }
     
@@ -1898,7 +1814,6 @@ export const App: React.FC = () => {
             const rect = container.getBoundingClientRect();
             const startX = e.clientX - rect.left + container.scrollLeft;
             const startY = e.clientY - rect.top + container.scrollTop;
-            console.log('Starting selection box:', { startX, startY, scrollLeft: container.scrollLeft, scrollTop: container.scrollTop });
             setIsSelecting(true);
             setSelectionBox({
                 startX: startX,
@@ -1909,7 +1824,6 @@ export const App: React.FC = () => {
             
             // Clear selection on background click
             if (activeTab.viewMode === 'browser') {
-                console.log('Clearing selection on background click');
                 updateActiveTab({ selectedFileIds: [] });
             } else if (activeTab.viewMode === 'tags-overview') {
                 updateActiveTab({ selectedTagIds: [] });
@@ -2070,7 +1984,6 @@ export const App: React.FC = () => {
     }
     
     // End selection box
-    console.log('Ending selection box');
     setIsSelecting(false);
     setSelectionBox(null);
   }, [isSelecting, selectionBox, activeTab.viewMode, state.people, state.thumbnailSize, updateActiveTab]);
@@ -2101,17 +2014,12 @@ export const App: React.FC = () => {
               window.electron.startDrag(filePaths); 
           } 
       } 
-      
-      console.log('[DEBUG] Drag start (Internal) with paths:', filePaths); 
   };
   
   // Handle drag end event, especially for external drag operations
   const handleDragEnd = async (e: React.DragEvent) => {
       // Reset the internal drag ref
       isInternalDragRef.current = false;
-      
-      // We've already handled clipboard copy in handleDragStart
-      console.log('[DEBUG] Drag end, dropEffect:', e.dataTransfer.dropEffect);
   };
 
   const groupedTags: Record<string, string[]> = useMemo(() => { const allTags = new Set<string>(state.customTags); (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); const groups: Record<string, string[]> = {}; filteredTags.forEach(tag => { const key = getPinyinGroup(tag); if (!groups[key]) groups[key] = []; groups[key].push(tag); }); const sortedKeys = Object.keys(groups).sort(); return sortedKeys.reduce((obj, key) => { obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); return obj; }, {} as Record<string, string[]>); }, [state.files, state.settings.language, state.customTags, tagSearchQuery]);
@@ -2797,20 +2705,13 @@ export const App: React.FC = () => {
   const toggleSettings = () => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }));
   
   const handleChangePath = async (type: 'resource' | 'cache') => {
-      console.log('[HANDLE_CHANGE_PATH] ========== ENTRY ==========', type);
-      console.trace('[HANDLE_CHANGE_PATH] Call stack');
       try {
-          console.log('[HANDLE_CHANGE_PATH] Calling openDirectory...');
           const selectedPath = await openDirectory();
-          console.log('[HANDLE_CHANGE_PATH] Selected path:', selectedPath);
           if (!selectedPath) {
-              console.log('[HANDLE_CHANGE_PATH] No path selected, returning');
               return;
           }
           
           if (type === 'resource') {
-              console.log('[HANDLE_CHANGE_PATH] Processing resource path');
-              
               const newSettings = {
                   ...state.settings,
                   paths: {
@@ -2819,20 +2720,13 @@ export const App: React.FC = () => {
                   }
               };
               
-              console.log('[HANDLE_CHANGE_PATH] New settings:', newSettings);
-              
               setState(prev => ({
                   ...prev,
                   settings: newSettings
               }));
               
               startTask('ai', [], t('tasks.processing')); 
-              console.log('[HANDLE_CHANGE_PATH] Starting scanDirectory...');
               const result = await scanDirectory(selectedPath);
-              console.log('[HANDLE_CHANGE_PATH] scanDirectory completed:', {
-                  rootsCount: result.roots.length,
-                  filesCount: Object.keys(result.files).length
-              });
               
               setState(prev => {
                    const newRoots = result.roots;
@@ -2871,15 +2765,7 @@ export const App: React.FC = () => {
               const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
               // 如果扫描结果中没有路径，使用 selectedPath
               const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
-              
-              console.log('[HANDLE_CHANGE_PATH] Preparing to save:', {
-                  selectedPath,
-                  resultRoots: result.roots,
-                  resultRootPaths,
-                  updatedRootPaths,
-                  newSettingsPaths: newSettings.paths
-              });
-              
+
               const dataToSave = {
                   rootPaths: updatedRootPaths,
                   customTags: state.customTags,
@@ -2888,12 +2774,8 @@ export const App: React.FC = () => {
                   fileMetadata: {}
               };
               
-              console.log('[HANDLE_CHANGE_PATH] Calling saveUserData with:', JSON.stringify(dataToSave, null, 2));
-              
               const saveResult = await saveUserData(dataToSave);
-              
-              console.log('[HANDLE_CHANGE_PATH] saveUserData result:', saveResult);
-              
+
               if (!saveResult) {
                   console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
               }
@@ -3227,16 +3109,14 @@ export const App: React.FC = () => {
           : (isInternalDragRef.current ? activeTab.selectedFileIds : []); 
 
       // 2. 核心分流逻辑 
-      if (finalSourceIds.length > 0) { 
-          // 分支 A: 确认是内部拖拽 -> 执行移动操作 
-          console.log('[Drop] Detected Internal Move'); 
-          handleMoveFiles(finalSourceIds, targetId); 
-      } else { 
-          // 分支 B: 既没有 ID 且 isInternalDragRef 为 false -> 确认为真正的外部文件拖入 
-          console.log('[Drop] Detected External Drop on Folder'); 
-          // 这里不需要做处理，因为 FileGrid 里的 onDrop 逻辑会判断， 
-          // 如果这里没处理，FileGrid 会调用 onDropExternal 
-      } 
+    if (finalSourceIds.length > 0) { 
+        // 分支 A: 确认是内部拖拽 -> 执行移动操作 
+        handleMoveFiles(finalSourceIds, targetId); 
+    } else { 
+        // 分支 B: 既没有 ID 且 isInternalDragRef 为 false -> 确认为真正的外部文件拖入 
+        // 这里不需要做处理，因为 FileGrid 里的 onDrop 逻辑会判断， 
+        // 如果这里没处理，FileGrid 会调用 onDropExternal 
+    } 
       
       // 重置标记 
       isInternalDragRef.current = false; 
@@ -3661,11 +3541,6 @@ export const App: React.FC = () => {
                               stream: false
                           };
                           
-                          console.log('LM Studio API Request:', {
-                              endpoint,
-                              body
-                          });
-                          
                           // Try multiple endpoints that LM Studio might support
                           const endpointsToTry = ['/chat/completions', '/v1/chat/completions', '/generate', '/v1/generate'];
                           let success = false;
@@ -3683,8 +3558,6 @@ export const App: React.FC = () => {
                                           stream: false
                                       } : body)
                                   });
-                                  
-                                  console.log(`LM Studio API Response (${apiEndpoint}):`, res);
                                   
                                   if (res && !res.error) {
                                       if (res.choices?.[0]?.message?.content) {
@@ -4636,11 +4509,9 @@ export const App: React.FC = () => {
                             // 1. 核心检查：如果是内部发起的拖拽 (isInternalDragRef.current = true)
                             // 即使走到了 onDropExternal 通道，我们也把它强行扭转为“移动”操作
                             if (isInternalDragRef.current) {
-                                console.log('Internal drag detected via onDropExternal path, redirecting to move');
                                 handleMoveFiles(activeTab.selectedFileIds, targetId);
                             } else {
                                 // 2. 确实是外部文件，执行复制
-                                console.log('External files detected');
                                 if (window.electron) {
                                      startTask('copy', [], t('tasks.copying'));
                                      window.electron.copyExternalFiles(targetId, paths).then(() => {
@@ -4729,13 +4600,10 @@ export const App: React.FC = () => {
       </div>)}
       
       {state.isSettingsOpen && ( <SettingsModal state={state} onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))} onUpdateSettings={(updates) => {
-          console.log('[SETTINGS] onUpdateSettings called:', updates);
           setState(s => ({ ...s, ...updates }));
       }} onUpdateSettingsData={(updates) => {
-          console.log('[SETTINGS] onUpdateSettingsData called:', updates);
           setState(s => {
               const newSettings = { ...s.settings, ...updates };
-              console.log('[SETTINGS] New settings:', newSettings);
               return { ...s, settings: newSettings };
           });
       }} onUpdatePath={handleChangePath} onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} t={t} /> )}

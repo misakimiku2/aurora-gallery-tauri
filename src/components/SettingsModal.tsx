@@ -339,6 +339,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             <div className="relative">
                                 <input 
                                     type="file" 
+                                    id="import-file" 
+                                    name="import-file"
                                     accept=".json" 
                                     onChange={handleImportData} 
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
@@ -453,9 +455,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               {state.settings.ai.provider === 'openai' && (
                                   <>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.endpoint')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-endpoint">{t('settings.endpoint')}</label>
                                           <input 
                                               type="text" 
+                                              id="openai-endpoint"
+                                              name="openai-endpoint"
                                               value={state.settings.ai.openai.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, endpoint: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -463,9 +467,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           />
                                       </div>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.apiKey')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-api-key">{t('settings.apiKey')}</label>
                                           <input 
                                               type="password" 
+                                              id="openai-api-key"
+                                              name="openai-api-key"
                                               value={state.settings.ai.openai.apiKey}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, apiKey: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -473,9 +479,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           />
                                       </div>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.aiModel')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-model">{t('settings.aiModel')}</label>
                                           <input 
                                               type="text" 
+                                              id="openai-model"
+                                              name="openai-model"
                                               value={state.settings.ai.openai.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, model: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -488,9 +496,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               {state.settings.ai.provider === 'ollama' && (
                                   <>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.endpoint')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="ollama-endpoint">{t('settings.endpoint')}</label>
                                           <input 
                                               type="text" 
+                                              id="ollama-endpoint"
+                                              name="ollama-endpoint"
                                               value={state.settings.ai.ollama.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, endpoint: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -498,9 +508,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           />
                                       </div>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.aiModelVision')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="ollama-model">{t('settings.aiModelVision')}</label>
                                           <input 
                                               type="text" 
+                                              id="ollama-model"
+                                              name="ollama-model"
                                               value={state.settings.ai.ollama.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, model: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -513,9 +525,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               {state.settings.ai.provider === 'lmstudio' && (
                                   <>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.lmStudioEndpoint')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="lmstudio-endpoint">{t('settings.lmStudioEndpoint')}</label>
                                           <input 
                                               type="text" 
+                                              id="lmstudio-endpoint"
+                                              name="lmstudio-endpoint"
                                               value={state.settings.ai.lmstudio.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, endpoint: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -524,9 +538,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           <div className="text-[10px] text-gray-400 mt-1">{t('settings.lmStudioVersionHint')}</div>
                                       </div>
                                       <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.aiModelOptional')}</label>
+                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="lmstudio-model">{t('settings.aiModelOptional')}</label>
                                           <input 
                                               type="text" 
+                                              id="lmstudio-model"
+                                              name="lmstudio-model"
                                               value={state.settings.ai.lmstudio.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, model: e.target.value } } })}
                                               className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -654,9 +670,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               )}
                               
                               <div className="pt-4">
-                                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1">{t('settings.aiConfidence')} ({Math.round(state.settings.ai.confidenceThreshold * 100)}%)</label>
+                                  <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="ai-confidence">{t('settings.aiConfidence')} ({Math.round(state.settings.ai.confidenceThreshold * 100)}%)</label>
                                   <input 
                                       type="range" 
+                                      id="ai-confidence"
+                                      name="ai-confidence"
                                       min="0.1" 
                                       max="0.9" 
                                       step="0.05"

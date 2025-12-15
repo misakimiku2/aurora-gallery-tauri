@@ -107,6 +107,8 @@ export const scanDirectory = async (
  * 打开文件夹选择对话框
  * @returns 选择的文件夹路径，如果取消则返回 null
  */
+
+
 export const openDirectory = async (): Promise<string | null> => {
   try {
     const selected = await open({
@@ -173,21 +175,11 @@ export const readFileAsBase64 = async (filePath: string): Promise<string | null>
  */
 export const saveUserData = async (data: any): Promise<boolean> => {
   try {
-    console.log('[TAURI_SAVE] Entry:', {
-      dataKeys: Object.keys(data),
-      rootPaths: data.rootPaths,
-      settingsPaths: data.settings?.paths
-    });
-    
     const { invoke } = await import('@tauri-apps/api/core');
-    console.log('[TAURI_SAVE] Calling invoke save_user_data...');
     const result = await invoke<boolean>('save_user_data', { data });
-    
-    console.log('[TAURI_SAVE] invoke result:', result);
-    
     return result;
   } catch (error) {
-    console.error('[TAURI_SAVE] Failed to save user data:', error);
+    console.error('Failed to save user data:', error);
     return false;
   }
 };
@@ -198,17 +190,11 @@ export const saveUserData = async (data: any): Promise<boolean> => {
  */
 export const loadUserData = async (): Promise<any | null> => {
   try {
-
-    
     const { invoke } = await import('@tauri-apps/api/core');
     const result = await invoke<any | null>('load_user_data');
-    
-
-    
     return result;
   } catch (error) {
     console.error('Failed to load user data:', error);
-
     return null;
   }
 };

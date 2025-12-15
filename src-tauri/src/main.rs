@@ -495,41 +495,8 @@ fn greet(name: &str) -> String {
 async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<bool, String> {
     use std::io::Write;
     
-    // #region agent log
-    let root_paths = data.get("rootPaths").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let settings_paths = data.get("settings").and_then(|s| s.get("paths"));
-    let log_entry = serde_json::json!({
-        "location": "main.rs:496",
-        "message": "save_user_data entry",
-        "data": {
-            "rootPaths_count": root_paths,
-            "has_settings_paths": settings_paths.is_some(),
-            "resourceRoot": settings_paths.and_then(|p| p.get("resourceRoot")).and_then(|v| v.as_str()),
-            "cacheRoot": settings_paths.and_then(|p| p.get("cacheRoot")).and_then(|v| v.as_str())
-        },
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "C"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
-    
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-    
-    // #region agent log
-    let log_entry = serde_json::json!({
-        "location": "main.rs:520",
-        "message": "app_data_dir path",
-        "data": {"path": app_data_dir.to_string_lossy()},
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "C"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
     
     // Create directory if it doesn't exist
     fs::create_dir_all(&app_data_dir)
@@ -540,91 +507,23 @@ async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Resul
     let json_string = serde_json::to_string_pretty(&data)
         .map_err(|e| format!("Failed to serialize data: {}", e))?;
     
-    // #region agent log
-    let log_entry = serde_json::json!({
-        "location": "main.rs:535",
-        "message": "Before write file",
-        "data": {"data_file": data_file.to_string_lossy(), "json_size": json_string.len()},
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "C"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
-    
     let mut file = fs::File::create(&data_file)
         .map_err(|e| format!("Failed to create data file: {}", e))?;
     
     file.write_all(json_string.as_bytes())
         .map_err(|e| format!("Failed to write data file: {}", e))?;
     
-    // #region agent log
-    let log_entry = serde_json::json!({
-        "location": "main.rs:545",
-        "message": "save_user_data success",
-        "data": {"success": true},
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "C"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
-    
     Ok(true)
 }
 
 #[tauri::command]
 async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
-    // #region agent log
-    let log_entry = serde_json::json!({
-        "location": "main.rs:520",
-        "message": "load_user_data entry",
-        "data": {},
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "B"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
-    
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
     
     let data_file = app_data_dir.join("user_data.json");
     
-    // #region agent log
-    let log_entry = serde_json::json!({
-        "location": "main.rs:530",
-        "message": "load_user_data check file",
-        "data": {
-            "app_data_dir": app_data_dir.to_string_lossy(),
-            "data_file": data_file.to_string_lossy(),
-            "file_exists": data_file.exists()
-        },
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "B"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
-    
     if !data_file.exists() {
-        // #region agent log
-        let log_entry = serde_json::json!({
-            "location": "main.rs:540",
-            "message": "load_user_data file not exists",
-            "data": {},
-            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "B"
-        });
-        println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-        // #endregion
         return Ok(None);
     }
     
@@ -633,28 +532,6 @@ async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Valu
     
     let data: serde_json::Value = serde_json::from_str(&contents)
         .map_err(|e| format!("Failed to parse data file: {}", e))?;
-    
-    // #region agent log
-    let root_paths = data.get("rootPaths").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
-    let settings_paths = data.get("settings").and_then(|s| s.get("paths"));
-    let log_entry = serde_json::json!({
-        "location": "main.rs:555",
-        "message": "load_user_data success",
-        "data": {
-            "rootPaths_count": root_paths,
-            "rootPaths": data.get("rootPaths"),
-            "has_settings": data.get("settings").is_some(),
-            "has_settings_paths": settings_paths.is_some(),
-            "resourceRoot": settings_paths.and_then(|p| p.get("resourceRoot")).and_then(|v| v.as_str()),
-            "cacheRoot": settings_paths.and_then(|p| p.get("cacheRoot")).and_then(|v| v.as_str())
-        },
-        "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis(),
-        "sessionId": "debug-session",
-        "runId": "run1",
-        "hypothesisId": "B"
-    });
-    println!("{}", serde_json::to_string(&log_entry).unwrap_or_default());
-    // #endregion
     
     Ok(Some(data))
 }
@@ -859,7 +736,9 @@ fn main() {
     let thumbnail_map: ThumbnailMap = Mutex::new(HashMap::new());
     
     tauri::Builder::default()
+        // 清理调试阶段的 setup 注入，恢复默认构建
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_log::Builder::default().build())
         .manage(thumbnail_map)
         .invoke_handler(tauri::generate_handler![
             greet, 

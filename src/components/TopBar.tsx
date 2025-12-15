@@ -98,6 +98,8 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           <Search size={14} className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" />
           <input
             type="text"
+            id="tag-search-input"
+            name="tag-search-input"
             placeholder={t('search.placeholder')}
             value={localSearchQuery}
             onChange={(e) => {
@@ -558,6 +560,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           <input
             ref={searchInputRef}
             type="text"
+            id="toolbar-search-input"
+            name="toolbar-search-input"
             className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
             placeholder={isAISearchEnabled ? t('settings.aiSmartSearch') : t('search.placeholder')}
             value={toolbarQuery}
@@ -688,6 +692,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                      </div>
                      <input 
                        type="range" 
+                       id="thumbnail-size-slider"
+                       name="thumbnail-size-slider"
                        min={activeTab.viewMode === 'people-overview' ? 140 : 100}
                        max={activeTab.viewMode === 'people-overview' ? 450 : 480}
                        step="20"

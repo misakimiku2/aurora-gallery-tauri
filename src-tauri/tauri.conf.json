@@ -1,4 +1,5 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
   "productName": "aurora-gallery-tauri",
   "version": "0.1.0",
   "identifier": "com.aurora.gallery",
@@ -26,6 +27,7 @@
       "dangerousDisableAssetCspModification": false
     }
   },
+
   "bundle": {
     "active": true,
     "targets": "all",
