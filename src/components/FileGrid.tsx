@@ -153,248 +153,117 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   resourceRoot?: string;
   cachePath?: string;
 }) => {
-  // #region agent log
-  useEffect(() => {
-      import('@tauri-apps/api/core').then(({ invoke }) => {
-          invoke('log_frontend', { msg: `ImageThumbnail props: resourceRoot=${resourceRoot}, cachePath=${cachePath}, filePath=${filePath}` });
-      });
-  }, [resourceRoot, cachePath, filePath]);
-  // #endregion
   const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
-  const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
-  const [hasError, setHasError] = useState(false);
-  const [retryCount, setRetryCount] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  
-  // Get thumbnail data using getThumbnail function
-  useEffect(() => {
-    const loadThumbnail = async () => {
-      if (!filePath) return;
-      
-      setIsLoading(true);
-      setHasError(false);
-      
-      try {
-        // Import dynamically to avoid circular dependencies
-        const { getThumbnail } = await import('../api/tauri-bridge');
+  const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(null);
+  const [animSrc, setAnimSrc] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    // Only load thumbnail if the component is in view or was previously in view
+    if ((isInView || wasInView) && filePath && resourceRoot) {
+      const loadThumbnail = async () => {
+        setLoading(true);
+        try {
+          const { getThumbnail } = await import('../api/tauri-bridge');
+          const thumbnail = await getThumbnail(filePath, modified, resourceRoot);
+          setThumbnailSrc(thumbnail);
+        } catch (error) {
+          console.error('Failed to load thumbnail:', error);
+          setThumbnailSrc(null);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      loadThumbnail();
+    }
+  }, [filePath, modified, resourceRoot, isInView, wasInView]);
+
+
+
+  React.useEffect(() => {
+    let isMounted = true;
+
+    const loadAnimation = async () => {
+      if (isHovering && filePath) {
+        // 从文件路径提取格式
+        const fileName = filePath.split(/[\\/]/).pop() || '';
+        const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+        const isAnimationFormat = (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
         
-        const thumbnailData = await getThumbnail(filePath, undefined, resourceRoot, cachePath);
-        
-        if (thumbnailData) {
-          // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
-          if (thumbnailData.startsWith('data:image')) {
-            setThumbnailUrl(thumbnailData);
-            setHasError(false);
-            setRetryCount(0);
-          } else {
-            throw new Error('Invalid thumbnail data format');
+        if (isAnimationFormat) {
+          try {
+            // 使用readFileAsBase64直接读取文件内容，避免使用http://asset.localhost/协议
+            const { readFileAsBase64 } = await import('../api/tauri-bridge');
+            
+            if (!isMounted) return;
+
+            const dataUrl = await readFileAsBase64(filePath);
+            
+            if (isMounted) {
+              if (dataUrl) {
+                setAnimSrc(dataUrl);
+              } else {
+                setAnimSrc(null);
+              }
+            }
+          } catch (e) {
+            setAnimSrc(null);
           }
         } else {
-          throw new Error('Failed to get thumbnail data');
+          if (isMounted) {
+            setAnimSrc(null);
+          }
         }
-      } catch (error) {
-        console.error('Failed to load thumbnail:', error);
-        setHasError(true);
-        
-        // Retry with exponential backoff
-        if (retryCount < 2) {
-          setTimeout(() => {
-            setRetryCount(prev => prev + 1);
-          }, 1000 * Math.pow(2, retryCount));
+      } else {
+        if (isMounted) {
+          setAnimSrc(null);
         }
-      } finally {
-        setIsLoading(false);
       }
     };
 
-    if ((isInView || wasInView) && filePath) {
-      loadThumbnail();
-    }
-  }, [filePath, isInView, wasInView, retryCount, resourceRoot, cachePath]);
+    loadAnimation();
 
-  if (!filePath || !modified) {
-    return (
-      <div ref={ref} className="w-full h-full relative">
-        <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center">
-          <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
-        </div>
-      </div>
-    );
-  }
+    return () => {
+      isMounted = false;
+    };
+  }, [isHovering, filePath, fileMeta]);
 
-  // Always render the image if it was ever in view to prevent flickering
-  const shouldRenderImage = isInView || wasInView;
+  const finalSrc = animSrc || thumbnailSrc;
 
   return (
     <div ref={ref} className="w-full h-full relative overflow-hidden">
-      {/* Placeholder Icon (visible when loading or error) */}
-      <div className={`absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center pointer-events-none transition-opacity duration-300 ${(hasError || isLoading) ? 'opacity-100' : 'opacity-0'}`}>
-        <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
+      {/* Placeholder Icon */}
+      <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center pointer-events-none">
+        {loading && !thumbnailSrc ? (
+          <ImageIcon className="text-gray-400 dark:text-gray-600 animate-pulse" size={24} />
+        ) : finalSrc ? (
+          <img 
+            src={finalSrc} 
+            alt={alt} 
+            className="absolute inset-0 w-full h-full object-cover" 
+            loading="eager" 
+            draggable="false"
+          />
+        ) : (
+          <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
+        )}
       </div>
-      
-      {shouldRenderImage && thumbnailUrl && (
-        <>
-          {/* Thumbnail Image (always visible except when animation is playing) */}
-          {thumbnailUrl.startsWith('data:image') ? (
-            <img
-                key={thumbnailUrl}
-                src={thumbnailUrl}
-                alt={alt}
-                loading="lazy"
-                decoding="async"
-                draggable="false"
-                className={`w-full h-full object-cover transition-all duration-300 ease-out absolute inset-0 ${isSelected ? 'scale-110' : 'group-hover:scale-105'} ${hasError ? 'opacity-0' : 'opacity-100'} ${isHovering && (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') ? 'opacity-0' : 'opacity-100'}`}
-                onError={() => {
-                  setHasError(true);
-                }}
-                onLoad={() => setHasError(false)}
-            />
-          ) : null}
-          
-          {/* Animation Image (only visible when hovering and for supported formats) */}
-          {/* Note: For Tauri, we use the same thumbnail URL for animation since file.url is a file path, not a usable URL */}
-          {(fileMeta?.format === 'gif' || fileMeta?.format === 'webp') && thumbnailUrl && thumbnailUrl.startsWith('data:image') && (
-            <img
-                key={`${thumbnailUrl}-animation`}
-                src={thumbnailUrl}
-                alt={alt}
-                loading="lazy"
-                decoding="async"
-                draggable="false"
-                className={`w-full h-full object-cover transition-all duration-300 ease-out absolute inset-0 ${isSelected ? 'scale-110' : 'group-hover:scale-105'} opacity-0 ${isHovering ? 'opacity-100' : 'opacity-0'}`}
-                onError={(e) => {
-                  // Hide animation if it fails to load
-                  e.currentTarget.style.opacity = '0';
-                }}
-            />
-          )}
-        </>
-      )}
     </div>
   );
 });
 
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
-  const [thumbnailUrls, setThumbnailUrls] = useState<string[]>([]);
-  const [loadingStates, setLoadingStates] = useState<boolean[]>([true, true, true]);
-  
-  const shouldProcessPreview = isInView || wasInView;
-  
-  const getImageFilesForPreview = useMemo(() => {
-    if (!shouldProcessPreview) return [];
-    
-    const cacheKey = `preview_${file.id}_${file.updatedAt}`;
-    
-    if ((window as any).previewCache && (window as any).previewCache[cacheKey]) {
-      return (window as any).previewCache[cacheKey];
-    }
-    
-    const imageFiles: FileNode[] = [];
-    const queue = [...(file.children || [])];
-    let head = 0;
-    let iterations = 0;
-    let depth = 0;
-    const maxIterations = 50; 
-    const maxDepth = 2; 
-
-    while (head < queue.length && imageFiles.length < 3 && iterations < maxIterations && depth <= maxDepth) {
-      const id = queue[head++];
-      iterations++;
-      
-      const node = files[id];
-      if (!node) continue;
-
-      if (node.type === FileType.IMAGE && node.path && node.updatedAt) {
-        imageFiles.push(node);
-      } else if (node.type === FileType.FOLDER && node.children && depth < maxDepth) {
-         for (const childId of node.children) {
-             queue.push(childId);
-         }
-         depth++;
-      }
-    }
-    
-    if (!(window as any).previewCache) {
-      (window as any).previewCache = {};
-    }
-    (window as any).previewCache[cacheKey] = imageFiles;
-    
-    return imageFiles;
-  }, [shouldProcessPreview, file, files]);
-
-  // Load thumbnails for folder preview images
-  useEffect(() => {
-    const loadThumbnails = async () => {
-      const imageFiles = getImageFilesForPreview.slice(0, 3);
-      const newThumbnailUrls: string[] = [];
-      const newLoadingStates: boolean[] = [];
-      
-      for (const img of imageFiles) {
-        if (img.path) {
-          try {
-            const { getThumbnail } = await import('../api/tauri-bridge');
-            const thumbnailData = await getThumbnail(img.path, undefined, resourceRoot, cachePath);
-            
-            // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
-            if (thumbnailData && thumbnailData.startsWith('data:image')) {
-              newThumbnailUrls.push(thumbnailData);
-              newLoadingStates.push(false);
-            } else {
-              newThumbnailUrls.push('');
-              newLoadingStates.push(false);
-            }
-          } catch (error) {
-            console.error('Failed to load folder preview thumbnail:', error);
-            newThumbnailUrls.push('');
-            newLoadingStates.push(false);
-          }
-        } else {
-          newThumbnailUrls.push('');
-          newLoadingStates.push(false);
-        }
-      }
-      
-      setThumbnailUrls(newThumbnailUrls);
-      setLoadingStates(newLoadingStates);
-    };
-    
-    if ((isInView || wasInView) && getImageFilesForPreview.length > 0) {
-      loadThumbnails();
-    }
-  }, [getImageFilesForPreview, isInView, wasInView, resourceRoot, cachePath]);
-
-  // Handle image load error for folder previews
-  const handlePreviewError = async (index: number) => {
-    const img = getImageFilesForPreview[index];
-    if (img && img.path) {
-      try {
-        const { getThumbnail } = await import('../api/tauri-bridge');
-        const thumbnailData = await getThumbnail(img.path, undefined, resourceRoot, cachePath);
-        
-        // Ensure we only use base64 data URLs
-        if (thumbnailData && thumbnailData.startsWith('data:image')) {
-          setThumbnailUrls(prev => {
-            const newUrls = [...prev];
-            newUrls[index] = thumbnailData;
-            return newUrls;
-          });
-        }
-      } catch (error) {
-        console.error('Failed to reload folder preview thumbnail:', error);
-      }
-    }
-  };
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       {(isInView || wasInView) && (
           <div className="relative w-full h-full p-2">
              <Folder3DIcon  
-                previewSrcs={thumbnailUrls}
+                previewSrcs={[]}
                 count={file.children?.length} 
                 category={file.category} 
-                onImageError={handlePreviewError}
              />
           </div>
       )}
@@ -885,12 +754,18 @@ const FileCard = React.memo(({
   onDropOnFolder,
   onDropExternal,
   style,
-  settings
+  settings,
+  resourceRoot,
+  cachePath
 }: any) => {
   if (!file) return null;
 
   // Extract layout positioning
   const { x, y, width, height } = style || { x: 0, y: 0, width: 200, height: 200 };
+  
+  // Fallback to settings if direct props are missing
+  const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
+  const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
 
   return (
     <div
@@ -971,11 +846,18 @@ const FileCard = React.memo(({
         }}
         onContextMenu={(e) => onContextMenu(e, file.id)}
         onMouseEnter={() => {
-            if (settings?.animateOnHover && file.meta && (file.meta.format === 'gif' || file.meta.format === 'webp')) {
+            // 从文件名提取格式作为fallback
+            const fileName = file.name;
+            const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+            const isAnimationFormat = (file.meta?.format === 'gif' || file.meta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
+            
+            if (settings?.animateOnHover && isAnimationFormat) {
                 onSetHoverPlayingId(file.id);
             }
         }}
-        onMouseLeave={() => onSetHoverPlayingId(null)}>
+        onMouseLeave={() => {
+            onSetHoverPlayingId(null);
+        }}>
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
@@ -1067,8 +949,14 @@ const GroupContent = React.memo(({
   handleDropOnFolderWrapper,
   settings,
   containerRect,
-  t
+  t,
+  resourceRoot,
+  cachePath
 }: any) => {
+  // Fallback to settings if direct props are missing
+  const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
+  const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
+  
   // Calculate layout for this group
   const { layout } = useLayout(
     group.fileIds,
@@ -1149,6 +1037,8 @@ const GroupContent = React.memo(({
                     onDropExternal={null}
                     style={item}
                     settings={settings}
+                    resourceRoot={effectiveResourceRoot}
+                    cachePath={effectiveCachePath}
                   />
             );
           })}
@@ -1431,12 +1321,9 @@ export const FileGrid: React.FC<FileGridProps> = ({
   settings
 }) => {
   // #region agent log
-  useEffect(() => {
-      import('@tauri-apps/api/core').then(({ invoke }) => {
-          invoke('log_frontend', { msg: `FileGrid props: resourceRoot=${resourceRoot}, cachePath=${cachePath}` });
-      });
-  }, [resourceRoot, cachePath]);
+  // Removed debug logs
   // #endregion
+
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
   
   // Fallback to settings if direct props are missing
@@ -1759,6 +1646,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   settings={settings}
                                   containerRect={containerRect}
                                   t={t}
+                                  resourceRoot={effectiveResourceRoot}
+                                  cachePath={effectiveCachePath}
                               />
                           )}
                       </div>
@@ -1835,6 +1724,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       onDropExternal={handleDropExternalWrapper}
                                       settings={settings}
                                       style={item}
+                                      resourceRoot={effectiveResourceRoot}
+                                      cachePath={effectiveCachePath}
                                   />
                               );
                           })}

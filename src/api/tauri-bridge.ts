@@ -1,6 +1,16 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { FileNode, FileType } from '../types';
+import { isTauriEnvironment } from '../utils/environment';
+
+/**
+ * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
+ * @param filePath 文件路径
+ * @returns 资源 URL
+ */
+export const getAssetUrl = (filePath: string): string => {
+  return convertFileSrc(filePath);
+};
 
 /**
  * Tauri API Bridge
@@ -44,52 +54,52 @@ export const scanDirectory = async (
     // 调用 Rust 的 scan_directory 命令
     const rustFiles = await invoke<Record<string, RustFileNode>>('scan_directory', { path });
     
-    // 找到根目录节点（parentId 为 null 的节点）
+    // 找到根目录节点（parentId 为 null 且类型为目录的节点）
     const rootIds: string[] = [];
     const fileMap: Record<string, FileNode> = {};
     
     // 转换 Rust 返回的数据格式
     Object.entries(rustFiles).forEach(([id, node]) => {
-      // 转换类型枚举（注意：Rust 使用 camelCase 序列化，所以是 'image', 'folder', 'unknown'）
-      let fileType: FileType = FileType.UNKNOWN;
-      if (node.type === 'image') {
-        fileType = FileType.IMAGE;
-      } else if (node.type === 'folder') {
-        fileType = FileType.FOLDER;
-      }
-      
-      // Note: In Tauri, node.url is a file path, not a usable URL
-      // We should not use it directly as an image src to avoid thumbnail:// protocol errors
-      
-      const fileNode: FileNode = {
-        id: node.id,
-        parentId: node.parentId || null,
-        name: node.name,
-        type: fileType,
-        path: node.path,
-        size: node.size,
-        children: node.children && node.children.length > 0 ? node.children : undefined,
-        tags: node.tags || [],
-        createdAt: node.createdAt || undefined,
-        updatedAt: node.updatedAt || undefined,
-        // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
-        url: undefined, // Don't use file path as URL - use getThumbnail() instead
-        meta: node.meta ? {
-          width: node.meta.width || 0,
-          height: node.meta.height || 0,
-          sizeKb: node.meta.sizeKb || 0,
-          created: node.meta.created,
-          modified: node.meta.modified,
-          format: node.meta.format,
-        } : undefined,
-      };
-      
-      fileMap[id] = fileNode;
-      
-      // 如果是根目录（parentId 为 null），添加到 roots
-      if (!fileNode.parentId) {
-        rootIds.push(id);
-      }
+        // 转换类型枚举（注意：Rust 使用 camelCase 序列化，所以是 'image', 'folder', 'unknown'）
+        let fileType: FileType = FileType.UNKNOWN;
+        if (node.type === 'image') {
+            fileType = FileType.IMAGE;
+        } else if (node.type === 'folder') {
+            fileType = FileType.FOLDER;
+        }
+        
+        // Note: In Tauri, node.url is a file path, not a usable URL
+        // We should not use it directly as an image src to avoid thumbnail:// protocol errors
+        
+        const fileNode: FileNode = {
+            id: node.id,
+            parentId: node.parentId || null,
+            name: node.name,
+            type: fileType,
+            path: node.path,
+            size: node.size,
+            children: node.children && node.children.length > 0 ? node.children : undefined,
+            tags: node.tags || [],
+            createdAt: node.createdAt || undefined,
+            updatedAt: node.updatedAt || undefined,
+            // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
+            url: undefined, // Don't use file path as URL - use getThumbnail() instead
+            meta: node.meta ? {
+                width: node.meta.width || 0,
+                height: node.meta.height || 0,
+                sizeKb: node.meta.sizeKb || 0,
+                created: node.meta.created,
+                modified: node.meta.modified,
+                format: node.meta.format,
+            } : undefined,
+        };
+        
+        fileMap[id] = fileNode;
+        
+        // 如果是根目录（parentId 为 null）且类型为目录，添加到 roots
+        if (!fileNode.parentId && fileNode.type === FileType.FOLDER) {
+            rootIds.push(id);
+        }
     });
     
     
@@ -132,31 +142,39 @@ export const openDirectory = async (): Promise<string | null> => {
  * 获取图片缩略图
  * @param filePath 图片文件路径
  * @param modified 文件修改时间（可选，用于缓存）
+ * @param rootPath 资源根目录路径（可选，用于计算缓存目录）
  * @returns Base64 编码的缩略图数据 URL，如果失败则返回 null
  */
-export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, cachePath?: string): Promise<string | null> => {
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string): Promise<string | null> => {
   try {
     // 验证 filePath 参数
     if (!filePath || filePath.trim() === '') {
-      const errorMsg = 'getThumbnail: filePath is empty or invalid';
-      console.error(errorMsg, { filePath });
+      console.error('getThumbnail: filePath is empty or invalid');
       return null;
     }
     
-    const { invoke } = await import('@tauri-apps/api/core');
+    // 验证 rootPath 参数
+    if (!rootPath || rootPath.trim() === '') {
+      console.error('getThumbnail: rootPath is empty or invalid');
+      return null;
+    }
     
-    // Explicitly use snake_case keys to match Rust command arguments
-    const thumbnail = await invoke<string | null>('get_thumbnail', { 
-      file_path: filePath,
-      root_path: rootPath || null,
-      cache_path: cachePath || null
+    // 计算缓存目录路径
+    const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+    
+    // 调用 Rust 的 get_thumbnail 命令
+    const thumbnailPath = await invoke<string | null>('get_thumbnail', { 
+      filePath, 
+      cacheRoot: cachePath 
     });
-    // Validate that we got a base64 data URL, not a thumbnail:// protocol URL
-    if (thumbnail && !thumbnail.startsWith('data:image')) {
-      return null;
+    
+    // 如果返回了缩略图路径，读取文件并转换为 Base64
+    if (thumbnailPath) {
+      // 使用现有的 readFileAsBase64 函数读取缩略图
+      return await readFileAsBase64(thumbnailPath);
     }
     
-    return thumbnail;
+    return null;
   } catch (error) {
     console.error('Failed to get thumbnail:', error);
     return null;
@@ -176,7 +194,6 @@ export const readFileAsBase64 = async (filePath: string): Promise<string | null>
       return null;
     }
     
-    const { invoke } = await import('@tauri-apps/api/core');
     // Tauri 2.0 会自动将 TypeScript 的 camelCase (filePath) 转换为 Rust 的 snake_case (file_path)
     const dataUrl = await invoke<string | null>('read_file_as_base64', { filePath });
     return dataUrl;
@@ -192,7 +209,6 @@ export const readFileAsBase64 = async (filePath: string): Promise<string | null>
  */
 export const ensureDirectory = async (path: string): Promise<void> => {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     await invoke('ensure_directory', { path });
   } catch (error) {
     console.error('Failed to ensure directory:', error);
@@ -219,7 +235,6 @@ export const ensureCacheDirectory = async (rootPath: string): Promise<void> => {
  */
 export const saveUserData = async (data: any): Promise<boolean> => {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     const result = await invoke<boolean>('save_user_data', { data });
     return result;
   } catch (error) {
@@ -234,7 +249,6 @@ export const saveUserData = async (data: any): Promise<boolean> => {
  */
 export const loadUserData = async (): Promise<any | null> => {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     const result = await invoke<any | null>('load_user_data');
     return result;
   } catch (error) {
@@ -249,12 +263,23 @@ export const loadUserData = async (): Promise<any | null> => {
  */
 export const getDefaultPaths = async (): Promise<Record<string, string>> => {
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
     const result = await invoke<Record<string, string>>('get_default_paths');
     return result;
   } catch (error) {
     console.error('Failed to get default paths:', error);
     return {};
+  }
+};
+
+/**
+ * 打开指定路径的文件夹
+ * @param path 要打开的文件夹路径
+ */
+export const openPath = async (path: string): Promise<void> => {
+  try {
+    await invoke('open_path', { path });
+  } catch (error) {
+    console.error('Failed to open path:', error);
   }
 };
 

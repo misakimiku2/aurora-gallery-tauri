@@ -38,7 +38,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
       try {
         // Use getThumbnail for preview (smaller, faster)
         const { getThumbnail } = await import('../api/tauri-bridge');
-        const dataUrl = await getThumbnail(file.path, undefined, resourceRoot, cachePath);
+        const dataUrl = await getThumbnail(file.path, undefined, resourceRoot);
         if (dataUrl) {
           setImageUrl(dataUrl);
         } else {
@@ -53,7 +53,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
     };
     
     loadImage();
-  }, [file.path, file.id, resourceRoot, cachePath]);
+  }, [file.path, file.id, resourceRoot]);
   
   return (
     <div className="flex flex-col items-center">

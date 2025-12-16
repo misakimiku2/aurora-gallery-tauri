@@ -5,13 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
-use std::io::Cursor;
-use std::sync::Mutex;
 use walkdir::WalkDir;
 use tauri::Manager;
-use image::{ImageOutputFormat, GenericImageView, RgbaImage};
-use fast_image_resize::{Resizer, ResizeAlg, FilterType, PixelType};
-use std::num::NonZeroU32;
 use base64::{Engine as _, engine::general_purpose};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,95 +69,6 @@ fn normalize_path(path: &str) -> String {
 // Check if file extension is supported
 fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
-}
-
-// Global state to store thumbnail hash -> file path mapping
-type ThumbnailMap = Mutex<HashMap<String, String>>;
-
-// Helper function to generate thumbnail data
-fn generate_thumbnail_data(file_path: &str) -> Option<Vec<u8>> {
-    // Load image
-    let img = image::open(file_path).ok()?;
-    
-    let (width, height) = img.dimensions();
-    let target_size = 256u32;
-    
-    // Don't upscale if image is already smaller
-    if width <= target_size && height <= target_size {
-        let mut buffer = Vec::new();
-        let mut cursor = Cursor::new(&mut buffer);
-        if img.write_to(&mut cursor, ImageOutputFormat::Jpeg(85)).is_ok() {
-            return Some(buffer);
-        }
-        return None;
-    }
-    
-    // Calculate new dimensions
-    let (new_width, new_height) = if width <= height {
-        let ratio = height as f32 / width as f32;
-        (target_size, (target_size as f32 * ratio) as u32)
-    } else {
-        let ratio = width as f32 / height as f32;
-        ((target_size as f32 * ratio) as u32, target_size)
-    };
-    
-    // Convert to RGBA
-    let rgba_img = img.to_rgba8();
-    
-    // Convert dimensions to NonZeroU32
-    let src_width = NonZeroU32::new(width)?;
-    let src_height = NonZeroU32::new(height)?;
-    let dst_width = NonZeroU32::new(new_width)?;
-    let dst_height = NonZeroU32::new(new_height)?;
-    
-    // Create source image
-    let src_image = fast_image_resize::Image::from_vec_u8(
-        src_width,
-        src_height,
-        rgba_img.into_raw(),
-        PixelType::U8x4,
-    ).ok()?;
-    
-    // Create destination image
-    let mut dst_image = fast_image_resize::Image::new(
-        dst_width,
-        dst_height,
-        PixelType::U8x4,
-    );
-    
-    // Resize
-    let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
-    if resizer.resize(&src_image.view(), &mut dst_image.view_mut()).is_err() {
-        return None;
-    }
-    
-    // Convert back to image format
-    let resized_rgba = RgbaImage::from_raw(
-        new_width,
-        new_height,
-        dst_image.buffer().to_vec(),
-    )?;
-    
-    // Encode as JPEG
-    let mut buffer = Vec::new();
-    let mut cursor = Cursor::new(&mut buffer);
-    if image::DynamicImage::ImageRgba8(resized_rgba)
-        .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
-        .is_ok()
-    {
-        Some(buffer)
-    } else {
-        None
-    }
-}
-
-// Register thumbnail hash mapping
-#[tauri::command]
-async fn register_thumbnail_hash(app: tauri::AppHandle, hash: String, file_path: String) -> Result<(), String> {
-    let state: tauri::State<'_, ThumbnailMap> = app.state();
-    let mut map = state.lock().map_err(|e| format!("Failed to lock state: {}", e))?;
-    map.insert(hash, file_path);
-    Ok(())
 }
 
 #[tauri::command]
@@ -254,8 +160,8 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             
-            // Skip .Aurora_Cache folder and other hidden files (except .pixcall)
-            if file_name == ".Aurora_Cache" {
+            // Skip .Aurora_Cache folder and its contents
+            if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") {
                 return None;
             }
             
@@ -344,6 +250,10 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
             } else if is_supported_image(&extension) {
                 // Create image file node (parent_id will be set later)
                 let file_size = metadata.len();
+                
+                // Try to get image dimensions efficiently (without loading full image)
+                let (width, height) = image::image_dimensions(entry_path).unwrap_or((0, 0));
+                
                 let image_node = FileNode {
                     id: file_id.clone(),
                     parent_id: None, // Will be set later
@@ -371,8 +281,8 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
                         }),
                     url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
                     meta: Some(ImageMeta {
-                        width: 0,
-                        height: 0,
+                        width,
+                        height,
                         size_kb: (file_size / 1024) as u32,
                         created: metadata
                             .created()
@@ -543,13 +453,12 @@ async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Valu
 
 // Command to ensure a directory exists
 #[tauri::command]
-fn log_frontend(msg: String) {
-    println!("FRONTEND: {}", msg);
-}
-
-#[tauri::command]
 async fn ensure_directory(path: String) -> Result<(), String> {
-    ensure_cache_dir(&path)?;
+    let cache_path = Path::new(&path);
+    if !cache_path.exists() {
+        fs::create_dir_all(cache_path)
+            .map_err(|e| format!("Failed to create directory: {}", e))?;
+    }
     Ok(())
 }
 
@@ -588,249 +497,168 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     Ok(paths)
 }
 
-
-
-// Helper function to generate cache file name from file path and modification time
-fn get_cache_file_name(file_path: &str) -> Result<String, String> {
-    use std::fs;
+#[tauri::command]
+async fn open_path(path: String) -> Result<(), String> {
+    use std::process::Command;
     
-    // Get file metadata to get modification time
-    let metadata = fs::metadata(file_path)
-        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let result = if cfg!(windows) {
+        Command::new("explorer")
+            .args([&path])
+            .spawn()
+            .map(|_| ())
+    } else if cfg!(target_os = "macos") {
+        Command::new("open")
+            .args([&path])
+            .spawn()
+            .map(|_| ())
+    } else {
+        // Linux: use xdg-open, gnome-open, or kde-open
+        Command::new("xdg-open")
+            .args([&path])
+            .spawn()
+            .map(|_| ())
+    };
     
-    let modified_time = metadata
-        .modified()
-        .map_err(|e| format!("Failed to get modification time: {}", e))?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|e| format!("Failed to calculate duration: {}", e))?
-        .as_secs();
-    
-    // Generate hash from file path and modification time
-    let hash_input = format!("{}_{}", file_path, modified_time);
-    let hash = md5::compute(hash_input.as_bytes());
-    let hash_str = format!("{:x}", hash);
-    
-    // Use first 16 characters of hash as filename
-    Ok(format!("{}.jpg", &hash_str[..16]))
-}
-
-// Helper function to ensure cache directory exists
-fn ensure_cache_dir(cache_dir: &str) -> Result<(), String> {
-    use std::fs;
-    
-    let cache_path = Path::new(cache_dir);
-    if !cache_path.exists() {
-        fs::create_dir_all(cache_path)
-            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to open path: {}", e)),
     }
-    Ok(())
 }
 
 #[tauri::command]
-async fn get_thumbnail(file_path: String, root_path: Option<String>, cache_path: Option<String>) -> Result<Option<String>, String> {
-    println!("DEBUG_RUST: get_thumbnail called for {}", file_path);
-    println!("DEBUG_RUST: root_path: {:?}", root_path);
-    println!("DEBUG_RUST: cache_path: {:?}", cache_path);
+async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
+    use std::path::Path;
+    use std::fs;
+    use std::io::Read;
+    use image::GenericImageView;
+    use image::imageops::FilterType;
+    use webp::Encoder;
     
     // Check if file exists
-    if !Path::new(&file_path).exists() {
+    let image_path = Path::new(&file_path);
+    if !image_path.exists() {
         return Ok(None);
     }
     
-    // Get cache directory and file name
-    // Priority: 1. cache_path (custom cache directory), 2. root_path + .Aurora_Cache, 3. find common root from file_path
-    let cache_dir = if let Some(cache) = cache_path {
-        // Use provided custom cache directory
-        cache
-    } else if let Some(root) = root_path {
-        // Use provided root directory + .Aurora_Cache
-        Path::new(&root).join(".Aurora_Cache").to_string_lossy().to_string()
-    } else {
-        // Find common root directory for all thumbnails
-        let path = Path::new(&file_path);
-        
-        // Get the parent directory of the file
-        let mut current = if let Some(parent) = path.parent() {
-            parent
-        } else {
-            Path::new(".")
-        };
-        
-        // Walk up the directory tree until we find a directory that is not .Aurora_Cache
-        // This prevents nested .Aurora_Cache folders
-        while let Some(parent_path) = current.parent() {
-            let folder_name = current.file_name().and_then(|name| name.to_str());
-            if folder_name == Some(".Aurora_Cache") {
-                current = parent_path;
-            } else {
-                break;
-            }
-        }
-        
-        // Find the user's Pictures folder or other common root folder
-        // On Windows, this is typically C:\Users\Username\Pictures
-        // On Unix, this is typically /home/username/Pictures
-        let mut root_dir = current.to_path_buf();
-        let mut current_clone = current.to_path_buf();
-        
-        loop {
-            // Check if we're in or above the Pictures folder
-            if let Some(folder_name) = current_clone.file_name().and_then(|name| name.to_str()) {
-                if folder_name.to_lowercase() == "pictures" {
-                    root_dir = current_clone.to_path_buf();
-                    break;
-                }
-            }
-            
-            // Check if we've reached the drive root or filesystem root
-            if let Some(parent) = current_clone.parent() {
-                if parent == current_clone || 
-                   (cfg!(windows) && current_clone.to_string_lossy().ends_with('\\')) || 
-                   (!cfg!(windows) && current_clone.to_string_lossy() == "/") {
-                    // We've reached the root, use it
-                    root_dir = current_clone.to_path_buf();
-                    break;
-                }
-                current_clone = parent.to_path_buf();
-            } else {
-                // No parent, use current directory
-                root_dir = current_clone;
-                break;
-            }
-        }
-        root_dir.join(".Aurora_Cache").to_string_lossy().to_string()
-    };
-    
-    let cache_file_name = get_cache_file_name(&file_path)?;
-    let cache_file_path = Path::new(&cache_dir).join(&cache_file_name);
-    
-    // Ensure cache directory exists
-    ensure_cache_dir(&cache_dir)?;
-    
-    // Check if cached thumbnail exists and is valid
-    if cache_file_path.exists() {
-        // Check if source file is newer than cache
-        use std::fs;
-        let source_metadata = fs::metadata(&file_path)
-            .map_err(|e| format!("Failed to get source file metadata: {}", e))?;
-        let cache_metadata = fs::metadata(&cache_file_path)
-            .map_err(|e| format!("Failed to get cache file metadata: {}", e))?;
-        
-        let source_modified = source_metadata
-            .modified()
-            .map_err(|e| format!("Failed to get source modification time: {}", e))?;
-        let cache_modified = cache_metadata
-            .modified()
-            .map_err(|e| format!("Failed to get cache modification time: {}", e))?;
-        
-        // If source file hasn't been modified since cache was created, use cache
-        if source_modified <= cache_modified {
-            // Read cached thumbnail
-            let cache_bytes = fs::read(&cache_file_path)
-                .map_err(|e| format!("Failed to read cache file: {}", e))?;
-            let base64_str = general_purpose::STANDARD.encode(&cache_bytes);
-            return Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)));
-        }
+    // Ensure we're not processing a file from .Aurora_Cache folder
+    if file_path.contains(".Aurora_Cache") {
+        return Ok(None);
     }
     
-    // Cache doesn't exist or is outdated, generate new thumbnail
-    let thumbnail_data = match image::open(&file_path) {
-        Ok(img) => {
-            // Get original dimensions
-            let (width, height) = img.dimensions();
-            
-            // Calculate target dimensions: smallest dimension should be 256px
-            let target_size = 256u32;
-            
-            // Don't upscale if image is already smaller
-            if width <= target_size && height <= target_size {
-                // Image is already small enough, use original
-                let mut buffer = Vec::new();
-                let mut cursor = Cursor::new(&mut buffer);
-                img.write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
-                    .map_err(|e| format!("Failed to encode image: {}", e))?;
-                
-                buffer
-            } else {
-                // Calculate new dimensions maintaining aspect ratio
-                let (new_width, new_height) = if width <= height {
-                    // Width is smaller, scale based on width
-                    let ratio = height as f32 / width as f32;
-                    (target_size, (target_size as f32 * ratio) as u32)
-                } else {
-                    // Height is smaller, scale based on height
-                    let ratio = width as f32 / height as f32;
-                    ((target_size as f32 * ratio) as u32, target_size)
-                };
-                
-                // Convert image to RGBA format for fast_image_resize
-                let rgba_img = img.to_rgba8();
-                
-                // Convert dimensions to NonZeroU32
-                let src_width = NonZeroU32::new(width)
-                    .ok_or_else(|| "Image width is zero".to_string())?;
-                let src_height = NonZeroU32::new(height)
-                    .ok_or_else(|| "Image height is zero".to_string())?;
-                let dst_width = NonZeroU32::new(new_width)
-                    .ok_or_else(|| "Target width is zero".to_string())?;
-                let dst_height = NonZeroU32::new(new_height)
-                    .ok_or_else(|| "Target height is zero".to_string())?;
-                
-                let src_image = fast_image_resize::Image::from_vec_u8(
-                    src_width,
-                    src_height,
-                    rgba_img.into_raw(),
-                    PixelType::U8x4,
-                ).map_err(|e| format!("Failed to create source image: {}", e))?;
-                
-                // Create destination image
-                let mut dst_image = fast_image_resize::Image::new(
-                    dst_width,
-                    dst_height,
-                    PixelType::U8x4,
-                );
-                
-                // Create resizer and resize
-                let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
-                
-                resizer.resize(&src_image.view(), &mut dst_image.view_mut())
-                    .map_err(|e| format!("Failed to resize image: {}", e))?;
-                
-                // Convert back to image crate format
-                let resized_rgba = RgbaImage::from_raw(
-                    new_width,
-                    new_height,
-                    dst_image.buffer().to_vec(),
-                ).ok_or_else(|| "Failed to create resized image".to_string())?;
-                
-                // Encode as JPEG
-                let mut buffer = Vec::new();
-                let mut cursor = Cursor::new(&mut buffer);
-                image::DynamicImage::ImageRgba8(resized_rgba)
-                    .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
-                    .map_err(|e| format!("Failed to encode image: {}", e))?;
-                
-                buffer
-            }
-        },
-        Err(_e) => {
-            // If image::open fails (e.g., for some PNG files), try to read file directly
-            use std::fs;
-            
-            // Read file as bytes
-            fs::read(&file_path)
-                .map_err(|read_err| format!("Failed to read file: {}", read_err))?
+    // Generate cache key based on file content (metadata + partial content)
+    // instead of file path to support moves/renames without regenerating thumbnails
+    
+    let metadata = fs::metadata(image_path).map_err(|e| format!("Failed to read metadata: {}", e))?;
+    let size = metadata.len();
+    let modified = metadata.modified()
+        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+        .unwrap_or(0);
+
+    // Read first 8KB for content hashing to avoid collisions on same size+time
+    let mut file = fs::File::open(image_path).map_err(|e| format!("Failed to open file: {}", e))?;
+    let mut buffer = [0u8; 8192];
+    let bytes_read = file.read(&mut buffer).unwrap_or(0);
+    
+    let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+    let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+
+    // Always use WebP format for thumbnails
+    // let output_format = ImageFormat::WebP;
+    let output_ext = "webp";
+    
+    let cache_file_name = format!("{}.{}", cache_filename, output_ext);
+    
+    // Create cache directory structure
+    let cache_dir = Path::new(&cache_root);
+    fs::create_dir_all(cache_dir)
+        .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    
+    let cache_file_path = cache_dir.join(&cache_file_name);
+    
+    // Check if thumbnail already exists in cache
+    if cache_file_path.exists() {
+        return Ok(Some(cache_file_path.to_str().unwrap_or_default().to_string()));
+    }
+    
+    // If thumbnail doesn't exist, generate it
+    
+    // Read file data once for all attempts
+    let data = match fs::read(image_path) {
+        Ok(data) => data,
+        Err(e) => {
+            println!("Failed to read file {}: {}", file_path, e);
+            return Ok(None);
         }
     };
     
-    // Save thumbnail to cache
-    use std::fs;
-    fs::write(&cache_file_path, &thumbnail_data)
-        .map_err(|e| format!("Failed to write cache file: {}", e))?;
+    // Guess format from data, ignoring file extension
+    let format = match image::guess_format(&data) {
+        Ok(format) => format,
+        Err(e) => {
+            println!("Failed to guess format for {}: {}", file_path, e);
+            return Ok(None);
+        }
+    };
     
-    // Convert to base64 and return
-    let base64_str = general_purpose::STANDARD.encode(&thumbnail_data);
-    Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)))
+    println!("Generating thumbnail for {} (guessed format: {:?})", file_path, format);
+
+    // Load image using guessed format
+    let img = match image::load_from_memory_with_format(&data, format) {
+        Ok(img) => img,
+        Err(e) => {
+            println!("Failed to load from memory with format {:?}: {}", format, e);
+            // Fallback: try standard load_from_memory which guesses internally again
+            match image::load_from_memory(&data) {
+                Ok(img) => img,
+                Err(e) => {
+                    println!("Failed to load from memory (fallback): {}", e);
+                    return Ok(None);
+                }
+            }
+        }
+    };
+    
+    // Get original dimensions
+    let (width, height) = img.dimensions();
+    
+    // Calculate new dimensions based on minimum side being 256px
+    // If width < height, scale width to 256, height proportional
+    // If height < width, scale height to 256, width proportional
+    // If width == height, both 256
+    const TARGET_MIN_SIZE: u32 = 256;
+    
+    let (new_width, new_height) = if width < height {
+        // Width is the smaller side (or equal)
+        let ratio = height as f32 / width as f32;
+        (TARGET_MIN_SIZE, (TARGET_MIN_SIZE as f32 * ratio) as u32)
+    } else {
+        // Height is the smaller side
+        let ratio = width as f32 / height as f32;
+        ((TARGET_MIN_SIZE as f32 * ratio) as u32, TARGET_MIN_SIZE)
+    };
+    
+    // Resize image using image crate's resize function
+    // Use Lanczos3 filter for good quality
+    let thumbnail = img.resize(new_width, new_height, FilterType::Lanczos3);
+    
+    // Save thumbnail to cache with appropriate format
+    // Encode with quality 75.0 (lossy) to reduce file size significantly compared to lossless
+    let (width, height) = thumbnail.dimensions();
+    let cache_result = if thumbnail.color().has_alpha() {
+        let rgba = thumbnail.to_rgba8();
+        let encoder = Encoder::from_rgba(&rgba, width, height);
+        encoder.encode(75.0)
+    } else {
+        let rgb = thumbnail.to_rgb8();
+        let encoder = Encoder::from_rgb(&rgb, width, height);
+        encoder.encode(75.0)
+    };
+    
+    // Write the WebP memory to file
+    fs::write(&cache_file_path, &*cache_result)
+        .map_err(|e| format!("Failed to save thumbnail (path: {:?}): {}", cache_file_path, e))?;
+    
+    Ok(Some(cache_file_path.to_str().unwrap_or_default().to_string()))
 }
 
 #[tauri::command]
@@ -871,13 +699,10 @@ async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String
 
 fn main() {
     
-    let thumbnail_map: ThumbnailMap = Mutex::new(HashMap::new());
-    
     tauri::Builder::default()
         // 清理调试阶段的 setup 注入，恢复默认构建
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_log::Builder::default().build())
-        .manage(thumbnail_map)
         .invoke_handler(tauri::generate_handler![
             greet, 
             scan_directory, 
@@ -885,65 +710,10 @@ fn main() {
             load_user_data,
             get_default_paths,
             get_thumbnail,
-            register_thumbnail_hash,
             read_file_as_base64,
             ensure_directory,
-            log_frontend
+            open_path
         ])
-        .register_uri_scheme_protocol("thumbnail", move |_app_handle, request| {
-            use tauri::http::{Response, StatusCode};
-            
-            let uri = request.uri();
-            
-            // Get file path from query parameter (e.g., thumbnail://hash.jpg?path=...)
-            let file_path = if let Some(query) = uri.query() {
-                // Parse query parameters
-                let params: std::collections::HashMap<String, String> = query
-                    .split('&')
-                    .filter_map(|p| {
-                        let mut parts = p.splitn(2, '=');
-                        Some((parts.next()?.to_string(), parts.next()?.to_string()))
-                    })
-                    .collect();
-                
-                if let Some(path) = params.get("path") {
-                    // URL decode the path
-                    let decoded = urlencoding::decode(path).unwrap_or(std::borrow::Cow::Borrowed(path));
-                    Some(decoded.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            
-            let file_path = match file_path {
-                Some(path) => path,
-                None => {
-                    return Response::builder()
-                        .status(StatusCode::NOT_FOUND)
-                        .body(vec![])
-                        .unwrap();
-                }
-            };
-            
-            // Generate thumbnail synchronously
-            let thumbnail_data = match generate_thumbnail_data(&file_path) {
-                Some(data) => data,
-                None => {
-                    return Response::builder()
-                        .status(StatusCode::INTERNAL_SERVER_ERROR)
-                        .body(vec![])
-                        .unwrap();
-                }
-            };
-            
-            Response::builder()
-                .header("Content-Type", "image/jpeg")
-                .status(StatusCode::OK)
-                .body(thumbnail_data)
-                .unwrap()
-        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

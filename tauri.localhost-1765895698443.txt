@@ -1,0 +1,122 @@
+index-Ca24XRLG.js:513 🐭 FileCard onMouseEnter for: e9f5356ea name: 44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:513 🐭 Animation check in onMouseEnter: {fileName: '44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileExt: 'webp', isAnimationFormat: true, animateOnHover: true}
+index-Ca24XRLG.js:513 🐭 Forcing hoverPlayingId to: e9f5356ea
+index-Ca24XRLG.js:517  🎮 handleSetHoverPlayingId called with: e9f5356ea
+(匿名) @ index-Ca24XRLG.js:517
+onMouseEnter @ index-Ca24XRLG.js:513
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+Ip @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🔴 ImageThumbnail isHovering state changed: true for file: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:504 🟡 loadAnimation called with: {isHovering: true, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', format: 'webp', hasFilePath: true, hasFileMeta: true}
+index-Ca24XRLG.js:504 🟢 Animation format check: {fileName: '44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileExt: 'webp', metaFormat: 'webp', isAnimationFormat: true}
+index-Ca24XRLG.js:504 🔵 Attempting to load animation for: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: null, thumbnailSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', finalSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', isHovering: true}
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid props received: resourceRoot=E:\资源, cachePath=E:\资源\.Aurora_Cache
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings path: {"resourceRoot":"E:\\资源","cacheRoot":""}
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid hover props: hoverPlayingId=e9f5356ea, onSetHoverPlayingId=function
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings.animateOnHover: true
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:521 getAssetUrl called with: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:521 getAssetUrl returned (Tauri): http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F44d7271f2fa2b3956a117b97965331fa697654195.gif%401052w_!web-dynamic.webp
+index-Ca24XRLG.js:504 🟣 Setting animation URL: http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F44d7271f2fa2b3956a117b97965331fa697654195.gif%401052w_!web-dynamic.webp?t=1765895684044 for file: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…195.gif%401052w_!web-dynamic.webp?t=1765895684044', thumbnailSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', finalSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…195.gif%401052w_!web-dynamic.webp?t=1765895684044', isHovering: true}
+(索引):1  Loading the image 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F44d7271f2fa2b3956a117b97965331fa697654195.gif%401052w_!web-dynamic.webp?t=1765895684044' violates the following Content Security Policy directive: "img-src 'self' data: blob: https: local-resource: thumbnail:". The action has been blocked.
+index-Ca24XRLG.js:504  ❌ Image failed to load: http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F44d7271f2fa2b3956a117b97965331fa697654195.gif%401052w_!web-dynamic.webp?t=1765895684044 t {_reactName: 'onError', _targetInst: null, type: 'error', nativeEvent: Event, target: img.absolute.inset-0.w-full.h-full.object-cover, …}
+onError @ index-Ca24XRLG.js:504
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:513 🐭 FileCard onMouseLeave for: e9f5356ea
+index-Ca24XRLG.js:517  🎮 handleSetHoverPlayingId called with: null
+(匿名) @ index-Ca24XRLG.js:517
+onMouseLeave @ index-Ca24XRLG.js:513
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+Ip @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🔴 ImageThumbnail isHovering state changed: false for file: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp
+index-Ca24XRLG.js:504 🟡 loadAnimation called with: {isHovering: false, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', format: 'webp', hasFilePath: true, hasFileMeta: true}
+index-Ca24XRLG.js:504 ⚫ Clearing animation URL for file: E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp (isHovering: false )
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…195.gif%401052w_!web-dynamic.webp?t=1765895684044', thumbnailSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', finalSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…195.gif%401052w_!web-dynamic.webp?t=1765895684044', isHovering: false}
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid props received: resourceRoot=E:\资源, cachePath=E:\资源\.Aurora_Cache
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings path: {"resourceRoot":"E:\\资源","cacheRoot":""}
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid hover props: hoverPlayingId=null, onSetHoverPlayingId=function
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings.animateOnHover: true
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: null, thumbnailSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', finalSrc: 'data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAAB…DiLSGY5LyzQlq/cqHph/vdxXP/eYOge9Ie1VAe4jHnMgyAAA=', isHovering: false}
+index-Ca24XRLG.js:504 🟢 Image loaded successfully: data:image/webp;base64,UklGRqIeAABXRUJQVlA4IJYeAABwpgCdASpmAf8APpE+m0sloykso/RL8ZASCWNtZw1cg78/jqhLNbobJbwPvEYsZzRmTcr2O/q97/zokJZn3h+gH8T3vP+16+9xbzyOnZ7sXkDk0Nv85b0YiBrILbueJP2Y19SgH/Nv8p6xH/B5bPsP2DemF6OBQ0rIv3wmu7S1iGFxcy1X0DoUDLqsvqL4dk5lm5EJLyBfeTeAJgXBYAC4UrQT/pDBe1vLtKmevSL8/n9H4wDcHlrDbiXhg+ur73mWIW5EB0nSEpSSlUy9qPUe6qgHNDXQL3/19YLeoRJx5D0DjTrZAPZfsUy7wo9k+1TAa9ik4nRHYQtJMiL0DI3xaLBy101R9lL/l3ejFxs3GAM3RMQ5ZEsopPjz2qwPo/3sZXZwAOfhmnRf5OSRW1AZFu0bmNHABolqo3hC7N0kjNxVelKwtjaBlb1VATRfsQdHklWmyCCYwjpfLrJLP25vClvB07dnXq+u1axML/JxbJnkKah4qy6oKft0w307Jj5yhZhMq1Vto9fOqCHi0WdxzAGKmZf8tpqvxAFz/dQMRnZS8ba0rA7G5FfNERB7CxjSreRXjcz7Tgz6Z4Cl0ZPrxbu19Vapti2t2BTo2UAFL0GHdgxVsJxEfDnIfcV7C3QaYd30IO2fzQkR1H8zSxblS2C+Dl5Xb7mdx7hLeovCKx4GFG60xGHcdx0HudlefdgRe9OO1exfqImjzTUDZ0LuXo6Dfq7MU7sWnsfRhIbDGifL8IDJzS3P8zN5ePd3pG/8tQb161/DJpezZS6zHznEF7fMZ7lXYBP2Tk+eiNM9Jv65Tl/8g+4bEzSF83bMvq1kX3a1abjSv5JCz9o7Ys4r+YTkGREB25IN7eNFe2qLaTvLnDk5UOaSL1ES9iTh/udXVbc+/PkspK6MSTNEonp6er+yYYUY/zEkl076SsalJQO1Mi/FRTU659Ysllh2i5c3lbYRI2u1xGIZ4q9hJQ7UMqyF5UckIGQTGW7qgP4YL/KVikqd03U1XPeA44BFs+Xe3dfss6H69I5JWpKrh92RGI+RZrrf6vwCASKqaJem0wk7xDaOq3fjbhiYAvBgaN0eZ5ihijM92Y1TSvnGbyKxIFmt2HbWuXC1bnBuFfNGJ011FJ6NH7rr90prg1f+7qsHlM8pz6NuPJjv8qGb+Byja8P2GrfZV+iJzLME+Y2qhwEaNFv35P6U85vBSU+UvQxnch+f/SZO90w7cZQWXFlaLDcxqdY+iwe+EKEl0IiHhHmwN0eHN4YMY8A6AiYwZ4qFbFz0f/MbOQD9yH/sEjsvEItMhrHwUj4f3k0bDje7mmZOsAwL/PmD19HU1ZptulActuRjLI8Ejxevn0t+09Rch/8TmwXHc7BhRBluqAgDdFf3FS4SaAhNHJlUFMKGDIq1EYwXGsaygKpGAQ7d3pcxE3/tVD7vYRGfoD8pOUVXEhZ4vhhcC0hLYkPcgZYvPCQuJJmCkt8ImGsVtFrmLU8V7aJdTiSuMX4MillyJnQRis6JniF4skg0bCpB1Qn6D8ttG5q9C5Qhw3JGjZEJN72/fIiwxqesnS7H/jsDGC2JVAYV8zbUWWDU7f/5LSJLiMuSONglANa18G4aWHmsMF3nEK0ppDjH4o0sBTjYZpTYFCpz1y5oaO890hYiaUtb0KP4ghfBbHBDGdY12TdyQZoa5MRYB0N6otuMXM8eEXofC/o336AdQsFWPhnhv2a5IpzYgahqF8uzT+x5ayG19Pwu19IRtrtwk5Vx6oD0NuV9osdXL1AWcyZttZQCgAD++6MMfPnTevRkWMvL6OsbdQ7Qx67EuBEcq9usyQCWqhCPcpPf9Q14MuVH5N75Mh+M+toAIfz88OeVqML/cajjrlHj3ScGDJ7psOExGFalpm8JHI6eyINXySHxkApPnirwEprK22hUquliAgBa9JOlF+zWpuqQcR23SAJ9hBAoahZxxNFdBqfHeAkYkMrQVBHtwJN4cXJVotVs1UvO6LwLoOy+dK2843CveEdUAJRn05mZX8vMCMmRZaWuJ0NCcBMyWuKRIQlNQ4VTjwLVBJ4gF6vVrNeZptrYIREMGKbpy3KZfFVraR6k+S1i/Wiz+LveMS8oTYdJCOwVciKyvVJYfKBfOIhaqEPbDIrdRKdfetpQbHR379YyQRjdHdXlY/RTDNJ7vmS6hFzUBhxZAkJnen+GcW5rZJ7j18h4vCg3i8CPVaFFrd1j/RPWyUV4n5YzCzBiv8IPGqVAmTJgRmWAiG7aianrfuMxh6rdZo2aLh097EGTW5J0z8iYIbIaN9gV7XROLrO5rtSNv1Dr2113SEEuasVXhD4d4DWLZxLum/26wMMbw34W8K6qER4+us2uG2EInD6le/jOdai+pSB/KTh9SPm44hyVaQXQrFee+B8Yw+4PHj0uuarG1r1FW9PvTkkXBhjoGvZO/7u3qKb8+fxhJeyPvB5AYEcXTtTBML2cN7T43hdvWXxqmYhnJGSY1nsf7CBmsiTKLHQSvVJHPyooUnrHB1jhT+c9fA+pJomRE/9E1TLfm7tw/fw+mDP+RSngcJrmLe9YKw2UwKopF4OpgAV14HLBeu5eaXawcmSbphgJfy1i+kFNSfwtrECmaY+D0+q/07HeMhLWU5cEuarNyH5PX1SHM0npzZK8C656rZnSvD1mdBn/2TUrw1EWOfPNsdoLZ8ADjF5Jwn4bclEDRRFy0/jay1eeoGVVQwmZtJ29PCIBUnBvNYKuFLCVg82zZyHMaOreFbJlXStWIUhDKAY32kdYYn1lrU4spZJalzRGQ/9m7RrJbHBA8ifFjhCYX2B3d26YoyRMErjhtqkBErulzFrEN3SL50av/rxj/APmT7ZQwpbXLz75VdhqOAP9u9b4T02MmYZMWu+uPbp+GoX3svJGCxzWafkW6ahU6e7WQBmg/BF0opNW2RVs/7UwnkGezQrwrvP14CkwwW5Dm5IZxC3oPUujdMRDFzZ+lU21q/u0B5lugwS1wZZx7AsdaZfHFG2OVzW9GeuKe6P4GxrRApbK/Sc7TqI5iZmiJxf9IUFCPnF5RDk6R+vd3oAO4Qs+8ggdXI3bskWSYp+Ah0d2+OI8A8WYDXEXJbiqXyqfWZVgeI0+GLJhIuCKQ+AKHRNIucaKu6GhBbd2Zzg5ySP7yoJJ2z99jjLQuarfV0Om4+rtBTrx/KN4Xn7H12ynd/2Ak6188r5JLkndA/6mNkHF26RYSNh48llgcOQBVbEdtPw67EghT2EMaAU5hs1aFd3aV9gdkD1kdabVLy87TeEpzYVceVorEL4kvtJaCr1r1jDaYG+pp18udUvMKcIcnIMyyPlxalqTGSZJDALeIhfTilAhdaa7tIvz+Zwh7hotWLdZ3Hg06kdppet7/RSqsWKPlwvJakfUHCs3Mls+Rg2gJR5WYR4LLyp1JARjj+DAqxjixN5ZjHGhRNnEGoIquB9CihFl2EBe+5GX02qJZzYl6Chgz8Xtr9TjWcWoLwkTDnNUWURKxmHYZoHgsePw+BtVdZjKMnZ1i1090AGc3caNf0ZE2dhTNtNA2CT7jJ8vxqfe/+hUrvL/oFtfx1a5pgGq767KxEleUConID4RjP4ITny8AJAUDc1laeF5NrrW5ksQDZv6XB9X5bmb7ieKfA3Suz2z7cPaCmDkRqGxLkqjZ1Eixwd+X1zFH5WsyOEj++k+RGIZhbd+PBhkJbnjk2x0Kkx+CrRtdIVp3aZSI23FUHW1STTd3pBUYIfSyN80nxcW8ja9aNT0DZ6iEEnqX9apgfBdgpeDTFiZWMuk3IRb28Q4ysp7RjrHo0GIj09eu4+7aya4EpbEJXIuKTLkbuAvaiuyKQMX3zBeY4GwZcACmQ7eq29XWIlISMMW4iGtAFo02X2XV7Xx2zxEWLYX0L1v97xfo0H08MavbHblY5pjxQKbBUeftBsGuSuWKKsWr7XwaGxWSw5+4DhGBu16i1gxOBz8XmOXwuMmQRsHAu2hxipiCrYE5hntz8RCHZdQx2boF9pcD3Ovbo13YwkMj3HUADNNosTS2U+w4t0ClcmuXAxANIu7HAX+JEJ/CHh9V0k08wszJukxXlPjNexN9HRpJu21SZMCezzoCdqfkXG/zUrMyTJ26lhK40r1VUotnz2GW63iLesgJT9EAsqNIB3srfQivHPsWBbESl5pdg7AAI+7GXdy5GpoO0GrtiP4HKLSOnCWPzo4ZNKjcU/NmNTChQSv952yGhewG+s5IILnjHk9YRipIMyy650IP74NVceB6+cle1yzaEc6N+klP9iPd+VTFInnjSRURdQgo7HH2dwys+PVer9tFfCHMlHBGLLh3OMVOmEQjDi9mok/jcftO24rl8DBr4pIT00XXMM6oPAA4IcXWMCAVWa2RBgNOG83ex+ylNHTYPfh5OPdf+gT9fDh7FjRRvAMLPTr9NUDpTRh5VnpWmJmh6QfelKdcbdZNIAtOJFqm0uMD1h7aow9/8/v1+hRi3IZRn2dqjZXmdpNcvTfaU0nkxyiPSfDijnd4te7f4sDDEVgfRWBk+nGiUxyUlYP65RQkU5yMk7zHswXR3zg1M4Yr7ySUauSm6cFow/9OJIyXvNvrPEXliNsuwfXPOGHFJVk/ul4aKWMH9CORO0tjthMY40OLfdy5k0Bi2kPyd/rXuOdlx7jIvmYpYIsVQxEXlTruXZQUP+/Zb+9KcWsydCA5uv2rNlrm/GW1Vyh7qkSZlHmhIHFe0hwOtXedwt4Xek9cQibqV/QqZDUaH0pImF0T553s0HZZi47bsOCgCHZ0/OSnWJJ2a6buiq1GJNs/3j7TjGipoM8s5YtVjLnacev9yDe65XupidCu3Vr5IrleoQ2aAFkMNWTjNo90hqE1eeWrYCy3oYmUjXD+P3zwSrey53YsANS4bYOPG2uN0d6JtvFC7C8lrXI5GbvqwuQYt1yBjdRb
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/44d7271f2fa2b3956a117b97965331fa697654195.gif@1052w_!web-dynamic.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}

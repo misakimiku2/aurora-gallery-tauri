@@ -1,0 +1,122 @@
+index-Ca24XRLG.js:513 🐭 FileCard onMouseEnter for: 1ead076ee name: 03_oc2.webp
+index-Ca24XRLG.js:513 🐭 Animation check in onMouseEnter: {fileName: '03_oc2.webp', fileExt: 'webp', isAnimationFormat: true, animateOnHover: true}
+index-Ca24XRLG.js:513 🐭 Forcing hoverPlayingId to: 1ead076ee
+index-Ca24XRLG.js:517  🎮 handleSetHoverPlayingId called with: 1ead076ee
+(匿名) @ index-Ca24XRLG.js:517
+onMouseEnter @ index-Ca24XRLG.js:513
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+Ip @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🔴 ImageThumbnail isHovering state changed: true for file: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp
+index-Ca24XRLG.js:504 🟡 loadAnimation called with: {isHovering: true, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', format: 'webp', hasFilePath: true, hasFileMeta: true}
+index-Ca24XRLG.js:504 🟢 Animation format check: {fileName: '03_oc2.webp', fileExt: 'webp', metaFormat: 'webp', isAnimationFormat: true}
+index-Ca24XRLG.js:504 🔵 Attempting to load animation for: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: null, thumbnailSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', finalSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', isHovering: true}
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid props received: resourceRoot=E:\资源, cachePath=E:\资源\.Aurora_Cache
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings path: {"resourceRoot":"E:\\资源","cacheRoot":""}
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid hover props: hoverPlayingId=1ead076ee, onSetHoverPlayingId=function
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings.animateOnHover: true
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:521 getAssetUrl called with: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp
+index-Ca24XRLG.js:521 getAssetUrl returned (Tauri): http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F%5BNFFA%5D%20oc%20GIFs%20%5BAI%20Generated%5D%2F03_oc2.webp
+index-Ca24XRLG.js:504 🟣 Setting animation URL: http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F%5BNFFA%5D%20oc%20GIFs%20%5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057 for file: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057', thumbnailSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', finalSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057', isHovering: true}
+index-Ca24XRLG.js:504  ❌ Image failed to load: http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2F%5BNFFA%5D%20oc%20GIFs%20%5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057 t {_reactName: 'onError', _targetInst: null, type: 'error', nativeEvent: Event, target: img.absolute.inset-0.w-full.h-full.object-cover, …}
+onError @ index-Ca24XRLG.js:504
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: true, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:513 🐭 FileCard onMouseLeave for: 1ead076ee
+index-Ca24XRLG.js:517  🎮 handleSetHoverPlayingId called with: null
+(匿名) @ index-Ca24XRLG.js:517
+onMouseLeave @ index-Ca24XRLG.js:513
+ip @ index-Ca24XRLG.js:37
+dp @ index-Ca24XRLG.js:37
+up @ index-Ca24XRLG.js:37
+pd @ index-Ca24XRLG.js:37
+N0 @ index-Ca24XRLG.js:37
+(匿名) @ index-Ca24XRLG.js:37
+uc @ index-Ca24XRLG.js:40
+Qu @ index-Ca24XRLG.js:37
+ho @ index-Ca24XRLG.js:37
+_i @ index-Ca24XRLG.js:37
+Ip @ index-Ca24XRLG.js:37
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🔴 ImageThumbnail isHovering state changed: false for file: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp
+index-Ca24XRLG.js:504 🟡 loadAnimation called with: {isHovering: false, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', format: 'webp', hasFilePath: true, hasFileMeta: true}
+index-Ca24XRLG.js:504 ⚫ Clearing animation URL for file: E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp (isHovering: false )
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057', thumbnailSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', finalSrc: 'http://asset.localhost/E%3A%2F%E8%B5%84%E6%BA%90%2…5BAI%20Generated%5D%2F03_oc2.webp?t=1765897202057', isHovering: false}
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid props received: resourceRoot=E:\资源, cachePath=E:\资源\.Aurora_Cache
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings path: {"resourceRoot":"E:\\资源","cacheRoot":""}
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid hover props: hoverPlayingId=null, onSetHoverPlayingId=function
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:517  FRONTEND_DEBUG: FileGrid settings.animateOnHover: true
+(匿名) @ index-Ca24XRLG.js:517
+Fl @ index-Ca24XRLG.js:40
+sa @ index-Ca24XRLG.js:40
+(匿名) @ index-Ca24XRLG.js:40
+z @ index-Ca24XRLG.js:25
+V @ index-Ca24XRLG.js:25
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}
+index-Ca24XRLG.js:504 🟠 finalSrc changed: {animSrc: null, thumbnailSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', finalSrc: 'data:image/webp;base64,UklGRpYoAABXRUJQVlA4IIooAAD…tzU2d3Uy+XcymDiYfWbv1q50pBjjjAlq6s0kaiQdZZAGwMAAA', isHovering: false}
+index-Ca24XRLG.js:504 🟢 Image loaded successfully: data:image/webp;base64,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
+index-Ca24XRLG.js:504 📷 ImageThumbnail rendered with: {isHovering: false, filePath: 'E:/资源/[NFFA] oc GIFs [AI Generated]/03_oc2.webp', fileMeta: {…}, resourceRoot: 'E:\\资源'}

@@ -539,12 +539,7 @@ export const App: React.FC = () => {
     aiConnectionStatus: 'checking'
   });
 
-  // #region agent log
-  useEffect(() => {
-      import('@tauri-apps/api/core').then(({ invoke }) => {
-          invoke('log_frontend', { msg: `App state.settings.paths: ${JSON.stringify(state.settings.paths)}` });
-      });
-  }, [state.settings.paths]);
+  // #region agent log - removed log_frontend invocation as it doesn't exist
   // #endregion
 
   // ... (keep all state variables and hooks identical)
@@ -758,11 +753,7 @@ export const App: React.FC = () => {
                         }
                     }));
 
-                    if (savedData.settings?.paths?.cacheRoot) {
-                        await window.electron.setCachePath(savedData.settings.paths.cacheRoot);
-                    } else {
-                        await window.electron.setCachePath(defaults.cacheRoot);
-                    }
+                    // 缓存目录现在总是从资源根目录计算，不需要单独设置
 
                     if (savedData.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
                         let allFiles: Record<string, FileNode> = {};
@@ -820,7 +811,7 @@ export const App: React.FC = () => {
                         }
                     }
                 } else {
-                    await window.electron.setCachePath(defaults.cacheRoot);
+                    // 缓存目录现在总是从资源根目录计算，不需要单独设置
                 }
             } catch (e) {
                 console.error("Initialization failed", e);
@@ -930,11 +921,26 @@ export const App: React.FC = () => {
                     
                     // 确定要扫描的路径列表
                     let pathsToScan: string[] = [];
+                    let validRootPaths: string[] = [];
+                    
                     if (savedData?.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
-                        pathsToScan = savedData.rootPaths;
-                    } else if (finalSettings.paths.resourceRoot) {
-                        // 如果 rootPaths 为空但 resourceRoot 存在，使用 resourceRoot
-                        pathsToScan = [finalSettings.paths.resourceRoot];
+                        // 先过滤掉明显的非目录路径（如包含文件扩展名的路径）
+                        validRootPaths = savedData.rootPaths.filter((path: string) => {
+                            // 检查路径是否包含文件扩展名
+                            const lastDotIndex = path.lastIndexOf('.');
+                            const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+                            // 如果没有点，或者点在最后一个斜杠之前，那么它是一个目录
+                            return lastDotIndex === -1 || lastDotIndex < lastSlashIndex;
+                        });
+                    }
+                    
+                    // 如果经过筛选后没有有效路径，或者没有保存的路径，使用默认资源根目录
+                    if (validRootPaths.length === 0) {
+                        if (finalSettings.paths.resourceRoot) {
+                            pathsToScan = [finalSettings.paths.resourceRoot];
+                        }
+                    } else {
+                        pathsToScan = validRootPaths;
                     }
                     
                     if (pathsToScan.length > 0) {
@@ -1075,18 +1081,19 @@ export const App: React.FC = () => {
 
   // ... (keep welcome modal logic)
   useEffect(() => {
-      if (!isLoading && state.roots.length === 0) {
-          const hasOnboarded = localStorage.getItem('aurora_onboarded');
-          if (!hasOnboarded) {
-              // 显示欢迎界面时，隐藏启动界面
-              setShowSplash(false);
-              setShowWelcome(true);
-          }
-      } else if (!isLoading && state.roots.length > 0) {
-          // 有根路径且加载完成，隐藏启动界面
+      if (!isLoading) {
+          // 无论什么情况，初始化完成后都要隐藏启动界面
           setTimeout(() => {
               setShowSplash(false);
           }, 500);
+          
+          if (state.roots.length === 0) {
+              const hasOnboarded = localStorage.getItem('aurora_onboarded');
+              if (!hasOnboarded) {
+                  // 显示欢迎界面
+                  setShowWelcome(true);
+              }
+          }
       }
   }, [isLoading, state.roots.length]);
 
@@ -1512,9 +1519,10 @@ export const App: React.FC = () => {
       try { 
           const path = await openDirectory(); 
           if (path) { 
-                  // 确保缓存目录存在
+                  // 确保缓存目录存在（在资源根目录下创建 .Aurora_Cache 文件夹）
                   if (isTauriEnvironment()) {
-                      await ensureCacheDirectory(path);
+                      const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+                      await ensureDirectory(cachePath);
                   }
                   
                   const result = await scanDirectory(path, true); 
@@ -2717,146 +2725,92 @@ export const App: React.FC = () => {
 
   const toggleSettings = () => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }));
   
-  const handleChangePath = async (type: 'resource' | 'cache') => {
+  const handleChangePath = async (type: 'resource') => {
       try {
           const selectedPath = await openDirectory();
           if (!selectedPath) {
               return;
           }
           
-          if (type === 'resource') {
-              // 确保缓存目录存在
-              if (isTauriEnvironment()) {
-                  // 计算默认缓存路径
-                  const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
-                  await ensureDirectory(cachePath);
-              }
-              
-              const newSettings = {
-                  ...state.settings,
-                  paths: {
-                      ...state.settings.paths,
-                      resourceRoot: selectedPath,
-                      // 如果缓存目录未设置或使用的是默认路径，更新为新的默认路径
-                      cacheRoot: state.settings.paths.cacheRoot && !state.settings.paths.cacheRoot.includes(state.settings.paths.resourceRoot) 
-                          ? state.settings.paths.cacheRoot 
-                          : ''
-                  }
-              };
-              
-              setState(prev => ({
-                  ...prev,
-                  settings: newSettings
-              }));
-              
-              startTask('ai', [], t('tasks.processing')); 
-              const result = await scanDirectory(selectedPath);
-              
-              setState(prev => {
-                   const newRoots = result.roots;
-                   const newFiles = result.files;
-                   const newRootId = newRoots.length > 0 ? newRoots[0] : '';
-                   if (!newRootId) return prev;
-                   const newTab: TabState = { 
-                       ...DUMMY_TAB, 
-                       id: Math.random().toString(36).substr(2, 9),
-                       folderId: newRootId,
-                       history: { 
-                           stack: [{ 
-                               folderId: newRootId, 
-                               viewingId: null, 
-                               viewMode: 'browser', 
-                               searchQuery: '', 
-                               searchScope: 'all', 
-                               activeTags: [], 
-                               activePersonId: null 
-                           }], 
-                           currentIndex: 0 
-                       } 
-                   };
-                   return {
-                       ...prev,
-                       roots: newRoots,
-                       files: newFiles,
-                       expandedFolderIds: [newRootId],
-                       tabs: [newTab],
-                       activeTabId: newTab.id,
-                       settings: newSettings
-                   };
-              });
-              
-              // 重要：在扫描目录并更新 state 后，再保存数据
-              // 使用扫描结果中的路径，确保包含新设置的目录
-              const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
-              // 如果扫描结果中没有路径，使用 selectedPath
-              const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
-
-              const dataToSave = {
-                  rootPaths: updatedRootPaths,
-                  customTags: state.customTags,
-                  people: state.people,
-                  settings: newSettings,
-                  fileMetadata: {}
-              };
-              
-              const saveResult = await saveUserData(dataToSave);
-
-              if (!saveResult) {
-                  console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
-              }
-              
-              showToast(t('settings.success'));
-          } else if (type === 'cache') {
-              let finalCachePath = selectedPath;
-              const trimmedPath = selectedPath.replace(/[\\/]$/, '');
-              // 如果选择的路径不是以 .Aurora_Cache 结尾，则在该路径下创建 .Aurora_Cache 文件夹
-              if (!trimmedPath.endsWith('.Aurora_Cache')) {
-                  const isWin = trimmedPath.includes('\\');
-                  finalCachePath = `${trimmedPath}${isWin ? '\\' : '/'}.Aurora_Cache`;
-              }
-              
-              // 确保缓存目录存在（Tauri 环境）
-              if (isTauriEnvironment()) {
-                  await ensureDirectory(finalCachePath);
-              }
-              
-              if (window.electron) {
-                  await window.electron.setCachePath(finalCachePath);
-              }
-              
-              const newSettings = {
-                  ...state.settings,
-                  paths: {
-                      ...state.settings.paths,
-                      cacheRoot: finalCachePath
-                  }
-              };
-              
-              setState(prev => ({
-                  ...prev,
-                  settings: newSettings
-              }));
-              
-              // 保存设置到持久化存储
-              const currentRootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
-
-              
-              const dataToSave = {
-                  rootPaths: currentRootPaths,
-                  customTags: state.customTags,
-                  people: state.people,
-                  settings: newSettings,
-                  fileMetadata: {}
-              };
-              
-
-              
-              const saveResult = await saveUserData(dataToSave);
-              
-
-              
-              showToast(t('settings.success'));
+          // 确保缓存目录存在（在资源根目录下创建 .Aurora_Cache 文件夹）
+          if (isTauriEnvironment()) {
+              // 计算缓存路径
+              const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+              await ensureDirectory(cachePath);
           }
+          
+          const newSettings = {
+              ...state.settings,
+              paths: {
+                  ...state.settings.paths,
+                  resourceRoot: selectedPath,
+                  // 清除 cacheRoot，因为现在它总是从 resourceRoot 计算
+                  cacheRoot: ''
+              }
+          };
+          
+          setState(prev => ({
+              ...prev,
+              settings: newSettings
+          }));
+          
+          startTask('ai', [], t('tasks.processing')); 
+          const result = await scanDirectory(selectedPath);
+          
+          setState(prev => {
+               const newRoots = result.roots;
+               const newFiles = result.files;
+               const newRootId = newRoots.length > 0 ? newRoots[0] : '';
+               if (!newRootId) return prev;
+               const newTab: TabState = { 
+                   ...DUMMY_TAB, 
+                   id: Math.random().toString(36).substr(2, 9),
+                   folderId: newRootId,
+                   history: { 
+                       stack: [{ 
+                           folderId: newRootId, 
+                           viewingId: null, 
+                           viewMode: 'browser', 
+                           searchQuery: '', 
+                           searchScope: 'all', 
+                           activeTags: [], 
+                           activePersonId: null 
+                       }], 
+                       currentIndex: 0 
+                   } 
+               };
+               return {
+                   ...prev,
+                   roots: newRoots,
+                   files: newFiles,
+                   expandedFolderIds: [newRootId],
+                   tabs: [newTab],
+                   activeTabId: newTab.id,
+                   settings: newSettings
+               };
+          });
+          
+          // 重要：在扫描目录并更新 state 后，再保存数据
+          // 使用扫描结果中的路径，确保包含新设置的目录
+          const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
+          // 如果扫描结果中没有路径，使用 selectedPath
+          const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
+
+          const dataToSave = {
+              rootPaths: updatedRootPaths,
+              customTags: state.customTags,
+              people: state.people,
+              settings: newSettings,
+              fileMetadata: {}
+          };
+          
+          const saveResult = await saveUserData(dataToSave);
+
+          if (!saveResult) {
+              console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
+          }
+          
+          showToast(t('settings.success'));
       } catch (e) {
           console.error("Change path failed", e);
           showToast("Error changing path");
@@ -4524,7 +4478,7 @@ export const App: React.FC = () => {
                         files={state.files} 
                         activeTab={activeTab} 
                         renamingId={state.renamingId} 
-                        thumbnailSize={state.thumbnailSize}
+                        thumbnailSize={state.thumbnailSize} 
                         resourceRoot={state.settings.paths.resourceRoot}
                         cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} 
                         hoverPlayingId={hoverPlayingId} 

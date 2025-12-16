@@ -7,7 +7,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onUpdateSettings: (updates: Partial<AppState>) => void;
   onUpdateSettingsData: (updates: Partial<AppSettings>) => void;
-  onUpdatePath: (type: 'resource' | 'cache') => void;
+  onUpdatePath: (type: 'resource') => void;
   t: (key: string) => string;
   onUpdateAIConnectionStatus: (status: 'checking' | 'connected' | 'disconnected') => void;
 }
@@ -313,13 +313,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
                                 <div className="flex items-center">
                                     <div className="flex-1 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
-                                        {state.settings.paths.cacheRoot || `${state.settings.paths.resourceRoot}\\.Aurora_Cache`}
+                                        {state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet')}
                                     </div>
                                     <button 
-                                        onClick={() => onUpdatePath('cache')}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r"
+                                        onClick={() => {
+                                            const cachePath = state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '';
+                                            if (cachePath) {
+                                                import('../api/tauri-bridge').then(({ openPath }) => {
+                                                    openPath(cachePath);
+                                                });
+                                            }
+                                        }}
+                                        disabled={!state.settings.paths.resourceRoot}
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
                                     >
-                                        {t('settings.change')}
+                                        打开
                                     </button>
                                 </div>
                             </div>
