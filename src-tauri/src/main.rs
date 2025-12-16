@@ -254,6 +254,11 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
             
+            // Skip .Aurora_Cache folder and other hidden files (except .pixcall)
+            if file_name == ".Aurora_Cache" {
+                return None;
+            }
+            
             if file_name.starts_with('.') && file_name != ".pixcall" {
                 return None;
             }
@@ -536,6 +541,18 @@ async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Valu
     Ok(Some(data))
 }
 
+// Command to ensure a directory exists
+#[tauri::command]
+fn log_frontend(msg: String) {
+    println!("FRONTEND: {}", msg);
+}
+
+#[tauri::command]
+async fn ensure_directory(path: String) -> Result<(), String> {
+    ensure_cache_dir(&path)?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     use std::env;
@@ -571,15 +588,153 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     Ok(paths)
 }
 
+
+
+// Helper function to generate cache file name from file path and modification time
+fn get_cache_file_name(file_path: &str) -> Result<String, String> {
+    use std::fs;
+    
+    // Get file metadata to get modification time
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    
+    let modified_time = metadata
+        .modified()
+        .map_err(|e| format!("Failed to get modification time: {}", e))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to calculate duration: {}", e))?
+        .as_secs();
+    
+    // Generate hash from file path and modification time
+    let hash_input = format!("{}_{}", file_path, modified_time);
+    let hash = md5::compute(hash_input.as_bytes());
+    let hash_str = format!("{:x}", hash);
+    
+    // Use first 16 characters of hash as filename
+    Ok(format!("{}.jpg", &hash_str[..16]))
+}
+
+// Helper function to ensure cache directory exists
+fn ensure_cache_dir(cache_dir: &str) -> Result<(), String> {
+    use std::fs;
+    
+    let cache_path = Path::new(cache_dir);
+    if !cache_path.exists() {
+        fs::create_dir_all(cache_path)
+            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
-async fn get_thumbnail(file_path: String) -> Result<Option<String>, String> {
+async fn get_thumbnail(file_path: String, root_path: Option<String>, cache_path: Option<String>) -> Result<Option<String>, String> {
+    println!("DEBUG_RUST: get_thumbnail called for {}", file_path);
+    println!("DEBUG_RUST: root_path: {:?}", root_path);
+    println!("DEBUG_RUST: cache_path: {:?}", cache_path);
+    
     // Check if file exists
     if !Path::new(&file_path).exists() {
         return Ok(None);
     }
     
-    // Try to load image using image crate
-    match image::open(&file_path) {
+    // Get cache directory and file name
+    // Priority: 1. cache_path (custom cache directory), 2. root_path + .Aurora_Cache, 3. find common root from file_path
+    let cache_dir = if let Some(cache) = cache_path {
+        // Use provided custom cache directory
+        cache
+    } else if let Some(root) = root_path {
+        // Use provided root directory + .Aurora_Cache
+        Path::new(&root).join(".Aurora_Cache").to_string_lossy().to_string()
+    } else {
+        // Find common root directory for all thumbnails
+        let path = Path::new(&file_path);
+        
+        // Get the parent directory of the file
+        let mut current = if let Some(parent) = path.parent() {
+            parent
+        } else {
+            Path::new(".")
+        };
+        
+        // Walk up the directory tree until we find a directory that is not .Aurora_Cache
+        // This prevents nested .Aurora_Cache folders
+        while let Some(parent_path) = current.parent() {
+            let folder_name = current.file_name().and_then(|name| name.to_str());
+            if folder_name == Some(".Aurora_Cache") {
+                current = parent_path;
+            } else {
+                break;
+            }
+        }
+        
+        // Find the user's Pictures folder or other common root folder
+        // On Windows, this is typically C:\Users\Username\Pictures
+        // On Unix, this is typically /home/username/Pictures
+        let mut root_dir = current.to_path_buf();
+        let mut current_clone = current.to_path_buf();
+        
+        loop {
+            // Check if we're in or above the Pictures folder
+            if let Some(folder_name) = current_clone.file_name().and_then(|name| name.to_str()) {
+                if folder_name.to_lowercase() == "pictures" {
+                    root_dir = current_clone.to_path_buf();
+                    break;
+                }
+            }
+            
+            // Check if we've reached the drive root or filesystem root
+            if let Some(parent) = current_clone.parent() {
+                if parent == current_clone || 
+                   (cfg!(windows) && current_clone.to_string_lossy().ends_with('\\')) || 
+                   (!cfg!(windows) && current_clone.to_string_lossy() == "/") {
+                    // We've reached the root, use it
+                    root_dir = current_clone.to_path_buf();
+                    break;
+                }
+                current_clone = parent.to_path_buf();
+            } else {
+                // No parent, use current directory
+                root_dir = current_clone;
+                break;
+            }
+        }
+        root_dir.join(".Aurora_Cache").to_string_lossy().to_string()
+    };
+    
+    let cache_file_name = get_cache_file_name(&file_path)?;
+    let cache_file_path = Path::new(&cache_dir).join(&cache_file_name);
+    
+    // Ensure cache directory exists
+    ensure_cache_dir(&cache_dir)?;
+    
+    // Check if cached thumbnail exists and is valid
+    if cache_file_path.exists() {
+        // Check if source file is newer than cache
+        use std::fs;
+        let source_metadata = fs::metadata(&file_path)
+            .map_err(|e| format!("Failed to get source file metadata: {}", e))?;
+        let cache_metadata = fs::metadata(&cache_file_path)
+            .map_err(|e| format!("Failed to get cache file metadata: {}", e))?;
+        
+        let source_modified = source_metadata
+            .modified()
+            .map_err(|e| format!("Failed to get source modification time: {}", e))?;
+        let cache_modified = cache_metadata
+            .modified()
+            .map_err(|e| format!("Failed to get cache modification time: {}", e))?;
+        
+        // If source file hasn't been modified since cache was created, use cache
+        if source_modified <= cache_modified {
+            // Read cached thumbnail
+            let cache_bytes = fs::read(&cache_file_path)
+                .map_err(|e| format!("Failed to read cache file: {}", e))?;
+            let base64_str = general_purpose::STANDARD.encode(&cache_bytes);
+            return Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)));
+        }
+    }
+    
+    // Cache doesn't exist or is outdated, generate new thumbnail
+    let thumbnail_data = match image::open(&file_path) {
         Ok(img) => {
             // Get original dimensions
             let (width, height) = img.dimensions();
@@ -595,103 +750,87 @@ async fn get_thumbnail(file_path: String) -> Result<Option<String>, String> {
                 img.write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
                     .map_err(|e| format!("Failed to encode image: {}", e))?;
                 
-                let base64_str = general_purpose::STANDARD.encode(&buffer);
-                return Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)));
-            }
-            
-            // Calculate new dimensions maintaining aspect ratio
-            let (new_width, new_height) = if width <= height {
-                // Width is smaller, scale based on width
-                let ratio = height as f32 / width as f32;
-                (target_size, (target_size as f32 * ratio) as u32)
+                buffer
             } else {
-                // Height is smaller, scale based on height
-                let ratio = width as f32 / height as f32;
-                ((target_size as f32 * ratio) as u32, target_size)
-            };
-            
-            // Convert image to RGBA format for fast_image_resize
-            let rgba_img = img.to_rgba8();
-            
-            // Convert dimensions to NonZeroU32
-            let src_width = NonZeroU32::new(width)
-                .ok_or_else(|| "Image width is zero".to_string())?;
-            let src_height = NonZeroU32::new(height)
-                .ok_or_else(|| "Image height is zero".to_string())?;
-            let dst_width = NonZeroU32::new(new_width)
-                .ok_or_else(|| "Target width is zero".to_string())?;
-            let dst_height = NonZeroU32::new(new_height)
-                .ok_or_else(|| "Target height is zero".to_string())?;
-            
-            let src_image = fast_image_resize::Image::from_vec_u8(
-                src_width,
-                src_height,
-                rgba_img.into_raw(),
-                PixelType::U8x4,
-            ).map_err(|e| format!("Failed to create source image: {}", e))?;
-            
-            // Create destination image
-            let mut dst_image = fast_image_resize::Image::new(
-                dst_width,
-                dst_height,
-                PixelType::U8x4,
-            );
-            
-            // Create resizer and resize
-            let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
-            
-            resizer.resize(&src_image.view(), &mut dst_image.view_mut())
-                .map_err(|e| format!("Failed to resize image: {}", e))?;
-            
-            // Convert back to image crate format
-            let resized_rgba = RgbaImage::from_raw(
-                new_width,
-                new_height,
-                dst_image.buffer().to_vec(),
-            ).ok_or_else(|| "Failed to create resized image".to_string())?;
-            
-            // Encode as JPEG
-            let mut buffer = Vec::new();
-            let mut cursor = Cursor::new(&mut buffer);
-            image::DynamicImage::ImageRgba8(resized_rgba)
-                .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
-                .map_err(|e| format!("Failed to encode image: {}", e))?;
-            
-            // Convert to base64
-            let base64_str = general_purpose::STANDARD.encode(&buffer);
-            Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)))
+                // Calculate new dimensions maintaining aspect ratio
+                let (new_width, new_height) = if width <= height {
+                    // Width is smaller, scale based on width
+                    let ratio = height as f32 / width as f32;
+                    (target_size, (target_size as f32 * ratio) as u32)
+                } else {
+                    // Height is smaller, scale based on height
+                    let ratio = width as f32 / height as f32;
+                    ((target_size as f32 * ratio) as u32, target_size)
+                };
+                
+                // Convert image to RGBA format for fast_image_resize
+                let rgba_img = img.to_rgba8();
+                
+                // Convert dimensions to NonZeroU32
+                let src_width = NonZeroU32::new(width)
+                    .ok_or_else(|| "Image width is zero".to_string())?;
+                let src_height = NonZeroU32::new(height)
+                    .ok_or_else(|| "Image height is zero".to_string())?;
+                let dst_width = NonZeroU32::new(new_width)
+                    .ok_or_else(|| "Target width is zero".to_string())?;
+                let dst_height = NonZeroU32::new(new_height)
+                    .ok_or_else(|| "Target height is zero".to_string())?;
+                
+                let src_image = fast_image_resize::Image::from_vec_u8(
+                    src_width,
+                    src_height,
+                    rgba_img.into_raw(),
+                    PixelType::U8x4,
+                ).map_err(|e| format!("Failed to create source image: {}", e))?;
+                
+                // Create destination image
+                let mut dst_image = fast_image_resize::Image::new(
+                    dst_width,
+                    dst_height,
+                    PixelType::U8x4,
+                );
+                
+                // Create resizer and resize
+                let mut resizer = Resizer::new(ResizeAlg::Convolution(FilterType::Lanczos3));
+                
+                resizer.resize(&src_image.view(), &mut dst_image.view_mut())
+                    .map_err(|e| format!("Failed to resize image: {}", e))?;
+                
+                // Convert back to image crate format
+                let resized_rgba = RgbaImage::from_raw(
+                    new_width,
+                    new_height,
+                    dst_image.buffer().to_vec(),
+                ).ok_or_else(|| "Failed to create resized image".to_string())?;
+                
+                // Encode as JPEG
+                let mut buffer = Vec::new();
+                let mut cursor = Cursor::new(&mut buffer);
+                image::DynamicImage::ImageRgba8(resized_rgba)
+                    .write_to(&mut cursor, ImageOutputFormat::Jpeg(85))
+                    .map_err(|e| format!("Failed to encode image: {}", e))?;
+                
+                buffer
+            }
         },
         Err(_e) => {
-            // If image::open fails (e.g., for some PNG files), try to read file directly as base64
+            // If image::open fails (e.g., for some PNG files), try to read file directly
             use std::fs;
             
             // Read file as bytes
-            let file_bytes = fs::read(&file_path)
-                .map_err(|read_err| format!("Failed to read file: {}", read_err))?;
-            
-            // Detect image format from file extension
-            let extension = Path::new(&file_path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-            
-            // Determine MIME type based on extension
-            let mime_type = match extension.as_str() {
-                "jpg" | "jpeg" => "image/jpeg",
-                "png" => "image/png",
-                "gif" => "image/gif",
-                "webp" => "image/webp",
-                "bmp" => "image/bmp",
-                "tiff" | "tif" => "image/tiff",
-                _ => "image/jpeg", // Default to JPEG
-            };
-            
-            // Convert to base64
-            let base64_str = general_purpose::STANDARD.encode(&file_bytes);
-            Ok(Some(format!("data:{};base64,{}", mime_type, base64_str)))
+            fs::read(&file_path)
+                .map_err(|read_err| format!("Failed to read file: {}", read_err))?
         }
-    }
+    };
+    
+    // Save thumbnail to cache
+    use std::fs;
+    fs::write(&cache_file_path, &thumbnail_data)
+        .map_err(|e| format!("Failed to write cache file: {}", e))?;
+    
+    // Convert to base64 and return
+    let base64_str = general_purpose::STANDARD.encode(&thumbnail_data);
+    Ok(Some(format!("data:image/jpeg;base64,{}", base64_str)))
 }
 
 #[tauri::command]
@@ -747,7 +886,9 @@ fn main() {
             get_default_paths,
             get_thumbnail,
             register_thumbnail_hash,
-            read_file_as_base64
+            read_file_as_base64,
+            ensure_directory,
+            log_frontend
         ])
         .register_uri_scheme_protocol("thumbnail", move |_app_handle, request| {
             use tauri::http::{Response, StatusCode};

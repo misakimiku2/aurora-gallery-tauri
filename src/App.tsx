@@ -11,7 +11,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths } from './api/tauri-bridge';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -538,6 +538,14 @@ export const App: React.FC = () => {
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
     aiConnectionStatus: 'checking'
   });
+
+  // #region agent log
+  useEffect(() => {
+      import('@tauri-apps/api/core').then(({ invoke }) => {
+          invoke('log_frontend', { msg: `App state.settings.paths: ${JSON.stringify(state.settings.paths)}` });
+      });
+  }, [state.settings.paths]);
+  // #endregion
 
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
@@ -1504,6 +1512,11 @@ export const App: React.FC = () => {
       try { 
           const path = await openDirectory(); 
           if (path) { 
+                  // 确保缓存目录存在
+                  if (isTauriEnvironment()) {
+                      await ensureCacheDirectory(path);
+                  }
+                  
                   const result = await scanDirectory(path, true); 
                   setState(prev => { 
                       const newRoots = Array.from(new Set([...prev.roots, ...result.roots])); 
@@ -2712,11 +2725,22 @@ export const App: React.FC = () => {
           }
           
           if (type === 'resource') {
+              // 确保缓存目录存在
+              if (isTauriEnvironment()) {
+                  // 计算默认缓存路径
+                  const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+                  await ensureDirectory(cachePath);
+              }
+              
               const newSettings = {
                   ...state.settings,
                   paths: {
                       ...state.settings.paths,
-                      resourceRoot: selectedPath
+                      resourceRoot: selectedPath,
+                      // 如果缓存目录未设置或使用的是默认路径，更新为新的默认路径
+                      cacheRoot: state.settings.paths.cacheRoot && !state.settings.paths.cacheRoot.includes(state.settings.paths.resourceRoot) 
+                          ? state.settings.paths.cacheRoot 
+                          : ''
                   }
               };
               
@@ -2756,7 +2780,8 @@ export const App: React.FC = () => {
                        files: newFiles,
                        expandedFolderIds: [newRootId],
                        tabs: [newTab],
-                       activeTabId: newTab.id
+                       activeTabId: newTab.id,
+                       settings: newSettings
                    };
               });
               
@@ -2784,10 +2809,17 @@ export const App: React.FC = () => {
           } else if (type === 'cache') {
               let finalCachePath = selectedPath;
               const trimmedPath = selectedPath.replace(/[\\/]$/, '');
+              // 如果选择的路径不是以 .Aurora_Cache 结尾，则在该路径下创建 .Aurora_Cache 文件夹
               if (!trimmedPath.endsWith('.Aurora_Cache')) {
                   const isWin = trimmedPath.includes('\\');
                   finalCachePath = `${trimmedPath}${isWin ? '\\' : '/'}.Aurora_Cache`;
               }
+              
+              // 确保缓存目录存在（Tauri 环境）
+              if (isTauriEnvironment()) {
+                  await ensureDirectory(finalCachePath);
+              }
+              
               if (window.electron) {
                   await window.electron.setCachePath(finalCachePath);
               }
@@ -4492,7 +4524,9 @@ export const App: React.FC = () => {
                         files={state.files} 
                         activeTab={activeTab} 
                         renamingId={state.renamingId} 
-                        thumbnailSize={state.thumbnailSize} 
+                        thumbnailSize={state.thumbnailSize}
+                        resourceRoot={state.settings.paths.resourceRoot}
+                        cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} 
                         hoverPlayingId={hoverPlayingId} 
                         onSetHoverPlayingId={setHoverPlayingId} 
                         onFileClick={handleFileClick} 
@@ -4555,7 +4589,7 @@ export const App: React.FC = () => {
           )}
         </div>
         <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
-          <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={handleViewerSearch} t={t} activeTab={activeTab} />
+          <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={handleViewerSearch} t={t} activeTab={activeTab} resourceRoot={state.settings.paths.resourceRoot} cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} />
         </div>
         <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} />
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">

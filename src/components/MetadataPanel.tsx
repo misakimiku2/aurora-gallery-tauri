@@ -17,10 +17,12 @@ interface MetadataProps {
   onSearch: (query: string) => void;
   t: (key: string) => string;
   activeTab: TabState;
+  resourceRoot?: string;
+  cachePath?: string;
 }
 
 // Image Preview Component for Tauri
-const ImagePreview = ({ file }: { file: FileNode }) => {
+const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resourceRoot?: string, cachePath?: string }) => {
   const [imageUrl, setImageUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
   
@@ -36,7 +38,7 @@ const ImagePreview = ({ file }: { file: FileNode }) => {
       try {
         // Use getThumbnail for preview (smaller, faster)
         const { getThumbnail } = await import('../api/tauri-bridge');
-        const dataUrl = await getThumbnail(file.path);
+        const dataUrl = await getThumbnail(file.path, undefined, resourceRoot, cachePath);
         if (dataUrl) {
           setImageUrl(dataUrl);
         } else {
@@ -51,7 +53,7 @@ const ImagePreview = ({ file }: { file: FileNode }) => {
     };
     
     loadImage();
-  }, [file.path, file.id]);
+  }, [file.path, file.id, resourceRoot, cachePath]);
   
   return (
     <div className="flex flex-col items-center">
@@ -241,7 +243,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, selectedPersonIds, onUpdate, onUpdatePerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, selectedPersonIds, onUpdate, onUpdatePerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
   const person = selectedPersonIds && selectedPersonIds.length === 1 && people ? people[selectedPersonIds[0]] : null;
@@ -801,7 +803,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
         {/* Large Preview Image (Single Image Only) */}
         {!isMulti && file && file.type === FileType.IMAGE && (
-            <ImagePreview file={file} />
+            <ImagePreview file={file} resourceRoot={resourceRoot} cachePath={cachePath} />
         )}
 
         {/* Color Palette (8 Card Grid) */}

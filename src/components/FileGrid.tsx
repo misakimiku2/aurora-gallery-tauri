@@ -141,7 +141,7 @@ const sortKeys = (keys: string[]) => keys.sort((a, b) => {
     return a.localeCompare(b);
 });
 
-export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta }: { 
+export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath }: { 
   src: string; 
   alt: string; 
   isSelected: boolean;
@@ -150,7 +150,16 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   size?: number;
   isHovering?: boolean;
   fileMeta?: { format?: string };
+  resourceRoot?: string;
+  cachePath?: string;
 }) => {
+  // #region agent log
+  useEffect(() => {
+      import('@tauri-apps/api/core').then(({ invoke }) => {
+          invoke('log_frontend', { msg: `ImageThumbnail props: resourceRoot=${resourceRoot}, cachePath=${cachePath}, filePath=${filePath}` });
+      });
+  }, [resourceRoot, cachePath, filePath]);
+  // #endregion
   const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
   const [thumbnailUrl, setThumbnailUrl] = useState<string>('');
   const [hasError, setHasError] = useState(false);
@@ -169,7 +178,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         // Import dynamically to avoid circular dependencies
         const { getThumbnail } = await import('../api/tauri-bridge');
         
-        const thumbnailData = await getThumbnail(filePath);
+        const thumbnailData = await getThumbnail(filePath, undefined, resourceRoot, cachePath);
         
         if (thumbnailData) {
           // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
@@ -201,7 +210,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     if ((isInView || wasInView) && filePath) {
       loadThumbnail();
     }
-  }, [filePath, isInView, wasInView, retryCount]);
+  }, [filePath, isInView, wasInView, retryCount, resourceRoot, cachePath]);
 
   if (!filePath || !modified) {
     return (
@@ -265,7 +274,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode }) => {
+export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
   const [thumbnailUrls, setThumbnailUrls] = useState<string[]>([]);
   const [loadingStates, setLoadingStates] = useState<boolean[]>([true, true, true]);
@@ -325,7 +334,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNo
         if (img.path) {
           try {
             const { getThumbnail } = await import('../api/tauri-bridge');
-            const thumbnailData = await getThumbnail(img.path);
+            const thumbnailData = await getThumbnail(img.path, undefined, resourceRoot, cachePath);
             
             // Ensure we only use base64 data URLs, not thumbnail:// protocol URLs
             if (thumbnailData && thumbnailData.startsWith('data:image')) {
@@ -353,7 +362,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNo
     if ((isInView || wasInView) && getImageFilesForPreview.length > 0) {
       loadThumbnails();
     }
-  }, [getImageFilesForPreview, isInView, wasInView]);
+  }, [getImageFilesForPreview, isInView, wasInView, resourceRoot, cachePath]);
 
   // Handle image load error for folder previews
   const handlePreviewError = async (index: number) => {
@@ -361,7 +370,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode }: { file: FileNo
     if (img && img.path) {
       try {
         const { getThumbnail } = await import('../api/tauri-bridge');
-        const thumbnailData = await getThumbnail(img.path);
+        const thumbnailData = await getThumbnail(img.path, undefined, resourceRoot, cachePath);
         
         // Ensure we only use base64 data URLs
         if (thumbnailData && thumbnailData.startsWith('data:image')) {
@@ -976,7 +985,7 @@ const FileCard = React.memo(({
             style={{ height: height ? (height - 40) : '100%' }}
         >
             {file.type === FileType.FOLDER ? (
-            <FolderThumbnail file={file} files={files} mode={layoutMode} />
+            <FolderThumbnail file={file} files={files} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
             ) : (
             <ImageThumbnail
                 src={''}
@@ -987,6 +996,8 @@ const FileCard = React.memo(({
                 size={file.size}
                 isHovering={hoverPlayingId === file.id}
                 fileMeta={file.meta}
+                resourceRoot={effectiveResourceRoot}
+                cachePath={effectiveCachePath}
             />
             )}
             
@@ -1368,8 +1379,10 @@ interface FileGridProps {
   t: (key: string) => string;
   onThumbnailSizeChange?: (size: number) => void;
   onUpdateFile?: (id: string, updates: Partial<FileNode>) => void;
-  settings?: { animateOnHover: boolean };
+  settings?: import('../types').AppSettings;
   onDragEnd?: (e: React.DragEvent) => void;
+  resourceRoot?: string;
+  cachePath?: string;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -1378,6 +1391,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   activeTab,
   renamingId,
   thumbnailSize,
+  resourceRoot,
+  cachePath,
   hoverPlayingId,
   onSetHoverPlayingId,
   onFileClick,
@@ -1415,7 +1430,25 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onUpdateFile,
   settings
 }) => {
+  // #region agent log
+  useEffect(() => {
+      import('@tauri-apps/api/core').then(({ invoke }) => {
+          invoke('log_frontend', { msg: `FileGrid props: resourceRoot=${resourceRoot}, cachePath=${cachePath}` });
+      });
+  }, [resourceRoot, cachePath]);
+  // #endregion
   const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+  
+  // Fallback to settings if direct props are missing
+  const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
+  const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
+
+  // #region agent log
+  useEffect(() => {
+      // Use console.warn for visibility in terminal
+      console.warn(`FRONTEND_DEBUG: FileGrid effective props: resourceRoot=${effectiveResourceRoot}, cachePath=${effectiveCachePath}`);
+  }, [effectiveResourceRoot, effectiveCachePath]);
+  // #endregion
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
 

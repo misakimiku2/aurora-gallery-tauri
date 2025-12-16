@@ -313,11 +313,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
                                 <div className="flex items-center">
                                     <div className="flex-1 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
-                                        {state.settings.paths.cacheRoot}
+                                        {state.settings.paths.cacheRoot || `${state.settings.paths.resourceRoot}\\.Aurora_Cache`}
                                     </div>
                                     <button 
                                         onClick={() => onUpdatePath('cache')}
-                                        className="bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 px-4 py-2 text-sm font-medium rounded-r"
+                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r"
                                     >
                                         {t('settings.change')}
                                     </button>

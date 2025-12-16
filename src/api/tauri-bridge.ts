@@ -134,7 +134,7 @@ export const openDirectory = async (): Promise<string | null> => {
  * @param modified 文件修改时间（可选，用于缓存）
  * @returns Base64 编码的缩略图数据 URL，如果失败则返回 null
  */
-export const getThumbnail = async (filePath: string, modified?: string): Promise<string | null> => {
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, cachePath?: string): Promise<string | null> => {
   try {
     // 验证 filePath 参数
     if (!filePath || filePath.trim() === '') {
@@ -145,8 +145,12 @@ export const getThumbnail = async (filePath: string, modified?: string): Promise
     
     const { invoke } = await import('@tauri-apps/api/core');
     
-    // Tauri 2.0 会自动将 TypeScript 的 camelCase (filePath) 转换为 Rust 的 snake_case (file_path)
-    const thumbnail = await invoke<string | null>('get_thumbnail', { filePath });
+    // Explicitly use snake_case keys to match Rust command arguments
+    const thumbnail = await invoke<string | null>('get_thumbnail', { 
+      file_path: filePath,
+      root_path: rootPath || null,
+      cache_path: cachePath || null
+    });
     // Validate that we got a base64 data URL, not a thumbnail:// protocol URL
     if (thumbnail && !thumbnail.startsWith('data:image')) {
       return null;
@@ -180,6 +184,32 @@ export const readFileAsBase64 = async (filePath: string): Promise<string | null>
     console.error('Failed to read file as base64:', error);
     return null;
   }
+};
+
+/**
+ * 确保目录存在
+ * @param path 目录路径
+ */
+export const ensureDirectory = async (path: string): Promise<void> => {
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('ensure_directory', { path });
+  } catch (error) {
+    console.error('Failed to ensure directory:', error);
+    // 不抛出错误
+  }
+};
+
+// Deprecated: use ensureDirectory instead
+export const ensureCacheDirectory = async (rootPath: string): Promise<void> => {
+    // Adapter to new function logic if needed, or just keep as is but utilizing new rust command if logic matches
+    // But since we changed rust command name, we must update this or just replace usage.
+    // Let's replace usage in App.tsx mainly.
+    // But for safety, let's make this function call ensureDirectory with the appended path
+    const path = rootPath.endsWith('.Aurora_Cache') || rootPath.endsWith('.Aurora_Cache\\') || rootPath.endsWith('.Aurora_Cache/')
+        ? rootPath 
+        : `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+    return ensureDirectory(path);
 };
 
 /**
