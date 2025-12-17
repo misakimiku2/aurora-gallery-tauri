@@ -1,3 +1,4 @@
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState } from '../types';
@@ -349,18 +350,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         // Only run if we haven't already processed this file in this session
         if (shouldExtract && !extractedCache.current.has(file.id) && file.path) {
            extractedCache.current.add(file.id); // Mark as processing/processed
-           // In Tauri, we need to read the file as base64 first
+           // Use Asset Protocol for palette extraction
            (async () => {
              try {
-               const { readFileAsBase64 } = await import('../api/tauri-bridge');
-               const dataUrl = await readFileAsBase64(file.path!);
-               if (dataUrl) {
-                 const palette = await extractPalette(dataUrl);
-                 if (palette && palette.length > 0) {
+               const imgUrl = convertFileSrc(file.path!);
+               const palette = await extractPalette(imgUrl);
+               if (palette && palette.length > 0) {
                    onUpdate(file.id, {
                      meta: { ...file.meta!, palette }
                    });
-                 }
                }
              } catch (err) {
                console.error('Failed to extract palette:', err);
@@ -475,7 +473,26 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
   const folderPreviewImages = useMemo(() => {
     if (file && file.type === FileType.FOLDER) {
-        return getFolderPreviewImages(files, file.id, 3);
+        // Custom logic for Tauri to use Asset Protocol
+        const found: string[] = [];
+        const queue = [...(file.children || [])];
+        let head = 0;
+        let iterations = 0;
+        const maxIterations = 200;
+
+        while (head < queue.length && found.length < 3 && iterations < maxIterations) {
+            const id = queue[head++];
+            iterations++;
+            const node = files[id];
+            if (!node) continue;
+            
+            if (node.type === FileType.IMAGE && node.path) {
+                found.push(convertFileSrc(node.path));
+            } else if (node.type === FileType.FOLDER && node.children) {
+                queue.push(...node.children);
+            }
+        }
+        return found;
     }
     return [];
   }, [file, files]);
@@ -650,8 +667,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
   if (person) {
       const coverFile = files[person.coverFileId];
-      // Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs
-      const coverUrl = null; // Disabled in Tauri - would need to load thumbnail separately
+      const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
