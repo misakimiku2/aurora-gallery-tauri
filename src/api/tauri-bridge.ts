@@ -1,4 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { Channel } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { FileNode, FileType } from '../types';
 import { isTauriEnvironment } from '../utils/environment';
@@ -138,47 +139,114 @@ export const openDirectory = async (): Promise<string | null> => {
   }
 };
 
+// 批量请求管理器
+class ThumbnailBatcher {
+    private batch: Map<string, {
+        resolve: (value: string | null) => void;
+        reject: (reason?: any) => void;
+        cacheRoot: string;
+    }> = new Map();
+    private timeoutId: ReturnType<typeof setTimeout> | null = null;
+    private readonly BATCH_DELAY = 50; // 50ms 聚合时间
+
+    add(filePath: string, cacheRoot: string): Promise<string | null> {
+        return new Promise((resolve, reject) => {
+            // 如果已经在队列中，暂不处理覆盖，假设相同请求会得到相同结果
+            if (this.batch.has(filePath)) {
+               // 可选：将新请求关联到旧请求的 Promise，但这里简化处理
+            }
+            
+            this.batch.set(filePath, { resolve, reject, cacheRoot });
+
+            if (!this.timeoutId) {
+                this.timeoutId = setTimeout(() => this.processBatch(), this.BATCH_DELAY);
+            }
+        });
+    }
+
+    private async processBatch() {
+        this.timeoutId = null;
+        if (this.batch.size === 0) return;
+
+        // 取出所有待处理项
+        const currentBatch = new Map(this.batch);
+        this.batch.clear();
+
+        try {
+            // 按照 cacheRoot 分组
+            const batchesByRoot: Record<string, string[]> = {};
+            
+            for (const [path, item] of currentBatch.entries()) {
+                if (!batchesByRoot[item.cacheRoot]) {
+                    batchesByRoot[item.cacheRoot] = [];
+                }
+                batchesByRoot[item.cacheRoot].push(path);
+            }
+
+            // 并行发送所有分组的批量请求
+            await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
+                try {
+                    // 创建通道
+                    const channel = new Channel<{ path: string; url: string | null }>();
+                    
+                    // 监听通道消息 (流式结果！)
+                    channel.onmessage = ({ path, url }) => {
+                        const item = currentBatch.get(path);
+                        if (item) {
+                            if (url) {
+                                item.resolve(convertFileSrc(url));
+                            } else {
+                                item.resolve(null);
+                            }
+                        }
+                    };
+
+                    // 调用 Rust 的流式批量接口
+                    await invoke('get_thumbnails_batch', {
+                        filePaths: paths,
+                        cacheRoot: cacheRoot,
+                        onEvent: channel // 传递通道
+                    });
+                } catch (err) {
+                    console.error('Batch processing failed:', err);
+                    // 局部失败
+                    paths.forEach(path => {
+                        const item = currentBatch.get(path);
+                        if (item) item.resolve(null);
+                    });
+                }
+            }));
+            
+        } catch (error) {
+            console.error('Global batch error:', error);
+            // 全局失败
+            for (const item of currentBatch.values()) {
+                item.resolve(null);
+            }
+        }
+    }
+}
+
+const thumbnailBatcher = new ThumbnailBatcher();
+
 /**
  * 获取图片缩略图
  * @param filePath 图片文件路径
  * @param modified 文件修改时间（可选，用于缓存）
  * @param rootPath 资源根目录路径（可选，用于计算缓存目录）
- * @returns Base64 编码的缩略图数据 URL，如果失败则返回 null
+ * @param signal AbortSignal (可选，用于取消请求)
+ * @returns 缩略图 Asset URL，如果失败则返回 null
  */
-export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string): Promise<string | null> => {
-  try {
-    // 验证 filePath 参数
-    if (!filePath || filePath.trim() === '') {
-      console.error('getThumbnail: filePath is empty or invalid');
-      return null;
-    }
-    
-    // 验证 rootPath 参数
-    if (!rootPath || rootPath.trim() === '') {
-      console.error('getThumbnail: rootPath is empty or invalid');
-      return null;
-    }
-    
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal): Promise<string | null> => {
+    // 验证参数
+    if (!filePath || filePath.trim() === '') return null;
+    if (!rootPath || rootPath.trim() === '') return null;
+
     // 计算缓存目录路径
     const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
-    
-    // 调用 Rust 的 get_thumbnail 命令
-    const thumbnailPath = await invoke<string | null>('get_thumbnail', { 
-      filePath, 
-      cacheRoot: cachePath 
-    });
-    
-    // 如果返回了缩略图路径，读取文件并转换为 Base64
-    if (thumbnailPath) {
-      // 使用现有的 readFileAsBase64 函数读取缩略图
-      return await readFileAsBase64(thumbnailPath);
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('Failed to get thumbnail:', error);
-    return null;
-  }
+
+    // 使用批量处理器
+    return thumbnailBatcher.add(filePath, cachePath);
 };
 
 /**

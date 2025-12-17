@@ -6,6 +6,21 @@ import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import md5 from 'md5';
 
+// 扩展 Window 接口以包含我们的全局缓存
+declare global {
+  interface Window {
+    __AURORA_THUMBNAIL_CACHE__?: Map<string, string>;
+  }
+}
+
+// 获取或初始化全局缓存 (挂载在 window 上以防热更新丢失)
+const getGlobalCache = () => {
+  if (!window.__AURORA_THUMBNAIL_CACHE__) {
+    window.__AURORA_THUMBNAIL_CACHE__ = new Map<string, string>();
+  }
+  return window.__AURORA_THUMBNAIL_CACHE__;
+};
+
 // --- Folder 3D Icon Component ---
 export const Folder3DIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void }) => {
     const styles: any = {
@@ -17,13 +32,8 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
     
     const Icon = category === 'book' ? Book : (category === 'sequence' ? Film : Folder);
 
-    // Filter out invalid URLs (thumbnail://, local-resource://, etc.) - only use base64 data URLs
-    const images = (previewSrcs || []).filter(src => {
-      if (!src) return false;
-      // Only allow base64 data URLs
-      if (src.startsWith('data:image')) return true;
-      return false;
-    });
+    // Use whatever valid URLs are passed (base64 or asset://)
+    const images = (previewSrcs || []).filter(src => !!src);
     
     return (
         <div className={`relative w-full h-full group select-none ${className}`}>
@@ -34,7 +44,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
 
              {/* Preview Images */}
              <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
-                 {images[2] && images[2].startsWith('data:image') && (
+                 {images[2] && (
                      <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
                          <img 
                              src={images[2]} 
@@ -45,7 +55,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                          />
                      </div>
                  )}
-                 {images[1] && images[1].startsWith('data:image') && (
+                 {images[1] && (
                      <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
                          <img 
                              src={images[1]} 
@@ -56,7 +66,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                          />
                      </div>
                  )}
-                 {images[0] && images[0].startsWith('data:image') && (
+                 {images[0] && (
                      <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
                          <img 
                              src={images[0]} 
@@ -154,28 +164,68 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   cachePath?: string;
 }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
-  const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(null);
+  
+  // 初始化时尝试从全局缓存读取
+  // 简化 Key: 只使用 filePath，提高命中率。文件修改后 getThumbnail 仍会更新图片。
+  const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(() => {
+      if (!filePath) return null;
+      // const key = `${filePath}|${modified || ''}`; 
+      const key = filePath; 
+      const cache = getGlobalCache();
+      return cache.get(key) || null;
+  });
+  
   const [animSrc, setAnimSrc] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  // 如果有缓存，初始 loading 为 false
+  const [loading, setLoading] = React.useState(!thumbnailSrc);
 
   React.useEffect(() => {
     // Only load thumbnail if the component is in view or was previously in view
     if ((isInView || wasInView) && filePath && resourceRoot) {
+      const cache = getGlobalCache();
+      const key = filePath; // 保持 Key 一致
+
+      // 如果已经有图了（比如从缓存中读到的），且 URL 没变，就不用重新加载
+      if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
+          // 这里可以不做任何事，但为了应对文件修改的情况，
+          // 可以选择继续请求，或者信任缓存。
+          // 考虑到用户对“闪烁”敏感，我们优先信任缓存。
+          // 如果真的需要更新，可以通过文件修改时间对比（这里略过，优先流畅度）
+          // return; 
+      }
+
+      const controller = new AbortController();
       const loadThumbnail = async () => {
-        setLoading(true);
+        // 只有当没有当前数据时才显示 loading
+        if (!thumbnailSrc) setLoading(true);
+        
         try {
           const { getThumbnail } = await import('../api/tauri-bridge');
-          const thumbnail = await getThumbnail(filePath, modified, resourceRoot);
-          setThumbnailSrc(thumbnail);
+          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal);
+          
+          if (!controller.signal.aborted && thumbnail) {
+            // 更新全局缓存
+            if (cache.get(key) !== thumbnail) {
+                cache.set(key, thumbnail);
+                setThumbnailSrc(thumbnail);
+            }
+          }
         } catch (error) {
-          console.error('Failed to load thumbnail:', error);
-          setThumbnailSrc(null);
+          if (!controller.signal.aborted) {
+            console.error('Failed to load thumbnail:', error);
+          }
         } finally {
-          setLoading(false);
+          if (!controller.signal.aborted) {
+            setLoading(false);
+          }
         }
       };
 
       loadThumbnail();
+
+      return () => {
+        controller.abort();
+      };
     }
   }, [filePath, modified, resourceRoot, isInView, wasInView]);
 
@@ -253,15 +303,138 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   );
 });
 
+// 辅助函数：深度查找文件夹内的图片
+const findImagesDeeply = (
+    rootFolder: FileNode, 
+    allFiles: Record<string, FileNode>, 
+    limit: number = 3
+): FileNode[] => {
+    const images: FileNode[] = [];
+    // 使用栈进行 DFS，或者队列进行 BFS
+    const stack: string[] = [...(rootFolder.children || [])];
+    const visited = new Set<string>(); // 防止循环引用
+    
+    // 设置一个遍历上限，防止超大文件夹卡死 UI
+    let traversalCount = 0;
+    const MAX_TRAVERSAL = 500; 
+
+    while (stack.length > 0 && traversalCount < MAX_TRAVERSAL) {
+        const id = stack.pop()!;
+        if (visited.has(id)) continue;
+        visited.add(id);
+        traversalCount++;
+
+        const node = allFiles[id];
+        if (!node) continue;
+        
+        if (node.type === FileType.IMAGE) {
+            images.push(node);
+        } else if (node.type === FileType.FOLDER && node.children) {
+            stack.push(...node.children);
+        }
+    }
+    
+    // 排序并切片
+    return images
+        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
+        .slice(0, limit);
+};
+
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
+  
+  // 1. 同步计算需要展示的子文件 (改为深度查找)
+  const imageChildren = useMemo(() => {
+      if (!file.children || file.children.length === 0) return [];
+      return findImagesDeeply(file, files, 3);
+  }, [file, files]);
+
+  // 2. 初始化时尝试从全局缓存同步读取
+  const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
+      const cache = getGlobalCache();
+      // 尝试映射所有子文件到缓存中的 URL
+      const cachedUrls = imageChildren.map(child => {
+          // 使用与 ImageThumbnail 相同的 Key 生成逻辑 (仅 filePath)
+          return cache.get(child.path) || null; 
+      });
+      
+      // 只有当所有需要的图片都有缓存时，才视为命中 (或者至少有一张？)
+      // 为了体验最好，只要有缓存就先用。过滤掉 null。
+      const validUrls = cachedUrls.filter((url): url is string => !!url);
+      
+      // 如果没有缓存，返回空数组
+      return validUrls;
+  });
+
+  // 如果初始就有数据（哪怕只有一张），就不设为 loaded=false，避免闪烁
+  const [loaded, setLoaded] = useState(previewSrcs.length > 0);
+
+  useEffect(() => {
+    // 如果已经加载过了，且数量足够（或者等于子文件总数），就不再请求
+    // 注意：这里简单判断，如果缓存里不够 3 张但实际有 3 张，还是会触发请求补全
+    if (loaded && previewSrcs.length === Math.min(3, imageChildren.length)) {
+        return;
+    }
+
+    if ((isInView || wasInView) && resourceRoot && imageChildren.length > 0) {
+      const controller = new AbortController();
+      const loadPreviews = async () => {
+        try {
+          const { getThumbnail } = await import('../api/tauri-bridge');
+          
+          // 并行请求所有子文件的缩略图
+          const promises = imageChildren.map(async (img: FileNode) => {
+              // 先查缓存，如果有就不请求了 (虽然 getThumbnail 内部也有 batcher，但这里拦截更快)
+              const cache = getGlobalCache();
+              const cached = cache.get(img.path);
+              if (cached) return cached;
+
+              // 请求新图
+              const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, controller.signal);
+              if (url) {
+                  cache.set(img.path, url); // 更新缓存
+              }
+              return url;
+          });
+
+          const thumbnails = await Promise.all(promises);
+          
+          if (!controller.signal.aborted) {
+            const validThumbnails = thumbnails.filter((t): t is string => !!t);
+            // 只有当结果不同时才更新状态
+            // 简单的数组比较
+            setPreviewSrcs(prev => {
+                if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
+                    return prev;
+                }
+                return validThumbnails;
+            });
+          }
+        } catch (error) {
+          if (!controller.signal.aborted) {
+            console.error('Failed to load folder previews:', error);
+          }
+        } finally {
+          if (!controller.signal.aborted) {
+            setLoaded(true);
+          }
+        }
+      };
+
+      loadPreviews();
+
+      return () => {
+        controller.abort();
+      };
+    }
+  }, [isInView, wasInView, loaded, imageChildren, resourceRoot]);
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       {(isInView || wasInView) && (
           <div className="relative w-full h-full p-2">
              <Folder3DIcon  
-                previewSrcs={[]}
+                previewSrcs={previewSrcs}
                 count={file.children?.length} 
                 category={file.category} 
              />

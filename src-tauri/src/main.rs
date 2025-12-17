@@ -5,9 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
+use std::num::NonZeroU32;
 use walkdir::WalkDir;
 use tauri::Manager;
 use base64::{Engine as _, engine::general_purpose};
+use fast_image_resize as fr;
+use rayon::prelude::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -525,140 +528,170 @@ async fn open_path(path: String) -> Result<(), String> {
     }
 }
 
-#[tauri::command]
-async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
-    use std::path::Path;
+use tauri::ipc::Channel;
+
+#[derive(Clone, Serialize)]
+struct BatchResult {
+    path: String,
+    url: Option<String>,
+}
+
+// 1. 提取核心生成逻辑为独立函数 (不作为 command)
+fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
     use std::fs;
-    use std::io::Read;
+    use std::io::{Read, BufWriter, BufReader, Cursor};
+    use image::codecs::jpeg::{JpegEncoder, JpegDecoder};
     use image::GenericImageView;
-    use image::imageops::FilterType;
-    use webp::Encoder;
+    use image::ImageFormat;
     
-    // Check if file exists
-    let image_path = Path::new(&file_path);
-    if !image_path.exists() {
-        return Ok(None);
+    let image_path = Path::new(file_path);
+    if !image_path.exists() || file_path.contains(".Aurora_Cache") {
+        return None;
     }
-    
-    // Ensure we're not processing a file from .Aurora_Cache folder
-    if file_path.contains(".Aurora_Cache") {
-        return Ok(None);
-    }
-    
-    // Generate cache key based on file content (metadata + partial content)
-    // instead of file path to support moves/renames without regenerating thumbnails
-    
-    let metadata = fs::metadata(image_path).map_err(|e| format!("Failed to read metadata: {}", e))?;
+
+    // 快速 Hash
+    let metadata = fs::metadata(image_path).ok()?;
     let size = metadata.len();
     let modified = metadata.modified()
         .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
         .unwrap_or(0);
-
-    // Read first 8KB for content hashing to avoid collisions on same size+time
-    let mut file = fs::File::open(image_path).map_err(|e| format!("Failed to open file: {}", e))?;
-    let mut buffer = [0u8; 8192];
+    
+    let mut file = fs::File::open(image_path).ok()?;
+    let mut buffer = [0u8; 4096];
     let bytes_read = file.read(&mut buffer).unwrap_or(0);
     
     let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
     let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
-
-    // Always use WebP format for thumbnails
-    // let output_format = ImageFormat::WebP;
-    let output_ext = "webp";
+    let cache_file_name = format!("{}.jpg", cache_filename);
     
-    let cache_file_name = format!("{}.{}", cache_filename, output_ext);
+    let cache_file_path = cache_root.join(&cache_file_name);
     
-    // Create cache directory structure
-    let cache_dir = Path::new(&cache_root);
-    fs::create_dir_all(cache_dir)
-        .map_err(|e| format!("Failed to create cache directory: {}", e))?;
-    
-    let cache_file_path = cache_dir.join(&cache_file_name);
-    
-    // Check if thumbnail already exists in cache
+    // 缓存命中
     if cache_file_path.exists() {
-        return Ok(Some(cache_file_path.to_str().unwrap_or_default().to_string()));
+        return Some(cache_file_path.to_str().unwrap_or_default().to_string());
     }
-    
-    // If thumbnail doesn't exist, generate it
-    
-    // Read file data once for all attempts
-    let data = match fs::read(image_path) {
-        Ok(data) => data,
-        Err(e) => {
-            println!("Failed to read file {}: {}", file_path, e);
-            return Ok(None);
-        }
-    };
-    
-    // Guess format from data, ignoring file extension
-    let format = match image::guess_format(&data) {
-        Ok(format) => format,
-        Err(e) => {
-            println!("Failed to guess format for {}: {}", file_path, e);
-            return Ok(None);
-        }
-    };
-    
-    println!("Generating thumbnail for {} (guessed format: {:?})", file_path, format);
 
-    // Load image using guessed format
-    let img = match image::load_from_memory_with_format(&data, format) {
-        Ok(img) => img,
-        Err(e) => {
-            println!("Failed to load from memory with format {:?}: {}", format, e);
-            // Fallback: try standard load_from_memory which guesses internally again
-            match image::load_from_memory(&data) {
-                Ok(img) => img,
-                Err(e) => {
-                    println!("Failed to load from memory (fallback): {}", e);
-                    return Ok(None);
-                }
-            }
-        }
+    // 生成逻辑
+    // 重新打开文件，使用 BufReader 以流式方式读取，避免一次性分配大内存
+    let file = fs::File::open(image_path).ok()?;
+    let mut reader = BufReader::new(file);
+    
+    // 1. 尝试识别格式
+    let format = image::guess_format(&buffer[..bytes_read]).unwrap_or(ImageFormat::Png);
+
+    let img = if format == ImageFormat::Jpeg {
+        // 【针对 JPEG 的超大图优化】
+        // 使用 BufReader 直接作为输入源，配合 scale 解码
+        let mut decoder = JpegDecoder::new(reader).ok()?;
+        
+        // 如果原图非常大，我们可以只加载它的缩略版
+        decoder.scale(256, 256).ok()?; 
+        
+        image::DynamicImage::from_decoder(decoder).ok()?
+    } else {
+        // 【针对 PNG 及其他格式的优化】
+        // 使用流式解码器，避免先将整个文件读入 Vec<u8>
+        // 这对于大尺寸 PNG (几十MB) 能节省大量内存带宽
+        let mut image_reader = image::io::Reader::new(reader);
+        image_reader.set_format(format);
+        
+        // 限制解码时的内存使用，防止炸弹攻击（可选，这里设为 512MB 足够应对 8K 图）
+        image_reader.no_limits(); 
+        
+        image_reader.decode().ok()?
     };
-    
-    // Get original dimensions
-    let (width, height) = img.dimensions();
-    
-    // Calculate new dimensions based on minimum side being 256px
-    // If width < height, scale width to 256, height proportional
-    // If height < width, scale height to 256, width proportional
-    // If width == height, both 256
+
+    let width = img.width();
+    let height = img.height();
     const TARGET_MIN_SIZE: u32 = 256;
     
-    let (new_width, new_height) = if width < height {
-        // Width is the smaller side (or equal)
+    let (dst_width, dst_height) = if width < height {
         let ratio = height as f32 / width as f32;
         (TARGET_MIN_SIZE, (TARGET_MIN_SIZE as f32 * ratio) as u32)
     } else {
-        // Height is the smaller side
         let ratio = width as f32 / height as f32;
         ((TARGET_MIN_SIZE as f32 * ratio) as u32, TARGET_MIN_SIZE)
     };
+
+    let src_width = NonZeroU32::new(width)?;
+    let src_height = NonZeroU32::new(height)?;
+    let dst_width_nz = NonZeroU32::new(dst_width)?;
+    let dst_height_nz = NonZeroU32::new(dst_height)?;
+
+    let src_image = fr::Image::from_vec_u8(
+        src_width,
+        src_height,
+        img.to_rgb8().into_raw(),
+        fr::PixelType::U8x3,
+    ).ok()?;
+
+    let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
     
-    // Resize image using image crate's resize function
-    // Use Lanczos3 filter for good quality
-    let thumbnail = img.resize(new_width, new_height, FilterType::Lanczos3);
+    // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
+    let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+    resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
+
+    // 确保目录存在
+    if !cache_root.exists() {
+        let _ = fs::create_dir_all(cache_root);
+    }
+
+    let cache_file = fs::File::create(&cache_file_path).ok()?;
+    let mut writer = BufWriter::new(cache_file);
+    let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+    encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
+
+    Some(cache_file_path.to_str().unwrap_or_default().to_string())
+}
+
+#[tauri::command]
+async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = Path::new(&cache_root);
+        if !root.exists() {
+             let _ = fs::create_dir_all(root);
+        }
+        process_single_thumbnail(&file_path, root)
+    }).await;
     
-    // Save thumbnail to cache with appropriate format
-    // Encode with quality 75.0 (lossy) to reduce file size significantly compared to lossless
-    let (width, height) = thumbnail.dimensions();
-    let cache_result = if thumbnail.color().has_alpha() {
-        let rgba = thumbnail.to_rgba8();
-        let encoder = Encoder::from_rgba(&rgba, width, height);
-        encoder.encode(75.0)
-    } else {
-        let rgb = thumbnail.to_rgb8();
-        let encoder = Encoder::from_rgb(&rgb, width, height);
-        encoder.encode(75.0)
-    };
-    
-    // Write the WebP memory to file
-    fs::write(&cache_file_path, &*cache_result)
-        .map_err(|e| format!("Failed to save thumbnail (path: {:?}): {}", cache_file_path, e))?;
-    
-    Ok(Some(cache_file_path.to_str().unwrap_or_default().to_string()))
+    match result {
+        Ok(val) => Ok(val),
+        Err(e) => Err(e.to_string())
+    }
+}
+
+#[tauri::command]
+async fn get_thumbnails_batch(
+    file_paths: Vec<String>, 
+    cache_root: String, 
+    on_event: tauri::ipc::Channel<BatchResult>
+) -> Result<(), String> {
+    // 放入 blocking 线程
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = Path::new(&cache_root);
+        if !root.exists() {
+             let _ = fs::create_dir_all(root);
+        }
+
+        // 使用 Rayon 并行处理！9800X3D 此时将全核满载
+        file_paths.par_iter().for_each(|path| {
+            // 处理单个文件
+            let url = process_single_thumbnail(path, root);
+            
+            // 立即发送结果回前端！不用等别人！
+            let _ = on_event.send(BatchResult {
+                path: path.clone(),
+                url,
+            });
+        });
+        
+        Ok(())
+    }).await;
+
+    match result {
+        Ok(val) => val,
+        Err(e) => Err(e.to_string())
+    }
 }
 
 #[tauri::command]
@@ -702,6 +735,8 @@ fn main() {
     tauri::Builder::default()
         // 清理调试阶段的 setup 注入，恢复默认构建
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_log::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             greet, 
@@ -710,6 +745,7 @@ fn main() {
             load_user_data,
             get_default_paths,
             get_thumbnail,
+            get_thumbnails_batch,
             read_file_as_base64,
             ensure_directory,
             open_path
