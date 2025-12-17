@@ -1,4 +1,5 @@
 
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FileNode, FileType } from '../types';
 import { 
@@ -46,8 +47,8 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
   // UI State
   const [contextMenu, setContextMenu] = useState<{ visible: boolean, x: number, y: number }>({ visible: false, x: 0, y: 0 });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [currentImageUrl, setCurrentImageUrl] = useState<string>('');
-
+  // Removed async currentImageUrl state in favor of direct Asset Protocol usage
+  
   // Context menu close handlers
   useEffect(() => {
     // 只有当菜单可见时才添加事件监听器
@@ -144,44 +145,25 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
     return () => clearInterval(intervalId);
   }, [isPlaying, fps, isLooping, currentIndex, totalFrames, validFileIds, onNavigate]);
 
-  // Load current image as base64
+  // Preloading - Optimize playback by preloading next frames
   useEffect(() => {
-    const loadImage = async () => {
-      if (!currentFile?.path) {
-        setCurrentImageUrl('');
-        return;
-      }
-      
-      try {
-        const { readFileAsBase64 } = await import('../api/tauri-bridge');
-        const dataUrl = await readFileAsBase64(currentFile.path);
-        if (dataUrl) {
-          setCurrentImageUrl(dataUrl);
-        } else {
-          setCurrentImageUrl('');
-        }
-      } catch (error) {
-        console.error('Failed to load image:', error);
-        setCurrentImageUrl('');
-      }
-    };
+    // Always preload next few frames, regardless of playing state, 
+    // to ensure smooth manual navigation too.
+    const PRELOAD_COUNT = 10; 
     
-    loadImage();
-  }, [currentFile?.path, currentFile?.id]);
+    if (totalFrames <= 1) return;
 
-  // Preloading - Note: Disabled in Tauri as file.url is not a usable URL
-  // useEffect(() => {
-  //   if (!isPlaying) return;
-  //   const preloadCount = 5;
-  //   for (let i = 1; i <= preloadCount; i++) {
-  //     const nextIdx = (currentIndex + i) % totalFrames;
-  //     const nextFile = files[validFileIds[nextIdx]];
-  //     if (nextFile?.url) {
-  //       const img = new Image();
-  //       img.src = nextFile.url;
-  //     }
-  //   }
-  // }, [currentIndex, isPlaying, totalFrames, validFileIds, files]);
+    for (let i = 1; i <= PRELOAD_COUNT; i++) {
+      const nextIdx = (currentIndex + i) % totalFrames;
+      const nextFileId = validFileIds[nextIdx];
+      const nextFile = files[nextFileId];
+      
+      if (nextFile?.path) {
+        const img = new Image();
+        img.src = convertFileSrc(nextFile.path);
+      }
+    }
+  }, [currentIndex, totalFrames, validFileIds, files]);
 
   // Keyboard controls
   useEffect(() => {
@@ -364,9 +346,9 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
             onMouseLeave={handleMouseUp}
             onContextMenu={handleContextMenu}
         >
-           {currentFile && currentImageUrl ? (
+           {currentFile && currentFile.path ? (
                <img 
-                 src={currentImageUrl} 
+                 src={convertFileSrc(currentFile.path)} 
                  className="max-h-full max-w-full object-contain shadow-lg pointer-events-none transition-transform duration-75"
                  style={{
                     transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`,
@@ -374,6 +356,8 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                  }}
                  alt="Frame"
                  draggable={false}
+                 loading="eager"
+                 decoding="async"
                />
            ) : currentFile ? (
                <div className="flex items-center justify-center">
