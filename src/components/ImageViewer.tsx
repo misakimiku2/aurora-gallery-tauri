@@ -1,3 +1,4 @@
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { FileNode, SlideshowConfig, SearchScope } from '../types';
 import { 
@@ -116,31 +117,40 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [isLoaded, setIsLoaded] = useState(false);
   const [imageUrl, setImageUrl] = useState<string>('');
 
-  // Load full image as base64 data URL
+  // Load image with asset protocol and preloading
   useEffect(() => {
-    const loadImage = async () => {
-      if (!file.path) {
-        setImageUrl('');
-        return;
-      }
-      
-      try {
-        const { readFileAsBase64 } = await import('../api/tauri-bridge');
-        const dataUrl = await readFileAsBase64(file.path);
-        if (dataUrl) {
-          setImageUrl(dataUrl);
-          setIsLoaded(false); // Reset loaded state when image changes
-        } else {
-          setImageUrl('');
-        }
-      } catch (error) {
-        console.error('Failed to load image:', error);
-        setImageUrl('');
-      }
-    };
+    let isMounted = true;
+    if (!file.path) {
+      setImageUrl('');
+      return;
+    }
     
-    loadImage();
-  }, [file.path, file.id]);
+    const targetSrc = convertFileSrc(file.path);
+    
+    // Initial load
+    if (!imageUrl) {
+      setImageUrl(targetSrc);
+      return;
+    }
+
+    // If source is different, preload then switch
+    if (imageUrl !== targetSrc) {
+       // Create a temp image to preload
+       const img = new Image();
+       img.src = targetSrc;
+       img.onload = () => {
+          if (isMounted) setImageUrl(targetSrc);
+       };
+       img.onerror = () => {
+          if (isMounted) setImageUrl(targetSrc); // Switch anyway on error
+       };
+    }
+
+    return () => {
+        isMounted = false;
+    };
+  }, [file.path]);
+
 
   // --- Calculate Preload Nodes ---
   const preloadImages = useMemo(() => {
@@ -164,6 +174,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       return nodes;
   }, [file.id, sortedFileIds, files]);
+
+  // Preload neighbors
+  useEffect(() => {
+     preloadImages.forEach(node => {
+        if (node.path) {
+           const img = new Image();
+           img.src = convertFileSrc(node.path);
+        }
+     });
+  }, [preloadImages]);
   // ------------------------------
 
   useEffect(() => {
@@ -223,7 +243,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       setRotation(0);
       setPosition({ x: 0, y: 0 });
       setScale(1); 
-      setIsLoaded(false); 
+      // Removed setIsLoaded(false) to prevent flickering (keep old image until new one loads)
       lastFileIdRef.current = file.id;
     }
   }, [file.id, slideshowActive, slideshowConfig]);
@@ -431,12 +451,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       className={`flex-1 flex flex-col h-full relative select-none overflow-hidden transition-colors duration-300 ${slideshowActive ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
       onClick={() => setContextMenu({ ...contextMenu, visible: false })}
     >
-      {/* Background Preloading of 4 neighbors - Note: Preloading disabled in Tauri as file.url is not a usable URL */}
-      {/* <div className="hidden">
-         {preloadImages.map(node => (
-             node?.url && <img key={node.id} src={node.url} alt="preload" />
-         ))}
-      </div> */}
+      {/* Preloading handled in useEffect now */}
 
       <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
         
@@ -584,10 +599,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
            {imageUrl ? (
              <img 
                ref={imgRef}
-               key={file.id} 
+               // Removed key={file.id} to prevent unmounting and flickering
                src={imageUrl} 
                alt={file.name}
-               className={`max-w-none transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''}`}
+               className={`max-w-none transition-opacity duration-150 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''}`}
                onLoad={() => setIsLoaded(true)}
                loading="eager"
                decoding="async"
@@ -596,7 +611,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                  height: '100%',
                  objectFit: 'contain',
                  transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                 transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+                 transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear, opacity 150ms ease-in-out'),
                  pointerEvents: slideshowActive ? 'none' : 'auto',
                  transformOrigin: 'center center',
                  ...filterStyle
