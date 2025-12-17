@@ -11,7 +11,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory } from './api/tauri-bridge';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -1552,10 +1552,11 @@ export const App: React.FC = () => {
   
   const handleRefresh = async (folderId?: string) => {
       const targetFolderId = folderId || activeTab.folderId;
+      const folder = state.files[targetFolderId];
       
-      // Handle Electron environment
-      if (window.electron && state.files[targetFolderId]?.path) {
-          const path = state.files[targetFolderId].path;
+      // Handle both Electron and Tauri environments
+      if (folder?.path) {
+          const path = folder.path;
           try {
               const result = await scanDirectory(path, true);
               setState(prev => {
@@ -1610,21 +1611,16 @@ export const App: React.FC = () => {
           } catch (e) {
               console.error("Failed to refresh directory", e);
           }
-      } else if (state.files[targetFolderId]) {
-          // Handle non-Electron environment or virtual folders
+      } else if (folder) {
+          // Handle virtual folders with no actual path
           setState(prev => {
               // Force a complete re-render by updating the folder's lastRefresh timestamp
               const files = { ...prev.files };
-              const folder = files[targetFolderId];
-              
-              if (folder) {
-                  // Create a new folder object with updated lastRefresh timestamp
-                  files[targetFolderId] = {
-                      ...folder,
-                      // Add a lastRefresh timestamp to force a re-render
-                      lastRefresh: Date.now()
-                  };
-              }
+              files[targetFolderId] = {
+                  ...folder,
+                  // Add a lastRefresh timestamp to force a re-render
+                  lastRefresh: Date.now()
+              };
               
               return { ...prev, files };
           });
@@ -2818,20 +2814,27 @@ export const App: React.FC = () => {
   };
   
   // Navigation helpers
-  const pushHistory = (folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, scrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null) => { 
+  const pushHistory = (folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null) => { 
+      const currentScrollTop = selectionRef.current?.scrollTop ?? activeTab.scrollTop;
       updateActiveTab(prevTab => { 
-          const newStack = [...prevTab.history.stack.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter }]; 
-          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
+          const stackCopy = [...prevTab.history.stack];
+          if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < stackCopy.length) {
+              stackCopy[prevTab.history.currentIndex] = { ...stackCopy[prevTab.history.currentIndex], scrollTop: currentScrollTop };
+          }
+          const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop }]; 
+          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
       }); 
   };
 
 
   
-  const enterFolder = (folderId: string) => pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
+  const enterFolder = (folderId: string) => {
+      pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
+  };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
   const handleToggleFolder = (id: string) => { setState(prev => ({ ...prev, expandedFolderIds: prev.expandedFolderIds.includes(id) ? prev.expandedFolderIds.filter(fid => fid !== id) : [...prev.expandedFolderIds, id] })); };
-  const goBack = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex > 0) { const newIndex = prevTab.history.currentIndex - 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
-  const goForward = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { const newIndex = prevTab.history.currentIndex + 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
+  const goBack = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex > 0) { const newIndex = prevTab.history.currentIndex - 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
+  const goForward = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { const newIndex = prevTab.history.currentIndex + 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
   
   const closeViewer = () => { 
       if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) { 
@@ -3008,12 +3011,22 @@ export const App: React.FC = () => {
       value = value.trim();
       const file = state.files[id];
       if (!value || value === file.name) { setState(s => ({ ...s, renamingId: null })); return; }
-      if (window.electron && file.path) {
+      if (file.path) {
           try {
               const separator = file.path.includes('/') ? '/' : '\\';
               const parentPath = file.path.substring(0, file.path.lastIndexOf(separator));
               const newPath = `${parentPath}${separator}${value}`;
-              await window.electron.renameFile(file.path, newPath);
+              
+              // Use appropriate renameFile function based on environment
+              const isTauriEnv = isTauriEnvironment();
+              if (isTauriEnv) {
+                  await renameFile(file.path, newPath);
+              } else if (window.electron) {
+                  await window.electron.renameFile(file.path, newPath);
+              } else {
+                  throw new Error("No file system access available");
+              }
+              
               await handleRefresh();
               setState(s => ({ ...s, renamingId: null }));
           } catch (e) {
@@ -3078,9 +3091,17 @@ export const App: React.FC = () => {
 
   const dismissDelete = async (taskId: string) => {
       const task = deletionTasks.find(t => t.id === taskId);
-      if (task && window.electron) {
+      if (task) {
           for (const file of task.files) {
-              if (file.path) await window.electron.deleteFile(file.path);
+              if (file.path) {
+                  // Use appropriate deleteFile function based on environment
+                  const isTauriEnv = isTauriEnvironment();
+                  if (isTauriEnv) {
+                      await deleteFile(file.path);
+                  } else if (window.electron) {
+                      await window.electron.deleteFile(file.path);
+                  }
+              }
           }
       }
       setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
@@ -3190,14 +3211,24 @@ export const App: React.FC = () => {
       if (!parent) return;
       const baseName = t('context.newFolder');
       let name = baseName;
-      if (window.electron && parent.path) {
+      if (parent.path) {
           try {
               let counter = 1;
               const children = parent.children?.map(id => state.files[id]) || [];
               while (children.some(c => c.name === name)) { name = `${baseName} (${counter++})`; }
               const separator = parent.path.includes('/') ? '/' : '\\';
               const newPath = `${parent.path}${separator}${name}`;
-              await window.electron.createFolder(newPath);
+              
+              // Use appropriate createFolder function based on environment
+              const isTauriEnv = isTauriEnvironment();
+              if (isTauriEnv) {
+                  await createFolder(newPath);
+              } else if (window.electron) {
+                  await window.electron.createFolder(newPath);
+              } else {
+                  throw new Error("No file system access available");
+              }
+              
               await handleRefresh();
               
               // Find the newly created folder and set it to renaming state
@@ -4266,6 +4297,7 @@ export const App: React.FC = () => {
                           isAISearchEnabled={state.settings.search.isAISearchEnabled}
                           onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
                           t={t}
+                          activeTab={activeTab}
                       />
                   );
               })()
@@ -4532,6 +4564,7 @@ export const App: React.FC = () => {
                         onToggleGroup={toggleGroup}
                         isSelecting={isSelecting}
                         selectionBox={selectionBox}
+                        onScrollTopChange={(scrollTop) => updateActiveTab({ scrollTop })}
                         t={t} 
                         onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                         onUpdateFile={handleUpdateFile}
