@@ -80,7 +80,7 @@ export interface UserProfile {
 
 export interface TaskProgress {
   id: string;
-  type: 'ai' | 'copy' | 'move';
+  type: 'ai' | 'copy' | 'move' | 'thumbnail';
   title: string;
   total: number;
   current: number;
@@ -168,6 +168,13 @@ export type SortDirection = 'asc' | 'desc';
 export type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry';
 export type GroupByOption = 'none' | 'type' | 'date' | 'size';
 
+export interface FolderSettings {
+  layoutMode: LayoutMode;
+  sortBy: SortOption;
+  sortDirection: SortDirection;
+  groupBy: GroupByOption;
+}
+
 export interface FileGroup {
   id: string;
   title: string;
@@ -183,6 +190,7 @@ export interface HistoryItem {
   activeTags: string[];
   activePersonId: string | null;
   aiFilter?: AiSearchFilter | null;
+  scrollTop?: number;
 }
 
 export interface TabState {
@@ -226,6 +234,7 @@ export interface AppState {
     items: { type: 'file' | 'tag', ids: string[] }; 
   };
   customTags: string[];
+  folderSettings: Record<string, FolderSettings>; // 文件夹ID -> 文件夹设置
   layout: {
     isSidebarVisible: boolean;
     isMetadataVisible: boolean;

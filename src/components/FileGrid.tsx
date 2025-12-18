@@ -36,68 +36,71 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
     const images = (previewSrcs || []).filter(src => !!src);
     
     return (
-        <div className={`relative w-full h-full group select-none ${className}`}>
-             {/* Back Plate */}
-             <svg viewBox="0 0 100 85" className={`absolute w-full h-full drop-shadow-sm transition-colors ${style.back}`} style={{top: 0}} preserveAspectRatio="none">
-                 <path d="M5,15 L35,15 L45,25 L95,25 C97,25 99,27 99,30 L99,80 C99,83 97,85 95,85 L5,85 C3,85 1,83 1,80 L1,20 C1,17 3,15 5,15 Z" fill="currentColor" />
-             </svg>
+        <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
+            {/* Square container to maintain aspect ratio */}
+            <div className="relative w-full aspect-square">
+                {/* Back Plate */}
+                <svg viewBox="0 0 100 100" className={`absolute w-full h-full drop-shadow-sm transition-colors ${style.back}`} preserveAspectRatio="none">
+                    <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" fill="currentColor" />
+                </svg>
 
-             {/* Preview Images */}
-             <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
-                 {images[2] && (
-                     <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
-                         <img 
-                             src={images[2]} 
-                             className="w-full h-full object-cover" 
-                             loading="lazy" 
-                             draggable="false"
-                             onError={() => onImageError?.(2)}
-                         />
-                     </div>
-                 )}
-                 {images[1] && (
-                     <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
-                         <img 
-                             src={images[1]} 
-                             className="w-full h-full object-cover" 
-                             loading="lazy" 
-                             draggable="false"
-                             onError={() => onImageError?.(1)}
-                         />
-                     </div>
-                 )}
-                 {images[0] && (
-                     <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
-                         <img 
-                             src={images[0]} 
-                             className="w-full h-full object-cover" 
-                             loading="lazy" 
-                             draggable="false"
-                             onError={() => onImageError?.(0)}
-                         />
-                     </div>
-                 )}
-             </div>
+                {/* Preview Images */}
+                <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
+                    {images[2] && (
+                        <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
+                            <img 
+                                src={images[2]} 
+                                className="w-full h-full object-cover" 
+                                loading="lazy" 
+                                draggable="false"
+                                onError={() => onImageError?.(2)}
+                            />
+                        </div>
+                    )}
+                    {images[1] && (
+                        <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
+                            <img 
+                                src={images[1]} 
+                                className="w-full h-full object-cover" 
+                                loading="lazy" 
+                                draggable="false"
+                                onError={() => onImageError?.(1)}
+                            />
+                        </div>
+                    )}
+                    {images[0] && (
+                        <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
+                            <img 
+                                src={images[0]} 
+                                className="w-full h-full object-cover" 
+                                loading="lazy" 
+                                draggable="false"
+                                onError={() => onImageError?.(0)}
+                            />
+                        </div>
+                    )}
+                </div>
 
-             {/* Front Plate */}
-             <div 
-                className="absolute left-0 right-0 bottom-0 h-[60%] z-20 transition-transform duration-300 origin-bottom"
-                style={{ transform: 'perspective(800px) rotateX(-10deg)' }}
-             >
-                 <svg viewBox="0 0 100 55" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
-                     <path d="M0,8 Q0,5 3,5 L97,5 Q100,5 100,8 L100,50 Q100,55 95,55 L5,55 Q0,55 0,50 Z" fill="currentColor" />
-                 </svg>
-                 
-                 <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
-                     <Icon size={32} className="text-white" strokeWidth={1.5} />
-                 </div>
-                 
-                 {count !== undefined && (
-                     <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
-                         {count}
-                     </div>
-                 )}
-             </div>
+                {/* Front Plate */}
+                <div 
+                    className="absolute left-0 right-0 bottom-0 h-[60%] z-20 transition-transform duration-300 origin-bottom"
+                    style={{ transform: 'perspective(800px) rotateX(-10deg)' }}
+                >
+                    <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
+                        <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
+                    </svg>
+                    
+                    <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
+                        <Icon size={32} className="text-white" strokeWidth={1.5} />
+                    </div>
+                    
+                    {count !== undefined && (
+                        <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
+                            {count}
+                        </div>
+                    )}
+                </div>
+            </div>
         </div>
     );
 };
@@ -432,7 +435,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       {(isInView || wasInView) && (
-          <div className="relative w-full h-full p-2">
+          <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
              <Folder3DIcon  
                 previewSrcs={previewSrcs}
                 count={file.children?.length} 
@@ -489,7 +492,7 @@ const TagItem = React.memo(({ tag, count, isSelected, onTagClick, onTagDoubleCli
     <div 
       key={tag} 
       data-tag={tag}
-      className={`tag-item rounded-lg p-4 border cursor-pointer group transition-all relative ${isSelected ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-500' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500'}`} 
+      className={`tag-item rounded-lg p-4 border-2 cursor-pointer group transition-all relative ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 shadow-lg ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500'}`} 
       onClick={(e) => { e.stopPropagation(); onTagClick && onTagClick(tag, e); }}
       onMouseDown={(e) => e.stopPropagation()}
       onDoubleClick={() => onTagDoubleClick && onTagDoubleClick(tag)} 
@@ -502,7 +505,7 @@ const TagItem = React.memo(({ tag, count, isSelected, onTagClick, onTagDoubleCli
         <span className={`${isSelected ? 'bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200' : 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300'} text-xs px-2 py-0.5 rounded-full`}>{count}</span>
       </div>
       <div className="font-bold text-gray-800 dark:text-gray-200 truncate">{tag}</div>
-      {isSelected && (<div className="absolute top-2 left-2 w-2 h-2 bg-blue-500 rounded-full"></div>)}
+      {isSelected && (<div className="absolute top-2 left-2 w-3 h-3 bg-blue-500 rounded-full ring-2 ring-white dark:ring-gray-900 shadow-md"></div>)}
     </div>
   );
 });
@@ -693,7 +696,9 @@ const FileListItem = React.memo(({
   onDropOnFolder,
   onDropExternal,
   t,
-  dragTargetId
+  dragTargetId,
+  resourceRoot,
+  cachePath
 }: any) => {
   if (!file) return null;
   return (
@@ -701,8 +706,8 @@ const FileListItem = React.memo(({
         data-id={file.id}
         draggable={renamingId !== file.id}
         className={`
-            file-item flex items-center p-2 rounded text-sm cursor-pointer border transition-colors mb-1
-            ${isSelected ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-500/50' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
+            file-item flex items-center p-2 rounded text-sm cursor-pointer border transition-colors mb-1 relative
+            ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 border-l-4 shadow-md' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
             ${dragTargetId === file.id ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : ''}
         `}
         onMouseDown={(e) => {
@@ -772,11 +777,27 @@ const FileListItem = React.memo(({
             {file.type === FileType.FOLDER ? (
             <Folder className="text-blue-500 mr-3 shrink-0" size={18} />
             ) : (
-            <div className="w-6 h-6 mr-3 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden shrink-0">
-                {/* Note: file.url is a file path in Tauri, not a usable URL. We'll use a placeholder or load thumbnail separately if needed */}
-                <div className="w-full h-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
-                    <ImageIcon className="text-gray-400 dark:text-gray-500" size={14} />
-                </div>
+            <div className="w-6 h-6 mr-3 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden shrink-0 relative">
+                {file.type === FileType.IMAGE ? (
+                    <div className="w-full h-full">
+                        <ImageThumbnail
+                            src={''}
+                            alt={file.name}
+                            isSelected={false}
+                            filePath={file.path}
+                            modified={file.updatedAt}
+                            size={file.size}
+                            isHovering={false}
+                            fileMeta={file.meta}
+                            resourceRoot={resourceRoot}
+                            cachePath={cachePath}
+                        />
+                    </div>
+                ) : (
+                    <div className="w-full h-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
+                        <ImageIcon className="text-gray-400 dark:text-gray-500" size={14} />
+                    </div>
+                )}
             </div>
             )}
             {renamingId === file.id ? (
@@ -848,7 +869,7 @@ const PersonCard = React.memo(({
       <div 
         className={`rounded-full p-1 transition-all duration-300 relative shadow-md group-hover:shadow-xl group-hover:-translate-y-1
           ${isSelected 
-            ? 'bg-blue-600 scale-105' 
+            ? 'bg-blue-600 scale-110 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
             : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
           }
         `}
@@ -884,15 +905,15 @@ const PersonCard = React.memo(({
         
         {/* Selection Checkmark */}
         {isSelected && (
-          <div className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 border-2 border-white dark:border-gray-900">
-            <Check size={Math.max(12, avatarSize * 0.15)} strokeWidth={3} />
+          <div className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1.5 border-2 border-white dark:border-gray-900 shadow-lg ring-2 ring-blue-400/50">
+            <Check size={Math.max(14, avatarSize * 0.17)} strokeWidth={3} />
           </div>
         )}
       </div>
       
       <div className="mt-4 text-center w-full px-2">
         <div 
-          className={`font-bold text-base truncate transition-colors px-2 rounded-md ${isSelected ? 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30' : 'text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}
+          className={`font-bold text-base truncate transition-colors px-2 rounded-md ${isSelected ? 'text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/50 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}
           onDoubleClick={() => onStartRenamePerson?.(person.id)}
         >
           {person.name}
@@ -1034,10 +1055,13 @@ const FileCard = React.memo(({
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
-                ${isSelected ? 'border-blue-500 ring-2 ring-blue-200 dark:ring-blue-900' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
+                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
                 ${dragTargetId === file.id ? 'border-green-500 bg-green-50 dark:bg-green-900/20 scale-105' : ''}
             `}
-            style={{ height: height ? (height - 40) : '100%' }}
+            style={{ 
+                height: height ? (height - 40) : '100%',
+                overflow: 'hidden'
+            }}
         >
             {file.type === FileType.FOLDER ? (
             <FolderThumbnail file={file} files={files} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
@@ -1058,8 +1082,8 @@ const FileCard = React.memo(({
             
             <div className={`absolute top-2 left-2 transition-opacity duration-200 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isSelected ? (
-                    <div className="w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center border border-white shadow-sm">
-                    <Check size={12} className="text-white" />
+                    <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center border-2 border-white shadow-lg ring-2 ring-blue-400/50">
+                    <Check size={14} className="text-white" strokeWidth={3} />
                     </div>
                 ) : (
                     <div className="w-5 h-5 bg-black/30 hover:bg-black/50 rounded-full border border-white/50 backdrop-blur-sm"></div>
@@ -1168,6 +1192,8 @@ const GroupContent = React.memo(({
                   onDropExternal={null}
                   t={t}
                   dragTargetId={dragTargetId}
+                  resourceRoot={effectiveResourceRoot}
+                  cachePath={effectiveCachePath}
               />
             );
           })}
@@ -1261,7 +1287,7 @@ const useLayout = (
         const file = files[id];
         ratios[id] = file?.meta?.width && file?.meta?.height 
           ? file.meta.width / file.meta.height 
-          : (file?.type === FileType.FOLDER ? 1.5 : 1);
+          : (file?.type === FileType.FOLDER ? 1 : 1);
       });
     }
     return ratios;
@@ -1446,6 +1472,7 @@ interface FileGridProps {
   onDragEnd?: (e: React.DragEvent) => void;
   resourceRoot?: string;
   cachePath?: string;
+  onScrollTopChange?: (scrollTop: number) => void;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -1491,7 +1518,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   t,
   onThumbnailSizeChange,
   onUpdateFile,
-  settings
+  settings,
+  onScrollTopChange
 }) => {
   // #region agent log
   // Removed debug logs
@@ -1601,17 +1629,30 @@ export const FileGrid: React.FC<FileGridProps> = ({
       setDragTargetId(null);
   }, []);
   
+  // Track if we're in the middle of a programmatic scroll restore
+  const isRestoringScrollRef = useRef(false);
+
   useEffect(() => {
-      if (containerRef?.current && activeTab.scrollTop > 0) {
+      if (containerRef?.current && !isRestoringScrollRef.current) {
           requestAnimationFrame(() => {
               if(containerRef.current) {
-                  if (Math.abs(containerRef.current.scrollTop - activeTab.scrollTop) > 50) {
-                      containerRef.current.scrollTop = activeTab.scrollTop;
+                  // Only restore scroll position if it's significantly different (10px threshold)
+                  const currentScroll = containerRef.current.scrollTop;
+                  const targetScroll = activeTab.scrollTop;
+                  
+                  if (Math.abs(currentScroll - targetScroll) > 10) {
+                      isRestoringScrollRef.current = true;
+                      containerRef.current.scrollTop = targetScroll;
+                      
+                      // Reset the flag after a short delay to allow user scrolling to take over
+                      setTimeout(() => {
+                          isRestoringScrollRef.current = false;
+                      }, 100);
                   }
               }
           });
       }
-  }, [activeTab.id, activeTab.folderId, activeTab.viewMode]);
+  }, [activeTab.id, activeTab.folderId, activeTab.viewMode, activeTab.scrollTop]);
 
   useEffect(() => {
     const container = containerRef?.current;
@@ -1659,7 +1700,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
     observer.observe(containerRef.current);
     
     const handleScroll = () => {
-        if (containerRef.current) setScrollTop(containerRef.current.scrollTop);
+        if (containerRef.current) {
+            const scrollTop = containerRef.current.scrollTop;
+            setScrollTop(scrollTop);
+            onScrollTopChange?.(scrollTop);
+        }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
 
@@ -1852,6 +1897,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onDropExternal={handleDropExternalWrapper}
                                   t={t}
                                   dragTargetId={dragTargetId}
+                                  resourceRoot={effectiveResourceRoot}
+                                  cachePath={effectiveCachePath}
                               />
                           );
                       })}
@@ -1872,6 +1919,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                           {visibleItems.map((item) => {
                               const file = files[item.id];
                               if (!file) return null;
+                              
                               return (
                                   <FileCard
                                       key={file.id}

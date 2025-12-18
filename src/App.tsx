@@ -11,7 +11,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile } from './api/tauri-bridge';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -83,15 +83,15 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
           const hasCover = !!coverFile; 
           const isSelected = selectedPeople.includes(p.id); 
           return ( 
-            <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group ${isSelected ? 'bg-blue-50 dark:bg-blue-900/30 border-l-2 border-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}> 
+            <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group border border-transparent ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}> 
               <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">
                 {hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (
                   <User size={14} className="text-gray-400 dark:text-gray-500" />
                 )}
               </div> 
-              <span className="text-sm text-gray-800 dark:text-gray-200 flex-1">{p.name}</span> 
-              <div className={`w-4 h-4 rounded border-2 flex items-center justify-center ${isSelected ? 'border-blue-500 bg-blue-500' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'}`}> 
-                {isSelected && <Check size={12} className="text-white" />} 
+              <span className={`text-sm flex-1 ${isSelected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800 dark:text-gray-200'}`}>{p.name}</span> 
+              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${isSelected ? 'border-blue-600 bg-blue-600 ring-2 ring-blue-300/50 dark:ring-blue-700/50 shadow-sm' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'}`}> 
+                {isSelected && <Check size={14} className="text-white" strokeWidth={3} />} 
               </div> 
             </div> 
           ); 
@@ -181,7 +181,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
     return (
       <div key={nodeId}>
         <div 
-          className={`flex items-center py-1 px-2 cursor-pointer text-sm ${currentId === nodeId ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
+          className={`flex items-center py-1 px-2 cursor-pointer text-sm border border-transparent ${currentId === nodeId ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           onClick={() => setCurrentId(nodeId)}
         >
@@ -509,7 +509,7 @@ import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environ
 
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
-    roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], layout: { isSidebarVisible: true, isMetadataVisible: true }, 
+    roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true }, 
     slideshowConfig: { interval: 3000, transition: 'fade', isRandom: false, enableZoom: true },
     settings: { 
         theme: 'system', 
@@ -695,6 +695,7 @@ export const App: React.FC = () => {
           rootPaths,
           customTags: state.customTags,
           people: state.people,
+          folderSettings: state.folderSettings,
           settings: state.settings,
           fileMetadata
       };
@@ -707,7 +708,7 @@ export const App: React.FC = () => {
           }
       }, 1000);
       return () => clearTimeout(timer);
-  }, [state.roots, state.files, state.customTags, state.people, state.settings, isElectron]);
+  }, [state.roots, state.files, state.customTags, state.people, state.settings, state.folderSettings, isElectron]);
 
   useEffect(() => {
     const init = async () => {
@@ -739,6 +740,7 @@ export const App: React.FC = () => {
                         ...prev,
                         customTags: savedData.customTags || [],
                         people: savedData.people || {},
+                        folderSettings: savedData.folderSettings || {},
                         settings: { 
                             ...prev.settings, 
                             ...savedData.settings,
@@ -907,6 +909,7 @@ export const App: React.FC = () => {
                             ...prev,
                             customTags: savedData.customTags || [],
                             people: savedData.people || {},
+                            folderSettings: savedData.folderSettings || {},
                             settings: finalSettings
                         }));
                     } else {
@@ -1265,7 +1268,7 @@ export const App: React.FC = () => {
   const showToast = (msg: string) => { setToast({ msg, visible: true }); setTimeout(() => setToast({ msg: '', visible: false }), 2500); };
   
   // ... (keep startTask and updateTask)
-  const startTask = (type: 'copy' | 'move' | 'ai', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
+  const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newTask: TaskProgress = { id, type: type as any, title, total: fileIds.length, current: 0, startTime: Date.now(), status: 'running', minimized: false };
     setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
@@ -2828,13 +2831,124 @@ export const App: React.FC = () => {
 
 
   
+  const handleRememberFolderSettings = () => {
+      if (activeTab.viewMode !== 'browser') return;
+      const folderId = activeTab.folderId;
+      const folder = state.files[folderId];
+      if (!folder || folder.type !== FileType.FOLDER) return;
+      
+      const settings = {
+          layoutMode: activeTab.layoutMode,
+          sortBy: state.sortBy,
+          sortDirection: state.sortDirection,
+          groupBy: groupBy
+      };
+      
+      const isCurrentlySaved = !!state.folderSettings[folderId];
+      
+      setState(prev => {
+          const newFolderSettings = { ...prev.folderSettings };
+          if (isCurrentlySaved) {
+              // 如果已存在，删除（切换关闭）
+              delete newFolderSettings[folderId];
+          } else {
+              // 如果不存在，添加（切换开启）
+              newFolderSettings[folderId] = settings;
+          }
+          return { ...prev, folderSettings: newFolderSettings };
+      });
+      
+      showToast(isCurrentlySaved ? t('folderSettings.remember') : t('folderSettings.saved'));
+  };
+  
+  // 监听文件夹变化，自动应用保存的设置
+  // 使用 ref 来避免将 folderSettings 加入依赖导致死循环
+  const folderSettingsRef = useRef(state.folderSettings);
+  useEffect(() => {
+      folderSettingsRef.current = state.folderSettings;
+  }, [state.folderSettings]);
+
+  useEffect(() => {
+      if (activeTab.viewMode !== 'browser') return;
+      const folderId = activeTab.folderId;
+      const savedSettings = folderSettingsRef.current[folderId];
+      
+      if (savedSettings) {
+          // 检查是否需要更新，避免无限循环
+          let hasChanges = false;
+          if (activeTab.layoutMode !== savedSettings.layoutMode) hasChanges = true;
+          if (state.sortBy !== savedSettings.sortBy) hasChanges = true;
+          if (state.sortDirection !== savedSettings.sortDirection) hasChanges = true;
+          if (groupBy !== savedSettings.groupBy) hasChanges = true;
+          
+          if (hasChanges) {
+              setState(prev => ({
+                  ...prev,
+                  sortBy: savedSettings.sortBy,
+                  sortDirection: savedSettings.sortDirection,
+              }));
+              setGroupBy(savedSettings.groupBy);
+              updateActiveTab({ layoutMode: savedSettings.layoutMode });
+          }
+      }
+  }, [activeTab.folderId, activeTab.id, activeTab.viewMode]);
+
+  // 监听设置变化，同步更新已保存的文件夹设置
+  useEffect(() => {
+      if (activeTab.viewMode !== 'browser') return;
+      const folderId = activeTab.folderId;
+      const saved = state.folderSettings[folderId];
+      
+      if (saved) {
+          const currentSettings = {
+              layoutMode: activeTab.layoutMode,
+              sortBy: state.sortBy,
+              sortDirection: state.sortDirection,
+              groupBy: groupBy
+          };
+
+          if (
+              saved.layoutMode !== currentSettings.layoutMode ||
+              saved.sortBy !== currentSettings.sortBy ||
+              saved.sortDirection !== currentSettings.sortDirection ||
+              saved.groupBy !== currentSettings.groupBy
+          ) {
+              setState(prev => ({
+                  ...prev,
+                  folderSettings: {
+                      ...prev.folderSettings,
+                      [folderId]: currentSettings
+                  }
+              }));
+          }
+      }
+  }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings]);
+
   const enterFolder = (folderId: string) => {
       pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
   };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
   const handleToggleFolder = (id: string) => { setState(prev => ({ ...prev, expandedFolderIds: prev.expandedFolderIds.includes(id) ? prev.expandedFolderIds.filter(fid => fid !== id) : [...prev.expandedFolderIds, id] })); };
-  const goBack = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex > 0) { const newIndex = prevTab.history.currentIndex - 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
-  const goForward = () => { updateActiveTab(prevTab => { if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { const newIndex = prevTab.history.currentIndex + 1; const step = prevTab.history.stack[newIndex]; return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; } return {}; }); };
+  const goBack = () => { 
+      updateActiveTab(prevTab => { 
+          if (prevTab.history.currentIndex > 0) { 
+              const newIndex = prevTab.history.currentIndex - 1; 
+              const step = prevTab.history.stack[newIndex]; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+          } 
+          return {}; 
+      }); 
+  };
+  const goForward = () => { 
+      updateActiveTab(prevTab => { 
+          if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { 
+              const newIndex = prevTab.history.currentIndex + 1; 
+              const step = prevTab.history.stack[newIndex]; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+          } 
+          return {}; 
+      }); 
+  };
   
   const closeViewer = () => { 
       if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) { 
@@ -3300,7 +3414,134 @@ export const App: React.FC = () => {
       setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
   };
 
-  const handleViewInExplorer = (id: string) => { if (window.electron && state.files[id]?.path) { window.electron.openPath(state.files[id].path); } };
+  const handleGenerateThumbnails = async (folderIds: string[]) => {
+      const getAllImageFilesInFolder = (folderId: string): string[] => {
+          const folder = state.files[folderId];
+          if (!folder) return [];
+          
+          let fileIds: string[] = [];
+          
+          // Use stack for DFS to avoid recursion depth issues
+          const stack = [folderId];
+          const visited = new Set<string>();
+
+          while (stack.length > 0) {
+              const currentId = stack.pop()!;
+              if (visited.has(currentId)) continue;
+              visited.add(currentId);
+
+              const currentFolder = state.files[currentId];
+              if (currentFolder && currentFolder.children) {
+                  for (const childId of currentFolder.children) {
+                      const child = state.files[childId];
+                      if (child) {
+                          if (child.type === FileType.FOLDER) {
+                              stack.push(childId);
+                          } else if (child.type === FileType.IMAGE) {
+                              fileIds.push(childId);
+                          }
+                      }
+                  }
+              }
+          }
+          return fileIds;
+      };
+
+      // Collect all image IDs from selected folders
+      let allImageIds: string[] = [];
+      for (const fid of folderIds) {
+          allImageIds = [...allImageIds, ...getAllImageFilesInFolder(fid)];
+      }
+      
+      // Deduplicate
+      allImageIds = Array.from(new Set(allImageIds));
+
+      if (allImageIds.length === 0) {
+          showToast(t('tasks.noImagesFound'));
+          return;
+      }
+
+      const taskId = startTask('thumbnail', [], t('tasks.generatingThumbnails'), false);
+      updateTask(taskId, { total: allImageIds.length, current: 0 });
+
+      // Use a simple concurrency control
+      let completed = 0;
+      const MAX_CONCURRENT = 20;
+      const queue = [...allImageIds];
+      const activePromises: Promise<void>[] = [];
+
+      const processNext = async () => {
+          if (queue.length === 0) return;
+          const id = queue.pop()!;
+          const file = state.files[id];
+          
+          if (file) {
+              try {
+                  // getThumbnail handles batching internally, but we await it to track progress
+                  await getThumbnail(file.path, file.updatedAt, state.settings.paths.resourceRoot);
+              } catch (e) {
+                  console.error('Thumbnail gen error', e);
+              }
+          }
+          
+          completed++;
+          updateTask(taskId, { current: completed });
+          
+          // Continue processing if queue not empty
+          if (queue.length > 0) {
+              await processNext();
+          }
+      };
+
+      // Start initial batch
+      for (let i = 0; i < Math.min(MAX_CONCURRENT, allImageIds.length); i++) {
+          activePromises.push(processNext());
+      }
+
+      await Promise.all(activePromises);
+      
+      setTimeout(() => {
+          setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) }));
+          showToast(t('tasks.thumbnailsGenerated'));
+      }, 1000);
+  };
+
+  const handleViewInExplorer = async (id: string) => {
+    const file = state.files[id];
+    if (!file?.path) {
+      console.error('handleViewInExplorer: file or path not found', { id, file });
+      return;
+    }
+    
+    // 确保路径是绝对路径
+    const targetPath = file.path;
+    console.log('handleViewInExplorer:', { id, path: targetPath, type: file.type, name: file.name });
+    
+    try {
+      if (isTauriEnvironment()) {
+        // Tauri 环境：使用 openPath API
+        const { openPath } = await import('./api/tauri-bridge');
+        // 传入 isFile 参数：非文件夹都是文件，需要选中；文件夹直接打开
+        const isFile = file.type !== FileType.FOLDER;
+        console.log('Calling openPath:', { path: targetPath, isFile });
+        await openPath(targetPath, isFile);
+      } else if (window.electron?.openPath) {
+        // Electron 环境（兼容旧代码）
+        if (file.type === FileType.FOLDER) {
+          window.electron.openPath(targetPath);
+        } else {
+          // 如果是文件，打开其父目录
+          const separator = targetPath.includes('/') ? '/' : '\\';
+          const parentPath = targetPath.substring(0, targetPath.lastIndexOf(separator));
+          if (parentPath) {
+            window.electron.openPath(parentPath);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Failed to open in explorer:', error);
+    }
+  };
   const handleSwitchTab = (id: string) => setState(s => ({ ...s, activeTabId: id }));
   const handleCloseTab = (e: React.MouseEvent, id: string) => { e.stopPropagation(); setState(prev => { const newTabs = prev.tabs.filter(t => t.id !== id); if (newTabs.length === 0) return prev; let newActiveId = prev.activeTabId; if (id === prev.activeTabId) { const index = prev.tabs.findIndex(t => t.id === id); newActiveId = newTabs[Math.max(0, index - 1)].id; } return { ...prev, tabs: newTabs, activeTabId: newActiveId }; }); };
   const handleNewTab = () => { const newTab: TabState = { ...DUMMY_TAB, id: Math.random().toString(36).substr(2, 9), folderId: state.roots[0] || '' }; newTab.history = { stack: [{ folderId: newTab.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }; setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id })); };
@@ -4331,6 +4572,8 @@ export const App: React.FC = () => {
                 onGroupByChange={setGroupBy}
                 isAISearchEnabled={state.settings.search.isAISearchEnabled}
                 onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
+                onRememberFolderSettings={activeTab.viewMode === 'browser' ? handleRememberFolderSettings : undefined}
+                hasFolderSettings={activeTab.viewMode === 'browser' ? !!state.folderSettings[activeTab.folderId] : false}
                 t={t} 
               />
               {/* ... (Filter UI, same as before) ... */}
@@ -4729,6 +4972,17 @@ export const App: React.FC = () => {
                   });
                   return allAreFiles && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handlePasteTags(activeTab.selectedFileIds); closeContextMenu(); }}>{t('context.pasteTag')}</div> );
                 })()}
+
+                {/* 只有文件夹类型才显示生成缩略图选项 */}
+                {(contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi') && (
+                    <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
+                        const folderIds = contextMenu.type === 'folder-single' ? [contextMenu.targetId!] : activeTab.selectedFileIds;
+                        handleGenerateThumbnails(folderIds);
+                        closeContextMenu();
+                    }}>
+                        <ImageIcon size={14} className="mr-2 opacity-70"/> {t('context.generateThumbnails')}
+                    </div>
+                )}
 
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
                 <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={14} className="mr-2"/> {t('context.delete')}</div>

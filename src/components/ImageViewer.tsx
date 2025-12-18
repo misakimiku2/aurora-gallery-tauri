@@ -42,6 +42,7 @@ interface ViewerProps {
   isAISearchEnabled: boolean;
   onToggleAISearch: () => void;
   t: (key: string) => string;
+  activeTab: any; // Added for open folder availability check
 }
 
 interface ContextMenuState {
@@ -83,7 +84,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   onAIAnalysis,
   isAISearchEnabled,
   onToggleAISearch,
-  t
+  t,
+  activeTab
 }) => {
   // 如果 file 不存在，关闭查看器
   if (!file) {
@@ -455,7 +457,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
         
-        <div className="flex items-center space-x-2 flex-1">
+        <div className="flex items-center space-x-2">
           <button 
             onClick={() => onLayoutToggle('sidebar')}
             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layout.isSidebarVisible ? 'text-gray-500 dark:text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}
@@ -478,35 +480,36 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           >
             <ArrowRight size={18} />
           </button>
-          
-          {/* Search Box moved to left side, after forward button */}
-          {showSearch && (
-            <div className="relative ml-4 flex-1 max-w-[672px] animate-fade-in">
-              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${isAISearchEnabled ? 'border-purple-500 shadow-sm shadow-purple-500/20' : localQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
-                 <div className="relative">
+        </div>
+
+        <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
+          {showSearch ? (
+            <div className="relative w-full max-w-[672px] animate-fade-in">
+              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${isAISearchEnabled ? 'border-purple-500 shadow-sm shadow-purple-500/20' : localQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
+                 <div className="relative flex-shrink-0">
                    <button 
                      ref={scopeBtnRef}
                      type="button"
                      onClick={toggleScopeMenu}
-                     className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700"
+                     className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
                    >
                      {getScopeIcon()}
                      <ChevronDown size={12} className="ml-1 opacity-70"/>
                    </button>
                  </div>
-                <Search size={16} className={`mr-2 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
+                <Search size={16} className={`mr-2 flex-shrink-0 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
                 <input
                   ref={searchInputRef}
                   type="text"
                   value={localQuery}
                   onChange={(e) => setLocalQuery(e.target.value)}
                   placeholder={isAISearchEnabled ? t('settings.aiSmartSearch') : t('search.placeholder')}
-                  className="bg-transparent border-none flex-1 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+                  className="bg-transparent border-none flex-1 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
                   onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubmit(); }}
                 />
-                <div className="flex items-center space-x-1 ml-2">
+                <div className="flex items-center space-x-1 ml-2 flex-shrink-0">
                   {localQuery && (
-                    <button onClick={() => { setLocalQuery(''); onSearch(''); }} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400">
+                    <button onClick={() => { setLocalQuery(''); onSearch(''); }} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0">
                       <X size={14} />
                     </button>
                   )}
@@ -520,11 +523,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 </div>
               </div>
             </div>
-          )}
-        </div>
-
-        <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center">
-          {!showSearch && (
+          ) : (
             <span>{file.name}</span>
           )}
         </div>
@@ -669,11 +668,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <ExternalLink size={14} className="mr-2 opacity-70"/> {t('context.viewInExplorer')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { if(file.parentId) onNavigateToFolder(file.parentId); setContextMenu({...contextMenu, visible: false}); }}>
-             <FolderOpen size={14} className="mr-2 opacity-70"/> {t('context.openFolder')}
-          </div>
+          {(() => {
+            const parentId = file.parentId;
+            const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
+            return (
+              <div 
+                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} 
+                onClick={() => { 
+                  if (!isUnavailable && parentId) { 
+                    onNavigateToFolder(parentId); 
+                    setContextMenu({...contextMenu, visible: false}); 
+                  }
+                }}
+              >
+                <FolderOpen size={14} className={`mr-2 opacity-70 ${isUnavailable ? 'opacity-40' : 'opacity-70'}`}/> 
+                {t('context.openFolder')}
+              </div>
+            );
+          })()}
 
           <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+
+          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({...contextMenu, visible: false}); }}>
+             <Tag size={14} className="mr-2 opacity-70"/> {t('context.editTags')}
+          </div>
 
           <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({...contextMenu, visible: false}); }}>
              <Tag size={14} className="mr-2 opacity-70"/> {t('context.copyTag')}

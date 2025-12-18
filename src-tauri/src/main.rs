@@ -465,6 +465,38 @@ async fn ensure_directory(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// Command to create a folder
+#[tauri::command]
+async fn create_folder(path: String) -> Result<(), String> {
+    fs::create_dir(&path)
+        .map_err(|e| format!("Failed to create folder: {}", e))?;
+    Ok(())
+}
+
+// Command to rename a file or folder
+#[tauri::command]
+async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
+    fs::rename(&old_path, &new_path)
+        .map_err(|e| format!("Failed to rename: {}", e))?;
+    Ok(())
+}
+
+// Command to delete a file or folder
+#[tauri::command]
+async fn delete_file(path: String) -> Result<(), String> {
+    let file_path = Path::new(&path);
+    if file_path.is_dir() {
+        // Delete directory recursively
+        fs::remove_dir_all(file_path)
+            .map_err(|e| format!("Failed to delete directory: {}", e))?;
+    } else {
+        // Delete file
+        fs::remove_file(file_path)
+            .map_err(|e| format!("Failed to delete file: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     use std::env;
@@ -501,30 +533,90 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
 }
 
 #[tauri::command]
-async fn open_path(path: String) -> Result<(), String> {
+async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
     use std::process::Command;
+    use std::path::Path;
+    
+    // 规范化路径：确保使用正确的路径分隔符，并转换为绝对路径
+    let path_obj = Path::new(&path);
+    
+    // 检查路径是否存在
+    if !path_obj.exists() {
+        return Err(format!("Path does not exist: {}", path));
+    }
+    
+    // 如果路径是相对路径，尝试转换为绝对路径
+    let absolute_path = if path_obj.is_absolute() {
+        path.clone()
+    } else {
+        match std::env::current_dir() {
+            Ok(current_dir) => {
+                match path_obj.canonicalize() {
+                    Ok(canonical) => canonical.to_string_lossy().to_string(),
+                    Err(_) => {
+                        // 如果无法规范化，尝试组合当前目录和路径
+                        current_dir.join(path_obj).to_string_lossy().to_string()
+                    }
+                }
+            }
+            Err(_) => path.clone(),
+        }
+    };
+    
+    // 规范化路径分隔符为 Windows 格式（使用反斜杠）
+    let normalized_path = if cfg!(windows) {
+        absolute_path.replace('/', "\\")
+    } else {
+        absolute_path
+    };
+    
+    let is_file_path = is_file.unwrap_or_else(|| path_obj.is_file());
+    
+    println!("open_path: path={}, normalized_path={}, is_file={:?}, is_file_path={}", 
+             path, normalized_path, is_file, is_file_path);
     
     let result = if cfg!(windows) {
+        // Windows: 对于文件和文件夹，都打开其父目录并选中该项
+        // explorer /select,路径（注意：逗号后面不能有空格）
+        // 注意：如果路径包含空格，需要用引号包裹整个 /select,路径 参数
+        let select_arg = if normalized_path.contains(' ') {
+            format!("/select,\"{}\"", normalized_path)
+        } else {
+            format!("/select,{}", normalized_path)
+        };
+        println!("Windows explorer command: explorer {}", select_arg);
         Command::new("explorer")
-            .args([&path])
+            .arg(&select_arg)
             .spawn()
             .map(|_| ())
     } else if cfg!(target_os = "macos") {
+        // macOS: 对于文件和文件夹，都打开其父目录并选中该项
         Command::new("open")
-            .args([&path])
+            .args(["-R", &normalized_path])
             .spawn()
             .map(|_| ())
     } else {
-        // Linux: use xdg-open, gnome-open, or kde-open
-        Command::new("xdg-open")
-            .args([&path])
-            .spawn()
-            .map(|_| ())
+        // Linux: 对于文件和文件夹，都打开其父目录
+        if let Some(parent) = Path::new(&normalized_path).parent() {
+            Command::new("xdg-open")
+                .args([parent.to_str().unwrap_or(&normalized_path)])
+                .spawn()
+                .map(|_| ())
+        } else {
+            Command::new("xdg-open")
+                .args([&normalized_path])
+                .spawn()
+                .map(|_| ())
+        }
     };
     
     match result {
         Ok(_) => Ok(()),
-        Err(e) => Err(format!("Failed to open path: {}", e)),
+        Err(e) => {
+            let error_msg = format!("Failed to open path '{}': {}", normalized_path, e);
+            println!("{}", error_msg);
+            Err(error_msg)
+        }
     }
 }
 
@@ -748,7 +840,10 @@ fn main() {
             get_thumbnails_batch,
             read_file_as_base64,
             ensure_directory,
-            open_path
+            open_path,
+            create_folder,
+            rename_file,
+            delete_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

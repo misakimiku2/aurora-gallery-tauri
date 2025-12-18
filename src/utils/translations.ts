@@ -54,6 +54,7 @@ export const translations = {
       editTags: '编辑标签',
       copyTag: '复制标签',
       pasteTag: '粘贴标签',
+      generateThumbnails: '生成缩略图',
       newTag: '新建标签',
       newTagDefault: '新标签',
       enterTagName: '请输入新标签名称:',
@@ -150,7 +151,10 @@ export const translations = {
       updatingDescription: '正在更新描述...',
       addingTags: '正在添加标签...',
       savingData: '正在保存数据...',
-      completed: '已完成'
+      completed: '已完成',
+      generatingThumbnails: '正在生成缩略图...',
+      thumbnailsGenerated: '缩略图生成完成',
+      noImagesFound: '未找到图片文件'
     },
     meta: {
         selectHint: '选择一个文件以查看详情',
@@ -429,6 +433,10 @@ export const translations = {
       medium: '中 (1-10MB)',
       large: '大 (> 10MB)'
     },
+    folderSettings: {
+      remember: '记住此文件夹',
+      saved: '已保存此文件夹的设置'
+    },
     layout: {
       mode: '布局方式',
       grid: '网格视图',
@@ -503,6 +511,7 @@ export const translations = {
       editTags: 'Edit Tags',
       copyTag: 'Copy Tags',
       pasteTag: 'Paste Tags',
+      generateThumbnails: 'Generate Thumbnails',
       newTag: 'New Tag',
       newTagDefault: 'New Tag',
       enterTagName: 'Enter new tag name:',
@@ -599,7 +608,10 @@ export const translations = {
       updatingDescription: 'Updating description...',
       addingTags: 'Adding tags...',
       savingData: 'Saving data...',
-      completed: 'Completed'
+      completed: 'Completed',
+      generatingThumbnails: 'Generating thumbnails...',
+      thumbnailsGenerated: 'Thumbnails generation complete',
+      noImagesFound: 'No image files found'
     },
     meta: {
         selectHint: 'Select a file to view details',
@@ -877,6 +889,10 @@ export const translations = {
       small: 'Small (< 1MB)',
       medium: 'Medium (1-10MB)',
       large: 'Large (> 10MB)'
+    },
+    folderSettings: {
+      remember: 'Remember This Folder',
+      saved: 'Folder settings saved'
     },
     layout: {
       mode: 'View Layout',

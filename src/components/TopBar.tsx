@@ -36,6 +36,8 @@ interface TopBarProps {
   onGroupByChange: (option: GroupByOption) => void;
   isAISearchEnabled: boolean;
   onToggleAISearch: () => void;
+  onRememberFolderSettings?: () => void;
+  hasFolderSettings?: boolean;
   t: (key: string) => string;
 }
 
@@ -467,6 +469,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onGroupByChange,
   isAISearchEnabled,
   onToggleAISearch,
+  onRememberFolderSettings,
+  hasFolderSettings,
   t
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
@@ -516,7 +520,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Center: Search */}
       <div className="flex-1 max-w-2xl relative">
-        <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
+        <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${
           isAISearchEnabled 
             ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
             : activeTab.searchQuery 
@@ -524,10 +528,10 @@ export const TopBar: React.FC<TopBarProps> = ({
               : 'border-transparent'
         }`}>
           
-          <div className="relative">
+          <div className="relative flex-shrink-0">
             <button 
               onClick={() => setScopeMenuOpen(!scopeMenuOpen)}
-              className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700"
+              className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
             >
               {getScopeIcon(activeTab.searchScope)}
               <ChevronDown size={12} className="ml-1 opacity-70"/>
@@ -555,27 +559,27 @@ export const TopBar: React.FC<TopBarProps> = ({
             )}
           </div>
 
-          <Search size={16} className={`mr-2 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
+          <Search size={16} className={`mr-2 flex-shrink-0 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
           
           <input
             ref={searchInputRef}
             type="text"
             id="toolbar-search-input"
             name="toolbar-search-input"
-            className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+            className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
             placeholder={isAISearchEnabled ? t('settings.aiSmartSearch') : t('search.placeholder')}
             value={toolbarQuery}
             onChange={(e) => onSetToolbarQuery(e.target.value)}
             onKeyDown={handleKeyDown}
           />
 
-          <div className="flex items-center space-x-1 ml-2">
+          <div className="flex items-center space-x-1 ml-2 flex-shrink-0">
              {toolbarQuery && (
-                <button onClick={() => { onSetToolbarQuery(''); onPerformSearch(''); }} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400">
+                <button onClick={() => { onSetToolbarQuery(''); onPerformSearch(''); }} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0">
                   <X size={14} />
                 </button>
              )}
-             
+              
              <button 
                 onClick={onToggleAISearch}
                 className={`p-1.5 rounded-full transition-colors ${isAISearchEnabled ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400'}`}
@@ -644,6 +648,19 @@ export const TopBar: React.FC<TopBarProps> = ({
                       {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
                     </button>
                   ))}
+                  {onRememberFolderSettings && (
+                    <>
+                      <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                      <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
+                        <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
+                        <button 
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                    </>
+                  )}
                </div>
              </>
            )}
@@ -702,6 +719,19 @@ export const TopBar: React.FC<TopBarProps> = ({
                        className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
                      />
                   </div>
+                  {onRememberFolderSettings && (
+                    <>
+                      <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                      <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
+                        <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
+                        <button 
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        >
+                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                    </>
+                  )}
                </div>
              </>
            )}

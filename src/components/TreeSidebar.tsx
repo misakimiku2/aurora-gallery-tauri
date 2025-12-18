@@ -85,8 +85,8 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
   return (
     <div className="select-none text-sm text-gray-600 dark:text-gray-300">
       <div 
-        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group
-          ${isSelected ? 'bg-blue-600 text-white' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}
+        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative
+          ${isSelected ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}
           ${isDragOver ? 'bg-blue-100 dark:bg-blue-900 border-blue-500 dark:border-blue-400' : ''}
         `}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}

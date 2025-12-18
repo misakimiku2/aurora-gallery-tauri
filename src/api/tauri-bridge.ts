@@ -340,14 +340,57 @@ export const getDefaultPaths = async (): Promise<Record<string, string>> => {
 };
 
 /**
- * 打开指定路径的文件夹
- * @param path 要打开的文件夹路径
+ * 打开指定路径的文件夹或文件
+ * @param path 要打开的路径
+ * @param isFile 是否为文件（可选，如果未提供则根据路径判断）
  */
-export const openPath = async (path: string): Promise<void> => {
+export const openPath = async (path: string, isFile?: boolean): Promise<void> => {
   try {
-    await invoke('open_path', { path });
+    console.log('tauri-bridge.openPath called:', { path, isFile });
+    await invoke('open_path', { path, isFile });
   } catch (error) {
-    console.error('Failed to open path:', error);
+    console.error('Failed to open path:', error, { path, isFile });
+    throw error;
+  }
+};
+
+/**
+ * 创建新文件夹
+ * @param path 要创建的文件夹路径
+ */
+export const createFolder = async (path: string): Promise<void> => {
+  try {
+    await invoke('create_folder', { path });
+  } catch (error) {
+    console.error('Failed to create folder:', error);
+    throw error;
+  }
+};
+
+/**
+ * 重命名文件或文件夹
+ * @param oldPath 旧路径
+ * @param newPath 新路径
+ */
+export const renameFile = async (oldPath: string, newPath: string): Promise<void> => {
+  try {
+    await invoke('rename_file', { oldPath, newPath });
+  } catch (error) {
+    console.error('Failed to rename file:', error);
+    throw error;
+  }
+};
+
+/**
+ * 删除文件或文件夹
+ * @param path 要删除的文件或文件夹路径
+ */
+export const deleteFile = async (path: string): Promise<void> => {
+  try {
+    await invoke('delete_file', { path });
+  } catch (error) {
+    console.error('Failed to delete file:', error);
+    throw error;
   }
 };
 
