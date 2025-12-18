@@ -9,9 +9,10 @@ import { TopBar } from './components/TopBar';
 import { FileGrid, InlineRenameInput } from './components/FileGrid';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
+import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail } from './api/tauri-bridge';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -575,6 +576,8 @@ export const App: React.FC = () => {
   const hasSelectedFilesRef = useRef(false);
   // Ref to track if mouse is inside the window
   const isMouseInsideRef = useRef(true);
+  // State for close confirmation modal
+  const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 
   // **【关键修复】使用 useEffect 监听全局事件，确保拖拽状态重置**
   useEffect(() => {
@@ -1076,6 +1079,49 @@ export const App: React.FC = () => {
         window.removeEventListener('mouseleave', handleMouseLeave);
     };
   }, []);
+
+  // Listen for window close requests (Tauri only)
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const setupCloseListener = async () => {
+      try {
+        // Only set up listener in Tauri environment
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const currentWindow = getCurrentWindow();
+
+        unlisten = await currentWindow.onCloseRequested(async (event) => {
+          // Prevent default close behavior
+          event.preventDefault();
+
+          // Check user's exit action preference
+          const exitAction = state.settings.exitAction;
+
+          if (exitAction === 'minimize') {
+            // Minimize to tray
+            await hideWindow();
+          } else if (exitAction === 'exit') {
+            // Exit immediately
+            currentWindow.destroy();
+          } else {
+            // Ask user (default behavior)
+            setShowCloseConfirmation(true);
+          }
+        });
+      } catch (error) {
+        // Not in Tauri environment or error occurred, ignore
+        console.log('Window close listener not available:', error);
+      }
+    };
+
+    setupCloseListener();
+
+    return () => {
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [state.settings.exitAction]);
 
   // Update hasSelectedFilesRef when activeTab.selectedFileIds changes
   useEffect(() => {
@@ -2626,6 +2672,36 @@ export const App: React.FC = () => {
           return { ...prev, activeModal: { type: null } };
       });
       showToast(t('context.saved'));
+  };
+
+  // Handle close confirmation actions
+  const handleCloseConfirmation = async (action: 'minimize' | 'exit' | 'ask') => {
+    setShowCloseConfirmation(false);
+    
+    // Save the user's preference if they don't want to be asked again
+    if (action !== 'ask') {
+      setState(prev => ({
+        ...prev,
+        settings: {
+          ...prev.settings,
+          exitAction: action
+        }
+      }));
+    }
+    
+    // Perform the selected action
+    switch (action) {
+      case 'minimize':
+        await hideWindow();
+        break;
+      case 'exit':
+        // Exit the application
+        window.close();
+        break;
+      case 'ask':
+        // Do nothing, just close the modal
+        break;
+    }
   };
 
   // Enhanced handleClearPersonInfo to support selective clearing
@@ -4477,7 +4553,7 @@ export const App: React.FC = () => {
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} t={t} showWindowControls={!showSplash} />
+      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={() => setShowCloseConfirmation(true)} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
           <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} onDrop={(targetId, sourceIds) => handleMoveFiles(sourceIds, targetId)} onDropOnTag={handleDropOnTag} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />
@@ -4871,6 +4947,14 @@ export const App: React.FC = () => {
               return { ...s, settings: newSettings };
           });
       }} onUpdatePath={handleChangePath} onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} t={t} /> )}
+      
+      {showCloseConfirmation && (
+          <CloseConfirmationModal
+              onClose={() => setShowCloseConfirmation(false)}
+              onAction={handleCloseConfirmation}
+              t={t}
+          />
+      )}
       
       <WelcomeModal 
         show={showWelcome} 

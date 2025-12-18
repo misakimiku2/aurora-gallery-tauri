@@ -1,6 +1,8 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { TabState } from '../types';
-import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Minus, Square } from 'lucide-react';
+import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Minus, Square, Minimize2 } from 'lucide-react';
+import { isTauriEnvironment } from '../utils/environment';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface TabBarProps {
   tabs: TabState[];
@@ -10,6 +12,7 @@ interface TabBarProps {
   onCloseTab: (e: React.MouseEvent, id: string) => void;
   onNewTab: () => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
+  onCloseWindow: () => void;
   t: (key: string) => string;
   showWindowControls?: boolean;
 }
@@ -22,27 +25,53 @@ export const TabBar: React.FC<TabBarProps> = ({
   onCloseTab,
   onNewTab,
   onContextMenu,
+  onCloseWindow,
   t,
   showWindowControls = true
 }) => {
   const tabBarRef = useRef<HTMLDivElement>(null);
   const [showControls, setShowControls] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   useEffect(() => {
-    // Only show custom window controls on Linux or if not in Electron.
+    // Only show custom window controls on Linux for Tauri.
     // Windows uses titleBarOverlay (native controls), macOS uses traffic lights.
-    if (window.electron) {
-        // @ts-ignore
-        const platform = window.electron.platform;
-        if (platform === 'linux') {
-            setShowControls(true);
-        } else {
-            setShowControls(false);
-        }
-    } else {
-        // Not electron (web mode), usually don't show window controls or show them if PWA?
-        // For now, hide them in web mode as browser has its own.
+    if (isTauriEnvironment()) {
+      const platform = (window as any).__TAURI__?.os?.platform || 'linux';
+      if (platform === 'linux') {
+        setShowControls(true);
+      } else {
         setShowControls(false);
+      }
+    } else {
+        // Not Tauri (web mode), usually don't show window controls as browser has its own.
+        setShowControls(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Listen for window maximize state changes in Tauri
+    if (isTauriEnvironment()) {
+      const checkMaximizeState = async () => {
+        try {
+          const window = getCurrentWindow();
+          const isMaximizedState = await window.isMaximized();
+          setIsMaximized(isMaximizedState);
+        } catch (error) {
+          console.error('Failed to check maximize state:', error);
+        }
+      };
+
+      // Initial check
+      checkMaximizeState();
+
+      // Set up event listener for window resize to check maximize state
+      const handleResize = () => {
+        checkMaximizeState();
+      };
+
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
     }
   }, []);
 
@@ -90,6 +119,33 @@ export const TabBar: React.FC<TabBarProps> = ({
     
     if (tab.activeTags.length > 0) return <Filter size={12} className="mr-1 text-amber-500" />;
     return <Folder size={12} className="mr-1 text-blue-500" />;
+  };
+
+  // Tauri window control functions
+  const handleMinimize = async () => {
+    try {
+      const window = getCurrentWindow();
+      await window.minimize();
+    } catch (error) {
+      console.error('Failed to minimize window:', error);
+    }
+  };
+
+  const handleMaximize = async () => {
+    try {
+      const window = getCurrentWindow();
+      await window.toggleMaximize();
+      // Update local state after toggle
+      const newState = await window.isMaximized();
+      setIsMaximized(newState);
+    } catch (error) {
+      console.error('Failed to toggle maximize window:', error);
+    }
+  };
+
+  const handleClose = async () => {
+    // Call the onCloseWindow callback instead of directly closing the window
+    onCloseWindow();
   };
 
   return (
@@ -141,23 +197,23 @@ export const TabBar: React.FC<TabBarProps> = ({
         {showControls && showWindowControls && (
             <div className="flex items-center h-full px-2 gap-1 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as any}>
                 <button 
-                    onClick={() => window.electron?.minimize()} 
+                    onClick={handleMinimize} 
                     className="p-2 text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-800 rounded transition-colors"
-                    title="Minimize"
+                    title={t('window.minimize')}
                 >
                     <Minus size={14} />
                 </button>
                 <button 
-                    onClick={() => window.electron?.maximize()} 
+                    onClick={handleMaximize} 
                     className="p-2 text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-800 rounded transition-colors"
-                    title="Maximize / Restore"
+                    title={isMaximized ? t('window.restore') : t('window.maximize')}
                 >
-                    <Square size={12} />
+                    {isMaximized ? <Minimize2 size={14} /> : <Square size={12} />}
                 </button>
                 <button 
-                    onClick={() => window.electron?.close()} 
+                    onClick={handleClose} 
                     className="p-2 text-gray-500 hover:bg-red-500 hover:text-white rounded transition-colors"
-                    title="Close"
+                    title={t('window.close')}
                 >
                     <X size={14} />
                 </button>
@@ -166,7 +222,7 @@ export const TabBar: React.FC<TabBarProps> = ({
         
         {/* Spacer for Native Controls on Windows (approx 140px) if we want to push tabs away, but native controls overlay on top anyway. 
             Keeping the area empty is enough. */}
-        {!showControls && window.electron && showWindowControls && (
+        {!showControls && isTauriEnvironment() && showWindowControls && (
              <div className="w-[140px] h-full shrink-0"></div>
         )}
     </div>

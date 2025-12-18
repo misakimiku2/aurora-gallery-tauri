@@ -394,3 +394,27 @@ export const deleteFile = async (path: string): Promise<void> => {
   }
 };
 
+/**
+ * 隐藏主窗口（最小化到托盘）
+ */
+export const hideWindow = async (): Promise<void> => {
+  try {
+    await invoke('hide_window');
+  } catch (error) {
+    console.error('Failed to hide window:', error);
+    throw error;
+  }
+};
+
+/**
+ * 显示主窗口
+ */
+export const showWindow = async (): Promise<void> => {
+  try {
+    await invoke('show_window');
+  } catch (error) {
+    console.error('Failed to show window:', error);
+    throw error;
+  }
+};
+

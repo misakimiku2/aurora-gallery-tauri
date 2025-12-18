@@ -8,6 +8,10 @@ use std::fs;
 use std::num::NonZeroU32;
 use walkdir::WalkDir;
 use tauri::Manager;
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::menu::{Menu, MenuItem};
+
+
 use base64::{Engine as _, engine::general_purpose};
 use fast_image_resize as fr;
 use rayon::prelude::*;
@@ -856,6 +860,20 @@ async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String
     Ok(Some(format!("data:{};base64,{}", mime_type, base64_str)))
 }
 
+// 窗口控制命令
+#[tauri::command]
+async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+    window.hide().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())
+}
+
 fn main() {
     
     tauri::Builder::default()
@@ -877,8 +895,61 @@ fn main() {
             open_path,
             create_folder,
             rename_file,
-            delete_file
+            delete_file,
+            hide_window,
+            show_window
         ])
+        .setup(|app| {
+            // 创建托盘菜单
+            let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            
+            // 获取应用句柄用于事件处理
+            let app_handle = app.handle().clone();
+            
+            // 创建托盘图标
+            let tray = TrayIconBuilder::new()
+                .tooltip("Aurora Gallery")
+                .icon(app.default_window_icon().expect("No default window icon").clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false) // 禁用左键点击显示菜单，只有右键才显示
+                .on_menu_event(move |app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(move |_tray, event| {
+                    // 处理托盘图标的鼠标事件
+                    match event {
+                        TrayIconEvent::DoubleClick { .. } => {
+                            // 双击显示窗口
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        _ => {
+                            // 单击不触发任何操作
+                        }
+                    }
+                })
+                .build(app)?;
+            
+            // 保存托盘图标到应用状态
+            app.manage(Some(tray));
+            
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -406,6 +406,19 @@ export const translations = {
       trayOpen: '打开',
       trayExit: '退出',
     },
+    window: {
+      minimize: '最小化',
+      maximize: '最大化',
+      restore: '恢复',
+      close: '关闭',
+      closeConfirmation: {
+        title: '关闭确认',
+        message: '您确定要关闭极光图库吗？',
+        minimizeToTray: '最小化到托盘',
+        exit: '退出程序',
+        alwaysAsk: '每次询问'
+      }
+    },
     search: {
       scopeAll: '搜索全部',
       scopeFile: '文件名',
@@ -862,6 +875,19 @@ export const translations = {
       remember: 'Remember my choice',
       trayOpen: 'Open',
       trayExit: 'Exit',
+    },
+    window: {
+      minimize: 'Minimize',
+      maximize: 'Maximize',
+      restore: 'Restore',
+      close: 'Close',
+      closeConfirmation: {
+        title: 'Close Confirmation',
+        message: 'Are you sure you want to close Aurora Gallery?',
+        minimizeToTray: 'Minimize to Tray',
+        exit: 'Exit Application',
+        alwaysAsk: 'Ask Every Time'
+      }
     },
     search: {
       scopeAll: 'All',

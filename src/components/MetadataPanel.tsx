@@ -1,5 +1,42 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+
+// 辅助函数：深度查找文件夹内的图片
+const findImagesDeeply = (
+    rootFolder: FileNode, 
+    allFiles: Record<string, FileNode>, 
+    limit: number = 3
+): FileNode[] => {
+    const images: FileNode[] = [];
+    // 使用栈进行 DFS
+    const stack: string[] = [...(rootFolder.children || [])];
+    const visited = new Set<string>(); // 防止循环引用
+    
+    // 设置一个遍历上限，防止超大文件夹卡死 UI
+    let traversalCount = 0;
+    const MAX_TRAVERSAL = 200;
+
+    while (stack.length > 0 && images.length < limit && traversalCount < MAX_TRAVERSAL) {
+        const id = stack.pop()!;
+        if (visited.has(id)) continue;
+        visited.add(id);
+        traversalCount++;
+
+        const node = allFiles[id];
+        if (!node) continue;
+        
+        if (node.type === FileType.IMAGE) {
+            images.push(node);
+        } else if (node.type === FileType.FOLDER && node.children) {
+            stack.push(...node.children);
+        }
+    }
+    
+    // 排序并切片
+    return images
+        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
+        .slice(0, limit);
+};
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
@@ -509,31 +546,85 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     return null;
   }, [file, files]);
 
-  const folderPreviewImages = useMemo(() => {
-    if (file && file.type === FileType.FOLDER) {
-        // Custom logic for Tauri to use Asset Protocol
-        const found: string[] = [];
-        const queue = [...(file.children || [])];
-        let head = 0;
-        let iterations = 0;
-        const maxIterations = 200;
+  // 获取或初始化全局缓存 (与FileGrid.tsx共享)
+  const getGlobalCache = () => {
+    const win = window as any;
+    return win.__AURORA_THUMBNAIL_CACHE__ || null;
+  };
 
-        while (head < queue.length && found.length < 3 && iterations < maxIterations) {
-            const id = queue[head++];
-            iterations++;
-            const node = files[id];
-            if (!node) continue;
-            
-            if (node.type === FileType.IMAGE && node.path) {
-                found.push(convertFileSrc(node.path));
-            } else if (node.type === FileType.FOLDER && node.children) {
-                queue.push(...node.children);
-            }
-        }
-        return found;
+  // 文件夹预览图，与主界面保持一致
+  const [folderPreviewImages, setFolderPreviewImages] = useState<string[]>([]);
+  const [folderPreviewLoaded, setFolderPreviewLoaded] = useState(false);
+
+  // 当文件或资源根目录变化时，更新文件夹预览图
+  useEffect(() => {
+    if (!file || file.type !== FileType.FOLDER) {
+      setFolderPreviewImages([]);
+      setFolderPreviewLoaded(true);
+      return;
     }
-    return [];
-  }, [file, files]);
+
+    // 1. 深度查找文件夹内的图片
+    const imageChildren = findImagesDeeply(file, files, 3);
+    
+    // 2. 检查全局缓存中是否已有缩略图
+    const cache = getGlobalCache();
+    if (cache) {
+      // 尝试映射所有子文件到缓存中的 URL
+      const cachedUrls = imageChildren.map((child: FileNode) => {
+          return cache.get(child.path) || null; 
+      });
+      
+      // 过滤掉 null 值
+      const validUrls = cachedUrls.filter((url: any): url is string => !!url);
+      
+      // 如果缓存中有数据，立即更新
+      if (validUrls.length > 0) {
+        setFolderPreviewImages(validUrls);
+      }
+    }
+
+    // 3. 如果没有足够的缓存数据，异步加载
+    if (imageChildren.length > 0) {
+      const loadPreviews = async () => {
+        try {
+          const { getThumbnail } = await import('../api/tauri-bridge');
+          
+          // 并行请求所有子文件的缩略图
+          const promises = imageChildren.map(async (img: FileNode) => {
+              // 先查缓存，如果有就不请求了
+              const cache = getGlobalCache();
+              if (cache) {
+                const cached = cache.get(img.path);
+                if (cached) return cached;
+              }
+
+              // 请求新图
+              const url = await getThumbnail(img.path, img.updatedAt, resourceRoot);
+              return url;
+          });
+
+          const thumbnails = await Promise.all(promises);
+          
+          // 过滤掉 null 值
+          const validThumbnails = thumbnails.filter((t: any): t is string => !!t);
+          
+          // 更新预览图
+          if (validThumbnails.length > 0) {
+            setFolderPreviewImages(validThumbnails);
+          }
+        } catch (error) {
+          console.error('Failed to load folder previews:', error);
+        } finally {
+          setFolderPreviewLoaded(true);
+        }
+      };
+
+      loadPreviews();
+    } else {
+      setFolderPreviewLoaded(true);
+    }
+  }, [file, files, resourceRoot]);
 
   const typeColors: Record<string, string> = {
       'JPG': 'bg-green-500 dark:bg-green-400',
@@ -852,6 +943,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     <span>{t('meta.totalFiles')}</span>
                     <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{selectedFileIds.length}</span>
                 </div>
+                {/* Total Size Summary */}
+                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-2">
+                    <span>{t('meta.totalSize')}</span>
+                    <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{formatSize(batchStats.totalSize)}</span>
+                </div>
             </div>
         )}
 
@@ -898,7 +994,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         {!isMulti && file && file.type === FileType.FOLDER && (
             <div className="flex flex-col">
                 <div className="w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-black/40 border border-gray-200 dark:border-gray-800 flex justify-center items-center py-8 mb-4 shadow-sm relative group">
-                    <div className="w-24 h-24">
+                    <div className="w-[200px] h-[200px]">
                         <Folder3DIcon 
                             previewSrcs={folderPreviewImages} 
                             count={file.children?.length} 
@@ -1177,15 +1273,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     {file.type === FileType.IMAGE && file.meta && (
                         <>
                             <div>
-                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{t('meta.format')}</div>
+                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><FileText size={10} className="mr-1"/> {t('meta.format')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.format.toUpperCase()}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{t('meta.size')}</div>
+                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><HardDrive size={10} className="mr-1"/> {t('meta.size')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">{formatSize(file.meta.sizeKb)}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{t('meta.dimensions')}</div>
+                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><ImageIcon size={10} className="mr-1"/> {t('meta.dimensions')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.width} x {file.meta.height}</div>
                             </div>
                         </>
@@ -1193,11 +1289,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     {file.type === FileType.FOLDER && folderStats && (
                         <>
                             <div>
-                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{t('context.files')}</div>
+                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><FolderIcon size={10} className="mr-1"/> {t('context.files')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">{folderStats.fileCount}</div>
                             </div>
                             <div>
-                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5">{t('meta.totalSize')}</div>
+                                <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><HardDrive size={10} className="mr-1"/> {t('meta.totalSize')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">{formatSize(folderStats.size)}</div>
                             </div>
                         </>
