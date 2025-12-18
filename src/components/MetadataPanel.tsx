@@ -23,31 +23,69 @@ interface MetadataProps {
 }
 
 // Image Preview Component for Tauri
+// 获取或初始化全局缓存 (与FileGrid.tsx共享)
+const getGlobalCache = () => {
+  // 使用类型断言来访问全局缓存，避免重新定义LRUCache类型
+  const win = window as any;
+  
+  // 只在缓存不存在时创建新实例
+  if (!win.__AURORA_THUMBNAIL_CACHE__) {
+    // 这里不重新定义LRUCache类，因为它已经在FileGrid.tsx中定义了
+    // 我们假设当FileGrid组件加载时，已经初始化了缓存
+    return null;
+  }
+  
+  return win.__AURORA_THUMBNAIL_CACHE__;
+};
+
 const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resourceRoot?: string, cachePath?: string }) => {
-  const [imageUrl, setImageUrl] = useState<string>('');
-  const [isLoading, setIsLoading] = useState(true);
+  // 初始化时尝试从全局缓存读取
+  const [imageUrl, setImageUrl] = useState<string | null>(() => {
+      if (!file.path) return null;
+      const key = file.path;
+      const cache = getGlobalCache();
+      return cache.get(key) || null;
+  });
+  
+  const [isLoading, setIsLoading] = useState(!imageUrl);
   
   useEffect(() => {
     const loadImage = async () => {
       if (!file.path) {
-        setImageUrl('');
+        setImageUrl(null);
         setIsLoading(false);
         return;
       }
       
+      // 检查全局缓存中是否已有缩略图
+      const cache = getGlobalCache();
+      const key = file.path;
+      const cachedUrl = cache.get(key);
+      
+      if (cachedUrl) {
+        setImageUrl(cachedUrl);
+        setIsLoading(false);
+        return;
+      }
+      
+      // 如果缓存中没有，才显示加载状态
       setIsLoading(true);
+      
       try {
         // Use getThumbnail for preview (smaller, faster)
         const { getThumbnail } = await import('../api/tauri-bridge');
         const dataUrl = await getThumbnail(file.path, undefined, resourceRoot);
+        
         if (dataUrl) {
+          // 更新全局缓存
+          cache.set(key, dataUrl);
           setImageUrl(dataUrl);
         } else {
-          setImageUrl('');
+          setImageUrl(null);
         }
       } catch (error) {
         console.error('Failed to load preview image:', error);
-        setImageUrl('');
+        setImageUrl(null);
       } finally {
         setIsLoading(false);
       }

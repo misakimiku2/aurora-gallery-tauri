@@ -563,57 +563,91 @@ async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
         }
     };
     
-    // 规范化路径分隔符为 Windows 格式（使用反斜杠）
-    let normalized_path = if cfg!(windows) {
-        absolute_path.replace('/', "\\")
+    // 使用绝对路径创建Path对象，确保所有后续操作都基于绝对路径
+    let abs_path_obj = Path::new(&absolute_path);
+    
+    let is_file_path = is_file.unwrap_or_else(|| abs_path_obj.is_file());
+    
+    // 计算目标路径
+    let target_path = if is_file_path {
+        // 情况1：文件 - 打开父目录
+        match abs_path_obj.parent() {
+            Some(parent) => {
+                let parent_str = parent.to_str().unwrap_or(&absolute_path);
+                println!("File parent path: {}", parent_str);
+                parent_str.to_string()
+            },
+            None => {
+                println!("File has no parent, using absolute path: {}", absolute_path);
+                absolute_path.clone()
+            },
+        }
     } else {
-        absolute_path
-    };
-    
-    let is_file_path = is_file.unwrap_or_else(|| path_obj.is_file());
-    
-    println!("open_path: path={}, normalized_path={}, is_file={:?}, is_file_path={}", 
-             path, normalized_path, is_file, is_file_path);
-    
-    let result = if cfg!(windows) {
-        // Windows: 对于文件和文件夹，都打开其父目录并选中该项
-        // explorer /select,路径（注意：逗号后面不能有空格）
-        // 注意：如果路径包含空格，需要用引号包裹整个 /select,路径 参数
-        let select_arg = if normalized_path.contains(' ') {
-            format!("/select,\"{}\"", normalized_path)
-        } else {
-            format!("/select,{}", normalized_path)
-        };
-        println!("Windows explorer command: explorer {}", select_arg);
-        Command::new("explorer")
-            .arg(&select_arg)
-            .spawn()
-            .map(|_| ())
-    } else if cfg!(target_os = "macos") {
-        // macOS: 对于文件和文件夹，都打开其父目录并选中该项
-        Command::new("open")
-            .args(["-R", &normalized_path])
-            .spawn()
-            .map(|_| ())
-    } else {
-        // Linux: 对于文件和文件夹，都打开其父目录
-        if let Some(parent) = Path::new(&normalized_path).parent() {
-            Command::new("xdg-open")
-                .args([parent.to_str().unwrap_or(&normalized_path)])
-                .spawn()
-                .map(|_| ())
-        } else {
-            Command::new("xdg-open")
-                .args([&normalized_path])
-                .spawn()
-                .map(|_| ())
+        // 情况2：文件夹
+        match is_file {
+            Some(false) => {
+                // 右键菜单打开文件夹：打开父目录
+                match abs_path_obj.parent() {
+                    Some(parent) => {
+                        let parent_str = parent.to_str().unwrap_or(&absolute_path);
+                        println!("Folder parent path (from context menu): {}", parent_str);
+                        parent_str.to_string()
+                    },
+                    None => {
+                        println!("Folder has no parent, using absolute path: {}", absolute_path);
+                        absolute_path.clone()
+                    },
+                }
+            },
+            _ => {
+                // 设置面板打开文件夹：直接打开该文件夹
+                println!("Opening folder directly: {}", absolute_path);
+                absolute_path.clone()
+            }
         }
     };
     
+    println!("open_path: path={}, target_path={}, is_file={:?}, is_file_path={}", 
+             path, target_path, is_file, is_file_path);
+    
+    println!("Final target_path: {}", target_path);
+    
+    // 直接使用系统命令打开文件管理器，但不等待命令完成，避免阻塞和闪退问题
+    let result = if cfg!(windows) {
+        // Windows: 使用explorer命令，确保路径使用正确的反斜杠格式
+        // 将正斜杠转换为反斜杠，确保Windows能够正确识别路径
+        let win_target_path = target_path.replace("/", "\\");
+        println!("Windows command: explorer.exe \"{}\"", win_target_path);
+        
+        // 使用spawn()而不是status()或output()，这样命令会在后台运行，不会阻塞主线程
+        // 同时，使用Command::new("explorer.exe")直接调用，避免使用cmd.exe包装
+        Command::new("explorer.exe")
+            .arg(win_target_path)
+            .spawn()
+            .map(|_| ())
+    } else if cfg!(target_os = "macos") {
+        // macOS: 使用open命令
+        println!("macOS command: open \"{}\"", target_path);
+        Command::new("open")
+            .arg(target_path.clone())
+            .spawn()
+            .map(|_| ())
+    } else {
+        // Linux: 使用xdg-open命令
+        println!("Linux command: xdg-open \"{}\"", target_path);
+        Command::new("xdg-open")
+            .arg(target_path.clone())
+            .spawn()
+            .map(|_| ())
+    };
+    
     match result {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            println!("Successfully started file manager for: {}", target_path);
+            Ok(())
+        },
         Err(e) => {
-            let error_msg = format!("Failed to open path '{}': {}", normalized_path, e);
+            let error_msg = format!("Failed to open path '{}': {}", target_path, e);
             println!("{}", error_msg);
             Err(error_msg)
         }

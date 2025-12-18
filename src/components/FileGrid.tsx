@@ -9,14 +9,71 @@ import md5 from 'md5';
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
   interface Window {
-    __AURORA_THUMBNAIL_CACHE__?: Map<string, string>;
+    __AURORA_THUMBNAIL_CACHE__?: LRUCache<string>;
+  }
+}
+
+// LRU缓存类，带大小限制
+class LRUCache<T> {
+  private cache: Map<string, { value: T; timestamp: number }>;
+  private maxSize: number;
+
+  constructor(maxSize: number) {
+    this.cache = new Map();
+    this.maxSize = maxSize;
+  }
+
+  get(key: string): T | undefined {
+    const item = this.cache.get(key);
+    if (item) {
+      // 更新访问时间
+      this.cache.set(key, { ...item, timestamp: Date.now() });
+      return item.value;
+    }
+    return undefined;
+  }
+
+  set(key: string, value: T): void {
+    // 检查是否超过最大容量
+    if (this.cache.size >= this.maxSize) {
+      // 找出最久未使用的项
+      let oldestKey: string | undefined;
+      let oldestTimestamp = Date.now() + 1;
+
+      for (const [k, v] of this.cache.entries()) {
+        if (v.timestamp < oldestTimestamp) {
+          oldestTimestamp = v.timestamp;
+          oldestKey = k;
+        }
+      }
+
+      // 删除最久未使用的项
+      if (oldestKey) {
+        this.cache.delete(oldestKey);
+      }
+    }
+
+    this.cache.set(key, { value, timestamp: Date.now() });
+  }
+
+  has(key: string): boolean {
+    return this.cache.has(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  get size(): number {
+    return this.cache.size;
   }
 }
 
 // 获取或初始化全局缓存 (挂载在 window 上以防热更新丢失)
 const getGlobalCache = () => {
   if (!window.__AURORA_THUMBNAIL_CACHE__) {
-    window.__AURORA_THUMBNAIL_CACHE__ = new Map<string, string>();
+    // 限制缓存大小为1000个项目，约50-100MB内存
+    window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(1000);
   }
   return window.__AURORA_THUMBNAIL_CACHE__;
 };
@@ -1155,7 +1212,7 @@ const GroupContent = React.memo(({
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
   
   // Calculate layout for this group
-  const { layout } = useLayout(
+  const { layout, totalHeight } = useLayout(
     group.fileIds,
     files,
     activeTab.layoutMode,
@@ -1163,6 +1220,9 @@ const GroupContent = React.memo(({
     thumbnailSize,
     'browser'
   );
+
+  // 移除虚拟滚动逻辑，直接使用所有项目
+  const visibleItems = layout;
 
   return (
     <div className="p-6">
@@ -1199,15 +1259,15 @@ const GroupContent = React.memo(({
           })}
         </div>
       ) : (
-        // Grid, adaptive, or masonry layout
+        // Grid, adaptive, or masonry layout - 使用虚拟滚动
         <div 
           className="relative" 
           style={{ 
             width: '100%', 
-            height: layout.reduce((max, item) => Math.max(max, item.y + item.height), 0) 
+            height: totalHeight 
           }}
         >
-          {layout.map((item) => {
+          {visibleItems.map((item) => {
             const file = files[item.id];
             if (!file) return null;
             
