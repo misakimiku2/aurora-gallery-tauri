@@ -247,11 +247,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
       // 如果已经有图了（比如从缓存中读到的），且 URL 没变，就不用重新加载
       if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
-          // 这里可以不做任何事，但为了应对文件修改的情况，
-          // 可以选择继续请求，或者信任缓存。
-          // 考虑到用户对“闪烁”敏感，我们优先信任缓存。
-          // 如果真的需要更新，可以通过文件修改时间对比（这里略过，优先流畅度）
-          // return; 
+          // 缓存命中，直接返回，避免不必要的请求
+          return;
       }
 
       const controller = new AbortController();

@@ -12,7 +12,7 @@ import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow } from './api/tauri-bridge';
+import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -576,6 +576,8 @@ export const App: React.FC = () => {
   const hasSelectedFilesRef = useRef(false);
   // Ref to track if mouse is inside the window
   const isMouseInsideRef = useRef(true);
+  // Ref to store the latest exit action preference (to avoid closure issues)
+  const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 
@@ -915,12 +917,16 @@ export const App: React.FC = () => {
                             folderSettings: savedData.folderSettings || {},
                             settings: finalSettings
                         }));
+                        // 立即更新 ref 以确保事件监听器使用正确的值
+                        exitActionRef.current = finalSettings.exitAction || 'ask';
                     } else {
                         // 只有默认路径，更新 state
                         setState(prev => ({
                             ...prev,
                             settings: finalSettings
                         }));
+                        // 立即更新 ref
+                        exitActionRef.current = finalSettings.exitAction || 'ask';
                     }
                     
 
@@ -1080,6 +1086,11 @@ export const App: React.FC = () => {
     };
   }, []);
 
+  // Update exitActionRef when state changes
+  useEffect(() => {
+    exitActionRef.current = state.settings.exitAction;
+  }, [state.settings.exitAction]);
+
   // Listen for window close requests (Tauri only)
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -1094,8 +1105,8 @@ export const App: React.FC = () => {
           // Prevent default close behavior
           event.preventDefault();
 
-          // Check user's exit action preference
-          const exitAction = state.settings.exitAction;
+          // Check user's exit action preference from ref (always latest value)
+          const exitAction = exitActionRef.current;
 
           if (exitAction === 'minimize') {
             // Minimize to tray
@@ -1121,7 +1132,7 @@ export const App: React.FC = () => {
         unlisten();
       }
     };
-  }, [state.settings.exitAction]);
+  }, []); // Empty dependency array - ref is always current
 
   // Update hasSelectedFilesRef when activeTab.selectedFileIds changes
   useEffect(() => {
@@ -2675,18 +2686,42 @@ export const App: React.FC = () => {
   };
 
   // Handle close confirmation actions
-  const handleCloseConfirmation = async (action: 'minimize' | 'exit' | 'ask') => {
+  const handleCloseConfirmation = async (action: 'minimize' | 'exit', alwaysAsk: boolean) => {
     setShowCloseConfirmation(false);
     
-    // Save the user's preference if they don't want to be asked again
-    if (action !== 'ask') {
-      setState(prev => ({
-        ...prev,
-        settings: {
-          ...prev.settings,
-          exitAction: action
-        }
-      }));
+    // Determine the exit action to save
+    // If alwaysAsk is true: keep as 'ask' (always show confirmation)
+    // If alwaysAsk is false: save the selected action (minimize or exit)
+    const exitActionToSave: 'ask' | 'minimize' | 'exit' = alwaysAsk ? 'ask' : action;
+    
+    // Update state
+    const newSettings = {
+      ...state.settings,
+      exitAction: exitActionToSave
+    };
+    
+    // Update state and ref immediately
+    setState(prev => ({
+      ...prev,
+      settings: newSettings
+    }));
+    
+    // Immediately update ref to ensure event listener uses the latest value
+    exitActionRef.current = exitActionToSave;
+    
+    // Immediately save the settings to ensure persistence
+    try {
+      const rootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
+      await saveUserData({
+        rootPaths,
+        customTags: state.customTags,
+        people: state.people,
+        folderSettings: state.folderSettings,
+        settings: newSettings,
+        fileMetadata: {}
+      });
+    } catch (error) {
+      console.error('Failed to save exit action preference:', error);
     }
     
     // Perform the selected action
@@ -2696,10 +2731,7 @@ export const App: React.FC = () => {
         break;
       case 'exit':
         // Exit the application
-        window.close();
-        break;
-      case 'ask':
-        // Do nothing, just close the modal
+        await exitApp();
         break;
     }
   };
@@ -4553,7 +4585,21 @@ export const App: React.FC = () => {
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={() => setShowCloseConfirmation(true)} t={t} showWindowControls={!showSplash} />
+      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
+        // Check user's exit action preference from ref (always latest value)
+        const exitAction = exitActionRef.current;
+
+        if (exitAction === 'minimize') {
+          // Minimize to tray
+          await hideWindow();
+        } else if (exitAction === 'exit') {
+          // Exit immediately
+          await exitApp();
+        } else {
+          // Ask user (default behavior)
+          setShowCloseConfirmation(true);
+        }
+      }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
           <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} onDrop={(targetId, sourceIds) => handleMoveFiles(sourceIds, targetId)} onDropOnTag={handleDropOnTag} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />

@@ -418,3 +418,19 @@ export const showWindow = async (): Promise<void> => {
   }
 };
 
+/**
+ * 退出应用程序
+ */
+export const exitApp = async (): Promise<void> => {
+  try {
+    // 使用 Rust 后端的 exit_app 命令来正确退出应用
+    await invoke('exit_app');
+  } catch (error) {
+    console.error('Failed to exit app:', error);
+    // 如果 Tauri API 不可用，尝试使用 window.close() 作为后备
+    if (typeof window !== 'undefined' && window.close) {
+      window.close();
+    }
+  }
+};
+

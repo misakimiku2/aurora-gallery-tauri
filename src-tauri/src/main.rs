@@ -658,8 +658,6 @@ async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
     }
 }
 
-use tauri::ipc::Channel;
-
 #[derive(Clone, Serialize)]
 struct BatchResult {
     path: String,
@@ -669,9 +667,8 @@ struct BatchResult {
 // 1. 提取核心生成逻辑为独立函数 (不作为 command)
 fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
     use std::fs;
-    use std::io::{Read, BufWriter, BufReader, Cursor};
+    use std::io::{Read, BufWriter, BufReader};
     use image::codecs::jpeg::{JpegEncoder, JpegDecoder};
-    use image::GenericImageView;
     use image::ImageFormat;
     
     let image_path = Path::new(file_path);
@@ -692,19 +689,24 @@ fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String
     
     let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
     let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
-    let cache_file_name = format!("{}.jpg", cache_filename);
     
-    let cache_file_path = cache_root.join(&cache_file_name);
+    // 先尝试检查两种格式的缓存文件是否存在，避免不必要的图像处理
+    let jpg_cache_file_path = cache_root.join(format!("{}.jpg", cache_filename));
+    let webp_cache_file_path = cache_root.join(format!("{}.webp", cache_filename));
     
-    // 缓存命中
-    if cache_file_path.exists() {
-        return Some(cache_file_path.to_str().unwrap_or_default().to_string());
+    // 如果任一缓存文件存在，直接返回路径
+    if jpg_cache_file_path.exists() {
+        return Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string());
     }
-
-    // 生成逻辑
+    
+    if webp_cache_file_path.exists() {
+        return Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
+    }
+    
+    // 缓存未命中，继续生成逻辑
     // 重新打开文件，使用 BufReader 以流式方式读取，避免一次性分配大内存
     let file = fs::File::open(image_path).ok()?;
-    let mut reader = BufReader::new(file);
+    let reader = BufReader::new(file);
     
     // 1. 尝试识别格式
     let format = image::guess_format(&buffer[..bytes_read]).unwrap_or(ImageFormat::Png);
@@ -731,6 +733,19 @@ fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String
         image_reader.decode().ok()?
     };
 
+    // 检查图片是否包含透明像素 (alpha < 255)
+    let has_transparency = {
+        let rgba = img.to_rgba8();
+        let mut found_transparent = false;
+        for pixel in rgba.pixels() {
+            if pixel[3] < 255 {
+                found_transparent = true;
+                break;
+            }
+        }
+        found_transparent
+    };
+
     let width = img.width();
     let height = img.height();
     const TARGET_MIN_SIZE: u32 = 256;
@@ -748,30 +763,61 @@ fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String
     let dst_width_nz = NonZeroU32::new(dst_width)?;
     let dst_height_nz = NonZeroU32::new(dst_height)?;
 
-    let src_image = fr::Image::from_vec_u8(
-        src_width,
-        src_height,
-        img.to_rgb8().into_raw(),
-        fr::PixelType::U8x3,
-    ).ok()?;
+    // 根据是否有透明度选择不同的处理方式
+    if has_transparency {
+        // 有透明度，生成 WebP 格式
+        let src_image = fr::Image::from_vec_u8(
+            src_width,
+            src_height,
+            img.to_rgba8().into_raw(),
+            fr::PixelType::U8x4,
+        ).ok()?;
 
-    let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
-    
-    // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
-    let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
-    resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
+        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
+        
+        // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
+        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
 
-    // 确保目录存在
-    if !cache_root.exists() {
-        let _ = fs::create_dir_all(cache_root);
+        // 确保目录存在
+        if !cache_root.exists() {
+            let _ = fs::create_dir_all(cache_root);
+        }
+
+        let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
+        let mut writer = BufWriter::new(cache_file);
+        // 使用 image 库的 write_to 方法来处理 WebP 编码
+        let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
+        resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
+
+        Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
+    } else {
+        // 无透明度，生成 JPEG 格式
+        let src_image = fr::Image::from_vec_u8(
+            src_width,
+            src_height,
+            img.to_rgb8().into_raw(),
+            fr::PixelType::U8x3,
+        ).ok()?;
+
+        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
+        
+        // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
+        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
+
+        // 确保目录存在
+        if !cache_root.exists() {
+            let _ = fs::create_dir_all(cache_root);
+        }
+
+        let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
+        let mut writer = BufWriter::new(cache_file);
+        let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+        encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
+
+        Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
     }
-
-    let cache_file = fs::File::create(&cache_file_path).ok()?;
-    let mut writer = BufWriter::new(cache_file);
-    let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
-    encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
-
-    Some(cache_file_path.to_str().unwrap_or_default().to_string())
 }
 
 #[tauri::command]
@@ -874,6 +920,12 @@ async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     window.set_focus().map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle.exit(0);
+    Ok(())
+}
+
 fn main() {
     
     tauri::Builder::default()
@@ -897,7 +949,8 @@ fn main() {
             rename_file,
             delete_file,
             hide_window,
-            show_window
+            show_window,
+            exit_app
         ])
         .setup(|app| {
             // 创建托盘菜单
