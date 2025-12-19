@@ -1441,7 +1441,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 />
                 {(isMulti ? batchSource : source) && (
                     <button 
-                      onClick={() => window.electron?.openExternal(isMulti ? batchSource : source)}
+                      onClick={() => window.open(isMulti ? batchSource : source, '_blank')}
                       className="p-2 text-gray-400 hover:text-blue-500"
                       title={t('meta.openSource')}
                     >
@@ -1458,7 +1458,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             <div key={id} className="flex items-center text-xs group bg-gray-50 dark:bg-gray-800/50 p-1.5 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors">
                                 <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
                                 <button 
-                                    onClick={() => f.sourceUrl && window.electron?.openExternal(f.sourceUrl)}
+                                    onClick={() => f.sourceUrl && window.open(f.sourceUrl, '_blank')}
                                     className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
                                     title={f.sourceUrl}
                                 >

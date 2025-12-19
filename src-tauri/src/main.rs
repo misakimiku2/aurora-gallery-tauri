@@ -73,6 +73,40 @@ fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
+// Generate a unique file path by adding _copy suffix if file exists
+fn generate_unique_file_path(dest_path: &str) -> String {
+    let path = Path::new(dest_path);
+    if !path.exists() {
+        return dest_path.to_string();
+    }
+    
+    // Get parent directory and file stem/extension
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
+    let file_stem = path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let extension = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e))
+        .unwrap_or_default();
+    
+    // Try _copy, _copy2, _copy3, etc.
+    for counter in 1.. {
+        let new_name = if counter == 1 {
+            format!("{}_copy{}", file_stem, extension)
+        } else {
+            format!("{}_copy{}{}", file_stem, counter, extension)
+        };
+        let new_path = parent.join(&new_name);
+        if !new_path.exists() {
+            return new_path.to_str().unwrap_or(dest_path).to_string();
+        }
+    }
+    
+    // Fallback (should never reach here)
+    dest_path.to_string()
+}
+
 // Check if file extension is supported
 fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
@@ -469,6 +503,13 @@ async fn ensure_directory(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// Command to check if file exists
+#[tauri::command]
+async fn file_exists(file_path: String) -> Result<bool, String> {
+    let path = Path::new(&file_path);
+    Ok(path.exists())
+}
+
 // Command to create a folder
 #[tauri::command]
 async fn create_folder(path: String) -> Result<(), String> {
@@ -499,6 +540,246 @@ async fn delete_file(path: String) -> Result<(), String> {
             .map_err(|e| format!("Failed to delete file: {}", e))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
+    let src = Path::new(&src_path);
+    let mut dest = Path::new(&dest_path);
+    
+    // Check if source exists
+    if !src.exists() {
+        return Err(format!("Source does not exist: {}", src_path));
+    }
+    
+    // Check if source is a file or directory
+    let is_dir = src.is_dir();
+    
+    // Normalize paths for comparison
+    let src_normalized = normalize_path(&src_path);
+    let dest_normalized = normalize_path(&dest_path);
+    
+    // Check if source and destination are exactly the same path
+    // For files: allow self-copy (will generate unique filename)
+    // For directories: don't allow exact same path copy
+    if src_normalized == dest_normalized {
+        if is_dir {
+            return Err(format!("Cannot copy directory to itself: {}", src_path));
+        } else {
+            // This is a file self-copy - generate a unique filename in the same directory
+            println!("Copying file to the same directory, will generate unique filename");
+        }
+    }
+    
+    // For files, generate unique path if destination exists
+    let final_dest_path = if !is_dir && dest.exists() {
+        let unique_path = generate_unique_file_path(&dest_path);
+        println!("Destination file exists, using unique path: {}", unique_path);
+        unique_path
+    } else {
+        dest_path.clone()
+    };
+    
+    dest = Path::new(&final_dest_path);
+    
+    // Create parent directory if it doesn't exist
+    if let Some(dest_parent) = dest.parent() {
+        if !dest_parent.exists() {
+            fs::create_dir_all(dest_parent)
+                .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+        }
+    }
+    
+    println!("Copying {}: {} to {}", if is_dir { "directory" } else { "file" }, src_path, final_dest_path);
+    
+    // On Windows, use appropriate command based on source type
+    // On other platforms, use standard fs operations
+    #[cfg(windows)]
+    {
+        use std::process::Command;
+        
+        let max_retries = 3;
+        let mut last_error: Option<std::io::Error> = None;
+        
+        for attempt in 0..max_retries {
+            if is_dir {
+                // Use robocopy for directory copying - call robocopy.exe directly
+                let src_win = src_path.replace("/", "\\");
+                let dest_win = final_dest_path.replace("/", "\\");
+                
+                // Call robocopy.exe directly with separate arguments to avoid quote escaping issues
+                // /E: copy subdirectories, including empty ones
+                // /NFL: no file list
+                // /NDL: no directory list  
+                // /NJH: no job header
+                // /NJS: no job summary
+                // /R:3: retry 3 times
+                // /W:1: wait 1 second between retries
+                println!("Attempt {}: Using robocopy: {} -> {}", attempt + 1, src_win, dest_win);
+                
+                let output = Command::new("robocopy")
+                    .arg(&src_win)
+                    .arg(&dest_win)
+                    .arg("*")  // Copy all files
+                    .arg("/E")
+                    .arg("/NFL")
+                    .arg("/NDL")
+                    .arg("/NJH")
+                    .arg("/NJS")
+                    .arg("/R:3")
+                    .arg("/W:1")
+                    .output()
+                    .map_err(|e| format!("Failed to execute robocopy command: {}", e))?;
+                
+                // robocopy returns 0-7, where 0-1 are success
+                let exit_code = output.status.code().unwrap_or(0);
+                if exit_code <= 1 {
+                    println!("Directory copy succeeded");
+                    return Ok(());
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let error_msg = if !stderr.is_empty() { stderr } else { stdout };
+                    println!("Robocopy attempt {} failed with code {}: {}", attempt + 1, exit_code, error_msg.trim());
+                    last_error = Some(std::io::Error::new(std::io::ErrorKind::Other, error_msg.trim().to_string()));
+                }
+            } else {
+                // Use Rust fs::copy for file copying - more reliable than Windows copy command
+                println!("Attempt {}: Using fs::copy: {} -> {}", attempt + 1, src_path, final_dest_path);
+                match fs::copy(src, dest) {
+                    Ok(_) => {
+                        println!("File copy succeeded");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
+                        last_error = Some(e);
+                    }
+                }
+            }
+            
+            // Wait before retrying
+            if attempt < max_retries - 1 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+        }
+        
+        // If all retries failed, return the last error
+        if let Some(e) = last_error {
+            return Err(format!("Failed to copy after {} attempts: {}", max_retries, e));
+        }
+    }
+    
+    // For non-Windows platforms
+    #[cfg(not(windows))]
+    {
+        let max_retries = 3;
+        let mut last_error: Option<std::io::Error> = None;
+        
+        for attempt in 0..max_retries {
+            if is_dir {
+                // Use fs::copy_dir_all for directory copying
+                match fs::copy_dir_all(src, dest) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        println!("copy_dir_all attempt {} failed: {:?}", attempt + 1, e);
+                        last_error = Some(e);
+                    }
+                }
+            } else {
+                // Use fs::copy for file copying
+                match fs::copy(src, dest) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        last_error = Some(e);
+                        println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
+                    }
+                }
+            }
+            
+            // Wait before retrying
+            if attempt < max_retries - 1 {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            }
+        }
+        
+        // If all retries failed, return the last error
+        if let Some(e) = last_error {
+            return Err(format!("Failed to copy after {} attempts: {}", max_retries, e));
+        }
+    }
+    
+    // This should never be reached
+    Err("Unknown error occurred while copying".to_string())
+}
+
+#[tauri::command]
+async fn move_file(src_path: String, dest_path: String) -> Result<(), String> {
+    let src = Path::new(&src_path);
+    let dest = Path::new(&dest_path);
+    
+    // Check if source exists
+    if !src.exists() {
+        return Err(format!("Source file does not exist: {}", src_path));
+    }
+    
+    // Create dest directory if it doesn't exist
+    if let Some(parent) = dest.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+        }
+    }
+    
+    // Try to move file with retry mechanism for file locking issues
+    let max_retries = 3;
+    let mut attempt = 0;
+    let mut last_error: Option<std::io::Error> = None;
+    
+    while attempt < max_retries {
+        match fs::rename(src, dest) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                attempt += 1;
+                last_error = Some(e);
+                
+                // Wait a bit before retrying
+                if attempt < max_retries {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+    
+    // If all retries failed, try a fallback approach: copy + delete
+    if let Some(e) = last_error {
+        if e.kind() == std::io::ErrorKind::PermissionDenied || 
+           e.kind() == std::io::ErrorKind::Other {
+            
+            // Fallback: copy then delete
+            match fs::copy(src, dest) {
+                Ok(_) => {
+                    // Copy succeeded, now delete the original
+                    match fs::remove_file(src) {
+                        Ok(_) => return Ok(()),
+                        Err(delete_err) => {
+                            // If delete fails, try to clean up the copy
+                            let _ = fs::remove_file(dest);
+                            return Err(format!("Failed to delete original file after copy: {}", delete_err));
+                        }
+                    }
+                },
+                Err(copy_err) => {
+                    return Err(format!("Failed to move file after {} attempts, fallback copy also failed: {} (original error: {})", max_retries, copy_err, e));
+                }
+            }
+        } else {
+            return Err(format!("Failed to move file after {} attempts: {}", max_retries, e));
+        }
+    }
+    
+    // This should never happen, but just in case
+    Err("Unknown error occurred while moving file".to_string())
 }
 
 #[tauri::command]
@@ -944,10 +1225,13 @@ fn main() {
             get_thumbnails_batch,
             read_file_as_base64,
             ensure_directory,
+            file_exists,
             open_path,
             create_folder,
             rename_file,
             delete_file,
+            copy_file,
+            move_file,
             hide_window,
             show_window,
             exit_app

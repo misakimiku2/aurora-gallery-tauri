@@ -245,7 +245,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
@@ -254,45 +254,6 @@ export interface AppState {
 declare global {
   interface Window {
     __TAURI__?: any;
-    electron?: {
-      openDirectory: () => Promise<string | null>;
-      scanDirectory: (path: string, forceRefresh?: boolean) => Promise<{ roots: string[], files: Record<string, FileNode> }>;
-      copyExternalFiles: (targetFolderId: string, externalPaths: string[]) => Promise<void>;
-      moveExternalFiles: (targetFolderId: string, externalPaths: string[]) => Promise<void>;
-      openPath: (path: string) => void;
-      openExternal: (url: string) => void;
-      copyImage: (path: string) => Promise<void>;
-      copyFilesToClipboard: (paths: string[]) => Promise<boolean>;
-      startDrag: (paths: string[]) => void;
-      getThumbnail: (path: string, modified: string) => Promise<string>;
-      saveThumbnail: (path: string, thumbnailData: string) => Promise<boolean>;
-      queueThumbnail: (path: string, modified: string) => Promise<boolean>;
-      getFileDetails: (path: string) => Promise<{ width: number; height: number } | null>;
-      setAutoLaunch: (enabled: boolean) => void;
-      minimize: () => void;
-      maximize: () => void;
-      close: () => void;
-      toggleControls: (show: boolean) => void;
-      onCloseRequest: (callback: () => void) => void;
-      sendCloseAction: (action: 'minimize' | 'exit') => void;
-      // New File System Operations
-      createFolder: (path: string) => Promise<boolean>;
-      renameFile: (oldPath: string, newPath: string) => Promise<boolean>;
-      deleteFile: (path: string) => Promise<boolean>;
-      moveFile: (srcPath: string, destPath: string) => Promise<boolean>;
-      copyFile: (srcPath: string, destPath: string) => Promise<boolean>;
-      // New AI & Utils
-      readFileAsBase64: (path: string) => Promise<string>;
-      chatRequest: (url: string, options: any) => Promise<any>;
-      // Persistence
-      saveUserData: (data: any) => Promise<boolean>;
-      loadUserData: () => Promise<any>;
-      // Theme
-      setTheme: (theme: 'light' | 'dark') => void;
-      // Settings
-      setCachePath: (path: string) => Promise<boolean>;
-      getDefaultPaths: () => Promise<{ resourceRoot: string, cacheRoot: string }>;
-    };
   }
 }
 

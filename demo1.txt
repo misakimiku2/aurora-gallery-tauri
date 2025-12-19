@@ -1,0 +1,204 @@
+index-D5Kz0rb4.js:526 [CopyFiles] Starting copy operation {fileIds: Array(1), targetFolderId: 'e7c608ba0'}
+index-D5Kz0rb4.js:526 [CopyFiles] Target folder info {targetFolder: '资源', targetPath: 'E:/资源'}
+index-D5Kz0rb4.js:526 [CopyFiles] Task started with ID 0vugaim44
+index-D5Kz0rb4.js:526 [CopyFiles] Processing file ID 6ad43b069
+index-D5Kz0rb4.js:526 [CopyFiles] Copying file {sourcePath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt/YumiaLP01.png', destPath: 'E:/资源/YumiaLP01.png'}
+index-D5Kz0rb4.js:526 [CopyFiles] Calling Tauri copyFile API
+index-D5Kz0rb4.js:526  Failed to copy file: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Bg @ index-D5Kz0rb4.js:526
+await in Bg
+Z @ index-D5Kz0rb4.js:526
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526  [CopyFiles] Error during copy operation: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Z @ index-D5Kz0rb4.js:526
+await in Z
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526 [CopyFiles] Starting copy operation {fileIds: Array(1), targetFolderId: '1064c0e08'}
+index-D5Kz0rb4.js:526 [CopyFiles] Target folder info {targetFolder: 'Yumia+Liessfeldt', targetPath: 'E:/资源/Yumia+Liessfeldt'}
+index-D5Kz0rb4.js:526 [CopyFiles] Task started with ID 5o0vr038f
+index-D5Kz0rb4.js:526 [CopyFiles] Processing file ID 6ad43b069
+index-D5Kz0rb4.js:526 [CopyFiles] Copying file {sourcePath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt/YumiaLP01.png', destPath: 'E:/资源/Yumia+Liessfeldt/YumiaLP01.png'}
+index-D5Kz0rb4.js:526 [CopyFiles] Calling Tauri copyFile API
+index-D5Kz0rb4.js:526  Failed to copy file: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Bg @ index-D5Kz0rb4.js:526
+await in Bg
+Z @ index-D5Kz0rb4.js:526
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526  [CopyFiles] Error during copy operation: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Z @ index-D5Kz0rb4.js:526
+await in Z
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526 [CopyFiles] Starting copy operation {fileIds: Array(1), targetFolderId: '446b64a7f'}
+index-D5Kz0rb4.js:526 [CopyFiles] Target folder info {targetFolder: 'Yumia Liessfeldt', targetPath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt'}
+index-D5Kz0rb4.js:526 [CopyFiles] Task started with ID qrugzswn6
+index-D5Kz0rb4.js:526 [CopyFiles] Processing file ID cad798a34
+index-D5Kz0rb4.js:526 [CopyFiles] Copying file {sourcePath: 'E:/资源/Yumia+Liessfeldt/新建文件夹', destPath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt/新建文件夹'}
+index-D5Kz0rb4.js:526 [CopyFiles] Calling Tauri copyFile API
+index-D5Kz0rb4.js:526  Failed to copy file: Failed to copy after 3 attempts: -------------------------------------------------------------------------------
+   ROBOCOPY     ::     Windows �Ŀɿ��ļ�����                              
+-------------------------------------------------------------------------------
+
+  ��ʼʱ��: 2025��12��19�� ���� 9:40:12
+        Դ- C:\Users\Misaki\Desktop\git\aurora-gallery-tauri\src-tauri\"E:\��Դ\Yumia+Liessfeldt\�½��ļ���"\
+      Ŀ��- C:\Users\Misaki\Desktop\git\aurora-gallery-tauri\src-tauri\"E:\��Դ\Yumia+Liessfeldt\Yumia\
+
+      �ļ�: 
+      ѡ��: /DCOPY:DA /COPY:DAT /R:1000000 /W:30 
+
+------------------------------------------------------------------------------
+
+����: ��Ч���� #3:��Liessfeldt\�½��ļ���"��
+
+            ���÷�:: ROBOCOPY source destination /MIR
+
+                  Դ:: ԴĿ¼(������:\·����\\������\����\·��)��
+                Ŀ��:: Ŀ��Ŀ¼(������:\·����\\������\����\·��)��
+               /MIR :: ��������Ŀ¼����
+
+    �й��÷�����ϸ��Ϣ�������� ROBOCOPY /? 
+
+                                                          
+****  /MIR ����ɾ���ļ�Ҳ���Ը����ļ�!
+Bg @ index-D5Kz0rb4.js:526
+await in Bg
+Z @ index-D5Kz0rb4.js:526
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526  [CopyFiles] Error during copy operation: Failed to copy after 3 attempts: -------------------------------------------------------------------------------
+   ROBOCOPY     ::     Windows �Ŀɿ��ļ�����                              
+-------------------------------------------------------------------------------
+
+  ��ʼʱ��: 2025��12��19�� ���� 9:40:12
+        Դ- C:\Users\Misaki\Desktop\git\aurora-gallery-tauri\src-tauri\"E:\��Դ\Yumia+Liessfeldt\�½��ļ���"\
+      Ŀ��- C:\Users\Misaki\Desktop\git\aurora-gallery-tauri\src-tauri\"E:\��Դ\Yumia+Liessfeldt\Yumia\
+
+      �ļ�: 
+      ѡ��: /DCOPY:DA /COPY:DAT /R:1000000 /W:30 
+
+------------------------------------------------------------------------------
+
+����: ��Ч���� #3:��Liessfeldt\�½��ļ���"��
+
+            ���÷�:: ROBOCOPY source destination /MIR
+
+                  Դ:: ԴĿ¼(������:\·����\\������\����\·��)��
+                Ŀ��:: Ŀ��Ŀ¼(������:\·����\\������\����\·��)��
+               /MIR :: ��������Ŀ¼����
+
+    �й��÷�����ϸ��Ϣ�������� ROBOCOPY /? 
+
+                                                          
+****  /MIR ����ɾ���ļ�Ҳ���Ը����ļ�!
+Z @ index-D5Kz0rb4.js:526
+await in Z
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526 [CopyFiles] Starting copy operation {fileIds: Array(3), targetFolderId: '446b64a7f'}
+index-D5Kz0rb4.js:526 [CopyFiles] Target folder info {targetFolder: 'Yumia Liessfeldt', targetPath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt'}
+index-D5Kz0rb4.js:526 [CopyFiles] Task started with ID n7l01ahvh
+index-D5Kz0rb4.js:526 [CopyFiles] Processing file ID 6ad43b069
+index-D5Kz0rb4.js:526 [CopyFiles] Copying file {sourcePath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt/YumiaLP01.png', destPath: 'E:/资源/Yumia+Liessfeldt/Yumia Liessfeldt/YumiaLP01.png'}
+index-D5Kz0rb4.js:526 [CopyFiles] Calling Tauri copyFile API
+index-D5Kz0rb4.js:526  Failed to copy file: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Bg @ index-D5Kz0rb4.js:526
+await in Bg
+Z @ index-D5Kz0rb4.js:526
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37
+index-D5Kz0rb4.js:526  [CopyFiles] Error during copy operation: Failed to copy after 3 attempts: �ļ�����Ŀ¼��������﷨����ȷ��
+Z @ index-D5Kz0rb4.js:526
+await in Z
+onConfirm @ index-D5Kz0rb4.js:671
+onClick @ index-D5Kz0rb4.js:526
+Zh @ index-D5Kz0rb4.js:37
+tp @ index-D5Kz0rb4.js:37
+rp @ index-D5Kz0rb4.js:37
+Kd @ index-D5Kz0rb4.js:37
+sf @ index-D5Kz0rb4.js:37
+(匿名) @ index-D5Kz0rb4.js:37
+Oc @ index-D5Kz0rb4.js:40
+I0 @ index-D5Kz0rb4.js:37
+Lo @ index-D5Kz0rb4.js:37
+gc @ index-D5Kz0rb4.js:37
+yp @ index-D5Kz0rb4.js:37

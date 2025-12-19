@@ -1,0 +1,35 @@
+index-B5fqJEvi.js:526 [MoveFiles] Starting move operation {fileIds: Array(1), targetFolderId: 'e480958c9'}
+index-B5fqJEvi.js:526 [MoveFiles] Target folder info {targetFolder: '新建文件夹', targetPath: 'E:/资源/真实写真/新建文件夹'}
+index-B5fqJEvi.js:526 [MoveFiles] Task started with ID dqfze9qz5
+index-B5fqJEvi.js:526 [MoveFiles] Updating state before file system operations
+index-B5fqJEvi.js:526 [MoveFiles] Checking for existing files
+index-B5fqJEvi.js:526 [MoveFiles] State update callback called
+index-B5fqJEvi.js:526 [MoveFiles] Processing file ID in state update 65f1b52e9
+index-B5fqJEvi.js:526 [MoveFiles] Updating file state {fileId: '65f1b52e9', oldParent: '6ec4188af', newParent: 'e480958c9', oldPath: 'E:/资源/真实写真/misaki.png', newPath: 'E:/资源/真实写真/新建文件夹/misaki.png'}
+index-B5fqJEvi.js:526 [MoveFiles] Added file to target folder children
+index-B5fqJEvi.js:526 [MoveFiles] Removed file from source parent children
+index-B5fqJEvi.js:526 [MoveFiles] Updated source parent 6ec4188af
+index-B5fqJEvi.js:526 [MoveFiles] Updated target folder e480958c9
+index-B5fqJEvi.js:526  [MoveFiles] Error checking file existence: invalid args `filePath` for command `file_exists`: command file_exists missing required key filePath
+ve @ index-B5fqJEvi.js:526
+await in ve
+onConfirm @ index-B5fqJEvi.js:671
+onClick @ index-B5fqJEvi.js:526
+Zh @ index-B5fqJEvi.js:37
+tp @ index-B5fqJEvi.js:37
+rp @ index-B5fqJEvi.js:37
+Kd @ index-B5fqJEvi.js:37
+sf @ index-B5fqJEvi.js:37
+(匿名) @ index-B5fqJEvi.js:37
+$c @ index-B5fqJEvi.js:40
+I0 @ index-B5fqJEvi.js:37
+Oo @ index-B5fqJEvi.js:37
+hc @ index-B5fqJEvi.js:37
+yp @ index-B5fqJEvi.js:37
+index-B5fqJEvi.js:526 [MoveFiles] Performing actual file system operations
+index-B5fqJEvi.js:526 [MoveFiles] Processing file ID 65f1b52e9
+index-B5fqJEvi.js:526 [MoveFiles] Moving file {sourcePath: 'E:/资源/真实写真/misaki.png', destPath: 'E:/资源/真实写真/新建文件夹/misaki.png'}
+index-B5fqJEvi.js:526 [MoveFiles] Calling Tauri moveFile API
+index-B5fqJEvi.js:526 [MoveFiles] File moved successfully
+index-B5fqJEvi.js:526 [MoveFiles] Move count: 1
+index-B5fqJEvi.js:526 [MoveFiles] Move operation completed successfully

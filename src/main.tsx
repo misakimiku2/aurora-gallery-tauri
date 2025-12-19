@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import '../index.css';
-import './utils/electron-mock'; // Import electron mock to prevent errors
+
 import { isTauriEnvironment } from './utils/environment';
 import { setupGlobalLogger } from './utils/logger';
 

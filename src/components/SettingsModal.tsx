@@ -51,19 +51,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           let result: any = null;
           let isError = false;
           
-          if (window.electron && window.electron.chatRequest) {
-               result = await window.electron.chatRequest(url, { method: 'GET', headers });
-               // Check if electron chatRequest returned an error
-               if (result && result.error) {
-                   isError = true;
-               }
+          const res = await fetch(url, { method: 'GET', headers });
+          if (!res.ok) {
+              isError = true;
           } else {
-               const res = await fetch(url, { method: 'GET', headers });
-               if (!res.ok) {
-                   isError = true;
-               } else {
-                   result = await res.json();
-               }
+              result = await res.json();
           }
           
           if (isError) {
@@ -218,10 +210,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                      </div>
                                      <button 
                                         onClick={() => {
-                                            const newValue = !state.settings.autoStart;
-                                            onUpdateSettingsData({ autoStart: newValue });
-                                            window.electron?.setAutoLaunch(newValue);
-                                        }}
+                                        const newValue = !state.settings.autoStart;
+                                        onUpdateSettingsData({ autoStart: newValue });
+                                    }}
                                         className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${state.settings.autoStart ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}
                                       >
                                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${state.settings.autoStart ? 'translate-x-6' : 'translate-x-1'}`} />

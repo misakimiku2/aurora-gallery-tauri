@@ -1,5 +1,5 @@
 // 环境检测工具
-// 集中管理Tauri和Electron环境检测逻辑
+// 集中管理Tauri环境检测逻辑
 
 /**
  * 环境检测缓存
@@ -59,11 +59,4 @@ export const detectTauriEnvironmentAsync = async (): Promise<boolean> => {
   return false;
 };
 
-/**
- * 检测Electron环境
- * @returns 是否为Electron环境
- */
-export const isElectronEnvironment = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  return typeof (window as any).electron !== 'undefined';
-};
+
