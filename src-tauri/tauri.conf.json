@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "Aurora Gallery Tauri",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 800,
-        "minHeight": 600,
+        "width": 1296,
+        "height": 809,
+        "minWidth": 1280,
+        "minHeight": 800,
         "resizable": true,
         "fullscreen": false,
         "label": "main",

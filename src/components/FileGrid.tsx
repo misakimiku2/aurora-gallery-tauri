@@ -564,11 +564,34 @@ const TagItem = React.memo(({ tag, count, isSelected, onTagClick, onTagDoubleCli
   );
 });
 
-const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagClick, onTagDoubleClick, onTagContextMenu, t }: any) => {
+const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagClick, onTagDoubleClick, onTagContextMenu, t, searchQuery }: any) => {
   const [hoveredTag, setHoveredTag] = useState<string | null>(null);
   const [hoveredTagPos, setHoveredTagPos] = useState<{ top: number, left: number } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
+  // 根据搜索查询过滤标签
+  const filteredGroupedTags = useMemo(() => {
+      if (!searchQuery || !searchQuery.trim()) {
+          return groupedTags;
+      }
+      const query = searchQuery.toLowerCase().trim();
+      const filtered: Record<string, string[]> = {};
+      Object.entries(groupedTags).forEach(([key, tags]) => {
+          const matchingTags = (tags as string[]).filter(tag => 
+              tag.toLowerCase().includes(query)
+          );
+          if (matchingTags.length > 0) {
+              filtered[key] = matchingTags;
+          }
+      });
+      return filtered;
+  }, [groupedTags, searchQuery]);
+
+  // 根据过滤后的标签生成 keys
+  const filteredKeys = useMemo(() => {
+      return Object.keys(filteredGroupedTags).sort();
+  }, [filteredGroupedTags]);
+
   const tagCounts = useMemo(() => {
       const counts: Record<string, number> = {};
       Object.values(files).forEach((f: any) => {
@@ -619,7 +642,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
   return (
     <div className="relative">
       {/* 字母索引栏 */}
-      {keys.length > 0 && (
+      {filteredKeys.length > 0 && (
         <div className="fixed top-1/2 transform -translate-y-1/2 z-20 bg-white/80 dark:bg-gray-950/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
              style={{ 
                right: 'calc(20px + var(--metadata-panel-width, 0px))',
@@ -641,7 +664,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
             }}
         >
           <div className="flex flex-col items-center space-y-1">
-            {keys.map((group: string) => (
+            {filteredKeys.map((group: string) => (
               <button
                 key={group}
                 onClick={() => {
@@ -661,14 +684,14 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
       )}
       
       {/* 标签列表内容 */}
-      {keys.length === 0 && (
+      {filteredKeys.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
               <Tag size={64} className="mb-4 opacity-20"/>
               <p>{t('sidebar.noTagsFound')}</p>
           </div>
       )}
-      {keys.map((group: string) => {
-          const tagsInGroup = groupedTags[group];
+      {filteredKeys.map((group: string) => {
+          const tagsInGroup = filteredGroupedTags[group];
           return (
               <div id={`tag-group-${group}`} key={group} className="mb-8 scroll-mt-4">
                    <div className="flex items-center mb-0 border-b border-gray-100 dark:border-gray-800 pt-3 pb-3 sticky top-0 bg-white/95 dark:bg-gray-950/95 z-10 backdrop-blur-sm transition-colors h-16">
@@ -730,7 +753,8 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
     return prev.groupedTags === next.groupedTags && 
            prev.files === next.files && 
            prev.selectedTagIds === next.selectedTagIds &&
-           prev.keys === next.keys; 
+           prev.keys === next.keys &&
+           prev.searchQuery === next.searchQuery; 
 });
 
 const FileListItem = React.memo(({
@@ -1335,7 +1359,8 @@ const useLayout = (
   thumbnailSize: number,
   viewMode: 'browser' | 'tags-overview' | 'people-overview',
   groupedTags?: Record<string, string[]>,
-  people?: Record<string, Person>
+  people?: Record<string, Person>,
+  searchQuery?: string
 ) => {
   const aspectRatios = useMemo(() => {
     const ratios: Record<string, number> = {};
@@ -1357,20 +1382,22 @@ const useLayout = (
     const PADDING = 24;
     
     // Ensure we have a reasonable width. If containerWidth is 0 (initial render), fall back to window width.
-    const safeContainerWidth = containerWidth > 0 ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth - 300 : 1200); 
+    const safeContainerWidth = containerWidth > 0 ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth : 1280); 
     const availableWidth = Math.max(100, safeContainerWidth - (PADDING * 2));
+    // Use actual available width without forcing a minimum - let the layout adapt to container size
+    const finalAvailableWidth = availableWidth;
 
     if (viewMode === 'browser') {
         if (layoutMode === 'list') {
             const itemHeight = 44;
             items.forEach((id, index) => {
-                layout.push({ id, x: PADDING, y: PADDING + index * itemHeight, width: availableWidth, height: itemHeight });
+                layout.push({ id, x: PADDING, y: PADDING + index * itemHeight, width: finalAvailableWidth, height: itemHeight });
             });
             totalHeight = PADDING + items.length * itemHeight;
         } else if (layoutMode === 'grid') {
             const minColWidth = thumbnailSize;
-            const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-            const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+            const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+            const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
             const itemHeight = itemWidth + 40;
 
             items.forEach((id, index) => {
@@ -1396,8 +1423,8 @@ const useLayout = (
                 const aspect = aspectRatios[id];
                 const w = targetHeight * aspect;
                 
-                if (currentWidth + w + GAP > availableWidth) {
-                    const scale = (availableWidth - (currentRow.length - 1) * GAP) / currentWidth;
+                if (currentWidth + w + GAP > finalAvailableWidth) {
+                    const scale = (finalAvailableWidth - (currentRow.length - 1) * GAP) / currentWidth;
                     const rowHeight = targetHeight * scale;
                     
                     let x = PADDING;
@@ -1428,8 +1455,8 @@ const useLayout = (
 
         } else if (layoutMode === 'masonry') {
             const minColWidth = thumbnailSize;
-            const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-            const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+            const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+            const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
             const colHeights = new Array(cols).fill(PADDING);
 
             items.forEach(id => {
@@ -1460,10 +1487,17 @@ const useLayout = (
         }
     } else if (viewMode === 'people-overview') {
         // Use provided people dictionary to generate IDs, ignore 'items' prop
-        const itemsList = Object.values(people || {});
+        // Filter people by search query if provided
+        let itemsList = Object.values(people || {});
+        if (searchQuery && searchQuery.trim()) {
+            const query = searchQuery.toLowerCase().trim();
+            itemsList = itemsList.filter(person => 
+                person.name.toLowerCase().includes(query)
+            );
+        }
         const minColWidth = thumbnailSize;
-        const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-        const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+        const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+        const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
         const itemHeight = itemWidth + 60; // Extra space for text
 
         itemsList.forEach((person, index) => {
@@ -1482,7 +1516,7 @@ const useLayout = (
     } 
 
     return { layout, totalHeight };
-  }, [items, files, layoutMode, containerWidth, thumbnailSize, viewMode, aspectRatios, people]);
+  }, [items, files, layoutMode, containerWidth, thumbnailSize, viewMode, aspectRatios, people, searchQuery]);
 };
 
 interface FileGridProps {
@@ -1776,11 +1810,12 @@ export const FileGrid: React.FC<FileGridProps> = ({
       displayFileIds,
       files,
       activeTab.layoutMode,
-      containerRect.width, 
+      containerRect.width,
       thumbnailSize,
       activeTab.viewMode,
       groupedTags,
-      people
+      people,
+      activeTab.searchQuery
   );
 
   const visibleItems = useMemo(() => {
@@ -1828,6 +1863,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   onTagDoubleClick={handleTagDoubleClickStable}
                   onTagContextMenu={handleTagContextMenuStable}
                   t={t}
+                  searchQuery={activeTab.searchQuery}
               />
           </div>
       );
@@ -1836,7 +1872,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   return (
       <div
           ref={containerRef}
-          className={`relative w-full h-full overflow-auto`}
+          className={`relative w-full h-full min-w-0 overflow-auto`}
           onContextMenu={onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
@@ -1857,12 +1893,13 @@ export const FileGrid: React.FC<FileGridProps> = ({
           </div>
 
           {activeTab.viewMode === 'people-overview' ? (
-              <div className="w-full" style={{ position: 'relative', minHeight: '100%' }}>
-                  <div style={{ position: 'relative' }}>
+              <div className="w-full min-w-0" style={{ position: 'relative', minHeight: '100%' }}>
+                  <div className="min-w-0" style={{ position: 'relative' }}>
                       <div
-                          className="relative"
+                          className="relative min-w-0"
                           style={{
                               width: '100%',
+                              maxWidth: '100%',
                               height: totalHeight,
                               position: 'relative'
                           }}
@@ -1889,7 +1926,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   </div>
               </div>
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
-              <div className="w-full">
+              <div className="w-full min-w-0">
                   {groupedFiles.map((group) => (
                       <div key={group.id} className="mb-8">
                           <GroupHeader
@@ -1929,7 +1966,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   ))}
               </div>
           ) : activeTab.layoutMode === 'list' ? (
-              <div className="w-full h-full overflow-auto">
+              <div className="w-full h-full min-w-0 overflow-auto">
                   <div className="p-6">
                       {displayFileIds.map((id) => {
                           const file = files[id];
@@ -1962,13 +1999,14 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   </div>
               </div>
           ) : (
-              <div className="w-full" style={{ position: 'relative', minHeight: '100%' }}>
-                  <div style={{ position: 'relative' }}>
+              <div className="w-full min-w-0" style={{ position: 'relative', minHeight: '100%' }}>
+                  <div className="min-w-0" style={{ position: 'relative' }}>
                       {/* Fixed height container to prevent scroll bounce */}
                       <div
-                          className="relative"
+                          className="relative min-w-0"
                           style={{
                               width: '100%',
+                              maxWidth: '100%',
                               height: totalHeight,
                               position: 'relative'
                           }}

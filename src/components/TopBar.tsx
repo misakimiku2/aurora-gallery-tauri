@@ -528,36 +528,38 @@ export const TopBar: React.FC<TopBarProps> = ({
               : 'border-transparent'
         }`}>
           
-          <div className="relative flex-shrink-0">
-            <button 
-              onClick={() => setScopeMenuOpen(!scopeMenuOpen)}
-              className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
-            >
-              {getScopeIcon(activeTab.searchScope)}
-              <ChevronDown size={12} className="ml-1 opacity-70"/>
-            </button>
-            {scopeMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
-                <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
-                  {[
-                    { id: 'all', icon: Globe, label: t('search.scopeAll') },
-                    { id: 'file', icon: FileText, label: t('search.scopeFile') },
-                    { id: 'tag', icon: Tag, label: t('search.scopeTag') },
-                    { id: 'folder', icon: Folder, label: t('search.scopeFolder') }
-                  ].map((opt) => (
-                    <button
-                      key={opt.id}
-                      onClick={() => { onSearchScopeChange(opt.id as SearchScope); setScopeMenuOpen(false); }}
-                      className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/20 ${activeTab.searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
-                    >
-                      <opt.icon size={14} className="mr-2"/> {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+          {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
+            <div className="relative flex-shrink-0">
+              <button 
+                onClick={() => setScopeMenuOpen(!scopeMenuOpen)}
+                className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
+              >
+                {getScopeIcon(activeTab.searchScope)}
+                <ChevronDown size={12} className="ml-1 opacity-70"/>
+              </button>
+              {scopeMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
+                  <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
+                    {[
+                      { id: 'all', icon: Globe, label: t('search.scopeAll') },
+                      { id: 'file', icon: FileText, label: t('search.scopeFile') },
+                      { id: 'tag', icon: Tag, label: t('search.scopeTag') },
+                      { id: 'folder', icon: Folder, label: t('search.scopeFolder') }
+                    ].map((opt) => (
+                      <button
+                        key={opt.id}
+                        onClick={() => { onSearchScopeChange(opt.id as SearchScope); setScopeMenuOpen(false); }}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/20 ${activeTab.searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
+                      >
+                        <opt.icon size={14} className="mr-2"/> {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           <Search size={16} className={`mr-2 flex-shrink-0 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
           
@@ -567,7 +569,15 @@ export const TopBar: React.FC<TopBarProps> = ({
             id="toolbar-search-input"
             name="toolbar-search-input"
             className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
-            placeholder={isAISearchEnabled ? t('settings.aiSmartSearch') : t('search.placeholder')}
+            placeholder={
+              activeTab.viewMode === 'people-overview' 
+                ? '搜索人物'
+                : activeTab.viewMode === 'tags-overview'
+                  ? '搜索标签'
+                  : isAISearchEnabled 
+                    ? t('settings.aiSmartSearch') 
+                    : t('search.placeholder')
+            }
             value={toolbarQuery}
             onChange={(e) => onSetToolbarQuery(e.target.value)}
             onKeyDown={handleKeyDown}
