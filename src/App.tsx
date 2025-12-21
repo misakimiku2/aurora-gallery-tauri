@@ -3054,12 +3054,6 @@ export const App: React.FC = () => {
   };
 
   const onPerformSearch = async (query: string) => {
-      // 在人物面板或标签面板时，搜索只应用于对应内容，不切换视图模式
-      if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview') {
-          updateActiveTab({ searchQuery: query });
-          return;
-      }
-      
       if (state.settings.search.isAISearchEnabled) {
           await performAiSearch(query);
       } else {
@@ -4441,8 +4435,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" 
-              onClick={closeContextMenu} onDragOver={handleDragOver} onDrop={handleExternalFileDrop} onDragLeave={handleDragLeave}>
+    <div className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" onClick={closeContextMenu} onDragOver={handleDragOver} onDrop={handleExternalFileDrop} onDragLeave={handleDragLeave}>
       {/* 启动界面 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
       {/* ... (SVG filters) ... */}
@@ -4467,7 +4460,7 @@ export const App: React.FC = () => {
           <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} onDrop={(targetId, sourceIds) => handleMoveFiles(sourceIds, targetId)} onDropOnTag={handleDropOnTag} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />
         </div>
         
-        <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
           {activeTab.viewingFileId && (
               (() => {
                   const viewingFile = state.files[activeTab.viewingFileId];
@@ -4544,13 +4537,7 @@ export const App: React.FC = () => {
                 onRefresh={handleRefresh} 
                 onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })} 
                 onPerformSearch={handlePerformSearch} 
-                onSetToolbarQuery={(query) => {
-                    setToolbarQuery(query);
-                    // 在人物面板或标签面板时，实时更新搜索查询以过滤内容
-                    if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview') {
-                        updateActiveTab({ searchQuery: query });
-                    }
-                }} 
+                onSetToolbarQuery={setToolbarQuery} 
                 onLayoutModeChange={(mode) => updateActiveTab({ layoutMode: mode })} 
                 onSortOptionChange={(opt) => setState(s => ({ ...s, sortBy: opt }))} 
                 onSortDirectionChange={() => setState(s => ({ ...s, sortDirection: s.sortDirection === 'asc' ? 'desc' : 'asc' }))} 
@@ -4608,7 +4595,7 @@ export const App: React.FC = () => {
                   </div>
               )}
               
-              <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950 overflow-hidden" 
+              <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-950 overflow-hidden" 
                    onDragOver={handleDragOver}
                    onDragLeave={handleDragLeave}
                    onDragEnter={handleDragEnter}
@@ -4643,13 +4630,68 @@ export const App: React.FC = () => {
                 )}
                 <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950/50 backdrop-blur shrink-0 relative z-20">
                   {activeTab.viewMode === 'tags-overview' ? (
-                    <div className="flex items-center w-full justify-between">
+                    <div className="flex items-center w-full">
                       <div className="flex items-center">
                         <Tag size={12} className="mr-1"/>
                         <span className="font-medium">{t('context.allTagsOverview')}</span>
                       </div>
-                      <div className="text-[10px] opacity-60">
-                        {Object.keys(groupedTags).reduce((acc, key) => acc + groupedTags[key].length, 0)} {t('context.items')}
+                      <div className="flex-1 flex justify-end">
+                        <div className="relative" style={{ width: '250px' }}>
+                          <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${tagSearchQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
+                            <Search size={14} className="mr-2 text-gray-400" />
+                            <input
+                              type="text"
+                              placeholder={t('search.placeholder')}
+                              value={tagSearchQuery}
+                              onChange={(e) => setTagSearchQuery(e.target.value)}
+                              className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+                            />
+                            {tagSearchQuery && (
+                              <button
+                                onClick={() => setTagSearchQuery('')}
+                                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400"
+                              >
+                                <X size={12} />
+                              </button>
+                            )}
+                          </div>
+                          {/* 智能联想下拉列表 */}
+                          {(() => {
+                            const allTags = new Set<string>();
+                            Object.values(state.files).forEach((f: any) => {
+                              if (f.tags) {
+                                f.tags.forEach((t: string) => allTags.add(t));
+                              }
+                            });
+                            state.customTags.forEach(t => allTags.add(t));
+                            
+                            const allTagsList = Array.from(allTags);
+                            const filteredTags = allTagsList.filter(tag => 
+                              tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
+                            );
+                            
+                            // 只有当有多个匹配标签或者当前搜索词与匹配标签不完全相同时才显示下拉列表
+                            const shouldShow = tagSearchQuery && 
+                                              filteredTags.length > 0 && 
+                                              !(filteredTags.length === 1 && filteredTags[0] === tagSearchQuery);
+                            
+                            if (!shouldShow) return null;
+                            
+                            return (
+                              <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+                                {filteredTags.map(tag => (
+                                  <div 
+                                    key={tag} 
+                                    className="px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-sm cursor-pointer text-gray-800 dark:text-gray-200"
+                                    onClick={() => setTagSearchQuery(tag)}
+                                  >
+                                    {tag}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
                       </div>
                     </div>
                   ) : activeTab.viewMode === 'people-overview' ? (
@@ -4676,7 +4718,7 @@ export const App: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="flex-1 min-w-0 overflow-hidden relative" id="file-grid-container">
+                <div className="flex-1 overflow-hidden relative" id="file-grid-container">
                   {displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                      <div className="w-full h-full flex flex-col items-center justify-center text-gray-400" onMouseDown={handleMouseDown} onContextMenu={(e) => handleContextMenu(e, 'background', '')}>
                         <div className="text-6xl mb-4 opacity-20"><FolderOpen/></div>
@@ -4703,7 +4745,7 @@ export const App: React.FC = () => {
                         onDragEnd={handleDragEnd} 
                         onDropOnFolder={handleDropOnFolder} 
                         settings={state.settings}
-                        onDropExternal={(targetId, paths) => {
+                        onDropExternal={async (targetId, paths) => {
                             // 1. 核心检查：如果是内部发起的拖拽 (isInternalDragRef.current = true)
                             // 即使走到了 onDropExternal 通道，我们也把它强行扭转为“移动”操作
                             if (isInternalDragRef.current) {
@@ -4711,9 +4753,46 @@ export const App: React.FC = () => {
                             } else {
                                 // 2. 确实是外部文件，执行复制
                                 // Tauri环境下使用Tauri API处理外部文件复制
-                                startTask('copy', [], t('tasks.copying'));
-                                showToast(t('context.copied'));
-                                handleRefresh();
+                                const targetFolder = state.files[targetId];
+                                if (targetFolder && targetFolder.path) {
+                                    const taskId = startTask('copy', paths, t('tasks.copying'), false);
+                                    try {
+                                        let copiedCount = 0;
+                                        const separator = targetFolder.path.includes('/') ? '/' : '\\';
+                                        
+                                        for (const sourcePath of paths) {
+                                            const filename = sourcePath.split(separator).pop();
+                                            if (filename) {
+                                                const newPath = `${targetFolder.path}${separator}${filename}`;
+                                                await copyFile(sourcePath, newPath);
+                                                copiedCount++;
+                                                updateTask(taskId, { current: copiedCount });
+                                            }
+                                        }
+                                        
+                                        showToast(t('context.copied'));
+                                        updateTask(taskId, { current: paths.length, status: 'completed' });
+                                        handleRefresh();
+                                        
+                                        // 1秒后移除任务
+                                        setTimeout(() => {
+                                            setState(prev => ({
+                                                ...prev,
+                                                tasks: prev.tasks.filter(t => t.id !== taskId)
+                                            }));
+                                        }, 1000);
+                                    } catch (err) {
+                                        console.error('Error copying external files:', err);
+                                        showToast('Copy failed');
+                                        // 任务失败，直接移除
+                                        setTimeout(() => {
+                                            setState(prev => ({
+                                                ...prev,
+                                                tasks: prev.tasks.filter(t => t.id !== taskId)
+                                            }));
+                                        }, 1000);
+                                    }
+                                }
                             }
                             
                             // 别忘了重置
