@@ -565,50 +565,12 @@ export const App: React.FC = () => {
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [rememberExitChoice, setRememberExitChoice] = useState(false);
-  // Drag and drop overlay state
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [dragAction, setDragAction] = useState<'copy' | 'move' | null>(null);
-  const [dragFiles, setDragFiles] = useState<FileList | null>(null);
-  // Ref to track if we're doing an internal drag operation (drag from inside the app to outside)
-  // Using ref instead of state for synchronous updates to avoid flickering
-  const isInternalDragRef = useRef(false);
-  // Ref to track if files are selected (user's suggested approach)
-  // This will help distinguish between internal drag (from selected files) and external drag
-  const hasSelectedFilesRef = useRef(false);
-  // Ref to track if mouse is inside the window
-  const isMouseInsideRef = useRef(true);
   // Ref to store the latest exit action preference (to avoid closure issues)
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 
-  // **【关键修复】使用 useEffect 监听全局事件，确保拖拽状态重置**
-  useEffect(() => {
-      // 1. 监听全局的 mouseup 事件。这是确保在拖拽取消或结束时清理状态的最可靠方法。
-      const handleGlobalMouseUp = () => {
-          // 只有当内部拖拽标记为 true 时才执行重置
-          if (isInternalDragRef.current) {
-              isInternalDragRef.current = false;
-          }
-      };
 
-      // 2. 监听标准的 dragend 事件作为辅助（它应该在拖拽操作结束时触发）
-      const handleGlobalDragEnd = () => {
-          if (isInternalDragRef.current) {
-              isInternalDragRef.current = false;
-          }
-      };
-
-      // 绑定事件到整个文档
-      document.addEventListener('mouseup', handleGlobalMouseUp);
-      document.addEventListener('dragend', handleGlobalDragEnd);
-
-      // 组件卸载时清理监听器
-      return () => {
-          document.removeEventListener('mouseup', handleGlobalMouseUp);
-          document.removeEventListener('dragend', handleGlobalDragEnd);
-      };
-  }, []); // 空依赖数组确保只在组件挂载和卸载时执行
   
   // Throttle function to limit how often a function can be called
   const throttle = useCallback((func: Function, limit: number) => {
@@ -897,28 +859,6 @@ export const App: React.FC = () => {
      return state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB;
   }, [state.tabs, state.activeTabId]);
 
-  // Add event listeners for mouse enter/leave to track when mouse is inside/outside the window
-  useEffect(() => {
-    const handleMouseEnter = () => {
-        isMouseInsideRef.current = true;
-    };
-    
-    const handleMouseLeave = () => {
-        isMouseInsideRef.current = false;
-        // Clear the internal drag flag when mouse leaves the window
-        isInternalDragRef.current = false;
-    };
-    
-    // Add event listeners to the window
-    window.addEventListener('mouseenter', handleMouseEnter);
-    window.addEventListener('mouseleave', handleMouseLeave);
-    
-    // Clean up event listeners
-    return () => {
-        window.removeEventListener('mouseenter', handleMouseEnter);
-        window.removeEventListener('mouseleave', handleMouseLeave);
-    };
-  }, []);
 
   // Update exitActionRef when state changes
   useEffect(() => {
@@ -968,10 +908,6 @@ export const App: React.FC = () => {
     };
   }, []); // Empty dependency array - ref is always current
 
-  // Update hasSelectedFilesRef when activeTab.selectedFileIds changes
-  useEffect(() => {
-    hasSelectedFilesRef.current = activeTab.selectedFileIds.length > 0;
-  }, [activeTab.selectedFileIds]);
 
   // ... (keep welcome modal logic)
   useEffect(() => {
@@ -1420,129 +1356,7 @@ export const App: React.FC = () => {
       }
   };
 
-  // ... (keep drag and drop, clicks, etc.)
-  // Drag over handler for the main container
-  const handleDragOver = (e: React.DragEvent) => {
-      e.preventDefault();
-      // 避免在此处使用 e.stopPropagation()，因为这会阻止事件流向子组件，导致子组件的拖拽逻辑失效 (如文件夹高亮)。
-
-      // Only show overlay for file browser view mode
-      if (activeTab.viewMode !== 'browser') {
-          if (isDragOver) {
-              setIsDragOver(false);
-          }
-          return;
-      }
-
-      // 1. 【内部拖拽检查】: 如果是内部拖拽，强制保持外部界面隐藏
-      if (isInternalDragRef.current) {
-          // 关键：如果状态已经是 isDragOver=true，则立即关闭它，防止闪烁
-          if (isDragOver) {
-              setIsDragOver(false);
-          }
-          // 允许事件向下传递，但不再执行下面的外部拖拽检测逻辑
-          return;
-      }
-
-      // 2. 【外部拖拽检查】: 检查是否有 Files 类型
-      if (e.dataTransfer.types.includes('Files')) {
-          // 关键：只有状态是 false 时才设置为 true，减少不必要的 state 更新
-          if (!isDragOver) {
-              setIsDragOver(true);
-          }
-          
-          // 计算复制/移动动作的逻辑
-          const container = e.currentTarget as HTMLElement;
-          const rect = container.getBoundingClientRect();
-          const x = e.clientX - rect.left;
-          if (x < rect.width / 2) setDragAction('copy');
-          else setDragAction('move');
-          
-      } else {
-          // 如果拖拽的内容不是文件 (例如：拖拽文本或URL)
-          // 关键：只有状态是 true 时才设置为 false
-          if (isDragOver) {
-              setIsDragOver(false);
-          }
-      }
-  };
   
-  // Drag leave handler for the main container
-  const handleDragLeave = (e: React.DragEvent) => {
-      e.preventDefault();
-      
-      // e.relatedTarget 是鼠标离开的那个元素（目标元素）
-      // 只有当鼠标真正离开了 App 的根容器时，才隐藏遮罩
-      if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setIsDragOver(false);
-          setDragAction(null);
-          setDragFiles(null);
-      }
-  };
-  
-  // Drag enter handler for the main container
-  const handleDragEnter = (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      // Only show overlay for file browser view mode
-      if (activeTab.viewMode !== 'browser') {
-          setIsDragOver(false);
-          return;
-      }
-      
-      // Check if dragging external files (not from our application)
-      const hasFiles = e.dataTransfer.types.includes('Files');
-      const hasInternalData = e.dataTransfer.types.includes('application/json');
-      
-      // Only show overlay if dragging external files
-      // hasSelectedFilesRef check removed to allow external drag even when files are selected
-      // isInternalDragRef check removed because it should be reset properly on drag end
-      if (hasFiles && !hasInternalData) {
-          setIsDragOver(true);
-          setDragFiles(e.dataTransfer.files);
-      } else if (!hasFiles || hasInternalData) {
-          // Hide overlay if not dragging external files
-          setIsDragOver(false);
-      }
-  };
-  
-  // Updated external file drop handler
-  const handleExternalFileDrop = async (e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // Reset drag state
-      setIsDragOver(false);
-      setDragAction(null);
-      
-      const files = Array.from(e.dataTransfer.files);
-      
-      if (files.length === 0) return;
-      
-      // 在Tauri环境下，我们可以通过文件拖放获取路径
-      // 这里暂时保留基本的处理逻辑
-      try {
-          // Determine action based on drag position or default to copy
-          const action = dragAction || 'copy';
-          
-          startTask(action, [], t(`tasks.${action}ing`));
-          
-          // Tauri环境下的外部文件复制/移动操作
-          if (action === 'copy') {
-              showToast(t('context.copied'));
-          } else {
-              showToast(t('context.moved'));
-          }
-          
-          handleRefresh();
-      } catch (err) {
-          console.error(`[ERROR] External ${dragAction || 'copy'} failed:`, err);
-          showToast(`${dragAction || 'Copy'} failed`);
-      }
-      
-      setDragFiles(null);
-  };
-
   const handleFileClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
     
@@ -1790,35 +1604,7 @@ export const App: React.FC = () => {
     setSelectionBox(null);
   }, [isSelecting, selectionBox, activeTab.viewMode, state.people, state.thumbnailSize, updateActiveTab]);
 
-  const handleDragStart = (e: React.DragEvent, id: string) => { 
-      // 1. 确保当前拖拽的项目被选中 
-      let idsToDrag = activeTab.selectedFileIds; 
-      if (!idsToDrag.includes(id)) { 
-          idsToDrag = [id]; 
-          updateActiveTab({ selectedFileIds: [id] }); 
-      } 
-      
-      // 2. 获取文件路径（为了拖出到系统） 
-      const filePaths = idsToDrag.map(fileId => { 
-          const file = state.files[fileId]; 
-          return file.path; 
-      }).filter(Boolean); 
-      
-      if (filePaths.length > 0) { 
-          // 3. 【核心】标记这是内部发起的拖拽 
-          isInternalDragRef.current = true; 
-          
-          // 4. Tauri 环境下的拖拽逻辑由 Tauri 框架处理
-          e.preventDefault();
-      } 
-  };
   
-  // Handle drag end event, especially for external drag operations
-  const handleDragEnd = async (e: React.DragEvent) => {
-      // Reset the internal drag ref
-      isInternalDragRef.current = false;
-  };
-
   const groupedTags: Record<string, string[]> = useMemo(() => { const allTags = new Set<string>(state.customTags); (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); const groups: Record<string, string[]> = {}; filteredTags.forEach(tag => { const key = getPinyinGroup(tag); if (!groups[key]) groups[key] = []; groups[key].push(tag); }); const sortedKeys = Object.keys(groups).sort(); return sortedKeys.reduce((obj, key) => { obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); return obj; }, {} as Record<string, string[]>); }, [state.files, state.settings.language, state.customTags, tagSearchQuery]);
   const handleUpdateFile = (id: string, updates: Partial<FileNode>) => { 
     setState(prev => { 
@@ -3170,28 +2956,6 @@ export const App: React.FC = () => {
       setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
-  const handleDropOnFolder = (targetId: string, sourceIds: string[]) => { 
-      // 1. 尝试获取有效的 ID 列表 
-      // 如果 sourceIds 有值，说明是某种保留了数据的拖拽（较少见） 
-      // 如果 sourceIds 为空，但 isInternalDragRef 为真，说明是 startDrag 导致的数据丢失 -> 【回退到当前选中的文件】 
-      const finalSourceIds = (sourceIds && sourceIds.length > 0) 
-          ? sourceIds 
-          : (isInternalDragRef.current ? activeTab.selectedFileIds : []); 
-
-      // 2. 核心分流逻辑 
-    if (finalSourceIds.length > 0) { 
-        // 分支 A: 确认是内部拖拽 -> 执行移动操作 
-        handleMoveFiles(finalSourceIds, targetId); 
-    } else { 
-        // 分支 B: 既没有 ID 且 isInternalDragRef 为 false -> 确认为真正的外部文件拖入 
-        // 这里不需要做处理，因为 FileGrid 里的 onDrop 逻辑会判断， 
-        // 如果这里没处理，FileGrid 会调用 onDropExternal 
-    } 
-      
-      // 重置标记 
-      isInternalDragRef.current = false; 
-  };
-  
   const handleContextMenu = (e: React.MouseEvent, type: 'file' | 'tag' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person', id: string) => { 
     e.preventDefault(); e.stopPropagation(); 
     let menuType: any = null; 
@@ -4435,7 +4199,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" onClick={closeContextMenu} onDragOver={handleDragOver} onDrop={handleExternalFileDrop} onDragLeave={handleDragLeave}>
+    <div className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" onClick={closeContextMenu}>
       {/* 启动界面 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
       {/* ... (SVG filters) ... */}
@@ -4457,7 +4221,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} onDrop={(targetId, sourceIds) => handleMoveFiles(sourceIds, targetId)} onDropOnTag={handleDropOnTag} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />
         </div>
         
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
@@ -4595,39 +4359,7 @@ export const App: React.FC = () => {
                   </div>
               )}
               
-              <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-950 overflow-hidden" 
-                   onDragOver={handleDragOver}
-                   onDragLeave={handleDragLeave}
-                   onDragEnter={handleDragEnter}
-                   onDrop={handleExternalFileDrop}
-              >
-                {/* Drag and drop overlay */}
-                {isDragOver && !isInternalDragRef.current && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-50 pointer-events-none">
-                    <div className="w-full h-full flex">
-                      {/* Copy section */}
-                      <div 
-                        className={`flex-1 flex flex-col items-center justify-center transition-all duration-200 pointer-events-auto cursor-pointer ${dragAction === 'copy' ? 'bg-blue-600/80' : 'bg-blue-600/50 hover:bg-blue-600/70'}`}
-                      >
-                        <div className="text-white text-6xl mb-4">📋</div>
-                        <h3 className="text-white text-2xl font-bold mb-2">{t('context.copyTo')}</h3>
-                        <p className="text-white/80 text-center max-w-xs">{t('context.copyToCurrentFolder')}</p>
-                      </div>
-                      
-                      {/* Divider */}
-                      <div className="w-1 bg-white/20"></div>
-                      
-                      {/* Move section */}
-                      <div 
-                        className={`flex-1 flex flex-col items-center justify-center transition-all duration-200 pointer-events-auto cursor-pointer ${dragAction === 'move' ? 'bg-green-600/80' : 'bg-green-600/50 hover:bg-green-600/70'}`}
-                      >
-                        <div className="text-white text-6xl mb-4">📁</div>
-                        <h3 className="text-white text-2xl font-bold mb-2">{t('context.moveTo')}</h3>
-                        <p className="text-white/80 text-center max-w-xs">{t('context.moveToCurrentFolder')}</p>
-                      </div>
-                    </div>
-                  </div>
-                )}
+              <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-950 overflow-hidden">
                 <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950/50 backdrop-blur shrink-0 relative z-20">
                   {activeTab.viewMode === 'tags-overview' ? (
                     <div className="flex items-center w-full">
@@ -4741,63 +4473,7 @@ export const App: React.FC = () => {
                         onRenameSubmit={handleRenameSubmit} 
                         onRenameCancel={() => setState(s => ({ ...s, renamingId: null }))} 
                         onStartRename={startRename} 
-                        onDragStart={handleDragStart} 
-                        onDragEnd={handleDragEnd} 
-                        onDropOnFolder={handleDropOnFolder} 
                         settings={state.settings}
-                        onDropExternal={async (targetId, paths) => {
-                            // 1. 核心检查：如果是内部发起的拖拽 (isInternalDragRef.current = true)
-                            // 即使走到了 onDropExternal 通道，我们也把它强行扭转为“移动”操作
-                            if (isInternalDragRef.current) {
-                                handleMoveFiles(activeTab.selectedFileIds, targetId);
-                            } else {
-                                // 2. 确实是外部文件，执行复制
-                                // Tauri环境下使用Tauri API处理外部文件复制
-                                const targetFolder = state.files[targetId];
-                                if (targetFolder && targetFolder.path) {
-                                    const taskId = startTask('copy', paths, t('tasks.copying'), false);
-                                    try {
-                                        let copiedCount = 0;
-                                        const separator = targetFolder.path.includes('/') ? '/' : '\\';
-                                        
-                                        for (const sourcePath of paths) {
-                                            const filename = sourcePath.split(separator).pop();
-                                            if (filename) {
-                                                const newPath = `${targetFolder.path}${separator}${filename}`;
-                                                await copyFile(sourcePath, newPath);
-                                                copiedCount++;
-                                                updateTask(taskId, { current: copiedCount });
-                                            }
-                                        }
-                                        
-                                        showToast(t('context.copied'));
-                                        updateTask(taskId, { current: paths.length, status: 'completed' });
-                                        handleRefresh();
-                                        
-                                        // 1秒后移除任务
-                                        setTimeout(() => {
-                                            setState(prev => ({
-                                                ...prev,
-                                                tasks: prev.tasks.filter(t => t.id !== taskId)
-                                            }));
-                                        }, 1000);
-                                    } catch (err) {
-                                        console.error('Error copying external files:', err);
-                                        showToast('Copy failed');
-                                        // 任务失败，直接移除
-                                        setTimeout(() => {
-                                            setState(prev => ({
-                                                ...prev,
-                                                tasks: prev.tasks.filter(t => t.id !== taskId)
-                                            }));
-                                        }, 1000);
-                                    }
-                                }
-                            }
-                            
-                            // 别忘了重置
-                            isInternalDragRef.current = false;
-                        }}
                         containerRef={selectionRef}
                         onMouseDown={handleMouseDown}
                         onMouseMove={handleMouseMove}

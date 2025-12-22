@@ -12,13 +12,11 @@ interface TreeProps {
   onToggle: (id: string) => void;
   onNavigate: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, type: 'file' | 'tag' | 'root-folder', id: string) => void;
-  onDrop: (targetId: string, sourceIds: string[]) => void;
   depth?: number;
 }
 
-const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, onDrop, depth = 0 }) => {
+const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, depth = 0 }) => {
   const node = files[nodeId];
-  const [isDragOver, setIsDragOver] = useState(false);
 
   if (!node || node.type !== FileType.FOLDER) return null;
 
@@ -41,37 +39,6 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
     onContextMenu(e, isRoot ? 'root-folder' : 'file', nodeId);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    
-    const data = e.dataTransfer.getData('application/json');
-    if (data) {
-      try {
-        const sourceIds = JSON.parse(data);
-        if (Array.isArray(sourceIds) && sourceIds.length > 0) {
-          onDrop(nodeId, sourceIds);
-        }
-      } catch (err) {
-        console.error('Failed to parse drop data', err);
-      }
-    }
-  };
-
   const Icon = isRoot 
     ? HardDrive 
     : (node.category === 'book' ? Book : node.category === 'sequence' ? Film : Folder);
@@ -87,14 +54,10 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
       <div 
         className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative
           ${isSelected ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}
-          ${isDragOver ? 'bg-blue-100 dark:bg-blue-900 border-blue-500 dark:border-blue-400' : ''}
         `}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
       >
         <div 
           className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded"
@@ -118,7 +81,6 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
           onToggle={onToggle}
           onNavigate={onNavigate}
           onContextMenu={onContextMenu}
-          onDrop={onDrop}
           depth={depth + 1}
         />
       ))}
@@ -225,18 +187,16 @@ interface TagSectionProps {
   onStartCreateTag: () => void;
   onSaveNewTag: (tag: string) => void;
   onCancelCreateTag: () => void;
-  onDropOnTag: (tag: string, sourceIds: string[]) => void;
   t: (key: string) => string;
 }
 
 const TagSection: React.FC<TagSectionProps> = ({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
-  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onDropOnTag, t 
+  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t 
 }) => {
   const [expanded, setExpanded] = useState(false);
   const [hoveredTag, setHoveredTag] = useState<string | null>(null);
   const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
-  const [dragOverTag, setDragOverTag] = useState<string | null>(null);
   const [tagInputValue, setTagInputValue] = useState('');
   
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -391,38 +351,10 @@ const TagSection: React.FC<TagSectionProps> = ({
               onMouseEnter={(e) => handleMouseEnter(e, tag)}
               onMouseLeave={handleMouseLeave}
               onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragOverTag(tag);
-                e.dataTransfer.dropEffect = 'copy';
-              }}
-              onDragLeave={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (e.relatedTarget && e.currentTarget.contains(e.relatedTarget as Node)) return;
-                  setDragOverTag(null);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                setDragOverTag(null);
-                const data = e.dataTransfer.getData('application/json');
-                if (data) {
-                    try {
-                        const ids = JSON.parse(data);
-                        if (Array.isArray(ids) && ids.length > 0) {
-                            onDropOnTag(tag, ids);
-                        }
-                    } catch (err) {}
-                }
-              }}
             >
               <div 
                 className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
-                   ${dragOverTag === tag 
-                      ? 'bg-blue-200 dark:bg-blue-900 border border-blue-400 dark:border-blue-500' 
-                      : 'hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent'}
+                   hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
                 `}
                 onClick={() => onTagSelect(tag)}
               >
@@ -480,8 +412,6 @@ export const Sidebar: React.FC<{
   onPersonSelect: (personId: string) => void;
   onNavigateAllPeople: () => void;
   onContextMenu: (e: React.MouseEvent, type: 'file' | 'tag' | 'tag-background' | 'root-folder' | 'person', id: string) => void;
-  onDrop: (targetId: string, sourceIds: string[]) => void;
-  onDropOnTag: (tag: string, sourceIds: string[]) => void;
   isCreatingTag: boolean;
   onStartCreateTag: () => void;
   onSaveNewTag: (tag: string) => void;
@@ -491,7 +421,7 @@ export const Sidebar: React.FC<{
   onStartRenamePerson: (personId: string) => void;
   onCreatePerson: () => void;
   t: (key: string) => string;
-}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, onDrop, onDropOnTag, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onStartRenamePerson, onCreatePerson, t }) => {
+}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onStartRenamePerson, onCreatePerson, t }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized && task.status === 'running') : [];
 
@@ -511,7 +441,6 @@ export const Sidebar: React.FC<{
             onToggle={onToggle}
             onNavigate={onNavigate}
             onContextMenu={onContextMenu}
-            onDrop={onDrop}
           />
         ))}
         
@@ -540,7 +469,6 @@ export const Sidebar: React.FC<{
           onStartCreateTag={onStartCreateTag}
           onSaveNewTag={onSaveNewTag}
           onCancelCreateTag={onCancelCreateTag}
-          onDropOnTag={onDropOnTag}
           t={t}
         />
       </div>

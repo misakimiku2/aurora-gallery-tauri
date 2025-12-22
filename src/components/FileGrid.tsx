@@ -767,14 +767,7 @@ const FileListItem = React.memo(({
   onStartRename,
   onRenameSubmit,
   onRenameCancel,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDropOnFolder,
-  onDropExternal,
   t,
-  dragTargetId,
   resourceRoot,
   cachePath
 }: any) => {
@@ -782,11 +775,9 @@ const FileListItem = React.memo(({
   return (
     <div
         data-id={file.id}
-        draggable={renamingId !== file.id}
         className={`
             file-item flex items-center p-2 rounded text-sm cursor-pointer border transition-colors mb-1 relative
             ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 border-l-4 shadow-md' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
-            ${dragTargetId === file.id ? 'border-green-500 bg-green-50 dark:bg-green-900/20' : ''}
         `}
         onMouseDown={(e) => {
             if (e.button === 0) e.stopPropagation();
@@ -799,58 +790,7 @@ const FileListItem = React.memo(({
             e.stopPropagation();
             onFileDoubleClick(file.id);
         }}
-        onContextMenu={(e) => onContextMenu(e, file.id)}
-        onDragStart={(e) => onDragStart && onDragStart(e, file.id)}
-        onDragEnd={onDragEnd}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation(); // 阻止事件冒泡，防止触发外层的 Drop
-
-            if (file.type === FileType.FOLDER) {
-                // 尝试获取 JSON 数据 (虽然后面 startDrag 可能会清空它，但保留这个逻辑兼容 Web 模式)
-                const data = e.dataTransfer.getData('application/json');
-                let parsedIds: string[] = [];
-
-                if (data) {
-                    try { parsedIds = JSON.parse(data); } catch (err) {}
-                }
-
-                // 逻辑分流：
-                if (parsedIds.length > 0) {
-                    // 情况1: 明确读到了 ID，肯定是内部移动
-                    onDropOnFolder(file.id, parsedIds);
-                } else {
-                    // 情况2: 没读到 ID。
-                    // 此时可能是：
-                    // A. 内部原生拖拽 (startDrag 导致数据被清空)
-                    // B. 真正的外部文件拖入
-                    
-                    // 我们直接传空数组 [] 给 onDropOnFolder。
-                    // App.tsx 会检查 isInternalDragRef：
-                    //   - 如果是 true -> 视为内部移动，使用 selectedFileIds
-                    //   - 如果是 false -> 视为外部文件
-                    onDropOnFolder(file.id, []);
-                    
-                    // 补充：如果是外部文件，且 App.tsx 的 onDropOnFolder 没处理(因为它判断不是内部)，
-                    // 我们还需要给外部文件一个入口。
-                    // 但由于我们在 onDropOnFolder 里做了判断，如果 App.tsx 发现不是内部拖拽，
-                    // 它可以选择忽略，然后我们需要在这里手动触发 external。
-                    
-                    // 更稳妥的写法是结合父组件的逻辑。
-                    // 简单方案：
-                    if (e.dataTransfer.files.length > 0) {
-                         // 把文件路径提取出来传出去，让父组件再次通过 Ref 判断
-                         const filePaths = Array.from(e.dataTransfer.files).map((f: any) => f.path).filter(Boolean);
-                         if (onDropExternal) {
-                             onDropExternal(file.id, filePaths);
-                         }
-                    }
-                }
-            }
-        }}
-    >
+        onContextMenu={(e) => onContextMenu(e, file.id)}>
         <div className="flex-1 flex items-center overflow-hidden min-w-0 pointer-events-none">
             {file.type === FileType.FOLDER ? (
             <Folder className="text-blue-500 mr-3 shrink-0" size={18} />
@@ -1011,7 +951,6 @@ const FileCard = React.memo(({
   renamingId,
   layoutMode,
   hoverPlayingId,
-  dragTargetId,
   onFileClick,
   onFileDoubleClick,
   onContextMenu,
@@ -1019,12 +958,6 @@ const FileCard = React.memo(({
   onRenameSubmit,
   onRenameCancel,
   onSetHoverPlayingId,
-  onDragStart,
-  onDragEnd,
-  onDragOver,
-  onDragLeave,
-  onDropOnFolder,
-  onDropExternal,
   style,
   settings,
   resourceRoot,
@@ -1042,57 +975,6 @@ const FileCard = React.memo(({
   return (
     <div
         data-id={file.id}
-        draggable={renamingId !== file.id}
-        onDragStart={(e) => onDragStart(e, file.id)}
-        onDragEnd={onDragEnd}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={(e) => {
-            e.preventDefault();
-            e.stopPropagation(); // 阻止事件冒泡，防止触发外层的 Drop
-
-            if (file.type === FileType.FOLDER) {
-                // 尝试获取 JSON 数据 (虽然后面 startDrag 可能会清空它，但保留这个逻辑兼容 Web 模式)
-                const data = e.dataTransfer.getData('application/json');
-                let parsedIds: string[] = [];
-
-                if (data) {
-                    try { parsedIds = JSON.parse(data); } catch (err) {}
-                }
-
-                // 逻辑分流：
-                if (parsedIds.length > 0) {
-                    // 情况1: 明确读到了 ID，肯定是内部移动
-                    onDropOnFolder(file.id, parsedIds);
-                } else {
-                    // 情况2: 没读到 ID。
-                    // 此时可能是：
-                    // A. 内部原生拖拽 (startDrag 导致数据被清空)
-                    // B. 真正的外部文件拖入
-                    
-                    // 我们直接传空数组 [] 给 onDropOnFolder。
-                    // App.tsx 会检查 isInternalDragRef：
-                    //   - 如果是 true -> 视为内部移动，使用 selectedFileIds
-                    //   - 如果是 false -> 视为外部文件
-                    onDropOnFolder(file.id, []);
-                    
-                    // 补充：如果是外部文件，且 App.tsx 的 onDropOnFolder 没处理(因为它判断不是内部)，
-                    // 我们还需要给外部文件一个入口。
-                    // 但由于我们在 onDropOnFolder 里做了判断，如果 App.tsx 发现不是内部拖拽，
-                    // 它可以选择忽略，然后我们需要在这里手动触发 external。
-                    
-                    // 更稳妥的写法是结合父组件的逻辑。
-                    // 简单方案：
-                    if (e.dataTransfer.files.length > 0) {
-                         // 把文件路径提取出来传出去，让父组件再次通过 Ref 判断
-                         const filePaths = Array.from(e.dataTransfer.files).map((f: any) => f.path).filter(Boolean);
-                         if (onDropExternal) {
-                             onDropExternal(file.id, filePaths);
-                         }
-                    }
-                }
-            }
-        }}
         className={`
             file-item group cursor-pointer transition-all duration-300 ease-out flex flex-col items-center
             ${isSelected ? 'z-10' : 'z-0 hover:scale-[1.01]'}
@@ -1134,7 +1016,6 @@ const FileCard = React.memo(({
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
                 ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
-                ${dragTargetId === file.id ? 'border-green-500 bg-green-50 dark:bg-green-900/20 scale-105' : ''}
             `}
             style={{ 
                 height: height ? (height - 40) : '100%',
@@ -1209,7 +1090,6 @@ const GroupContent = React.memo(({
   renamingId,
   thumbnailSize,
   hoverPlayingId,
-  dragTargetId,
   handleFileClick,
   handleFileDoubleClick,
   handleContextMenu,
@@ -1217,11 +1097,6 @@ const GroupContent = React.memo(({
   handleRenameSubmit,
   handleRenameCancel,
   handleSetHoverPlayingId,
-  handleDragStart,
-  handleDragEnd,
-  handleDragOverFolder,
-  handleDragLeaveFolder,
-  handleDropOnFolderWrapper,
   settings,
   containerRect,
   t,
@@ -1265,14 +1140,7 @@ const GroupContent = React.memo(({
                   onStartRename={handleStartRename}
                   onRenameSubmit={handleRenameSubmit}
                   onRenameCancel={handleRenameCancel}
-                  onDragStart={handleDragStart}
-                  onDragEnd={handleDragEnd}
-                  onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
-                  onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
-                  onDropOnFolder={handleDropOnFolderWrapper}
-                  onDropExternal={null}
                   t={t}
-                  dragTargetId={dragTargetId}
                   resourceRoot={effectiveResourceRoot}
                   cachePath={effectiveCachePath}
               />
@@ -1301,7 +1169,6 @@ const GroupContent = React.memo(({
                     renamingId={renamingId}
                     layoutMode={activeTab.layoutMode}
                     hoverPlayingId={hoverPlayingId}
-                    dragTargetId={dragTargetId}
                     onFileClick={handleFileClick}
                     onFileDoubleClick={handleFileDoubleClick}
                     onContextMenu={handleContextMenu}
@@ -1309,12 +1176,6 @@ const GroupContent = React.memo(({
                     onRenameSubmit={handleRenameSubmit}
                     onRenameCancel={handleRenameCancel}
                     onSetHoverPlayingId={handleSetHoverPlayingId}
-                    onDragStart={handleDragStart}
-                    onDragEnd={handleDragEnd}
-                    onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
-                    onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
-                    onDropOnFolder={handleDropOnFolderWrapper}
-                    onDropExternal={null}
                     style={item}
                     settings={settings}
                     resourceRoot={effectiveResourceRoot}
@@ -1533,9 +1394,6 @@ interface FileGridProps {
   onRenameSubmit: (val: string, id: string) => void;
   onRenameCancel: () => void;
   onStartRename: (id: string) => void;
-  onDragStart: (e: React.DragEvent, id: string) => void;
-  onDropOnFolder: (targetId: string, sourceIds: string[]) => void;
-  onDropExternal?: (targetId: string, paths: string[]) => void;
   containerRef?: React.RefObject<HTMLDivElement>;
   onMouseDown?: (e: React.MouseEvent) => void;
   onMouseMove?: (e: React.MouseEvent) => void;
@@ -1560,7 +1418,6 @@ interface FileGridProps {
   onThumbnailSizeChange?: (size: number) => void;
   onUpdateFile?: (id: string, updates: Partial<FileNode>) => void;
   settings?: import('../types').AppSettings;
-  onDragEnd?: (e: React.DragEvent) => void;
   resourceRoot?: string;
   cachePath?: string;
   onScrollTopChange?: (scrollTop: number) => void;
@@ -1582,10 +1439,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onRenameSubmit,
   onRenameCancel,
   onStartRename,
-  onDragStart,
-  onDragEnd,
-  onDropOnFolder,
-  onDropExternal,
   containerRef,
   onMouseDown,
   onMouseMove,
@@ -1616,7 +1469,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // Removed debug logs
   // #endregion
 
-  const [dragTargetId, setDragTargetId] = useState<string | null>(null);
+
   
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
@@ -1667,24 +1520,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
       onStartRename(id);
   }, [onStartRename]);
   
-  const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
-      onDragStart(e, id);
-  }, [onDragStart]);
-  
-  const handleDragEnd = useCallback((e: React.DragEvent) => {
-      onDragEnd?.(e);
-  }, [onDragEnd]);
-  
-  const handleDropOnFolderWrapper = useCallback((targetId: string, sourceIds: string[]) => {
-      setDragTargetId(null);
-      onDropOnFolder(targetId, sourceIds);
-  }, [onDropOnFolder]);
-
-  const handleDropExternalWrapper = useCallback((targetId: string, paths: string[]) => {
-      setDragTargetId(null);
-      onDropExternal?.(targetId, paths);
-  }, [onDropExternal]);
-  
   const handleSetHoverPlayingId = useCallback((id: string | null) => {
       onSetHoverPlayingId(id);
   }, [onSetHoverPlayingId]);
@@ -1704,21 +1539,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
   const handleToggleGroup = useCallback((id: string) => {
       onToggleGroup?.(id);
   }, [onToggleGroup]);
-
-  const handleDragOverFolder = useCallback((e: React.DragEvent, id: string) => {
-      const file = files[id];
-      if (file?.type === FileType.FOLDER) {
-          // 总是调用 e.preventDefault()，确保 onDrop 事件能够触发
-          // 移除 e.stopPropagation()，确保事件能够传递到 onDrop 处理函数
-          e.preventDefault();
-          setDragTargetId(id);
-      }
-  }, [files]);
-
-  const handleDragLeaveFolder = useCallback((e: React.DragEvent, id: string) => {
-      // 无论 relatedTarget 是什么，都清除 dragTargetId
-      setDragTargetId(null);
-  }, []);
   
   // Track if we're in the middle of a programmatic scroll restore
   const isRestoringScrollRef = useRef(false);
@@ -1942,7 +1762,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   renamingId={renamingId}
                                   thumbnailSize={thumbnailSize}
                                   hoverPlayingId={hoverPlayingId}
-                                  dragTargetId={dragTargetId}
                                   handleFileClick={handleFileClick}
                                   handleFileDoubleClick={handleFileDoubleClick}
                                   handleContextMenu={handleContextMenu}
@@ -1950,11 +1769,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   handleRenameSubmit={handleRenameSubmit}
                                   handleRenameCancel={handleRenameCancel}
                                   handleSetHoverPlayingId={handleSetHoverPlayingId}
-                                  handleDragStart={handleDragStart}
-                                  handleDragEnd={handleDragEnd}
-                                  handleDragOverFolder={handleDragOverFolder}
-                                  handleDragLeaveFolder={handleDragLeaveFolder}
-                                  handleDropOnFolderWrapper={handleDropOnFolderWrapper}
                                   settings={settings}
                                   containerRect={containerRect}
                                   t={t}
@@ -1983,14 +1797,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onStartRename={onStartRename}
                                   onRenameSubmit={handleRenameSubmit}
                                   onRenameCancel={handleRenameCancel}
-                                  onDragStart={handleDragStart}
-                                  onDragEnd={handleDragEnd}
-                                  onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
-                                  onDragLeave={(e: React.DragEvent) => handleDragLeaveFolder(e, file.id)}
-                                  onDropOnFolder={handleDropOnFolderWrapper}
-                                  onDropExternal={handleDropExternalWrapper}
                                   t={t}
-                                  dragTargetId={dragTargetId}
                                   resourceRoot={effectiveResourceRoot}
                                   cachePath={effectiveCachePath}
                               />
@@ -2024,7 +1831,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       renamingId={renamingId}
                                       layoutMode={activeTab.layoutMode}
                                       hoverPlayingId={hoverPlayingId}
-                                      dragTargetId={dragTargetId}
                                       onFileClick={handleFileClick}
                                       onFileDoubleClick={handleFileDoubleClick}
                                       onContextMenu={handleContextMenu}
@@ -2032,12 +1838,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       onRenameSubmit={handleRenameSubmit}
                                       onRenameCancel={handleRenameCancel}
                                       onSetHoverPlayingId={handleSetHoverPlayingId}
-                                      onDragStart={handleDragStart}
-                                      onDragEnd={handleDragEnd}
-                                      onDragOver={(e: React.DragEvent) => handleDragOverFolder(e, file.id)}
-                                      onDragLeave={handleDragLeaveFolder}
-                                      onDropOnFolder={handleDropOnFolderWrapper}
-                                      onDropExternal={handleDropExternalWrapper}
                                       settings={settings}
                                       style={item}
                                       resourceRoot={effectiveResourceRoot}
