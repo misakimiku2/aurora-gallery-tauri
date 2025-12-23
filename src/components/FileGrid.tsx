@@ -759,6 +759,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
 
 const FileListItem = React.memo(({
   file,
+  files,
   isSelected,
   renamingId,
   onFileClick,
@@ -769,9 +770,228 @@ const FileListItem = React.memo(({
   onRenameCancel,
   t,
   resourceRoot,
-  cachePath
+  cachePath,
+  selectedFileIds,
+  onDragStart,
+  onDragEnd,
+  thumbnailSize
 }: any) => {
   if (!file) return null;
+  
+  // 列表视图下的拖拽处理
+  const handleDragStart = (e: React.DragEvent) => {
+    e.stopPropagation();
+    
+    // 如果文件未被选中，拖拽时自动选中它
+    if (!isSelected) {
+      onFileClick(e, file.id);
+    }
+    
+    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文件
+    const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
+      ? selectedFileIds 
+      : [file.id];
+    
+    // 设置拖拽数据
+    try {
+      // 1. 设置JSON格式的拖拽数据，用于内部处理
+      e.dataTransfer.setData('application/json', JSON.stringify({
+        type: 'file',
+        ids: filesToDrag,
+        sourceFolderId: file.parentId
+      }));
+      
+      // 2. 设置简单的文本数据，用于显示拖拽信息
+      const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
+      e.dataTransfer.setData('text/plain', textData);
+    } catch (error) {
+      // Error handling for drag data setup
+    }
+    
+    // 列表视图下，拖拽缩略图固定为100px
+    const dragThumbSize = 100;
+    
+    // 创建拖拽预览容器
+    const dragImageContainer = document.createElement('div');
+    dragImageContainer.style.position = 'absolute';
+    dragImageContainer.style.left = '-9999px';
+    dragImageContainer.style.top = '-9999px';
+    dragImageContainer.style.pointerEvents = 'none';
+    dragImageContainer.style.zIndex = '9999';
+    dragImageContainer.style.width = `${dragThumbSize}px`;
+    dragImageContainer.style.height = `${dragThumbSize}px`;
+    dragImageContainer.style.display = 'flex';
+    dragImageContainer.style.alignItems = 'center';
+    dragImageContainer.style.justifyContent = 'center';
+    dragImageContainer.style.borderRadius = '8px';
+    dragImageContainer.style.background = 'transparent';
+    dragImageContainer.style.boxShadow = 'none';
+    dragImageContainer.style.padding = '0px';
+    
+    // 创建缩略图容器
+    const thumbnailsContainer = document.createElement('div');
+    thumbnailsContainer.style.position = 'relative';
+    thumbnailsContainer.style.width = '100%';
+    thumbnailsContainer.style.height = '100%';
+    thumbnailsContainer.style.display = 'flex';
+    thumbnailsContainer.style.alignItems = 'center';
+    thumbnailsContainer.style.justifyContent = 'center';
+    
+    // 获取全局缓存
+    const cache = getGlobalCache();
+    
+    // 最多显示3个缩略图
+    const previewCount = Math.min(filesToDrag.length, 3);
+    
+    // 确保拖拽的文件显示在预览中，并且优先级最高
+    const previewFiles: string[] = [];
+    previewFiles.push(file.id);
+    
+    // 从剩余选中的文件中添加其他文件，避免重复
+    for (const fileId of filesToDrag) {
+      if (fileId !== file.id && previewFiles.length < previewCount) {
+        previewFiles.push(fileId);
+      }
+    }
+    
+    // 绘制每个文件的缩略图
+    for (let i = 0; i < previewFiles.length; i++) {
+      const draggedFileId = previewFiles[i];
+      const draggedFile = files[draggedFileId];
+      if (!draggedFile) continue;
+      
+      // 获取缓存的缩略图
+      const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
+      
+      // 计算单个缩略图尺寸（基于拖拽容器大小）
+      const singleThumbSize = dragThumbSize * 0.9;
+      
+      // 创建单个缩略图元素
+      const thumbElement = document.createElement('div');
+      thumbElement.style.position = 'absolute';
+      thumbElement.style.width = `${singleThumbSize}px`;
+      thumbElement.style.height = `${singleThumbSize}px`;
+      thumbElement.style.borderRadius = '8px';
+      thumbElement.style.background = 'transparent';
+      thumbElement.style.border = '2px solid rgba(255, 255, 255, 0.4)';
+      thumbElement.style.display = 'flex';
+      thumbElement.style.alignItems = 'center';
+      thumbElement.style.justifyContent = 'center';
+      thumbElement.style.overflow = 'hidden';
+      
+      // 设置z-index，确保拖拽的文件显示在最前面
+      thumbElement.style.zIndex = `${previewCount - i}`;
+      
+      // 计算位置和旋转（使用CSS变换）
+      const rotation = i === 0 ? 0 : (i === 1 ? -8 : 8);
+      const offsetScale = singleThumbSize / 150;
+      const offsetX = i === 0 ? 0 : (i === 1 ? -10 * offsetScale : 10 * offsetScale);
+      const offsetY = i * 12 * offsetScale;
+      thumbElement.style.transform = `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`;
+      
+      // 绘制缩略图或占位符
+      if (cachedThumb) {
+        const img = document.createElement('img');
+        img.src = cachedThumb;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'cover';
+        img.style.objectPosition = 'center';
+        img.draggable = false;
+        thumbElement.appendChild(img);
+      } else {
+        if (draggedFile.type === FileType.IMAGE) {
+          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼️</div>`;
+        } else if (draggedFile.type === FileType.FOLDER) {
+          // 使用与软件内Folder3DIcon一致的设计
+          thumbElement.innerHTML = `
+            <div style="width: 100%; height: 100%; position: relative;">
+              <svg viewBox="0 0 100 100" style="position: absolute; width: 100%; height: 100%; fill: #3b82f6; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));" preserveAspectRatio="none">
+                <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" />
+              </svg>
+              <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60%; transform: perspective(800px) rotateX(-10deg);">
+                <svg viewBox="0 0 100 65" style="width: 100%; height: 100%; fill: #2563eb; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));" preserveAspectRatio="none">
+                  <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" />
+                </svg>
+                <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0.5; mix-blend-mode: overlay;">
+                  <svg viewBox="0 0 24 24" style="width: 32px; height: 32px; fill: white; stroke: white; stroke-width: 1.5;" preserveAspectRatio="xMidYMid meet">
+                    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          thumbElement.innerHTML = `<div style="font-size: 32px;">📄</div>`;
+        }
+      }
+      
+      thumbnailsContainer.appendChild(thumbElement);
+    }
+    
+    // 绘制文件计数（如果超过3个）
+    if (filesToDrag.length > 3) {
+      const count = filesToDrag.length - 3;
+      const countBadge = document.createElement('div');
+      countBadge.style.position = 'absolute';
+      const badgeSize = 40 * (dragThumbSize / 200);
+      countBadge.style.right = `${12 * (dragThumbSize / 200)}px`;
+      countBadge.style.bottom = `${12 * (dragThumbSize / 200)}px`;
+      countBadge.style.width = `${badgeSize}px`;
+      countBadge.style.height = `${badgeSize}px`;
+      countBadge.style.borderRadius = '50%';
+      countBadge.style.background = '#2563eb';
+      countBadge.style.color = 'white';
+      countBadge.style.display = 'flex';
+      countBadge.style.alignItems = 'center';
+      countBadge.style.justifyContent = 'center';
+      countBadge.style.font = `bold ${14 * (dragThumbSize / 200)}px Arial, sans-serif`;
+      countBadge.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+      countBadge.textContent = `+${count}`;
+      thumbnailsContainer.appendChild(countBadge);
+    }
+    
+    // 添加到容器
+    dragImageContainer.appendChild(thumbnailsContainer);
+    document.body.appendChild(dragImageContainer);
+    
+    // 设置拖拽图像
+    try {
+      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中心
+      const dragOffset = dragThumbSize / 2;
+      e.dataTransfer.setDragImage(dragImageContainer, dragOffset, dragOffset);
+    } catch (error) {
+      // Error handling for drag image setup
+    }
+    
+    // 设置拖拽效果
+    e.dataTransfer.effectAllowed = 'move';
+    
+    // 通知父组件开始拖拽
+    if (onDragStart) {
+      onDragStart(filesToDrag);
+    }
+    
+    // 在拖拽结束后清理临时元素
+    const cleanupDragImage = () => {
+      if (dragImageContainer.parentNode) {
+        dragImageContainer.parentNode.removeChild(dragImageContainer);
+      }
+      document.removeEventListener('dragend', cleanupDragImage);
+      document.removeEventListener('dragleave', cleanupDragImage);
+    };
+    
+    document.addEventListener('dragend', cleanupDragImage);
+    document.addEventListener('dragleave', cleanupDragImage);
+  };
+  
+  const handleDragEnd = (e: React.DragEvent) => {
+    e.stopPropagation();
+    if (onDragEnd) {
+      onDragEnd();
+    }
+  };
+  
   return (
     <div
         data-id={file.id}
@@ -790,7 +1010,10 @@ const FileListItem = React.memo(({
             e.stopPropagation();
             onFileDoubleClick(file.id);
         }}
-        onContextMenu={(e) => onContextMenu(e, file.id)}>
+        onContextMenu={(e) => onContextMenu(e, file.id)}
+        draggable={true}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}>
         <div className="flex-1 flex items-center overflow-hidden min-w-0 pointer-events-none">
             {file.type === FileType.FOLDER ? (
             <Folder className="text-blue-500 mr-3 shrink-0" size={18} />
@@ -961,8 +1184,13 @@ const FileCard = React.memo(({
   style,
   settings,
   resourceRoot,
-  cachePath
+  cachePath,
+  selectedFileIds,
+  onDragStart,
+  onDragEnd,
+  thumbnailSize
 }: any) => {
+  const [isDragging, setIsDragging] = useState(false);
   if (!file) return null;
 
   // Extract layout positioning
@@ -972,12 +1200,257 @@ const FileCard = React.memo(({
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
 
+  const handleDragStart = (e: React.DragEvent) => {
+    e.stopPropagation();
+    setIsDragging(true);
+    
+    // 如果文件未被选中，拖拽时自动选中它
+    if (!isSelected) {
+      onFileClick(e, file.id);
+    }
+    
+    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文件
+    const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
+      ? selectedFileIds 
+      : [file.id];
+    
+    // 设置拖拽数据
+    try {
+      // 1. 设置JSON格式的拖拽数据，用于内部处理
+      e.dataTransfer.setData('application/json', JSON.stringify({
+        type: 'file',
+        ids: filesToDrag,
+        sourceFolderId: file.parentId
+      }));
+      
+      // 2. 设置简单的文本数据，用于显示拖拽信息
+      const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
+      e.dataTransfer.setData('text/plain', textData);
+    } catch (error) {
+      // Error handling for drag data setup
+    }
+    
+    // 计算拖拽缩略图尺寸
+    // 主界面图标大小范围：100px-480px
+    // 拖拽缩略图大小范围：100px-380px
+    // 线性映射：dragThumbSize = 100 + (mainThumbSize - 100) * (280 / 380)
+    const mainThumbSize = thumbnailSize; // 主界面图标大小
+    const minMainSize = 100;
+    const maxMainSize = 480;
+    const minDragSize = 100;
+    const maxDragSize = 380;
+    
+    // 线性映射计算拖拽缩略图大小
+    const dragThumbSize = Math.min(maxDragSize, Math.max(minDragSize, 
+        minDragSize + (mainThumbSize - minMainSize) * ((maxDragSize - minDragSize) / (maxMainSize - minMainSize))
+    ));
+    
+    // 优化方案：创建临时DOM元素作为拖拽预览
+    // 这种方法比Canvas更可靠，避免了Canvas绘制的时序问题
+    const dragImageContainer = document.createElement('div');
+    dragImageContainer.style.position = 'absolute';
+    dragImageContainer.style.left = '-9999px';
+    dragImageContainer.style.top = '-9999px';
+    dragImageContainer.style.pointerEvents = 'none';
+    dragImageContainer.style.zIndex = '9999';
+    dragImageContainer.style.width = `${dragThumbSize}px`;
+    dragImageContainer.style.height = `${dragThumbSize}px`;
+    dragImageContainer.style.display = 'flex';
+    dragImageContainer.style.alignItems = 'center';
+    dragImageContainer.style.justifyContent = 'center';
+    dragImageContainer.style.borderRadius = '8px';
+    dragImageContainer.style.background = 'transparent';
+    dragImageContainer.style.boxShadow = 'none';
+    dragImageContainer.style.padding = '0px';
+    
+    // 获取全局缓存
+    const cache = getGlobalCache();
+    
+    // 创建缩略图容器
+    const thumbnailsContainer = document.createElement('div');
+    thumbnailsContainer.style.position = 'relative';
+    thumbnailsContainer.style.width = '100%';
+    thumbnailsContainer.style.height = '100%';
+    thumbnailsContainer.style.display = 'flex';
+    thumbnailsContainer.style.alignItems = 'center';
+    thumbnailsContainer.style.justifyContent = 'center';
+    
+    // 最多显示3个缩略图
+    const previewCount = Math.min(filesToDrag.length, 3);
+    
+    // 确保拖拽的文件显示在预览中，并且优先级最高
+    // 1. 首先添加当前拖拽的文件（file变量代表用户正在拖拽的文件）
+    // 2. 然后从剩余选中的文件中添加其他文件，最多显示3个
+    const previewFiles: string[] = [];
+    
+    // 确保当前拖拽的文件在预览中
+    previewFiles.push(file.id);
+    
+    // 从剩余选中的文件中添加其他文件，避免重复
+    for (const fileId of filesToDrag) {
+      if (fileId !== file.id && previewFiles.length < previewCount) {
+        previewFiles.push(fileId);
+      }
+    }
+    
+    // 绘制每个文件的缩略图
+    for (let i = 0; i < previewFiles.length; i++) {
+      const draggedFileId = previewFiles[i];
+      const draggedFile = files[draggedFileId];
+      if (!draggedFile) continue;
+      
+      // 获取缓存的缩略图
+      const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
+      
+      // 计算单个缩略图尺寸（基于拖拽容器大小）
+      // 增加单个缩略图尺寸，从容器的75%增加到90%，确保内部显示的缩略图更大
+      const singleThumbSize = dragThumbSize * 0.9; // 单个缩略图尺寸为容器的90%
+      
+      // 创建单个缩略图元素
+      const thumbElement = document.createElement('div');
+      thumbElement.style.position = 'absolute';
+      thumbElement.style.width = `${singleThumbSize}px`;
+      thumbElement.style.height = `${singleThumbSize}px`;
+      thumbElement.style.borderRadius = '8px';
+      thumbElement.style.background = 'transparent';
+      thumbElement.style.border = '2px solid rgba(255, 255, 255, 0.4)';
+      thumbElement.style.display = 'flex';
+      thumbElement.style.alignItems = 'center';
+      thumbElement.style.justifyContent = 'center';
+      thumbElement.style.overflow = 'hidden';
+      
+      // 设置z-index，确保拖拽的文件显示在最前面
+      thumbElement.style.zIndex = `${previewCount - i}`;
+      
+      // 计算位置和旋转（使用CSS变换）
+      const rotation = i === 0 ? 0 : (i === 1 ? -8 : 8);
+      // 偏移量按比例调整
+      const offsetScale = singleThumbSize / 150; // 基于150px的基准尺寸
+      const offsetX = i === 0 ? 0 : (i === 1 ? -10 * offsetScale : 10 * offsetScale);
+      const offsetY = i * 12 * offsetScale;
+      thumbElement.style.transform = `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`;
+      
+      // 绘制缩略图或占位符
+      if (cachedThumb) {
+        // 使用已缓存的缩略图URL
+        const img = document.createElement('img');
+        img.src = cachedThumb;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        img.style.objectFit = 'cover';
+        img.style.objectPosition = 'center';
+        img.draggable = false;
+        thumbElement.appendChild(img);
+      } else {
+        // 绘制占位符
+        if (draggedFile.type === FileType.IMAGE) {
+          // 图片占位符
+          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼️</div>`;
+        } else if (draggedFile.type === FileType.FOLDER) {
+          // 文件夹占位符：使用与软件内Folder3DIcon一致的设计
+          thumbElement.innerHTML = `
+            <div style="width: 100%; height: 100%; position: relative;">
+              <!-- Back Plate -->
+              <svg viewBox="0 0 100 100" style="position: absolute; width: 100%; height: 100%; fill: #3b82f6; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));" preserveAspectRatio="none">
+                <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" />
+              </svg>
+              
+              <!-- Front Plate -->
+              <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60%; transform: perspective(800px) rotateX(-10deg);">
+                <svg viewBox="0 0 100 65" style="width: 100%; height: 100%; fill: #2563eb; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));" preserveAspectRatio="none">
+                  <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" />
+                </svg>
+                
+                <!-- Folder Icon -->
+                <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0.5; mix-blend-mode: overlay;">
+                  <svg viewBox="0 0 24 24" style="width: 32px; height: 32px; fill: white; stroke: white; stroke-width: 1.5;" preserveAspectRatio="xMidYMid meet">
+                    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          `;
+        } else {
+          // 其他文件类型占位符
+          thumbElement.innerHTML = `<div style="font-size: 32px;">📄</div>`;
+        }
+      }
+      
+      thumbnailsContainer.appendChild(thumbElement);
+    }
+    
+    // 绘制文件计数（如果超过3个）
+    if (filesToDrag.length > 3) {
+      const count = filesToDrag.length - 3;
+      const countBadge = document.createElement('div');
+      countBadge.style.position = 'absolute';
+      // 计数徽章位置按比例调整
+      const badgeSize = 40 * (dragThumbSize / 200); // 基于200px容器的40px徽章
+      countBadge.style.right = `${12 * (dragThumbSize / 200)}px`;
+      countBadge.style.bottom = `${12 * (dragThumbSize / 200)}px`;
+      countBadge.style.width = `${badgeSize}px`;
+      countBadge.style.height = `${badgeSize}px`;
+      countBadge.style.borderRadius = '50%';
+      countBadge.style.background = '#2563eb';
+      countBadge.style.color = 'white';
+      countBadge.style.display = 'flex';
+      countBadge.style.alignItems = 'center';
+      countBadge.style.justifyContent = 'center';
+      countBadge.style.font = `bold ${14 * (dragThumbSize / 200)}px Arial, sans-serif`;
+      countBadge.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+      countBadge.textContent = `+${count}`;
+      thumbnailsContainer.appendChild(countBadge);
+    }
+    
+    // 添加到容器
+    dragImageContainer.appendChild(thumbnailsContainer);
+    document.body.appendChild(dragImageContainer);
+    
+    // 设置拖拽图像
+    try {
+      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中心
+      const dragOffset = dragThumbSize / 2;
+      e.dataTransfer.setDragImage(dragImageContainer, dragOffset, dragOffset);
+    } catch (error) {
+      // Error handling for drag image setup
+    }
+    
+    // 设置拖拽效果
+    e.dataTransfer.effectAllowed = 'move';
+    
+    // 通知父组件开始拖拽
+    if (onDragStart) {
+      onDragStart(filesToDrag);
+    }
+    
+    // 在拖拽结束后清理临时元素
+    const cleanupDragImage = () => {
+      if (dragImageContainer.parentNode) {
+        dragImageContainer.parentNode.removeChild(dragImageContainer);
+      }
+      document.removeEventListener('dragend', cleanupDragImage);
+      document.removeEventListener('dragleave', cleanupDragImage);
+    };
+    
+    document.addEventListener('dragend', cleanupDragImage);
+    document.addEventListener('dragleave', cleanupDragImage);
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    e.stopPropagation();
+    setIsDragging(false);
+    if (onDragEnd) {
+      onDragEnd();
+    }
+  };
+
   return (
     <div
         data-id={file.id}
         className={`
-            file-item group cursor-pointer transition-all duration-300 ease-out flex flex-col items-center
+            file-item group cursor-pointer transition-all duration-300 ease-out flex flex-col items-center rounded-xl
             ${isSelected ? 'z-10' : 'z-0 hover:scale-[1.01]'}
+            ${isDragging ? 'opacity-50 scale-95 drop-shadow-lg' : ''}
         `}
         style={{
             position: 'absolute',
@@ -987,6 +1460,9 @@ const FileCard = React.memo(({
             height: `${height}px`,
             willChange: 'transform'
         }}
+        draggable={true}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         onMouseDown={(e) => {
             if (e.button === 0) e.stopPropagation();
         }}
@@ -1015,7 +1491,7 @@ const FileCard = React.memo(({
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
-                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
+                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
             `}
             style={{ 
                 height: height ? (height - 40) : '100%',
@@ -1101,7 +1577,9 @@ const GroupContent = React.memo(({
   containerRect,
   t,
   resourceRoot,
-  cachePath
+  cachePath,
+  onDragStart,
+  onDragEnd
 }: any) => {
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
@@ -1132,6 +1610,7 @@ const GroupContent = React.memo(({
               <FileListItem
                   key={file.id}
                   file={file}
+                  files={files}
                   isSelected={activeTab.selectedFileIds.includes(file.id)}
                   renamingId={renamingId}
                   onFileClick={handleFileClick}
@@ -1143,6 +1622,10 @@ const GroupContent = React.memo(({
                   t={t}
                   resourceRoot={effectiveResourceRoot}
                   cachePath={effectiveCachePath}
+                  selectedFileIds={activeTab.selectedFileIds}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  thumbnailSize={thumbnailSize}
               />
             );
           })}
@@ -1162,25 +1645,29 @@ const GroupContent = React.memo(({
             
             return (
               <FileCard
-                    key={file.id}
-                    file={file}
-                    files={files}
-                    isSelected={activeTab.selectedFileIds.includes(file.id)}
-                    renamingId={renamingId}
-                    layoutMode={activeTab.layoutMode}
-                    hoverPlayingId={hoverPlayingId}
-                    onFileClick={handleFileClick}
-                    onFileDoubleClick={handleFileDoubleClick}
-                    onContextMenu={handleContextMenu}
-                    onStartRename={handleStartRename}
-                    onRenameSubmit={handleRenameSubmit}
-                    onRenameCancel={handleRenameCancel}
-                    onSetHoverPlayingId={handleSetHoverPlayingId}
-                    style={item}
-                    settings={settings}
-                    resourceRoot={effectiveResourceRoot}
-                    cachePath={effectiveCachePath}
-                  />
+                key={file.id}
+                file={file}
+                files={files}
+                isSelected={activeTab.selectedFileIds.includes(file.id)}
+                renamingId={renamingId}
+                layoutMode={activeTab.layoutMode}
+                hoverPlayingId={hoverPlayingId}
+                onFileClick={handleFileClick}
+                onFileDoubleClick={handleFileDoubleClick}
+                onContextMenu={handleContextMenu}
+                onStartRename={handleStartRename}
+                onRenameSubmit={handleRenameSubmit}
+                onRenameCancel={handleRenameCancel}
+                onSetHoverPlayingId={handleSetHoverPlayingId}
+                settings={settings}
+                style={item}
+                resourceRoot={effectiveResourceRoot}
+                cachePath={effectiveCachePath}
+                selectedFileIds={activeTab.selectedFileIds}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                thumbnailSize={thumbnailSize}
+            />
             );
           })}
         </div>
@@ -1421,6 +1908,11 @@ interface FileGridProps {
   resourceRoot?: string;
   cachePath?: string;
   onScrollTopChange?: (scrollTop: number) => void;
+  onDragStart?: (ids: string[]) => void;
+  onDragEnd?: () => void;
+  onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
+  isDraggingOver?: boolean;
+  dragOverTarget?: string | null;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -1463,7 +1955,12 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onThumbnailSizeChange,
   onUpdateFile,
   settings,
-  onScrollTopChange
+  onScrollTopChange,
+  onDragStart,
+  onDragEnd,
+  onDropOnFolder,
+  isDraggingOver,
+  dragOverTarget
 }) => {
   // #region agent log
   // Removed debug logs
@@ -1689,14 +2186,95 @@ export const FileGrid: React.FC<FileGridProps> = ({
       );
   }
 
+  const handleDragOver = (e: React.DragEvent) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      
+      // 检查是否拖拽到文件夹上
+      const target = e.target as HTMLElement;
+      const folderElement = target.closest('.file-item[data-id]');
+      if (folderElement) {
+          const folderId = folderElement.getAttribute('data-id');
+          if (folderId) {
+              const folder = files[folderId];
+              if (folder && folder.type === FileType.FOLDER) {
+                  // 添加拖拽悬停的视觉效果
+                  folderElement.classList.add('drop-target-active');
+                  if (onDropOnFolder && dragOverTarget !== folderId) {
+                      // 这里可以设置视觉反馈
+                  }
+              }
+          }
+      }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+      e.preventDefault();
+      
+      try {
+          const data = e.dataTransfer.getData('application/json');
+          if (!data) return;
+          
+          const { type, ids } = JSON.parse(data);
+          if (type !== 'file' || !ids || ids.length === 0) return;
+          
+          // 清除所有悬停状态
+          const allFolders = document.querySelectorAll('.file-item[data-id]');
+          allFolders.forEach(el => el.classList.remove('drop-target-active'));
+          
+          // 检查是否拖拽到特定文件夹
+          const target = e.target as HTMLElement;
+          const folderElement = target.closest('.file-item[data-id]');
+          
+          if (folderElement) {
+              const targetFolderId = folderElement.getAttribute('data-id');
+              if (targetFolderId) {
+                  const targetFolder = files[targetFolderId];
+                  
+                  if (targetFolder && targetFolder.type === FileType.FOLDER) {
+                      // 拖拽到文件夹
+                      if (onDropOnFolder) {
+                          onDropOnFolder(targetFolderId, ids);
+                      }
+                  }
+              }
+          } else {
+              // 拖拽到空白区域（移动到当前目录）
+              const currentFolderId = activeTab.folderId;
+              if (currentFolderId && onDropOnFolder) {
+                  // 检查是否所有文件都已经在当前文件夹中
+                  const allFilesInCurrentFolder = ids.every((id: string) => {
+                      const file = files[id];
+                      return file && file.parentId === currentFolderId;
+                  });
+                  
+                  // 如果所有文件都在当前文件夹中，不执行任何操作
+                  if (allFilesInCurrentFolder) {
+                      return;
+                  }
+                  
+                  onDropOnFolder(currentFolderId, ids);
+              }
+          }
+      } catch (error) {
+          console.error('Drop handling error:', error);
+      }
+  };
+
   return (
       <div
           ref={containerRef}
-          className={`relative w-full h-full min-w-0 overflow-auto`}
+          className={`relative w-full h-full min-w-0 overflow-auto transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
           onContextMenu={onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onDragLeave={() => {
+              const allFolders = document.querySelectorAll('.file-item[data-id]');
+              allFolders.forEach(el => el.classList.remove('drop-target-active'));
+          }}
       >
           <div className="absolute inset-0 pointer-events-none z-50">
               {selectionBox && (
@@ -1774,6 +2352,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   t={t}
                                   resourceRoot={effectiveResourceRoot}
                                   cachePath={effectiveCachePath}
+                                  onDragStart={onDragStart}
+                                  onDragEnd={onDragEnd}
                               />
                           )}
                       </div>
@@ -1789,17 +2369,22 @@ export const FileGrid: React.FC<FileGridProps> = ({
                               <FileListItem
                                   key={file.id}
                                   file={file}
+                                  files={files}
                                   isSelected={activeTab.selectedFileIds.includes(file.id)}
                                   renamingId={renamingId}
                                   onFileClick={handleFileClick}
                                   onFileDoubleClick={handleFileDoubleClick}
                                   onContextMenu={handleContextMenu}
                                   onStartRename={onStartRename}
-                                  onRenameSubmit={handleRenameSubmit}
-                                  onRenameCancel={handleRenameCancel}
+                                  onRenameSubmit={onRenameSubmit}
+                                  onRenameCancel={onRenameCancel}
                                   t={t}
                                   resourceRoot={effectiveResourceRoot}
                                   cachePath={effectiveCachePath}
+                                  selectedFileIds={activeTab.selectedFileIds}
+                                  onDragStart={onDragStart}
+                                  onDragEnd={onDragEnd}
+                                  thumbnailSize={thumbnailSize}
                               />
                           );
                       })}
@@ -1842,6 +2427,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       style={item}
                                       resourceRoot={effectiveResourceRoot}
                                       cachePath={effectiveCachePath}
+                                      selectedFileIds={activeTab.selectedFileIds}
+                                      onDragStart={onDragStart}
+                                      onDragEnd={onDragEnd}
+                                      thumbnailSize={thumbnailSize}
                                   />
                               );
                           })}

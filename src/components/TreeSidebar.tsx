@@ -12,11 +12,13 @@ interface TreeProps {
   onToggle: (id: string) => void;
   onNavigate: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, type: 'file' | 'tag' | 'root-folder', id: string) => void;
+  onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   depth?: number;
 }
 
-const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, depth = 0 }) => {
+const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, onDropOnFolder, depth = 0 }) => {
   const node = files[nodeId];
+  const [isDragOverNode, setIsDragOverNode] = useState(false);
 
   if (!node || node.type !== FileType.FOLDER) return null;
 
@@ -39,6 +41,55 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
     onContextMenu(e, isRoot ? 'root-folder' : 'file', nodeId);
   };
 
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    setIsDragOverNode(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverNode(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOverNode(false);
+
+    try {
+      const data = e.dataTransfer.getData('application/json');
+      if (!data) return;
+
+      const { type, ids } = JSON.parse(data);
+      if (type !== 'file' || !ids || ids.length === 0) return;
+
+      // 不允许将文件夹拖拽到它自己或它的子文件夹中
+      if (ids.includes(nodeId)) {
+        console.warn('Cannot move a folder into itself');
+        return;
+      }
+
+      // 检查是否所有文件都已经在目标文件夹中
+      const allFilesInTarget = ids.every((id: string) => {
+        const file = files[id];
+        return file && file.parentId === nodeId;
+      });
+      
+      if (allFilesInTarget) {
+        return;
+      }
+
+      if (onDropOnFolder) {
+        onDropOnFolder(nodeId, ids);
+      }
+    } catch (error) {
+      console.error('Drop handling error:', error);
+    }
+  };
+
   const Icon = isRoot 
     ? HardDrive 
     : (node.category === 'book' ? Book : node.category === 'sequence' ? Film : Folder);
@@ -53,11 +104,15 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
     <div className="select-none text-sm text-gray-600 dark:text-gray-300">
       <div 
         className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative
-          ${isSelected ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}
+          ${isDragOverNode ? 'bg-blue-500/30 dark:bg-blue-900/50 border-2 border-blue-400 dark:border-blue-500 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : ''}
+          ${isSelected && !isDragOverNode ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : !isDragOverNode ? 'hover:bg-gray-200 dark:hover:bg-gray-800' : ''}
         `}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
         <div 
           className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded"
@@ -81,6 +136,7 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
           onToggle={onToggle}
           onNavigate={onNavigate}
           onContextMenu={onContextMenu}
+          onDropOnFolder={onDropOnFolder}
           depth={depth + 1}
         />
       ))}
@@ -420,8 +476,9 @@ export const Sidebar: React.FC<{
   onRestoreTask: (taskId: string) => void;
   onStartRenamePerson: (personId: string) => void;
   onCreatePerson: () => void;
+  onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
-}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onStartRenamePerson, onCreatePerson, t }) => {
+}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onStartRenamePerson, onCreatePerson, onDropOnFolder, t }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized && task.status === 'running') : [];
 
@@ -441,6 +498,7 @@ export const Sidebar: React.FC<{
             onToggle={onToggle}
             onNavigate={onNavigate}
             onContextMenu={onContextMenu}
+            onDropOnFolder={onDropOnFolder}
           />
         ))}
         

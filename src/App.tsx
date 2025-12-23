@@ -511,15 +511,15 @@ import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environ
 
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
-    roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true }, 
+    roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
     slideshowConfig: { interval: 3000, transition: 'fade', isRandom: false, enableZoom: true },
-    settings: { 
-        theme: 'system', 
-        language: 'zh', 
+    settings: {
+        theme: 'system',
+        language: 'zh',
         autoStart: false,
         exitAction: 'ask',
         animateOnHover: true,
-        paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' }, 
+        paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
         search: { isAISearchEnabled: false },
         ai: {
             provider: 'ollama',
@@ -538,7 +538,15 @@ export const App: React.FC = () => {
         }
     },
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
-    aiConnectionStatus: 'checking'
+    aiConnectionStatus: 'checking',
+    // 拖拽状态
+    dragState: {
+      isDragging: false,
+      draggedFileIds: [],
+      sourceFolderId: null,
+      dragOverFolderId: null,
+      dragOverPosition: null
+    }
   });
 
   // #region agent log - removed log_frontend invocation as it doesn't exist
@@ -1958,6 +1966,45 @@ export const App: React.FC = () => {
               }));
           }, 1000);
       }
+  };
+
+  // 处理拖拽放置到文件夹的回调（来自FileGrid和TreeSidebar）
+  const handleDropOnFolder = async (targetFolderId: string, sourceIds: string[]) => {
+      // 过滤掉目标文件夹本身和无效的ID
+      const validIds = sourceIds.filter(id => id !== targetFolderId && state.files[id]);
+      
+      if (validIds.length === 0) {
+          return;
+      }
+      
+      // 检查目标是否是文件夹
+      const targetFolder = state.files[targetFolderId];
+      if (!targetFolder || targetFolder.type !== FileType.FOLDER) {
+          return;
+      }
+      
+      // 检查是否所有文件都已经在目标文件夹中
+      const allFilesInTarget = validIds.every(id => {
+          const file = state.files[id];
+          return file && file.parentId === targetFolderId;
+      });
+      
+      if (allFilesInTarget) {
+          return;
+      }
+      
+      // 过滤掉已经在目标文件夹中的文件
+      const filesToMove = validIds.filter(id => {
+          const file = state.files[id];
+          return file && file.parentId !== targetFolderId;
+      });
+      
+      if (filesToMove.length === 0) {
+          return;
+      }
+      
+      // 调用已有的handleMoveFiles函数
+      await handleMoveFiles(filesToMove, targetFolderId);
   };
 
   const handleBatchRename = (pattern: string, startNum: number) => { /* ... */ }; 
@@ -4221,7 +4268,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
         
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
@@ -4498,6 +4545,9 @@ export const App: React.FC = () => {
                         t={t} 
                         onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                         onUpdateFile={handleUpdateFile}
+                        onDropOnFolder={handleDropOnFolder}
+                        isDraggingOver={state.dragState.isDragging}
+                        dragOverTarget={state.dragState.dragOverFolderId}
                     />
                   )}
                 </div>

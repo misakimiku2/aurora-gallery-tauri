@@ -218,6 +218,14 @@ export interface TabState {
 
 export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai';
 
+export interface DragState {
+  isDragging: boolean;
+  draggedFileIds: string[];
+  sourceFolderId: string | null;
+  dragOverFolderId: string | null;
+  dragOverPosition: 'inside' | 'before' | 'after' | null;
+}
+
 export interface AppState {
   roots: string[];
   files: Record<string, FileNode>;
@@ -231,7 +239,7 @@ export interface AppState {
   renamingId: string | null;
   clipboard: {
     action: 'copy' | 'move' | null;
-    items: { type: 'file' | 'tag', ids: string[] }; 
+    items: { type: 'file' | 'tag', ids: string[] };
   };
   customTags: string[];
   folderSettings: Record<string, FolderSettings>; // 文件夹ID -> 文件夹设置
@@ -249,6 +257,7 @@ export interface AppState {
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
+  dragState: DragState;
 }
 
 declare global {
