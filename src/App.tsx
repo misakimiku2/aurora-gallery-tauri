@@ -921,6 +921,44 @@ export const App: React.FC = () => {
     };
   }, []); // Empty dependency array - ref is always current
 
+  // Listen for Tauri drag and drop events (system level)
+  // NOTE: This listener is here as a backup, but the main approach uses Web API
+  useEffect(() => {
+    let unlistenDragDrop: (() => void) | undefined;
+
+    const setupDragDropListener = async () => {
+      try {
+        // Only set up listener in Tauri environment
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const currentWindow = getCurrentWindow();
+
+        unlistenDragDrop = await currentWindow.onDragDropEvent((event) => {
+          const dragDropEvent = event.payload;
+          
+          console.log('[TauriDragDrop] Event received:', { type: dragDropEvent.type });
+
+          // This is a backup listener - the Web API should handle most cases
+          // But we log it to help diagnose issues
+          if (dragDropEvent.type === 'drop') {
+            const paths = dragDropEvent.paths || [];
+            console.log('[TauriDragDrop] Files dropped:', { paths, count: paths.length });
+            console.log('[TauriDragDrop] INFO: If you see this, Tauri onDragDropEvent is working!');
+          }
+        });
+      } catch (error) {
+        // Not in Tauri environment or error occurred
+        console.log('[TauriDragDrop] Listener setup:', error instanceof Error ? error.message : 'Unknown error');
+      }
+    };
+
+    setupDragDropListener();
+
+    return () => {
+      if (unlistenDragDrop) {
+        unlistenDragDrop();
+      }
+    };
+  }, []); // Empty dependency array
 
   // ... (keep welcome modal logic)
   useEffect(() => {
@@ -1974,6 +2012,245 @@ export const App: React.FC = () => {
   };
 
   // 处理拖拽放置到文件夹的回调（来自FileGrid和TreeSidebar）
+  // Handle Tauri drag drop with actual file paths (system level)
+  const handleExternalDropWithPaths = async (paths: string[]) => {
+    if (paths.length === 0) {
+      console.warn('[TauriDragDrop] No paths provided');
+      return;
+    }
+
+    console.log('[TauriDragDrop] handleExternalDropWithPaths called with paths:', paths);
+
+    // Reset drag state
+    setIsExternalDragging(false);
+    setExternalDragItems([]);
+    setDragEnterCounter(0);
+
+    try {
+      // Determine if we should copy or move based on cursor position
+      const windowWidth = window.innerWidth;
+      const isLeftHalf = externalDragPosition && externalDragPosition.x < windowWidth / 2;
+
+      console.log('[TauriDragDrop] Processing drop:', { 
+        pathCount: paths.length, 
+        isMove: isLeftHalf, 
+        position: externalDragPosition,
+        windowWidth 
+      });
+
+      if (isLeftHalf) {
+        // Move to current folder (left side)
+        console.log('[TauriDragDrop] Initiating MOVE operation');
+        await handleExternalMoveFilesWithPaths(paths);
+      } else {
+        // Copy to current folder (right side)
+        console.log('[TauriDragDrop] Initiating COPY operation');
+        await handleExternalCopyFilesWithPaths(paths);
+      }
+    } catch (error) {
+      console.error('[TauriDragDrop] Error handling drop:', error);
+      setToast({ msg: t('errors.dropFailed'), visible: true });
+    } finally {
+      // Ensure drag state is reset
+      setIsExternalDragging(false);
+      setExternalDragItems([]);
+      setExternalDragPosition(null);
+      setDragEnterCounter(0);
+    }
+  };
+
+  const handleExternalCopyFilesWithPaths = async (paths: string[]) => {
+    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    if (!activeTab || !activeTab.folderId) return;
+    
+    const targetFolder = state.files[activeTab.folderId];
+    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
+    
+    try {
+      // Show progress toast
+      setToast({ msg: t('tasks.copying'), visible: true });
+      
+      console.log('[TauriCopyPaths] Starting copy operation:', { fileCount: paths.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
+      
+      // Process each file/folder path
+      for (const sourcePath of paths) {
+        // Extract file name from path
+        const fileName = sourcePath.split(/[\\\/]/).pop() || 'file';
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${fileName}`;
+        
+        console.log('[TauriCopyPaths] Copying file:', { sourcePath, destPath });
+        
+        // Use Tauri's copyFile function for proper file operations
+        await copyFile(sourcePath, destPath);
+        console.log('[TauriCopyPaths] File copied successfully');
+      }
+      
+      console.log('[TauriCopyPaths] Scanning new files individually');
+      const targetFolderId = activeTab.folderId;
+      
+      // Scan each new file individually
+      for (const sourcePath of paths) {
+        const fileName = sourcePath.split(/[\\\/]/).pop() || 'file';
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${fileName}`;
+        
+        try {
+          const scannedFile = await scanFile(destPath, targetFolderId);
+          
+          // Update state with the new file
+          setState(prev => {
+            const newFiles = { ...prev.files };
+            const existingFile = prev.files[scannedFile.id];
+            
+            if (existingFile) {
+              // Merge preserving user data
+              newFiles[scannedFile.id] = {
+                ...scannedFile,
+                tags: existingFile.tags,
+                description: existingFile.description,
+                url: existingFile.url,
+                aiData: existingFile.aiData,
+                sourceUrl: existingFile.sourceUrl,
+                author: existingFile.author,
+                category: existingFile.category
+              };
+            } else {
+              // New file, add it
+              newFiles[scannedFile.id] = scannedFile;
+            }
+            
+            // Update target folder's children list
+            const currentFolder = newFiles[targetFolderId];
+            if (currentFolder) {
+              const existingChildren = currentFolder.children || [];
+              if (!existingChildren.includes(scannedFile.id)) {
+                newFiles[targetFolderId] = {
+                  ...currentFolder,
+                  children: [...existingChildren, scannedFile.id]
+                };
+              }
+            }
+            
+            return { ...prev, files: newFiles };
+          });
+        } catch (error) {
+          console.error(`[TauriCopyPaths] Failed to scan file:`, error);
+          // Continue with other files even if one fails
+        }
+      }
+      
+      // Show success toast
+      setToast({ msg: t('context.copied'), visible: true });
+      console.log('[TauriCopyPaths] Copy operation completed successfully');
+    } catch (error) {
+      console.error('[TauriCopyPaths] Failed to copy files:', error);
+      setToast({ msg: t('errors.copyFailed'), visible: true });
+    }
+  };
+
+  const handleExternalMoveFilesWithPaths = async (paths: string[]) => {
+    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    if (!activeTab || !activeTab.folderId) {
+      console.warn('[TauriMovePaths] No active tab or folder selected');
+      return;
+    }
+    
+    const targetFolder = state.files[activeTab.folderId];
+    if (!targetFolder || targetFolder.type !== FileType.FOLDER) {
+      console.warn('[TauriMovePaths] Target is not a folder');
+      return;
+    }
+    
+    try {
+      // Show progress toast
+      setToast({ msg: t('tasks.moving'), visible: true });
+      
+      console.log('[TauriMovePaths] Starting move operation:', { 
+        fileCount: paths.length, 
+        targetFolder: targetFolder.name, 
+        targetPath: targetFolder.path,
+        paths: paths 
+      });
+      
+      // Process each file/folder path using Tauri's moveFile
+      for (const sourcePath of paths) {
+        // Extract file name from path
+        const fileName = sourcePath.split(/[\\\/]/).pop() || 'file';
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${fileName}`;
+        
+        console.log('[TauriMovePaths] Attempting to move file:', { sourcePath, fileName, destPath });
+        
+        try {
+          // Use Tauri's moveFile function for true move operation
+          await moveFile(sourcePath, destPath);
+          console.log('[TauriMovePaths] File moved successfully:', { sourcePath, destPath });
+        } catch (moveError) {
+          console.error('[TauriMovePaths] moveFile() failed:', { sourcePath, destPath, error: moveError });
+          throw moveError;
+        }
+      }
+      
+      console.log('[TauriMovePaths] All files moved, now scanning...');
+      const targetFolderId = activeTab.folderId;
+      
+      // Scan each new file individually
+      for (const sourcePath of paths) {
+        const fileName = sourcePath.split(/[\\\/]/).pop() || 'file';
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${fileName}`;
+        
+        try {
+          const scannedFile = await scanFile(destPath, targetFolderId);
+          
+          // Update state with the new file
+          setState(prev => {
+            const newFiles = { ...prev.files };
+            const existingFile = prev.files[scannedFile.id];
+            
+            if (existingFile) {
+              // Merge preserving user data
+              newFiles[scannedFile.id] = {
+                ...scannedFile,
+                tags: existingFile.tags,
+                description: existingFile.description,
+                url: existingFile.url,
+                aiData: existingFile.aiData,
+                sourceUrl: existingFile.sourceUrl,
+                author: existingFile.author,
+                category: existingFile.category
+              };
+            } else {
+              // New file, add it
+              newFiles[scannedFile.id] = scannedFile;
+            }
+            
+            // Update target folder's children list
+            const currentFolder = newFiles[targetFolderId];
+            if (currentFolder) {
+              const existingChildren = currentFolder.children || [];
+              if (!existingChildren.includes(scannedFile.id)) {
+                newFiles[targetFolderId] = {
+                  ...currentFolder,
+                  children: [...existingChildren, scannedFile.id]
+                };
+              }
+            }
+            
+            return { ...prev, files: newFiles };
+          });
+        } catch (error) {
+          console.error(`[TauriMovePaths] Failed to scan file:`, error);
+          // Continue with other files even if one fails
+        }
+      }
+      
+      // Show success toast
+      setToast({ msg: t('context.moved'), visible: true });
+      console.log('[TauriMovePaths] Move operation completed successfully');
+    } catch (error) {
+      console.error('[TauriMovePaths] Failed to move files:', error);
+      setToast({ msg: t('errors.moveFailed'), visible: true });
+    }
+  };
+
   // External drag and drop handlers
   // State to track the number of drag enter events (to handle nested elements)
   const [dragEnterCounter, setDragEnterCounter] = useState(0);
@@ -2015,41 +2292,52 @@ export const App: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     
-    if (!isExternalDragging) return;
+    if (!isExternalDragging) {
+      setIsExternalDragging(false);
+      setExternalDragItems([]);
+      setExternalDragPosition(null);
+      setDragEnterCounter(0);
+      return;
+    }
     
     try {
-      // In Tauri, we cannot get full file paths from external drag events
-      // Instead, we need to read the file contents and write them to the destination
+      console.log('[ExternalDrop] Web API drop event - processing files from e.dataTransfer');
+      
+      // Get files from the dataTransfer object
       const files = Array.from(e.dataTransfer.files);
       
       if (files.length === 0) {
-        console.warn('[ExternalDrag] No files found in drag event');
+        console.warn('[ExternalDrop] No files found in drag event');
+        setIsExternalDragging(false);
+        setExternalDragItems([]);
+        setExternalDragPosition(null);
+        setDragEnterCounter(0);
         return;
       }
       
+      console.log('[ExternalDrop] Processing files:', { count: files.length });
+      
       // Determine if we should copy or move based on cursor position
-      const container = e.currentTarget as HTMLElement;
-      let isLeftHalf = true;
+      const windowWidth = window.innerWidth;
+      const isLeftHalf = externalDragPosition && externalDragPosition.x < windowWidth / 2;
       
-      if (container) {
-        const containerRect = container.getBoundingClientRect();
-        isLeftHalf = e.clientX < containerRect.left + containerRect.width / 2;
-      } else if (externalDragPosition) {
-        const windowWidth = window.innerWidth;
-        isLeftHalf = externalDragPosition.x < windowWidth / 2;
-      }
+      console.log('[ExternalDrop] Drop decision:', { 
+        isMove: isLeftHalf, 
+        position: externalDragPosition, 
+        windowWidth 
+      });
       
-      // Call the appropriate function with File objects and drag event
       if (isLeftHalf) {
-        // Copy to current folder
-        await handleExternalCopyFiles(files);
+        // Move to current folder (left side)
+        console.log('[ExternalDrop] Initiating MOVE operation');
+        await handleExternalMoveFiles(files);
       } else {
-        // Move to current folder
-        // Try to use File System Access API for true move if available
-        await handleExternalMoveFiles(files, e.dataTransfer);
+        // Copy to current folder (right side)
+        console.log('[ExternalDrop] Initiating COPY operation');
+        await handleExternalCopyFiles(files);
       }
     } catch (error) {
-      console.error('Error handling external drop:', error);
+      console.error('[ExternalDrop] Error handling drop:', error);
       setToast({ msg: t('errors.dropFailed'), visible: true });
     } finally {
       // Reset drag state
@@ -2172,27 +2460,102 @@ export const App: React.FC = () => {
 
   const handleExternalMoveFiles = async (files: File[], dataTransfer?: DataTransfer) => {
     const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
-    if (!activeTab || !activeTab.folderId) return;
+    if (!activeTab || !activeTab.folderId) {
+      console.warn('[ExternalMove] No active tab or folder');
+      return;
+    }
     
     const targetFolder = state.files[activeTab.folderId];
-    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
+    if (!targetFolder || targetFolder.type !== FileType.FOLDER) {
+      console.warn('[ExternalMove] Target is not a folder');
+      return;
+    }
     
     try {
-      // Show progress toast
       setToast({ msg: t('tasks.moving'), visible: true });
       
-      console.log('[ExternalMove] Starting move operation:', { fileCount: files.length, targetFolder: targetFolder.name });
+      console.log('[ExternalMove] Starting move operation:', { 
+        fileCount: files.length, 
+        targetFolder: targetFolder.name, 
+        targetPath: targetFolder.path,
+        files: files.map(f => ({ name: f.name, size: f.size, type: f.type }))
+      });
       
-      // Note: True move is not possible without source file paths
-      // File System Access API would trigger browser permission dialogs and is not suitable for Tauri
-      // So we implement "move" as copy
-      await handleExternalCopyFiles(files);
+      // IMPORTANT: Web API File objects are read-only and don't have access to source paths
+      // We can only copy them (read content and write to new location)
+      // To truly move, we would need the source file system path, which Web API doesn't provide
       
-      // Show "moved" message to user (even though it's actually a copy)
-      setToast({ msg: t('context.moved'), visible: true });
-      console.log('[ExternalMove] Note: External move is implemented as copy (source path unavailable due to web API limitations)');
+      console.log('[ExternalMove] Note: Using Web API File objects - can only copy, not delete source');
+      
+      // Copy files to destination
+      for (const file of files) {
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
+        
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        
+        console.log('[ExternalMove] Writing file to destination:', { 
+          fileName: file.name, 
+          destPath, 
+          size: bytes.length 
+        });
+        await writeFileFromBytes(destPath, bytes);
+        console.log('[ExternalMove] File written successfully');
+      }
+      
+      console.log('[ExternalMove] Scanning new files...');
+      const targetFolderId = activeTab.folderId;
+      
+      // Scan each new file
+      for (const file of files) {
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
+        try {
+          const scannedFile = await scanFile(destPath, targetFolderId);
+          
+          setState(prev => {
+            const newFiles = { ...prev.files };
+            const existingFile = prev.files[scannedFile.id];
+            
+            if (existingFile) {
+              newFiles[scannedFile.id] = {
+                ...scannedFile,
+                tags: existingFile.tags,
+                description: existingFile.description,
+                url: existingFile.url,
+                aiData: existingFile.aiData,
+                sourceUrl: existingFile.sourceUrl,
+                author: existingFile.author,
+                category: existingFile.category
+              };
+            } else {
+              newFiles[scannedFile.id] = scannedFile;
+            }
+            
+            const currentFolder = newFiles[targetFolderId];
+            if (currentFolder) {
+              const existingChildren = currentFolder.children || [];
+              if (!existingChildren.includes(scannedFile.id)) {
+                newFiles[targetFolderId] = {
+                  ...currentFolder,
+                  children: [...existingChildren, scannedFile.id]
+                };
+              }
+            }
+            
+            return { ...prev, files: newFiles };
+          });
+        } catch (error) {
+          console.error(`[ExternalMove] Failed to scan file:`, error);
+        }
+      }
+      
+      setToast({ 
+        msg: '✓ 文件已复制。Web API 限制：无法删除源文件，请在原位置手动删除。',
+        visible: true 
+      });
+      console.log('[ExternalMove] Completed - files copied (source deletion not possible with Web API)');
     } catch (error) {
-      console.error('[ExternalMove] Failed to move external items:', error);
+      console.error('[ExternalMove] Failed:', error);
       setToast({ msg: t('errors.moveFailed'), visible: true });
     }
   };

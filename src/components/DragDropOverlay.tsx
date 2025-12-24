@@ -49,32 +49,32 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
       {/* 主面板容器：改为响应式宽度与高度 */}
       <div className="w-[85%] max-w-7xl h-[45vh] min-h-[320px] max-h-[500px] bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl rounded-[40px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.4)] overflow-hidden flex pointer-events-auto border border-white/20">
         
-        {/* 左侧 - 复制面板 */}
+        {/* 左侧 - 移动面板 */}
         <div 
           className={`flex-1 flex flex-col items-center justify-center transition-all duration-500 relative ${
             isLeftHalf 
-              ? 'bg-blue-50/80 dark:bg-blue-900/40 z-10 shadow-inner' 
+              ? 'bg-green-50/80 dark:bg-green-900/40 z-10 shadow-inner' 
               : 'bg-transparent opacity-40'
           }`}
         >
           <div className="mb-6 relative">
             {isLeftHalf && (
-              <div className="absolute inset-0 bg-blue-500/20 rounded-3xl animate-ping" />
+              <div className="absolute inset-0 bg-green-500/20 rounded-3xl animate-ping" />
             )}
             {/* 图标形变动画 */}
             <div className={`relative p-6 rounded-3xl transition-all duration-500 shadow-lg ${
               isLeftHalf 
-                ? 'bg-blue-600 text-white scale-110 rotate-0' 
-                : 'bg-white dark:bg-gray-800 text-blue-600 scale-90 -rotate-12'
+                ? 'bg-green-600 text-white scale-110 rotate-0' 
+                : 'bg-white dark:bg-gray-800 text-green-600 scale-90 -rotate-12'
             }`}>
-              <Copy size={48} />
+              <Move size={48} />
             </div>
           </div>
-          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${isLeftHalf ? 'text-blue-700 dark:text-blue-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
-            {t('context.copy')}
+          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${isLeftHalf ? 'text-green-700 dark:text-green-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
+            {t('context.move')}
           </h3>
-          <p className={`text-base transition-opacity duration-500 ${isLeftHalf ? 'text-blue-600/70 dark:text-blue-200/60 opacity-100' : 'opacity-0'}`}>
-            {t('drag.copyHint')}
+          <p className={`text-base transition-opacity duration-500 ${isLeftHalf ? 'text-green-600/70 dark:text-green-200/60 opacity-100' : 'opacity-0'}`}>
+            {t('drag.moveHint')}
           </p>
         </div>
 
@@ -85,32 +85,32 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
           </div>
         </div>
 
-        {/* 右侧 - 移动面板 */}
+        {/* 右侧 - 复制面板 */}
         <div 
           className={`flex-1 flex flex-col items-center justify-center transition-all duration-500 relative ${
             !isLeftHalf 
-              ? 'bg-green-50/80 dark:bg-green-900/40 z-10 shadow-inner' 
+              ? 'bg-blue-50/80 dark:bg-blue-900/40 z-10 shadow-inner' 
               : 'bg-transparent opacity-40'
           }`}
         >
           <div className="mb-6 relative">
             {!isLeftHalf && (
-              <div className="absolute inset-0 bg-green-500/20 rounded-3xl animate-ping" />
+              <div className="absolute inset-0 bg-blue-500/20 rounded-3xl animate-ping" />
             )}
             {/* 图标形变动画 */}
             <div className={`relative p-6 rounded-3xl transition-all duration-500 shadow-lg ${
               !isLeftHalf 
-                ? 'bg-green-600 text-white scale-110 rotate-0' 
-                : 'bg-white dark:bg-gray-800 text-green-600 scale-90 rotate-12'
+                ? 'bg-blue-600 text-white scale-110 rotate-0' 
+                : 'bg-white dark:bg-gray-800 text-blue-600 scale-90 rotate-12'
             }`}>
-              <Move size={48} />
+              <Copy size={48} />
             </div>
           </div>
-          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${!isLeftHalf ? 'text-green-700 dark:text-green-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
-            {t('context.move')}
+          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${!isLeftHalf ? 'text-blue-700 dark:text-blue-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
+            {t('context.copy')}
           </h3>
-          <p className={`text-base transition-opacity duration-500 ${!isLeftHalf ? 'text-green-600/70 dark:text-green-200/60 opacity-100' : 'opacity-0'}`}>
-            {t('drag.moveHint')}
+          <p className={`text-base transition-opacity duration-500 ${!isLeftHalf ? 'text-blue-600/70 dark:text-blue-200/60 opacity-100' : 'opacity-0'}`}>
+            {t('drag.copyHint')}
           </p>
         </div>
       </div>
