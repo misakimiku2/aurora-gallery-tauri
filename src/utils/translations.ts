@@ -137,7 +137,8 @@ export const translations = {
       releaseToComplete: '松开即可完成操作',
       selectAction: '选择左侧复制或右侧移动',
       copyHint: '将文件复制到',
-      moveHint: '将文件移动到'
+      moveHint: '将文件移动到',
+      multiSelectHint: '按住 Alt + 鼠标左键拖拽可将文件复制到外部'
     },
     tasks: {
       title: '任务进度',
@@ -620,7 +621,8 @@ export const translations = {
       releaseToComplete: 'Release to complete the operation',
       selectAction: 'Select copy on the left or move on the right',
       copyHint: 'Copy files to',
-      moveHint: 'Move files to'
+      moveHint: 'Move files to',
+      multiSelectHint: 'Hold Alt + Left Mouse Button to drag files outside'
     },
     tasks: {
       title: 'Progress',

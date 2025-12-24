@@ -23,6 +23,8 @@
     "fs:allow-rename",
     "fs:allow-exists",
     "shell:allow-open",
+    "drag:default",
+    "drag:allow-start-drag",
     {
       "identifier": "fs:scope",
       "allowPaths": ["**"]

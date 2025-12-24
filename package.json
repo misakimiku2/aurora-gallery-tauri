@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@tauri-apps/plugin-log": "^2.7.1",
+    "@crabnebula/tauri-plugin-drag": "^2.1.0",
     "@vladmandic/face-api": "^1.7.12",
     "lucide-react": "^0.344.0",
     "md5": "^2.3.0",

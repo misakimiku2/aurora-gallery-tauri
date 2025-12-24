@@ -5,11 +5,14 @@ import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGr
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import md5 from 'md5';
+import { startDragToExternal } from '../api/tauri-bridge';
+import { isTauriEnvironment } from '../utils/environment';
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
   interface Window {
     __AURORA_THUMBNAIL_CACHE__?: LRUCache<string>;
+    __AURORA_THUMBNAIL_PATH_CACHE__?: LRUCache<string>; // 缩略图原始文件路径缓存（用于外部拖拽）
   }
 }
 
@@ -76,6 +79,14 @@ const getGlobalCache = () => {
     window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(1000);
   }
   return window.__AURORA_THUMBNAIL_CACHE__;
+};
+
+// 获取缩略图原始路径缓存（用于外部拖拽时作为图标）
+const getThumbnailPathCache = () => {
+  if (!window.__AURORA_THUMBNAIL_PATH_CACHE__) {
+    window.__AURORA_THUMBNAIL_PATH_CACHE__ = new LRUCache<string>(1000);
+  }
+  return window.__AURORA_THUMBNAIL_PATH_CACHE__;
 };
 
 // --- Folder 3D Icon Component ---
@@ -774,7 +785,9 @@ const FileListItem = React.memo(({
   selectedFileIds,
   onDragStart,
   onDragEnd,
-  thumbnailSize
+  thumbnailSize,
+  setIsDraggingInternal,
+  setDraggedFilePaths
 }: any) => {
   if (!file) return null;
   
@@ -792,18 +805,35 @@ const FileListItem = React.memo(({
       ? selectedFileIds 
       : [file.id];
     
+    // 收集被拖拽文件的实际路径
+    const filePaths = filesToDrag.map((fileId: string) => files[fileId]?.path || '').filter(Boolean);
+    
+    // 设置内部拖拽标记
+    if (setIsDraggingInternal && setDraggedFilePaths) {
+      setIsDraggingInternal(true);
+      setDraggedFilePaths(filePaths);
+    }
+    
     // 设置拖拽数据
     try {
       // 1. 设置JSON格式的拖拽数据，用于内部处理
       e.dataTransfer.setData('application/json', JSON.stringify({
         type: 'file',
         ids: filesToDrag,
-        sourceFolderId: file.parentId
+        sourceFolderId: file.parentId,
+        internalDrag: true // 添加内部拖拽标记
       }));
       
-      // 2. 设置简单的文本数据，用于显示拖拽信息
+      // 2. 设置text/uri-list格式，用于外部文件拖拽
+      const uriList = filePaths.map((path: string) => `file://${path.replace(/\\/g, '/')}`).join('\n');
+      e.dataTransfer.setData('text/uri-list', uriList);
+      
+      // 3. 设置简单的文本数据，用于显示拖拽信息
       const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
       e.dataTransfer.setData('text/plain', textData);
+      
+      // 设置拖拽效果
+      e.dataTransfer.effectAllowed = 'copyMove';
     } catch (error) {
       // Error handling for drag data setup
     }
@@ -964,8 +994,38 @@ const FileListItem = React.memo(({
       // Error handling for drag image setup
     }
     
-    // 设置拖拽效果
+    // 设置拖拽效果为move，用于内部拖拽
     e.dataTransfer.effectAllowed = 'move';
+    
+    // 获取要拖拽的实际文件路径
+    const draggedFiles = filesToDrag.map((fileId: string) => files[fileId]).filter((Boolean as unknown) as (file: FileNode | undefined) => file is FileNode);
+    const draggedFilePaths = draggedFiles.map((file: FileNode) => file.path);
+    
+    // 设置内部拖拽标记
+    if (setIsDraggingInternal) {
+      setIsDraggingInternal(true);
+    }
+    
+    // 保存拖拽的文件路径
+    if (setDraggedFilePaths) {
+      setDraggedFilePaths(draggedFilePaths);
+    }
+    
+    try {
+      // 设置JSON格式的拖拽数据，用于内部处理
+      e.dataTransfer.setData('application/json', JSON.stringify({
+        type: 'file',
+        ids: filesToDrag,
+        sourceFolderId: file.parentId,
+        // 添加内部拖拽标记
+        internalDrag: true
+      }));
+      
+      // 不设置外部拖拽数据，避免触发外部拖拽行为
+      // 我们将在拖拽结束时检测是否拖拽到了外部
+    } catch (error) {
+      console.error('Drag data setup error:', error);
+    }
     
     // 通知父组件开始拖拽
     if (onDragStart) {
@@ -987,10 +1047,19 @@ const FileListItem = React.memo(({
   
   const handleDragEnd = (e: React.DragEvent) => {
     e.stopPropagation();
+    
+    // 清除内部拖拽标记
+    if (setIsDraggingInternal) {
+      setIsDraggingInternal(false);
+    }
+    
     if (onDragEnd) {
       onDragEnd();
     }
   };
+  
+  // 用于追踪外部拖拽状态
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
   
   return (
     <div
@@ -998,9 +1067,63 @@ const FileListItem = React.memo(({
         className={`
             file-item flex items-center p-2 rounded text-sm cursor-pointer border transition-colors mb-1 relative
             ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 border-l-4 shadow-md' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
+            ${isExternalDragging ? 'opacity-50' : ''}
         `}
-        onMouseDown={(e) => {
-            if (e.button === 0) e.stopPropagation();
+        onMouseDown={async (e) => {
+            if (e.button === 0) {
+                e.stopPropagation();
+                
+                // 按住 Alt 键时，启动外部拖拽（复制文件到外部应用）
+                if (e.altKey && isTauriEnvironment()) {
+                    e.preventDefault();
+                    
+                    // 获取要拖拽的文件
+                    const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
+                        ? selectedFileIds 
+                        : [file.id];
+                    
+                    // 收集被拖拽文件的实际路径
+                    const filePaths = filesToDrag
+                        .map((fileId: string) => files[fileId]?.path || '')
+                        .filter(Boolean);
+                    
+                    if (filePaths.length > 0) {
+                        setIsExternalDragging(true);
+                        
+                        // 设置内部拖拽标记，防止触发外部拖入覆盖层
+                        if (setIsDraggingInternal) {
+                            setIsDraggingInternal(true);
+                        }
+                        
+                        // 获取缩略图路径（最多3个）
+                        const pathCache = getThumbnailPathCache();
+                        const thumbnailPaths = filePaths
+                            .slice(0, 3)
+                            .map((fp: string) => pathCache.get(fp))
+                            .filter((p: string | undefined): p is string => !!p);
+                        
+                        // 计算缓存目录
+                        const cacheDir = resourceRoot 
+                            ? `${resourceRoot}${resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache`
+                            : undefined;
+                        
+                        try {
+                            await startDragToExternal(filePaths, thumbnailPaths, cacheDir, () => {
+                                setIsExternalDragging(false);
+                                if (setIsDraggingInternal) {
+                                    setIsDraggingInternal(false);
+                                }
+                            });
+                        } catch (error) {
+                            console.error('External drag failed:', error);
+                            setIsExternalDragging(false);
+                            if (setIsDraggingInternal) {
+                                setIsDraggingInternal(false);
+                            }
+                        }
+                    }
+                }
+            }
         }}
         onClick={(e) => {
             e.stopPropagation();
@@ -1188,7 +1311,9 @@ const FileCard = React.memo(({
   selectedFileIds,
   onDragStart,
   onDragEnd,
-  thumbnailSize
+  thumbnailSize,
+  setIsDraggingInternal,
+  setDraggedFilePaths
 }: any) => {
   const [isDragging, setIsDragging] = useState(false);
   if (!file) return null;
@@ -1214,18 +1339,35 @@ const FileCard = React.memo(({
       ? selectedFileIds 
       : [file.id];
     
+    // 收集被拖拽文件的实际路径
+    const filePaths = filesToDrag.map((fileId: string) => files[fileId]?.path || '').filter(Boolean);
+    
+    // 设置内部拖拽标记
+    if (setIsDraggingInternal && setDraggedFilePaths) {
+      setIsDraggingInternal(true);
+      setDraggedFilePaths(filePaths);
+    }
+    
     // 设置拖拽数据
     try {
       // 1. 设置JSON格式的拖拽数据，用于内部处理
       e.dataTransfer.setData('application/json', JSON.stringify({
         type: 'file',
         ids: filesToDrag,
-        sourceFolderId: file.parentId
+        sourceFolderId: file.parentId,
+        internalDrag: true // 添加内部拖拽标记
       }));
       
-      // 2. 设置简单的文本数据，用于显示拖拽信息
+      // 2. 设置text/uri-list格式，用于外部文件拖拽
+      const uriList = filePaths.map((path: string) => `file://${path.replace(/\\/g, '/')}`).join('\n');
+      e.dataTransfer.setData('text/uri-list', uriList);
+      
+      // 3. 设置简单的文本数据，用于显示拖拽信息
       const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
       e.dataTransfer.setData('text/plain', textData);
+      
+      // 设置拖拽效果
+      e.dataTransfer.effectAllowed = 'copyMove';
     } catch (error) {
       // Error handling for drag data setup
     }
@@ -1415,8 +1557,38 @@ const FileCard = React.memo(({
       // Error handling for drag image setup
     }
     
-    // 设置拖拽效果
+    // 设置拖拽效果为move，用于内部拖拽
     e.dataTransfer.effectAllowed = 'move';
+    
+    // 获取要拖拽的实际文件路径
+    const draggedFiles = filesToDrag.map((fileId: string) => files[fileId]).filter((Boolean as unknown) as (file: FileNode | undefined) => file is FileNode);
+    const draggedFilePaths = draggedFiles.map((file: FileNode) => file.path);
+    
+    // 设置内部拖拽标记
+    if (setIsDraggingInternal) {
+      setIsDraggingInternal(true);
+    }
+    
+    // 保存拖拽的文件路径
+    if (setDraggedFilePaths) {
+      setDraggedFilePaths(draggedFilePaths);
+    }
+    
+    try {
+      // 设置JSON格式的拖拽数据，用于内部处理
+      e.dataTransfer.setData('application/json', JSON.stringify({
+        type: 'file',
+        ids: filesToDrag,
+        sourceFolderId: file.parentId,
+        // 添加内部拖拽标记
+        internalDrag: true
+      }));
+      
+      // 不设置外部拖拽数据，避免触发外部拖拽行为
+      // 我们将在拖拽结束时检测是否拖拽到了外部
+    } catch (error) {
+      console.error('Drag data setup error:', error);
+    }
     
     // 通知父组件开始拖拽
     if (onDragStart) {
@@ -1439,6 +1611,12 @@ const FileCard = React.memo(({
   const handleDragEnd = (e: React.DragEvent) => {
     e.stopPropagation();
     setIsDragging(false);
+    
+    // 清除内部拖拽标记
+    if (setIsDraggingInternal) {
+      setIsDraggingInternal(false);
+    }
+    
     if (onDragEnd) {
       onDragEnd();
     }
@@ -1463,8 +1641,61 @@ const FileCard = React.memo(({
         draggable={true}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
-        onMouseDown={(e) => {
-            if (e.button === 0) e.stopPropagation();
+        onMouseDown={async (e) => {
+            if (e.button === 0) {
+                e.stopPropagation();
+                
+                // 按住 Alt 键时，启动外部拖拽（复制文件到外部应用）
+                if (e.altKey && isTauriEnvironment()) {
+                    e.preventDefault();
+                    
+                    // 获取要拖拽的文件
+                    const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
+                        ? selectedFileIds 
+                        : [file.id];
+                    
+                    // 收集被拖拽文件的实际路径
+                    const filePaths = filesToDrag
+                        .map((fileId: string) => files[fileId]?.path || '')
+                        .filter(Boolean);
+                    
+                    if (filePaths.length > 0) {
+                        setIsDragging(true);
+                        
+                        // 设置内部拖拽标记，防止触发外部拖入覆盖层
+                        if (setIsDraggingInternal) {
+                            setIsDraggingInternal(true);
+                        }
+                        
+                        // 获取缩略图路径（最多3个）
+                        const pathCache = getThumbnailPathCache();
+                        const thumbnailPaths = filePaths
+                            .slice(0, 3)
+                            .map((fp: string) => pathCache.get(fp))
+                            .filter((p: string | undefined): p is string => !!p);
+                        
+                        // 计算缓存目录
+                        const cacheDir = effectiveResourceRoot 
+                            ? `${effectiveResourceRoot}${effectiveResourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache`
+                            : undefined;
+                        
+                        try {
+                            await startDragToExternal(filePaths, thumbnailPaths, cacheDir, () => {
+                                setIsDragging(false);
+                                if (setIsDraggingInternal) {
+                                    setIsDraggingInternal(false);
+                                }
+                            });
+                        } catch (error) {
+                            console.error('External drag failed:', error);
+                            setIsDragging(false);
+                            if (setIsDraggingInternal) {
+                                setIsDraggingInternal(false);
+                            }
+                        }
+                    }
+                }
+            }
         }}
         onClick={(e) => {
             e.stopPropagation();
@@ -1913,6 +2144,10 @@ interface FileGridProps {
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   isDraggingOver?: boolean;
   dragOverTarget?: string | null;
+  // New props for external drag handling
+  isDraggingInternal?: boolean;
+  setIsDraggingInternal?: (isDragging: boolean) => void;
+  setDraggedFilePaths?: (paths: string[]) => void;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -1960,7 +2195,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onDragEnd,
   onDropOnFolder,
   isDraggingOver,
-  dragOverTarget
+  dragOverTarget,
+  isDraggingInternal,
+  setIsDraggingInternal,
+  setDraggedFilePaths
 }) => {
   // #region agent log
   // Removed debug logs
@@ -2385,6 +2623,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onDragStart={onDragStart}
                                   onDragEnd={onDragEnd}
                                   thumbnailSize={thumbnailSize}
+                                  setIsDraggingInternal={setIsDraggingInternal}
+                                  setDraggedFilePaths={setDraggedFilePaths}
                               />
                           );
                       })}
@@ -2431,6 +2671,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       onDragStart={onDragStart}
                                       onDragEnd={onDragEnd}
                                       thumbnailSize={thumbnailSize}
+                                      setIsDraggingInternal={setIsDraggingInternal}
+                                      setDraggedFilePaths={setDraggedFilePaths}
                                   />
                               );
                           })}
