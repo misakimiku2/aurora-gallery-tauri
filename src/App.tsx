@@ -13,7 +13,7 @@ import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
 
@@ -505,6 +505,7 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
 };
 
 import SplashScreen from './components/SplashScreen';
+import { DragDropOverlay } from './components/DragDropOverlay';
 
 // 导入统一的环境检测工具
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
@@ -549,8 +550,6 @@ export const App: React.FC = () => {
     }
   });
 
-  // #region agent log - removed log_frontend invocation as it doesn't exist
-  // #endregion
 
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
@@ -577,6 +576,12 @@ export const App: React.FC = () => {
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
+  
+  // External drag and drop state
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
+  const [externalDragCursorX, setExternalDragCursorX] = useState(0);
+  const [externalDragItems, setExternalDragItems] = useState<string[]>([]);
+  const [externalDragPosition, setExternalDragPosition] = useState<{ x: number; y: number } | null>(null);
 
 
   
@@ -1969,6 +1974,229 @@ export const App: React.FC = () => {
   };
 
   // 处理拖拽放置到文件夹的回调（来自FileGrid和TreeSidebar）
+  // External drag and drop handlers
+  // State to track the number of drag enter events (to handle nested elements)
+  const [dragEnterCounter, setDragEnterCounter] = useState(0);
+
+  const handleExternalDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Check if this is an external drag (contains files/folders)
+    if (e.dataTransfer.types.includes('Files')) {
+      setDragEnterCounter(prev => {
+        // Only update state if we're transitioning from 0 to 1
+        if (prev === 0) {
+          setIsExternalDragging(true);
+          // Update file count from dataTransfer.items
+          const fileCount = e.dataTransfer.items.length;
+          // Create placeholder array to show file count
+          setExternalDragItems(Array(fileCount).fill('placeholder'));
+        }
+        return prev + 1;
+      });
+      
+      setExternalDragCursorX(e.clientX);
+      setExternalDragPosition({ x: e.clientX, y: e.clientY });
+    }
+  };
+
+  const handleExternalDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (isExternalDragging) {
+      setExternalDragCursorX(e.clientX);
+      setExternalDragPosition({ x: e.clientX, y: e.clientY });
+    }
+  };
+
+  const handleExternalDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!isExternalDragging) return;
+    
+    try {
+      // In Tauri, we cannot get full file paths from external drag events
+      // Instead, we need to read the file contents and write them to the destination
+      const files = Array.from(e.dataTransfer.files);
+      
+      if (files.length === 0) {
+        console.warn('[ExternalDrag] No files found in drag event');
+        return;
+      }
+      
+      // Determine if we should copy or move based on cursor position
+      const container = e.currentTarget as HTMLElement;
+      let isLeftHalf = true;
+      
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        isLeftHalf = e.clientX < containerRect.left + containerRect.width / 2;
+      } else if (externalDragPosition) {
+        const windowWidth = window.innerWidth;
+        isLeftHalf = externalDragPosition.x < windowWidth / 2;
+      }
+      
+      // Call the appropriate function with File objects and drag event
+      if (isLeftHalf) {
+        // Copy to current folder
+        await handleExternalCopyFiles(files);
+      } else {
+        // Move to current folder
+        // Try to use File System Access API for true move if available
+        await handleExternalMoveFiles(files, e.dataTransfer);
+      }
+    } catch (error) {
+      console.error('Error handling external drop:', error);
+      setToast({ msg: t('errors.dropFailed'), visible: true });
+    } finally {
+      // Reset drag state
+      setIsExternalDragging(false);
+      setExternalDragItems([]);
+      setExternalDragPosition(null);
+      setDragEnterCounter(0);
+    }
+  };
+
+  const handleExternalDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    setDragEnterCounter(prev => {
+      const newCount = Math.max(0, prev - 1);
+      
+      // Only hide the overlay if the counter reaches 0
+      if (newCount === 0) {
+        setIsExternalDragging(false);
+        setExternalDragItems([]);
+        setExternalDragPosition(null);
+      }
+      
+      return newCount;
+    });
+  };
+
+  // External file operations - using File objects instead of paths
+  const handleExternalCopyFiles = async (files: File[]) => {
+    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    if (!activeTab || !activeTab.folderId) return;
+    
+    const targetFolder = state.files[activeTab.folderId];
+    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
+    
+    try {
+      // Show progress toast
+      setToast({ msg: t('tasks.copying'), visible: true });
+      
+      console.log('[ExternalCopy] Starting copy operation:', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
+      
+      // Process each file
+      for (const file of files) {
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
+        
+        // Read file content as ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        
+        // Write file to destination
+        console.log('[ExternalCopy] Copying file:', { fileName: file.name, destPath });
+        await writeFileFromBytes(destPath, bytes);
+        console.log('[ExternalCopy] File copied successfully');
+      }
+      
+      console.log('[ExternalCopy] Scanning new files individually (performance optimized)');
+      // Scan only the new files individually instead of scanning entire directory
+      // This is much faster for large directories
+      
+      // Save folder ID to local variable for use in async operations
+      const targetFolderId = activeTab.folderId;
+      
+      // Scan each new file individually
+      for (const file of files) {
+        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
+        try {
+          const scannedFile = await scanFile(destPath, targetFolderId);
+          
+          // Update state with the new file
+          setState(prev => {
+            const newFiles = { ...prev.files };
+            const existingFile = prev.files[scannedFile.id];
+            
+            if (existingFile) {
+              // Merge preserving user data
+              newFiles[scannedFile.id] = {
+                ...scannedFile,
+                tags: existingFile.tags,
+                description: existingFile.description,
+                url: existingFile.url,
+                aiData: existingFile.aiData,
+                sourceUrl: existingFile.sourceUrl,
+                author: existingFile.author,
+                category: existingFile.category
+              };
+            } else {
+              // New file, add it
+              newFiles[scannedFile.id] = scannedFile;
+            }
+            
+            // Update target folder's children list
+            const currentFolder = newFiles[targetFolderId];
+            if (currentFolder) {
+              const existingChildren = currentFolder.children || [];
+              if (!existingChildren.includes(scannedFile.id)) {
+                newFiles[targetFolderId] = {
+                  ...currentFolder,
+                  children: [...existingChildren, scannedFile.id]
+                };
+              }
+            }
+            
+            return { ...prev, files: newFiles };
+          });
+        } catch (error) {
+          console.error(`[ExternalCopy] Failed to scan file ${file.name}:`, error);
+          // Continue with other files even if one fails
+        }
+      }
+      
+      // Show success toast
+      setToast({ msg: t('context.copied'), visible: true });
+      console.log('[ExternalCopy] Copy operation completed successfully');
+    } catch (error) {
+      console.error('[ExternalCopy] Failed to copy external items:', error);
+      setToast({ msg: t('errors.copyFailed'), visible: true });
+    }
+  };
+
+  const handleExternalMoveFiles = async (files: File[], dataTransfer?: DataTransfer) => {
+    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
+    if (!activeTab || !activeTab.folderId) return;
+    
+    const targetFolder = state.files[activeTab.folderId];
+    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
+    
+    try {
+      // Show progress toast
+      setToast({ msg: t('tasks.moving'), visible: true });
+      
+      console.log('[ExternalMove] Starting move operation:', { fileCount: files.length, targetFolder: targetFolder.name });
+      
+      // Note: True move is not possible without source file paths
+      // File System Access API would trigger browser permission dialogs and is not suitable for Tauri
+      // So we implement "move" as copy
+      await handleExternalCopyFiles(files);
+      
+      // Show "moved" message to user (even though it's actually a copy)
+      setToast({ msg: t('context.moved'), visible: true });
+      console.log('[ExternalMove] Note: External move is implemented as copy (source path unavailable due to web API limitations)');
+    } catch (error) {
+      console.error('[ExternalMove] Failed to move external items:', error);
+      setToast({ msg: t('errors.moveFailed'), visible: true });
+    }
+  };
+
   const handleDropOnFolder = async (targetFolderId: string, sourceIds: string[]) => {
       // 过滤掉目标文件夹本身和无效的ID
       const validIds = sourceIds.filter(id => id !== targetFolderId && state.files[id]);
@@ -4246,9 +4474,25 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" onClick={closeContextMenu}>
+    <div 
+      className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" 
+      onClick={closeContextMenu}
+      onDragEnter={handleExternalDragEnter}
+      onDragOver={handleExternalDragOver}
+      onDrop={handleExternalDrop}
+      onDragLeave={handleExternalDragLeave}
+    >
       {/* 启动界面 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
+      
+      {/* 外部拖拽覆盖层 */}
+      <DragDropOverlay 
+        isVisible={isExternalDragging}
+        cursorX={externalDragCursorX}
+        fileCount={externalDragItems.length}
+        t={t}
+      />
+      
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
       <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {

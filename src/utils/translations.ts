@@ -128,7 +128,16 @@ export const translations = {
       addBookmark: '添加书签',
       readBookmark: '读取书签',
       saved: '已保存',
-      loaded: '已读取'
+      loaded: '已读取',
+      copy: '复制',
+      move: '移动',
+      successfully: '成功'
+    },
+    drag: {
+      releaseToComplete: '松开即可完成操作',
+      selectAction: '选择左侧复制或右侧移动',
+      copyHint: '将文件复制到',
+      moveHint: '将文件移动到'
     },
     tasks: {
       title: '任务进度',
@@ -224,6 +233,8 @@ export const translations = {
         clearAiData: '清除 AI 智能分析信息',
         clearAllAiData: '清除所有 AI 智能分析信息',
         aiFilesCount: 'AI 分析文件数',
+        file: '个文件',
+        files: '个文件',
       },
     viewer: {
       toggleSidebar: '切换侧边栏',
@@ -600,7 +611,16 @@ export const translations = {
       addBookmark: 'Add Bookmark',
       readBookmark: 'Read Bookmark',
       saved: 'Saved',
-      loaded: 'Loaded'
+      loaded: 'Loaded',
+      copy: 'Copy',
+      move: 'Move',
+      successfully: 'Successfully'
+    },
+    drag: {
+      releaseToComplete: 'Release to complete the operation',
+      selectAction: 'Select copy on the left or move on the right',
+      copyHint: 'Copy files to',
+      moveHint: 'Move files to'
     },
     tasks: {
       title: 'Progress',
@@ -696,6 +716,8 @@ export const translations = {
         clearAiData: 'Clear AI Intelligence Info',
         clearAllAiData: 'Clear All AI Intelligence Info',
         aiFilesCount: 'AI Analyzed Files',
+        file: 'file',
+        files: 'files',
       },
     viewer: {
       toggleSidebar: 'Toggle Sidebar',

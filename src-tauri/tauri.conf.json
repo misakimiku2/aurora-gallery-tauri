@@ -25,13 +25,13 @@
       }
     ],
     "security": {
-          "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http://localhost:* http://127.0.0.1:* http://ipc.localhost:* http://asset.localhost:* ws://localhost:* wss://localhost:* thumbnail:; connect-src 'self' http://localhost:* http://127.0.0.1:* http://ipc.localhost:* http://asset.localhost:* ws://localhost:* wss://localhost:*; img-src 'self' data: blob: https: local-resource: thumbnail: http://asset.localhost:*; media-src 'self' data: blob: https: local-resource: http://asset.localhost:*;",
-          "dangerousDisableAssetCspModification": false,
-          "assetProtocol": {
-            "enable": true,
-            "scope": ["**"]
-          }
-        }
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: http://localhost:* http://127.0.0.1:* http://ipc.localhost:* http://asset.localhost:* ws://localhost:* wss://localhost:* thumbnail:; connect-src 'self' http://localhost:* http://127.0.0.1:* http://ipc.localhost:* http://asset.localhost:* ws://localhost:* wss://localhost:*; img-src 'self' data: blob: https: local-resource: thumbnail: http://asset.localhost:*; media-src 'self' data: blob: https: local-resource: http://asset.localhost:*;",
+      "dangerousDisableAssetCspModification": false,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
+    }
   },
   "bundle": {
     "active": true,

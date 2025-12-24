@@ -443,6 +443,157 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
 }
 
 #[tauri::command]
+async fn scan_file(file_path: String, parent_id: Option<String>) -> Result<FileNode, String> {
+    use std::fs;
+    
+    let path = Path::new(&file_path);
+    
+    // Check if path exists
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    let metadata = fs::metadata(path)
+        .map_err(|e| format!("Failed to read file metadata: {}", e))?;
+    
+    let file_id = generate_id(&normalize_path(&file_path));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    
+    let is_directory = path.is_dir();
+    let is_image = is_supported_image(&extension);
+    
+    if is_directory {
+        // Create folder node
+        Ok(FileNode {
+            id: file_id,
+            parent_id,
+            name: file_name,
+            r#type: FileType::Folder,
+            path: normalize_path(&file_path),
+            size: None,
+            children: Some(Vec::new()),
+            tags: Vec::new(),
+            created_at: metadata
+                .created()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            updated_at: metadata
+                .modified()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            url: None,
+            meta: None,
+        })
+    } else if is_image {
+        // Create image file node
+        let file_size = metadata.len();
+        let (width, height) = image::image_dimensions(path).unwrap_or((0, 0));
+        
+        Ok(FileNode {
+            id: file_id,
+            parent_id,
+            name: file_name,
+            r#type: FileType::Image,
+            path: normalize_path(&file_path),
+            size: Some(file_size),
+            children: None,
+            tags: Vec::new(),
+            created_at: metadata
+                .created()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            updated_at: metadata
+                .modified()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            url: None,
+            meta: Some(ImageMeta {
+                width,
+                height,
+                size_kb: (file_size / 1024) as u32,
+                created: metadata
+                    .created()
+                    .ok()
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                    .and_then(|secs| {
+                        chrono::DateTime::from_timestamp(secs as i64, 0)
+                            .map(|dt| dt.to_rfc3339())
+                    })
+                    .unwrap_or_default(),
+                modified: metadata
+                    .modified()
+                    .ok()
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                    .and_then(|secs| {
+                        chrono::DateTime::from_timestamp(secs as i64, 0)
+                            .map(|dt| dt.to_rfc3339())
+                    })
+                    .unwrap_or_default(),
+                format: extension,
+            }),
+        })
+    } else {
+        // Create unknown file node
+        let file_size = metadata.len();
+        
+        Ok(FileNode {
+            id: file_id,
+            parent_id,
+            name: file_name,
+            r#type: FileType::Unknown,
+            path: normalize_path(&file_path),
+            size: Some(file_size),
+            children: None,
+            tags: Vec::new(),
+            created_at: metadata
+                .created()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            updated_at: metadata
+                .modified()
+                .ok()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .and_then(|secs| {
+                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                        .map(|dt| dt.to_rfc3339())
+                }),
+            url: None,
+            meta: None,
+        })
+    }
+}
+
+#[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
@@ -780,6 +931,56 @@ async fn move_file(src_path: String, dest_path: String) -> Result<(), String> {
     
     // This should never happen, but just in case
     Err("Unknown error occurred while moving file".to_string())
+}
+
+#[tauri::command]
+async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>) -> Result<(), String> {
+    use std::io::Write;
+    
+    let path = Path::new(&file_path);
+    
+    // Create parent directory if it doesn't exist
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory: {}", e))?;
+        }
+    }
+    
+    // Write file with retry mechanism
+    let max_retries = 3;
+    let mut attempt = 0;
+    let mut last_error: Option<std::io::Error> = None;
+    
+    while attempt < max_retries {
+        match fs::File::create(path) {
+            Ok(mut file) => {
+                match file.write_all(&bytes) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => {
+                        attempt += 1;
+                        last_error = Some(e);
+                        if attempt < max_retries {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                attempt += 1;
+                last_error = Some(e);
+                if attempt < max_retries {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
+    }
+    
+    if let Some(e) = last_error {
+        Err(format!("Failed to write file after {} attempts: {}", max_retries, e))
+    } else {
+        Err("Unknown error occurred while writing file".to_string())
+    }
 }
 
 #[tauri::command]
@@ -1232,6 +1433,8 @@ fn main() {
             delete_file,
             copy_file,
             move_file,
+            write_file_from_bytes,
+            scan_file,
             hide_window,
             show_window,
             exit_app

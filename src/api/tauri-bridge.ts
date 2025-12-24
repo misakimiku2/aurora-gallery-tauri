@@ -423,6 +423,58 @@ export const moveFile = async (srcPath: string, destPath: string): Promise<void>
 };
 
 /**
+ * 从字节数组写入文件
+ * @param filePath 目标文件路径
+ * @param bytes 文件内容的字节数组
+ */
+export const writeFileFromBytes = async (filePath: string, bytes: Uint8Array): Promise<void> => {
+  try {
+    await invoke('write_file_from_bytes', { filePath, bytes: Array.from(bytes) });
+  } catch (error) {
+    console.error('Failed to write file:', error);
+    throw error;
+  }
+};
+
+/**
+ * 扫描单个文件并返回文件节点
+ * @param filePath 文件路径
+ * @param parentId 父文件夹ID（可选）
+ * @returns 文件节点
+ */
+export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => {
+  try {
+    const rustFile = await invoke<RustFileNode>('scan_file', { filePath, parentId: parentId || null });
+    
+    // Convert Rust FileNode to TypeScript FileNode
+    return {
+      id: rustFile.id,
+      parentId: rustFile.parentId,
+      name: rustFile.name,
+      type: rustFile.type === 'image' ? FileType.IMAGE : rustFile.type === 'folder' ? FileType.FOLDER : FileType.UNKNOWN,
+      path: rustFile.path,
+      size: rustFile.size,
+      children: rustFile.children || undefined,
+      tags: rustFile.tags,
+      createdAt: rustFile.createdAt || undefined,
+      updatedAt: rustFile.updatedAt || undefined,
+      url: rustFile.url || undefined,
+      meta: rustFile.meta ? {
+        width: rustFile.meta.width,
+        height: rustFile.meta.height,
+        sizeKb: rustFile.meta.sizeKb,
+        created: rustFile.meta.created,
+        modified: rustFile.meta.modified,
+        format: rustFile.meta.format
+      } : undefined
+    };
+  } catch (error) {
+    console.error('Failed to scan file:', error);
+    throw error;
+  }
+};
+
+/**
  * 隐藏主窗口（最小化到托盘）
  */
 export const hideWindow = async (): Promise<void> => {
