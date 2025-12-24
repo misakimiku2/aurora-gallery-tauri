@@ -1,117 +1,80 @@
 import React from 'react';
-import { Copy, Move } from 'lucide-react';
+import { Copy, UploadCloud } from 'lucide-react';
 
 interface DragDropOverlayProps {
   isVisible: boolean;
-  cursorX: number;
   fileCount: number;
   t: (key: string) => string;
 }
 
 export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({ 
   isVisible, 
-  cursorX, 
   fileCount, 
   t 
 }) => {
   if (!isVisible) return null;
 
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = React.useState(0);
-
-  React.useEffect(() => {
-    const updateWidth = () => {
-      if (containerRef.current) {
-        setContainerWidth(containerRef.current.offsetWidth);
-      }
-    };
-
-    updateWidth();
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, []);
-
-  const isLeftHalf = containerWidth > 0 && cursorX < containerWidth / 2;
-
   return (
     <div 
-      ref={containerRef}
-      // 降低全屏遮罩模糊度，从 md 改为更轻微的定制值 (4px)
-      className="fixed inset-0 z-[50] bg-black/30 backdrop-blur-[4px] flex flex-col items-center justify-center pointer-events-none transition-opacity duration-300"
+      className="fixed inset-0 z-[50] bg-black/20 backdrop-blur-[4px] flex flex-col items-center justify-center pointer-events-none transition-opacity duration-300"
     >
       {/* 顶部提示气泡 */}
-      <div className="mb-8 bg-white/95 dark:bg-gray-800/95 px-8 py-3 rounded-full shadow-2xl border border-white/20">
-        <p className="text-base font-semibold text-gray-800 dark:text-gray-100">
-          {t('drag.releaseToComplete')} ({fileCount} {fileCount === 1 ? t('meta.file') : t('meta.files')})
+      <div className="mb-6 bg-white/95 dark:bg-gray-800/95 px-6 py-2 rounded-full shadow-xl border border-white/20">
+        <p className="text-sm font-medium text-gray-600 dark:text-gray-300">
+          {t('drag.releaseToComplete')}
         </p>
       </div>
       
-      {/* 主面板容器：改为响应式宽度与高度 */}
-      <div className="w-[85%] max-w-7xl h-[45vh] min-h-[320px] max-h-[500px] bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl rounded-[40px] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.4)] overflow-hidden flex pointer-events-auto border border-white/20">
+      {/* 单一面板容器：调整为更紧凑的比例，增加流光感 */}
+      <div className="relative group pointer-events-auto">
+        {/* 背景装饰流光 - 让单调的背景动起来 */}
+        <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-[48px] blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 animate-pulse"></div>
         
-        {/* 左侧 - 移动面板 */}
-        <div 
-          className={`flex-1 flex flex-col items-center justify-center transition-all duration-500 relative ${
-            isLeftHalf 
-              ? 'bg-green-50/80 dark:bg-green-900/40 z-10 shadow-inner' 
-              : 'bg-transparent opacity-40'
-          }`}
-        >
-          <div className="mb-6 relative">
-            {isLeftHalf && (
-              <div className="absolute inset-0 bg-green-500/20 rounded-3xl animate-ping" />
-            )}
-            {/* 图标形变动画 */}
-            <div className={`relative p-6 rounded-3xl transition-all duration-500 shadow-lg ${
-              isLeftHalf 
-                ? 'bg-green-600 text-white scale-110 rotate-0' 
-                : 'bg-white dark:bg-gray-800 text-green-600 scale-90 -rotate-12'
-            }`}>
-              <Move size={48} />
+        <div className="relative w-[400px] h-[400px] md:w-[500px] md:h-[500px] bg-white/90 dark:bg-gray-900/95 backdrop-blur-2xl rounded-[44px] shadow-2xl border border-white/40 dark:border-white/10 flex flex-col items-center justify-center overflow-hidden">
+          
+          {/* 内部装饰性背景色块 */}
+          <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+            <div className="absolute -top-24 -left-24 w-64 h-64 bg-blue-500/10 rounded-full blur-3xl animate-blob"></div>
+            <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl animate-blob animation-delay-2000"></div>
+          </div>
+
+          {/* 图标区域：组合图标增强视觉丰富度 */}
+          <div className="mb-8 relative">
+            {/* 外圈波纹动画 */}
+            <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping opacity-75" />
+            <div className="absolute -inset-4 bg-blue-500/5 rounded-[40px] scale-110" />
+            
+            <div className="relative w-32 h-32 bg-gradient-to-br from-blue-500 to-blue-700 rounded-[36px] shadow-2xl flex items-center justify-center transform transition-transform duration-500 group-hover:scale-105 group-hover:rotate-3">
+              <Copy size={56} className="text-white" />
+              {/* 叠加一个小图标表示“存入”感 */}
+              <div className="absolute -bottom-2 -right-2 w-12 h-12 bg-white dark:bg-gray-800 rounded-2xl shadow-lg flex items-center justify-center border-4 border-blue-50 dark:border-gray-900">
+                <UploadCloud size={24} className="text-blue-600" />
+              </div>
             </div>
           </div>
-          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${isLeftHalf ? 'text-green-700 dark:text-green-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
-            {t('context.move')}
-          </h3>
-          <p className={`text-base transition-opacity duration-500 ${isLeftHalf ? 'text-green-600/70 dark:text-green-200/60 opacity-100' : 'opacity-0'}`}>
-            {t('drag.moveHint')}
-          </p>
-        </div>
 
-        {/* 分割线 */}
-        <div className="w-px h-[60%] self-center bg-gray-200 dark:bg-gray-700 relative z-20">
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-full flex items-center justify-center shadow-md">
-            <div className="w-2 h-2 bg-gray-300 dark:bg-gray-600 rounded-full" />
-          </div>
-        </div>
-
-        {/* 右侧 - 复制面板 */}
-        <div 
-          className={`flex-1 flex flex-col items-center justify-center transition-all duration-500 relative ${
-            !isLeftHalf 
-              ? 'bg-blue-50/80 dark:bg-blue-900/40 z-10 shadow-inner' 
-              : 'bg-transparent opacity-40'
-          }`}
-        >
-          <div className="mb-6 relative">
-            {!isLeftHalf && (
-              <div className="absolute inset-0 bg-blue-500/20 rounded-3xl animate-ping" />
-            )}
-            {/* 图标形变动画 */}
-            <div className={`relative p-6 rounded-3xl transition-all duration-500 shadow-lg ${
-              !isLeftHalf 
-                ? 'bg-blue-600 text-white scale-110 rotate-0' 
-                : 'bg-white dark:bg-gray-800 text-blue-600 scale-90 rotate-12'
-            }`}>
-              <Copy size={48} />
+          {/* 文字区域 */}
+          <div className="text-center z-10 px-8">
+            <h3 className="text-4xl font-black mb-4 bg-clip-text text-transparent bg-gradient-to-b from-gray-900 to-gray-600 dark:from-white dark:to-gray-400">
+              {t('context.copy')}
+            </h3>
+            
+            <div className="flex items-center justify-center space-x-2 bg-blue-50 dark:bg-blue-900/30 px-4 py-2 rounded-2xl">
+              <span className="text-blue-600 dark:text-blue-300 font-bold text-lg">
+                {fileCount}
+              </span>
+              <span className="text-blue-600/80 dark:text-blue-300/80 text-sm font-medium">
+                {fileCount === 1 ? t('meta.file') : t('meta.files')}
+              </span>
             </div>
+
+            <p className="mt-6 text-gray-400 dark:text-gray-500 text-sm max-w-[240px] leading-relaxed">
+              {t('drag.copyHint')}
+            </p>
           </div>
-          <h3 className={`text-3xl font-bold mb-2 transition-all duration-500 ${!isLeftHalf ? 'text-blue-700 dark:text-blue-300 translate-y-0' : 'text-gray-400 translate-y-2'}`}>
-            {t('context.copy')}
-          </h3>
-          <p className={`text-base transition-opacity duration-500 ${!isLeftHalf ? 'text-blue-600/70 dark:text-blue-200/60 opacity-100' : 'opacity-0'}`}>
-            {t('drag.copyHint')}
-          </p>
+
+          {/* 底部装饰条 */}
+          <div className="absolute bottom-0 left-0 w-full h-1.5 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50"></div>
         </div>
       </div>
     </div>
