@@ -196,10 +196,39 @@ class ThumbnailBatcher {
                         if (item) {
                             if (url) {
                                 // 同时缓存原始路径（用于外部拖拽时作为图标）
-                                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                if (pathCache && typeof pathCache.set === 'function') {
-                                    pathCache.set(path, url);
+                                // 确保缓存存在，如果不存在则创建
+                                if (!(window as any).__AURORA_THUMBNAIL_PATH_CACHE__) {
+                                    // 简单的 LRU 缓存实现
+                                    const cache = new Map<string, { value: string; timestamp: number }>();
+                                    const maxSize = 1000;
+                                    (window as any).__AURORA_THUMBNAIL_PATH_CACHE__ = {
+                                        get: (key: string) => {
+                                            const item = cache.get(key);
+                                            if (item) {
+                                                cache.set(key, { ...item, timestamp: Date.now() });
+                                                return item.value;
+                                            }
+                                            return undefined;
+                                        },
+                                        set: (key: string, value: string) => {
+                                            if (cache.size >= maxSize) {
+                                                let oldestKey: string | null = null;
+                                                let oldestTime = Infinity;
+                                                for (const [k, v] of cache.entries()) {
+                                                    if (v.timestamp < oldestTime) {
+                                                        oldestTime = v.timestamp;
+                                                        oldestKey = k;
+                                                    }
+                                                }
+                                                if (oldestKey) cache.delete(oldestKey);
+                                            }
+                                            cache.set(key, { value, timestamp: Date.now() });
+                                        },
+                                        has: (key: string) => cache.has(key)
+                                    };
                                 }
+                                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                pathCache.set(path, url);
                                 item.resolve(convertFileSrc(url));
                             } else {
                                 item.resolve(null);
@@ -589,8 +618,11 @@ export const startDragToExternal = async (
     // 如果没有生成预览图，尝试从缩略图缓存获取单个缩略图
     if (!finalIconPath) {
       const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-      if (pathCache && typeof pathCache.get === 'function') {
-        finalIconPath = pathCache.get(filePaths[0]);
+      if (pathCache && pathCache.get) {
+        const cachedPath = pathCache.get(filePaths[0]);
+        if (cachedPath) {
+          finalIconPath = cachedPath;
+        }
       }
     }
     
