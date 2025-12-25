@@ -1476,7 +1476,44 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       {paletteMenu.visible && paletteMenu.color && createPortal(
           <div 
              className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 z-[70] animate-zoom-in"
-             style={{ top: paletteMenu.y, left: paletteMenu.x }}
+             style={{ 
+               top: 'auto', 
+               left: 'auto',
+               position: 'fixed',
+               zIndex: 70
+             }}
+             ref={(el) => {
+               if (el) {
+                 // 动态计算菜单位置，确保完全显示在屏幕内
+                 const rect = el.getBoundingClientRect();
+                 const menuWidth = rect.width;
+                 const menuHeight = rect.height;
+                 const screenWidth = window.innerWidth;
+                 const screenHeight = window.innerHeight;
+                 
+                 // 计算X位置，确保菜单不超出左右边界
+                 let x = paletteMenu.x;
+                 if (x + menuWidth > screenWidth) {
+                   x = screenWidth - menuWidth;
+                 }
+                 if (x < 0) {
+                   x = 0;
+                 }
+                 
+                 // 计算Y位置，确保菜单不超出上下边界
+                 let y = paletteMenu.y;
+                 if (y + menuHeight > screenHeight) {
+                   y = screenHeight - menuHeight;
+                 }
+                 if (y < 0) {
+                   y = 0;
+                 }
+                 
+                 // 设置最终位置
+                 el.style.left = `${x}px`;
+                 el.style.top = `${y}px`;
+               }
+             }}
           >
               <div 
                  className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center"

@@ -3,6 +3,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
 import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 interface TreeProps {
   files: Record<string, FileNode>;
@@ -211,11 +212,19 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSe
                            >
                               <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
                                  {coverFile ? (
-                                   // Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs
-                                   // Use placeholder for now - could be enhanced to load thumbnail separately
-                                   <div className="w-full h-full flex items-center justify-center bg-gray-200 dark:bg-gray-700">
-                                     <User size={16} className="text-gray-400 dark:text-gray-500" />
-                                   </div>
+                                   <div 
+                                     className="w-full h-full" 
+                                     style={{
+                                       backgroundImage: `url("${convertFileSrc(coverFile.path)}")`,
+                                       backgroundSize: person.faceBox 
+                                         ? `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%` 
+                                         : 'cover',
+                                       backgroundPosition: person.faceBox 
+                                         ? `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%` 
+                                         : 'center',
+                                       backgroundRepeat: 'no-repeat'
+                                     }}
+                                   />
                                  ) : (
                                    <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={16}/></div>
                                  )}

@@ -650,9 +650,43 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div 
           className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
           style={{ 
-            top: contextMenu.y + 350 > window.innerHeight ? 'auto' : contextMenu.y,
-            bottom: contextMenu.y + 350 > window.innerHeight ? window.innerHeight - contextMenu.y : 'auto',
-            left: Math.min(contextMenu.x, window.innerWidth - 240)
+            top: 'auto', 
+            bottom: 'auto', 
+            left: 'auto',
+            position: 'fixed',
+            zIndex: 60
+          }}
+          ref={(el) => {
+            if (el) {
+              // 动态计算菜单位置，确保完全显示在屏幕内
+              const rect = el.getBoundingClientRect();
+              const menuWidth = rect.width;
+              const menuHeight = rect.height;
+              const screenWidth = window.innerWidth;
+              const screenHeight = window.innerHeight;
+              
+              // 计算X位置，确保菜单不超出左右边界
+              let x = contextMenu.x;
+              if (x + menuWidth > screenWidth) {
+                x = screenWidth - menuWidth;
+              }
+              if (x < 0) {
+                x = 0;
+              }
+              
+              // 计算Y位置，确保菜单不超出上下边界
+              let y = contextMenu.y;
+              if (y + menuHeight > screenHeight) {
+                y = screenHeight - menuHeight;
+              }
+              if (y < 0) {
+                y = 0;
+              }
+              
+              // 设置最终位置
+              el.style.left = `${x}px`;
+              el.style.top = `${y}px`;
+            }
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >

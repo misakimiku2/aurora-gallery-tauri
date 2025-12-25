@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Sidebar } from './components/TreeSidebar';
 import { MetadataPanel } from './components/MetadataPanel';
 import { ImageViewer } from './components/ImageViewer';
@@ -16,6 +16,7 @@ import { translations } from './utils/translations';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
+import { aiService } from './services/aiService';
 
 // ... (helper components remain unchanged)
 const TaskProgressModal = ({ tasks, onMinimize, onClose, t }: any) => {
@@ -38,7 +39,7 @@ const ConfirmModal = ({ title, message, subMessage, confirmText, confirmIcon: Ic
 const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input id="rename-tag-input" name="rename-tag-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input id="rename-person-input" name="rename-person-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-pattern">{t('settings.namePattern')}</label><input id="batch-rename-pattern" name="batch-rename-pattern" className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-start">{t('settings.startNumber')}</label><input type="number" id="batch-rename-start" name="batch-rename-start" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
+const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (<div className="w-full h-full" style={{ backgroundImage: `url("${convertFileSrc(coverFile.path)}")`, backgroundSize: p.faceBox ? `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%` : 'cover', backgroundPosition: p.faceBox ? `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%` : 'center', backgroundRepeat: 'no-repeat' }} />) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
 
 const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any) => { 
   // Get all unique people from selected files 
@@ -87,7 +88,7 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
           return ( 
             <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group border border-transparent ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}> 
               <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">
-                {hasCover ? (/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */<div className="w-full h-full flex items-center justify-center bg-gray-300 dark:bg-gray-700"><User size={14} className="text-gray-400 dark:text-gray-500" /></div>) : (
+                {hasCover ? (<div className="w-full h-full" style={{ backgroundImage: `url("${convertFileSrc(coverFile.path)}")`, backgroundSize: p.faceBox ? `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%` : 'cover', backgroundPosition: p.faceBox ? `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%` : 'center', backgroundRepeat: 'no-repeat' }} />) : (
                   <User size={14} className="text-gray-400 dark:text-gray-500" />
                 )}
               </div> 
@@ -1648,22 +1649,49 @@ export const App: React.FC = () => {
         // Recalculate counts for all affected people
         allAffectedPersonIds.forEach(personId => {
           let newCount = 0;
+          let hasFaceInCurrentFile = false;
+          let faceBox = null;
           
           // Count files that contain this person
           Object.values(updatedFiles).forEach(file => {
             if (file.type === FileType.IMAGE && file.aiData?.analyzed && file.aiData?.faces) {
               if (file.aiData.faces.some(face => face.personId === personId)) {
                 newCount++;
+                // Check if this is the current file we're updating
+                if (file.id === id) {
+                  hasFaceInCurrentFile = true;
+                  // Get the first face box for this person in the current file
+                  const faceForPerson = file.aiData.faces.find(face => face.personId === personId);
+                  if (faceForPerson?.box && faceForPerson.box.w > 0 && faceForPerson.box.h > 0) {
+                    faceBox = {
+                      x: faceForPerson.box.x,
+                      y: faceForPerson.box.y,
+                      w: faceForPerson.box.w,
+                      h: faceForPerson.box.h
+                    };
+                  }
+                }
               }
             }
           });
           
-          // Update the person's count
+          // Update the person's count and cover file if needed
           if (updatedPeople[personId]) {
-            updatedPeople[personId] = {
+            const updatedPerson = {
               ...updatedPeople[personId],
               count: newCount
             };
+            
+            // If person doesn't have a cover file and has a face in current file, set current file as cover
+            if (!updatedPerson.coverFileId && hasFaceInCurrentFile) {
+              updatedPerson.coverFileId = id;
+              // If we found a valid face box, set it
+              if (faceBox) {
+                updatedPerson.faceBox = faceBox;
+              }
+            }
+            
+            updatedPeople[personId] = updatedPerson;
           }
         });
         
@@ -4122,43 +4150,44 @@ export const App: React.FC = () => {
       // Create prompt in the same language as software settings
       const isChinese = state.settings.language === 'zh';
       
-      let basePrompt = isChinese ? `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-      - description: string (请简单描述这张图里的内容。)
-      ` : `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-      - description: string (Please briefly describe the content of this image.)
-      `;
+      let promptFields: string[] = [];
       
-      let prompt = basePrompt;
-      if (aiConfig.enhancePersonDescription) {
-          prompt = isChinese ? `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-          - description: string (请简单描述这张图里的内容。着重描述图片里的人物行为。并且对人物体型进行说明。)
-          ` : `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-          - description: string (Please briefly describe the content of this image. Emphasize describing people's actions. Also provide a description of people's body types.)
-          `;
+      // Only include description if autoDescription is enabled
+      if (aiConfig.autoDescription) {
+          promptFields.push(isChinese ? `- description: string (请简单描述这张图里的内容。${aiConfig.enhancePersonDescription ? '着重描述图片里的人物行为。并且对人物体型进行说明。' : ''})` : `- description: string (Please briefly describe the content of this image.${aiConfig.enhancePersonDescription ? ' Emphasize describing people\'s actions. Also provide a description of people\'s body types.' : ''})`);
       }
 
+      // Only include OCR if enableOCR is enabled
       if (aiConfig.enableOCR) {
-          prompt += isChinese ? `
-          - extractedText: string (提取图片中的文字。)
-          ` : `
-          - extractedText: string (Extract text from the image.)
-          `;
+          promptFields.push(isChinese ? `- extractedText: string (提取图片中的文字。)` : `- extractedText: string (Extract text from the image.)`);
       }
 
+      // Only include translation if enableTranslation is enabled
       if (aiConfig.enableTranslation) {
-          prompt += isChinese ? `
-          - translatedText: string (把图片中的文字翻译成${transTarget}。)
-          ` : `
-          - translatedText: string (Translate text from the image to ${transTarget}.)
-          `;
+          promptFields.push(isChinese ? `- translatedText: string (把图片中的文字翻译成${transTarget}。)` : `- translatedText: string (Translate text from the image to ${transTarget}.)`);
       }
 
-      prompt += `
-      - tags: string[] (relevant keywords in ${targetLanguage})
-      - sceneCategory: string (e.g. landscape, portrait, indoor, etc in ${targetLanguage})
-      - objects: string[] (list of visible objects in ${targetLanguage})
-      - dominantColors: string[] (hex codes if detected, optional)
-      - people: string[] (list of distinct people identified, if any, in ${targetLanguage})
+      // Only include tags if autoTag is enabled
+      if (aiConfig.autoTag) {
+          promptFields.push(`- tags: string[] (relevant keywords in ${targetLanguage})`);
+      }
+
+      // Only include people if enableFaceRecognition is enabled
+      if (aiConfig.enableFaceRecognition) {
+          promptFields.push(`- people: string[] (list of distinct people identified, if any, in ${targetLanguage})`);
+      }
+
+      // Always include sceneCategory, objects, and dominantColors for internal use
+      promptFields.push(`- sceneCategory: string (e.g. landscape, portrait, indoor, etc in ${targetLanguage})`);
+      promptFields.push(`- objects: string[] (list of visible objects in ${targetLanguage})`);
+      promptFields.push(`- dominantColors: string[] (hex codes if detected, optional)`);
+      
+      const prompt = isChinese ? `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
+      ${promptFields.join('\n      ')}
+      
+      Respond STRICTLY in JSON.
+      ` : `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
+      ${promptFields.join('\n      ')}
       
       Respond STRICTLY in JSON.
       `;
@@ -4282,68 +4311,147 @@ export const App: React.FC = () => {
               // Step 3: Process AI response
               updateTask(taskId, { current: currentStep + 3, currentStep: t('tasks.processingResult') });
               let peopleUpdated = false;
-              const newFaces: AiFace[] = [];
-
-              // Process people
+              
+              // Create aiData object with filtered fields based on settings
+              const baseAiData: Partial<AiData> = {
+                  analyzed: true,
+                  analyzedAt: new Date().toISOString(),
+                  description: aiConfig.autoDescription ? (result.description || '') : '',
+                  tags: aiConfig.autoTag && Array.isArray(result.tags) ? result.tags : [],
+                  sceneCategory: result.sceneCategory || 'General',
+                  confidence: 0.95,
+                  dominantColors: Array.isArray(result.dominantColors) ? result.dominantColors : [],
+                  objects: Array.isArray(result.objects) ? result.objects : [],
+                  extractedText: aiConfig.enableOCR ? result.extractedText : undefined,
+                  translatedText: aiConfig.enableTranslation ? result.translatedText : undefined
+              };
+              
+              // Step 3.1: Use face recognition service to get real face data if enabled
+              // Initialize aiData with default values
+              let aiData: AiData = {
+                  ...baseAiData,
+                  faces: [],
+              } as AiData;
+              
+              if (aiConfig.enableFaceRecognition) {
+                  // Use the actual file path for face recognition
+                  const imagePath = file.path || '';
+                  // Add current people database to settings for face recognition
+                  const settingsWithPeople = {
+                      ...state.settings,
+                      people: currentPeople
+                  };
+                  const { aiData: aiResultData, faceDescriptors } = await aiService.analyzeImage(imagePath, settingsWithPeople);
+                  
+                  aiData = {
+                      ...baseAiData,
+                      faces: aiResultData.faces || [],
+                  } as AiData;
+                  
+                  // Update people database with recognized faces
+                  aiData.faces.forEach((face, index) => {
+                      if (face.personId && face.name) {
+                          // Get corresponding face descriptor
+                          const faceDescriptor = faceDescriptors.find(fd => fd.faceId === face.id);
+                          
+                          // Calculate face box percentages if we have image dimensions
+                          let faceBox: { x: number; y: number; w: number; h: number } | undefined;
+                          if (file.meta?.width && file.meta?.height && face.box) {
+                              const { x, y, w, h } = face.box;
+                              faceBox = {
+                                  x: Math.round((x / file.meta.width) * 100),
+                                  y: Math.round((y / file.meta.height) * 100),
+                                  w: Math.round((w / file.meta.width) * 100),
+                                  h: Math.round((h / file.meta.height) * 100)
+                              };
+                          }
+                          
+                          // Check if person already exists
+                          let person = currentPeople[face.personId];
+                          
+                          if (!person) {
+                              if (state.settings.ai.autoAddPeople) {
+                                  // Create new person
+                                  currentPeople[face.personId] = {
+                                      id: face.personId,
+                                      name: face.name,
+                                      coverFileId: fileId,
+                                      count: 1,
+                                      description: 'Detected by AI face recognition',
+                                      descriptor: faceDescriptor?.descriptor,
+                                      faceBox: faceBox
+                                  };
+                                  peopleUpdated = true;
+                              }
+                          } else {
+                              // Update existing person count, and add descriptor if not already present
+                              currentPeople[face.personId] = {
+                                  ...person,
+                                  count: person.count + 1,
+                                  descriptor: person.descriptor || faceDescriptor?.descriptor,
+                                  faceBox: person.faceBox || faceBox
+                              };
+                              peopleUpdated = true;
+                          }
+                      }
+                  });
+              } 
+              
+              // Always process people from AI API response regardless of face recognition setting
               if (result.people && Array.isArray(result.people)) {
+                  const aiFaces: AiFace[] = [];
+                  
                   result.people.forEach((name: string) => {
+                      // Check if person already exists by name
                       let personId = Object.keys(currentPeople).find(pid => currentPeople[pid].name.toLowerCase() === name.toLowerCase());
                       
                       if (!personId) {
                           if (state.settings.ai.autoAddPeople) {
+                              // Create new person
                               personId = Math.random().toString(36).substr(2, 9);
                               currentPeople[personId] = {
                                   id: personId,
                                   name: name,
                                   coverFileId: fileId,
-                                  count: 0,
+                                  count: 1,
                                   description: 'Detected by AI'
                               };
                               peopleUpdated = true;
                           }
+                      } else {
+                          // Update existing person count
+                          currentPeople[personId] = {
+                              ...currentPeople[personId],
+                              count: currentPeople[personId].count + 1
+                          };
+                          peopleUpdated = true;
                       }
                       
                       if (personId) {
-                          newFaces.push({
+                          // Add face to AI data
+                          aiFaces.push({
                               id: Math.random().toString(36).substr(2, 9),
                               personId: personId,
                               name: name,
                               confidence: 0.95,
                               box: { x: 0, y: 0, w: 0, h: 0 }
                           });
-
-                          if (currentPeople[personId]) {
-                              currentPeople[personId] = {
-                                  ...currentPeople[personId],
-                                  count: currentPeople[personId].count + 1
-                              };
-                              peopleUpdated = true;
-                          }
                       }
                   });
+                  
+                  // Merge AI detected faces with existing faces, avoiding duplicates
+                  const existingPersonIds = new Set(aiData.faces.map(face => face.personId));
+                  const newAIFaces = aiFaces.filter(face => !existingPersonIds.has(face.personId));
+                  aiData.faces = [...aiData.faces, ...newAIFaces];
               }
 
-              const aiData: AiData = {
-                  analyzed: true,
-                  analyzedAt: new Date().toISOString(),
-                  description: result.description || '',
-                  tags: Array.isArray(result.tags) ? result.tags : [],
-                  faces: newFaces,
-                  sceneCategory: result.sceneCategory || 'General',
-                  confidence: 0.95,
-                  dominantColors: Array.isArray(result.dominantColors) ? result.dominantColors : [],
-                  objects: Array.isArray(result.objects) ? result.objects : [],
-                  extractedText: result.extractedText,
-                  translatedText: result.translatedText
-              };
-
-              // Step 4: Update description
+              // Step 4: Update description only if autoDescription is enabled
               updateTask(taskId, { current: currentStep + 4, currentStep: t('tasks.updatingDescription') });
               
-              // Step 5: Add tags
+              // Step 5: Add tags only if autoTag is enabled
               updateTask(taskId, { current: currentStep + 5, currentStep: t('tasks.addingTags') });
               const currentTags = file.tags || [];
-              const newTags = Array.from(new Set([...currentTags, ...aiData.tags]));
+              const newTags = aiConfig.autoTag ? Array.from(new Set([...currentTags, ...aiData.tags])) : currentTags;
 
               // Step 6: Save all AI data
               updateTask(taskId, { current: currentStep + 6, currentStep: t('tasks.savingData') });
@@ -4351,7 +4459,7 @@ export const App: React.FC = () => {
                   ...file,
                   aiData,
                   tags: newTags,
-                  description: file.description ? file.description : aiData.description
+                  description: file.description ? file.description : (aiConfig.autoDescription ? aiData.description : '')
               };
 
               setState(prev => ({
@@ -4997,7 +5105,45 @@ export const App: React.FC = () => {
       />
 
       {contextMenu.visible && (
-        <div data-testid="context-menu" className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[60] max-h-[80vh] overflow-y-auto" style={{ top: contextMenu.y + 350 > window.innerHeight ? 'auto' : contextMenu.y, bottom: contextMenu.y + 350 > window.innerHeight ? window.innerHeight - contextMenu.y : 'auto', left: Math.min(contextMenu.x, window.innerWidth - 200) }}>
+        <div data-testid="context-menu" className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[60] max-h-[80vh] overflow-y-auto" style={{ 
+          top: 'auto', 
+          bottom: 'auto', 
+          left: 'auto', 
+          right: 'auto',
+          position: 'fixed',
+          zIndex: 60
+        }} ref={(el) => {
+          if (el) {
+            // 动态计算菜单位置，确保完全显示在屏幕内
+            const rect = el.getBoundingClientRect();
+            const menuWidth = rect.width;
+            const menuHeight = rect.height;
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+            
+            // 计算X位置，确保菜单不超出左右边界
+            let x = contextMenu.x;
+            if (x + menuWidth > screenWidth) {
+              x = screenWidth - menuWidth;
+            }
+            if (x < 0) {
+              x = 0;
+            }
+            
+            // 计算Y位置，确保菜单不超出上下边界
+            let y = contextMenu.y;
+            if (y + menuHeight > screenHeight) {
+              y = screenHeight - menuHeight;
+            }
+            if (y < 0) {
+              y = 0;
+            }
+            
+            // 设置最终位置
+            el.style.left = `${x}px`;
+            el.style.top = `${y}px`;
+          }
+        }}>
           {/* ... (Context Menu items, omitted for brevity but should be same as before) ... */}
           {/* 文件和文件夹的右键菜单（单个或多个） */}
           {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi' || contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi') && ( <>

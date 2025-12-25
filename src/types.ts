@@ -146,6 +146,7 @@ export interface AppSettings {
   };
   search: SearchSettings;
   ai: AIConfig;
+  people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析
 }
 
 export interface DateFilter {
