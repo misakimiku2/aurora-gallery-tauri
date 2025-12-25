@@ -2502,7 +2502,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   return (
       <div
           ref={containerRef}
-          className={`relative w-full h-full min-w-0 overflow-auto transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
+          className="relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200"
           onContextMenu={onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
@@ -2598,7 +2598,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   ))}
               </div>
           ) : activeTab.layoutMode === 'list' ? (
-              <div className="w-full h-full min-w-0 overflow-auto">
+              <div className="w-full h-full min-w-0 overflow-y-auto overflow-x-hidden">
                   <div className="p-6">
                       {displayFileIds.map((id) => {
                           const file = files[id];

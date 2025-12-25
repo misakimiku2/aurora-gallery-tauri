@@ -2028,19 +2028,13 @@ export const App: React.FC = () => {
     const isInternalDrag = e.dataTransfer.types.includes('application/json') || isDraggingInternal;
     
     // Only show overlay for external drags (files from outside the app)
-    if (e.dataTransfer.types.includes('Files') && !isInternalDrag) {
-      setDragEnterCounter(prev => {
-        // Only update state if we're transitioning from 0 to 1
-        if (prev === 0) {
-          setIsExternalDragging(true);
-          // Update file count from dataTransfer.items
-          const fileCount = e.dataTransfer.items.length;
-          // Create placeholder array to show file count
-          setExternalDragItems(Array(fileCount).fill('placeholder'));
-        }
-        return prev + 1;
-      });
-      
+    if (e.dataTransfer.types.includes('Files') && !isInternalDrag && !isExternalDragging) {
+      // Only set the state if we're not already dragging
+      setIsExternalDragging(true);
+      // Update file count from dataTransfer.items
+      const fileCount = e.dataTransfer.items.length;
+      // Create placeholder array to show file count
+      setExternalDragItems(Array(fileCount).fill('placeholder'));
       setExternalDragPosition({ x: e.clientX, y: e.clientY });
     }
   };
@@ -2067,7 +2061,6 @@ export const App: React.FC = () => {
     setIsExternalDragging(false);
     setExternalDragItems([]);
     setExternalDragPosition(null);
-    setDragEnterCounter(0);
     setHoveredDropAction(null);
     
     // 如果没有悬停在复制区域，不执行任何操作
@@ -2098,22 +2091,17 @@ export const App: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
     
-    setDragEnterCounter(prev => {
-      const newCount = Math.max(0, prev - 1);
+    // Check if the mouse is actually leaving the window
+    // by checking if the relatedTarget is null or outside the document
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsExternalDragging(false);
+      setExternalDragItems([]);
+      setExternalDragPosition(null);
+      setHoveredDropAction(null);
       
-      // Only hide the overlay if the counter reaches 0
-      if (newCount === 0) {
-        setIsExternalDragging(false);
-        setExternalDragItems([]);
-        setExternalDragPosition(null);
-        setHoveredDropAction(null);
-        
-        // 检查是否拖拽到了外部
-        handleWindowDragLeave();
-      }
-      
-      return newCount;
-    });
+      // 检查是否拖拽到了外部
+      handleWindowDragLeave();
+    }
   };
 
   // External file operations - using File objects instead of paths
