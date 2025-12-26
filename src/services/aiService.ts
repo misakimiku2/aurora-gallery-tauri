@@ -2,7 +2,7 @@ import { faceRecognitionService } from './faceRecognitionService';
 import { AiData, AiFace, AppSettings, Person } from '../types';
 
 class AIService {
-  async analyzeImage(imageUrl: string, settings: AppSettings) {
+  async analyzeImage(imageUrl: string, settings: AppSettings, people: Record<string, Person>) {
     const aiData: Partial<AiData> = {
       analyzed: true,
       analyzedAt: new Date().toISOString(),
@@ -13,12 +13,12 @@ class AIService {
       faces: []
     };
 
-    // 保存人脸特征向量信息
+    // 淇濆瓨浜鸿劯鐗瑰緛鍚戦噺淇℃伅
     const faceDescriptors: { faceId: string; descriptor: number[] | undefined }[] = [];
 
-    // 如果启用人脸识别
+    // 濡傛灉鍚敤浜鸿劯璇嗗埆
     if (settings.ai.enableFaceRecognition) {
-      const facesWithDescriptors = await this.detectAndRecognizeFaces(imageUrl, settings);
+      const facesWithDescriptors = await this.detectAndRecognizeFaces(imageUrl, settings, people);
       aiData.faces = facesWithDescriptors.faces;
       faceDescriptors.push(...facesWithDescriptors.faceDescriptors);
     }
@@ -26,26 +26,27 @@ class AIService {
     return { aiData, faceDescriptors };
   }
 
-  async detectAndRecognizeFaces(imageUrl: string, settings: AppSettings) {
+  async detectAndRecognizeFaces(imageUrl: string, settings: AppSettings, people: Record<string, Person>) {
     try {
-      // 检测人脸
+      // 妫€娴嬩汉鑴?
       const detections = await faceRecognitionService.detectFaces(imageUrl);
       const faces: AiFace[] = [];
       const faceDescriptors: { faceId: string; descriptor: number[] | undefined }[] = [];
 
       for (const detection of detections) {
         const faceId = `face_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // 提取人脸特征
+
+        // 鎻愬彇浜鸿劯鐗瑰緛
         const descriptor = detection.descriptor;
-        
-        // 匹配已知人物
-        const people = this.getPeopleFromSettings(settings);
+
+        // 鍖归厤宸茬煡浜虹墿
         const match = descriptor ? await faceRecognitionService.matchFace(descriptor, people) : null;
 
+        // 初始化为未知人物
         let personId = `person_${Math.random().toString(36).substr(2, 9)}`;
-        let name = '未知人物';
+        let name = '鏈煡浜虹墿';
 
+        // 如果有匹配的人物，使用匹配的人物信息
         if (match) {
           personId = match.person.id;
           name = match.person.name;
@@ -75,20 +76,11 @@ class AIService {
     }
   }
 
-  private getPeopleFromSettings(settings: AppSettings): Record<string, Person> {
-    // 在实际应用中，这里应该从全局状态或存储中获取人物数据库
-    // 由于我们无法直接访问全局状态，我们将通过设置中的临时存储来获取
-    // 这需要在调用analyzeImage方法之前将人物数据传递给settings
-    // 目前我们返回一个空对象，实际使用时需要修改这部分逻辑
-    // 注意：在真实应用中，你应该通过上下文或其他方式传递人物数据
-    return settings.people || {};
-  }
-
   async updatePersonDescriptor(personId: string, imageUrl: string) {
     try {
       const descriptor = await faceRecognitionService.computeFaceDescriptor(imageUrl);
       if (descriptor) {
-        // 更新人物的特征向量
+        // 鏇存柊浜虹墿鐨勭壒寰佸悜閲?
         return Array.from(descriptor);
       }
       return null;
@@ -98,8 +90,8 @@ class AIService {
     }
   }
 
-  async processImageForAI(imageUrl: string, settings: AppSettings) {
-    const aiData = await this.analyzeImage(imageUrl, settings);
+  async processImageForAI(imageUrl: string, settings: AppSettings, people: Record<string, Person>) {
+    const aiData = await this.analyzeImage(imageUrl, settings, people);
     return aiData;
   }
 }

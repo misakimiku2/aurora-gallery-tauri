@@ -131,7 +131,8 @@ export const translations = {
       loaded: '已读取',
       copy: '复制',
       move: '移动',
-      successfully: '成功'
+      successfully: '成功',
+      selectedPeople: '位已选人物'
     },
     drag: {
       releaseToComplete: '松开即可完成操作',
@@ -615,7 +616,8 @@ export const translations = {
       loaded: 'Loaded',
       copy: 'Copy',
       move: 'Move',
-      successfully: 'Successfully'
+      successfully: 'Successfully',
+      selectedPeople: 'Selected People'
     },
     drag: {
       releaseToComplete: 'Release to complete the operation',

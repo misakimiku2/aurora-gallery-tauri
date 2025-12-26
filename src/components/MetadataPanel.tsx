@@ -322,7 +322,11 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
 export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, selectedPersonIds, onUpdate, onUpdatePerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
-  const person = selectedPersonIds && selectedPersonIds.length === 1 && people ? people[selectedPersonIds[0]] : null;
+  
+  // 处理人物选择
+  const isMultiPerson = selectedPersonIds && selectedPersonIds.length > 1;
+  const selectedPeopleCount = selectedPersonIds ? selectedPersonIds.length : 0;
+  const person = !isMultiPerson && selectedPeopleCount === 1 && people ? people[selectedPersonIds![0]] : null;
 
   const [name, setName] = useState('');
   const [desc, setDesc] = useState('');
@@ -794,6 +798,72 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       }
   };
 
+  // 多个人物选择情况
+  if (isMultiPerson) {
+      return (
+        <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+          <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
+            <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
+                {selectedPeopleCount} {t('context.selectedPeople')}
+            </div>
+          </div>
+
+          <div className="p-5 space-y-6">
+            {/* Selected People List */}
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+              <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
+                  <User size={12} className="mr-1.5" /> {t('context.selectedPeople')}
+              </div>
+              <div className="flex flex-col gap-3 overflow-y-auto">
+                {selectedPersonIds?.map(personId => {
+                  const selectedPerson = people?.[personId];
+                  if (!selectedPerson) return null;
+                  
+                  const coverFile = files[selectedPerson.coverFileId];
+                  const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
+                  
+                  return (
+                    <div key={personId} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
+                      {/* Avatar */}
+                      <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0">
+                        {coverUrl ? (
+                          selectedPerson.faceBox ? (
+                            <div 
+                              className="w-full h-full"
+                              style={{
+                                backgroundImage: `url("${coverUrl}")`,
+                                backgroundSize: `${10000 / Math.min(selectedPerson.faceBox.w, 99.9)}% ${10000 / Math.min(selectedPerson.faceBox.h, 99.9)}%`,
+                                backgroundPosition: `${selectedPerson.faceBox.x / (100 - Math.min(selectedPerson.faceBox.w, 99.9)) * 100}% ${selectedPerson.faceBox.y / (100 - Math.min(selectedPerson.faceBox.h, 99.9)) * 100}%`,
+                                backgroundRepeat: 'no-repeat'
+                              }}
+                            />
+                          ) : (
+                            <img 
+                              src={coverUrl} 
+                              className="w-full h-full object-cover"
+                            />
+                          )
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={18}/></div>
+                        )}
+                      </div>
+                      
+                      {/* Name and Stats */}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-gray-800 dark:text-white">{selectedPerson.name}</div>
+                        <div className="text-sm text-gray-500 dark:text-gray-400">{selectedPerson.count} {t('context.files')}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+  }
+  
+  // 单个人物选择情况
   if (person) {
       const coverFile = files[person.coverFileId];
       const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;

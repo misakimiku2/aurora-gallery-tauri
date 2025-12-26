@@ -299,14 +299,70 @@ const ToastItem: React.FC<ToastItemProps> = ({ task, onUndo, onDismiss: onDismis
 const WelcomeModal = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t }: any) => { const [step, setStep] = useState(1); if (!show) return null; return ( <div className="fixed inset-0 z-[200] bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-8 animate-fade-in"><div className="max-w-2xl w-full bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col md:flex-row h-[500px]"><div className="w-full md:w-1/2 bg-blue-600 p-8 flex flex-col justify-between text-white relative overflow-hidden"><div className="z-10"><div className="flex items-center space-x-2 mb-4"><AuroraLogo size={40} className="shadow-lg" /><span className="font-bold text-xl tracking-wider">AURORA</span></div><h1 className="text-3xl font-bold leading-tight mb-4">{step === 1 ? t('welcome.step1Title') : t('welcome.step2Title')}</h1><p className="text-blue-100 opacity-90">{step === 1 ? t('welcome.step1Desc') : t('welcome.step2Desc')}</p></div><div className="absolute -bottom-20 -right-20 w-64 h-64 bg-blue-500 rounded-full opacity-50 blur-3xl"></div><div className="absolute top-20 -left-20 w-48 h-48 bg-purple-500 rounded-full opacity-30 blur-3xl"></div><div className="flex space-x-2 z-10"><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 1 ? 'bg-white' : 'bg-white/30'}`}></div><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 2 ? 'bg-white' : 'bg-white/30'}`}></div></div></div><div className="w-full md:w-1/2 p-8 flex flex-col relative bg-gray-50 dark:bg-gray-900">{step === 1 && (<div className="flex-1 flex flex-col justify-center space-y-6"><div className="text-center"><div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400"><HardDrive size={32} /></div><button onClick={onSelectFolder} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center justify-center w-full">{t('welcome.selectFolder')}</button></div>{currentPath && (<div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center"><div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div><div className="text-sm font-mono truncate px-2">{currentPath}</div></div>)}</div>)}{step === 2 && (<div className="flex-1 space-y-6 flex flex-col justify-center"><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label><div className="grid grid-cols-2 gap-3">{['zh', 'en'].map(lang => (<button key={lang} onClick={() => onUpdateSettings({ language: lang })} className={`px-3 py-2 rounded-lg border text-sm font-medium transition-all ${settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{lang === 'zh' ? '中文' : 'English'}</button>))}</div></div><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.theme')}</label><div className="grid grid-cols-3 gap-2">{['light', 'dark', 'system'].map(theme => (<button key={theme} onClick={() => onUpdateSettings({ theme })} className={`px-2 py-2 rounded-lg border text-xs font-medium transition-all flex flex-col items-center justify-center ${settings.theme === theme ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{theme === 'light' && <Sun size={16} className="mb-1"/>}{theme === 'dark' && <Moon size={16} className="mb-1"/>}{theme === 'system' && <Monitor size={16} className="mb-1"/>}{t(`settings.theme${theme.charAt(0).toUpperCase() + theme.slice(1)}`)}</button>))}</div></div></div>)}<div className="mt-6 flex justify-between items-center pt-6 border-t border-gray-100 dark:border-gray-800">{step === 2 ? (<button onClick={onFinish} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm font-medium px-4">{t('welcome.skip')}</button>) : (<div></div>)}<button onClick={() => { if (step === 1) { if (currentPath) setStep(2); } else { onFinish(); } }} disabled={step === 1 && !currentPath} className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && !currentPath ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}>{step === 1 ? t('welcome.next') : t('welcome.finish')}<ChevronRight size={16} className="ml-2" /></button></div></div></div></div> ); };
 
 // ... (CropAvatarModal and other helpers remain unchanged)
-const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
-  // ... (keep existing implementation)
+const CropAvatarModal = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t }: any) => {
+  // 基础状态
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // 文件列表状态
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [currentImageId, setCurrentImageId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  // 初始化时设置当前图片ID
+  useEffect(() => {
+    // 找到与fileUrl对应的文件
+    const initialFile: any = Object.values(allFiles).find((file: any) => {
+      return file.url === fileUrl || convertFileSrc(file.path) === fileUrl;
+    });
+    
+    if (initialFile) {
+      setSelectedFile(initialFile.id);
+      setCurrentImageId(initialFile.id);
+    }
+  }, [fileUrl, allFiles]);
+  
+  // 获取该人物下的所有图片
+  const getPersonImages = () => {
+    const images: any[] = [];
+    
+    Object.values(allFiles).forEach((file: any) => {
+      if (file.type === 'image' && file.aiData?.faces) {
+        const hasPerson = file.aiData.faces.some((face: any) => face.personId === personId);
+        if (hasPerson) {
+          images.push(file);
+        }
+      }
+    });
+    
+    return images;
+  };
+  
+  const personImages = getPersonImages();
+  
+  // 过滤图片
+  const filteredImages = personImages.filter(img => 
+    img.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+  
+  // 处理图片选择
+  const handleImageSelect = (file: any) => {
+    setSelectedFile(file.id);
+    setCurrentImageId(file.id);
+    // 重置缩放和位置
+    setScale(1);
+    setPosition({ x: 0, y: 0 });
+    // 更新当前显示的图片URL
+    const newFileUrl = convertFileSrc(file.path);
+    // 触发重新渲染
+    if (imgRef.current) {
+      imgRef.current.src = newFileUrl;
+    }
+  };
   
   const VIEWPORT_SIZE = 400;
   const CROP_SIZE = 250;
@@ -344,14 +400,41 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
       const img = e.currentTarget;
-      const minScale = CROP_SIZE / Math.min(img.naturalWidth, img.naturalHeight);
-      const initialScale = Math.max(minScale, 0.5); 
-      setScale(initialScale);
+      let initialScale;
+      let initialPosition = { x: 0, y: 0 };
       
-      setPosition({
-          x: (VIEWPORT_SIZE - img.naturalWidth * initialScale) / 2,
-          y: (VIEWPORT_SIZE - img.naturalHeight * initialScale) / 2
-      });
+      if (initialBox) {
+          // 如果有初始人脸框，根据人脸框计算缩放和位置
+          const boxWidth = img.naturalWidth * (initialBox.w / 100);
+          const boxHeight = img.naturalHeight * (initialBox.h / 100);
+          const boxAspect = boxWidth / boxHeight;
+          
+          // 计算适合裁剪区域的缩放比例
+          const scaleX = CROP_SIZE * 1.5 / boxWidth;
+          const scaleY = CROP_SIZE * 1.5 / boxHeight;
+          initialScale = Math.max(scaleX, scaleY);
+          
+          // 计算位置，使人脸框中心对准裁剪区域中心
+          const boxCenterX = img.naturalWidth * (initialBox.x / 100) + boxWidth / 2;
+          const boxCenterY = img.naturalHeight * (initialBox.y / 100) + boxHeight / 2;
+          
+          initialPosition = {
+              x: VIEWPORT_SIZE / 2 - boxCenterX * initialScale,
+              y: VIEWPORT_SIZE / 2 - boxCenterY * initialScale
+          };
+      } else {
+          // 默认行为：居中显示
+          const minScale = CROP_SIZE / Math.min(img.naturalWidth, img.naturalHeight);
+          initialScale = Math.max(minScale, 0.5);
+          
+          initialPosition = {
+              x: (VIEWPORT_SIZE - img.naturalWidth * initialScale) / 2,
+              y: (VIEWPORT_SIZE - img.naturalHeight * initialScale) / 2
+          };
+      }
+      
+      setScale(initialScale);
+      setPosition(initialPosition);
   };
   
   const handleWheel = (e: React.WheelEvent) => {
@@ -412,7 +495,8 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
           x: (x / natW) * 100,
           y: (y / natH) * 100,
           w: (w / natW) * 100,
-          h: (h / natH) * 100
+          h: (h / natH) * 100,
+          imageId: currentImageId
       });
   };
   
@@ -427,77 +511,137 @@ const CropAvatarModal = ({ fileUrl, onConfirm, onClose, t }: any) => {
 
   return (
     <div className="fixed inset-0 z-[150] bg-black/70 flex items-center justify-center p-4 animate-fade-in" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col w-[450px]">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-800 font-bold text-gray-800 dark:text-white flex justify-between">
-                <span>{t('context.cropAvatar')}</span>
-                <button onClick={onClose}><X size={20}/></button>
+        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row w-full max-w-4xl max-h-[90vh]">
+            {/* 左侧：裁剪区域 */}
+            <div className="flex flex-col w-full md:w-1/2 p-6">
+                <div className="font-bold text-gray-800 dark:text-white mb-4">
+                    <span>{t('context.cropAvatar')}</span>
+                </div>
+                <div 
+                    ref={containerRef}
+                    className="relative bg-gray-100 dark:bg-black overflow-hidden cursor-move select-none flex-shrink-0"
+                    style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE, margin: '0 auto' }}
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                >
+                    <img 
+                       ref={imgRef}
+                       src={fileUrl}
+                       draggable={false}
+                       onLoad={handleImageLoad}
+                       className="max-w-none absolute origin-top-left pointer-events-none"
+                       style={{ 
+                           transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
+                       }}
+                    />
+                    <div className="absolute inset-0 pointer-events-none">
+                        <svg width="100%" height="100%">
+                            <defs>
+                                <mask id="cropMask">
+                                    <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                                    <circle cx={VIEWPORT_SIZE/2} cy={VIEWPORT_SIZE/2} r={CROP_SIZE/2} fill="black" />
+                                </mask>
+                            </defs>
+                            <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#cropMask)" />
+                            
+                            <circle 
+                                cx={VIEWPORT_SIZE/2} 
+                                cy={VIEWPORT_SIZE/2} 
+                                r={CROP_SIZE/2} 
+                                fill="none" 
+                                stroke="white" 
+                                strokeWidth="2" 
+                                style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
+                            />
+                        </svg>
+                    </div>
+                </div>
+                <div className="mt-6 space-y-4">
+                    <div className="flex items-center space-x-3">
+                        <Minus size={16} className="text-gray-500"/>
+                        <input 
+                        type="range" 
+                        id="crop-zoom-slider"
+                        name="crop-zoom-slider"
+                        min="0.1" 
+                        max="5" 
+                        step="0.01" 
+                        value={scale}
+                        onChange={(e) => {
+                            const newScale = parseFloat(e.target.value);
+                            if (imgRef.current) {
+                                const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
+                                if (newScale >= minScale) setScale(newScale);
+                            } else {
+                                setScale(newScale);
+                            }
+                        }}
+                        className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
+                    />
+                        <Plus size={16} className="text-gray-500"/>
+                    </div>
+                    <div className="flex justify-end space-x-3">
+                        <button onClick={onClose} className="px-4 py-2 rounded text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">{t('settings.cancel')}</button>
+                        <button onClick={handleSave} className="px-6 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg">{t('settings.confirm')}</button>
+                    </div>
+                </div>
             </div>
-            <div 
-                ref={containerRef}
-                className="relative bg-gray-100 dark:bg-black overflow-hidden cursor-move select-none"
-                style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE, margin: '25px auto' }}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-            >
-                <img 
-                   ref={imgRef}
-                   src={fileUrl}
-                   draggable={false}
-                   onLoad={handleImageLoad}
-                   className="max-w-none absolute origin-top-left pointer-events-none"
-                   style={{ 
-                       transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
-                   }}
-                />
-                <div className="absolute inset-0 pointer-events-none">
-                    <svg width="100%" height="100%">
-                        <defs>
-                            <mask id="cropMask">
-                                <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                                <circle cx={VIEWPORT_SIZE/2} cy={VIEWPORT_SIZE/2} r={CROP_SIZE/2} fill="black" />
-                            </mask>
-                        </defs>
-                        <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#cropMask)" />
-                        
-                        <circle 
-                            cx={VIEWPORT_SIZE/2} 
-                            cy={VIEWPORT_SIZE/2} 
-                            r={CROP_SIZE/2} 
-                            fill="none" 
-                            stroke="white" 
-                            strokeWidth="2" 
-                            style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
+            
+            {/* 右侧：文件列表 */}
+            <div className="w-full md:w-1/2 border-l border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
+                    <div className="relative">
+                        <input
+                            type="text"
+                            placeholder={t('search.placeholder')}
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         />
-                    </svg>
+                        <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                    </div>
                 </div>
-            </div>
-            <div className="p-6 pt-0 space-y-4">
-                <div className="flex items-center space-x-3">
-                    <Minus size={16} className="text-gray-500"/>
-                    <input 
-                    type="range" 
-                    id="crop-zoom-slider"
-                    name="crop-zoom-slider"
-                    min="0.1" 
-                    max="5" 
-                    step="0.01" 
-                    value={scale}
-                    onChange={(e) => {
-                        const newScale = parseFloat(e.target.value);
-                        if (imgRef.current) {
-                            const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
-                            if (newScale >= minScale) setScale(newScale);
-                        } else {
-                            setScale(newScale);
-                        }
-                    }}
-                    className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                />
-                    <Plus size={16} className="text-gray-500"/>
-                </div>
-                <div className="flex justify-end space-x-3">
-                    <button onClick={onClose} className="px-4 py-2 rounded text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">{t('settings.cancel')}</button>
-                    <button onClick={handleSave} className="px-6 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg">{t('settings.confirm')}</button>
+                
+                <div className="flex-1 overflow-y-auto p-4">
+                    {filteredImages.length === 0 ? (
+                        <div className="text-center text-gray-500 dark:text-gray-400 py-8">
+                            <p>{t('context.noImagesFound')}</p>
+                            {searchQuery && <p className="text-sm mt-2">{t('context.noImagesMatchingQuery')}</p>}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-3 gap-3">
+                            {filteredImages.map((file) => {
+                                const isSelected = selectedFile === file.id;
+                                return (
+                                    <div
+                                        key={file.id}
+                                        onClick={() => handleImageSelect(file)}
+                                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all duration-200 hover:shadow-md ${
+                                            isSelected ? 'border-blue-500 shadow-lg' : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700'
+                                        }`}
+                                    >
+                                        <div className="relative">
+                                            <img
+                                                src={convertFileSrc(file.path)}
+                                                className="w-full h-24 object-cover"
+                                                alt={file.name}
+                                            />
+                                            {isSelected && (
+                                                <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center">
+                                                    <Check size={24} className="text-white" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="p-2 bg-white dark:bg-gray-800">
+                                            <p className="text-xs text-gray-600 dark:text-gray-300 truncate">
+                                                {file.name}
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -1441,7 +1585,7 @@ export const App: React.FC = () => {
     // 关闭右键菜单
     closeContextMenu();
     
-    if ((e.target as HTMLElement).closest('.file-item') || (e.target as HTMLElement).closest('.tag-item')) {
+    if ((e.target as HTMLElement).closest('.file-item') || (e.target as HTMLElement).closest('.tag-item') || (e.target as HTMLElement).closest('[style*="left:"]')) {
         return;
     }
     
@@ -1580,12 +1724,22 @@ export const App: React.FC = () => {
         updateActiveTab({ selectedTagIds });
       }
     } else if (activeTab.viewMode === 'people-overview') {
-      // Person selection - optimized with efficient calculation
+      // Person selection - use the same logic as FileGrid for consistent positioning
       const selectedPersonIds: string[] = [];
-      // Get all people in the same order as displayed in the grid
-      const allPeople = Object.values(state.people);
       
-      // Calculate container width for layout calculation
+      // Get all people and filter by search query (same as FileGrid)
+      let itemsList = Object.values(state.people);
+      if (activeTab.searchQuery && activeTab.searchQuery.trim()) {
+        const query = activeTab.searchQuery.toLowerCase().trim();
+        itemsList = itemsList.filter(person => 
+            person.name.toLowerCase().includes(query)
+        );
+      }
+      
+      // Sort people alphabetically by name, same as in handlePersonClick and useLayout
+      itemsList.sort((a, b) => a.name.localeCompare(b.name));
+      
+      // Calculate layout parameters (same as FileGrid)
       const containerWidth = container.clientWidth;
       const thumbnailSize = state.thumbnailSize;
       const GAP = 16;
@@ -1597,28 +1751,35 @@ export const App: React.FC = () => {
       const itemHeight = itemWidth + 60;
       
       // Check each person's position against selection box
-      allPeople.forEach((person, index) => {
+      itemsList.forEach((person, index) => {
         const row = Math.floor(index / cols);
         const col = index % cols;
         
-        // Calculate person position in viewport coordinates
-        const personLeft = containerRect.left + PADDING + col * (itemWidth + GAP);
-        const personTop = containerRect.top + PADDING + row * (itemHeight + GAP);
-        const personRight = personLeft + itemWidth;
-        const personBottom = personTop + itemHeight;
+        // Calculate person position in container coordinates (not viewport)
+        // This accounts for scrolling correctly
+        const personContainerLeft = PADDING + col * (itemWidth + GAP);
+        const personContainerTop = PADDING + row * (itemHeight + GAP);
+        const personContainerRight = personContainerLeft + itemWidth;
+        const personContainerBottom = personContainerTop + itemHeight;
         
-        // Check if person overlaps with selection box
-        if (personLeft < selectionRight && 
-            personRight > selectionLeft && 
-            personTop < selectionBottom && 
-            personBottom > selectionTop) {
+        // Calculate selection box in container coordinates (not viewport)
+        const selContainerLeft = Math.min(selectionBox.startX, selectionBox.currentX);
+        const selContainerTop = Math.min(selectionBox.startY, selectionBox.currentY);
+        const selContainerRight = Math.max(selectionBox.startX, selectionBox.currentX);
+        const selContainerBottom = Math.max(selectionBox.startY, selectionBox.currentY);
+        
+        // Check if person overlaps with selection box in container coordinates
+        // This works correctly regardless of scrolling
+        if (personContainerLeft < selContainerRight && 
+            personContainerRight > selContainerLeft && 
+            personContainerTop < selContainerBottom && 
+            personContainerBottom > selContainerTop) {
           selectedPersonIds.push(person.id);
         }
       });
       
-      if (selectedPersonIds.length > 0) {
-        updateActiveTab({ selectedPersonIds });
-      }
+      // Always update selection, even if no people were selected (consistent with file selection)
+      updateActiveTab({ selectedPersonIds });
     }
     
     // End selection box
@@ -2515,14 +2676,30 @@ export const App: React.FC = () => {
       
       closeContextMenu();
       
+      // If we just finished a selection box operation, don't process the click
+      if (isSelecting) return;
+      
       const isCtrl = e.ctrlKey || e.metaKey; // Ctrl for Windows/Linux, Command for macOS
       const isShift = e.shiftKey;
       
       let newSelectedPersonIds: string[];
+      let newLastSelectedId: string = personId;
       
       // Get all people in the current view, in the same order as displayed in the grid
       // Match the order used in FileGrid's useLayout function for people-overview
-      const allPeople = Object.values(state.people);
+      let allPeople = Object.values(state.people);
+      
+      // Apply search filter if present, same as in FileGrid
+      if (activeTab.searchQuery && activeTab.searchQuery.trim()) {
+        const query = activeTab.searchQuery.toLowerCase().trim();
+        allPeople = allPeople.filter(person => 
+            person.name.toLowerCase().includes(query)
+        );
+      }
+      
+      // Sort people alphabetically by name, same as in useLayout
+      allPeople.sort((a, b) => a.name.localeCompare(b.name));
+      
       const allPersonIds = allPeople.map(person => person.id);
       
       if (isCtrl) {
@@ -2534,10 +2711,18 @@ export const App: React.FC = () => {
           // Add to selection
           newSelectedPersonIds = [...activeTab.selectedPersonIds, personId];
         }
-      } else if (isShift && activeTab.selectedPersonIds.length > 0) {
+        // Always set lastSelectedId to current click, same as file handling
+        newLastSelectedId = personId;
+      } else if (isShift) {
         // Shift+Click: Select range from last selected to current
-        const lastSelectedPersonId = activeTab.selectedPersonIds[activeTab.selectedPersonIds.length - 1];
-        const lastIndex = allPersonIds.indexOf(lastSelectedPersonId);
+        let lastSelectedId = activeTab.lastSelectedId;
+        
+        // If no lastSelectedId, use the first selected person or current person
+        if (!lastSelectedId) {
+          lastSelectedId = activeTab.selectedPersonIds.length > 0 ? activeTab.selectedPersonIds[0] : personId;
+        }
+        
+        const lastIndex = allPersonIds.indexOf(lastSelectedId);
         const currentIndex = allPersonIds.indexOf(personId);
         
         if (lastIndex !== -1 && currentIndex !== -1) {
@@ -2552,7 +2737,10 @@ export const App: React.FC = () => {
         newSelectedPersonIds = [personId];
       }
       
-      updateActiveTab({ selectedPersonIds: newSelectedPersonIds });
+      updateActiveTab({ 
+        selectedPersonIds: newSelectedPersonIds,
+        lastSelectedId: newLastSelectedId
+      });
   };
 
   const handleRenameTag = (oldTag: string, newTag: string) => {
@@ -2845,22 +3033,32 @@ export const App: React.FC = () => {
   const handleSetAvatar = (personId: string) => {
       const person = state.people[personId];
       if (person && person.coverFileId) {
-          setState(s => ({ 
-              ...s, 
-              activeModal: { 
-                  type: 'crop-avatar', 
-                  data: { 
-                      personId: person.id, 
-                      fileUrl: state.files[person.coverFileId]?.url,
-                      initialBox: person.faceBox 
+          const coverFile = state.files[person.coverFileId];
+          if (coverFile) {
+              setState(s => ({ 
+                  ...s, 
+                  activeModal: { 
+                      type: 'crop-avatar', 
+                      data: { 
+                          personId: person.id, 
+                          fileUrl: convertFileSrc(coverFile.path),
+                          initialBox: person.faceBox 
+                      } 
                   } 
-              } 
-          }));
+              }));
+          }
       }
   };
 
-  const handleSaveAvatarCrop = (personId: string, box: {x: number, y: number, w: number, h: number}) => {
-      handleUpdatePerson(personId, { faceBox: box });
+  const handleSaveAvatarCrop = (personId: string, box: {x: number, y: number, w: number, h: number, imageId?: string | null}) => {
+      const updates: Partial<Person> = { faceBox: box };
+      
+      // 如果选择了新的图片，更新coverFileId
+      if (box.imageId) {
+          updates.coverFileId = box.imageId;
+      }
+      
+      handleUpdatePerson(personId, updates);
       setState(s => ({ ...s, activeModal: { type: null } }));
       showToast(t('context.saved'));
   };
@@ -4341,7 +4539,7 @@ export const App: React.FC = () => {
                       ...state.settings,
                       people: currentPeople
                   };
-                  const { aiData: aiResultData, faceDescriptors } = await aiService.analyzeImage(imagePath, settingsWithPeople);
+                  const { aiData: aiResultData, faceDescriptors } = await aiService.analyzeImage(imagePath, settingsWithPeople, currentPeople);
                   
                   aiData = {
                       ...baseAiData,
@@ -4402,6 +4600,13 @@ export const App: React.FC = () => {
                   const aiFaces: AiFace[] = [];
                   
                   result.people.forEach((name: string) => {
+                      // For AI API detected people, be cautious with generic names
+                      // Don't automatically merge by name for generic terms like "女性"
+                      const isGenericName = name.toLowerCase() === '女性' || name.toLowerCase() === 'female' || 
+                                          name.toLowerCase() === '男性' || name.toLowerCase() === 'male' ||
+                                          name.toLowerCase() === 'person' || name.toLowerCase() === 'people';
+                      
+                      if (!isGenericName) {
                       // Check if person already exists by name
                       let personId = Object.keys(currentPeople).find(pid => currentPeople[pid].name.toLowerCase() === name.toLowerCase());
                       
@@ -4436,6 +4641,7 @@ export const App: React.FC = () => {
                               confidence: 0.95,
                               box: { x: 0, y: 0, w: 0, h: 0 }
                           });
+                      }
                       }
                   });
                   
@@ -5048,6 +5254,9 @@ export const App: React.FC = () => {
           <CropAvatarModal 
              fileUrl={state.activeModal.data.fileUrl}
              initialBox={state.activeModal.data.initialBox}
+             personId={state.activeModal.data.personId}
+             allFiles={state.files}
+             people={state.people}
              onConfirm={(box: any) => handleSaveAvatarCrop(state.activeModal.data.personId, box)}
              onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))}
              t={t}

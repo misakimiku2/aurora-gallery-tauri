@@ -1234,7 +1234,7 @@ const PersonCard = React.memo(({
       <div 
         className={`rounded-full p-1 transition-all duration-300 relative shadow-md group-hover:shadow-xl group-hover:-translate-y-1
           ${isSelected 
-            ? 'bg-blue-600 scale-110 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
+            ? 'bg-blue-600 scale-105 ring-3 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
             : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
           }
         `}
@@ -1265,8 +1265,8 @@ const PersonCard = React.memo(({
         
         {/* Selection Checkmark */}
         {isSelected && (
-          <div className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1.5 border-2 border-white dark:border-gray-900 shadow-lg ring-2 ring-blue-400/50">
-            <Check size={Math.max(14, avatarSize * 0.17)} strokeWidth={3} />
+          <div className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 border-1 border-white dark:border-gray-900 shadow-md ring-1 ring-blue-400/50">
+            <Check size={Math.max(12, avatarSize * 0.12)} strokeWidth={2} />
           </div>
         )}
       </div>
@@ -2070,6 +2070,9 @@ const useLayout = (
                 person.name.toLowerCase().includes(query)
             );
         }
+        
+        // Sort people alphabetically by name, same as in handlePersonClick
+        itemsList.sort((a, b) => a.name.localeCompare(b.name));
         const minColWidth = thumbnailSize;
         const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
         const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
