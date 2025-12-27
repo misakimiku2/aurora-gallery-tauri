@@ -40,7 +40,7 @@ const findImagesDeeply = (
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2 } from 'lucide-react';
+import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw } from 'lucide-react';
 import { Folder3DIcon } from './FileGrid';
 
 interface MetadataProps {
@@ -1029,8 +1029,39 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         {/* Color Palette (8 Card Grid) */}
         {!isMulti && file && file.type === FileType.IMAGE && colors.length > 0 && (
             <div>
-                <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center">
-                    <PaletteIcon size={12} className="mr-1.5"/> {t('meta.palette')}
+                <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
+                    <div className="flex items-center">
+                        <PaletteIcon size={12} className="mr-1.5"/> {t('meta.palette')}
+                    </div>
+                    <button 
+                        onClick={() => {
+                            if (file && file.type === FileType.IMAGE && file.path) {
+                                // Clear current palette
+                                onUpdate(file.id, {
+                                    meta: { ...file.meta!, palette: [] }
+                                });
+                                // Re-extract palette
+                                extractedCache.current.delete(file.id);
+                                (async () => {
+                                    try {
+                                        const imgUrl = convertFileSrc(file.path!);
+                                        const palette = await extractPalette(imgUrl);
+                                        if (palette && palette.length > 0) {
+                                            onUpdate(file.id, {
+                                                meta: { ...file.meta!, palette }
+                                            });
+                                        }
+                                    } catch (err) {
+                                        console.error('Failed to re-extract palette:', err);
+                                    }
+                                })();
+                            }
+                        }}
+                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors flex items-center justify-center"
+                        title={t('meta.regeneratePalette')}
+                    >
+                        <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
+                    </button>
                 </div>
                 <div className="grid grid-cols-4 gap-2">
                     {colors.slice(0, 8).map((color, i) => (
