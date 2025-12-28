@@ -2,7 +2,7 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { Channel } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 import { startDrag as tauriStartDrag } from '@crabnebula/tauri-plugin-drag';
-import { FileNode, FileType } from '../types';
+import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment } from '../utils/environment';
 
 /**
@@ -146,18 +146,19 @@ class ThumbnailBatcher {
         resolve: (value: string | null) => void;
         reject: (reason?: any) => void;
         cacheRoot: string;
+        onColors?: (colors: DominantColor[] | null) => void;
     }> = new Map();
     private timeoutId: ReturnType<typeof setTimeout> | null = null;
     private readonly BATCH_DELAY = 50; // 50ms 聚合时间
 
-    add(filePath: string, cacheRoot: string): Promise<string | null> {
+    add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> {
         return new Promise((resolve, reject) => {
             // 如果已经在队列中，暂不处理覆盖，假设相同请求会得到相同结果
             if (this.batch.has(filePath)) {
                // 可选：将新请求关联到旧请求的 Promise，但这里简化处理
             }
             
-            this.batch.set(filePath, { resolve, reject, cacheRoot });
+            this.batch.set(filePath, { resolve, reject, cacheRoot, onColors });
 
             if (!this.timeoutId) {
                 this.timeoutId = setTimeout(() => this.processBatch(), this.BATCH_DELAY);
@@ -188,10 +189,10 @@ class ThumbnailBatcher {
             await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
                 try {
                     // 创建通道
-                    const channel = new Channel<{ path: string; url: string | null }>();
+                    const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null }>();
                     
                     // 监听通道消息 (流式结果！)
-                    channel.onmessage = ({ path, url }) => {
+                    channel.onmessage = ({ path, url, colors }) => {
                         const item = currentBatch.get(path);
                         if (item) {
                             if (url) {
@@ -233,6 +234,13 @@ class ThumbnailBatcher {
                             } else {
                                 item.resolve(null);
                             }
+                            
+                            // 回调颜色数据
+                            if (item.onColors && colors) {
+                                item.onColors(colors);
+                            } else if (item.onColors) {
+                                item.onColors(null);
+                            }
                         }
                     };
 
@@ -247,7 +255,10 @@ class ThumbnailBatcher {
                     // 局部失败
                     paths.forEach(path => {
                         const item = currentBatch.get(path);
-                        if (item) item.resolve(null);
+                        if (item) {
+                            item.resolve(null);
+                            if (item.onColors) item.onColors(null);
+                        }
                     });
                 }
             }));
@@ -257,6 +268,7 @@ class ThumbnailBatcher {
             // 全局失败
             for (const item of currentBatch.values()) {
                 item.resolve(null);
+                if (item.onColors) item.onColors(null);
             }
         }
     }
@@ -270,9 +282,10 @@ const thumbnailBatcher = new ThumbnailBatcher();
  * @param modified 文件修改时间（可选，用于缓存）
  * @param rootPath 资源根目录路径（可选，用于计算缓存目录）
  * @param signal AbortSignal (可选，用于取消请求)
+ * @param onColors 颜色提取回调（可选）
  * @returns 缩略图 Asset URL，如果失败则返回 null
  */
-export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal): Promise<string | null> => {
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => {
     // 验证参数
     if (!filePath || filePath.trim() === '') return null;
     if (!rootPath || rootPath.trim() === '') return null;
@@ -281,7 +294,7 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
     const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
 
     // 使用批量处理器
-    return thumbnailBatcher.add(filePath, cachePath);
+    return thumbnailBatcher.add(filePath, cachePath, onColors);
 };
 
 /**
@@ -546,6 +559,38 @@ export const exitApp = async (): Promise<void> => {
     if (typeof window !== 'undefined' && window.close) {
       window.close();
     }
+  }
+};
+
+/**
+ * 从图片文件中提取主色调
+ * @param filePath 图片文件路径
+ * @returns 主色调结果，如果失败则返回 null
+ */
+export const getDominantColor = async (filePath: string): Promise<DominantColor | null> => {
+  try {
+    const result = await invoke('get_dominant_color', { filePath });
+    return result as DominantColor | null;
+  } catch (error) {
+    console.error('Failed to get dominant color:', error);
+    return null;
+  }
+};
+
+/**
+ * 从图片文件中提取多个主色调
+ * @param filePath 图片文件路径
+ * @param count 要提取的颜色数量
+ * @param thumbnailPath 可选的缩略图路径，如果提供则使用缩略图进行提取
+ * @returns 主色调数组，如果失败则返回空数组
+ */
+export const getDominantColors = async (filePath: string, count: number = 8, thumbnailPath?: string): Promise<DominantColor[]> => {
+  try {
+    const result = await invoke('get_dominant_colors', { filePath, count, thumbnailPath });
+    return result as DominantColor[];
+  } catch (error) {
+    console.error('Failed to get dominant colors:', error);
+    return [];
   }
 };
 

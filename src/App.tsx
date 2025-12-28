@@ -655,6 +655,13 @@ import { DragDropOverlay, DropAction } from './components/DragDropOverlay';
 // 导入统一的环境检测工具
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
 
+// 扩展 Window 接口以包含我们的全局函数
+declare global {
+  interface Window {
+    __UPDATE_FILE_COLORS__?: (filePath: string, colors: string[]) => void;
+  }
+}
+
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
     roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
@@ -732,6 +739,45 @@ export const App: React.FC = () => {
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
   const [draggedFilePaths, setDraggedFilePaths] = useState<string[]>([]);
 
+  // Global function for FileGrid to update file colors
+  useEffect(() => {
+    // 设置全局函数，供 FileGrid 组件调用
+    window.__UPDATE_FILE_COLORS__ = (filePath: string, colors: string[]) => {
+      // 找到对应的文件ID
+      const fileEntry = Object.entries(state.files).find(([id, file]) => file.path === filePath);
+      if (fileEntry) {
+        const [fileId, file] = fileEntry;
+        // 更新文件的 meta.palette，保持其他 meta 字段不变
+        const currentMeta = file.meta;
+        if (currentMeta) {
+          handleUpdateFile(fileId, {
+            meta: {
+              ...currentMeta,
+              palette: colors
+            }
+          });
+        } else {
+          // 如果没有 meta，创建一个基本的 meta 对象
+          handleUpdateFile(fileId, {
+            meta: {
+              width: 0,
+              height: 0,
+              sizeKb: 0,
+              created: new Date().toISOString(),
+              modified: new Date().toISOString(),
+              format: '',
+              palette: colors
+            }
+          });
+        }
+      }
+    };
+
+    // 清理函数
+    return () => {
+      delete window.__UPDATE_FILE_COLORS__;
+    };
+  }, [state.files]); // 依赖 files，确保能正确找到文件
 
   
   // Throttle function to limit how often a function can be called

@@ -5,6 +5,12 @@ export enum FileType {
   UNKNOWN = 'unknown'
 }
 
+export interface DominantColor {
+  hex: string;
+  rgb: [number, number, number];
+  isDark: boolean;
+}
+
 export interface ImageMeta {
   width: number;
   height: number;
@@ -13,6 +19,7 @@ export interface ImageMeta {
   modified: string;
   format: string;
   palette?: string[];
+  dominantColors?: DominantColor[];
 }
 
 export interface AiFace {

@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup } from '../types';
+import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, DominantColor } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import md5 from 'md5';
@@ -14,6 +14,7 @@ declare global {
   interface Window {
     __AURORA_THUMBNAIL_CACHE__?: LRUCache<string>;
     __AURORA_THUMBNAIL_PATH_CACHE__?: LRUCache<string>; // 缩略图原始文件路径缓存（用于外部拖拽）
+    __UPDATE_FILE_COLORS__?: (filePath: string, colors: string[]) => void;
   }
 }
 
@@ -270,7 +271,16 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         
         try {
           const { getThumbnail } = await import('../api/tauri-bridge');
-          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal);
+          
+          // 创建颜色提取回调函数
+          const onColors = (colors: DominantColor[] | null) => {
+            if (colors && window.__UPDATE_FILE_COLORS__) {
+              // 通过全局函数更新文件元数据
+              window.__UPDATE_FILE_COLORS__(filePath, colors.map(c => c.hex));
+            }
+          };
+          
+          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, onColors);
           
           if (!controller.signal.aborted && thumbnail) {
             // 更新全局缓存

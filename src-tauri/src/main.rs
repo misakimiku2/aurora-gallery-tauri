@@ -16,6 +16,9 @@ use base64::{Engine as _, engine::general_purpose};
 use fast_image_resize as fr;
 use rayon::prelude::*;
 
+// 导入颜色提取模块
+mod color_extractor;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileType {
@@ -1318,11 +1321,18 @@ async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<S
     }
 }
 
+#[derive(Clone, Serialize)]
+struct ThumbnailBatchResult {
+    path: String,
+    url: Option<String>,
+    colors: Option<Vec<color_extractor::ColorResult>>,
+}
+
 #[tauri::command]
 async fn get_thumbnails_batch(
-    file_paths: Vec<String>, 
-    cache_root: String, 
-    on_event: tauri::ipc::Channel<BatchResult>
+    file_paths: Vec<String>,
+    cache_root: String,
+    on_event: tauri::ipc::Channel<ThumbnailBatchResult>
 ) -> Result<(), String> {
     // 放入 blocking 线程
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1333,13 +1343,37 @@ async fn get_thumbnails_batch(
 
         // 使用 Rayon 并行处理！9800X3D 此时将全核满载
         file_paths.par_iter().for_each(|path| {
-            // 处理单个文件
+            // 处理单个文件 - 生成缩略图
             let url = process_single_thumbnail(path, root);
             
-            // 立即发送结果回前端！不用等别人！
-            let _ = on_event.send(BatchResult {
+            // 同时提取主色调（使用缩略图路径，如果存在的话）
+            let colors = if let Some(ref thumb_path) = url {
+                // 从缩略图提取颜色（更快）
+                if let Ok(thumb_file) = fs::File::open(thumb_path) {
+                    use std::io::BufReader;
+                    let reader = BufReader::new(thumb_file);
+                    if let Ok(img) = image::load(reader, image::ImageFormat::from_path(thumb_path).unwrap_or(image::ImageFormat::Jpeg)) {
+                        let extracted = color_extractor::get_dominant_colors(&img, 8);
+                        if !extracted.is_empty() { Some(extracted) } else { None }
+                    } else { None }
+                } else { None }
+            } else {
+                // 缩略图生成失败，尝试从原图提取
+                if let Ok(file) = fs::File::open(path) {
+                    use std::io::BufReader;
+                    let reader = BufReader::new(file);
+                    if let Ok(img) = image::load(reader, image::ImageFormat::from_path(path).unwrap_or(image::ImageFormat::Jpeg)) {
+                        let extracted = color_extractor::get_dominant_colors(&img, 8);
+                        if !extracted.is_empty() { Some(extracted) } else { None }
+                    } else { None }
+                } else { None }
+            };
+            
+            // 立即发送结果回前端！
+            let _ = on_event.send(ThumbnailBatchResult {
                 path: path.clone(),
                 url,
+                colors,
             });
         });
         
@@ -1584,6 +1618,68 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+async fn get_dominant_color(file_path: String) -> Result<Option<color_extractor::ColorResult>, String> {
+    use image::ImageFormat;
+    use std::fs::File;
+    use std::io::BufReader;
+    
+    // Check if file exists
+    if !Path::new(&file_path).exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    // Load image
+    let file = File::open(&file_path)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    
+    let reader = BufReader::new(file);
+    let img = image::load(reader, ImageFormat::from_path(&file_path).unwrap_or(ImageFormat::Jpeg))
+        .map_err(|e| format!("Failed to load image: {}", e))?;
+    
+    // Extract dominant color
+    match color_extractor::get_dominant_color(&img) {
+        Some(color) => Ok(Some(color)),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+async fn get_dominant_colors(file_path: String, count: usize, thumbnail_path: Option<String>) -> Result<Vec<color_extractor::ColorResult>, String> {
+    use image::ImageFormat;
+    use std::fs::File;
+    use std::io::BufReader;
+    
+    // 优先使用缩略图路径，如果提供了的话
+    let image_path = if let Some(thumb_path) = &thumbnail_path {
+        if Path::new(thumb_path).exists() {
+            thumb_path.clone()
+        } else {
+            file_path.clone()
+        }
+    } else {
+        file_path.clone()
+    };
+    
+    // Check if file exists
+    if !Path::new(&image_path).exists() {
+        return Err(format!("File does not exist: {}", image_path));
+    }
+    
+    // Load image (from thumbnail if available, otherwise from original)
+    let file = File::open(&image_path)
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+    
+    let reader = BufReader::new(file);
+    let img = image::load(reader, ImageFormat::from_path(&image_path).unwrap_or(ImageFormat::Jpeg))
+        .map_err(|e| format!("Failed to load image: {}", e))?;
+    
+    // Extract dominant colors
+    let colors = color_extractor::get_dominant_colors(&img, count);
+    
+    Ok(colors)
+}
+
 fn main() {
     
     tauri::Builder::default()
@@ -1594,8 +1690,8 @@ fn main() {
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
-            greet, 
-            scan_directory, 
+            greet,
+            scan_directory,
             save_user_data,
             load_user_data,
             get_default_paths,
@@ -1615,7 +1711,9 @@ fn main() {
             scan_file,
             hide_window,
             show_window,
-            exit_app
+            exit_app,
+            get_dominant_color,
+            get_dominant_colors
         ])
         .setup(|app| {
             // 创建托盘菜单

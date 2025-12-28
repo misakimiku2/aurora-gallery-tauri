@@ -150,119 +150,6 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
   );
 };
 
-const extractPalette = async (url: string): Promise<string[]> => {
-    return new Promise((resolve) => {
-        const img = new Image();
-        img.crossOrigin = "Anonymous";
-        img.src = url;
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            if(!ctx) return resolve([]);
-            
-            // Scale down for performance
-            const maxDim = 128;
-            const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-            const w = Math.round(img.width * scale);
-            const h = Math.round(img.height * scale);
-            
-            canvas.width = w;
-            canvas.height = h;
-            ctx.drawImage(img, 0, 0, w, h);
-            
-            try {
-                const data = ctx.getImageData(0, 0, w, h).data;
-                const colorCounts: Record<string, number> = {};
-                
-                // Quantize more aggressively to group noise/gradients (Bin size 16)
-                const quantization = 16;
-                
-                for(let i=0; i<data.length; i+=4) {
-                    const r = data[i];
-                    const g = data[i+1];
-                    const b = data[i+2];
-                    const a = data[i+3];
-                    
-                    if(a < 128) continue; // Ignore transparent
-
-                    // Center the quantized value
-                    const qr = Math.floor(r / quantization) * quantization + quantization/2;
-                    const qg = Math.floor(g / quantization) * quantization + quantization/2;
-                    const qb = Math.floor(b / quantization) * quantization + quantization/2;
-                    
-                    // Clamp to 0-255
-                    const fqr = Math.min(255, Math.max(0, qr));
-                    const fqg = Math.min(255, Math.max(0, qg));
-                    const fqb = Math.min(255, Math.max(0, qb));
-                    
-                    const key = `${Math.floor(fqr)},${Math.floor(fqg)},${Math.floor(fqb)}`;
-                    colorCounts[key] = (colorCounts[key] || 0) + 1;
-                }
-                
-                // Sort by frequency
-                const sorted = Object.entries(colorCounts)
-                    .map(([key, count]) => {
-                        const [r,g,b] = key.split(',').map(Number);
-                        return { 
-                            r, g, b, count, 
-                            hex: `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}` 
-                        };
-                    })
-                    .sort((a,b) => b.count - a.count);
-                
-                const finalPalette: typeof sorted = [];
-                
-                const getDist = (c1: typeof sorted[0], c2: typeof sorted[0]) => {
-                    return Math.sqrt((c1.r-c2.r)**2 + (c1.g-c2.g)**2 + (c1.b-c2.b)**2);
-                };
-
-                // Perceived luminance
-                const getLuma = (c: typeof sorted[0]) => (c.r*0.299 + c.g*0.587 + c.b*0.114);
-                
-                // Is the color effectively "black" or very dark gray?
-                const isDark = (c: typeof sorted[0]) => getLuma(c) < 45;
-
-                const addColor = (candidate: typeof sorted[0], distanceThreshold: number) => {
-                     // 1. Distance Check
-                     if (finalPalette.some(p => getDist(p, candidate) < distanceThreshold)) return false;
-                     
-                     // 2. Dark Color Limiter (Max 2 dark colors allowed)
-                     if (isDark(candidate)) {
-                         const existingDarkCount = finalPalette.filter(p => isDark(p)).length;
-                         if (existingDarkCount >= 2) return false; 
-                     }
-                     
-                     finalPalette.push(candidate);
-                     return true;
-                };
-
-                // Pass 1: Strict (Diversity priority). Distance ~45 is significant.
-                // e.g., (30,30,30) vs (60,60,60) is dist ~52. 
-                for (const c of sorted) {
-                    if (finalPalette.length >= 8) break;
-                    addColor(c, 45);
-                }
-                
-                // Pass 2: Relax slightly only if we have very few colors
-                if (finalPalette.length < 5) {
-                    for (const c of sorted) {
-                        if (finalPalette.length >= 8) break;
-                        addColor(c, 30);
-                    }
-                }
-                
-                // We DO NOT force 8 colors. If we only found 4 distinct ones, we return 4.
-
-                resolve(finalPalette.map(p => p.hex));
-                
-            } catch(e) {
-                console.error("Pixel access failed", e);
-                resolve([]);
-            }
-        };
-        img.onerror = () => resolve([]);
-    });
-};
 
 const CategorySelector = ({ current, onChange, t }: any) => (
   <div className="space-y-2 pt-4 border-t border-gray-200 dark:border-gray-800">
@@ -429,18 +316,52 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         // Only run if we haven't already processed this file in this session
         if (shouldExtract && !extractedCache.current.has(file.id) && file.path) {
            extractedCache.current.add(file.id); // Mark as processing/processed
-           // Use Asset Protocol for palette extraction
+           // Use direct file path for palette extraction (bypass URL parsing issues)
            (async () => {
              try {
-               const imgUrl = convertFileSrc(file.path!);
-               const palette = await extractPalette(imgUrl);
-               if (palette && palette.length > 0) {
+               console.log('[Auto-extract] Starting palette extraction for:', file.path);
+               const { getDominantColors } = await import('../api/tauri-bridge');
+               
+               // 尝试从全局缩略图路径缓存中获取缩略图路径
+               let thumbnailPath: string | null = null;
+               const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+               if (pathCache && pathCache.get) {
+                   thumbnailPath = pathCache.get(file.path!);
+                   if (thumbnailPath) {
+                       console.log('[Auto-extract] Got thumbnail path from cache:', thumbnailPath);
+                   }
+               }
+               
+               // 如果缓存中没有，尝试生成缩略图并获取路径
+               if (!thumbnailPath && resourceRoot) {
+                   try {
+                       const { getThumbnail } = await import('../api/tauri-bridge');
+                       // getThumbnail 返回的是 convertFileSrc 后的 URL，我们需要原始路径
+                       // 所以我们先调用 getThumbnail 确保缩略图存在，然后从缓存中获取路径
+                       const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
+                       if (thumbUrl) {
+                           // 重新从缓存获取原始路径
+                           thumbnailPath = pathCache.get(file.path!);
+                           console.log('[Auto-extract] Generated thumbnail, got path:', thumbnailPath);
+                       }
+                   } catch (err) {
+                       console.log('[Auto-extract] Failed to generate thumbnail:', err);
+                   }
+               }
+               
+               // 使用缩略图路径（如果可用）或原图路径进行颜色提取
+               const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
+               console.log('[Auto-extract] Got colors:', colors);
+               
+               if (colors && colors.length > 0) {
+                   const hexColors = colors.map(c => c.hex);
+                   console.log('[Auto-extract] Updating file with palette:', hexColors);
                    onUpdate(file.id, {
-                     meta: { ...file.meta!, palette }
+                       meta: { ...file.meta!, palette: hexColors }
                    });
                }
              } catch (err) {
-               console.error('Failed to extract palette:', err);
+               console.error('[Auto-extract] Failed to extract palette:', err);
              }
            })();
         }
@@ -508,7 +429,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }
     
     return [];
-  }, [file]);
+  }, [file?.meta?.palette, file?.aiData?.dominantColors, file]);
 
   const folderDetails = useMemo(() => {
     if (file && file.type === FileType.FOLDER) {
@@ -1033,26 +954,56 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     <div className="flex items-center">
                         <PaletteIcon size={12} className="mr-1.5"/> {t('meta.palette')}
                     </div>
-                    <button 
+                    <button
                         onClick={() => {
                             if (file && file.type === FileType.IMAGE && file.path) {
-                                // Clear current palette
-                                onUpdate(file.id, {
-                                    meta: { ...file.meta!, palette: [] }
-                                });
-                                // Re-extract palette
+                                // Remove from cache to force re-extraction
                                 extractedCache.current.delete(file.id);
+                                
+                                // Re-extract palette using direct file path
                                 (async () => {
                                     try {
-                                        const imgUrl = convertFileSrc(file.path!);
-                                        const palette = await extractPalette(imgUrl);
-                                        if (palette && palette.length > 0) {
+                                        const { getDominantColors } = await import('../api/tauri-bridge');
+                                        
+                                        // 尝试从全局缩略图路径缓存中获取缩略图路径
+                                        let thumbnailPath: string | null = null;
+                                        const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                        if (pathCache && pathCache.get) {
+                                            thumbnailPath = pathCache.get(file.path!);
+                                        }
+                                        
+                                        // 如果缓存中没有，尝试生成缩略图
+                                        if (!thumbnailPath && resourceRoot) {
+                                            try {
+                                                const { getThumbnail } = await import('../api/tauri-bridge');
+                                                const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
+                                                if (thumbUrl) {
+                                                    thumbnailPath = pathCache.get(file.path!);
+                                                }
+                                            } catch (err) {
+                                                console.log('Failed to generate thumbnail:', err);
+                                            }
+                                        }
+                                        
+                                        const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
+                                         
+                                        if (colors && colors.length > 0) {
+                                            const hexColors = colors.map(c => c.hex);
                                             onUpdate(file.id, {
-                                                meta: { ...file.meta!, palette }
+                                                meta: { ...file.meta!, palette: hexColors }
+                                            });
+                                        } else {
+                                            // If extraction fails or returns empty, clear the palette
+                                            onUpdate(file.id, {
+                                                meta: { ...file.meta!, palette: [] }
                                             });
                                         }
                                     } catch (err) {
-                                        console.error('Failed to re-extract palette:', err);
+                                        console.error('Failed to extract palette:', err);
+                                        // Clear palette on error
+                                        onUpdate(file.id, {
+                                            meta: { ...file.meta!, palette: [] }
+                                        });
                                     }
                                 })();
                             }
@@ -1063,11 +1014,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
                     </button>
                 </div>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="flex flex-wrap gap-2 justify-center">
                     {colors.slice(0, 8).map((color, i) => (
-                        <div 
-                            key={i} 
-                            className="h-8 rounded-md cursor-pointer hover:scale-105 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10 relative group flex items-center justify-center overflow-hidden"
+                        <div
+                            key={i}
+                            className="w-6 h-6 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
                             style={{ backgroundColor: color }}
                             onClick={() => onSearch(`color:${color.replace('#', '')}`)}
                             onContextMenu={(e) => {
@@ -1075,17 +1026,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 e.stopPropagation();
                                 // 计算菜单宽度（根据菜单项内容估算）
                                 const menuWidth = 180;
-                                // 对于最右边一列的色块（索引3和7），将菜单显示在鼠标左边
-                                const isRightmostColumn = i === 3 || i === 7; // 4列网格，第4列索引为3和7
-                                const x = isRightmostColumn ? e.clientX - menuWidth : e.clientX;
+                                // 对于最右边的色块，将菜单显示在鼠标左边
+                                const isRightmost = i === 7; // 最后一个色块
+                                const x = isRightmost ? e.clientX - menuWidth : e.clientX;
                                 setPaletteMenu({ visible: true, x, y: e.clientY, color });
                             }}
                             title={color}
-                        >
-                             <span className="text-[9px] font-mono font-bold text-white/90 opacity-0 group-hover:opacity-100 bg-black/30 px-1 py-0.5 rounded backdrop-blur-sm transition-opacity">
-                                {color.toUpperCase()}
-                             </span>
-                        </div>
+                        />
                     ))}
                 </div>
             </div>
