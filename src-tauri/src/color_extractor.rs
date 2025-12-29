@@ -1,5 +1,5 @@
 use color_thief::{get_palette, ColorFormat};
-use image::{DynamicImage, GenericImageView};
+use image::DynamicImage;
 
 /// 颜色提取结果结构体
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
@@ -39,25 +39,56 @@ pub fn get_dominant_color(img: &DynamicImage) -> Option<ColorResult> {
         return None;
     }
 
-    // 3. 调用 ColorThief 算法 (采样步长 10, 提取颜色数 5)
-    let palette = get_palette(&filtered_pixels, ColorFormat::Rgb, 10, 5).ok()?;
+    // 3. 调用 ColorThief 算法 (采样步长 1, 提取颜色数 12) - 参考网页版设置
+    // 更小的采样步长(1)确保捕获更多细节，提取更多颜色(12)确保鲜艳的小面积颜色被包含
+    let palette = get_palette(&filtered_pixels, ColorFormat::Rgb, 1, 12).ok()?;
 
-    // 4. 获取最主导的颜色
-    let color = palette.first()?;
+    // 4. 改进的主色调选择逻辑：考虑颜色的鲜艳度和饱和度
+    // 计算每个颜色的饱和度，并选择饱和度较高的颜色作为主色调
+    // 这样可以确保像红色咖啡机这样鲜艳的小面积颜色被选中
+    let mut best_color = palette.first()?;
+    let mut max_saturation = 0.0;
+    
+    for color in &palette {
+        // 计算 RGB 值的浮点表示 (0.0-1.0)
+        let r = color.r as f32 / 255.0;
+        let g = color.g as f32 / 255.0;
+        let b = color.b as f32 / 255.0;
+        
+        // 计算颜色的亮度
+        let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+        
+        // 计算颜色的最大值和最小值
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        
+        // 计算饱和度
+        let saturation = if max == min {
+            0.0
+        } else {
+            (max - min) / (1.0 - (2.0 * luminance - 1.0).abs())
+        };
+        
+        // 选择饱和度更高的颜色，同时考虑亮度不要太极端
+        if saturation > max_saturation && luminance > 0.1 && luminance < 0.9 {
+            max_saturation = saturation;
+            best_color = color;
+        }
+    }
     
     // 5. 格式化输出与深浅色判断
-    let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
-    let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
+    let hex = format!("#{:02x}{:02x}{:02x}", best_color.r, best_color.g, best_color.b);
+    let luminance = 0.299 * best_color.r as f32 + 0.587 * best_color.g as f32 + 0.114 * best_color.b as f32;
     let is_dark = luminance < 128.0;
 
     Some(ColorResult {
         hex,
-        rgb: [color.r, color.g, color.b],
+        rgb: [best_color.r, best_color.g, best_color.b],
         is_dark,
     })
 }
 
-/// 从 DynamicImage 中提取8个主色调
+/// 从 DynamicImage 中提取多个主色调
 pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult> {
     // 1. 将图片转为 RGBA8 以获取透明度信息
     // 注意：现在由调用者负责提供适当大小的图像（通常是缩略图）
@@ -90,28 +121,117 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
 
     // 3. 调用 ColorThief 算法提取颜色
     // 使用采样步长1（采样所有像素）以确保不会遗漏明显的颜色，特别是小区域的明显颜色如红色
-    // 提取稍多一些颜色(12个)以确保有足够的候选，然后取前count个
-    let request_count = (count + 4).min(16).max(count);
+    // 提取稍多一些颜色(16个)以确保有足够的候选，包括鲜艳的小面积颜色
+    let request_count = (count + 8).min(20).max(count);
     let count_u8 = request_count.min(255) as u8;
     let palette = match get_palette(&filtered_pixels, ColorFormat::Rgb, 1, count_u8) {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
 
-    // 4. 格式化所有颜色并返回前count个
-    palette
+    // 4. 改进的颜色选择逻辑：考虑颜色的频率为主，饱和度为辅
+    // 为每个颜色计算饱和度，并按频率和饱和度的综合评分排序
+    let mut colored_palette: Vec<_> = palette
         .iter()
-        .take(count)  // 确保只返回请求的数量
-        .map(|color| {
+        .enumerate()
+        .map(|(index, color)| {
+            // 计算 RGB 值的浮点表示 (0.0-1.0)
+            let r = color.r as f32 / 255.0;
+            let g = color.g as f32 / 255.0;
+            let b = color.b as f32 / 255.0;
+            
+            // 计算颜色的亮度
+            let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+            
+            // 计算颜色的最大值和最小值
+            let max = r.max(g).max(b);
+            let min = r.min(g).min(b);
+            
+            // 计算饱和度
+            let saturation = if max == min {
+                0.0
+            } else {
+                (max - min) / (1.0 - (2.0 * luminance - 1.0).abs())
+            };
+            
+            // 综合评分：频率权重(0.8) + 饱和度权重(0.2)
+            // 降低指数衰减的频率权重，确保占比高的颜色（如深色头发）仍然有最高权重
+            // 这样可以确保占比最多的#3D3634颜色不会被忽略
+            let frequency_weight = 1.0 / ((index as f32 + 1.0).powf(0.25));
+            let score = (frequency_weight * 0.8) + (saturation * 0.2);
+            
+            (color, saturation, luminance, score)
+        })
+        .collect();
+    
+    // 5. 按综合评分排序，确保占比高的颜色有最高排名，同时兼顾鲜艳度
+    colored_palette.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
+    
+    // 6. 格式化所有颜色并返回前count个，同时确保颜色多样性
+    // 简单去重：确保返回的颜色之间有足够的差异
+    let mut result = Vec::new();
+    let mut added_colors: Vec<[u8; 3]> = Vec::new();
+    
+    for (color, _, _, _) in &colored_palette {
+        if result.len() >= count {
+            break;
+        }
+        
+        // 检查与已添加颜色的差异
+        let new_rgb = [color.r, color.g, color.b];
+        let mut is_unique = true;
+        
+        for existing in &added_colors {
+            // 计算颜色差异
+            let diff = (
+                (new_rgb[0] as i32 - existing[0] as i32).abs() +
+                (new_rgb[1] as i32 - existing[1] as i32).abs() +
+                (new_rgb[2] as i32 - existing[2] as i32).abs()
+            ) as u32;
+            
+            // 如果差异太小，跳过这个颜色
+            if diff < 30 {
+                is_unique = false;
+                break;
+            }
+        }
+        
+        if is_unique {
             let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
             let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
             let is_dark = luminance < 128.0;
-
-            ColorResult {
+            
+            result.push(ColorResult {
                 hex,
                 rgb: [color.r, color.g, color.b],
                 is_dark,
+            });
+            
+            added_colors.push(new_rgb);
+        }
+    }
+    
+    // 如果去重后颜色数量不足，补充一些原始颜色
+    if result.len() < count {
+        for (color, _, _, _) in &colored_palette {
+            if result.len() >= count {
+                break;
             }
-        })
-        .collect()
+            
+            let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
+            let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
+            let is_dark = luminance < 128.0;
+            
+            // 检查是否已经添加
+            if !result.iter().any(|c| c.hex == hex) {
+                result.push(ColorResult {
+                    hex,
+                    rgb: [color.r, color.g, color.b],
+                    is_dark,
+                });
+            }
+        }
+    }
+    
+    result
 }
