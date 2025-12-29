@@ -87,14 +87,15 @@ export interface UserProfile {
 
 export interface TaskProgress {
   id: string;
-  type: 'ai' | 'copy' | 'move' | 'thumbnail';
+  type: 'ai' | 'copy' | 'move' | 'thumbnail' | 'color';
   title: string;
   total: number;
   current: number;
   startTime: number;
-  status: 'running' | 'completed';
+  status: 'running' | 'completed' | 'paused';
   minimized: boolean;
   currentStep?: string;
+  currentFile?: string;
 }
 
 export interface DeletionTask {

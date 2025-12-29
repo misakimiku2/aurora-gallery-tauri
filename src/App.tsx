@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from './components/TreeSidebar';
 import { MetadataPanel } from './components/MetadataPanel';
 import { ImageViewer } from './components/ImageViewer';
@@ -13,22 +14,54 @@ import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
-import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle } from 'lucide-react';
+import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
 import { aiService } from './services/aiService';
 
 // ... (helper components remain unchanged)
-const TaskProgressModal = ({ tasks, onMinimize, onClose, t }: any) => {
+const TaskProgressModal = ({ tasks, onMinimize, onClose, t, onPauseResume }: any) => {
   const [isMinimizing, setIsMinimizing] = useState(false);
   const activeTasks = tasks.filter((task: any) => !task.minimized);
   if (activeTasks.length === 0) return null;
   const handleMinimize = () => { setIsMinimizing(true); setTimeout(() => { activeTasks.forEach((task: any) => onMinimize(task.id)); setIsMinimizing(false); }, 300); };
+  
+  const handlePauseResume = (taskId: string, taskType: string) => {
+    if (taskType !== 'color') return;
+    onPauseResume(taskId, taskType);
+  };
+  
   return (
     <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] transition-all duration-300 ease-in-out origin-bottom ${isMinimizing ? 'scale-75 opacity-0 translate-y-full' : 'scale-100 opacity-100'}`}>
       <div className="w-96 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-slide-up">
         <div className="bg-gray-100 dark:bg-gray-900 px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"><span className="font-bold text-sm text-gray-700 dark:text-gray-200">{t('sidebar.tasks')} ({activeTasks.length})</span><div className="flex space-x-1"><button onClick={handleMinimize} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"><Minus size={14}/></button></div></div>
-        <div className="max-h-64 overflow-y-auto p-4 space-y-4">{activeTasks.map((task: any) => (<div key={task.id} className="space-y-1"><div className="flex justify-between text-xs text-gray-600 dark:text-gray-400"><span className="truncate pr-2">{task.title}</span><span>{Math.round((task.current / Math.max(task.total, 1)) * 100)}%</span></div>{task.currentStep && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentStep}</div>}<div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden"><div className="bg-blue-500 h-full transition-all duration-300" style={{ width: `${(task.current / Math.max(task.total, 1)) * 100}%` }}></div></div></div>))}</div>
+        <div className="max-h-64 overflow-y-auto p-4 space-y-4">{activeTasks.map((task: any) => (
+          <div key={task.id} className="space-y-1">
+            <div className="flex justify-between items-center">
+              <span className="truncate pr-2 text-xs text-gray-600 dark:text-gray-400 flex-1">{task.title}</span>
+              <div className="flex items-center space-x-2">
+                <span className="text-xs text-gray-600 dark:text-gray-400">{Math.round((task.current / Math.max(task.total, 1)) * 100)}%</span>
+                {task.type === 'color' && (
+                  <button 
+                    onClick={() => handlePauseResume(task.id, task.type)}
+                    className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"
+                    title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
+                  >
+                    {task.status === 'paused' ? <Loader2 size={12} className="animate-spin" /> : <Pause size={12} />}
+                  </button>
+                )}
+              </div>
+            </div>
+            {task.currentStep && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentStep}</div>}
+            {task.currentFile && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentFile}</div>}
+            <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`} 
+                style={{ width: `${(task.current / Math.max(task.total, 1)) * 100}%` }}
+              ></div>
+            </div>
+          </div>
+        ))}</div>
       </div>
     </div>
   );
@@ -738,7 +771,7 @@ export const App: React.FC = () => {
   // Internal drag state for tracking external drag operations
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
   const [draggedFilePaths, setDraggedFilePaths] = useState<string[]>([]);
-
+  
   // Global function for FileGrid to update file colors
   useEffect(() => {
     // 设置全局函数，供 FileGrid 组件调用
@@ -778,6 +811,50 @@ export const App: React.FC = () => {
       delete window.__UPDATE_FILE_COLORS__;
     };
   }, [state.files]); // 依赖 files，确保能正确找到文件
+
+  // 监听主色调提取进度事件
+  const colorTaskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    let isMounted = true;
+    
+    const listenProgress = async () => {
+      try {
+        const unlisten = await listen('color-extraction-progress', (event: any) => {
+          if (!isMounted) return;
+          
+          const progress = event.payload as { current: number; total: number; current_file: string };
+          
+          // 如果任务不存在，创建它
+          if (!colorTaskIdRef.current) {
+            const taskId = startTask('color', [], t('tasks.processingColors'), false);
+            colorTaskIdRef.current = taskId;
+          }
+          
+          // 更新任务进度
+          if (colorTaskIdRef.current) {
+            updateTask(colorTaskIdRef.current, { 
+              current: progress.current, 
+              total: progress.total,
+              currentFile: progress.current_file,
+              currentStep: `${progress.current} / ${progress.total}`
+            });
+          }
+        });
+        
+        return unlisten;
+      } catch (error) {
+        console.error('Failed to listen for color extraction progress:', error);
+        return () => {};
+      }
+    };
+    
+    const unlistenPromise = listenProgress();
+    
+    return () => {
+      isMounted = false;
+      unlistenPromise.then(unlistenFn => unlistenFn()).catch(console.error);
+    };
+  }, []);
 
   
   // Throttle function to limit how often a function can be called
@@ -1206,7 +1283,7 @@ export const App: React.FC = () => {
   const showDragHint = selectedCount > 1;
   
   // ... (keep startTask and updateTask)
-  const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
+  const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newTask: TaskProgress = { id, type: type as any, title, total: fileIds.length, current: 0, startTime: Date.now(), status: 'running', minimized: false };
     setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
@@ -3658,6 +3735,21 @@ export const App: React.FC = () => {
   const handleNavigateUp = () => { if (activeTab.activePersonId) { enterPeopleOverview(); } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview') { enterFolder(activeTab.folderId); } else { const current = state.files[activeTab.folderId]; if (current && current.parentId) { enterFolder(current.parentId); } } };
   const minimizeTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: true } : t) })); };
   const onRestoreTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: false } : t) })); };
+
+  const onPauseResume = async (id: string, taskType: string) => {
+    if (taskType !== 'color') return;
+    
+    const task = state.tasks.find(t => t.id === id);
+    if (!task) return;
+    
+    if (task.status === 'paused') {
+      await resumeColorExtraction();
+      updateTask(id, { status: 'running' });
+    } else {
+      await pauseColorExtraction();
+      updateTask(id, { status: 'paused' });
+    }
+  };
   
   const handleCreateFolder = async (targetId?: string) => {
       const parentId = targetId || activeTab.folderId;
@@ -4989,7 +5081,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
         
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
@@ -5284,7 +5376,7 @@ export const App: React.FC = () => {
         <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
           <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={handleViewerSearch} t={t} activeTab={activeTab} resourceRoot={state.settings.paths.resourceRoot} cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} />
         </div>
-        <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} />
+        <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} onPauseResume={onPauseResume} />
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">
           {deletionTasks.map(task => ( <ToastItem key={task.id} task={task} onUndo={() => undoDelete(task.id)} onDismiss={() => dismissDelete(task.id)} t={t} /> ))}
           {toast.visible && ( <div className="bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg backdrop-blur-sm animate-toast-up">{toast.msg}</div> )}

@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
 use std::num::NonZeroU32;
+use std::sync::Arc;
 use walkdir::WalkDir;
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -16,8 +17,10 @@ use base64::{Engine as _, engine::general_purpose};
 use fast_image_resize as fr;
 use rayon::prelude::*;
 
-// 导入颜色提取模块
+// 导入颜色相关模块
 mod color_extractor;
+mod color_db;
+mod color_worker;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,7 +119,7 @@ fn is_supported_image(extension: &str) -> bool {
 }
 
 #[tauri::command]
-async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, String> {
+async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
     use rayon::prelude::*;
     
@@ -439,6 +442,37 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
         }
     }
     
+    // Collect all image paths from the scan results
+    let image_paths: Vec<String> = all_files
+        .iter()
+        .filter(|(_, node)| matches!(node.r#type, FileType::Image))
+        .map(|(_, node)| node.path.clone())
+        .collect();
+    
+    // Add all image paths to color database in batches
+    if !image_paths.is_empty() {
+        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+        let batch_size = 100;
+        
+        // Process in batches to avoid database overload
+        for chunk in image_paths.chunks(batch_size) {
+            let chunk_vec: Vec<String> = chunk.iter().cloned().collect();
+            let pool_clone = pool.clone();
+            
+            // Add to database in a blocking thread
+            let result = tokio::task::spawn_blocking(move || {
+                let mut conn = pool_clone.get_connection();
+                color_db::add_pending_files(&mut conn, &chunk_vec)
+            }).await;
+            
+            if let Err(e) = result {
+                eprintln!("Failed to add batch to color database: {}", e);
+            } else if let Err(e) = result.unwrap() {
+                eprintln!("Database error when adding batch: {}", e);
+            }
+        }
+    }
+    
     // DO NOT update root node in map - it's already there with children!
     // all_files.insert(root_id, root_node); // This line was overwriting the root node!
     
@@ -446,7 +480,7 @@ async fn scan_directory(path: String) -> Result<HashMap<String, FileNode>, Strin
 }
 
 #[tauri::command]
-async fn scan_file(file_path: String, parent_id: Option<String>) -> Result<FileNode, String> {
+async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::AppHandle) -> Result<FileNode, String> {
     use std::fs;
     
     let path = Path::new(&file_path);
@@ -510,7 +544,8 @@ async fn scan_file(file_path: String, parent_id: Option<String>) -> Result<FileN
         let file_size = metadata.len();
         let (width, height) = image::image_dimensions(path).unwrap_or((0, 0));
         
-        Ok(FileNode {
+        // Create image file node
+        let image_node = FileNode {
             id: file_id,
             parent_id,
             name: file_name,
@@ -560,7 +595,25 @@ async fn scan_file(file_path: String, parent_id: Option<String>) -> Result<FileN
                     .unwrap_or_default(),
                 format: extension,
             }),
-        })
+        };
+        
+        // Add image to color database
+        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+        let image_path = image_node.path.clone();
+        
+        // Add to database in a blocking thread
+        let result = tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get_connection();
+            color_db::add_pending_files(&mut conn, &[image_path])
+        }).await;
+        
+        if let Err(e) = result {
+            eprintln!("Failed to add file to color database: {}", e);
+        } else if let Err(e) = result.unwrap() {
+            eprintln!("Database error when adding file: {}", e);
+        }
+        
+        Ok(image_node)
     } else {
         // Create unknown file node
         let file_size = metadata.len();
@@ -1332,9 +1385,20 @@ struct ThumbnailBatchResult {
 async fn get_thumbnails_batch(
     file_paths: Vec<String>,
     cache_root: String,
-    on_event: tauri::ipc::Channel<ThumbnailBatchResult>
+    on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
+    app: tauri::AppHandle
 ) -> Result<(), String> {
-    // 放入 blocking 线程
+    // 1. 批量添加待处理文件到数据库
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let file_paths_clone1 = file_paths.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        color_db::add_pending_files(&mut conn, &file_paths_clone1)
+    }).await.map_err(|e| format!("Failed to add pending files to database: {}", e))?.map_err(|e| e.to_string())?;
+    
+    // 2. 放入 blocking 线程生成缩略图和提取颜色
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let file_paths_clone2 = file_paths;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
         if !root.exists() {
@@ -1342,7 +1406,7 @@ async fn get_thumbnails_batch(
         }
 
         // 使用 Rayon 并行处理！9800X3D 此时将全核满载
-        file_paths.par_iter().for_each(|path| {
+        file_paths_clone2.par_iter().for_each(|path| {
             // 处理单个文件 - 生成缩略图
             let url = process_single_thumbnail(path, root);
             
@@ -1354,7 +1418,26 @@ async fn get_thumbnails_batch(
                     let reader = BufReader::new(thumb_file);
                     if let Ok(img) = image::load(reader, image::ImageFormat::from_path(thumb_path).unwrap_or(image::ImageFormat::Jpeg)) {
                         let extracted = color_extractor::get_dominant_colors(&img, 8);
-                        if !extracted.is_empty() { Some(extracted) } else { None }
+                        if !extracted.is_empty() { 
+                            // 保存到数据库
+                            let pool_clone = pool.clone();
+                            let path_clone = path.clone();
+                            let colors_clone = extracted.clone();
+                            
+                            // 异步保存到数据库
+                            let _ = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap()
+                                .block_on(async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        let mut conn = pool_clone.get_connection();
+                                        color_db::save_colors(&mut conn, &path_clone, &colors_clone)
+                                    }).await
+                                });
+                                
+                            Some(extracted) 
+                        } else { None }
                     } else { None }
                 } else { None }
             } else {
@@ -1364,7 +1447,26 @@ async fn get_thumbnails_batch(
                     let reader = BufReader::new(file);
                     if let Ok(img) = image::load(reader, image::ImageFormat::from_path(path).unwrap_or(image::ImageFormat::Jpeg)) {
                         let extracted = color_extractor::get_dominant_colors(&img, 8);
-                        if !extracted.is_empty() { Some(extracted) } else { None }
+                        if !extracted.is_empty() { 
+                            // 保存到数据库
+                            let pool_clone = pool.clone();
+                            let path_clone = path.clone();
+                            let colors_clone = extracted.clone();
+                            
+                            // 异步保存到数据库
+                            let _ = tokio::runtime::Builder::new_current_thread()
+                                .enable_all()
+                                .build()
+                                .unwrap()
+                                .block_on(async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        let mut conn = pool_clone.get_connection();
+                                        color_db::save_colors(&mut conn, &path_clone, &colors_clone)
+                                    }).await
+                                });
+                                
+                            Some(extracted) 
+                        } else { None }
                     } else { None }
                 } else { None }
             };
@@ -1621,11 +1723,34 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 
 #[tauri::command]
-async fn get_dominant_colors(file_path: String, count: usize, thumbnail_path: Option<String>) -> Result<Vec<color_extractor::ColorResult>, String> {
+async fn get_dominant_colors(
+    file_path: String, 
+    count: usize, 
+    thumbnail_path: Option<String>,
+    app: tauri::AppHandle
+) -> Result<Vec<color_extractor::ColorResult>, String> {
     use image::ImageFormat;
     use std::fs::File;
     use std::io::BufReader;
+    use std::sync::Arc;
     
+    // 1. 尝试从数据库获取颜色数据
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let file_path_clone = file_path.clone();
+    
+    // 在单独线程中执行数据库操作
+    let db_result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        color_db::get_colors_by_file_path(&mut conn, &file_path_clone)
+    }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
+    
+    if let Ok(Some(colors)) = db_result {
+        if !colors.is_empty() {
+            return Ok(colors);
+        }
+    }
+    
+    // 2. 数据库中没有数据，提取颜色
     // 优先使用缩略图路径，如果提供了的话
     let image_path = if let Some(thumb_path) = &thumbnail_path {
         if Path::new(thumb_path).exists() {
@@ -1652,6 +1777,30 @@ async fn get_dominant_colors(file_path: String, count: usize, thumbnail_path: Op
     
     // Extract dominant colors
     let colors = color_extractor::get_dominant_colors(&img, count);
+    
+    // 3. 将提取的颜色保存到数据库
+    if !colors.is_empty() {
+        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+        let file_path_clone = file_path.clone();
+        let colors_clone = colors.clone();
+        
+        // 在单独线程中执行数据库操作
+        let _ = tokio::task::spawn_blocking(move || {
+            let mut conn = pool.get_connection();
+            
+            // 先检查是否存在记录
+            match color_db::get_colors_by_file_path(&mut conn, &file_path_clone) {
+                Ok(None) => {
+                    // 不存在记录，插入待处理状态
+                    let _ = color_db::add_pending_files(&mut conn, &[file_path_clone.clone()]);
+                },
+                _ => {}
+            }
+            
+            // 保存颜色数据
+            color_db::save_colors(&mut conn, &file_path_clone, &colors_clone)
+        }).await;
+    }
     
     Ok(colors)
 }
@@ -1688,7 +1837,9 @@ fn main() {
             hide_window,
             show_window,
             exit_app,
-            get_dominant_colors
+            get_dominant_colors,
+            color_worker::pause_color_extraction,
+            color_worker::resume_color_extraction
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -1738,6 +1889,55 @@ fn main() {
             
             // 保存托盘图标到应用状态
             app.manage(Some(tray));
+            
+            // 初始化颜色数据库
+            let app_data_dir = app.path().app_data_dir()
+                .expect("Failed to get app data directory");
+            let db_path = app_data_dir.join("colors.db");
+            
+            let pool = match color_db::ColorDbPool::new(&db_path) {
+        Ok(pool_instance) => {
+            // 初始化数据库表结构
+            let mut conn = pool_instance.get_connection();
+            if let Err(e) = color_db::init_db(&mut conn) {
+                eprintln!("Failed to initialize color database: {}", e);
+                // 创建一个空的连接池作为备用
+                color_db::ColorDbPool::new(&db_path).unwrap_or_else(|_|
+                    panic!("Failed to create color database connection pool")
+                )
+            } else {
+                // 克隆pool_instance，避免借用冲突
+                let cloned_pool = pool_instance.clone();
+                cloned_pool
+            }
+        },
+        Err(e) => {
+            eprintln!("Failed to create color database connection pool: {}", e);
+            // 创建一个空的连接池作为备用
+            color_db::ColorDbPool::new(&db_path).unwrap_or_else(|_| {
+                panic!("Failed to create color database connection pool");
+            })
+        }
+    };
+            
+            // 将数据库连接池保存到应用状态
+            let pool_arc = Arc::new(pool);
+            app.manage(pool_arc.clone());
+            
+            // 启动后台颜色提取任务
+            // 持续处理待处理文件，每批最多处理20个文件
+            let batch_size = 20;
+            // 正确克隆AppHandle后再包装到Arc中
+            let app_handle_new = app.handle().clone();
+            let app_handle_arc = Arc::new(app_handle_new);
+            
+            tauri::async_runtime::spawn(async move {
+                color_worker::color_extraction_worker(
+                    pool_arc,
+                    batch_size,
+                    Some(app_handle_arc)
+                ).await;
+            });
             
             Ok(())
         })

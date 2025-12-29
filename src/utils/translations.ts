@@ -165,7 +165,10 @@ export const translations = {
       completed: '已完成',
       generatingThumbnails: '正在生成缩略图...',
       thumbnailsGenerated: '缩略图生成完成',
-      noImagesFound: '未找到图片文件'
+      noImagesFound: '未找到图片文件',
+      processingColors: '正在处理图片主色调',
+      pause: '暂停',
+      resume: '恢复'
     },
     meta: {
         selectHint: '选择一个文件以查看详情',
@@ -650,7 +653,10 @@ export const translations = {
       completed: 'Completed',
       generatingThumbnails: 'Generating thumbnails...',
       thumbnailsGenerated: 'Thumbnails generation complete',
-      noImagesFound: 'No image files found'
+      noImagesFound: 'No image files found',
+      processingColors: 'Processing Image Colors',
+      pause: 'Pause',
+      resume: 'Resume'
     },
     meta: {
         selectHint: 'Select a file to view details',

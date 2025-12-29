@@ -2,8 +2,9 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { pauseColorExtraction, resumeColorExtraction } from '../api/tauri-bridge';
 
 interface TreeProps {
   files: Record<string, FileNode>;
@@ -483,13 +484,19 @@ export const Sidebar: React.FC<{
   onCancelCreateTag: () => void;
   onOpenSettings: () => void;
   onRestoreTask: (taskId: string) => void;
+  onPauseResume: (taskId: string, taskType: string) => void;
   onStartRenamePerson: (personId: string) => void;
   onCreatePerson: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
-}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onStartRenamePerson, onCreatePerson, onDropOnFolder, t }) => {
+}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onDropOnFolder, t }) => {
   
-  const minimizedTasks = tasks ? tasks.filter(task => task.minimized && task.status === 'running') : [];
+  const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
+  
+  const handlePauseResume = (taskId: string, taskType: string) => {
+    if (taskType !== 'color') return;
+    onPauseResume(taskId, taskType);
+  };
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -547,13 +554,24 @@ export const Sidebar: React.FC<{
                  {minimizedTasks.map(task => {
                     const percent = Math.round((task.current / task.total) * 100);
                     return (
-                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 text-xs shadow-sm cursor-pointer group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in" onClick={() => onRestoreTask(task.id)}>
+                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 text-xs shadow-sm cursor-pointer group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in">
                            <div className="flex justify-between items-center mb-1">
-                               <span className="font-medium text-gray-700 dark:text-gray-200 truncate pr-2">{task.title}</span>
-                               <Maximize2 size={10} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity"/>
+                               <span className="font-medium text-gray-700 dark:text-gray-200 truncate pr-2 flex-1">{task.title}</span>
+                               <div className="flex items-center space-x-1">
+                                   {task.type === 'color' && (
+                                     <button 
+                                       onClick={(e) => { e.stopPropagation(); handlePauseResume(task.id, task.type); }}
+                                       className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500"
+                                       title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
+                                     >
+                                       {task.status === 'paused' ? <Loader2 size={10} className="animate-spin" /> : <Pause size={10} />}
+                                     </button>
+                                   )}
+                                   <Maximize2 size={10} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => { e.stopPropagation(); onRestoreTask(task.id); }}/>
+                               </div>
                            </div>
                            <div className="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
-                               <div className="bg-blue-500 h-full rounded-full transition-all duration-300" style={{ width: `${percent}%` }}></div>
+                               <div className={`h-full rounded-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
                            </div>
                         </div>
                     );

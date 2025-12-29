@@ -582,6 +582,34 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
 };
 
 /**
+ * 暂停主色调提取后台任务
+ * @returns 是否成功暂停
+ */
+export const pauseColorExtraction = async (): Promise<boolean> => {
+  try {
+    const result = await invoke<boolean>('pause_color_extraction');
+    return result;
+  } catch (error) {
+    console.error('Failed to pause color extraction:', error);
+    return false;
+  }
+};
+
+/**
+ * 恢复主色调提取后台任务
+ * @returns 是否成功恢复
+ */
+export const resumeColorExtraction = async (): Promise<boolean> => {
+  try {
+    const result = await invoke<boolean>('resume_color_extraction');
+    return result;
+  } catch (error) {
+    console.error('Failed to resume color extraction:', error);
+    return false;
+  }
+};
+
+/**
  * 生成拖拽预览图（用于外部拖拽时显示）
  * @param thumbnailPaths 缩略图路径数组（最多3个）
  * @param totalCount 总文件数
