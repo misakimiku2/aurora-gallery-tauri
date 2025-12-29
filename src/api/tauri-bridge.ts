@@ -562,20 +562,7 @@ export const exitApp = async (): Promise<void> => {
   }
 };
 
-/**
- * 从图片文件中提取主色调
- * @param filePath 图片文件路径
- * @returns 主色调结果，如果失败则返回 null
- */
-export const getDominantColor = async (filePath: string): Promise<DominantColor | null> => {
-  try {
-    const result = await invoke('get_dominant_color', { filePath });
-    return result as DominantColor | null;
-  } catch (error) {
-    console.error('Failed to get dominant color:', error);
-    return null;
-  }
-};
+
 
 /**
  * 从图片文件中提取多个主色调

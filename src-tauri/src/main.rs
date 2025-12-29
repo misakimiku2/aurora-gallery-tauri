@@ -1618,31 +1618,7 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn get_dominant_color(file_path: String) -> Result<Option<color_extractor::ColorResult>, String> {
-    use image::ImageFormat;
-    use std::fs::File;
-    use std::io::BufReader;
-    
-    // Check if file exists
-    if !Path::new(&file_path).exists() {
-        return Err(format!("File does not exist: {}", file_path));
-    }
-    
-    // Load image
-    let file = File::open(&file_path)
-        .map_err(|e| format!("Failed to open file: {}", e))?;
-    
-    let reader = BufReader::new(file);
-    let img = image::load(reader, ImageFormat::from_path(&file_path).unwrap_or(ImageFormat::Jpeg))
-        .map_err(|e| format!("Failed to load image: {}", e))?;
-    
-    // Extract dominant color
-    match color_extractor::get_dominant_color(&img) {
-        Some(color) => Ok(Some(color)),
-        None => Ok(None),
-    }
-}
+
 
 #[tauri::command]
 async fn get_dominant_colors(file_path: String, count: usize, thumbnail_path: Option<String>) -> Result<Vec<color_extractor::ColorResult>, String> {
@@ -1712,7 +1688,6 @@ fn main() {
             hide_window,
             show_window,
             exit_app,
-            get_dominant_color,
             get_dominant_colors
         ])
         .setup(|app| {
