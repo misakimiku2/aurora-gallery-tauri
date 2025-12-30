@@ -18,30 +18,65 @@ declare global {
   }
 }
 
-// LRU缓存类，带大小限制
+// LRU缓存类，带大小限制和TTL
 class LRUCache<T> {
-  private cache: Map<string, { value: T; timestamp: number }>;
+  private cache: Map<string, { value: T; timestamp: number; size: number }>;
   private maxSize: number;
+  private maxMemorySize: number;
+  private currentMemorySize: number;
+  private ttl: number;
+  private cleanupInterval: number;
+  private cleanupTimer: ReturnType<typeof setInterval> | null;
 
-  constructor(maxSize: number) {
+  constructor(options: { maxSize: number; maxMemorySize?: number; ttl?: number; cleanupInterval?: number }) {
     this.cache = new Map();
-    this.maxSize = maxSize;
+    this.maxSize = options.maxSize;
+    this.maxMemorySize = options.maxMemorySize || 100 * 1024 * 1024; // 默认100MB
+    this.currentMemorySize = 0;
+    this.ttl = options.ttl || 30 * 60 * 1000; // 默认30分钟
+    this.cleanupInterval = options.cleanupInterval || 10 * 60 * 1000; // 默认10分钟
+    this.cleanupTimer = null;
+
+    this.startCleanupTimer();
   }
 
-  get(key: string): T | undefined {
-    const item = this.cache.get(key);
-    if (item) {
-      // 更新访问时间
-      this.cache.set(key, { ...item, timestamp: Date.now() });
-      return item.value;
+  private calculateSize(value: T): number {
+    if (typeof value === 'string') {
+      return new Blob([value]).size;
     }
-    return undefined;
+    return 0;
   }
 
-  set(key: string, value: T): void {
-    // 检查是否超过最大容量
-    if (this.cache.size >= this.maxSize) {
-      // 找出最久未使用的项
+  private startCleanupTimer(): void {
+    this.cleanupTimer = setInterval(() => {
+      this.cleanup();
+    }, this.cleanupInterval);
+  }
+
+  private stopCleanupTimer(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+  }
+
+  private cleanup(): void {
+    const now = Date.now();
+    const keysToDelete: string[] = [];
+
+    for (const [key, item] of this.cache.entries()) {
+      if (now - item.timestamp > this.ttl) {
+        keysToDelete.push(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      this.delete(key);
+    }
+  }
+
+  private enforceMemoryLimit(): void {
+    while (this.currentMemorySize > this.maxMemorySize && this.cache.size > 0) {
       let oldestKey: string | undefined;
       let oldestTimestamp = Date.now() + 1;
 
@@ -52,33 +87,121 @@ class LRUCache<T> {
         }
       }
 
-      // 删除最久未使用的项
       if (oldestKey) {
-        this.cache.delete(oldestKey);
+        this.delete(oldestKey);
+      }
+    }
+  }
+
+  get(key: string): T | undefined {
+    const item = this.cache.get(key);
+    if (item) {
+      const now = Date.now();
+      if (now - item.timestamp > this.ttl) {
+        this.delete(key);
+        return undefined;
+      }
+      this.cache.set(key, { ...item, timestamp: now });
+      return item.value;
+    }
+    return undefined;
+  }
+
+  set(key: string, value: T): void {
+    const existingItem = this.cache.get(key);
+    if (existingItem) {
+      this.currentMemorySize -= existingItem.size;
+    }
+
+    const size = this.calculateSize(value);
+
+    if (this.cache.size >= this.maxSize || this.currentMemorySize + size > this.maxMemorySize) {
+      this.enforceMemoryLimit();
+      if (this.cache.size >= this.maxSize) {
+        let oldestKey: string | undefined;
+        let oldestTimestamp = Date.now() + 1;
+
+        for (const [k, v] of this.cache.entries()) {
+          if (v.timestamp < oldestTimestamp) {
+            oldestTimestamp = v.timestamp;
+            oldestKey = k;
+          }
+        }
+
+        if (oldestKey) {
+          this.delete(oldestKey);
+        }
       }
     }
 
-    this.cache.set(key, { value, timestamp: Date.now() });
+    this.cache.set(key, { value, timestamp: Date.now(), size });
+    this.currentMemorySize += size;
   }
 
   has(key: string): boolean {
-    return this.cache.has(key);
+    const item = this.cache.get(key);
+    if (item) {
+      const now = Date.now();
+      if (now - item.timestamp > this.ttl) {
+        this.delete(key);
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  delete(key: string): boolean {
+    const item = this.cache.get(key);
+    if (item) {
+      this.currentMemorySize -= item.size;
+      return this.cache.delete(key);
+    }
+    return false;
   }
 
   clear(): void {
     this.cache.clear();
+    this.currentMemorySize = 0;
   }
 
   get size(): number {
     return this.cache.size;
+  }
+
+  getStats(): { size: number; memorySize: number; memorySizeMB: number; maxSize: number; maxMemorySizeMB: number; ttl: number } {
+    return {
+      size: this.cache.size,
+      memorySize: this.currentMemorySize,
+      memorySizeMB: this.currentMemorySize / (1024 * 1024),
+      maxSize: this.maxSize,
+      maxMemorySizeMB: this.maxMemorySize / (1024 * 1024),
+      ttl: this.ttl
+    };
+  }
+
+  cleanupExpired(): number {
+    const beforeSize = this.cache.size;
+    this.cleanup();
+    return beforeSize - this.cache.size;
+  }
+
+  destroy(): void {
+    this.stopCleanupTimer();
+    this.clear();
   }
 }
 
 // 获取或初始化全局缓存 (挂载在 window 上以防热更新丢失)
 const getGlobalCache = () => {
   if (!window.__AURORA_THUMBNAIL_CACHE__) {
-    // 限制缓存大小为1000个项目，约50-100MB内存
-    window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(1000);
+    // 限制缓存大小为1000个项目，内存限制100MB，TTL 30分钟，清理间隔10分钟
+    window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>({
+      maxSize: 1000,
+      maxMemorySize: 100 * 1024 * 1024, // 100MB
+      ttl: 30 * 60 * 1000, // 30分钟
+      cleanupInterval: 10 * 60 * 1000 // 10分钟
+    });
   }
   return window.__AURORA_THUMBNAIL_CACHE__;
 };
@@ -86,7 +209,13 @@ const getGlobalCache = () => {
 // 获取缩略图原始路径缓存（用于外部拖拽时作为图标）
 const getThumbnailPathCache = () => {
   if (!window.__AURORA_THUMBNAIL_PATH_CACHE__) {
-    window.__AURORA_THUMBNAIL_PATH_CACHE__ = new LRUCache<string>(1000);
+    // 路径缓存：限制1000个项目，内存限制10MB，TTL 30分钟，清理间隔10分钟
+    window.__AURORA_THUMBNAIL_PATH_CACHE__ = new LRUCache<string>({
+      maxSize: 1000,
+      maxMemorySize: 10 * 1024 * 1024, // 10MB
+      ttl: 30 * 60 * 1000, // 30分钟
+      cleanupInterval: 10 * 60 * 1000 // 10分钟
+    });
   }
   return window.__AURORA_THUMBNAIL_PATH_CACHE__;
 };
