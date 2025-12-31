@@ -3645,7 +3645,25 @@ export const App: React.FC = () => {
       pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
   };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
-  const handleToggleFolder = (id: string) => { setState(prev => ({ ...prev, expandedFolderIds: prev.expandedFolderIds.includes(id) ? prev.expandedFolderIds.filter(fid => fid !== id) : [...prev.expandedFolderIds, id] })); };
+  const handleToggleFolder = (id: string) => {
+    setState(prev => {
+      const isCurrentlyExpanded = prev.expandedFolderIds.includes(id);
+      const newExpandedIds = isCurrentlyExpanded
+        ? prev.expandedFolderIds.filter(fid => fid !== id)
+        : [...prev.expandedFolderIds, id];
+      
+      // 检查数组是否真的发生了变化 - 比较长度和内容
+      if (newExpandedIds.length === prev.expandedFolderIds.length &&
+          newExpandedIds.every(id => prev.expandedFolderIds.includes(id))) {
+        return prev;
+      }
+      
+      return {
+        ...prev,
+        expandedFolderIds: newExpandedIds
+      };
+    });
+  };
   const goBack = () => { 
       updateActiveTab(prevTab => { 
           if (prevTab.history.currentIndex > 0) { 

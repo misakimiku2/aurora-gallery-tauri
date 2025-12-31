@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, DominantColor } from '../types';
@@ -406,11 +405,11 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                     <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
                         <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
                     </svg>
-                    
+                     
                     <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
                         <Icon size={32} className="text-white" strokeWidth={1.5} />
                     </div>
-                    
+                     
                     {count !== undefined && (
                         <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
                             {count}
@@ -601,11 +600,11 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           try {
             // 使用readFileAsBase64直接读取文件内容，避免使用http://asset.localhost/协议
             const { readFileAsBase64 } = await import('../api/tauri-bridge');
-            
+             
             if (!isMounted) return;
 
             const dataUrl = await readFileAsBase64(filePath);
-            
+             
             if (isMounted) {
               if (dataUrl) {
                 setAnimSrc(dataUrl);
@@ -948,19 +947,19 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
                transform: 'translateY(-50%) translateY(10px)' // 向下调整10px，使其居中
              }}
              onMouseEnter={() => {
-              // 鼠标悬停时，确保索引栏显示在最前面
-              const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
-              if (metadataPanel) {
-                metadataPanel.style.zIndex = '10';
-              }
-            }}
-            onMouseLeave={() => {
-              // 鼠标离开时，恢复详情面板的z-index
-              const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
-              if (metadataPanel) {
-                metadataPanel.style.zIndex = '40';
-              }
-            }}
+               // 鼠标悬停时，确保索引栏显示在最前面
+               const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
+               if (metadataPanel) {
+                 metadataPanel.style.zIndex = '10';
+               }
+             }}
+             onMouseLeave={() => {
+               // 鼠标离开时，恢复详情面板的z-index
+               const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
+               if (metadataPanel) {
+                 metadataPanel.style.zIndex = '40';
+               }
+             }}
         >
           <div className="flex flex-col items-center space-y-1">
             {filteredKeys.map((group: string) => (
@@ -981,7 +980,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
           </div>
         </div>
       )}
-      
+       
       {/* 标签列表内容 */}
       {filteredKeys.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
@@ -1077,6 +1076,9 @@ const FileListItem = React.memo(({
   setIsDraggingInternal,
   setDraggedFilePaths
 }: any) => {
+  // 用于追踪外部拖拽状态
+  const [isExternalDragging, setIsExternalDragging] = useState(false);
+  
   if (!file) return null;
   
   // 列表视图下的拖拽处理
@@ -1346,9 +1348,6 @@ const FileListItem = React.memo(({
     }
   };
   
-  // 用于追踪外部拖拽状态
-  const [isExternalDragging, setIsExternalDragging] = useState(false);
-  
   return (
     <div
         data-id={file.id}
@@ -1360,41 +1359,41 @@ const FileListItem = React.memo(({
         onMouseDown={async (e) => {
             if (e.button === 0) {
                 e.stopPropagation();
-                
+                 
                 // 按住 Alt 键时，启动外部拖拽（复制文件到外部应用）
                 if (e.altKey && isTauriEnvironment()) {
                     e.preventDefault();
-                    
+                     
                     // 获取要拖拽的文件
                     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
                         ? selectedFileIds 
                         : [file.id];
-                    
+                     
                     // 收集被拖拽文件的实际路径
                     const filePaths = filesToDrag
                         .map((fileId: string) => files[fileId]?.path || '')
                         .filter(Boolean);
-                    
+                     
                     if (filePaths.length > 0) {
                         setIsExternalDragging(true);
-                        
+                         
                         // 设置内部拖拽标记，防止触发外部拖入覆盖层
                         if (setIsDraggingInternal) {
                             setIsDraggingInternal(true);
                         }
-                        
+                         
                         // 获取缩略图路径（最多3个）
                         const pathCache = getThumbnailPathCache();
                         const thumbnailPaths = filePaths
                             .slice(0, 3)
                             .map((fp: string) => pathCache.get(fp))
                             .filter((p: string | undefined): p is string => !!p);
-                        
+                         
                         // 计算缓存目录
                         const cacheDir = resourceRoot 
                             ? `${resourceRoot}${resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache`
                             : undefined;
-                        
+                         
                         try {
                             await startDragToExternal(filePaths, thumbnailPaths, cacheDir, () => {
                                 setIsExternalDragging(false);
@@ -1557,7 +1556,7 @@ const PersonCard = React.memo(({
           </div>
         )}
       </div>
-      
+       
       <div className="mt-4 text-center w-full px-2">
         <div 
           className={`font-bold text-base truncate transition-colors px-2 rounded-md ${isSelected ? 'text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/50 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}
@@ -1779,13 +1778,13 @@ const FileCard = React.memo(({
               <svg viewBox="0 0 100 100" style="position: absolute; width: 100%; height: 100%; fill: #3b82f6; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));" preserveAspectRatio="none">
                 <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" />
               </svg>
-              
+               
               <!-- Front Plate -->
               <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60%; transform: perspective(800px) rotateX(-10deg);">
                 <svg viewBox="0 0 100 65" style="width: 100%; height: 100%; fill: #2563eb; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));" preserveAspectRatio="none">
                   <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" />
                 </svg>
-                
+                 
                 <!-- Folder Icon -->
                 <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0.5; mix-blend-mode: overlay;">
                   <svg viewBox="0 0 24 24" style="width: 32px; height: 32px; fill: white; stroke: white; stroke-width: 1.5;" preserveAspectRatio="xMidYMid meet">
@@ -1927,41 +1926,41 @@ const FileCard = React.memo(({
         onMouseDown={async (e) => {
             if (e.button === 0) {
                 e.stopPropagation();
-                
+                 
                 // 按住 Alt 键时，启动外部拖拽（复制文件到外部应用）
                 if (e.altKey && isTauriEnvironment()) {
                     e.preventDefault();
-                    
+                     
                     // 获取要拖拽的文件
                     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
                         ? selectedFileIds 
                         : [file.id];
-                    
+                     
                     // 收集被拖拽文件的实际路径
                     const filePaths = filesToDrag
                         .map((fileId: string) => files[fileId]?.path || '')
                         .filter(Boolean);
-                    
+                     
                     if (filePaths.length > 0) {
                         setIsDragging(true);
-                        
+                         
                         // 设置内部拖拽标记，防止触发外部拖入覆盖层
                         if (setIsDraggingInternal) {
                             setIsDraggingInternal(true);
                         }
-                        
+                         
                         // 获取缩略图路径（最多3个）
                         const pathCache = getThumbnailPathCache();
                         const thumbnailPaths = filePaths
                             .slice(0, 3)
                             .map((fp: string) => pathCache.get(fp))
                             .filter((p: string | undefined): p is string => !!p);
-                        
+                         
                         // 计算缓存目录
                         const cacheDir = effectiveResourceRoot 
                             ? `${effectiveResourceRoot}${effectiveResourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache`
                             : undefined;
-                        
+                         
                         try {
                             await startDragToExternal(filePaths, thumbnailPaths, cacheDir, () => {
                                 setIsDragging(false);
@@ -1994,7 +1993,7 @@ const FileCard = React.memo(({
             const fileName = file.name;
             const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
             const isAnimationFormat = (file.meta?.format === 'gif' || file.meta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
-            
+             
             if (settings?.animateOnHover && isAnimationFormat) {
                 onSetHoverPlayingId(file.id);
             }
@@ -2028,7 +2027,7 @@ const FileCard = React.memo(({
                 cachePath={effectiveCachePath}
             />
             )}
-            
+             
             <div className={`absolute top-2 left-2 transition-opacity duration-200 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isSelected ? (
                     <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center border-2 border-white shadow-lg ring-2 ring-blue-400/50">
@@ -2045,7 +2044,7 @@ const FileCard = React.memo(({
             )}
             </div>
         </div>
-        
+         
         <div className="mt-1.5 w-full text-center px-1 h-8 flex flex-col justify-start leading-tight">
             {renamingId === file.id ? (
             <InlineRenameInput
@@ -2093,7 +2092,9 @@ const GroupContent = React.memo(({
   resourceRoot,
   cachePath,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  scrollTop,
+  groupOffsetY
 }: any) => {
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
@@ -2109,82 +2110,113 @@ const GroupContent = React.memo(({
     'browser'
   );
 
-  // 移除虚拟滚动逻辑，直接使用所有项目
-  const visibleItems = layout;
+  // 虚拟滚动逻辑：基于组的全局位置
+  const visibleItems = useMemo(() => {
+    // 如果容器高度为0，显示所有项目（初始渲染）
+    if (containerRect.height === 0) return layout;
+    
+    const buffer = 400;
+    
+    // 如果项目数量不多，不需要虚拟滚动
+    if (layout.length <= 50) {
+      return layout;
+    }
+    
+    // 使用组的全局垂直位置（groupOffsetY）和滚动位置
+    // 计算当前视口相对于组的可见区域
+    const groupTop = groupOffsetY;
+    const groupBottom = groupOffsetY + totalHeight;
+    
+    // 当前滚动位置相对于组的可见区域
+    const viewportTop = scrollTop;
+    const viewportBottom = scrollTop + containerRect.height;
+    
+    // 只渲染在视口附近（包括缓冲区）的项目
+    const minY = viewportTop - buffer;
+    const maxY = viewportBottom + buffer;
+    
+    // 过滤：项目必须与可见区域有交集
+    // 注意：item.y 是相对于组顶部的偏移
+    return layout.filter(item => {
+      const itemTop = groupTop + item.y;
+      const itemBottom = itemTop + item.height;
+      return itemBottom > minY && itemTop < maxY;
+    });
+  }, [layout, scrollTop, containerRect.height, groupOffsetY, totalHeight]);
 
   return (
-    <div className="p-6">
+    <div className="p-6" style={{ height: totalHeight, position: 'relative' }}>
       {activeTab.layoutMode === 'list' ? (
-        // List layout
-        <div className="overflow-hidden">
-          {group.fileIds.map((id: string) => {
-            const file = files[id];
-            if (!file) return null;
-            return (
+        // List layout - 使用虚拟滚动优化
+        visibleItems.map((item) => {
+          const file = files[item.id];
+          if (!file) return null;
+          return (
+            <div
+              key={file.id}
+              style={{
+                position: 'absolute',
+                left: item.x,
+                top: item.y,
+                width: item.width,
+                height: item.height
+              }}
+            >
               <FileListItem
-                  key={file.id}
-                  file={file}
-                  files={files}
-                  isSelected={activeTab.selectedFileIds.includes(file.id)}
-                  renamingId={renamingId}
-                  onFileClick={handleFileClick}
-                  onFileDoubleClick={handleFileDoubleClick}
-                  onContextMenu={handleContextMenu}
-                  onStartRename={handleStartRename}
-                  onRenameSubmit={handleRenameSubmit}
-                  onRenameCancel={handleRenameCancel}
-                  t={t}
-                  resourceRoot={effectiveResourceRoot}
-                  cachePath={effectiveCachePath}
-                  selectedFileIds={activeTab.selectedFileIds}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                  thumbnailSize={thumbnailSize}
-              />
-            );
-          })}
-        </div>
-      ) : (
-        // Grid, adaptive, or masonry layout - 使用虚拟滚动
-        <div 
-          className="relative" 
-          style={{ 
-            width: '100%', 
-            height: totalHeight 
-          }}
-        >
-          {visibleItems.map((item) => {
-            const file = files[item.id];
-            if (!file) return null;
-            
-            return (
-              <FileCard
-                key={file.id}
                 file={file}
                 files={files}
                 isSelected={activeTab.selectedFileIds.includes(file.id)}
                 renamingId={renamingId}
-                layoutMode={activeTab.layoutMode}
-                hoverPlayingId={hoverPlayingId}
                 onFileClick={handleFileClick}
                 onFileDoubleClick={handleFileDoubleClick}
                 onContextMenu={handleContextMenu}
                 onStartRename={handleStartRename}
                 onRenameSubmit={handleRenameSubmit}
                 onRenameCancel={handleRenameCancel}
-                onSetHoverPlayingId={handleSetHoverPlayingId}
-                settings={settings}
-                style={item}
+                t={t}
                 resourceRoot={effectiveResourceRoot}
                 cachePath={effectiveCachePath}
                 selectedFileIds={activeTab.selectedFileIds}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 thumbnailSize={thumbnailSize}
-            />
-            );
-          })}
-        </div>
+              />
+            </div>
+          );
+        })
+      ) : (
+        // Grid, adaptive, or masonry layout - 使用虚拟滚动
+        visibleItems.map((item) => {
+          const file = files[item.id];
+          if (!file) return null;
+          
+          return (
+            <FileCard
+              key={file.id}
+              file={file}
+              files={files}
+              isSelected={activeTab.selectedFileIds.includes(file.id)}
+              renamingId={renamingId}
+              layoutMode={activeTab.layoutMode}
+              hoverPlayingId={hoverPlayingId}
+              onFileClick={handleFileClick}
+              onFileDoubleClick={handleFileDoubleClick}
+              onContextMenu={handleContextMenu}
+              onStartRename={handleStartRename}
+              onRenameSubmit={handleRenameSubmit}
+              onRenameCancel={handleRenameCancel}
+              onSetHoverPlayingId={handleSetHoverPlayingId}
+              settings={settings}
+              style={item}
+              resourceRoot={effectiveResourceRoot}
+              cachePath={effectiveCachePath}
+              selectedFileIds={activeTab.selectedFileIds}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              thumbnailSize={thumbnailSize}
+          />
+          );
+        })
       )}
     </div>
   );
@@ -2192,7 +2224,7 @@ const GroupContent = React.memo(({
 
 const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGroup, collapsed: boolean, onToggle: (id: string) => void }) => {
   return (
-    <div 
+    <div
       className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors sticky top-0 z-20"
       onClick={() => onToggle(group.id)}
     >
@@ -2201,6 +2233,105 @@ const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGro
       </div>
       <span className="font-bold text-sm text-gray-700 dark:text-gray-200">{group.title}</span>
       <span className="ml-2 text-xs text-gray-400 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded-full">{group.fileIds.length}</span>
+    </div>
+  );
+});
+
+const GroupedContent = React.memo(({
+  groupedFiles,
+  collapsedGroups,
+  files,
+  activeTab,
+  renamingId,
+  thumbnailSize,
+  hoverPlayingId,
+  handleFileClick,
+  handleFileDoubleClick,
+  handleContextMenu,
+  handleStartRename,
+  handleRenameSubmit,
+  handleRenameCancel,
+  handleSetHoverPlayingId,
+  settings,
+  containerRect,
+  t,
+  resourceRoot,
+  cachePath,
+  onDragStart,
+  onDragEnd,
+  scrollTop,
+  handleToggleGroup
+}: any) => {
+  // 计算每个组的全局垂直位置
+  const groupOffsets = useMemo(() => {
+    const offsets: Record<string, number> = {};
+    let currentOffset = 0;
+    
+    for (const group of groupedFiles) {
+      offsets[group.id] = currentOffset;
+      
+      const isCollapsed = collapsedGroups[group.id] || false;
+      const headerHeight = 44; // GroupHeader 的高度
+      const marginBottom = 32; // mb-8 = 32px
+      
+      // 简化计算：不调用 useLayout，而是使用固定高度估算
+      // 这避免了在 useMemo 中调用 Hook 导致的 Hook 调用顺序问题
+      if (!isCollapsed) {
+        // 估算每个组的高度：每个文件项高度约为 thumbnailSize + 40px
+        const estimatedItemsPerRow = Math.max(1, Math.floor((containerRect.width - 48) / (thumbnailSize + 16)));
+        const estimatedRows = Math.ceil(group.fileIds.length / estimatedItemsPerRow);
+        const estimatedGroupHeight = estimatedRows * (thumbnailSize + 40) + 40; // +40 for padding and margins
+        currentOffset += headerHeight + estimatedGroupHeight + marginBottom;
+      } else {
+        currentOffset += headerHeight + marginBottom;
+      }
+    }
+    
+    return offsets;
+  }, [groupedFiles, collapsedGroups, containerRect.width, thumbnailSize]);
+
+  return (
+    <div className="w-full min-w-0">
+      {groupedFiles.map((group: FileGroup) => {
+        const isCollapsed = collapsedGroups[group.id] || false;
+        const groupOffsetY = groupOffsets[group.id] || 0;
+        
+        return (
+          <div key={group.id} className="mb-8">
+            <GroupHeader
+              group={group}
+              collapsed={isCollapsed}
+              onToggle={handleToggleGroup}
+            />
+            {!isCollapsed && (
+              <GroupContent
+                group={group}
+                files={files}
+                activeTab={activeTab}
+                renamingId={renamingId}
+                thumbnailSize={thumbnailSize}
+                hoverPlayingId={hoverPlayingId}
+                handleFileClick={handleFileClick}
+                handleFileDoubleClick={handleFileDoubleClick}
+                handleContextMenu={handleContextMenu}
+                handleStartRename={handleStartRename}
+                handleRenameSubmit={handleRenameSubmit}
+                handleRenameCancel={handleRenameCancel}
+                handleSetHoverPlayingId={handleSetHoverPlayingId}
+                settings={settings}
+                containerRect={containerRect}
+                t={t}
+                resourceRoot={resourceRoot}
+                cachePath={cachePath}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                scrollTop={scrollTop}
+                groupOffsetY={groupOffsetY}
+              />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 });
@@ -2571,11 +2702,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   // Only restore scroll position if it's significantly different (10px threshold)
                   const currentScroll = containerRef.current.scrollTop;
                   const targetScroll = activeTab.scrollTop;
-                  
+                   
                   if (Math.abs(currentScroll - targetScroll) > 10) {
                       isRestoringScrollRef.current = true;
                       containerRef.current.scrollTop = targetScroll;
-                      
+                       
                       // Reset the flag after a short delay to allow user scrolling to take over
                       setTimeout(() => {
                           isRestoringScrollRef.current = false;
@@ -2660,7 +2791,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   );
 
   const visibleItems = useMemo(() => {
-      const buffer = 800; 
+      const buffer = 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
@@ -2754,7 +2885,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               const targetFolderId = folderElement.getAttribute('data-id');
               if (targetFolderId) {
                   const targetFolder = files[targetFolderId];
-                  
+                   
                   if (targetFolder && targetFolder.type === FileType.FOLDER) {
                       // 拖拽到文件夹
                       if (onDropOnFolder) {
@@ -2771,12 +2902,12 @@ export const FileGrid: React.FC<FileGridProps> = ({
                       const file = files[id];
                       return file && file.parentId === currentFolderId;
                   });
-                  
+                   
                   // 如果所有文件都在当前文件夹中，不执行任何操作
                   if (allFilesInCurrentFolder) {
                       return;
                   }
-                  
+                   
                   onDropOnFolder(currentFolderId, ids);
               }
           }
@@ -2848,41 +2979,31 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   </div>
               </div>
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
-              <div className="w-full min-w-0">
-                  {groupedFiles.map((group) => (
-                      <div key={group.id} className="mb-8">
-                          <GroupHeader
-                              group={group}
-                              collapsed={collapsedGroups[group.id] || false}
-                              onToggle={handleToggleGroup}
-                          />
-                          {!(collapsedGroups[group.id] || false) && (
-                              <GroupContent
-                                  group={group}
-                                  files={files}
-                                  activeTab={activeTab}
-                                  renamingId={renamingId}
-                                  thumbnailSize={thumbnailSize}
-                                  hoverPlayingId={hoverPlayingId}
-                                  handleFileClick={handleFileClick}
-                                  handleFileDoubleClick={handleFileDoubleClick}
-                                  handleContextMenu={handleContextMenu}
-                                  handleStartRename={handleStartRename}
-                                  handleRenameSubmit={handleRenameSubmit}
-                                  handleRenameCancel={handleRenameCancel}
-                                  handleSetHoverPlayingId={handleSetHoverPlayingId}
-                                  settings={settings}
-                                  containerRect={containerRect}
-                                  t={t}
-                                  resourceRoot={effectiveResourceRoot}
-                                  cachePath={effectiveCachePath}
-                                  onDragStart={onDragStart}
-                                  onDragEnd={onDragEnd}
-                              />
-                          )}
-                      </div>
-                  ))}
-              </div>
+              <GroupedContent
+                  groupedFiles={groupedFiles}
+                  collapsedGroups={collapsedGroups}
+                  files={files}
+                  activeTab={activeTab}
+                  renamingId={renamingId}
+                  thumbnailSize={thumbnailSize}
+                  hoverPlayingId={hoverPlayingId}
+                  handleFileClick={handleFileClick}
+                  handleFileDoubleClick={handleFileDoubleClick}
+                  handleContextMenu={handleContextMenu}
+                  handleStartRename={handleStartRename}
+                  handleRenameSubmit={handleRenameSubmit}
+                  handleRenameCancel={handleRenameCancel}
+                  handleSetHoverPlayingId={handleSetHoverPlayingId}
+                  settings={settings}
+                  containerRect={containerRect}
+                  t={t}
+                  resourceRoot={effectiveResourceRoot}
+                  cachePath={effectiveCachePath}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  scrollTop={scrollTop}
+                  handleToggleGroup={handleToggleGroup}
+              />
           ) : activeTab.layoutMode === 'list' ? (
               <div className="w-full h-full min-w-0 overflow-y-auto overflow-x-hidden">
                   <div className="p-6">
@@ -2899,7 +3020,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onFileClick={handleFileClick}
                                   onFileDoubleClick={handleFileDoubleClick}
                                   onContextMenu={handleContextMenu}
-                                  onStartRename={onStartRename}
+                                  onStartRename={handleStartRename}
                                   onRenameSubmit={onRenameSubmit}
                                   onRenameCancel={onRenameCancel}
                                   t={t}
@@ -2932,7 +3053,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                           {visibleItems.map((item) => {
                               const file = files[item.id];
                               if (!file) return null;
-                              
+                               
                               return (
                                   <FileCard
                                       key={file.id}
@@ -2945,7 +3066,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       onFileClick={handleFileClick}
                                       onFileDoubleClick={handleFileDoubleClick}
                                       onContextMenu={handleContextMenu}
-                                      onStartRename={onStartRename}
+                                      onStartRename={handleStartRename}
                                       onRenameSubmit={handleRenameSubmit}
                                       onRenameCancel={handleRenameCancel}
                                       onSetHoverPlayingId={handleSetHoverPlayingId}
