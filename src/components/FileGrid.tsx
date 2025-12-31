@@ -14,9 +14,11 @@ declare global {
   interface Window {
     __AURORA_THUMBNAIL_CACHE__?: LRUCache<string>;
     __AURORA_THUMBNAIL_PATH_CACHE__?: LRUCache<string>; // 缩略图原始文件路径缓存（用于外部拖拽）
-    __UPDATE_FILE_COLORS__?: (filePath: string, colors: string[]) => void;
   }
 }
+
+// 导入性能监控工具
+import { performanceMonitor } from '../utils/performanceMonitor';
 
 // LRU缓存类，带大小限制和TTL
 class LRUCache<T> {
@@ -220,6 +222,122 @@ const getThumbnailPathCache = () => {
   return window.__AURORA_THUMBNAIL_PATH_CACHE__;
 };
 
+// Intersection Observer 单例管理器
+class IntersectionObserverManager {
+  private static instance: IntersectionObserverManager;
+  private observers: Map<string, { observer: IntersectionObserver; callbacks: WeakMap<Element, Set<(entry: IntersectionObserverEntry) => void>> }>;
+  private defaultOptions: IntersectionObserverInit;
+
+  private constructor() {
+    this.observers = new Map();
+    this.defaultOptions = {
+      rootMargin: '300px',
+      threshold: 0.01
+    };
+  }
+
+  // 获取单例实例
+  public static getInstance(): IntersectionObserverManager {
+    if (!IntersectionObserverManager.instance) {
+      IntersectionObserverManager.instance = new IntersectionObserverManager();
+    }
+    return IntersectionObserverManager.instance;
+  }
+
+  // 注册观察
+  public observe(
+    element: Element,
+    callback: (entry: IntersectionObserverEntry) => void,
+    options: IntersectionObserverInit = {}
+  ): void {
+    if (typeof IntersectionObserver === 'undefined') {
+      // 如果浏览器不支持 IntersectionObserver，直接调用回调
+      callback({ isIntersecting: true } as IntersectionObserverEntry);
+      return;
+    }
+
+    // 合并默认选项和用户选项
+    const mergedOptions = { ...this.defaultOptions, ...options };
+    // 使用选项生成唯一键，相同选项的元素共享同一个 Observer
+    const optionsKey = JSON.stringify(mergedOptions);
+
+    // 获取或创建 Observer
+    let observerInfo = this.observers.get(optionsKey);
+    if (!observerInfo) {
+      // 创建新的 Observer
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          // 获取该元素的所有回调并执行
+          const callbacks = observerInfo?.callbacks.get(entry.target);
+          if (callbacks) {
+            callbacks.forEach((cb) => cb(entry));
+          }
+        });
+      }, mergedOptions);
+
+      observerInfo = {
+        observer,
+        callbacks: new WeakMap()
+      };
+      this.observers.set(optionsKey, observerInfo);
+    }
+
+    // 获取或创建元素的回调集合
+    let elementCallbacks = observerInfo.callbacks.get(element);
+    if (!elementCallbacks) {
+      elementCallbacks = new Set();
+      observerInfo.callbacks.set(element, elementCallbacks);
+      // 开始观察元素
+      observerInfo.observer.observe(element);
+    }
+
+    // 添加回调
+    elementCallbacks.add(callback);
+  }
+
+  // 取消观察
+  public unobserve(
+    element: Element,
+    callback: (entry: IntersectionObserverEntry) => void,
+    options: IntersectionObserverInit = {}
+  ): void {
+    if (typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    const mergedOptions = { ...this.defaultOptions, ...options };
+    const optionsKey = JSON.stringify(mergedOptions);
+
+    const observerInfo = this.observers.get(optionsKey);
+    if (!observerInfo) {
+      return;
+    }
+
+    const elementCallbacks = observerInfo.callbacks.get(element);
+    if (elementCallbacks) {
+      // 移除回调
+      elementCallbacks.delete(callback);
+
+      // 如果没有回调了，停止观察并清理
+      if (elementCallbacks.size === 0) {
+        observerInfo.observer.unobserve(element);
+        observerInfo.callbacks.delete(element);
+        // 简化逻辑：不再检查 WeakMap 是否为空，因为 WeakMap 没有有效的方式来检查大小
+        // 这样可能会导致少量未使用的 Observer 实例存在，但不会造成内存泄漏
+        // 主要优化已经实现：将 O(n) 个 Observer 减少到 O(1) 个（按选项分组）
+      }
+    }
+  }
+
+  // 清理所有观察
+  public disconnect(): void {
+    this.observers.forEach((observerInfo) => {
+      observerInfo.observer.disconnect();
+    });
+    this.observers.clear();
+  }
+}
+
 // --- Folder 3D Icon Component ---
 export const Folder3DIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void }) => {
     const styles: any = {
@@ -310,36 +428,35 @@ const useInView = (options: IntersectionObserverInit = {}) => {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const currentRef = ref.current;
+    if (!currentRef) return;
+
     if (typeof IntersectionObserver === 'undefined') {
       setIsInView(true);
       setWasInView(true);
       return;
     }
 
-    // More efficient observer with larger rootMargin to prevent flickering
-    const observer = new IntersectionObserver(([entry]) => {
+    // 获取单例实例
+    const observerManager = IntersectionObserverManager.getInstance();
+
+    // 定义回调函数
+    const handleIntersection = (entry: IntersectionObserverEntry) => {
       const intersecting = entry.isIntersecting;
       setIsInView(intersecting);
       // If it was once in view, keep it marked as wasInView
       if (intersecting) {
         setWasInView(true);
       }
-    }, {
-      rootMargin: '300px', // Larger root margin to prevent flickering when scrolling
-      threshold: 0.01,     // Lower threshold for more sensitivity
-      ...options
-    });
+    };
 
-    const currentRef = ref.current;
-    if (currentRef) {
-      observer.observe(currentRef);
-    }
+    // 注册观察
+    observerManager.observe(currentRef, handleIntersection, options);
 
+    // 清理函数
     return () => {
-      if (currentRef) {
-        observer.unobserve(currentRef);
-      }
-      observer.disconnect();
+      // 取消观察
+      observerManager.unobserve(currentRef, handleIntersection, options);
     };
   }, [options]);
 
@@ -374,7 +491,12 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       // const key = `${filePath}|${modified || ''}`; 
       const key = filePath; 
       const cache = getGlobalCache();
-      return cache.get(key) || null;
+      const cachedThumbnail = cache.get(key);
+      if (cachedThumbnail) {
+        // 记录初始化时的缓存命中
+        performanceMonitor.increment('thumbnailCacheHit');
+      }
+      return cachedThumbnail || null;
   });
   
   const [animSrc, setAnimSrc] = React.useState<string | null>(null);
@@ -389,7 +511,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
       // 如果已经有图了（比如从缓存中读到的），且 URL 没变，就不用重新加载
       if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
-          // 缓存命中，直接返回，避免不必要的请求
+          // 缓存命中，记录并返回，避免不必要的请求
+          performanceMonitor.increment('thumbnailCacheHit');
           return;
       }
 
@@ -402,21 +525,46 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           const { getThumbnail } = await import('../api/tauri-bridge');
           
           // 创建颜色提取回调函数
-          const onColors = (colors: DominantColor[] | null) => {
-            if (colors && window.__UPDATE_FILE_COLORS__) {
-              // 通过全局函数更新文件元数据
-              window.__UPDATE_FILE_COLORS__(filePath, colors.map(c => c.hex));
-            }
-          };
+        const onColors = (colors: DominantColor[] | null) => {
+          if (colors) {
+            // 通过自定义事件更新文件元数据
+            window.dispatchEvent(new CustomEvent('color-update', {
+              detail: {
+                filePath,
+                colors: colors.map(c => c.hex)
+              }
+            }));
+          }
+        };
+          
+          // 检查缓存是否已有
+          const cachedThumbnail = cache.get(key);
+          if (cachedThumbnail) {
+            // 缓存命中，直接使用缓存
+            performanceMonitor.increment('thumbnailCacheHit');
+            setThumbnailSrc(cachedThumbnail);
+            return;
+          }
+          
+          // 缓存未命中，记录并调用API
+          performanceMonitor.increment('thumbnailCacheMiss');
+          
+          // 开始记录缩略图加载性能
+          const thumbnailTimer = performanceMonitor.start('getThumbnail');
           
           const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, onColors);
           
+          // 结束计时并记录性能指标
+          performanceMonitor.end(thumbnailTimer, 'getThumbnail', {
+            filePath,
+            cacheHit: false,
+            modified
+          });
+          
           if (!controller.signal.aborted && thumbnail) {
             // 更新全局缓存
-            if (cache.get(key) !== thumbnail) {
-                cache.set(key, thumbnail);
-                setThumbnailSrc(thumbnail);
-            }
+            cache.set(key, thumbnail);
+            setThumbnailSrc(thumbnail);
           }
         } catch (error) {
           if (!controller.signal.aborted) {

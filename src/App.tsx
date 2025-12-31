@@ -14,6 +14,8 @@ import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
+import { debounce } from './utils/debounce';
+import { performanceMonitor } from './utils/performanceMonitor';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
@@ -707,6 +709,9 @@ export const App: React.FC = () => {
         animateOnHover: true,
         paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
         search: { isAISearchEnabled: false },
+        performance: {
+            refreshInterval: 5000 // 默认5秒刷新一次
+        },
         ai: {
             provider: 'ollama',
             openai: { apiKey: '', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o' },
@@ -745,6 +750,37 @@ export const App: React.FC = () => {
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
   const selectionRef = useRef<HTMLDivElement>(null);
+  
+  // 组件卸载时清理逻辑
+  useEffect(() => {
+    return () => {
+      // 清理所有定时器
+      timerRefs.current.forEach((timer) => {
+        clearInterval(timer);
+      });
+      timerRefs.current.clear();
+      
+      // 取消防抖任务更新
+      debouncedTaskUpdate.cancel();
+      
+      // 应用所有暂存的任务更新，确保最终一致性
+      if (taskUpdatesRef.current.size > 0) {
+        setState(prev => {
+          const updatedTasks = prev.tasks.map(t => {
+            const updates = taskUpdatesRef.current.get(t.id);
+            if (updates) {
+              return { ...t, ...updates };
+            }
+            return t;
+          });
+          
+          taskUpdatesRef.current.clear();
+          
+          return { ...prev, tasks: updatedTasks };
+        });
+      }
+    };
+  }, []);
 
   const [hoverPlayingId, setHoverPlayingId] = useState<string | null>(null);
   const [isCreatingTag, setIsCreatingTag] = useState(false);
@@ -772,10 +808,13 @@ export const App: React.FC = () => {
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
   const [draggedFilePaths, setDraggedFilePaths] = useState<string[]>([]);
   
-  // Global function for FileGrid to update file colors
+  // 自定义事件监听器，用于更新文件颜色
   useEffect(() => {
-    // 设置全局函数，供 FileGrid 组件调用
-    window.__UPDATE_FILE_COLORS__ = (filePath: string, colors: string[]) => {
+    // 定义事件处理函数
+    const handleColorUpdate = (event: CustomEvent) => {
+      const { filePath, colors } = event.detail;
+      if (!filePath || !colors) return;
+      
       // 找到对应的文件ID
       const fileEntry = Object.entries(state.files).find(([id, file]) => file.path === filePath);
       if (fileEntry) {
@@ -805,10 +844,13 @@ export const App: React.FC = () => {
         }
       }
     };
-
+    
+    // 添加事件监听器
+    window.addEventListener('color-update', handleColorUpdate as EventListener);
+    
     // 清理函数
     return () => {
-      delete window.__UPDATE_FILE_COLORS__;
+      window.removeEventListener('color-update', handleColorUpdate as EventListener);
     };
   }, [state.files]); // 依赖 files，确保能正确找到文件
 
@@ -1045,7 +1087,21 @@ export const App: React.FC = () => {
                         const savedMetadata = savedData?.fileMetadata || {};
                         for (const p of pathsToScan) {
                             try {
+                                // 开始记录文件扫描性能，绕过采样率
+                                const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
+                                
                                 const result = await scanDirectory(p);
+                                
+                                // 结束计时并记录性能指标
+                                performanceMonitor.end(scanTimer, 'scanDirectory', {
+                                    path: p,
+                                    fileCount: Object.keys(result.files).length,
+                                    rootCount: result.roots.length
+                                });
+                                
+                                // 记录扫描文件数量
+                                performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
+                                
                                 Object.values(result.files).forEach((f: any) => {
                                     const saved = savedMetadata[f.path];
                                     if (saved) {
@@ -1283,24 +1339,77 @@ export const App: React.FC = () => {
   const showDragHint = selectedCount > 1;
   
   // ... (keep startTask and updateTask)
+  // 存储所有定时器引用，用于组件卸载时清理
+  const timerRefs = useRef<Map<string, number>>(new Map());
+  
   const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
     const id = Math.random().toString(36).substr(2, 9);
     const newTask: TaskProgress = { id, type: type as any, title, total: fileIds.length, current: 0, startTime: Date.now(), status: 'running', minimized: false };
+    
+    // 立即添加任务，不使用防抖，确保用户立即看到任务开始
     setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
     
     if (autoProgress) {
         let current = 0;
+        // 降低定时器频率，从 500ms 改为 1000ms
         const interval = setInterval(() => {
             current += 1;
-            setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, current } : t) }));
-            if (current >= newTask.total) { clearInterval(interval); setTimeout(() => { setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== id) })); }, 1000); }
-        }, 500);
+            // 使用优化后的 updateTask 函数，利用防抖机制
+            updateTask(id, { current });
+            if (current >= newTask.total) {
+                clearInterval(interval);
+                // 移除定时器引用
+                timerRefs.current.delete(id);
+                // 使用 setTimeout 延迟移除任务，让用户看到完成状态
+                setTimeout(() => {
+                    setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== id) }));
+                }, 1000);
+            }
+        }, 1000);
+        
+        // 存储定时器引用，便于后续清理
+        timerRefs.current.set(id, interval);
     }
     return id;
   };
 
+  // 使用 ref 暂存任务更新，确保防抖时的最终一致性
+  const taskUpdatesRef = useRef<Map<string, Partial<TaskProgress>>>(new Map());
+  
+  // 创建防抖的状态更新函数
+  const debouncedTaskUpdate = useRef(
+    debounce(() => {
+      setState(prev => {
+        // 如果没有更新，直接返回
+        if (taskUpdatesRef.current.size === 0) {
+          return prev;
+        }
+        
+        // 应用所有暂存的任务更新
+        const updatedTasks = prev.tasks.map(t => {
+          const updates = taskUpdatesRef.current.get(t.id);
+          if (updates) {
+            return { ...t, ...updates };
+          }
+          return t;
+        });
+        
+        // 清空暂存的更新
+        taskUpdatesRef.current.clear();
+        
+        return { ...prev, tasks: updatedTasks };
+      });
+    }, 100) // 100ms 防抖延迟
+  ).current;
+  
+  // 优化的 updateTask 函数，使用防抖处理
   const updateTask = (id: string, updates: Partial<TaskProgress>) => {
-      setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, ...updates } : t) }));
+    // 将更新暂存到 ref 中
+    const existingUpdates = taskUpdatesRef.current.get(id) || {};
+    taskUpdatesRef.current.set(id, { ...existingUpdates, ...updates });
+    
+    // 调用防抖函数
+    debouncedTaskUpdate();
   };
 
   // ... (keep navigation/file handling functions: updateActiveTab, sortFiles, getFilteredChildren, displayFileIds)
@@ -1308,25 +1417,30 @@ export const App: React.FC = () => {
      setState(prev => { const current = prev.tabs.find(t => t.id === prev.activeTabId); if (!current) return prev; const newValues = typeof updates === 'function' ? updates(current) : updates; const newTab = { ...current, ...newValues }; return { ...prev, tabs: prev.tabs.map(t => t.id === prev.activeTabId ? newTab : t) }; });
   };
 
-  const sortFiles = (files: FileNode[]) => {
-    return files.sort((a, b) => {
-      if (a.type !== b.type) return a.type === FileType.FOLDER ? -1 : 1;
-      let res: number = 0;
-      if (state.sortBy === 'date') { const valA = a.createdAt || ''; const valB = b.createdAt || ''; res = valA.localeCompare(valB); } 
-      else if (state.sortBy === 'size') { const sizeA: number = a.meta?.sizeKb || 0; const sizeB: number = b.meta?.sizeKb || 0; res = sizeA - sizeB; } 
-      else { const valA = (a.name || '').toLowerCase(); const valB = (b.name || '').toLowerCase(); res = valA.localeCompare(valB); }
-      if (res === 0) return 0; const modifier = state.sortDirection === 'asc' ? 1 : -1; return res * modifier;
-    });
-  };
+  // Cache all files array to avoid repeated Object.values() calls
+  const allFiles = useMemo(() => Object.values(state.files) as FileNode[], [state.files]);
+
+  // Memoized sort function with stable dependencies
+  const sortFiles = useMemo(() => {
+    return (files: FileNode[]) => {
+      return files.sort((a, b) => {
+        if (a.type !== b.type) return a.type === FileType.FOLDER ? -1 : 1;
+        let res: number = 0;
+        if (state.sortBy === 'date') { const valA = a.createdAt || ''; const valB = b.createdAt || ''; res = valA.localeCompare(valB); } 
+        else if (state.sortBy === 'size') { const sizeA: number = a.meta?.sizeKb || 0; const sizeB: number = b.meta?.sizeKb || 0; res = sizeA - sizeB; } 
+        else { const valA = (a.name || '').toLowerCase(); const valB = (b.name || '').toLowerCase(); res = valA.localeCompare(valB); }
+        if (res === 0) return 0; const modifier = state.sortDirection === 'asc' ? 1 : -1; return res * modifier;
+      });
+    };
+  }, [state.sortBy, state.sortDirection]);
 
   // Optimized filtered children calculation
   const displayFileIds = useMemo(() => {
     let candidates: FileNode[] = [];
     
-    // AI Search Filter Logic - Optimized with early exits
+    // AI Search Filter Logic - Optimized with early exits and Set lookups
     if (activeTab.aiFilter && state.settings.search.isAISearchEnabled) {
         const { keywords, colors, people, description } = activeTab.aiFilter;
-        const allFiles = Object.values(state.files) as FileNode[];
         
         candidates = allFiles.filter(f => {
             if (f.type !== FileType.IMAGE) return false;
@@ -1336,42 +1450,44 @@ export const App: React.FC = () => {
                 return false;
             }
             
-            // Check Keywords (Tags, Objects, Description) - Early exit if no match
+            // Check Keywords (Tags, Objects, Description) - Optimized with early exits
             if (keywords.length > 0) {
-                const keywordMatch = keywords.some(k => {
-                    const lowerK = k.toLowerCase();
-                    return f.tags.some(t => t.toLowerCase().includes(lowerK)) ||
-                           (f.aiData?.objects && f.aiData.objects.some(o => o.toLowerCase().includes(lowerK))) ||
-                           (f.aiData?.tags && f.aiData.tags.some(t => t.toLowerCase().includes(lowerK))) ||
-                           (f.description && f.description.toLowerCase().includes(lowerK)) ||
-                           (f.aiData?.description && f.aiData.description.toLowerCase().includes(lowerK));
+                const lowerKeywords = keywords.map(k => k.toLowerCase());
+                const hasKeywordMatch = lowerKeywords.some(lowerK => {
+                    if (f.tags?.some(t => t.toLowerCase().includes(lowerK))) return true;
+                    if (f.aiData?.objects?.some(o => o.toLowerCase().includes(lowerK))) return true;
+                    if (f.aiData?.tags?.some(t => t.toLowerCase().includes(lowerK))) return true;
+                    if (f.description?.toLowerCase().includes(lowerK)) return true;
+                    if (f.aiData?.description?.toLowerCase().includes(lowerK)) return true;
+                    return false;
                 });
-                if (!keywordMatch) return false;
+                if (!hasKeywordMatch) return false;
             }
 
-            // Check Colors - Early exit if no match
+            // Check Colors - Optimized with Set for O(1) lookups
             if (colors.length > 0) {
-                const colorMatch = colors.some(c => {
-                    const hex = c.toLowerCase();
-                    return (f.meta?.palette && f.meta.palette.some(p => p.toLowerCase().includes(hex))) ||
-                           (f.aiData?.dominantColors && f.aiData.dominantColors.some(p => p.toLowerCase().includes(hex)));
-                });
-                if (!colorMatch) return false;
+                const colorSet = new Set(colors.map(c => c.toLowerCase()));
+                const hasColorMatch = 
+                    (f.meta?.palette?.some(p => colorSet.has(p.toLowerCase()))) ||
+                    (f.aiData?.dominantColors?.some(p => colorSet.has(p.toLowerCase())));
+                if (!hasColorMatch) return false;
             }
 
-            // Check People - Early exit if no match
+            // Check People - Optimized with Set for O(1) lookups
             if (people.length > 0) {
-                const peopleMatch = people.some(p => {
-                    const lowerP = p.toLowerCase();
-                    return f.aiData?.faces && f.aiData.faces.some(face => face.name.toLowerCase().includes(lowerP));
-                });
-                if (!peopleMatch) return false;
+                const peopleSet = new Set(people.map(p => p.toLowerCase()));
+                const hasPeopleMatch = f.aiData?.faces?.some(face => 
+                    face.name && peopleSet.has(face.name.toLowerCase())
+                );
+                if (!hasPeopleMatch) return false;
             }
 
             // Check specific description intent - Early exit if no match
             if (description) {
-                const descMatch = (f.description && f.description.toLowerCase().includes(description.toLowerCase())) ||
-                               (f.aiData?.description && f.aiData.description.toLowerCase().includes(description.toLowerCase()));
+                const lowerDesc = description.toLowerCase();
+                const descMatch = 
+                    (f.description?.toLowerCase().includes(lowerDesc)) ||
+                    (f.aiData?.description?.toLowerCase().includes(lowerDesc));
                 if (!descMatch) return false;
             }
 
@@ -1381,7 +1497,7 @@ export const App: React.FC = () => {
     } else if (activeTab.activePersonId) { 
         // Optimized active person filter - use direct lookup
         const personId = activeTab.activePersonId;
-        candidates = (Object.values(state.files) as FileNode[]).filter(f => 
+        candidates = allFiles.filter(f => 
             f.type === FileType.IMAGE && 
             f.aiData?.faces && 
             f.aiData.faces.some(face => face.personId === personId)
@@ -1390,14 +1506,14 @@ export const App: React.FC = () => {
     else if (activeTab.activeTags.length > 0) { 
         // Optimized tag filter - use Set for faster lookups
         const activeTagsSet = new Set(activeTab.activeTags);
-        candidates = (Object.values(state.files) as FileNode[]).filter(f => 
+        candidates = allFiles.filter(f => 
             f.type !== FileType.FOLDER && 
-            f.tags.some(tag => activeTagsSet.has(tag))
+            f.tags?.some(tag => activeTagsSet.has(tag))
         );
     } 
     else if (activeTab.searchScope === 'tag' && activeTab.searchQuery.startsWith('tag:')) { 
         const tagName = activeTab.searchQuery.replace('tag:', '');
-        candidates = (Object.values(state.files) as FileNode[]).filter((f) => f.tags.includes(tagName)); 
+        candidates = allFiles.filter((f) => f.tags?.includes(tagName)); 
     } 
     else { 
         if (!state.files[activeTab.folderId]) { 
@@ -1405,7 +1521,7 @@ export const App: React.FC = () => {
         } 
         
         if (activeTab.searchQuery) { 
-            candidates = Object.values(state.files) as FileNode[]; 
+            candidates = allFiles; 
         } else { 
             const folder = state.files[activeTab.folderId];
             candidates = folder?.children?.map(id => state.files[id]).filter(Boolean) as FileNode[] || [];
@@ -1439,32 +1555,32 @@ export const App: React.FC = () => {
                 }
                 
                 // Check tags
-                if (f.tags.some(t => t.toLowerCase().includes(lowerPart))) {
+                if (f.tags?.some(t => t.toLowerCase().includes(lowerPart))) {
                     return true;
                 }
                 
                 // Check description if available
-                if (f.description && f.description.toLowerCase().includes(lowerPart)) {
+                if (f.description?.toLowerCase().includes(lowerPart)) {
                     return true;
                 }
                 
                 // Check source URL if available
-                if (f.sourceUrl && f.sourceUrl.toLowerCase().includes(lowerPart)) {
+                if (f.sourceUrl?.toLowerCase().includes(lowerPart)) {
                     return true;
                 }
                 
                 // Check AI data if available
                 if (f.aiData) {
-                    if (f.aiData.sceneCategory.toLowerCase().includes(lowerPart)) {
+                    if (f.aiData.sceneCategory?.toLowerCase().includes(lowerPart)) {
                         return true;
                     }
-                    if (f.aiData.objects && f.aiData.objects.some(obj => obj.toLowerCase().includes(lowerPart))) {
+                    if (f.aiData.objects?.some(obj => obj.toLowerCase().includes(lowerPart))) {
                         return true;
                     }
-                    if (f.aiData.extractedText && f.aiData.extractedText.toLowerCase().includes(lowerPart)) {
+                    if (f.aiData.extractedText?.toLowerCase().includes(lowerPart)) {
                         return true;
                     }
-                    if (f.aiData.translatedText && f.aiData.translatedText.toLowerCase().includes(lowerPart)) {
+                    if (f.aiData.translatedText?.toLowerCase().includes(lowerPart)) {
                         return true;
                     }
                 }
@@ -1501,7 +1617,7 @@ export const App: React.FC = () => {
     
     // Sort and return IDs
     return sortFiles(candidates).map(f => f.id);
-  }, [state.files, activeTab, state.sortBy, state.sortDirection, state.settings.search.isAISearchEnabled]);
+  }, [allFiles, activeTab, state.sortBy, state.sortDirection, state.settings.search.isAISearchEnabled]);
 
   // ... (keep grouping logic)
   const toggleGroup = (groupId: string) => { setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] })); };
@@ -1543,7 +1659,20 @@ export const App: React.FC = () => {
                       await ensureDirectory(cachePath);
                   }
                   
+                  // 开始记录文件扫描性能，绕过采样率
+                  const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
+                  
                   const result = await scanDirectory(path, true); 
+                  
+                  // 结束计时并记录性能指标
+                  performanceMonitor.end(scanTimer, 'scanDirectory', {
+                      path,
+                      fileCount: Object.keys(result.files).length,
+                      rootCount: result.roots.length
+                  });
+                  
+                  // 记录扫描文件数量
+                  performanceMonitor.increment('filesScanned', Object.keys(result.files).length); 
                   setState(prev => { 
                       const newRoots = Array.from(new Set([...prev.roots, ...result.roots])); 
                       const newFiles = { ...prev.files, ...result.files }; 
@@ -1912,6 +2041,37 @@ export const App: React.FC = () => {
 
   
   const groupedTags: Record<string, string[]> = useMemo(() => { const allTags = new Set<string>(state.customTags); (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); const groups: Record<string, string[]> = {}; filteredTags.forEach(tag => { const key = getPinyinGroup(tag); if (!groups[key]) groups[key] = []; groups[key].push(tag); }); const sortedKeys = Object.keys(groups).sort(); return sortedKeys.reduce((obj, key) => { obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); return obj; }, {} as Record<string, string[]>); }, [state.files, state.settings.language, state.customTags, tagSearchQuery]);
+  // Memoized person counts to avoid recalculating every time
+  const personCounts = useMemo(() => {
+    // 开始记录人员计数性能
+    const timer = performance.now();
+    const counts = new Map<string, number>();
+    
+    // Initialize all people with 0 count
+    Object.keys(state.people).forEach(personId => {
+      counts.set(personId, 0);
+    });
+    
+    // Count files per person
+    Object.values(state.files).forEach(file => {
+      if (file.type === FileType.IMAGE && file.aiData?.analyzed && file.aiData?.faces) {
+        const personIds = new Set(file.aiData.faces.map(face => face.personId));
+        personIds.forEach(personId => {
+          counts.set(personId, (counts.get(personId) || 0) + 1);
+        });
+      }
+    });
+    
+    // 记录性能指标
+    const duration = performance.now() - timer;
+    performanceMonitor.timing('personCounts', duration, {
+      personCount: Object.keys(state.people).length,
+      fileCount: Object.keys(state.files).length
+    });
+    
+    return counts;
+  }, [state.files, state.people]);
+
   const handleUpdateFile = (id: string, updates: Partial<FileNode>) => { 
     setState(prev => { 
       const updatedFiles = { ...prev.files, [id]: { ...prev.files[id], ...updates } }; 
@@ -1920,58 +2080,47 @@ export const App: React.FC = () => {
       if (updates.aiData?.faces || (updates.aiData && prev.files[id].aiData?.faces)) {
         const updatedPeople = { ...prev.people }; 
         
-        // Get the current and previous faces to find all affected people
+        // Get the current and previous faces
         const currentFaces = updatedFiles[id].aiData?.faces || []; 
         const prevFaces = prev.files[id].aiData?.faces || []; 
         
-        // Collect all affected person IDs
-        const allAffectedPersonIds = new Set<string>(); 
+        // Get person IDs from current and previous faces
+        const currentPersonIds = new Set(currentFaces.map(face => face.personId));
+        const prevPersonIds = new Set(prevFaces.map(face => face.personId));
         
-        prevFaces.forEach(face => allAffectedPersonIds.add(face.personId)); 
-        currentFaces.forEach(face => allAffectedPersonIds.add(face.personId)); 
+        // Find added and removed person IDs
+        const addedPersonIds = Array.from(currentPersonIds).filter(personId => !prevPersonIds.has(personId));
+        const removedPersonIds = Array.from(prevPersonIds).filter(personId => !currentPersonIds.has(personId));
         
-        // Recalculate counts for all affected people
+        // Update counts for all affected people
+        const allAffectedPersonIds = new Set([...addedPersonIds, ...removedPersonIds]);
+        
+        // Create a copy of the current counts
+        const currentCounts = new Map(personCounts);
+        
         allAffectedPersonIds.forEach(personId => {
-          let newCount = 0;
-          let hasFaceInCurrentFile = false;
-          let faceBox = null;
+          let newCount = currentCounts.get(personId) || 0;
           
-          // Count files that contain this person
-          Object.values(updatedFiles).forEach(file => {
-            if (file.type === FileType.IMAGE && file.aiData?.analyzed && file.aiData?.faces) {
-              if (file.aiData.faces.some(face => face.personId === personId)) {
-                newCount++;
-                // Check if this is the current file we're updating
-                if (file.id === id) {
-                  hasFaceInCurrentFile = true;
-                  // Get the first face box for this person in the current file
-                  const faceForPerson = file.aiData.faces.find(face => face.personId === personId);
-                  if (faceForPerson?.box && faceForPerson.box.w > 0 && faceForPerson.box.h > 0) {
-                    faceBox = {
-                      x: faceForPerson.box.x,
-                      y: faceForPerson.box.y,
-                      w: faceForPerson.box.w,
-                      h: faceForPerson.box.h
-                    };
-                  }
-                }
-              }
-            }
-          });
+          // Adjust count based on changes
+          if (addedPersonIds.includes(personId)) {
+            newCount += 1;
+          }
+          if (removedPersonIds.includes(personId)) {
+            newCount = Math.max(0, newCount - 1);
+          }
           
           // Update the person's count and cover file if needed
           if (updatedPeople[personId]) {
-            const updatedPerson = {
-              ...updatedPeople[personId],
-              count: newCount
-            };
+            const updatedPerson = { ...updatedPeople[personId], count: newCount };
             
             // If person doesn't have a cover file and has a face in current file, set current file as cover
-            if (!updatedPerson.coverFileId && hasFaceInCurrentFile) {
+            if (!updatedPerson.coverFileId && currentPersonIds.has(personId)) {
               updatedPerson.coverFileId = id;
-              // If we found a valid face box, set it
-              if (faceBox) {
-                updatedPerson.faceBox = faceBox;
+              
+              // Find the first face for this person in current file
+              const faceForPerson = currentFaces.find(face => face.personId === personId);
+              if (faceForPerson?.box && faceForPerson.box.w > 0 && faceForPerson.box.h > 0) {
+                updatedPerson.faceBox = faceForPerson.box;
               }
             }
             
@@ -1986,45 +2135,102 @@ export const App: React.FC = () => {
     }); 
   };
   
+  // Helper function to limit concurrency
+  const asyncPool = async function <T>(limit: number, items: T[], fn: (item: T, index: number) => Promise<any>) {
+    const results = [];
+    const executing: Promise<any>[] = [];
+    
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const p = Promise.resolve().then(() => fn(item, i));
+      results.push(p);
+      
+      if (limit <= items.length) {
+        const e = p.then(() => {
+          executing.splice(executing.indexOf(e), 1);
+        });
+        executing.push(e);
+        if (executing.length >= limit) {
+          await Promise.race(executing);
+        }
+      }
+    }
+    
+    return Promise.all(results);
+  };
+
   const handleCopyFiles = async (fileIds: string[], targetFolderId: string) => {
+      // 开始记录复制操作性能
+      const copyTimer = performanceMonitor.start('handleCopyFiles');
       console.log('[CopyFiles] Starting copy operation', { fileIds, targetFolderId });
       const targetFolder = state.files[targetFolderId];
       console.log('[CopyFiles] Target folder info', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
       
       if (!targetFolder || !targetFolder.path) {
           console.error('[CopyFiles] Invalid target folder or path');
+          // 记录性能指标
+          performanceMonitor.end(copyTimer, 'handleCopyFiles', { success: false, fileCount: fileIds.length });
           return;
       }
       
       const taskId = startTask('copy', fileIds, t('tasks.copying'), false); // 禁用自动进度
       console.log('[CopyFiles] Task started with ID', taskId);
       
+      const separator = targetFolder.path.includes('/') ? '/' : '\\';
+      let copiedCount = 0;
+      const scannedFilesMap = new Map<string, any>();
+      const filePathsMap = new Map<string, { sourcePath: string; newPath: string; filename: string; originalFile: FileNode }>();
+      
       try {
-          const separator = targetFolder.path.includes('/') ? '/' : '\\';
-          let copiedCount = 0;
           
-          // Process each file individually - copy, scan, and update UI immediately after each file
+          // Precompute all target paths and file info
           for (const id of fileIds) {
-              console.log('[CopyFiles] Processing file ID', id);
               const file = state.files[id];
-              
               if (file && file.path) {
                   const filename = file.name;
                   const newPath = `${targetFolder.path}${separator}${filename}`;
-                  console.log('[CopyFiles] Copying file', { sourcePath: file.path, destPath: newPath });
+                  filePathsMap.set(id, { sourcePath: file.path, newPath, filename, originalFile: file });
+              }
+          }
+          
+          // Parallel copy with limited concurrency (10 files at a time)
+          await asyncPool(10, fileIds, async (id, index) => {
+              const fileInfo = filePathsMap.get(id);
+              if (!fileInfo) return;
+              
+              try {
+                  console.log('[CopyFiles] Copying file', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
                   
                   // Use Tauri API directly
-                  console.log('[CopyFiles] Calling Tauri copyFile API');
-                  await copyFile(file.path, newPath);
-                  console.log('[CopyFiles] File copied successfully');
+                  await copyFile(fileInfo.sourcePath, fileInfo.newPath);
                   
                   // Scan only the newly copied file instead of entire directory
-                  console.log('[CopyFiles] Scanning newly copied file:', newPath);
-                  const scannedFile = await scanFile(newPath, targetFolderId);
+                  console.log('[CopyFiles] Scanning newly copied file:', fileInfo.newPath);
+                  const scannedFile = await scanFile(fileInfo.newPath, targetFolderId);
                   
-                  // Update state with the new file immediately after copying and scanning
-                  setState(prev => {
-                      const newFiles = { ...prev.files };
+                  // Store scanned file info for batch update
+                  scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
+                  
+                  // Update progress
+                  copiedCount++;
+                  console.log('[CopyFiles] Copy count:', copiedCount);
+                  // 手动更新任务进度
+                  updateTask(taskId, { current: copiedCount });
+              } catch (error) {
+                  console.error('[CopyFiles] Error processing file ID', id, error);
+                  // Continue with other files
+              }
+          });
+          
+          // Batch update state with all newly copied files
+          if (scannedFilesMap.size > 0) {
+              setState(prev => {
+                  const newFiles = { ...prev.files };
+                  const updatedTargetFolder = { ...newFiles[targetFolderId] };
+                  updatedTargetFolder.children = [...(updatedTargetFolder.children || [])];
+                  
+                  // Process all scanned files
+                  scannedFilesMap.forEach(({ scannedFile, originalFile }) => {
                       const existingFile = prev.files[scannedFile.id];
                       
                       if (existingFile) {
@@ -2044,28 +2250,17 @@ export const App: React.FC = () => {
                           newFiles[scannedFile.id] = scannedFile;
                       }
                       
-                      // Update target folder's children list
-                      const currentFolder = newFiles[targetFolderId];
-                      if (currentFolder) {
-                          const existingChildren = currentFolder.children || [];
-                          if (!existingChildren.includes(scannedFile.id)) {
-                              newFiles[targetFolderId] = {
-                                  ...currentFolder,
-                                  children: [...existingChildren, scannedFile.id]
-                              };
-                          }
+                      // Add to target folder's children if not already present
+                      if (!updatedTargetFolder.children?.includes(scannedFile.id)) {
+                          updatedTargetFolder.children?.push(scannedFile.id);
                       }
-                      
-                      return { ...prev, files: newFiles };
                   });
                   
-                  copiedCount++;
-                  console.log('[CopyFiles] Copy count:', copiedCount);
-                  // 手动更新任务进度
-                  updateTask(taskId, { current: copiedCount });
-              } else {
-                  console.error('[CopyFiles] Invalid file or path for ID', id);
-              }
+                  // Update target folder
+                  newFiles[targetFolderId] = updatedTargetFolder;
+                  
+                  return { ...prev, files: newFiles };
+              });
           }
           
           showToast(t('context.copied'));
@@ -2079,6 +2274,13 @@ export const App: React.FC = () => {
                   tasks: prev.tasks.filter(t => t.id !== taskId)
               }));
           }, 1000);
+          
+          // 记录成功的性能指标
+          performanceMonitor.end(copyTimer, 'handleCopyFiles', { 
+              success: true, 
+              fileCount: fileIds.length,
+              copiedCount: copiedCount 
+          });
       } catch (e) {
           console.error('[CopyFiles] Error during copy operation:', e);
           showToast("Copy failed");
@@ -2089,14 +2291,25 @@ export const App: React.FC = () => {
                   tasks: prev.tasks.filter(t => t.id !== taskId)
               }));
           }, 1000);
+          
+          // 记录失败的性能指标
+          performanceMonitor.end(copyTimer, 'handleCopyFiles', { 
+              success: false, 
+              fileCount: fileIds.length,
+              copiedCount: copiedCount 
+          });
       }
   };
 
   const handleMoveFiles = async (fileIds: string[], targetFolderId: string) => {
+      // 开始记录移动操作性能
+      const moveTimer = performanceMonitor.start('handleMoveFiles');
       console.log('[MoveFiles] Starting move operation', { fileIds, targetFolderId });
       
       if (fileIds.includes(targetFolderId)) {
           console.error('[MoveFiles] Cannot move a folder into itself');
+          // 记录性能指标
+          performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: false, fileCount: fileIds.length });
           return;
       }
       
@@ -2105,42 +2318,64 @@ export const App: React.FC = () => {
       
       if (!targetFolder || !targetFolder.path) {
           console.error('[MoveFiles] Invalid target folder or path');
+          // 记录性能指标
+          performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: false, fileCount: fileIds.length });
           return;
       }
       
       const taskId = startTask('move', fileIds, t('tasks.moving'), false); // 禁用自动进度
       console.log('[MoveFiles] Task started with ID', taskId);
       
+      const separator = targetFolder.path.includes('/') ? '/' : '\\';
+      // Collect all unique source parent IDs
+      const sourceParentIds = new Set<string>();
+      let movedCount = 0;
+      
+      // Precompute all target paths and file info
+      const filePathsMap = new Map<string, { 
+          sourcePath: string; 
+          newPath: string; 
+          filename: string; 
+          originalFile: FileNode;
+          parentId: string | undefined;
+      }>();
+      
       try {
-          const separator = targetFolder.path.includes('/') ? '/' : '\\';
-          // Collect all unique source parent IDs
-          const sourceParentIds = new Set<string>();
-          let movedCount = 0;
-          
-          // Check for existing files before performing file system operations
-          console.log('[MoveFiles] Checking for existing files');
-          let existingFiles: string[] = [];
-          const targetPaths: Record<string, string> = {};
           
           for (const id of fileIds) {
               const file = state.files[id];
               if (file && file.path) {
                   const filename = file.name;
                   const newPath = `${targetFolder.path}${separator}${filename}`;
-                  targetPaths[id] = newPath;
-                  
-                  // Check if file exists at destination
-                  try {
-                      // Use Tauri API to check if file exists
-                      const exists = await invoke<boolean>('file_exists', { filePath: newPath });
-                      if (exists) {
-                          existingFiles.push(filename);
-                      }
-                  } catch (error) {
-                      console.error('[MoveFiles] Error checking file existence:', error);
-                  }
+                  filePathsMap.set(id, { 
+                      sourcePath: file.path, 
+                      newPath, 
+                      filename, 
+                      originalFile: file,
+                      parentId: file.parentId || undefined
+                  });
               }
           }
+          
+          // Check for existing files before performing file system operations - Parallel check
+          console.log('[MoveFiles] Checking for existing files in parallel');
+          let existingFiles: string[] = [];
+          
+          // Parallel file existence check
+          await asyncPool(20, fileIds, async (id) => {
+              const fileInfo = filePathsMap.get(id);
+              if (!fileInfo) return;
+              
+              try {
+                  // Use Tauri API to check if file exists
+                  const exists = await invoke<boolean>('file_exists', { filePath: fileInfo.newPath });
+                  if (exists) {
+                      existingFiles.push(fileInfo.filename);
+                  }
+              } catch (error) {
+                  console.error('[MoveFiles] Error checking file existence for', fileInfo.filename, error);
+              }
+          });
           
           // If any files exist at destination, show confirmation modal
           if (existingFiles.length > 0) {
@@ -2167,28 +2402,29 @@ export const App: React.FC = () => {
               });
           }
           
-          // Perform actual file system operations
-          console.log('[MoveFiles] Performing actual file system operations');
-          for (const id of fileIds) {
-              console.log('[MoveFiles] Processing file ID', id);
-              const file = state.files[id];
-              if (file && file.path) {
-                  const newPath = targetPaths[id];
-                  console.log('[MoveFiles] Moving file', { sourcePath: file.path, destPath: newPath });
+          // Perform actual file system operations - Parallel move with limited concurrency
+          console.log('[MoveFiles] Performing actual file system operations in parallel');
+          
+          await asyncPool(10, fileIds, async (id) => {
+              const fileInfo = filePathsMap.get(id);
+              if (!fileInfo) return;
+              
+              try {
+                  console.log('[MoveFiles] Moving file', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
                   
                   // Use Tauri API directly
-                  console.log('[MoveFiles] Calling Tauri moveFile API');
-                  await moveFile(file.path, newPath);
+                  await moveFile(fileInfo.sourcePath, fileInfo.newPath);
                   console.log('[MoveFiles] File moved successfully');
                   
                   movedCount++;
                   console.log('[MoveFiles] Move count:', movedCount);
                   // 手动更新任务进度
                   updateTask(taskId, { current: movedCount });
-              } else {
-                  console.error('[MoveFiles] Invalid file or path for ID', id);
+              } catch (error) {
+                  console.error('[MoveFiles] Error processing file ID', id, error);
+                  // Continue with other files
               }
-          }
+          });
           
           // Update local state after file system operations are complete
           console.log('[MoveFiles] Updating state after file system operations');
@@ -2201,60 +2437,62 @@ export const App: React.FC = () => {
               // Track source parents that need their children updated
               const sourceParentsToUpdate = new Map<string, any>();
               
+              // Process all files in batch
               for (const id of fileIds) {
-                  console.log('[MoveFiles] Processing file ID in state update', id);
+                  const fileInfo = filePathsMap.get(id);
                   const file = newFiles[id];
-                  if (file && file.path) {
-                      // Get source parent
-                      if (file.parentId) {
-                          sourceParentIds.add(file.parentId);
-                          if (!sourceParentsToUpdate.has(file.parentId)) {
-                              const sourceParent = newFiles[file.parentId];
-                              if (sourceParent) {
-                                  sourceParentsToUpdate.set(file.parentId, {
-                                      ...sourceParent,
-                                      children: [...(sourceParent.children || [])]
-                                  });
-                              }
+                  if (!fileInfo || !file || !file.path) continue;
+                  
+                  console.log('[MoveFiles] Processing file ID in state update', id);
+                  
+                  // Get source parent
+                  if (fileInfo.parentId) {
+                      sourceParentIds.add(fileInfo.parentId);
+                      if (!sourceParentsToUpdate.has(fileInfo.parentId)) {
+                          const sourceParent = newFiles[fileInfo.parentId];
+                          if (sourceParent) {
+                              sourceParentsToUpdate.set(fileInfo.parentId, {
+                                  ...sourceParent,
+                                  children: [...(sourceParent.children || [])]
+                              });
                           }
                       }
-                      
-                      // Update file's parent and path
-                      const filename = file.name;
-                      const newPath = `${updatedTargetFolder.path}${separator}${filename}`;
-                      console.log('[MoveFiles] Updating file state', { fileId: id, oldParent: file.parentId, newParent: targetFolderId, oldPath: file.path, newPath });
-                      
-                      // Check if target folder already has a file with the same name
-                      const existingFileId: string | undefined = updatedTargetFolder.children.find(childId => {
-                          const childFile = newFiles[childId];
-                          return childFile && childFile.name === filename;
-                      });
-                      
-                      // If existing file found, remove it from target folder's children and files map
-                      if (existingFileId) {
-                          console.log('[MoveFiles] Removing existing file from target folder', { existingFileId, filename });
-                          // Remove from target folder's children array
-                          updatedTargetFolder.children = updatedTargetFolder.children.filter((childId: string) => childId !== existingFileId);
-                          // Remove from files map
-                          delete newFiles[existingFileId];
-                      }
-                      
-                      newFiles[id] = {
-                          ...file,
-                          parentId: targetFolderId,
-                          path: newPath
-                      };
-                      
-                      // Add to target folder's children
-                      updatedTargetFolder.children.push(id);
-                      console.log('[MoveFiles] Added file to target folder children');
-                      
-                      // Remove from source parent's children
-                      if (file.parentId && sourceParentsToUpdate.has(file.parentId)) {
-                          const sourceParent = sourceParentsToUpdate.get(file.parentId);
-                          sourceParent.children = sourceParent.children.filter((childId: string) => childId !== id);
-                          console.log('[MoveFiles] Removed file from source parent children');
-                      }
+                  }
+                  
+                  // Update file's parent and path
+                  const newPath = `${updatedTargetFolder.path}${separator}${fileInfo.filename}`;
+                  console.log('[MoveFiles] Updating file state', { fileId: id, oldParent: fileInfo.parentId, newParent: targetFolderId, oldPath: file.path, newPath });
+                  
+                  // Check if target folder already has a file with the same name
+                  const existingFileId: string | undefined = updatedTargetFolder.children.find(childId => {
+                      const childFile = newFiles[childId];
+                      return childFile && childFile.name === fileInfo.filename;
+                  });
+                  
+                  // If existing file found, remove it from target folder's children and files map
+                  if (existingFileId) {
+                      console.log('[MoveFiles] Removing existing file from target folder', { existingFileId, filename: fileInfo.filename });
+                      // Remove from target folder's children array
+                      updatedTargetFolder.children = updatedTargetFolder.children.filter((childId: string) => childId !== existingFileId);
+                      // Remove from files map
+                      delete newFiles[existingFileId];
+                  }
+                  
+                  newFiles[id] = {
+                      ...file,
+                      parentId: targetFolderId,
+                      path: newPath
+                  };
+                  
+                  // Add to target folder's children
+                  updatedTargetFolder.children.push(id);
+                  console.log('[MoveFiles] Added file to target folder children');
+                  
+                  // Remove from source parent's children
+                  if (fileInfo.parentId && sourceParentsToUpdate.has(fileInfo.parentId)) {
+                      const sourceParent = sourceParentsToUpdate.get(fileInfo.parentId);
+                      sourceParent.children = sourceParent.children.filter((childId: string) => childId !== id);
+                      console.log('[MoveFiles] Removed file from source parent children');
                   }
               }
               
@@ -2274,6 +2512,7 @@ export const App: React.FC = () => {
               };
           });
           
+          showToast(t('context.moved'));
           console.log('[MoveFiles] Move operation completed successfully');
           // 完成任务
           updateTask(taskId, { current: fileIds.length, status: 'completed' });
@@ -2284,6 +2523,13 @@ export const App: React.FC = () => {
                   tasks: prev.tasks.filter(t => t.id !== taskId)
               }));
           }, 1000);
+          
+          // 记录成功的性能指标
+          performanceMonitor.end(moveTimer, 'handleMoveFiles', { 
+              success: true, 
+              fileCount: fileIds.length,
+              movedCount: movedCount 
+          });
       } catch (e) {
           console.error('[MoveFiles] Error during move operation:', e);
           showToast("Move failed");
@@ -2294,6 +2540,13 @@ export const App: React.FC = () => {
                   tasks: prev.tasks.filter(t => t.id !== taskId)
               }));
           }, 1000);
+          
+          // 记录失败的性能指标
+          performanceMonitor.end(moveTimer, 'handleMoveFiles', { 
+              success: false, 
+              fileCount: fileIds.length,
+              movedCount: movedCount 
+          });
       }
   };
 
