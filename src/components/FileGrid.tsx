@@ -7,6 +7,8 @@ import md5 from 'md5';
 import { startDragToExternal } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { Folder3DIcon, OptimizedFolderThumbnail } from './FolderIcon';
+export { Folder3DIcon, OptimizedFolderThumbnail };
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
@@ -337,93 +339,11 @@ class IntersectionObserverManager {
   }
 }
 
-// --- Folder 3D Icon Component ---
-export const Folder3DIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void }) => {
-    const styles: any = {
-        general: { back: 'text-blue-600 dark:text-blue-500', front: 'text-blue-400 dark:text-blue-400' },
-        book: { back: 'text-amber-600 dark:text-amber-500', front: 'text-amber-400 dark:text-amber-400' },
-        sequence: { back: 'text-purple-600 dark:text-purple-500', front: 'text-purple-400 dark:text-purple-400' },
-    };
-    const style = styles[category] || styles.general;
-    
-    const Icon = category === 'book' ? Book : (category === 'sequence' ? Film : Folder);
-
-    // Use whatever valid URLs are passed (base64 or asset://)
-    const images = (previewSrcs || []).filter(src => !!src);
-    
-    return (
-        <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
-            {/* Square container to maintain aspect ratio */}
-            <div className="relative w-full aspect-square">
-                {/* Back Plate */}
-                <svg viewBox="0 0 100 100" className={`absolute w-full h-full drop-shadow-sm transition-colors ${style.back}`} preserveAspectRatio="none">
-                    <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" fill="currentColor" />
-                </svg>
-
-                {/* Preview Images */}
-                <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
-                    {images[2] && (
-                        <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
-                            <img 
-                                src={images[2]} 
-                                className="w-full h-full object-cover" 
-                                loading="lazy" 
-                                draggable="false"
-                                onError={() => onImageError?.(2)}
-                            />
-                        </div>
-                    )}
-                    {images[1] && (
-                        <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
-                            <img 
-                                src={images[1]} 
-                                className="w-full h-full object-cover" 
-                                loading="lazy" 
-                                draggable="false"
-                                onError={() => onImageError?.(1)}
-                            />
-                        </div>
-                    )}
-                    {images[0] && (
-                        <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
-                            <img 
-                                src={images[0]} 
-                                className="w-full h-full object-cover" 
-                                loading="lazy" 
-                                draggable="false"
-                                onError={() => onImageError?.(0)}
-                            />
-                        </div>
-                    )}
-                </div>
-
-                {/* Front Plate */}
-                <div 
-                    className="absolute left-0 right-0 bottom-0 h-[60%] z-20 transition-transform duration-300 origin-bottom"
-                    style={{ transform: 'perspective(800px) rotateX(-10deg)' }}
-                >
-                    <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
-                        <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
-                    </svg>
-                     
-                    <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
-                        <Icon size={32} className="text-white" strokeWidth={1.5} />
-                    </div>
-                     
-                    {count !== undefined && (
-                        <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
-                            {count}
-                        </div>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
 
 const useInView = (options: IntersectionObserverInit = {}) => {
   const [isInView, setIsInView] = useState(false); // Default to false to avoid initial load spike
   const [wasInView, setWasInView] = useState(false); // Track if it was ever in view
+  const [isNearView, setIsNearView] = useState(false); // Track if it's near the viewport for preloading
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -433,13 +353,14 @@ const useInView = (options: IntersectionObserverInit = {}) => {
     if (typeof IntersectionObserver === 'undefined') {
       setIsInView(true);
       setWasInView(true);
+      setIsNearView(true);
       return;
     }
 
     // 获取单例实例
     const observerManager = IntersectionObserverManager.getInstance();
 
-    // 定义回调函数
+    // 定义可见性回调函数
     const handleIntersection = (entry: IntersectionObserverEntry) => {
       const intersecting = entry.isIntersecting;
       setIsInView(intersecting);
@@ -449,18 +370,27 @@ const useInView = (options: IntersectionObserverInit = {}) => {
       }
     };
 
-    // 注册观察
+    // 定义预加载回调函数（更大的 rootMargin）
+    const handlePreload = (entry: IntersectionObserverEntry) => {
+      setIsNearView(entry.isIntersecting);
+    };
+
+    // 注册可见性观察
     observerManager.observe(currentRef, handleIntersection, options);
+    
+    // 注册预加载观察（更大的 rootMargin，用于提前预加载）
+    const preloadOptions = { ...options, rootMargin: '500px' };
+    observerManager.observe(currentRef, handlePreload, preloadOptions);
 
     // 清理函数
     return () => {
-      // 取消观察
       observerManager.unobserve(currentRef, handleIntersection, options);
+      observerManager.unobserve(currentRef, handlePreload, preloadOptions);
     };
   }, [options]);
 
   // Return wasInView as well to track if it was ever loaded
-  return [ref, isInView, wasInView] as const;
+  return [ref, isInView, wasInView, isNearView] as const;
 };
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
@@ -481,7 +411,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   resourceRoot?: string;
   cachePath?: string;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
+  const [ref, isInView, wasInView, isNearView] = useInView({ rootMargin: '100px' }); 
   
   // 初始化时尝试从全局缓存读取
   // 简化 Key: 只使用 filePath，提高命中率。文件修改后 getThumbnail 仍会更新图片。
@@ -658,144 +588,17 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   );
 });
 
-// 辅助函数：深度查找文件夹内的图片
-const findImagesDeeply = (
-    rootFolder: FileNode, 
-    allFiles: Record<string, FileNode>, 
-    limit: number = 3
-): FileNode[] => {
-    const images: FileNode[] = [];
-    // 使用栈进行 DFS，或者队列进行 BFS
-    const stack: string[] = [...(rootFolder.children || [])];
-    const visited = new Set<string>(); // 防止循环引用
-    
-    // 设置一个遍历上限，防止超大文件夹卡死 UI
-    let traversalCount = 0;
-    const MAX_TRAVERSAL = 500; 
-
-    while (stack.length > 0 && traversalCount < MAX_TRAVERSAL) {
-        const id = stack.pop()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        traversalCount++;
-
-        const node = allFiles[id];
-        if (!node) continue;
-        
-        if (node.type === FileType.IMAGE) {
-            images.push(node);
-        } else if (node.type === FileType.FOLDER && node.children) {
-            stack.push(...node.children);
-        }
-    }
-    
-    // 排序并切片
-    return images
-        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
-        .slice(0, limit);
-};
 
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
-  
-  // 1. 同步计算需要展示的子文件 (改为深度查找)
-  const imageChildren = useMemo(() => {
-      if (!file.children || file.children.length === 0) return [];
-      return findImagesDeeply(file, files, 3);
-  }, [file, files]);
-
-  // 2. 初始化时尝试从全局缓存同步读取
-  const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
-      const cache = getGlobalCache();
-      // 尝试映射所有子文件到缓存中的 URL
-      const cachedUrls = imageChildren.map(child => {
-          // 使用与 ImageThumbnail 相同的 Key 生成逻辑 (仅 filePath)
-          return cache.get(child.path) || null; 
-      });
-      
-      // 只有当所有需要的图片都有缓存时，才视为命中 (或者至少有一张？)
-      // 为了体验最好，只要有缓存就先用。过滤掉 null。
-      const validUrls = cachedUrls.filter((url): url is string => !!url);
-      
-      // 如果没有缓存，返回空数组
-      return validUrls;
-  });
-
-  // 如果初始就有数据（哪怕只有一张），就不设为 loaded=false，避免闪烁
-  const [loaded, setLoaded] = useState(previewSrcs.length > 0);
-
-  useEffect(() => {
-    // 如果已经加载过了，且数量足够（或者等于子文件总数），就不再请求
-    // 注意：这里简单判断，如果缓存里不够 3 张但实际有 3 张，还是会触发请求补全
-    if (loaded && previewSrcs.length === Math.min(3, imageChildren.length)) {
-        return;
-    }
-
-    if ((isInView || wasInView) && resourceRoot && imageChildren.length > 0) {
-      const controller = new AbortController();
-      const loadPreviews = async () => {
-        try {
-          const { getThumbnail } = await import('../api/tauri-bridge');
-          
-          // 并行请求所有子文件的缩略图
-          const promises = imageChildren.map(async (img: FileNode) => {
-              // 先查缓存，如果有就不请求了 (虽然 getThumbnail 内部也有 batcher，但这里拦截更快)
-              const cache = getGlobalCache();
-              const cached = cache.get(img.path);
-              if (cached) return cached;
-
-              // 请求新图
-              const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, controller.signal);
-              if (url) {
-                  cache.set(img.path, url); // 更新缓存
-              }
-              return url;
-          });
-
-          const thumbnails = await Promise.all(promises);
-          
-          if (!controller.signal.aborted) {
-            const validThumbnails = thumbnails.filter((t): t is string => !!t);
-            // 只有当结果不同时才更新状态
-            // 简单的数组比较
-            setPreviewSrcs(prev => {
-                if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
-                    return prev;
-                }
-                return validThumbnails;
-            });
-          }
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            console.error('Failed to load folder previews:', error);
-          }
-        } finally {
-          if (!controller.signal.aborted) {
-            setLoaded(true);
-          }
-        }
-      };
-
-      loadPreviews();
-
-      return () => {
-        controller.abort();
-      };
-    }
-  }, [isInView, wasInView, loaded, imageChildren, resourceRoot]);
-
   return (
-    <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
-      {(isInView || wasInView) && (
-          <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
-             <Folder3DIcon  
-                previewSrcs={previewSrcs}
-                count={file.children?.length} 
-                category={file.category} 
-             />
-          </div>
-      )}
-    </div>
+    <OptimizedFolderThumbnail
+      file={file}
+      files={files}
+      mode={mode}
+      resourceRoot={resourceRoot}
+      cachePath={cachePath}
+      enablePreview={true}
+    />
   );
 });
 

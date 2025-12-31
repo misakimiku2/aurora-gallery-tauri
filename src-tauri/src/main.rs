@@ -1388,16 +1388,7 @@ async fn get_thumbnails_batch(
     on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
     app: tauri::AppHandle
 ) -> Result<(), String> {
-    // 1. 批量添加待处理文件到数据库
-    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
-    let file_paths_clone1 = file_paths.clone();
-    tokio::task::spawn_blocking(move || {
-        let mut conn = pool.get_connection();
-        color_db::add_pending_files(&mut conn, &file_paths_clone1)
-    }).await.map_err(|e| format!("Failed to add pending files to database: {}", e))?.map_err(|e| e.to_string())?;
-    
-    // 2. 放入 blocking 线程生成缩略图和提取颜色
-    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    // 放入 blocking 线程处理缩略图读取
     let file_paths_clone2 = file_paths;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
@@ -1405,77 +1396,90 @@ async fn get_thumbnails_batch(
              let _ = fs::create_dir_all(root);
         }
 
-        // 使用 Rayon 并行处理！9800X3D 此时将全核满载
+        // 使用 Rayon 并行处理！
         file_paths_clone2.par_iter().for_each(|path| {
-            // 处理单个文件 - 生成缩略图
+            // 快速检查缓存是否存在，跳过复杂的缩略图生成逻辑
+            use std::fs;
+            use std::io::{Read};
+            use image::ImageFormat;
+            
+            let image_path = Path::new(path);
+            if !image_path.exists() || path.contains(".Aurora_Cache") {
+                let _ = on_event.send(ThumbnailBatchResult {
+                    path: path.clone(),
+                    url: None,
+                    colors: None,
+                });
+                return;
+            }
+
+            // 快速 Hash - 复用 process_single_thumbnail 中的缓存逻辑
+            let metadata = match fs::metadata(image_path) {
+                Ok(m) => m,
+                Err(_) => {
+                    let _ = on_event.send(ThumbnailBatchResult {
+                        path: path.clone(),
+                        url: None,
+                        colors: None,
+                    });
+                    return;
+                }
+            };
+            let size = metadata.len();
+            let modified = metadata.modified()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                .unwrap_or(0);
+            
+            let mut file = match fs::File::open(image_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    let _ = on_event.send(ThumbnailBatchResult {
+                        path: path.clone(),
+                        url: None,
+                        colors: None,
+                    });
+                    return;
+                }
+            };
+            let mut buffer = [0u8; 4096];
+            let bytes_read = file.read(&mut buffer).unwrap_or(0);
+            
+            let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+            let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+            
+            // 先尝试检查两种格式的缓存文件是否存在，避免不必要的图像处理
+            let jpg_cache_file_path = root.join(format!("{}.jpg", cache_filename));
+            let webp_cache_file_path = root.join(format!("{}.webp", cache_filename));
+            
+            // 如果任一缓存文件存在，直接返回路径，跳过不必要的处理
+            if jpg_cache_file_path.exists() {
+                let url = Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string());
+                let _ = on_event.send(ThumbnailBatchResult {
+                    path: path.clone(),
+                    url,
+                    colors: None, // 跳过颜色提取，提高响应速度
+                });
+                return;
+            }
+            
+            if webp_cache_file_path.exists() {
+                let url = Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
+                let _ = on_event.send(ThumbnailBatchResult {
+                    path: path.clone(),
+                    url,
+                    colors: None, // 跳过颜色提取，提高响应速度
+                });
+                return;
+            }
+            
+            // 缓存未命中，才执行完整的缩略图生成逻辑
             let url = process_single_thumbnail(path, root);
             
-            // 同时提取主色调（使用缩略图路径，如果存在的话）
-            let colors = if let Some(ref thumb_path) = url {
-                // 从缩略图提取颜色（更快）
-                if let Ok(thumb_file) = fs::File::open(thumb_path) {
-                    use std::io::BufReader;
-                    let reader = BufReader::new(thumb_file);
-                    if let Ok(img) = image::load(reader, image::ImageFormat::from_path(thumb_path).unwrap_or(image::ImageFormat::Jpeg)) {
-                        let extracted = color_extractor::get_dominant_colors(&img, 8);
-                        if !extracted.is_empty() { 
-                            // 保存到数据库
-                            let pool_clone = pool.clone();
-                            let path_clone = path.clone();
-                            let colors_clone = extracted.clone();
-                            
-                            // 异步保存到数据库
-                            let _ = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                                .unwrap()
-                                .block_on(async move {
-                                    tokio::task::spawn_blocking(move || {
-                                        let mut conn = pool_clone.get_connection();
-                                        color_db::save_colors(&mut conn, &path_clone, &colors_clone)
-                                    }).await
-                                });
-                                
-                            Some(extracted) 
-                        } else { None }
-                    } else { None }
-                } else { None }
-            } else {
-                // 缩略图生成失败，尝试从原图提取
-                if let Ok(file) = fs::File::open(path) {
-                    use std::io::BufReader;
-                    let reader = BufReader::new(file);
-                    if let Ok(img) = image::load(reader, image::ImageFormat::from_path(path).unwrap_or(image::ImageFormat::Jpeg)) {
-                        let extracted = color_extractor::get_dominant_colors(&img, 8);
-                        if !extracted.is_empty() { 
-                            // 保存到数据库
-                            let pool_clone = pool.clone();
-                            let path_clone = path.clone();
-                            let colors_clone = extracted.clone();
-                            
-                            // 异步保存到数据库
-                            let _ = tokio::runtime::Builder::new_current_thread()
-                                .enable_all()
-                                .build()
-                                .unwrap()
-                                .block_on(async move {
-                                    tokio::task::spawn_blocking(move || {
-                                        let mut conn = pool_clone.get_connection();
-                                        color_db::save_colors(&mut conn, &path_clone, &colors_clone)
-                                    }).await
-                                });
-                                
-                            Some(extracted) 
-                        } else { None }
-                    } else { None }
-                } else { None }
-            };
-            
-            // 立即发送结果回前端！
+            // 立即发送结果回前端，跳过颜色提取
             let _ = on_event.send(ThumbnailBatchResult {
                 path: path.clone(),
                 url,
-                colors,
+                colors: None, // 跳过颜色提取，提高响应速度
             });
         });
         
