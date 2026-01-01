@@ -2258,6 +2258,8 @@ const useStableLayout = (
   const itemCountRef = useRef(items.length);
   // 缓存容器宽度，用于检测容器宽度变化
   const containerWidthRef = useRef(containerWidth);
+  // 缓存缩略图大小，用于检测图标大小变化
+  const thumbnailSizeRef = useRef(thumbnailSize);
   
   // 计算布局
   const currentLayout = useLayout(
@@ -2272,23 +2274,26 @@ const useStableLayout = (
     searchQuery
   );
   
-  // 检测文件数量或容器宽度变化，变化时清除缓存
+  // 检测文件数量、容器宽度或缩略图大小变化，变化时清除缓存
   useMemo(() => {
-    if (itemCountRef.current !== items.length || containerWidthRef.current !== containerWidth) {
-      // 文件数量或容器宽度变化，清除缓存，重新计算布局
+    if (itemCountRef.current !== items.length || 
+        containerWidthRef.current !== containerWidth || 
+        thumbnailSizeRef.current !== thumbnailSize) {
+      // 文件数量、容器宽度或缩略图大小变化，清除缓存，重新计算布局
       initialLayoutRef.current = null;
       itemCountRef.current = items.length;
       containerWidthRef.current = containerWidth;
+      thumbnailSizeRef.current = thumbnailSize;
     }
-  }, [items.length, containerWidth]);
+  }, [items.length, containerWidth, thumbnailSize]);
   
   // 缓存初始布局，确保容器高度在初始化后保持稳定
-  // 只在初始化时设置，之后不再更新，确保滚动条大小稳定
+  // 当图标大小变化时，重新缓存布局高度
   useMemo(() => {
     if (!initialLayoutRef.current && currentLayout.totalHeight > 0) {
       initialLayoutRef.current = currentLayout;
     }
-  }, [currentLayout.totalHeight, items.length, containerWidth]);
+  }, [currentLayout.totalHeight, items.length, containerWidth, thumbnailSize]);
   
   // 使用初始布局的totalHeight，确保容器高度稳定
   return {
