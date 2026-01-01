@@ -152,7 +152,7 @@ export const initializeFileSystem = (): { roots: string[], files: Record<string,
 
   const greetingsSvg = createMockFile(aiTestFolder.id, 'Test_Greetings_Multilingual', false);
   greetingsSvg.url = getTestSvgDataUrl('greetings');
-  greetingsSvg.previewUrl = greetingsSvg.url; 
+  greetingsSvg.previewUrl = greetingsSvg.url;
   greetingsSvg.meta = { ...greetingsSvg.meta!, format: 'svg', width: 600, height: 400, sizeKb: 15 };
   greetingsSvg.tags = ['测试', '多语言', 'AI', 'SVG'];
   files[greetingsSvg.id] = greetingsSvg;
@@ -201,14 +201,14 @@ export const initializeFileSystem = (): { roots: string[], files: Record<string,
 
   const gifFile = createMockFile(sub2.id, 'Anim_Logo_Final', false);
   gifFile.meta!.format = 'gif';
-  gifFile.url = 'https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif'; 
-  gifFile.previewUrl = 'https://picsum.photos/id/237/400/300'; 
+  gifFile.url = 'https://media.giphy.com/media/xT9IgzoKnwFNmISR8I/giphy.gif';
+  gifFile.previewUrl = 'https://picsum.photos/id/237/400/300';
   files[gifFile.id] = gifFile;
   sub2.children?.push(gifFile.id);
 
   const webpFile = createMockFile(sub2.id, 'Banner_Interactive', false);
   webpFile.meta!.format = 'webp';
-  webpFile.url = 'https://mathiasbynens.be/demo/animated-webp-supported.webp'; 
+  webpFile.url = 'https://mathiasbynens.be/demo/animated-webp-supported.webp';
   webpFile.previewUrl = 'https://picsum.photos/id/238/400/300';
   files[webpFile.id] = webpFile;
   sub2.children?.push(webpFile.id);
@@ -224,10 +224,10 @@ export const initializeFileSystem = (): { roots: string[], files: Record<string,
   root1.children?.push(rootFace.id);
 
   const faceUrls = [
-      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=800', 
-      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=800', 
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800', 
-      'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=800', 
+      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=800',
+      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=800',
+      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=800',
+      'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=800',
   ];
 
   faceUrls.forEach((url, i) => {
@@ -237,6 +237,40 @@ export const initializeFileSystem = (): { roots: string[], files: Record<string,
       files[img.id] = img;
       rootFace.children?.push(img.id);
   });
+
+  // --- 大量测试文件 (200个虚拟文件在一个文件夹内) ---
+  const largeTestFolder = createMockFile(root1.id, '测试数据集-200文件', true);
+  files[largeTestFolder.id] = largeTestFolder;
+  root1.children?.push(largeTestFolder.id);
+
+  // 在一个文件夹内生成200个文件
+  for (let i = 1; i <= 200; i++) {
+    const isImage = Math.random() > 0.1; // 90% 是图片
+    const fileBaseName = isImage ? `IMG_${String(i).padStart(4, '0')}` : `DOC_${String(i).padStart(4, '0')}`;
+    
+    const file = createMockFile(largeTestFolder.id, fileBaseName, !isImage);
+    
+    if (isImage) {
+      // 为图片文件添加更多随机性
+      const randomImgIndex = Math.floor(Math.random() * mockImages.length);
+      file.url = mockImages[randomImgIndex];
+      file.previewUrl = mockImages[randomImgIndex];
+      file.tags = [
+        tagsPool[Math.floor(Math.random() * tagsPool.length)],
+        tagsPool[Math.floor(Math.random() * tagsPool.length)],
+        `编号${i}`
+      ];
+      file.description = `测试图片 ${i}`;
+    } else {
+      // 为文档文件添加特殊标记
+      file.tags = ['文档', '测试数据', `编号${i}`];
+      file.description = `测试文档 ${i}`;
+    }
+    
+    files[file.id] = file;
+    largeTestFolder.children?.push(file.id);
+  }
+  // --- 大量测试文件结束 ---
 
   return { roots, files };
 };

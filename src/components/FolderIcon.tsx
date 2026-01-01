@@ -185,7 +185,7 @@ export const FolderPreviewImages = memo(({
   if (images.length === 0) return null;
 
   return (
-    <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10">
+    <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 group-hover:-translate-y-2 transition-transform duration-300">
       <div
         className="absolute inset-0 bg-white shadow-md border-[2px] border-white rounded-sm overflow-hidden"
         style={{ zIndex: 20, transform: 'rotate(0deg) scale(1)', opacity: 1 }}
@@ -203,18 +203,18 @@ export const FolderPreviewImages = memo(({
 });
 
 // 完整的3D文件夹图标组件 - 保持原有设计但优化性能
-export const Folder3DIcon = memo(({ 
-  previewSrcs, 
-  count, 
-  category = 'general', 
-  className = "", 
-  onImageError 
-}: { 
-  previewSrcs?: string[], 
-  count?: number, 
-  category?: string, 
-  className?: string, 
-  onImageError?: (index: number) => void 
+export const Folder3DIcon = memo(({
+  previewSrcs,
+  count,
+  category = 'general',
+  className = "",
+  onImageError
+}: {
+  previewSrcs?: string[],
+  count?: number,
+  category?: string,
+  className?: string,
+  onImageError?: (index: number) => void
 }) => {
   const styles: any = {
     general: { back: 'text-blue-600 dark:text-blue-500', front: 'text-blue-400 dark:text-blue-400' },
@@ -228,7 +228,7 @@ export const Folder3DIcon = memo(({
   const images = useMemo(() => (previewSrcs || []).filter(src => !!src), [previewSrcs]);
 
   return (
-    <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
+    <div className={`relative w-full h-full select-none flex items-center justify-center ${className}`}>
       {/* Square container to maintain aspect ratio */}
       <div className="relative w-full aspect-square">
         {/* Back Plate - 优化为CSS类 */}
@@ -241,19 +241,19 @@ export const Folder3DIcon = memo(({
           <FolderPreviewImages previewSrcs={images} onImageError={onImageError} />
         )}
 
-        {/* Front Plate */}
-        <div 
+        {/* Front Plate - 使用group-hover从父组件继承 */}
+        <div
           className="absolute left-0 right-0 bottom-0 h-[60%] z-20 transition-transform duration-300 origin-bottom group-hover:-translate-y-3"
           style={{ transform: 'perspective(800px) rotateX(-10deg)' }}
         >
           <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
             <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
           </svg>
-            
+             
           <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
             <Icon size={32} className="text-white" strokeWidth={1.5} />
           </div>
-            
+             
           {count !== undefined && (
             <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
               {count}
@@ -386,7 +386,7 @@ export const OptimizedFolderThumbnail = memo(({
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       {(isInView || wasInView) && (
-        <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
+        <div className="relative w-full aspect-square p-2 group" style={{ maxHeight: '100%' }}>
           <Folder3DIcon
             previewSrcs={previewSrcs}
             count={file.children?.length}

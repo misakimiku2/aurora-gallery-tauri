@@ -1806,10 +1806,10 @@ const FileCard = React.memo(({
         }}>
         <div
             className={`
-                w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
+                w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300 group
                 ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
             `}
-            style={{ 
+            style={{
                 height: height ? (height - 40) : '100%',
                 overflow: 'hidden'
             }}
@@ -2077,13 +2077,15 @@ const GroupedContent = React.memo(({
       const headerHeight = 44; // GroupHeader 的高度
       const marginBottom = 32; // mb-8 = 32px
       
-      // 简化计算：不调用 useLayout，而是使用固定高度估算
-      // 这避免了在 useMemo 中调用 Hook 导致的 Hook 调用顺序问题
       if (!isCollapsed) {
-        // 估算每个组的高度：每个文件项高度约为 thumbnailSize + 40px
-        const estimatedItemsPerRow = Math.max(1, Math.floor((containerRect.width - 48) / (thumbnailSize + 16)));
-        const estimatedRows = Math.ceil(group.fileIds.length / estimatedItemsPerRow);
-        const estimatedGroupHeight = estimatedRows * (thumbnailSize + 40) + 40; // +40 for padding and margins
+        // 使用与 useLayout 相同的逻辑计算组高度，确保估算准确
+        const estimatedGroupHeight = calculateLayoutHeight(
+          group.fileIds,
+          files,
+          activeTab.layoutMode,
+          containerRect.width,
+          thumbnailSize
+        );
         currentOffset += headerHeight + estimatedGroupHeight + marginBottom;
       } else {
         currentOffset += headerHeight + marginBottom;
@@ -2091,7 +2093,7 @@ const GroupedContent = React.memo(({
     }
     
     return offsets;
-  }, [groupedFiles, collapsedGroups, containerRect.width, thumbnailSize]);
+  }, [groupedFiles, collapsedGroups, containerRect.width, thumbnailSize, files, activeTab.layoutMode]);
 
   return (
     <div className="w-full min-w-0">
@@ -2146,6 +2148,154 @@ interface LayoutItem {
   width: number;
   height: number;
 }
+
+// 提取布局高度计算逻辑，用于在useMemo中估算组高度
+const calculateLayoutHeight = (
+  items: string[],
+  files: Record<string, FileNode>,
+  layoutMode: LayoutMode,
+  containerWidth: number,
+  thumbnailSize: number
+): number => {
+  let totalHeight = 0;
+  const GAP = 16;
+  const PADDING = 24;
+  
+  // Ensure we have a reasonable width
+  const safeContainerWidth = containerWidth > 0 ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth : 1280); 
+  const availableWidth = Math.max(100, safeContainerWidth - (PADDING * 2));
+  const finalAvailableWidth = availableWidth;
+
+  // 计算宽高比
+  const aspectRatios: Record<string, number> = {};
+  items.forEach(id => {
+    const file = files[id];
+    aspectRatios[id] = file?.meta?.width && file?.meta?.height 
+      ? file.meta.width / file.meta.height 
+      : (file?.type === FileType.FOLDER ? 1 : 1);
+  });
+
+  if (layoutMode === 'list') {
+    const itemHeight = 44;
+    totalHeight = PADDING + items.length * itemHeight;
+  } else if (layoutMode === 'grid') {
+    const minColWidth = thumbnailSize;
+    const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+    const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
+    const itemHeight = itemWidth + 40;
+    const rows = Math.ceil(items.length / cols);
+    totalHeight = PADDING + rows * (itemHeight + GAP);
+  } else if (layoutMode === 'adaptive') {
+    let currentRow: any[] = [];
+    let currentWidth = 0;
+    let y = PADDING;
+    const targetHeight = thumbnailSize;
+
+    items.forEach((id) => {
+      const aspect = aspectRatios[id];
+      const w = targetHeight * aspect;
+      
+      if (currentWidth + w + GAP > finalAvailableWidth) {
+        const scale = (finalAvailableWidth - (currentRow.length - 1) * GAP) / currentWidth;
+        const rowHeight = targetHeight * scale;
+        y += rowHeight + 40 + GAP;
+        currentRow = [];
+        currentWidth = 0;
+      }
+      
+      currentRow.push({ id, w });
+      currentWidth += w;
+    });
+
+    if (currentRow.length > 0) {
+      y += targetHeight + 40 + GAP;
+    }
+    totalHeight = y;
+  } else if (layoutMode === 'masonry') {
+    const minColWidth = thumbnailSize;
+    const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+    const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
+
+    // Track column heights
+    const columnHeights: number[] = Array(cols).fill(PADDING);
+
+    items.forEach((id) => {
+      // Find the shortest column
+      const minHeight = Math.min(...columnHeights);
+      const columnIndex = columnHeights.indexOf(minHeight);
+
+      // Calculate height based on aspect ratio
+      const aspect = aspectRatios[id];
+      const itemHeight = aspect > 0 ? (itemWidth / aspect) : thumbnailSize;
+      const finalHeight = itemHeight + 40; // +40 for file name and padding
+
+      // Update column height
+      columnHeights[columnIndex] += finalHeight + GAP;
+    });
+
+    // Total height is the tallest column
+    totalHeight = Math.max(...columnHeights);
+  }
+
+  return totalHeight;
+};
+
+// 缓存初始布局计算结果，避免文件加载后布局变化导致的滚动条回弹
+const useStableLayout = (
+  items: string[],
+  files: Record<string, FileNode>,
+  layoutMode: LayoutMode,
+  containerWidth: number,
+  thumbnailSize: number,
+  viewMode: 'browser' | 'tags-overview' | 'people-overview',
+  groupedTags?: Record<string, string[]>,
+  people?: Record<string, Person>,
+  searchQuery?: string
+) => {
+  // 缓存初始布局计算结果
+  const initialLayoutRef = useRef<{ layout: LayoutItem[]; totalHeight: number } | null>(null);
+  // 缓存文件数量，用于检测文件数量变化
+  const itemCountRef = useRef(items.length);
+  // 缓存容器宽度，用于检测容器宽度变化
+  const containerWidthRef = useRef(containerWidth);
+  
+  // 计算布局
+  const currentLayout = useLayout(
+    items,
+    files,
+    layoutMode,
+    containerWidth,
+    thumbnailSize,
+    viewMode,
+    groupedTags,
+    people,
+    searchQuery
+  );
+  
+  // 检测文件数量或容器宽度变化，变化时清除缓存
+  useMemo(() => {
+    if (itemCountRef.current !== items.length || containerWidthRef.current !== containerWidth) {
+      // 文件数量或容器宽度变化，清除缓存，重新计算布局
+      initialLayoutRef.current = null;
+      itemCountRef.current = items.length;
+      containerWidthRef.current = containerWidth;
+    }
+  }, [items.length, containerWidth]);
+  
+  // 缓存初始布局，确保容器高度在初始化后保持稳定
+  // 只在初始化时设置，之后不再更新，确保滚动条大小稳定
+  useMemo(() => {
+    if (!initialLayoutRef.current && currentLayout.totalHeight > 0) {
+      initialLayoutRef.current = currentLayout;
+    }
+  }, [currentLayout.totalHeight, items.length, containerWidth]);
+  
+  // 使用初始布局的totalHeight，确保容器高度稳定
+  return {
+    layout: currentLayout.layout,
+    totalHeight: initialLayoutRef.current?.totalHeight || currentLayout.totalHeight
+  };
+};
 
 const useLayout = (
   items: string[],
@@ -2565,23 +2715,42 @@ export const FileGrid: React.FC<FileGridProps> = ({
     });
     observer.observe(containerRef.current);
     
+    // Optimized scroll handler for smooth scrolling
+    let lastScrollTop = 0;
+    let scrollTimeout: number | null = null;
+    
     const handleScroll = () => {
         if (containerRef.current) {
             const scrollTop = containerRef.current.scrollTop;
+            
+            // Update scrollTop state immediately for virtual scrolling
             setScrollTop(scrollTop);
-            onScrollTopChange?.(scrollTop);
+            
+            // Throttle the external scroll update to prevent excessive re-renders
+            if (Math.abs(scrollTop - lastScrollTop) >= 5) {
+                if (scrollTimeout) {
+                    window.clearTimeout(scrollTimeout);
+                }
+                
+                scrollTimeout = window.setTimeout(() => {
+                    onScrollTopChange?.(scrollTop);
+                    lastScrollTop = scrollTop;
+                }, 100);
+            }
         }
     };
+    
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
 
     return () => {
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        if (scrollTimeout) window.clearTimeout(scrollTimeout);
         observer.disconnect();
         containerRef?.current?.removeEventListener('scroll', handleScroll);
     };
   }, [containerRef]);
 
-  const { layout, totalHeight } = useLayout(
+  const { layout, totalHeight } = useStableLayout(
       displayFileIds,
       files,
       activeTab.layoutMode,
@@ -2598,7 +2767,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
-  }, [layout, scrollTop, containerRect.height, totalHeight]);
+  }, [layout, scrollTop, containerRect.height]);
 
   const sortedKeys = useMemo(() => {
       if (!groupedTags) return [];
