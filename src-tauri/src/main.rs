@@ -7,7 +7,6 @@ use std::path::Path;
 use std::fs;
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use walkdir::WalkDir;
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
@@ -121,6 +120,7 @@ fn is_supported_image(extension: &str) -> bool {
 #[tauri::command]
 async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
+    use std::io::Read;
     use rayon::prelude::*;
     
     let root_path = Path::new(&path);
@@ -181,19 +181,23 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     
     all_files.insert(root_id.clone(), root_node.clone());
     
-    // Walk directory recursively (no depth limit)
-    let entries: Vec<_> = WalkDir::new(&path)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .collect();
+    // Use jwalk for parallel directory traversal
+    let normalized_root_path = normalize_path(&path);
     
-    // First pass: collect all entries and build path -> parent path mapping
-    let mut path_to_parent: HashMap<String, String> = HashMap::new();
-    path_to_parent.insert(normalize_path(&path), String::new()); // Root has no parent
+    // Build path -> id mapping (will be populated as we process entries)
+    let mut path_to_id: HashMap<String, String> = HashMap::new();
+    path_to_id.insert(normalized_root_path.clone(), root_id.clone());
     
-    let all_entries: Vec<_> = entries
+    // Process entries in parallel using jwalk
+    let file_nodes: Vec<(String, FileNode, String)> = jwalk::WalkDir::new(&path)
         .into_iter()
-        .filter_map(|entry| {
+        .par_bridge()
+        .filter_map(|entry_result| {
+            let entry = match entry_result {
+                Ok(e) => e,
+                Err(_) => return None,
+            };
+            
             let entry_path = entry.path();
             
             // Skip root directory itself
@@ -218,40 +222,19 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
             
             let full_path = normalize_path(entry_path.to_str().unwrap_or(""));
             
-            // Get parent path
-            if let Some(parent) = entry_path.parent() {
-                let parent_path = normalize_path(parent.to_str().unwrap_or(""));
-                path_to_parent.insert(full_path.clone(), parent_path);
-            }
-            
-            Some(entry)
-        })
-        .collect();
-    
-    // Build path -> id mapping (will be populated as we process entries)
-    let mut path_to_id: HashMap<String, String> = HashMap::new();
-    path_to_id.insert(normalize_path(&path), root_id.clone());
-    
-    // Process entries in parallel using rayon (collect data without modifying shared state)
-    let file_nodes: Vec<(String, FileNode, String)> = all_entries
-        .par_iter()
-        .filter_map(|entry| {
-            let entry_path = entry.path();
+            // Get metadata
             let metadata = match entry.metadata() {
                 Ok(m) => m,
                 Err(_) => return None,
             };
             
-            // Use entry.file_type() for more reliable directory detection
-            let file_type = entry.file_type();
-            let is_directory = file_type.is_dir();
-            let extension = entry_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
+            // Get parent path directly from entry_path (thread-safe)
+            let parent_path = if let Some(parent) = entry_path.parent() {
+                normalize_path(parent.to_str().unwrap_or(""))
+            } else {
+                normalized_root_path.clone()
+            };
             
-            let full_path = normalize_path(entry_path.to_str().unwrap_or(""));
             let file_id = generate_id(&full_path);
             let file_name = entry_path
                 .file_name()
@@ -259,8 +242,8 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                 .unwrap_or("")
                 .to_string();
             
-            // Get parent path (we'll resolve parent_id later)
-            let parent_path = path_to_parent.get(&full_path).cloned().unwrap_or_default();
+            // Check if it's a directory
+            let is_directory = metadata.is_dir();
             
             if is_directory {
                 // Create folder node (parent_id will be set later)
@@ -294,68 +277,94 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                 };
                 
                 Some((file_id, folder_node, parent_path))
-            } else if is_supported_image(&extension) {
-                // Create image file node (parent_id will be set later)
-                let file_size = metadata.len();
+            } else {
+                // Check if it's a supported image
+                let extension = entry_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase())
+                    .unwrap_or_default();
                 
-                // Try to get image dimensions efficiently (without loading full image)
-                let (width, height) = image::image_dimensions(entry_path).unwrap_or((0, 0));
-                
-                let image_node = FileNode {
-                    id: file_id.clone(),
-                    parent_id: None, // Will be set later
-                    name: file_name,
-                    r#type: FileType::Image,
-                    path: full_path.clone(),
-                    size: Some(file_size),
-                    children: None,
-                    tags: Vec::new(),
-                    created_at: metadata
-                        .created()
-                        .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
-                    updated_at: metadata
-                        .modified()
-                        .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
-                    url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
-                    meta: Some(ImageMeta {
-                        width,
-                        height,
-                        size_kb: (file_size / 1024) as u32,
-                        created: metadata
+                if is_supported_image(&extension) {
+                    // Create image file node (parent_id will be set later)
+                    let file_size = metadata.len();
+                    
+                    // Use imageinfo to quickly get image dimensions
+                    let (width, height) = {
+                        // Read just the first few bytes needed for imageinfo
+                        if let Ok(mut file) = fs::File::open(entry_path) {
+                            let mut buffer = vec![0u8; 4096]; // Read first 4KB, enough for most formats
+                            if let Ok(bytes_read) = file.read(&mut buffer) {
+                                buffer.truncate(bytes_read);
+                                if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
+                                    (info.size.width as u32, info.size.height as u32)
+                                } else {
+                                    (0, 0)
+                                }
+                            } else {
+                                (0, 0)
+                            }
+                        } else {
+                            (0, 0)
+                        }
+                    };
+                    
+                    let image_node = FileNode {
+                        id: file_id.clone(),
+                        parent_id: None, // Will be set later
+                        name: file_name,
+                        r#type: FileType::Image,
+                        path: full_path.clone(),
+                        size: Some(file_size),
+                        children: None,
+                        tags: Vec::new(),
+                        created_at: metadata
                             .created()
                             .ok()
                             .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
                             .and_then(|secs| {
                                 chrono::DateTime::from_timestamp(secs as i64, 0)
                                     .map(|dt| dt.to_rfc3339())
-                            })
-                            .unwrap_or_default(),
-                        modified: metadata
+                            }),
+                        updated_at: metadata
                             .modified()
                             .ok()
                             .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
                             .and_then(|secs| {
                                 chrono::DateTime::from_timestamp(secs as i64, 0)
                                     .map(|dt| dt.to_rfc3339())
-                            })
-                            .unwrap_or_default(),
-                        format: extension,
-                    }),
-                };
-                
-                Some((file_id, image_node, parent_path))
-            } else {
-                None
+                            }),
+                        url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
+                        meta: Some(ImageMeta {
+                            width,
+                            height,
+                            size_kb: (file_size / 1024) as u32,
+                            created: metadata
+                                .created()
+                                .ok()
+                                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                                .and_then(|secs| {
+                                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                                        .map(|dt| dt.to_rfc3339())
+                                })
+                                .unwrap_or_default(),
+                            modified: metadata
+                                .modified()
+                                .ok()
+                                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                                .and_then(|secs| {
+                                    chrono::DateTime::from_timestamp(secs as i64, 0)
+                                        .map(|dt| dt.to_rfc3339())
+                                })
+                                .unwrap_or_default(),
+                            format: extension,
+                        }),
+                    };
+                    
+                    Some((file_id, image_node, parent_path))
+                } else {
+                    None
+                }
             }
         })
         .collect();
