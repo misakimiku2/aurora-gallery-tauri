@@ -856,6 +856,7 @@ export const App: React.FC = () => {
 
   // 监听主色调提取进度事件
   const colorTaskIdRef = useRef<string | null>(null);
+  const colorTaskInitialTotalRef = useRef<number>(0);
   useEffect(() => {
     let isMounted = true;
     
@@ -866,10 +867,42 @@ export const App: React.FC = () => {
           
           const progress = event.payload as { current: number; total: number; current_file: string };
           
-          // 如果任务不存在，创建它
-          if (!colorTaskIdRef.current) {
+          // 检查任务是否存在（可能已被关闭）
+          // 使用函数式更新来获取最新的 tasks 状态并检查任务是否存在
+          let shouldCreateNewTask = false;
+          let existingTask = null;
+          
+          setState(prev => {
+            existingTask = colorTaskIdRef.current 
+              ? prev.tasks.find(t => t.id === colorTaskIdRef.current)
+              : null;
+            
+            // 如果任务不存在或已被关闭，标记需要创建新任务
+            if (!colorTaskIdRef.current || !existingTask) {
+              shouldCreateNewTask = true;
+            } else {
+              // 如果任务存在，检查是否有新图片进来（total 增加了）
+              // 如果新的 total 大于任务的初始 total，说明有新图片进来，应该创建新任务
+              if (progress.total > colorTaskInitialTotalRef.current) {
+                shouldCreateNewTask = true;
+              }
+            }
+            
+            return prev; // 不修改状态，只是检查
+          });
+          
+          // 如果需要创建新任务，创建它
+          if (shouldCreateNewTask) {
+            // 如果旧任务还在，先关闭它
+            if (colorTaskIdRef.current && existingTask) {
+              setState(prev => ({ 
+                ...prev, 
+                tasks: prev.tasks.filter(t => t.id !== colorTaskIdRef.current) 
+              }));
+            }
             const taskId = startTask('color', [], t('tasks.processingColors'), false);
             colorTaskIdRef.current = taskId;
+            colorTaskInitialTotalRef.current = progress.total; // 记录新任务的初始 total
           }
           
           // 更新任务进度
@@ -880,6 +913,28 @@ export const App: React.FC = () => {
               currentFile: progress.current_file,
               currentStep: `${progress.current} / ${progress.total}`
             });
+            
+            // 检测任务是否完成（current >= total）
+            // 注意：只有当 total 等于初始 total 时才关闭任务
+            // 如果 total 大于初始 total，说明有新图片进来，已经创建了新任务
+            if (progress.current >= progress.total && progress.total > 0 && progress.total === colorTaskInitialTotalRef.current) {
+              // 标记任务为完成状态
+              updateTask(colorTaskIdRef.current, { 
+                status: 'completed' 
+              });
+              
+              // 延迟1秒后关闭任务窗口并清除引用
+              setTimeout(() => {
+                if (isMounted && colorTaskIdRef.current) {
+                  setState(prev => ({ 
+                    ...prev, 
+                    tasks: prev.tasks.filter(t => t.id !== colorTaskIdRef.current) 
+                  }));
+                  colorTaskIdRef.current = null;
+                  colorTaskInitialTotalRef.current = 0; // 清除初始 total
+                }
+              }, 1000);
+            }
           }
         });
         
