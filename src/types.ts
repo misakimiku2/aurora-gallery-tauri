@@ -96,6 +96,9 @@ export interface TaskProgress {
   minimized: boolean;
   currentStep?: string;
   currentFile?: string;
+  estimatedTime?: number; // 预估剩余时间（毫秒）
+  lastProgressUpdate?: number; // 上次进度更新时间
+  lastProgress?: number; // 上次进度值
 }
 
 export interface DeletionTask {

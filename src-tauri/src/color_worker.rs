@@ -3,11 +3,13 @@ use std::time::Duration;
 use image::{ImageFormat, GenericImageView};
 use std::fs::File;
 use std::io::BufReader;
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPoolBuilder};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
+use crossbeam_channel::{unbounded, Sender, Receiver};
+use tokio::task;
 
 use crate::color_db::{self, ColorDbPool};
 use crate::color_extractor;
@@ -43,23 +45,94 @@ pub fn is_paused() -> bool {
     IS_PAUSED.load(Ordering::SeqCst)
 }
 
+// 定义处理结果结构体
+type ProcessingResult = Result<(String, Vec<color_extractor::ColorResult>), String>;
+
+// 定义任务类型
+type Task = String;
+
 // 后台处理任务，持续提取待处理图片的主色调
 pub async fn color_extraction_worker(
     pool: Arc<ColorDbPool>, 
     batch_size: usize,
     app_handle: Option<Arc<AppHandle>>
 ) {
-    // 创建rayon线程池，限制使用CPU核心数为总核心数的一半
-    // 例如：8核CPU只使用4核，确保前端流畅
+    // 创建rayon线程池，根据CPU核心数调整线程数
+    // 8核→6线程，16核→12线程，更多核心→固定16线程
     let num_cpus = num_cpus::get();
+    let num_workers = match num_cpus {
+        0..=8 => num_cpus - 2, // 8核→6线程
+        9..=16 => num_cpus - 4, // 16核→12线程
+        _ => 16, // 更多核心→固定16线程
+    };
+    let num_workers = num_workers.max(1); // 确保至少有1个线程
+    
+    // 创建rayon线程池
     let thread_pool = ThreadPoolBuilder::new()
-        .num_threads(num_cpus / 2)
+        .num_threads(num_workers)
         .build()
         .expect("Failed to create thread pool");
+    
+    // 创建任务通道（无界）
+    let (task_sender, task_receiver): (Sender<Task>, Receiver<Task>) = unbounded();
+    
+    // 创建结果通道（无界）
+    let (result_sender, result_receiver): (Sender<ProcessingResult>, Receiver<ProcessingResult>) = unbounded();
     
     // 使用互斥锁跟踪当前处理的文件，用于进度报告
     let current_file = Arc::new(Mutex::new(String::new()));
     
+    // 1. 启动生产者任务：持续从数据库获取待处理文件
+    let pool_producer = pool.clone();
+    let producer_handle = task::spawn(async move {
+        producer_loop(pool_producer, batch_size, task_sender).await;
+    });
+    
+    // 2. 启动多个消费者任务：并行处理文件
+    let mut consumer_handles = Vec::new();
+    for _ in 0..num_workers {
+        let pool_consumer = pool.clone();
+        let task_receiver_clone = task_receiver.clone();
+        let result_sender_clone = result_sender.clone();
+        let current_file_clone = current_file.clone();
+        
+        let handle = task::spawn_blocking(move || {
+            consumer_loop(
+                pool_consumer,
+                task_receiver_clone,
+                result_sender_clone,
+                current_file_clone
+            );
+        });
+        
+        consumer_handles.push(handle);
+    }
+    
+    // 3. 启动结果处理任务：批量保存到数据库
+    let pool_result = pool.clone();
+    let app_handle_result = app_handle.clone();
+    let result_handle = task::spawn(async move {
+        result_processor(
+            pool_result,
+            result_receiver,
+            app_handle_result
+        ).await;
+    });
+    
+    // 等待所有任务完成（实际上不会完成，会一直运行）
+    producer_handle.await.unwrap();
+    for handle in consumer_handles {
+        handle.await.unwrap();
+    }
+    result_handle.await.unwrap();
+}
+
+// 生产者循环：持续从数据库获取待处理文件
+async fn producer_loop(
+    pool: Arc<ColorDbPool>,
+    batch_size: usize,
+    task_sender: Sender<Task>
+) {
     loop {
         // 检查是否暂停
         if is_paused() {
@@ -67,170 +140,262 @@ pub async fn color_extraction_worker(
             continue;
         }
         
-        // 处理一批待处理文件
+        // 克隆pool，避免在循环中移动所有权
         let pool_clone = pool.clone();
-        let app_handle_clone = app_handle.clone();
-        let current_file_clone = current_file.clone();
         
-        if let Err(e) = process_pending_files(
-            pool_clone, 
-            batch_size, 
-            &thread_pool, 
-            app_handle_clone,
-            current_file_clone
-        ).await {
-            eprintln!("Error processing pending files: {}", e);
+        // 从数据库获取待处理文件
+        let pending_files = match tokio::task::spawn_blocking(move || {
+            let mut conn = pool_clone.get_connection();
+            color_db::get_pending_files(&mut conn, batch_size)
+        }).await {
+            Ok(Ok(files)) => files,
+            Ok(Err(e)) => {
+                eprintln!("Failed to get pending files: {}", e);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            },
+            Err(e) => {
+                eprintln!("Failed to execute database query: {}", e);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        
+        if pending_files.is_empty() {
+            // 没有待处理文件，睡眠500毫秒后再次检查
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            continue;
         }
         
-        // 短暂睡眠，避免CPU空转
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // 将文件路径发送到任务队列
+        for file_path in pending_files {
+            if task_sender.send(file_path).is_err() {
+                // 通道已关闭，退出循环
+                break;
+            }
+        }
+        
+        // 短暂睡眠，避免过于频繁的数据库查询
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
-// 处理一批待处理文件
-async fn process_pending_files(
-    pool: Arc<ColorDbPool>, 
-    batch_size: usize,
-    _thread_pool: &rayon::ThreadPool,
-    app_handle: Option<Arc<AppHandle>>,
+// 消费者循环：从队列获取任务并处理
+fn consumer_loop(
+    pool: Arc<ColorDbPool>,
+    task_receiver: Receiver<Task>,
+    result_sender: Sender<ProcessingResult>,
     current_file: Arc<Mutex<String>>
-) -> Result<(), String> {
-    // 1. 获取总文件数和待处理文件列表
-    let pool_clone_for_stats = pool.clone();
-    let (total_files, pending_files) = tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone_for_stats.get_connection();
-        let total = color_db::get_total_files(&mut conn).map_err(|e| e.to_string())?;
-        let pending = color_db::get_pending_files(&mut conn, batch_size).map_err(|e| e.to_string())?;
-        Ok((total, pending))
-    }).await.map_err(|e| format!("Failed to get stats: {}", e))?
-        .map_err(|e: String| format!("Database error: {}", e))?;
-    
-    if pending_files.is_empty() {
-        return Ok(());
+) {
+    // 持续从任务队列获取任务
+    for file_path in task_receiver {
+        // 检查是否暂停
+        if is_paused() {
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
+        }
+        
+        // 更新当前处理的文件
+        let _ = *current_file.lock().unwrap() = file_path.clone();
+        
+        // 1. 加载和处理图片
+        let processing_result: ProcessingResult = match File::open(&file_path) {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                match image::load(reader, ImageFormat::from_path(&file_path).unwrap_or(ImageFormat::Jpeg)) {
+                    Ok(mut img) => {
+                        // 等比例缩小图片到256px，以较小边为准
+                        let (width, height) = img.dimensions();
+                        let max_dim = 256;
+                        
+                        if width > max_dim || height > max_dim {
+                            let (new_width, new_height) = if width < height {
+                                let scale = max_dim as f32 / width as f32;
+                                (max_dim, (height as f32 * scale) as u32)
+                            } else {
+                                let scale = max_dim as f32 / height as f32;
+                                ((width as f32 * scale) as u32, max_dim)
+                            };
+                            
+                            img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Triangle);
+                        }
+                        
+                        let colors = color_extractor::get_dominant_colors(&img, 8);
+                        
+                        if colors.is_empty() {
+                            Err(format!("No colors extracted from file: {}", file_path))
+                        } else {
+                            Ok((file_path, colors))
+                        }
+                    },
+                    Err(e) => {
+                        Err(format!("Failed to load image: {}", e))
+                    }
+                }
+            },
+            Err(e) => {
+                Err(format!("Failed to open file: {}", e))
+            }
+        };
+        
+        // 将处理结果发送到结果队列
+        if result_sender.send(processing_result).is_err() {
+            // 通道已关闭，退出循环
+            break;
+        }
     }
+}
+
+// 结果处理器：批量保存结果到数据库
+async fn result_processor(
+    pool: Arc<ColorDbPool>,
+    result_receiver: Receiver<ProcessingResult>,
+    app_handle: Option<Arc<AppHandle>>
+) {
+    // 获取总文件数，用于进度报告
+    let pool_clone = pool.clone();
+    let total_files = match tokio::task::spawn_blocking(move || {
+        let mut conn = pool_clone.get_connection();
+        color_db::get_total_files(&mut conn)
+    }).await {
+        Ok(Ok(count)) => count,
+        Ok(Err(e)) => {
+            eprintln!("Failed to get total files: {}", e);
+            0
+        },
+        Err(e) => {
+            eprintln!("Failed to execute database query: {}", e);
+            0
+        }
+    };
     
-    // 获取已处理文件数
-    let pool_clone_for_extracted = pool.clone();
-    let extracted_count = tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone_for_extracted.get_connection();
+    // 获取已处理文件数，用于进度报告
+    let pool_clone = pool.clone();
+    let extracted_count = match tokio::task::spawn_blocking(move || {
+        let mut conn = pool_clone.get_connection();
         color_db::get_extracted_files_count(&mut conn)
-    }).await.map_err(|e| format!("Failed to get extracted count: {}", e))?
-        .map_err(|e| format!("Database error: {}", e))?;
+    }).await {
+        Ok(Ok(count)) => count,
+        Ok(Err(e)) => {
+            eprintln!("Failed to get extracted files count: {}", e);
+            0
+        },
+        Err(e) => {
+            eprintln!("Failed to execute database query: {}", e);
+            0
+        }
+    };
     
-    // 2. 并行处理每个文件
-    let _pending_files_len = pending_files.len();
-    let app_handle_clone = app_handle.clone();
-    let current_file_clone = current_file.clone();
-    let total_files_clone = total_files;
+    // 结果缓冲区，用于批量保存
+    let mut result_buffer = Vec::new();
+    let batch_save_threshold = 5; // 每5个结果批量保存一次，进一步减少可能丢失的数据量
+    let mut processed_count = extracted_count; // 从已处理文件数开始计数
+    let mut success_count = extracted_count; // 已处理的都是成功的
+    let mut error_count = 0;
+    let mut last_save_time = tokio::time::Instant::now();
+    let auto_save_interval = Duration::from_secs(2); // 自动保存间隔：2秒，进一步缩短自动保存时间
     
-    // 创建一个原子计数器来跟踪当前处理的文件数量
-    let processed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let processed_count_clone = processed_count.clone();
-    
-    let results: Vec<_> = {
-        // 使用rayon线程池处理文件，这会尊重我们设置的核心数限制
-        _thread_pool.install(|| {
-            pending_files.into_iter().map(|file_path: String| {
-                // 更新当前处理的文件
-                *current_file_clone.lock().unwrap() = file_path.clone();
+    // 持续处理结果
+    loop {
+        // 检查是否有结果需要处理
+        match result_receiver.recv_timeout(Duration::from_millis(100)) {
+            Ok(result) => {
+                processed_count += 1;
                 
-                // 获取当前处理的文件索引
-                let current = processed_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                match result {
+                    Ok((file_path, colors)) => {
+                        result_buffer.push((file_path, colors));
+                        success_count += 1;
+                    },
+                    Err(e) => {
+                        error_count += 1;
+                        eprintln!("Error processing file: {}", e);
+                    }
+                }
                 
-                // 发送进度报告（在rayon线程中同步发送）
-                if let Some(app_handle) = &app_handle_clone {
+                // 发送进度报告
+                if let Some(app_handle) = &app_handle {
                     let progress = ColorExtractionProgress {
-                        current: extracted_count + current,
-                        total: total_files_clone,
-                        current_file: file_path.clone(),
+                        current: processed_count,
+                        total: total_files,
+                        current_file: String::new(), // 不再跟踪单个文件
                     };
                     
                     // 忽略发送失败的情况，不影响主流程
                     let _ = app_handle.emit("color-extraction-progress", progress);
                 }
                 
-                // 只处理同步部分，不包含异步操作
-                let pool_sync = pool.clone();
-                let file_path_sync = file_path.clone();
-                
-                // 1. 加载和处理图片（同步操作）
-                let img_result: Result<image::DynamicImage, String> = {
-                    let file = File::open(&file_path_sync)
-                        .map_err(|e| format!("Failed to open file: {}", e))?;
-                    
-                    let reader = BufReader::new(file);
-                    let mut img = image::load(reader, ImageFormat::from_path(&file_path_sync).unwrap_or(ImageFormat::Jpeg))
-                        .map_err(|e| format!("Failed to load image: {}", e))?;
-                    
-                    // 等比例缩小图片到256px，以较小边为准
-                    let (width, height) = img.dimensions();
-                    let max_dim = 256;
-                    
-                    if width > max_dim || height > max_dim {
-                        let (new_width, new_height) = if width < height {
-                            let scale = max_dim as f32 / width as f32;
-                            (max_dim, (height as f32 * scale) as u32)
-                        } else {
-                            let scale = max_dim as f32 / height as f32;
-                            ((width as f32 * scale) as u32, max_dim)
-                        };
-                        
-                        img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Triangle);
-                    }
-                    
-                    Ok(img)
-                };
-                
-                let img = img_result?;
-                let colors = color_extractor::get_dominant_colors(&img, 8);
-                
-                // 2. 保存到数据库（同步操作）
-                if colors.is_empty() {
-                    // 更新状态为错误
-                    let mut conn = pool_sync.get_connection();
-                    color_db::update_status(&mut conn, &file_path_sync, "error")
-                        .map_err(|e| format!("Failed to update status: {}", e))?;
-                    
-                    return Err(format!("No colors extracted from file: {}", file_path_sync));
+                // 打印处理统计
+                if processed_count % 10 == 0 {
+                    eprintln!("Processed {} files: {} success, {} errors", 
+                             processed_count, success_count, error_count);
                 }
-                
-                // 保存到数据库
-                let mut conn = pool_sync.get_connection();
-                color_db::save_colors(&mut conn, &file_path_sync, &colors)
-                    .map_err(|e| format!("Failed to save colors: {}", e))?;
-                
-                // 返回成功处理的结果
-                Ok(())
-            }).collect::<Vec<Result<(), String>>>()
-        })
-    };
-    
-    // 转换结果格式，适配后续的汇总逻辑
-    let results: Vec<Result<Result<(), String>, String>> = results.into_iter().map(|res| {
-        Ok(res)
-    }).collect();
-    
-    // 3. 汇总结果
-    let mut success_count = 0;
-    let mut error_count = 0;
-    
-    for result in results {
-        match result {
-            Ok(Ok(_)) => success_count += 1,
-            Ok(Err(e)) => {
-                error_count += 1;
-                eprintln!("Error processing file: {}", e);
             },
-            Err(e) => {
-                error_count += 1;
-                eprintln!("Task error: {}", e);
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // 超时，检查是否需要保存
+            },
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                // 通道关闭，退出循环
+                break;
             }
+        }
+        
+        // 检查是否需要保存：达到阈值、暂停状态或超过自动保存间隔
+        let elapsed_time = last_save_time.elapsed();
+        let should_save = result_buffer.len() >= batch_save_threshold || 
+                         is_paused() || 
+                         (elapsed_time >= auto_save_interval && !result_buffer.is_empty());
+        
+        if should_save {
+            // 保存当前缓冲区的结果
+            save_batch_results(pool.clone(), &mut result_buffer).await;
+            last_save_time = tokio::time::Instant::now(); // 重置自动保存时间
+        }
+        
+        // 检查是否暂停
+        if is_paused() {
+            // 短暂睡眠，避免CPU占用过高
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
     }
     
-    eprintln!("Processed {} files: {} success, {} errors", success_count + error_count, success_count, error_count);
+    // 保存剩余的结果
+    if !result_buffer.is_empty() {
+        save_batch_results(pool.clone(), &mut result_buffer).await;
+    }
+}
+
+// 批量保存结果到数据库
+async fn save_batch_results(
+    pool: Arc<ColorDbPool>,
+    result_buffer: &mut Vec<(String, Vec<color_extractor::ColorResult>)>
+) {
+    if result_buffer.is_empty() {
+        return;
+    }
     
-    Ok(())
+    // 创建一个临时缓冲区，避免移动原始缓冲区
+    let batch_data: Vec<(String, Vec<color_extractor::ColorResult>)> = result_buffer.drain(0..).collect();
+    
+    // 保存结果到数据库
+    let pool_clone = pool.clone();
+    let save_result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool_clone.get_connection();
+        
+        // 将结果转换为batch_save_colors所需的格式
+        let batch_data_refs: Vec<(&str, &[color_extractor::ColorResult])> = batch_data
+            .iter()
+            .map(|(file_path, colors)| (file_path.as_str(), colors.as_slice()))
+            .collect();
+        
+        color_db::batch_save_colors(&mut conn, &batch_data_refs)
+    }).await;
+    
+    if let Err(e) = save_result {
+        eprintln!("Failed to execute batch save: {}", e);
+    } else if let Err(e) = save_result.unwrap() {
+        eprintln!("Failed to batch save colors: {}", e);
+    }
 }
 
 // 处理单个文件，提取主色调并保存到数据库

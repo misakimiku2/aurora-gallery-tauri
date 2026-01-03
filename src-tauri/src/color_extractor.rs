@@ -13,46 +13,60 @@ pub struct ColorResult {
 
 /// 从 DynamicImage 中提取多个主色调
 pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult> {
-    // 1. 将图片转为 RGBA8 以获取透明度信息
-    // 注意：现在由调用者负责提供适当大小的图像（通常是缩略图）
-    let rgba_img = img.to_rgba8();
+    // 1. 限制图片最大尺寸为512x512，减少像素数量
+    let max_dimension = 512;
+    let resized_img = if img.width() > max_dimension || img.height() > max_dimension {
+        img.resize(max_dimension, max_dimension, image::imageops::FilterType::Triangle)
+    } else {
+        img.clone()
+    };
     
-    // 2. 执行像素预过滤
-    let filtered_pixels: Vec<u8> = rgba_img
-        .pixels()
-        .filter_map(|p| {
-            let [r, g, b, a] = p.0;
+    // 2. 将图片转为 RGBA8 以获取透明度信息
+    let rgba_img = resized_img.to_rgba8();
+    
+    // 3. 执行像素预过滤，优化版本：减少中间数据结构
+    let mut filtered_pixels = Vec::with_capacity(rgba_img.width() as usize * rgba_img.height() as usize * 3);
+    for p in rgba_img.pixels() {
+        let [r, g, b, a] = p.0;
 
-            // 条件 A: 过滤透明像素 (Alpha < 125)
-            if a < 125 {
-                return None;
-            }
+        // 条件 A: 过滤透明像素 (Alpha < 125)
+        if a < 125 {
+            continue;
+        }
 
-            // 条件 B: 过滤接近白色的像素 (R,G,B 均 > 250)
-            if r > 250 && g > 250 && b > 250 {
-                return None;
-            }
+        // 条件 B: 过滤接近白色的像素 (R,G,B 均 > 250)
+        if r > 250 && g > 250 && b > 250 {
+            continue;
+        }
 
-            Some(vec![r, g, b])
-        })
-        .flatten()
-        .collect();
+        // 直接添加到结果向量，避免中间vec和flatten操作
+        filtered_pixels.push(r);
+        filtered_pixels.push(g);
+        filtered_pixels.push(b);
+    }
 
     if filtered_pixels.is_empty() {
         return Vec::new();
     }
 
-    // 3. 调用 ColorThief 算法提取颜色
-    // 使用采样步长1（采样所有像素）以确保不会遗漏明显的颜色，特别是小区域的明显颜色如红色
+    // 4. 动态调整采样步长，根据图片尺寸优化性能
+    let image_area = (rgba_img.width() * rgba_img.height()) as usize;
+    let quality = match image_area {
+        0..=65536 => 1,       // 小图片 (<=256x256): 步长1
+        65537..=262144 => 2,   // 中图片 (257x257-512x512): 步长2
+        _ => 4,                // 大图片 (>512x512): 步长4
+    };
+
+    // 5. 调用 ColorThief 算法提取颜色
     // 提取稍多一些颜色(16个)以确保有足够的候选，包括鲜艳的小面积颜色
     let request_count = (count + 8).min(20).max(count);
     let count_u8 = request_count.min(255) as u8;
-    let palette = match get_palette(&filtered_pixels, ColorFormat::Rgb, 1, count_u8) {
+    let palette = match get_palette(&filtered_pixels, ColorFormat::Rgb, quality, count_u8) {
         Ok(p) => p,
         Err(_) => return Vec::new(),
     };
 
-    // 4. 改进的颜色选择逻辑：考虑颜色的频率为主，饱和度为辅
+    // 6. 改进的颜色选择逻辑：考虑颜色的频率为主，饱和度为辅
     // 为每个颜色计算饱和度，并按频率和饱和度的综合评分排序
     let mut colored_palette: Vec<_> = palette
         .iter()
@@ -81,19 +95,19 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             // 降低指数衰减的频率权重，确保占比高的颜色（如深色头发）仍然有最高权重
             // 这样可以确保占比最多的#3D3634颜色不会被忽略
             let frequency_weight = 1.0 / ((index as f32 + 1.0).powf(0.25));
-            let score = (frequency_weight * 0.8) + (saturation * 0.2);
+            let score = (frequency_weight * 0.7) + (saturation * 0.3);
             
             (color, saturation, luminance, score)
         })
         .collect();
     
-    // 5. 按综合评分排序，确保占比高的颜色有最高排名，同时兼顾鲜艳度
+    // 7. 按综合评分排序，确保占比高的颜色有最高排名，同时兼顾鲜艳度
     colored_palette.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal));
     
-    // 6. 格式化所有颜色并返回前count个，同时确保颜色多样性
-    // 简单去重：确保返回的颜色之间有足够的差异
-    let mut result = Vec::new();
-    let mut added_colors: Vec<[u8; 3]> = Vec::new();
+    // 8. 格式化所有颜色并返回前count个，同时确保颜色多样性
+    // 优化去重：使用哈希表存储已添加颜色的RGB值，减少比较次数
+    let mut result = Vec::with_capacity(count);
+    let mut added_colors: std::collections::HashSet<[u8; 3]> = std::collections::HashSet::with_capacity(count);
     
     for (color, _, _, _) in &colored_palette {
         if result.len() >= count {
@@ -104,6 +118,12 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
         let new_rgb = [color.r, color.g, color.b];
         let mut is_unique = true;
         
+        // 快速检查是否完全相同
+        if added_colors.contains(&new_rgb) {
+            continue;
+        }
+        
+        // 检查与已添加颜色的差异是否足够大
         for existing in &added_colors {
             // 计算颜色差异
             let diff = (
@@ -126,11 +146,11 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             
             result.push(ColorResult {
                 hex,
-                rgb: [color.r, color.g, color.b],
+                rgb: new_rgb,
                 is_dark,
             });
             
-            added_colors.push(new_rgb);
+            added_colors.insert(new_rgb);
         }
     }
     
@@ -141,17 +161,21 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
                 break;
             }
             
+            let new_rgb = [color.r, color.g, color.b];
             let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
-            let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
-            let is_dark = luminance < 128.0;
             
             // 检查是否已经添加
-            if !result.iter().any(|c| c.hex == hex) {
+            if !added_colors.contains(&new_rgb) {
+                let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
+                let is_dark = luminance < 128.0;
+                
                 result.push(ColorResult {
                     hex,
-                    rgb: [color.r, color.g, color.b],
+                    rgb: new_rgb,
                     is_dark,
                 });
+                
+                added_colors.insert(new_rgb);
             }
         }
     }

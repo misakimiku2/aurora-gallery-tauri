@@ -208,6 +208,7 @@ dependencies = [
  "base64 0.21.7",
  "chrono",
  "color-thief",
+ "crossbeam-channel",
  "fast_image_resize",
  "futures",
  "image",

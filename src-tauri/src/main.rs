@@ -1938,8 +1938,8 @@ fn main() {
             app.manage(pool_arc.clone());
             
             // 启动后台颜色提取任务
-            // 持续处理待处理文件，每批最多处理20个文件
-            let batch_size = 20;
+            // 持续处理待处理文件，每批最多处理50个文件
+            let batch_size = 50;
             // 正确克隆AppHandle后再包装到Arc中
             let app_handle_new = app.handle().clone();
             let app_handle_arc = Arc::new(app_handle_new);

@@ -33,6 +33,22 @@ const TaskProgressModal = ({ tasks, onMinimize, onClose, t, onPauseResume }: any
     onPauseResume(taskId, taskType);
   };
   
+  // 格式化预估时间（毫秒）为 HH:MM:SS
+  const formatEstimatedTime = (ms: number | undefined): string => {
+    if (!ms || ms < 0) return '';
+    
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    } else {
+      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+  };
+  
   return (
     <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] transition-all duration-300 ease-in-out origin-bottom ${isMinimizing ? 'scale-75 opacity-0 translate-y-full' : 'scale-100 opacity-100'}`}>
       <div className="w-96 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-slide-up">
@@ -56,6 +72,11 @@ const TaskProgressModal = ({ tasks, onMinimize, onClose, t, onPauseResume }: any
             </div>
             {task.currentStep && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentStep}</div>}
             {task.currentFile && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentFile}</div>}
+            {task.estimatedTime && task.estimatedTime > 0 && (
+              <div className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                剩余时间: {formatEstimatedTime(task.estimatedTime)}
+              </div>
+            )}
             <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
               <div 
                 className={`h-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`} 
@@ -907,11 +928,84 @@ export const App: React.FC = () => {
           
           // 更新任务进度
           if (colorTaskIdRef.current) {
+            // 获取当前时间
+            const now = Date.now();
+            
+            // 查找当前任务，获取上次进度、时间和速度
+            let lastProgress = 0;
+            let lastProgressUpdate = now;
+            let averageSpeed: number | undefined = undefined;
+            let lastEstimatedTimeUpdate = now;
+            let existingEstimatedTime: number | undefined = undefined;
+            
+            // 先获取当前任务的状态
+            let taskStatus = 'running';
+            setState(prev => {
+              const task = prev.tasks.find(t => t.id === colorTaskIdRef.current);
+              if (task) {
+                lastProgress = task.lastProgress || 0;
+                lastProgressUpdate = task.lastProgressUpdate || now;
+                existingEstimatedTime = task.estimatedTime;
+                taskStatus = task.status;
+                // 使用现有速度或默认值
+                if (existingEstimatedTime && existingEstimatedTime > 0) {
+                  averageSpeed = (progress.total - lastProgress) / existingEstimatedTime;
+                }
+              }
+              return prev;
+            });
+            
+            // 计算处理速度和预估时间
+            let calculatedEstimatedTime: number | undefined = existingEstimatedTime;
+            
+            if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
+              // 计算当前速度（文件/毫秒）
+              const elapsedTime = now - lastProgressUpdate;
+              const progressDelta = progress.current - lastProgress;
+              const currentSpeed = progressDelta / elapsedTime;
+              
+              // 平滑速度：使用移动平均，给新速度10%权重，历史速度90%权重，减少跳动
+              const smoothingFactor = 0.1;
+              const newSpeed = averageSpeed 
+                ? (currentSpeed * smoothingFactor) + (averageSpeed * (1 - smoothingFactor)) 
+                : currentSpeed;
+              
+              // 计算剩余任务量
+              const remainingTasks = progress.total - progress.current;
+              
+              // 计算新的预估剩余时间（毫秒）
+              if (newSpeed > 0) {
+                calculatedEstimatedTime = remainingTasks / newSpeed;
+                
+                // 限制预估时间的更新频率：至少间隔2秒
+                const timeSinceLastUpdate = now - lastProgressUpdate;
+                if (existingEstimatedTime && timeSinceLastUpdate < 2000) {
+                  calculatedEstimatedTime = existingEstimatedTime;
+                }
+              }
+            }
+            
+            // 只有处理了至少10个文件后才显示预估时间，避免初始阶段的不稳定
+            let estimatedTime = calculatedEstimatedTime;
+            const processedFiles = progress.current;
+            if (processedFiles < 10) {
+              estimatedTime = undefined;
+            }
+            
+            // 暂停时清除预估时间
+            if (taskStatus === 'paused') {
+              estimatedTime = undefined;
+            }
+            
+            // 更新任务
             updateTask(colorTaskIdRef.current, { 
               current: progress.current, 
               total: progress.total,
               currentFile: progress.current_file,
-              currentStep: `${progress.current} / ${progress.total}`
+              currentStep: `${progress.current} / ${progress.total}`,
+              estimatedTime,
+              lastProgressUpdate: now,
+              lastProgress: progress.current
             });
             
             // 检测任务是否完成（current >= total）
@@ -1399,7 +1493,20 @@ export const App: React.FC = () => {
   
   const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
     const id = Math.random().toString(36).substr(2, 9);
-    const newTask: TaskProgress = { id, type: type as any, title, total: fileIds.length, current: 0, startTime: Date.now(), status: 'running', minimized: false };
+    const now = Date.now();
+    const newTask: TaskProgress = { 
+      id, 
+      type: type as any, 
+      title, 
+      total: fileIds.length, 
+      current: 0, 
+      startTime: now, 
+      status: 'running', 
+      minimized: false,
+      lastProgressUpdate: now,
+      lastProgress: 0,
+      estimatedTime: undefined
+    };
     
     // 立即添加任务，不使用防抖，确保用户立即看到任务开始
     setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
