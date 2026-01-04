@@ -1395,7 +1395,7 @@ async fn get_thumbnails_batch(
     file_paths: Vec<String>,
     cache_root: String,
     on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
-    app: tauri::AppHandle
+    _app: tauri::AppHandle
 ) -> Result<(), String> {
     // 放入 blocking 线程处理缩略图读取
     let file_paths_clone2 = file_paths;
@@ -1410,7 +1410,6 @@ async fn get_thumbnails_batch(
             // 快速检查缓存是否存在，跳过复杂的缩略图生成逻辑
             use std::fs;
             use std::io::{Read};
-            use image::ImageFormat;
             
             let image_path = Path::new(path);
             if !image_path.exists() || path.contains(".Aurora_Cache") {
@@ -1733,6 +1732,33 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// 手动执行WAL检查点
+#[tauri::command]
+async fn force_wal_checkpoint(app: tauri::AppHandle) -> Result<bool, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    
+    // 在单独线程中执行WAL检查点
+    let result = tokio::task::spawn_blocking(move || {
+        pool.force_wal_checkpoint()
+    }).await.map_err(|e| format!("Failed to execute WAL checkpoint: {}", e))?;
+    
+    result.map_err(|e| format!("WAL checkpoint error: {}", e))?;
+    Ok(true)
+}
+
+// 获取WAL文件信息
+#[tauri::command]
+async fn get_wal_info(app: tauri::AppHandle) -> Result<(i64, i64), String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    
+    // 在单独线程中获取WAL信息
+    let result = tokio::task::spawn_blocking(move || {
+        pool.get_wal_info()
+    }).await.map_err(|e| format!("Failed to get WAL info: {}", e))?;
+    
+    result
+}
+
 
 
 #[tauri::command]
@@ -1742,7 +1768,6 @@ async fn get_dominant_colors(
     thumbnail_path: Option<String>,
     app: tauri::AppHandle
 ) -> Result<Vec<color_extractor::ColorResult>, String> {
-    use image::ImageFormat;
     use std::fs::File;
     use std::io::BufReader;
     use std::sync::Arc;
@@ -1785,7 +1810,7 @@ async fn get_dominant_colors(
         .map_err(|e| format!("Failed to open file: {}", e))?;
     
     let reader = BufReader::new(file);
-    let img = image::load(reader, ImageFormat::from_path(&image_path).unwrap_or(ImageFormat::Jpeg))
+    let img = image::load(reader, image::ImageFormat::from_path(&image_path).unwrap_or(image::ImageFormat::Jpeg))
         .map_err(|e| format!("Failed to load image: {}", e))?;
     
     // Extract dominant colors
@@ -1852,7 +1877,9 @@ fn main() {
             exit_app,
             get_dominant_colors,
             color_worker::pause_color_extraction,
-            color_worker::resume_color_extraction
+            color_worker::resume_color_extraction,
+            force_wal_checkpoint,
+            get_wal_info
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -1911,25 +1938,26 @@ fn main() {
             let pool = match color_db::ColorDbPool::new(&db_path) {
         Ok(pool_instance) => {
             // 初始化数据库表结构
-            let mut conn = pool_instance.get_connection();
-            if let Err(e) = color_db::init_db(&mut conn) {
-                eprintln!("Failed to initialize color database: {}", e);
-                // 创建一个空的连接池作为备用
-                color_db::ColorDbPool::new(&db_path).unwrap_or_else(|_|
-                    panic!("Failed to create color database connection pool")
-                )
-            } else {
-                // 克隆pool_instance，避免借用冲突
-                let cloned_pool = pool_instance.clone();
-                cloned_pool
+            {
+                let mut conn = pool_instance.get_connection();
+                if let Err(e) = color_db::init_db(&mut conn) {
+                    eprintln!("Failed to initialize color database: {}", e);
+                }
+                
+                // 清理卡在"processing"状态的文件
+                if let Err(e) = color_db::reset_processing_to_pending(&mut conn) {
+                    eprintln!("Failed to reset processing files to pending: {}", e);
+                }
             }
+            // 记录初始化后的数据库文件大小
+            if let Err(e) = pool_instance.get_db_file_sizes() {
+                eprintln!("Failed to get database file sizes: {}", e);
+            }
+            pool_instance
         },
         Err(e) => {
             eprintln!("Failed to create color database connection pool: {}", e);
-            // 创建一个空的连接池作为备用
-            color_db::ColorDbPool::new(&db_path).unwrap_or_else(|_| {
-                panic!("Failed to create color database connection pool");
-            })
+            panic!("Failed to create color database connection pool: {}", e);
         }
     };
             
