@@ -646,6 +646,19 @@ pub fn get_pending_files_count(
     Ok(count as usize)
 }
 
+// 获取正在处理文件数量
+pub fn get_processing_files_count(
+    conn: &mut Connection
+) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM dominant_colors WHERE status = ?",
+        params!["processing"],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(count as usize)
+}
+
 // 获取已处理文件数量
 pub fn get_extracted_files_count(
     conn: &mut Connection

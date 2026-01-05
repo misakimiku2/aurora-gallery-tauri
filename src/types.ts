@@ -99,6 +99,9 @@ export interface TaskProgress {
   estimatedTime?: number; // 预估剩余时间（毫秒）
   lastProgressUpdate?: number; // 上次进度更新时间
   lastProgress?: number; // 上次进度值
+  initialTotal?: number; // 初始总数（用于颜色提取任务，表示初始待处理文件数）
+  lastEstimatedTimeUpdate?: number; // 上次更新预估时间的时间戳
+  totalProcessedTime?: number; // 累计有效处理时间（不包括暂停时间）
 }
 
 export interface DeletionTask {

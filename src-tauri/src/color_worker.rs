@@ -25,6 +25,7 @@ static IS_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 pub struct ColorExtractionProgress {
     pub current: usize,
     pub total: usize,
+    pub pending: usize,
     pub current_file: String,
 }
 
@@ -313,18 +314,19 @@ async fn result_processor(
     app_handle: Option<Arc<AppHandle>>
 ) {
     // 获取总文件数，用于进度报告
+    // 修复：优先使用待处理文件数作为总数，避免首次创建数据库时出现除零错误
     let pool_clone = pool.clone();
-    let total_files = match tokio::task::spawn_blocking(move || {
+    let pending_count = match tokio::task::spawn_blocking(move || {
         let mut conn = pool_clone.get_connection();
-        color_db::get_total_files(&mut conn)
+        color_db::get_pending_files_count(&mut conn)
     }).await {
         Ok(Ok(count)) => count,
         Ok(Err(e)) => {
-            eprintln!("Failed to get total files: {}", e);
+            eprintln!("Failed to get pending files count: {}", e);
             0
         },
         Err(e) => {
-            eprintln!("Failed to execute database query: {}", e);
+            eprintln!("Failed to execute pending files query: {}", e);
             0
         }
     };
@@ -345,6 +347,29 @@ async fn result_processor(
             0
         }
     };
+    
+    // 获取正在处理的文件数，用于进度报告
+    let pool_clone = pool.clone();
+    let initial_processing_count = match tokio::task::spawn_blocking(move || {
+        let mut conn = pool_clone.get_connection();
+        color_db::get_processing_files_count(&mut conn)
+    }).await {
+        Ok(Ok(count)) => count,
+        Ok(Err(e)) => {
+            eprintln!("Failed to get processing files count: {}", e);
+            0
+        },
+        Err(e) => {
+            eprintln!("Failed to execute processing files query: {}", e);
+            0
+        }
+    };
+    
+    // 计算实际需要处理的总文件数（初始值）
+    // 修复：优先使用 processing 文件数作为总数，解决首次启动时 pending=0 导致 total=0 的问题
+    let mut total_files_to_process = pending_count + extracted_count + initial_processing_count;
+    let mut should_report_progress = total_files_to_process > 0;
+    let mut last_total_check_time = tokio::time::Instant::now();
     
     // 结果缓冲区，用于批量保存
     let mut result_buffer = Vec::new();
@@ -378,14 +403,49 @@ async fn result_processor(
                     }
                 }
                 
-                // 发送进度报告
-                if let Some(app_handle) = &app_handle {
-                    let progress = ColorExtractionProgress {
-                        current: processed_count,
-                        total: total_files,
-                        current_file: String::new(),
+                // 定期重新计算总数（每1秒检查一次）
+                let time_since_last_check = last_total_check_time.elapsed();
+                let mut current_pending = 0;
+                if time_since_last_check >= Duration::from_secs(1) {
+                    let pool_clone = pool.clone();
+                    let (new_pending, _new_extracted, new_processing) = match tokio::task::spawn_blocking(move || {
+                        let mut conn = pool_clone.get_connection();
+                        let pending = color_db::get_pending_files_count(&mut conn).unwrap_or(0);
+                        let extracted = color_db::get_extracted_files_count(&mut conn).unwrap_or(0);
+                        let processing = color_db::get_processing_files_count(&mut conn).unwrap_or(0);
+                        (pending, extracted, processing)
+                    }).await {
+                        Ok((pending, extracted, processing)) => (pending, extracted, processing),
+                        Err(_) => (0, 0, 0),
                     };
-                    let _ = app_handle.emit("color-extraction-progress", progress);
+                    
+                    current_pending = new_pending;
+                    
+                    // 使用processing状态的文件数量作为总数
+                    let new_total = new_processing;
+                    if new_total > 0 && total_files_to_process == 0 {
+                        // 如果之前是0，现在有数据了，开始报告进度
+                        total_files_to_process = new_total;
+                        should_report_progress = true;
+                    } else if new_total > total_files_to_process {
+                        // 如果总数增加了（有新图片进来），更新总数
+                        total_files_to_process = new_total;
+                    }
+                    last_total_check_time = tokio::time::Instant::now();
+                }
+                
+                // 发送进度报告（只在数据库中有数据时才发送）
+                if should_report_progress {
+                    if let Some(app_handle) = &app_handle {
+                        // 修复：使用待处理+已处理的总数，避免除零错误
+                        let progress = ColorExtractionProgress {
+                            current: processed_count,
+                            total: total_files_to_process,
+                            pending: current_pending,
+                            current_file: String::new(),
+                        };
+                        let _ = app_handle.emit("color-extraction-progress", progress);
+                    }
                 }
                 
                 if processed_count % 50 == 0 {

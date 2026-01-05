@@ -886,7 +886,7 @@ export const App: React.FC = () => {
         const unlisten = await listen('color-extraction-progress', (event: any) => {
           if (!isMounted) return;
           
-          const progress = event.payload as { current: number; total: number; current_file: string };
+          const progress = event.payload as { current: number; total: number; pending: number; current_file: string };
           
           // 检查任务是否存在（可能已被关闭）
           // 使用函数式更新来获取最新的 tasks 状态并检查任务是否存在
@@ -913,7 +913,7 @@ export const App: React.FC = () => {
           });
           
           // 如果需要创建新任务，创建它
-          if (shouldCreateNewTask) {
+          if (shouldCreateNewTask && progress.total > 0) {
             // 如果旧任务还在，先关闭它
             if (colorTaskIdRef.current && existingTask) {
               setState(prev => ({ 
@@ -935,6 +935,7 @@ export const App: React.FC = () => {
             let lastProgress = 0;
             let lastProgressUpdate = now;
             let averageSpeed: number | undefined = undefined;
+            let totalProcessedTime = 0;
             let lastEstimatedTimeUpdate = now;
             let existingEstimatedTime: number | undefined = undefined;
             
@@ -946,42 +947,41 @@ export const App: React.FC = () => {
                 lastProgress = task.lastProgress || 0;
                 lastProgressUpdate = task.lastProgressUpdate || now;
                 existingEstimatedTime = task.estimatedTime;
+                lastEstimatedTimeUpdate = task.lastEstimatedTimeUpdate || now;
                 taskStatus = task.status;
-                // 使用现有速度或默认值
-                if (existingEstimatedTime && existingEstimatedTime > 0) {
-                  averageSpeed = (progress.total - lastProgress) / existingEstimatedTime;
-                }
+                totalProcessedTime = task.totalProcessedTime || 0;
               }
               return prev;
             });
             
             // 计算处理速度和预估时间
             let calculatedEstimatedTime: number | undefined = existingEstimatedTime;
+            let shouldUpdateEstimatedTime = false;
             
             if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
-              // 计算当前速度（文件/毫秒）
               const elapsedTime = now - lastProgressUpdate;
               const progressDelta = progress.current - lastProgress;
-              const currentSpeed = progressDelta / elapsedTime;
+              const currentSpeed = (totalProcessedTime + elapsedTime) > 0 ? progress.current / (totalProcessedTime + elapsedTime) : progressDelta / elapsedTime;
               
-              // 平滑速度：使用移动平均，给新速度10%权重，历史速度90%权重，减少跳动
-              const smoothingFactor = 0.1;
-              const newSpeed = averageSpeed 
-                ? (currentSpeed * smoothingFactor) + (averageSpeed * (1 - smoothingFactor)) 
-                : currentSpeed;
+              // 计算剩余任务量，使用初始总任务量作为基准
+              const totalTasks = colorTaskInitialTotalRef.current;
+              const remainingTasks = Math.max(0, totalTasks - progress.current);
               
-              // 计算剩余任务量
-              const remainingTasks = progress.total - progress.current;
-              
-              // 计算新的预估剩余时间（毫秒）
-              if (newSpeed > 0) {
-                calculatedEstimatedTime = remainingTasks / newSpeed;
+              let shouldUpdateEstimatedTime = false;
+              if (currentSpeed > 0 && remainingTasks > 0) {
+                const newEstimatedTime = remainingTasks / currentSpeed;
                 
-                // 限制预估时间的更新频率：至少间隔2秒
-                const timeSinceLastUpdate = now - lastProgressUpdate;
-                if (existingEstimatedTime && timeSinceLastUpdate < 2000) {
-                  calculatedEstimatedTime = existingEstimatedTime;
+                const timeSinceLastEstimatedUpdate = now - lastEstimatedTimeUpdate;
+                
+                if (timeSinceLastEstimatedUpdate >= 3000 || !existingEstimatedTime) {
+                  calculatedEstimatedTime = newEstimatedTime;
+                  lastEstimatedTimeUpdate = now;
+                  shouldUpdateEstimatedTime = true;
                 }
+              } else if (remainingTasks <= 0) {
+                // 任务接近完成，显示00:00
+                calculatedEstimatedTime = 0;
+                shouldUpdateEstimatedTime = true;
               }
             }
             
@@ -998,15 +998,32 @@ export const App: React.FC = () => {
             }
             
             // 更新任务
-            updateTask(colorTaskIdRef.current, { 
+            // 进度计算：待处理 = pending + processing - current
+            const remainingFiles = progress.pending + progress.total - progress.current;
+            
+            // 计算新的处理时间（只在运行状态下累积）
+            let newTotalProcessedTime = totalProcessedTime;
+            if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
+              newTotalProcessedTime += now - lastProgressUpdate;
+            }
+            
+            const taskUpdates: any = { 
               current: progress.current, 
-              total: progress.total,
+              total: colorTaskInitialTotalRef.current,
               currentFile: progress.current_file,
-              currentStep: `${progress.current} / ${progress.total}`,
+              currentStep: `${progress.current} / ${Math.max(0, remainingFiles)}`,
               estimatedTime,
               lastProgressUpdate: now,
-              lastProgress: progress.current
-            });
+              lastProgress: progress.current,
+              totalProcessedTime: newTotalProcessedTime
+            };
+            
+            // 只有当预估时间实际更新时才更新 lastEstimatedTimeUpdate
+            if (shouldUpdateEstimatedTime) {
+              taskUpdates.lastEstimatedTimeUpdate = lastEstimatedTimeUpdate;
+            }
+            
+            updateTask(colorTaskIdRef.current, taskUpdates);
             
             // 检测任务是否完成（current >= total）
             // 注意：只有当 total 等于初始 total 时才关闭任务
@@ -1505,7 +1522,8 @@ export const App: React.FC = () => {
       minimized: false,
       lastProgressUpdate: now,
       lastProgress: 0,
-      estimatedTime: undefined
+      estimatedTime: undefined,
+      lastEstimatedTimeUpdate: now
     };
     
     // 立即添加任务，不使用防抖，确保用户立即看到任务开始
@@ -4177,7 +4195,14 @@ export const App: React.FC = () => {
     
     if (task.status === 'paused') {
       await resumeColorExtraction();
-      updateTask(id, { status: 'running' });
+      const now = Date.now();
+      updateTask(id, { 
+        status: 'running',
+        estimatedTime: undefined,
+        lastProgressUpdate: now,
+        lastProgress: task.current,
+        lastEstimatedTimeUpdate: now
+      });
     } else {
       await pauseColorExtraction();
       updateTask(id, { status: 'paused' });
