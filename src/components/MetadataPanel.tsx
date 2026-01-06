@@ -319,7 +319,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
            // Use direct file path for palette extraction (bypass URL parsing issues)
            (async () => {
              try {
-               console.log('[Auto-extract] Starting palette extraction for:', file.path);
+
                const { getDominantColors } = await import('../api/tauri-bridge');
                
                // 尝试从全局缩略图路径缓存中获取缩略图路径
@@ -328,8 +328,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                if (pathCache && pathCache.get) {
                    thumbnailPath = pathCache.get(file.path!);
                    if (thumbnailPath) {
-                       console.log('[Auto-extract] Got thumbnail path from cache:', thumbnailPath);
-                   }
+                           // 使用缓存的缩略图路径
+                       }
                }
                
                // 如果缓存中没有，尝试生成缩略图并获取路径
@@ -340,25 +340,27 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                        // 所以我们先调用 getThumbnail 确保缩略图存在，然后从缓存中获取路径
                        const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
                        if (thumbUrl) {
-                           // 重新从缓存获取原始路径
-                           thumbnailPath = pathCache.get(file.path!);
-                           console.log('[Auto-extract] Generated thumbnail, got path:', thumbnailPath);
-                       }
+                               // 重新从缓存获取原始路径
+                               thumbnailPath = pathCache.get(file.path!);
+                           }
                    } catch (err) {
-                       console.log('[Auto-extract] Failed to generate thumbnail:', err);
+                       // 忽略缩略图生成失败，继续使用原图提取
                    }
                }
                
                // 使用缩略图路径（如果可用）或原图路径进行颜色提取
                const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
-               console.log('[Auto-extract] Got colors:', colors);
-               
                if (colors && colors.length > 0) {
                    const hexColors = colors.map(c => c.hex);
-                   console.log('[Auto-extract] Updating file with palette:', hexColors);
-                   onUpdate(file.id, {
-                       meta: { ...file.meta!, palette: hexColors }
-                   });
+                   // 只有当提取的颜色与当前颜色不同时才更新，避免不必要的更新
+                   const currentHexColors = currentPalette || [];
+                   const colorsChanged = JSON.stringify(hexColors) !== JSON.stringify(currentHexColors);
+                   
+                   if (colorsChanged) {
+                       onUpdate(file.id, {
+                           meta: { ...file.meta!, palette: hexColors }
+                       });
+                   }
                }
              } catch (err) {
                console.error('[Auto-extract] Failed to extract palette:', err);
