@@ -877,7 +877,7 @@ export const App: React.FC = () => {
 
   // 监听主色调提取进度事件
   const colorTaskIdRef = useRef<string | null>(null);
-  const colorTaskInitialTotalRef = useRef<number>(0);
+  const colorBatchIdRef = useRef<number>(-1); // 初始化为 -1，以免与批次ID 0 冲突
   useEffect(() => {
     let isMounted = true;
     
@@ -886,61 +886,58 @@ export const App: React.FC = () => {
         const unlisten = await listen('color-extraction-progress', (event: any) => {
           if (!isMounted) return;
           
-          const progress = event.payload as { current: number; total: number; pending: number; current_file: string };
+          const progress = event.payload as { 
+            batchId: number; 
+            current: number; 
+            total: number; 
+            pending: number; 
+            currentFile: string;
+            batchCompleted: boolean;
+          };
           
-          // 检查任务是否存在（可能已被关闭）
-          // 使用函数式更新来获取最新的 tasks 状态并检查任务是否存在
-          let shouldCreateNewTask = false;
-          let existingTask = null;
+          // 忽略 total 为 0 的无效进度
+          if (progress.total === 0) {
+            return;
+          }
           
-          setState(prev => {
-            existingTask = colorTaskIdRef.current 
-              ? prev.tasks.find(t => t.id === colorTaskIdRef.current)
-              : null;
-            
-            // 如果任务不存在或已被关闭，标记需要创建新任务
-            if (!colorTaskIdRef.current || !existingTask) {
-              shouldCreateNewTask = true;
-            } else {
-              // 如果任务存在，检查是否有新图片进来（total 增加了）
-              // 如果新的 total 大于任务的初始 total，说明有新图片进来，应该创建新任务
-              if (progress.total > colorTaskInitialTotalRef.current) {
-                shouldCreateNewTask = true;
-              }
+          // 检查是否是新批次
+          const isNewBatch = progress.batchId !== colorBatchIdRef.current;
+          
+          if (isNewBatch) {
+            // 防止旧批次干扰：如果收到的批次ID比当前的小且不为-1，忽略
+            if (colorBatchIdRef.current !== -1 && progress.batchId < colorBatchIdRef.current) {
+              return;
             }
-            
-            return prev; // 不修改状态，只是检查
-          });
-          
-          // 如果需要创建新任务，创建它
-          if (shouldCreateNewTask && progress.total > 0) {
-            // 如果旧任务还在，先关闭它
-            if (colorTaskIdRef.current && existingTask) {
+
+            // 新批次：关闭旧任务，创建新任务
+            const oldTaskId = colorTaskIdRef.current;
+            if (oldTaskId) {
               setState(prev => ({ 
                 ...prev, 
-                tasks: prev.tasks.filter(t => t.id !== colorTaskIdRef.current) 
+                tasks: prev.tasks.filter(t => t.id !== oldTaskId) 
               }));
             }
+            
+            // 创建新任务
             const taskId = startTask('color', [], t('tasks.processingColors'), false);
             colorTaskIdRef.current = taskId;
-            colorTaskInitialTotalRef.current = progress.total; // 记录新任务的初始 total
+            colorBatchIdRef.current = progress.batchId;
+            
+            eprintln(`=== New color extraction batch ${progress.batchId} started, total: ${progress.total} ===`);
           }
           
           // 更新任务进度
           if (colorTaskIdRef.current) {
-            // 获取当前时间
             const now = Date.now();
             
-            // 查找当前任务，获取上次进度、时间和速度
+            // 获取当前任务状态
             let lastProgress = 0;
             let lastProgressUpdate = now;
-            let averageSpeed: number | undefined = undefined;
-            let totalProcessedTime = 0;
-            let lastEstimatedTimeUpdate = now;
-            let existingEstimatedTime: number | undefined = undefined;
-            
-            // 先获取当前任务的状态
             let taskStatus = 'running';
+            let totalProcessedTime = 0;
+            let existingEstimatedTime: number | undefined = undefined;
+            let lastEstimatedTimeUpdate = now;
+            
             setState(prev => {
               const task = prev.tasks.find(t => t.id === colorTaskIdRef.current);
               if (task) {
@@ -954,23 +951,20 @@ export const App: React.FC = () => {
               return prev;
             });
             
-            // 计算处理速度和预估时间
+            // 计算预估时间
             let calculatedEstimatedTime: number | undefined = existingEstimatedTime;
             let shouldUpdateEstimatedTime = false;
             
             if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
               const elapsedTime = now - lastProgressUpdate;
-              const progressDelta = progress.current - lastProgress;
-              const currentSpeed = (totalProcessedTime + elapsedTime) > 0 ? progress.current / (totalProcessedTime + elapsedTime) : progressDelta / elapsedTime;
+              const currentSpeed = (totalProcessedTime + elapsedTime) > 0 
+                ? progress.current / (totalProcessedTime + elapsedTime) 
+                : 0;
               
-              // 计算剩余任务量，使用初始总任务量作为基准
-              const totalTasks = colorTaskInitialTotalRef.current;
-              const remainingTasks = Math.max(0, totalTasks - progress.current);
+              const remainingTasks = Math.max(0, progress.total - progress.current);
               
-              let shouldUpdateEstimatedTime = false;
               if (currentSpeed > 0 && remainingTasks > 0) {
                 const newEstimatedTime = remainingTasks / currentSpeed;
-                
                 const timeSinceLastEstimatedUpdate = now - lastEstimatedTimeUpdate;
                 
                 if (timeSinceLastEstimatedUpdate >= 3000 || !existingEstimatedTime) {
@@ -979,29 +973,18 @@ export const App: React.FC = () => {
                   shouldUpdateEstimatedTime = true;
                 }
               } else if (remainingTasks <= 0) {
-                // 任务接近完成，显示00:00
                 calculatedEstimatedTime = 0;
                 shouldUpdateEstimatedTime = true;
               }
             }
             
-            // 只有处理了至少10个文件后才显示预估时间，避免初始阶段的不稳定
-            let estimatedTime = calculatedEstimatedTime;
-            const processedFiles = progress.current;
-            if (processedFiles < 10) {
-              estimatedTime = undefined;
-            }
-            
-            // 暂停时清除预估时间
+            // 只有处理了至少10个文件后才显示预估时间
+            let estimatedTime = progress.current >= 10 ? calculatedEstimatedTime : undefined;
             if (taskStatus === 'paused') {
               estimatedTime = undefined;
             }
             
-            // 更新任务
-            // 进度计算：待处理 = pending + processing - current
-            const remainingFiles = progress.pending + progress.total - progress.current;
-            
-            // 计算新的处理时间（只在运行状态下累积）
+            // 计算新的处理时间
             let newTotalProcessedTime = totalProcessedTime;
             if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
               newTotalProcessedTime += now - lastProgressUpdate;
@@ -1009,40 +992,37 @@ export const App: React.FC = () => {
             
             const taskUpdates: any = { 
               current: progress.current, 
-              total: colorTaskInitialTotalRef.current,
-              currentFile: progress.current_file,
-              currentStep: `${progress.current} / ${Math.max(0, remainingFiles)}`,
+              total: progress.total,
+              currentFile: progress.currentFile,
+              currentStep: `${progress.current} / ${progress.total}`,
               estimatedTime,
               lastProgressUpdate: now,
               lastProgress: progress.current,
               totalProcessedTime: newTotalProcessedTime
             };
             
-            // 只有当预估时间实际更新时才更新 lastEstimatedTimeUpdate
             if (shouldUpdateEstimatedTime) {
               taskUpdates.lastEstimatedTimeUpdate = lastEstimatedTimeUpdate;
             }
             
             updateTask(colorTaskIdRef.current, taskUpdates);
             
-            // 检测任务是否完成（current >= total）
-            // 注意：只有当 total 等于初始 total 时才关闭任务
-            // 如果 total 大于初始 total，说明有新图片进来，已经创建了新任务
-            if (progress.current >= progress.total && progress.total > 0 && progress.total === colorTaskInitialTotalRef.current) {
-              // 标记任务为完成状态
-              updateTask(colorTaskIdRef.current, { 
-                status: 'completed' 
-              });
+            // 检测批次完成
+            if (progress.batchCompleted) {
+              updateTask(colorTaskIdRef.current, { status: 'completed' });
               
-              // 延迟1秒后关闭任务窗口并清除引用
+              // 延迟1秒后关闭任务窗口
+              const currentTaskId = colorTaskIdRef.current;
               setTimeout(() => {
-                if (isMounted && colorTaskIdRef.current) {
+                if (isMounted && currentTaskId) {
                   setState(prev => ({ 
                     ...prev, 
-                    tasks: prev.tasks.filter(t => t.id !== colorTaskIdRef.current) 
+                    tasks: prev.tasks.filter(t => t.id !== currentTaskId) 
                   }));
-                  colorTaskIdRef.current = null;
-                  colorTaskInitialTotalRef.current = 0; // 清除初始 total
+                  // 只有当当前任务ID未变化时才清除引用
+                  if (colorTaskIdRef.current === currentTaskId) {
+                    colorTaskIdRef.current = null;
+                  }
                 }
               }, 1000);
             }
@@ -1054,6 +1034,11 @@ export const App: React.FC = () => {
         console.error('Failed to listen for color extraction progress:', error);
         return () => {};
       }
+    };
+    
+    // Helper function for logging
+    const eprintln = (msg: string) => {
+      console.log(`[ColorExtraction] ${msg}`);
     };
     
     const unlistenPromise = listenProgress();

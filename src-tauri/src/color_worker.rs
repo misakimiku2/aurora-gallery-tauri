@@ -6,7 +6,7 @@ use std::io::BufReader;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use tokio::task;
 
@@ -19,14 +19,28 @@ static IS_PAUSED: AtomicBool = AtomicBool::new(false);
 // 全局关闭状态
 static IS_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
 
+// 全局批次ID计数器
+static BATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 // 进度报告结构体
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorExtractionProgress {
-    pub current: usize,
-    pub total: usize,
-    pub pending: usize,
-    pub current_file: String,
+    pub batch_id: u64,           // 批次ID
+    pub current: usize,          // 当前批次已处理数量
+    pub total: usize,            // 当前批次总数量
+    pub pending: usize,          // 待处理数量（用于显示）
+    pub current_file: String,    // 当前处理的文件
+    pub batch_completed: bool,   // 当前批次是否完成
+}
+
+// 批次状态结构体
+#[derive(Debug, Clone)]
+struct BatchState {
+    id: u64,
+    total: usize,
+    processed: usize,
+    started: bool,
 }
 
 // 暂停主色调提取
@@ -68,11 +82,16 @@ pub fn is_shutting_down() -> bool {
     IS_SHUTTING_DOWN.load(Ordering::SeqCst)
 }
 
-// 定义处理结果结构体
-type ProcessingResult = Result<(String, Vec<color_extractor::ColorResult>), String>;
+// 生成新的批次ID
+fn generate_batch_id() -> u64 {
+    BATCH_ID_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
 
-// 定义任务类型
-type Task = String;
+// 定义处理结果结构体（包含批次ID）
+type ProcessingResult = Result<(u64, String, Vec<color_extractor::ColorResult>), (u64, String)>;
+
+// 定义任务类型（包含批次ID和文件路径）
+type Task = (u64, String);
 
 // 后台处理任务，持续提取待处理图片的主色调
 pub async fn color_extraction_worker(
@@ -137,44 +156,39 @@ pub async fn color_extraction_worker(
     result_handle.await.unwrap();
 }
 
-// 生产者循环：持续从数据库获取待处理文件
+// 生产者循环：持续从数据库获取待处理文件，按批次管理
 async fn producer_loop(
     pool: Arc<ColorDbPool>,
     batch_size: usize,
     task_sender: Sender<Task>
 ) {
+    // 等待时间变量，用于文件聚合
+    let mut debounce_deadline: Option<tokio::time::Instant> = None;
+    let debounce_duration = Duration::from_secs(2); // 基础等待2秒
+    let mut last_pending_count: usize = 0; // 上次检测到的数量
+    
     loop {
         // 检查是否暂停或关闭
         if is_paused() || is_shutting_down() {
             tokio::time::sleep(Duration::from_millis(500)).await;
             if is_shutting_down() {
-                // 关闭时，不再发送新任务，让队列自然清空
                 eprintln!("Producer shutting down, stopping new task dispatch");
                 break;
             }
             continue;
         }
         
-        // 克隆pool，避免在循环中移动所有权
+        // 克隆pool
         let pool_clone = pool.clone();
         
-        // 从数据库获取待处理文件
-        let pending_files = match tokio::task::spawn_blocking(move || {
+        // 检查待处理文件数量
+        let pending_count = match tokio::task::spawn_blocking(move || {
             let mut conn = pool_clone.get_connection();
-            let files = color_db::get_pending_files(&mut conn, batch_size);
-            
-            // 立即将获取的文件状态更新为processing，避免重复获取
-            if let Ok(ref files) = files {
-                for file_path in files {
-                    let _ = color_db::update_status(&mut conn, file_path, "processing");
-                }
-            }
-            
-            files
+            color_db::get_pending_files_count(&mut conn)
         }).await {
-            Ok(Ok(files)) => files,
+            Ok(Ok(count)) => count,
             Ok(Err(e)) => {
-                eprintln!("Failed to get pending files: {}", e);
+                eprintln!("Failed to get pending files count: {}", e);
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             },
@@ -185,26 +199,124 @@ async fn producer_loop(
             }
         };
         
-        if pending_files.is_empty() {
-            // 没有待处理文件，睡眠500毫秒后再次检查
+        if pending_count == 0 {
+            // 没有待处理文件，重置防抖计时器
+            debounce_deadline = None;
+            last_pending_count = 0;
             tokio::time::sleep(Duration::from_millis(500)).await;
             continue;
         }
         
-        // 将文件路径发送到任务队列
-        for file_path in pending_files {
-            if task_sender.send(file_path).is_err() {
-                // 通道已关闭，退出循环
-                break;
-            }
+        // 文件防抖逻辑：等待更多文件被添加完成 (Sliding Window)
+        if debounce_deadline.is_none() {
+            // 首次检测到待处理文件，开始等待
+            debounce_deadline = Some(tokio::time::Instant::now() + debounce_duration);
+            last_pending_count = pending_count;
+            eprintln!("Detected {} pending files, waiting for file copy to complete...", pending_count);
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
         }
         
-        // 短暂睡眠，避免过于频繁的数据库查询
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        let deadline = debounce_deadline.unwrap();
+        let now = tokio::time::Instant::now();
+        
+        // 如果文件数量增加，延长等待时间（滑动窗口）
+        if pending_count > last_pending_count {
+            eprintln!("Pending files increased ({} -> {}), extending wait window...", last_pending_count, pending_count);
+            debounce_deadline = Some(now + Duration::from_millis(1500)); // 延长1.5秒
+            last_pending_count = pending_count;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        }
+
+        if now < deadline {
+            // 还在等待期，继续等待
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            continue;
+        }
+        
+        // 等待期结束，重新获取最终的待处理文件数量
+        let pool_clone = pool.clone();
+        let final_pending_count = match tokio::task::spawn_blocking(move || {
+            let mut conn = pool_clone.get_connection();
+            color_db::get_pending_files_count(&mut conn)
+        }).await {
+            Ok(Ok(count)) => count,
+            Ok(Err(_)) | Err(_) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+        
+        if final_pending_count == 0 {
+            debounce_deadline = None;
+            continue;
+        }
+        
+        // 创建新批次
+        let batch_id = generate_batch_id();
+        eprintln!("=== Starting new batch {} with {} files ===", batch_id, final_pending_count);
+        
+        // 重置防抖计时器
+        debounce_deadline = None;
+        last_pending_count = 0;
+        
+        // 获取所有待处理文件并发送到任务队列
+        let mut batch_files_sent = 0;
+        loop {
+            let pool_clone = pool.clone();
+            
+            // 获取一批待处理文件
+            let pending_files = match tokio::task::spawn_blocking(move || {
+                let mut conn = pool_clone.get_connection();
+                let files = color_db::get_pending_files(&mut conn, batch_size);
+                
+                // 立即将获取的文件状态更新为processing
+                if let Ok(ref files) = files {
+                    for file_path in files {
+                        let _ = color_db::update_status(&mut conn, file_path, "processing");
+                    }
+                }
+                
+                files
+            }).await {
+                Ok(Ok(files)) => files,
+                Ok(Err(e)) => {
+                    eprintln!("Failed to get pending files: {}", e);
+                    break;
+                },
+                Err(e) => {
+                    eprintln!("Failed to execute database query: {}", e);
+                    break;
+                }
+            };
+            
+            if pending_files.is_empty() {
+                // 该批次所有文件已发送完毕
+                break;
+            }
+            
+            // 将文件路径发送到任务队列（带批次ID）
+            for file_path in pending_files {
+                if task_sender.send((batch_id, file_path)).is_err() {
+                    eprintln!("Task sender closed, producer exiting");
+                    return;
+                }
+                batch_files_sent += 1;
+            }
+            
+            // 短暂睡眠
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        
+        eprintln!("Batch {} dispatched {} files to processing queue", batch_id, batch_files_sent);
+        
+        // 等待一段时间后检查是否有新文件
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
-// 消费者循环：从队列获取任务并处理
+// 消费者循环：从队列获取任务并处理（带批次支持）
 fn consumer_loop(
     pool: Arc<ColorDbPool>,
     task_receiver: Receiver<Task>,
@@ -216,7 +328,6 @@ fn consumer_loop(
         // 检查是否暂停或关闭
         if is_paused() || is_shutting_down() {
             if is_shutting_down() {
-                // 如果正在关闭，排空当前接收到的任务并退出
                 eprintln!("Consumer loop received shutdown signal, exiting.");
                 break;
             }
@@ -224,19 +335,19 @@ fn consumer_loop(
             continue;
         }
         
-        // 尝试接收任务（增加超时检查频率）
+        // 尝试接收任务
         match task_receiver.recv_timeout(Duration::from_millis(50)) {
-            Ok(file_path) => {
+            Ok((batch_id, file_path)) => {
                 // 更新当前处理的文件
                 let _ = *current_file.lock().unwrap() = file_path.clone();
                 
-                // 1. 加载和处理图片
+                // 处理图片
                 let processing_result: ProcessingResult = match File::open(&file_path) {
                     Ok(file) => {
                         let reader = BufReader::new(file);
                         match image::load(reader, ImageFormat::from_path(&file_path).unwrap_or(ImageFormat::Jpeg)) {
                             Ok(mut img) => {
-                                // 等比例缩小图片到256px，以较小边为准
+                                // 等比例缩小图片到256px
                                 let (width, height) = img.dimensions();
                                 let max_dim = 256;
                                 
@@ -255,35 +366,29 @@ fn consumer_loop(
                                 let colors = color_extractor::get_dominant_colors(&img, 8);
                                 
                                 if colors.is_empty() {
-                                    Err(format!("No colors extracted from file: {}", file_path))
+                                    Err((batch_id, format!("No colors extracted from file: {}", file_path)))
                                 } else {
-                                    Ok((file_path.clone(), colors))
+                                    Ok((batch_id, file_path.clone(), colors))
                                 }
                             },
-                            Err(e) => {
-                                Err(format!("Failed to load image: {}", e))
-                            }
+                            Err(e) => Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
                         }
                     },
-                    Err(e) => {
-                        Err(format!("Failed to open file: {}", e))
-                    }
+                    Err(e) => Err((batch_id, format!("Failed to open file {}: {}", file_path, e)))
                 };
                 
-                // 将处理结果发送到结果队列
-                // 克隆处理结果以便后续检查错误状态
-                let processing_result_clone = processing_result.clone();
+                // 克隆结果用于后续错误处理
+                let result_clone = processing_result.clone();
+                
                 if result_sender.send(processing_result).is_err() {
-                    // 通道已关闭，退出循环
                     eprintln!("Result sender closed, consumer exiting");
                     break;
                 }
                 
                 // 如果处理失败，更新文件状态为error
-                if let Err(error_msg) = processing_result_clone {
+                if let Err((_, error_msg)) = result_clone {
                     let pool_clone = pool.clone();
                     let file_path_clone = file_path.clone();
-                    // 使用spawn_blocking在后台线程中更新状态
                     std::thread::spawn(move || {
                         let mut conn = pool_clone.get_connection();
                         if let Err(e) = color_db::update_status(&mut conn, &file_path_clone, "error") {
@@ -295,11 +400,9 @@ fn consumer_loop(
                 }
             },
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                // 超时，继续循环
                 continue;
             },
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                // 通道已关闭（生产者已退出），退出循环
                 eprintln!("Task receiver disconnected, consumer exiting");
                 break;
             }
@@ -307,234 +410,156 @@ fn consumer_loop(
     }
 }
 
-// 结果处理器：批量保存结果到数据库
+// 结果处理器：批量保存结果到数据库（带批次管理）
 async fn result_processor(
     pool: Arc<ColorDbPool>,
     result_receiver: Receiver<ProcessingResult>,
     app_handle: Option<Arc<AppHandle>>
 ) {
-    // 获取总文件数，用于进度报告
-    // 修复：优先使用待处理文件数作为总数，避免首次创建数据库时出现除零错误
-    let pool_clone = pool.clone();
-    let pending_count = match tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone.get_connection();
-        color_db::get_pending_files_count(&mut conn)
-    }).await {
-        Ok(Ok(count)) => count,
-        Ok(Err(e)) => {
-            eprintln!("Failed to get pending files count: {}", e);
-            0
-        },
-        Err(e) => {
-            eprintln!("Failed to execute pending files query: {}", e);
-            0
-        }
-    };
+    use std::collections::HashMap;
     
-    // 获取已处理文件数，用于进度报告
-    let pool_clone = pool.clone();
-    let extracted_count = match tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone.get_connection();
-        color_db::get_extracted_files_count(&mut conn)
-    }).await {
-        Ok(Ok(count)) => count,
-        Ok(Err(e)) => {
-            eprintln!("Failed to get extracted files count: {}", e);
-            0
-        },
-        Err(e) => {
-            eprintln!("Failed to execute database query: {}", e);
-            0
-        }
-    };
-    
-    // 获取正在处理的文件数，用于进度报告
-    let pool_clone = pool.clone();
-    let initial_processing_count = match tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone.get_connection();
-        color_db::get_processing_files_count(&mut conn)
-    }).await {
-        Ok(Ok(count)) => count,
-        Ok(Err(e)) => {
-            eprintln!("Failed to get processing files count: {}", e);
-            0
-        },
-        Err(e) => {
-            eprintln!("Failed to execute processing files query: {}", e);
-            0
-        }
-    };
-    
-    // 计算实际需要处理的总文件数（初始值）
-    // 修复：优先使用 processing 文件数作为总数，解决首次启动时 pending=0 导致 total=0 的问题
-    let mut total_files_to_process = pending_count + extracted_count + initial_processing_count;
-    let mut should_report_progress = total_files_to_process > 0;
-    let mut last_total_check_time = tokio::time::Instant::now();
+    // 批次状态跟踪：batch_id -> (total, processed, started)
+    let mut batch_states: HashMap<u64, BatchState> = HashMap::new();
     
     // 结果缓冲区，用于批量保存
-    let mut result_buffer = Vec::new();
-    let batch_save_threshold = 50; // 增大批量保存阈值，从20增加到50
-    let mut processed_count = extracted_count; // 从已处理文件数开始计数
-    let mut success_count = extracted_count; // 已处理的都是成功的
-    let mut error_count = 0;
+    let mut result_buffer: Vec<(String, Vec<color_extractor::ColorResult>)> = Vec::new();
+    let batch_save_threshold = 50;
     let mut last_save_time = tokio::time::Instant::now();
-    let auto_save_interval = Duration::from_secs(5); // 增加自动保存间隔，从500ms增加到5秒
+    let auto_save_interval = Duration::from_secs(5);
+    
+    // 统计计数
+    let mut total_success_count = 0usize;
+    let mut total_error_count = 0usize;
     
     // WAL检查点相关变量
     let mut last_checkpoint_time = tokio::time::Instant::now();
-    let checkpoint_interval = Duration::from_secs(60); // 每60秒执行一次WAL检查点
-    let mut last_checkpoint_processed = processed_count; // 上次检查点时已处理的文件数
-    let mut pause_checkpoint_executed = false; // 跟踪是否已经执行了暂停时的检查点
+    let checkpoint_interval = Duration::from_secs(60);
+    let mut total_processed_since_checkpoint = 0usize;
+    let mut pause_checkpoint_executed = false;
     
     // 持续处理结果
     loop {
         // 1. 尝试接收结果
         match result_receiver.try_recv() {
             Ok(result) => {
-                processed_count += 1;
-                match result {
-                    Ok((file_path, colors)) => {
-                        result_buffer.push((file_path, colors));
-                        success_count += 1;
-                    },
-                    Err(e) => {
-                        error_count += 1;
-                        eprintln!("Error processing file: {}", e);
+                let (batch_id, file_path, colors_opt, is_error) = match result {
+                    Ok((bid, path, colors)) => (bid, path, Some(colors), false),
+                    Err((bid, err_msg)) => {
+                        eprintln!("Error processing file: {}", err_msg);
+                        (bid, String::new(), None, true)
                     }
-                }
+                };
                 
-                // 定期重新计算总数（每1秒检查一次）
-                let time_since_last_check = last_total_check_time.elapsed();
-                let mut current_pending = 0;
-                if time_since_last_check >= Duration::from_secs(1) {
+                // 更新批次状态
+                let batch_state = batch_states.entry(batch_id).or_insert_with(|| {
+                    // 获取该批次的总文件数（processing状态的文件数）
                     let pool_clone = pool.clone();
-                    let (new_pending, _new_extracted, new_processing) = match tokio::task::spawn_blocking(move || {
+                    let count = std::thread::spawn(move || {
                         let mut conn = pool_clone.get_connection();
-                        let pending = color_db::get_pending_files_count(&mut conn).unwrap_or(0);
-                        let extracted = color_db::get_extracted_files_count(&mut conn).unwrap_or(0);
-                        let processing = color_db::get_processing_files_count(&mut conn).unwrap_or(0);
-                        (pending, extracted, processing)
-                    }).await {
-                        Ok((pending, extracted, processing)) => (pending, extracted, processing),
-                        Err(_) => (0, 0, 0),
+                        color_db::get_processing_files_count(&mut conn).unwrap_or(0)
+                    }).join().unwrap_or(0);
+                    
+                    eprintln!("=== New batch {} detected, total files: {} ===", batch_id, count);
+                    
+                    BatchState {
+                        id: batch_id,
+                        total: count,
+                        processed: 0,
+                        started: false,
+                    }
+                });
+                
+                batch_state.processed += 1;
+                total_processed_since_checkpoint += 1;
+                
+                if is_error {
+                    total_error_count += 1;
+                } else {
+                    total_success_count += 1;
+                    if let Some(colors) = colors_opt {
+                        result_buffer.push((file_path, colors));
+                    }
+                }
+                
+                // 发送进度报告
+                if let Some(app_handle) = &app_handle {
+                    let batch_completed = batch_state.processed >= batch_state.total && batch_state.total > 0;
+                    
+                    let progress = ColorExtractionProgress {
+                        batch_id,
+                        current: batch_state.processed,
+                        total: batch_state.total,
+                        pending: batch_state.total.saturating_sub(batch_state.processed),
+                        current_file: String::new(),
+                        batch_completed,
                     };
+                    let _ = app_handle.emit("color-extraction-progress", progress);
                     
-                    current_pending = new_pending;
-                    
-                    // 使用processing状态的文件数量作为总数
-                    let new_total = new_processing;
-                    if new_total > 0 && total_files_to_process == 0 {
-                        // 如果之前是0，现在有数据了，开始报告进度
-                        total_files_to_process = new_total;
-                        should_report_progress = true;
-                    } else if new_total > total_files_to_process {
-                        // 如果总数增加了（有新图片进来），更新总数
-                        total_files_to_process = new_total;
-                    }
-                    last_total_check_time = tokio::time::Instant::now();
-                }
-                
-                // 发送进度报告（只在数据库中有数据时才发送）
-                if should_report_progress {
-                    if let Some(app_handle) = &app_handle {
-                        // 修复：使用待处理+已处理的总数，避免除零错误
-                        let progress = ColorExtractionProgress {
-                            current: processed_count,
-                            total: total_files_to_process,
-                            pending: current_pending,
-                            current_file: String::new(),
-                        };
-                        let _ = app_handle.emit("color-extraction-progress", progress);
+                    // 如果批次完成，从跟踪列表移除（延迟清理）
+                    if batch_completed {
+                        eprintln!("=== Batch {} completed: {}/{} ===", batch_id, batch_state.processed, batch_state.total);
                     }
                 }
                 
-                if processed_count % 50 == 0 {
+                if (total_success_count + total_error_count) % 50 == 0 {
                     eprintln!("Total processed: {} (Success: {}, Errors: {})", 
-                             processed_count, success_count, error_count);
+                             total_success_count + total_error_count, total_success_count, total_error_count);
                 }
                 
-                // 检查是否需要执行WAL检查点
+                // 检查WAL检查点
                 let checkpoint_elapsed = last_checkpoint_time.elapsed();
-                let processed_since_last_checkpoint = processed_count - last_checkpoint_processed;
-                
-                // 调整触发阈值，增加检查点频率
-                if checkpoint_elapsed >= checkpoint_interval || processed_since_last_checkpoint >= 200 {
-                    // 检查WAL文件大小，避免在文件较小时执行检查点
+                if checkpoint_elapsed >= checkpoint_interval || total_processed_since_checkpoint >= 200 {
                     let pool_clone = pool.clone();
-                    let should_execute_checkpoint = match tokio::task::spawn_blocking(move || {
+                    let should_checkpoint = match tokio::task::spawn_blocking(move || {
                         pool_clone.get_wal_info()
                     }).await {
-                        Ok(Ok((wal_size, _))) => wal_size > 512 * 1024, // 只有当WAL文件大于512KB时才执行检查点
-                        _ => true, // 如果获取失败，默认执行
+                        Ok(Ok((wal_size, _))) => wal_size > 512 * 1024,
+                        _ => true,
                     };
                     
-                    if should_execute_checkpoint {
-                        eprintln!("Executing periodic WAL checkpoint after processing {} files ({} processed since last checkpoint)", 
-                                 processed_since_last_checkpoint, processed_count);
+                    if should_checkpoint {
                         let pool_clone = pool.clone();
                         let checkpoint_start = std::time::Instant::now();
                         tokio::task::spawn_blocking(move || {
                             match pool_clone.force_wal_checkpoint() {
                                 Ok(_) => {
                                     let duration = checkpoint_start.elapsed();
-                                    eprintln!("Periodic WAL checkpoint completed successfully in {:?}", duration);
-                                    // 记录检查点后的数据库文件大小
-                                    if let Err(e) = pool_clone.get_db_file_sizes() {
-                                        eprintln!("Failed to get database file sizes after checkpoint: {}", e);
-                                    }
+                                    eprintln!("Periodic WAL checkpoint completed in {:?}", duration);
                                 },
-                                Err(e) => {
-                                    eprintln!("Failed to execute periodic WAL checkpoint: {}", e);
-                                }
+                                Err(e) => eprintln!("WAL checkpoint failed: {}", e)
                             }
-                        }).await.unwrap_or_else(|e| eprintln!("Failed to spawn WAL checkpoint task: {}", e));
+                        }).await.unwrap_or_else(|e| eprintln!("Checkpoint task failed: {}", e));
                         
                         last_checkpoint_time = tokio::time::Instant::now();
-                        last_checkpoint_processed = processed_count;
-                    } else {
-                        eprintln!("Skipping WAL checkpoint - WAL file is too small");
+                        total_processed_since_checkpoint = 0;
                     }
                 }
             },
             Err(crossbeam_channel::TryRecvError::Empty) => {
-                // 通道暂时为空，检查是否需要强制保存
+                // 通道暂时为空
                 let elapsed_time = last_save_time.elapsed();
                 if (!result_buffer.is_empty() && elapsed_time >= auto_save_interval) || is_paused() || is_shutting_down() {
                     save_batch_results(pool.clone(), &mut result_buffer).await;
                     last_save_time = tokio::time::Instant::now();
                     
-                    // 如果是暂停或关闭状态，执行WAL检查点（只执行一次）
                     if (is_paused() || is_shutting_down()) && !pause_checkpoint_executed {
                         let reason = if is_paused() { "pause" } else { "shutdown" };
                         eprintln!("Executing WAL checkpoint due to {}", reason);
                         let pool_clone = pool.clone();
-                        let checkpoint_start = std::time::Instant::now();
                         tokio::task::spawn_blocking(move || {
-                            match pool_clone.force_full_checkpoint() {
-                                Ok(_) => {
-                                    let duration = checkpoint_start.elapsed();
-                                    eprintln!("WAL checkpoint on {} completed successfully in {:?}", reason, duration);
-                                },
-                                Err(e) => {
-                                    eprintln!("Failed to execute WAL checkpoint on {}: {}", reason, e);
-                                }
-                            }
-                        }).await.unwrap_or_else(|e| eprintln!("Failed to spawn WAL checkpoint task: {}", e));
-                        
+                            let _ = pool_clone.force_full_checkpoint();
+                        }).await.unwrap_or_else(|e| eprintln!("Checkpoint task failed: {}", e));
                         pause_checkpoint_executed = true;
                     }
                 }
                 
-                // 即使没有数据，也要检查是否正在关闭
                 if is_shutting_down() {
-                    // 如果正在关闭且通道空，则跳到关闭逻辑
+                    // 继续到关闭逻辑
                 } else {
-                    // 正常运行，且暂无数据，休眠一会
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             },
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
-                // 通道关闭
                 break;
             }
         }
@@ -545,20 +570,31 @@ async fn result_processor(
             last_save_time = tokio::time::Instant::now();
         }
 
-        // 3. 处理关闭逻辑
+        // 3. 清理已完成的批次（保留最近5个用于查询）
+        if batch_states.len() > 10 {
+            let mut completed: Vec<u64> = batch_states.iter()
+                .filter(|(_, state)| state.processed >= state.total && state.total > 0)
+                .map(|(id, _)| *id)
+                .collect();
+            completed.sort();
+            // 移除较老的已完成批次
+            for id in completed.iter().take(completed.len().saturating_sub(5)) {
+                batch_states.remove(id);
+            }
+        }
+
+        // 4. 处理关闭逻辑
         if is_shutting_down() {
             eprintln!("Shutdown initiated, draining remaining results...");
             
-            // 尽力排空通道
             while let Ok(result) = result_receiver.try_recv() {
-                processed_count += 1;
                 match result {
-                    Ok((file_path, colors)) => {
+                    Ok((_bid, file_path, colors)) => {
                         result_buffer.push((file_path, colors));
-                        success_count += 1;
+                        total_success_count += 1;
                     },
-                    Err(e) => {
-                        error_count += 1;
+                    Err((_bid, e)) => {
+                        total_error_count += 1;
                         eprintln!("Error during shutdown drain: {}", e);
                     }
                 }
@@ -567,33 +603,23 @@ async fn result_processor(
                 }
             }
             
-            // 最后一跳保存
             if !result_buffer.is_empty() {
                 save_batch_results(pool.clone(), &mut result_buffer).await;
             }
             
-            // 执行最终WAL检查点，确保所有数据写入主数据库
+            // 执行最终WAL检查点
             eprintln!("Executing final WAL checkpoint before shutdown");
             let pool_clone = pool.clone();
-            let pool_for_sizes = pool.clone();
-            let checkpoint_start = std::time::Instant::now();
             match tokio::task::spawn_blocking(move || {
                 pool_clone.force_full_checkpoint()
             }).await {
-                Err(e) => eprintln!("Failed to spawn final WAL checkpoint task: {}", e),
-                Ok(Err(e)) => eprintln!("Failed to execute final WAL checkpoint: {}", e),
-                Ok(_) => {
-                    let duration = checkpoint_start.elapsed();
-                    eprintln!("Final WAL checkpoint completed successfully in {:?}", duration);
-                    // 记录最终数据库文件大小
-                    if let Err(e) = pool_for_sizes.get_db_file_sizes() {
-                        eprintln!("Failed to get database file sizes after final checkpoint: {}", e);
-                    }
-                }
+                Err(e) => eprintln!("Final checkpoint task failed: {}", e),
+                Ok(Err(e)) => eprintln!("Final checkpoint failed: {}", e),
+                Ok(_) => eprintln!("Final WAL checkpoint completed")
             }
             
-            eprintln!("Shutdown complete. Final stats: {} processed, {} success, {} error.", 
-                     processed_count, success_count, error_count);
+            eprintln!("Shutdown complete. Final stats: {} success, {} error.", 
+                     total_success_count, total_error_count);
             break;
         }
     }

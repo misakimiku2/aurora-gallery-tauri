@@ -281,8 +281,13 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-// 添加待处理文件
-pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result<()> {
+// 添加待处理文件（只添加数据库中不存在的文件）
+// 返回实际添加的文件数量
+pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result<usize> {
+    if file_paths.is_empty() {
+        return Ok(0);
+    }
+    
     let current_ts = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_err(|e| e.to_string())?
@@ -290,8 +295,12 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     
+    let mut added_count = 0usize;
+    
     for path in file_paths {
-        tx.execute(
+        // 使用 INSERT OR IGNORE 来避免重复
+        // 已存在的文件（无论是 pending、processing 还是 extracted）都会被忽略
+        let result = tx.execute(
             "INSERT OR IGNORE INTO dominant_colors 
              (file_path, colors, created_at, updated_at, status) 
              VALUES (?, ?, ?, ?, ?)",
@@ -303,10 +312,19 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
                 "pending"
             ],
         ).map_err(|e| e.to_string())?;
+        
+        if result > 0 {
+            added_count += 1;
+        }
     }
     
     tx.commit().map_err(|e| e.to_string())?;
-    Ok(())
+    
+    if added_count > 0 {
+        eprintln!("Added {} new files to pending queue (out of {} requested)", added_count, file_paths.len());
+    }
+    
+    Ok(added_count)
 }
 
 // 保存主色调数据
