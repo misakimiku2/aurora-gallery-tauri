@@ -1,0 +1,357 @@
+Database file sizes: DB=4239360 bytes (4.04 MB), WAL=708672 bytes (0.68 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1307/1300 ===
+=== Batch 0 completed: 1308/1300 ===
+=== Batch 0 completed: 1309/1300 ===
+=== Batch 0 completed: 1310/1300 ===
+=== Batch 0 completed: 1311/1300 ===
+=== Batch 0 completed: 1312/1300 ===
+=== Batch 0 completed: 1313/1300 ===
+=== Batch 0 completed: 1314/1300 ===
+=== Batch 0 completed: 1315/1300 ===
+=== Batch 0 completed: 1316/1300 ===
+=== Batch 0 completed: 1317/1300 ===
+=== Batch 0 completed: 1318/1300 ===
+=== Batch 0 completed: 1319/1300 ===
+=== Batch 0 completed: 1320/1300 ===
+=== Batch 0 completed: 1321/1300 ===
+=== Batch 0 completed: 1322/1300 ===
+=== Batch 0 completed: 1323/1300 ===
+=== Batch 0 completed: 1324/1300 ===
+=== Batch 0 completed: 1325/1300 ===
+=== Batch 0 completed: 1326/1300 ===
+=== Batch 0 completed: 1327/1300 ===
+=== Batch 0 completed: 1328/1300 ===
+=== Batch 0 completed: 1329/1300 ===
+=== Batch 0 completed: 1330/1300 ===
+=== Batch 0 completed: 1331/1300 ===
+=== Batch 0 completed: 1332/1300 ===
+=== Batch 0 completed: 1333/1300 ===
+=== Batch 0 completed: 1334/1300 ===
+Saving batch of 28 files to database
+Starting database transaction for 28 files
+WAL status before transaction: size=0, frames_in_wal=158, frames_checkpointed=158
+Transaction committed successfully: 28 success, 0 errors, took 5.2862ms
+Total extracted records in database after transaction: 1334
+Database verification: 1334 extracted records found
+WAL status after transaction: size=0, frames_in_wal=196, frames_checkpointed=196
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4329472 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4329472 bytes (4.13 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1335/1300 ===
+=== Batch 0 completed: 1336/1300 ===
+=== Batch 0 completed: 1337/1300 ===
+=== Batch 0 completed: 1338/1300 ===
+=== Batch 0 completed: 1339/1300 ===
+=== Batch 0 completed: 1340/1300 ===
+=== Batch 0 completed: 1341/1300 ===
+=== Batch 0 completed: 1342/1300 ===
+=== Batch 0 completed: 1343/1300 ===
+=== Batch 0 completed: 1344/1300 ===
+=== Batch 0 completed: 1345/1300 ===
+=== Batch 0 completed: 1346/1300 ===
+=== Batch 0 completed: 1347/1300 ===
+=== Batch 0 completed: 1348/1300 ===
+=== Batch 0 completed: 1349/1300 ===
+=== Batch 0 completed: 1350/1300 ===
+Total processed: 1350 (Success: 1350, Errors: 0)
+=== Batch 0 completed: 1351/1300 ===
+=== Batch 0 completed: 1352/1300 ===
+=== Batch 0 completed: 1353/1300 ===
+=== Batch 0 completed: 1354/1300 ===
+=== Batch 0 completed: 1355/1300 ===
+=== Batch 0 completed: 1356/1300 ===
+=== Batch 0 completed: 1357/1300 ===
+Saving batch of 23 files to database
+Starting database transaction for 23 files
+WAL status before transaction: size=0, frames_in_wal=196, frames_checkpointed=196
+Transaction committed successfully: 23 success, 0 errors, took 3.7422ms
+Total extracted records in database after transaction: 1357
+Database verification: 1357 extracted records found
+WAL status after transaction: size=0, frames_in_wal=173, frames_checkpointed=173
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4386816 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4386816 bytes (4.18 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1358/1300 ===
+=== Batch 0 completed: 1359/1300 ===
+=== Batch 0 completed: 1360/1300 ===
+=== Batch 0 completed: 1361/1300 ===
+=== Batch 0 completed: 1362/1300 ===
+=== Batch 0 completed: 1363/1300 ===
+=== Batch 0 completed: 1364/1300 ===
+=== Batch 0 completed: 1365/1300 ===
+=== Batch 0 completed: 1366/1300 ===
+=== Batch 0 completed: 1367/1300 ===
+=== Batch 0 completed: 1368/1300 ===
+=== Batch 0 completed: 1369/1300 ===
+=== Batch 0 completed: 1370/1300 ===
+=== Batch 0 completed: 1371/1300 ===
+=== Batch 0 completed: 1372/1300 ===
+=== Batch 0 completed: 1373/1300 ===
+=== Batch 0 completed: 1374/1300 ===
+=== Batch 0 completed: 1375/1300 ===
+=== Batch 0 completed: 1376/1300 ===
+=== Batch 0 completed: 1377/1300 ===
+=== Batch 0 completed: 1378/1300 ===
+=== Batch 0 completed: 1379/1300 ===
+=== Batch 0 completed: 1380/1300 ===
+Saving batch of 23 files to database
+Starting database transaction for 23 files
+WAL status before transaction: size=0, frames_in_wal=173, frames_checkpointed=173
+Transaction committed successfully: 23 success, 0 errors, took 6.6622ms
+Total extracted records in database after transaction: 1380
+Database verification: 1380 extracted records found
+WAL status after transaction: size=0, frames_in_wal=160, frames_checkpointed=160
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4444160 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4444160 bytes (4.24 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1381/1300 ===
+=== Batch 0 completed: 1382/1300 ===
+=== Batch 0 completed: 1383/1300 ===
+=== Batch 0 completed: 1384/1300 ===
+=== Batch 0 completed: 1385/1300 ===
+=== Batch 0 completed: 1386/1300 ===
+=== Batch 0 completed: 1387/1300 ===
+=== Batch 0 completed: 1388/1300 ===
+=== Batch 0 completed: 1389/1300 ===
+=== Batch 0 completed: 1390/1300 ===
+=== Batch 0 completed: 1391/1300 ===
+=== Batch 0 completed: 1392/1300 ===
+=== Batch 0 completed: 1393/1300 ===
+=== Batch 0 completed: 1394/1300 ===
+Saving batch of 14 files to database
+Starting database transaction for 14 files
+WAL status before transaction: size=0, frames_in_wal=160, frames_checkpointed=160
+Transaction committed successfully: 14 success, 0 errors, took 5.5575ms
+Total extracted records in database after transaction: 1394
+Database verification: 1394 extracted records found
+WAL status after transaction: size=0, frames_in_wal=139, frames_checkpointed=139
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4497408 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4497408 bytes (4.29 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1395/1300 ===
+=== Batch 0 completed: 1396/1300 ===
+=== Batch 0 completed: 1397/1300 ===
+=== Batch 0 completed: 1398/1300 ===
+=== Batch 0 completed: 1399/1300 ===
+=== Batch 0 completed: 1400/1300 ===
+Total processed: 1400 (Success: 1400, Errors: 0)
+=== Batch 0 completed: 1401/1300 ===
+=== Batch 0 completed: 1402/1300 ===
+=== Batch 0 completed: 1403/1300 ===
+=== Batch 0 completed: 1404/1300 ===
+=== Batch 0 completed: 1405/1300 ===
+=== Batch 0 completed: 1406/1300 ===
+=== Batch 0 completed: 1407/1300 ===
+=== Batch 0 completed: 1408/1300 ===
+=== Batch 0 completed: 1409/1300 ===
+=== Batch 0 completed: 1410/1300 ===
+=== Batch 0 completed: 1411/1300 ===
+=== Batch 0 completed: 1412/1300 ===
+=== Batch 0 completed: 1413/1300 ===
+=== Batch 0 completed: 1414/1300 ===
+=== Batch 0 completed: 1415/1300 ===
+=== Batch 0 completed: 1416/1300 ===
+=== Batch 0 completed: 1417/1300 ===
+=== Batch 0 completed: 1418/1300 ===
+Saving batch of 24 files to database
+Starting database transaction for 24 files
+WAL status before transaction: size=0, frames_in_wal=139, frames_checkpointed=139
+Transaction committed successfully: 24 success, 0 errors, took 4.4694ms
+Total extracted records in database after transaction: 1418
+Database verification: 1418 extracted records found
+WAL status after transaction: size=0, frames_in_wal=180, frames_checkpointed=180
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4571136 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4571136 bytes (4.36 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1419/1300 ===
+=== Batch 0 completed: 1420/1300 ===
+=== Batch 0 completed: 1421/1300 ===
+=== Batch 0 completed: 1422/1300 ===
+=== Batch 0 completed: 1423/1300 ===
+=== Batch 0 completed: 1424/1300 ===
+=== Batch 0 completed: 1425/1300 ===
+=== Batch 0 completed: 1426/1300 ===
+=== Batch 0 completed: 1427/1300 ===
+=== Batch 0 completed: 1428/1300 ===
+=== Batch 0 completed: 1429/1300 ===
+=== Batch 0 completed: 1430/1300 ===
+=== Batch 0 completed: 1431/1300 ===
+=== Batch 0 completed: 1432/1300 ===
+=== Batch 0 completed: 1433/1300 ===
+=== Batch 0 completed: 1434/1300 ===
+=== Batch 0 completed: 1435/1300 ===
+=== Batch 0 completed: 1436/1300 ===
+=== Batch 0 completed: 1437/1300 ===
+Saving batch of 19 files to database
+Starting database transaction for 19 files
+WAL status before transaction: size=0, frames_in_wal=180, frames_checkpointed=180
+Transaction committed successfully: 19 success, 0 errors, took 8.0529ms
+Total extracted records in database after transaction: 1437
+Database verification: 1437 extracted records found
+WAL status after transaction: size=0, frames_in_wal=159, frames_checkpointed=159
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4620288 bytes
+WAL file metadata found, size: 807552 bytes
+Database file sizes: DB=4620288 bytes (4.41 MB), WAL=807552 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1438/1300 ===
+=== Batch 0 completed: 1439/1300 ===
+=== Batch 0 completed: 1440/1300 ===
+=== Batch 0 completed: 1441/1300 ===
+=== Batch 0 completed: 1442/1300 ===
+=== Batch 0 completed: 1443/1300 ===
+=== Batch 0 completed: 1444/1300 ===
+=== Batch 0 completed: 1445/1300 ===
+=== Batch 0 completed: 1446/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1447/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1448/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1449/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1450/1300 ===
+Total processed: 1450 (Success: 1450, Errors: 0)
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1451/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1452/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1453/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1454/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1455/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1456/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1457/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1458/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1459/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1460/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1461/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1462/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1463/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1464/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1465/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1466/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1467/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+=== Batch 0 completed: 1468/1300 ===
+WAL info: size=0, frames_in_wal=159, frames_checkpointed=159
+Saving batch of 31 files to database
+Starting database transaction for 31 files
+WAL status before transaction: size=0, frames_in_wal=159, frames_checkpointed=159
+Transaction committed successfully: 31 success, 0 errors, took 7.0781ms
+Total extracted records in database after transaction: 1468
+Database verification: 1468 extracted records found
+WAL status after transaction: size=0, frames_in_wal=197, frames_checkpointed=197
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4718592 bytes
+WAL file metadata found, size: 811672 bytes
+Database file sizes: DB=4718592 bytes (4.50 MB), WAL=811672 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1469/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1470/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1471/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1472/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1473/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1474/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1475/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1476/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1477/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1478/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1479/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1480/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1481/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1482/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1483/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+=== Batch 0 completed: 1484/1300 ===
+WAL info: size=0, frames_in_wal=197, frames_checkpointed=197
+Saving batch of 16 files to database
+Starting database transaction for 16 files
+WAL status before transaction: size=0, frames_in_wal=197, frames_checkpointed=197
+Transaction committed successfully: 16 success, 0 errors, took 2.9455ms
+Total extracted records in database after transaction: 1484
+Database verification: 1484 extracted records found
+WAL status after transaction: size=0, frames_in_wal=138, frames_checkpointed=138
+=== get_db_file_sizes called ===
+Database path from self.db_path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved DB path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db
+Resolved WAL path: C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db-wal
+DB file metadata found, size: 4751360 bytes
+WAL file metadata found, size: 811672 bytes
+Database file sizes: DB=4751360 bytes (4.53 MB), WAL=811672 bytes (0.77 MB)
+=== get_db_file_sizes completed ===
+=== Batch 0 completed: 1485/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+=== Batch 0 completed: 1486/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+=== Batch 0 completed: 1487/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+=== Batch 0 completed: 1488/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+=== Batch 0 completed: 1489/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+=== Batch 0 completed: 1490/1300 ===
+WAL info: size=0, frames_in_wal=138, frames_checkpointed=138
+[2026-01-06][20:29:02][tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared
+[2026-01-06][20:29:02][tao::platform_impl::platform::event_loop::runner][WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
+[0107/042902.164:ERROR:ui\gfx\win\window_impl.cc:124] Failed to unregister class Chrome_WidgetWin_0. Error = 1412

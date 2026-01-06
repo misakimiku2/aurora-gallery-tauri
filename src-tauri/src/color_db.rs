@@ -277,6 +277,27 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_created_at ON dominant_colors(created_at)",
         [],
     ).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS image_color_indices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            l REAL NOT NULL,
+            a REAL NOT NULL,
+            b REAL NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_color_indices_file_path ON image_color_indices(file_path)",
+        [],
+    ).map_err(|e| e.to_string())?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_color_indices_lab ON image_color_indices(l, a, b)",
+        [],
+    ).map_err(|e| e.to_string())?;
     
     Ok(())
 }
@@ -341,19 +362,37 @@ pub fn save_colors(
     let colors_json = serde_json::to_string(colors)
         .map_err(|e| e.to_string())?;
     
-    conn.execute(
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    tx.execute(
         "INSERT OR IGNORE INTO dominant_colors 
          (file_path, colors, created_at, updated_at, status) 
          VALUES (?, ?, ?, ?, ?)",
         params![file_path, colors_json, current_ts, current_ts, "extracted"],
     ).map_err(|e| format!("Database error in save_colors: {}", e))?;
     
-    conn.execute(
+    tx.execute(
         "UPDATE dominant_colors
          SET colors = ?, updated_at = ?, status = ?
          WHERE file_path = ?",
         params![colors_json, current_ts, "extracted", file_path],
     ).map_err(|e| format!("Database error in save_colors: {}", e))?;
+
+    // 更新 image_color_indices 表
+    tx.execute("DELETE FROM image_color_indices WHERE file_path = ?", params![file_path])
+      .map_err(|e| format!("Failed to delete old indices: {}", e))?;
+      
+    {
+        let mut stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
+            .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+            
+        for color in colors {
+            stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b])
+                .map_err(|e| format!("Failed to insert index: {}", e))?;
+        }
+    }
+    
+    tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
     
     Ok(())
 }
@@ -405,46 +444,65 @@ pub fn batch_save_colors(
 
     let mut success_count = 0;
     let mut error_count = 0;
+    
+    // 预编译语句以提高性能
+    {
+        let mut delete_indices_stmt = tx.prepare("DELETE FROM image_color_indices WHERE file_path = ?")
+            .map_err(|e| format!("Failed to prepare delete statement: {}", e))?;
+        let mut insert_indices_stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
+            .map_err(|e| format!("Failed to prepare insert statement: {}", e))?;
 
-    for (file_path, colors) in color_data {
-        let colors_json = match serde_json::to_string(colors) {
-            Ok(json) => json,
-            Err(e) => {
-                eprintln!("Failed to serialize colors for {}: {}", file_path, e);
-                error_count += 1;
-                continue;
+        for (file_path, colors) in color_data {
+            let colors_json = match serde_json::to_string(colors) {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("Failed to serialize colors for {}: {}", file_path, e);
+                    error_count += 1;
+                    continue;
+                }
+            };
+
+            match tx.execute(
+                "INSERT OR IGNORE INTO dominant_colors 
+                 (file_path, colors, created_at, updated_at, status) 
+                 VALUES (?, ?, ?, ?, ?)",
+                params![file_path, colors_json, current_ts, current_ts, "extracted"],
+            ) {
+                Ok(_) => {},
+                Err(e) => {
+                    eprintln!("Database error for {}: {}", file_path, e);
+                    error_count += 1;
+                    continue;
+                }
             }
-        };
 
-        match tx.execute(
-            "INSERT OR IGNORE INTO dominant_colors 
-             (file_path, colors, created_at, updated_at, status) 
-             VALUES (?, ?, ?, ?, ?)",
-            params![file_path, colors_json, current_ts, current_ts, "extracted"],
-        ) {
-            Ok(_) => {},
-            Err(e) => {
-                eprintln!("Database error for {}: {}", file_path, e);
-                error_count += 1;
-                continue;
+            match tx.execute(
+                "UPDATE dominant_colors
+                 SET colors = ?, updated_at = ?, status = ?
+                 WHERE file_path = ?",
+                params![colors_json, current_ts, "extracted", file_path],
+            ) {
+                Ok(_) => {
+                    success_count += 1;
+                    
+                    // 更新索引表
+                    if let Err(e) = delete_indices_stmt.execute(params![file_path]) {
+                        eprintln!("Failed to delete old indices for {}: {}", file_path, e);
+                    }
+                    
+                    for color in *colors {
+                        if let Err(e) = insert_indices_stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b]) {
+                            eprintln!("Failed to insert index for {}: {}", file_path, e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Database error for {}: {}", file_path, e);
+                    error_count += 1;
+                }
             }
         }
-
-        match tx.execute(
-            "UPDATE dominant_colors
-             SET colors = ?, updated_at = ?, status = ?
-             WHERE file_path = ?",
-            params![colors_json, current_ts, "extracted", file_path],
-        ) {
-            Ok(_) => {
-                success_count += 1;
-            },
-            Err(e) => {
-                eprintln!("Database error for {}: {}", file_path, e);
-                error_count += 1;
-            }
-        }
-    }
+    } // 结束语句的作用域以便提交事务
 
     // 提交事务
     match tx.commit() {

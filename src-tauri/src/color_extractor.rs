@@ -1,11 +1,15 @@
 use color_thief::{get_palette, ColorFormat};
 use image::DynamicImage;
+use palette::{Srgb, FromColor, Lab};
 
 /// 颜色提取结果结构体
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct ColorResult {
     pub hex: String,      // 网页常用的 #RRGGBB
     pub rgb: [u8; 3],     // 原始 RGB 数值
+    pub lab_l: f32,       // LAB L
+    pub lab_a: f32,       // LAB a
+    pub lab_b: f32,       // LAB b
     pub is_dark: bool,    // 是否为深色
 }
 
@@ -107,7 +111,8 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
     // 8. 格式化所有颜色并返回前count个，同时确保颜色多样性
     // 优化去重：使用哈希表存储已添加颜色的RGB值，减少比较次数
     let mut result = Vec::with_capacity(count);
-    let mut added_colors: std::collections::HashSet<[u8; 3]> = std::collections::HashSet::with_capacity(count);
+    let mut added_rgb_set: std::collections::HashSet<[u8; 3]> = std::collections::HashSet::with_capacity(count);
+    let mut added_labs: Vec<Lab> = Vec::with_capacity(count);
     
     for (color, _, _, _) in &colored_palette {
         if result.len() >= count {
@@ -116,24 +121,31 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
         
         // 检查与已添加颜色的差异
         let new_rgb = [color.r, color.g, color.b];
-        let mut is_unique = true;
         
         // 快速检查是否完全相同
-        if added_colors.contains(&new_rgb) {
+        if added_rgb_set.contains(&new_rgb) {
             continue;
         }
+
+        // Convert to Lab
+        let srgb = Srgb::new(color.r as f32 / 255.0, color.g as f32 / 255.0, color.b as f32 / 255.0);
+        let lab: Lab = Lab::from_color(srgb);
         
-        // 检查与已添加颜色的差异是否足够大
-        for existing in &added_colors {
-            // 计算颜色差异
-            let diff = (
-                (new_rgb[0] as i32 - existing[0] as i32).abs() +
-                (new_rgb[1] as i32 - existing[1] as i32).abs() +
-                (new_rgb[2] as i32 - existing[2] as i32).abs()
-            ) as u32;
+        let mut is_unique = true;
+        
+        // 检查与已添加颜色的差异是否足够大 (基于 CIE76 Lab 距离)
+        // CIE76 距离阈值，10.0 大约为视觉上明显的差异
+        // JND (Just Noticeable Difference) 约为 2.3
+        const LAB_DISTANCE_THRESHOLD: f32 = 10.0;
+        
+        for existing_lab in &added_labs {
+            // 计算 CIE76 距离 (欧几里得距离)
+            // delta_E = sqrt((L1-L2)^2 + (a1-a2)^2 + (b1-b2)^2)
+            let dist_sq = (lab.l - existing_lab.l).powi(2) + 
+                          (lab.a - existing_lab.a).powi(2) + 
+                          (lab.b - existing_lab.b).powi(2);
             
-            // 如果差异太小，跳过这个颜色
-            if diff < 30 {
+            if dist_sq < LAB_DISTANCE_THRESHOLD.powi(2) {
                 is_unique = false;
                 break;
             }
@@ -147,10 +159,14 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             result.push(ColorResult {
                 hex,
                 rgb: new_rgb,
+                lab_l: lab.l,
+                lab_a: lab.a,
+                lab_b: lab.b,
                 is_dark,
             });
             
-            added_colors.insert(new_rgb);
+            added_rgb_set.insert(new_rgb);
+            added_labs.push(lab);
         }
     }
     
@@ -162,20 +178,27 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             }
             
             let new_rgb = [color.r, color.g, color.b];
-            let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
             
             // 检查是否已经添加
-            if !added_colors.contains(&new_rgb) {
+            if !added_rgb_set.contains(&new_rgb) {
+                let hex = format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b);
                 let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
                 let is_dark = luminance < 128.0;
+
+                // Re-calculate Lab
+                let srgb = Srgb::new(color.r as f32 / 255.0, color.g as f32 / 255.0, color.b as f32 / 255.0);
+                let lab: Lab = Lab::from_color(srgb);
                 
                 result.push(ColorResult {
                     hex,
                     rgb: new_rgb,
+                    lab_l: lab.l,
+                    lab_a: lab.a,
+                    lab_b: lab.b,
                     is_dark,
                 });
                 
-                added_colors.insert(new_rgb);
+                added_rgb_set.insert(new_rgb);
             }
         }
     }

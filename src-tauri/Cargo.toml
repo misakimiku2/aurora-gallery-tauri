@@ -32,6 +32,7 @@ rayon = "1.8"
 base64 = "0.21"
 md5 = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
+palette = { version = "0.7", features = ["std"] }
 tokio = { version = "1", features = ["full"] }
 urlencoding = "2.1"
 color-thief = "0.2.2"

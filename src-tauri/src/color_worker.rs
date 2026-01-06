@@ -263,13 +263,26 @@ async fn producer_loop(
         
         // 获取所有待处理文件并发送到任务队列
         let mut batch_files_sent = 0;
+        let batch_total = final_pending_count; // 锁定当前批次的总数
+
         loop {
+            // 如果已经发送了足够的文件，就停止当前批次
+            if batch_files_sent >= batch_total {
+                eprintln!("Batch {} limit reached ({}/{} dispatched), deferring remaining files to next batch", 
+                         batch_id, batch_files_sent, batch_total);
+                break;
+            }
+
             let pool_clone = pool.clone();
             
+            // 计算剩余需要获取的文件数，不能超过设定的 batch_size
+            let remaining = batch_total - batch_files_sent;
+            let current_batch_limit = batch_size.min(remaining);
+
             // 获取一批待处理文件
             let pending_files = match tokio::task::spawn_blocking(move || {
                 let mut conn = pool_clone.get_connection();
-                let files = color_db::get_pending_files(&mut conn, batch_size);
+                let files = color_db::get_pending_files(&mut conn, current_batch_limit);
                 
                 // 立即将获取的文件状态更新为processing
                 if let Ok(ref files) = files {
