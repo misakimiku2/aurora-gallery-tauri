@@ -485,6 +485,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
 
+  const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
+  const currentSearchColor = useMemo(() => isColorSearchQuery ? toolbarQuery.replace('color:', '') : '', [isColorSearchQuery, toolbarQuery]);
+
   // Debounce color search slightly to prevent event flooding, but keep it responsive (50ms)
   const debouncedColorSearch = useMemo(() => 
     debounce(async (color: string) => {
@@ -544,7 +547,9 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Center: Search */}
       <div className="flex-1 max-w-2xl relative">
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
-          isAISearchEnabled 
+          isColorSearchQuery
+            ? 'border-blue-500 shadow-sm'
+            : isAISearchEnabled 
             ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
             : activeTab.searchQuery 
               ? 'border-blue-500 shadow-sm' 
@@ -615,6 +620,13 @@ export const TopBar: React.FC<TopBarProps> = ({
              )}
           </div>
           
+          {isColorSearchQuery && (
+            <div 
+                className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-600 mr-2 flex-shrink-0 shadow-sm"
+                style={{ backgroundColor: currentSearchColor }}
+            />
+          )}
+
           <input
             ref={searchInputRef}
             type="text"

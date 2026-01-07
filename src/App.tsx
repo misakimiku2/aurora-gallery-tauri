@@ -5708,11 +5708,22 @@ export const App: React.FC = () => {
                       </div>
                       
                       {activeTab.aiFilter && (
-                          <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
-                              <Brain size={10} className="mr-1"/>
-                              <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
-                              <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
-                          </div>
+                          activeTab.aiFilter.originalQuery.startsWith('color:') ? (
+                            <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
+                                <div 
+                                    className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
+                                    style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '') }}
+                                />
+                                <span className="font-mono">{activeTab.aiFilter.originalQuery.replace('color:', '')}</span>
+                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12}/></button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
+                                <Brain size={10} className="mr-1"/>
+                                <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
+                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
+                            </div>
+                          )
                       )}
 
                       {activeTab.dateFilter.start && (
