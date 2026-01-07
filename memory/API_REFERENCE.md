@@ -335,6 +335,29 @@ const thumbnail = await getThumbnail(
 
 ---
 
+## 后端命令 (Rust / Tauri)
+
+### `search_by_color`
+```rust
+// 调用示例 (Tauri invoke)
+let results: Vec<String> = invoke("search_by_color", { targetHex: "#ff0000" }).await?;
+```
+
+**描述**: 在后端基于存储的色彩信息检索与给定颜色相似的图片路径，返回匹配图片的绝对路径数组。
+
+**请求**:
+- `targetHex`: string - 目标颜色的十六进制字符串（带或不带 `#`）。
+
+**响应**:
+- `Vec<String>` - 绝对路径数组 (示例: `C:\Users\...\photo.jpg` 或 `/home/user/.../photo.jpg`)。
+
+**事件**:
+- 颜色提取过程会通过 `color-extraction-progress` 事件向前端推送进度，事件载荷包含批次 id、当前文件、总量及是否完成等字段。
+
+**注意**:
+- 建议后端返回路径时尽量使用与前端索引一致的路径风格，或在后端/导入阶段返回文件 ID 映射以避免路径不一致问题。
+
+
 #### `readFileAsBase64`
 ```typescript
 async function readFileAsBase64(path: string): Promise<string>
@@ -354,6 +377,29 @@ const base64 = await readFileAsBase64('/home/user/Pictures/photo.jpg')
 ```
 
 ---
+
+#### `searchByColor`
+```typescript
+async function searchByColor(targetHex: string): Promise<string[]>
+```
+
+**描述**: 基于颜色相似度在后端检索匹配图片的路径列表。前端通过 `tauri-bridge` 调用后端命令 `search_by_color`，并对返回的路径进行标准化与索引匹配。
+
+**参数**:
+- `targetHex`: string - 目标颜色的十六进制值，例如 `#ff0000` 或 `ff0000`（前端会确保前置 `#`）。
+
+**返回**: `Promise<string[]>` - 匹配图片的绝对路径数组（后端返回）。前端会对路径做归一化并与 `state.files[*].path` 匹配以获取本地文件索引中的条目。
+
+**示例**:
+```typescript
+const matches = await searchByColor('#ff0000')
+// matches => ["C:/Users/.../photo1.jpg", "/home/user/Pictures/photo2.jpg", ...]
+```
+
+**注意**:
+- 前端会移除 Windows 长路径前缀 `\\?\`、把 `\\` 转为 `/` 并统一小写以提高匹配成功率。
+- 如果后端返回的路径无法在前端索引中匹配，前端会在 UI 中以 Toast 提示用户（例如：后端找到 N 张，但前端无法显示）。
+
 
 ### 4. 窗口管理 API
 

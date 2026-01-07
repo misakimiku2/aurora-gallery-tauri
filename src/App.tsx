@@ -1703,19 +1703,10 @@ export const App: React.FC = () => {
       const query = activeTab.searchQuery.toLowerCase();
       const queryParts = query.split(' or ').map(p => p.trim()).filter(p => p);
       
-      if (query.startsWith('color:')) { 
-          const hex = query.replace('color:', '').trim(); 
-          candidates = candidates.filter(f => 
-              f.type === FileType.IMAGE && 
-              f.meta?.palette && 
-              f.meta.palette.some(c => c.toLowerCase().includes(hex))
-          ); 
-      } 
-      else { 
-        // Optimized search with early exits
-        candidates = candidates.filter(f => {
-            // Check if file matches any search part
-            return queryParts.some(part => {
+      // Optimized search with early exits
+      candidates = candidates.filter(f => {
+          // Check if file matches any search part
+          return queryParts.some(part => {
                 // Early exit for exact matches
                 const lowerPart = part.toLowerCase();
                 
@@ -1766,7 +1757,6 @@ export const App: React.FC = () => {
                 return false;
             });
         }); 
-      }
     }
     
     // Date filter optimization
@@ -4022,35 +4012,30 @@ export const App: React.FC = () => {
 
 // 替换 App.tsx 中的 onPerformSearch
   const onPerformSearch = async (query: string) => {
-      console.log("🚀 触发搜索:", query); // DEBUG
 
       // 1. 颜色搜索逻辑
       if (query.startsWith('color:')) {
           let hex = query.replace('color:', '').trim();
           if (hex.startsWith('#')) hex = hex.substring(1);
 
-          const taskId = startTask('ai', [], t('status.searching'), false);
+          const taskId = startTask('ai', [], t('tasks.searching'), false);
           
           try {
-              console.log(`🎨 正在调用后端搜索颜色: #${hex}`); // DEBUG
               const results = await searchByColor(`#${hex}`);
-              console.log(`📦 后端返回结果数量: ${results.length}`); // DEBUG
               
               if (results.length > 0) {
-                  console.log("📄 后端返回的第一条路径示例:", results[0]); // DEBUG
               } else {
-                  console.warn("⚠️ 后端返回了空列表，可能是数据库没数据或阈值太高");
               }
 
               // 【核心修复 & 调试】：超级路径标准化
               const allFiles = Object.values(state.files);
               
-              // 打印一个前端现有的路径看看长什么样
-              if (allFiles.length > 0) {
-                 // 找一个带路径的文件打印出来对比
-                 const sample = allFiles.find(f => f.path); 
-                 if (sample) console.log("💻 前端现有路径示例:", sample.path);
-              }
+                // (debug) sample path checked during development — suppressed in production
+                if (allFiles.length > 0) {
+                  // 保留查找逻辑以备将来调试，但不在控制台打印
+                  const sample = allFiles.find(f => f.path);
+                  void sample;
+                }
 
               const validPaths: string[] = [];
               
@@ -4084,10 +4069,8 @@ export const App: React.FC = () => {
                   }
               });
 
-              console.log(`✅ 最终匹配到的有效文件数: ${validPaths.length}`); // DEBUG
 
               if (validPaths.length === 0 && results.length > 0) {
-                  console.error("❌ 严重错误：后端搜到了图，但前端没匹配上！请检查控制台里的路径示例差异。");
                   showToast(`后端找到 ${results.length} 张，但前端无法显示 (路径不匹配)`);
               }
 
@@ -4099,8 +4082,8 @@ export const App: React.FC = () => {
                   filePaths: validPaths
               };
               
-              // 强制跳转逻辑
-              pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+              // 强制跳转逻辑 - 颜色搜索不再在搜索框保留文本，仅保留在 aiFilter 中
+              pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
 
           } catch (e) {
               console.error("Color search failed", e);

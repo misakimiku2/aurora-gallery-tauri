@@ -3,26 +3,19 @@
 ## 快速开始
 
 ### 环境要求
-```bash
-# Node.js 18+
 node --version
-
 # Rust 1.70+
 rustc --version
 
 # Tauri CLI
 cargo install tauri-cli
 ```
-
-### 安装和运行
 ```bash
 # 1. 安装依赖
-npm install
 
 # 2. 开发模式运行
 npm run dev
 
-# 3. 构建应用
 npm run build
 
 # 4. 清理缓存

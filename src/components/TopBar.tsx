@@ -1,6 +1,7 @@
-
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption } from '../types';
+import { debounce } from '../utils/debounce';
+import { ColorPickerPopover } from './ColorPickerPopover';
 import { 
   Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw, 
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
@@ -479,19 +480,27 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const colorInputRef = useRef<HTMLInputElement>(null);
+  
+  // Color Picker State
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
 
-  const handleColorSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const color = e.target.value;
-    setIsColorSearching(true);
-    try {
-      await onPerformSearch(`color:${color}`);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsColorSearching(false);
-    }
+  // Debounce color search slightly to prevent event flooding, but keep it responsive (50ms)
+  const debouncedColorSearch = useMemo(() => 
+    debounce(async (color: string) => {
+       setIsColorSearching(true);
+       try {
+         await onPerformSearch(`color:${color}`);
+       } catch (e) {
+         console.error(e);
+       } finally {
+         setIsColorSearching(false);
+       }
+    }, 30)
+  , [onPerformSearch]);
+
+  const handleColorSelect = (color: string) => {
+    debouncedColorSearch(color);
   };
 
   const getScopeIcon = (scope: SearchScope) => {
@@ -534,7 +543,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Center: Search */}
       <div className="flex-1 max-w-2xl relative">
-        <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${
+        <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isAISearchEnabled 
             ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
             : activeTab.searchQuery 
@@ -575,22 +584,36 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
 
-          {isColorSearching ? (
-             <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
-          ) : (
-             <Palette 
-               size={16} 
-               className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`}
-               onClick={() => colorInputRef.current?.click()}
-             />
-          )}
-
-          <input 
-            type="color" 
-            ref={colorInputRef} 
-            className="hidden" 
-            onChange={handleColorSelect} 
-          />
+          <div className="relative">
+             {isColorSearching ? (
+                <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
+             ) : (
+                <button
+                  onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
+                  className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center`}
+                  title="Search by color"
+                  >
+                  <Palette size={16} />
+                </button>
+             )}
+             
+             {isColorPickerOpen && (
+                 <>
+                   <div 
+                     className="fixed inset-0 z-40" 
+                     onClick={() => setIsColorPickerOpen(false)}
+                   />
+                   <div className="absolute top-full left-0 mt-2 z-50">
+                       <ColorPickerPopover 
+                          onChange={handleColorSelect}
+                          onClose={() => setIsColorPickerOpen(false)}
+                          initialColor="#ffffff"
+                         t={t}
+                       />
+                   </div>
+                 </>
+             )}
+          </div>
           
           <input
             ref={searchInputRef}

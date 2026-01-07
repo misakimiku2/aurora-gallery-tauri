@@ -3,12 +3,17 @@
 
 import * as tauriLog from '@tauri-apps/plugin-log';
 
+// Vite 提供的开发模式检测标志
+const IS_DEV = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
+
 /**
  * 日志配置
  */
 const LOG_CONFIG = {
-  enableBrowserConsole: true,
-  enableTauriConsole: true,
+  // 仅在开发模式下输出浏览器控制台日志
+  enableBrowserConsole: IS_DEV,
+  // 仅在开发模式下通过 Tauri 控制台输出（生产构建不输出）
+  enableTauriConsole: IS_DEV,
 };
 
 /**
@@ -18,6 +23,9 @@ const LOG_CONFIG = {
  * @param args 额外参数
  */
 const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
+  // 如果不是开发模式，直接返回，不输出调试信息
+  if (!IS_DEV) return;
+
   // 输出到浏览器控制台
   if (LOG_CONFIG.enableBrowserConsole) {
     switch (level) {
@@ -36,7 +44,7 @@ const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...arg
     }
   }
 
-  // 输出到Tauri应用窗口控制台
+  // 输出到Tauri应用窗口控制台（仅开发模式）
   if (LOG_CONFIG.enableTauriConsole && typeof window !== 'undefined' && '__TAURI__' in window) {
     let logMessage = message;
     if (args.length > 0) {
@@ -111,6 +119,19 @@ export const error = (message: string, ...args: any[]) => {
  * 替换全局console对象，确保所有日志都通过Tauri日志插件输出
  */
 export const setupGlobalLogger = () => {
+  // 如果不是开发模式，覆盖 console 方法为空函数以禁止日志输出
+  if (!IS_DEV) {
+    if (typeof console !== 'undefined') {
+      // 保留 error/warn 也一并静默（用户要求仅开发模式打印）
+      console.log = (() => {}) as any;
+      console.debug = (() => {}) as any;
+      console.info = (() => {}) as any;
+      console.warn = (() => {}) as any;
+      console.error = (() => {}) as any;
+    }
+    return;
+  }
+
   if (typeof window !== 'undefined' && '__TAURI__' in window) {
     // 保存原始console对象
     const originalConsole = {

@@ -155,6 +155,31 @@ async function scanDirectory(path: string, recursive: boolean = false): Promise<
 File Path → Type Detection → Metadata Extraction → AI Analysis → Color Extraction → Database Storage
 ```
 
+### 颜色相似度搜索（Color Similarity Search）
+
+- **概述**: 后端的色彩提取模块（Color Extractor / Color Worker）会定期或按需分析图片并将色彩信息写入数据库（`file_colors` 表）。基于这些数据，提供按颜色相似度检索的能力。
+
+- **后端返回格式**: 当触发颜色搜索时，Rust 后端会返回一个字符串数组，内容为匹配图片的绝对路径（示例: `C:\Users\...\photo.jpg` 或 `/home/user/.../photo.jpg`）。这个结果通过 Tauri 命令或事件发送到前端。
+
+- **前端处理逻辑**:
+  1. 接收后端返回的路径数组。
+  2. 对每个路径进行标准化处理：
+     - 移除 Windows 长路径前缀 `\\?\`（若存在）。
+     - 将反斜杠 `\\` 替换为正斜杠 `/`。
+     - 将字符串转换为小写以减少大小写不一致造成的匹配失败。
+  3. 在当前前端索引 `state.files` 中查找匹配项（通过 `file.path` 字段，使用相同的标准化函数进行比较）。
+  4. 将匹配到的路径收集为 `validPaths`，并把它们放入 `AiSearchFilter.filePaths`（或等效内部过滤器）中以驱动视图显示。
+
+- **交互与 UX**:
+  - 颜色搜索不会把 `color:#xxxxxx` 文本留在搜索框中（目前实现将搜索文本清空，但把查询信息放入 `aiFilter.originalQuery`）。
+  - 如果后端返回的路径全部无法在前端索引中匹配，前端会弹出提示（Toast），提示后台找到 N 张但前端无法显示，提醒用户可能需要重新扫描或生成色彩数据。
+
+- **注意与限制**:
+  - 成功匹配依赖于前端索引中 `file.path` 的完整性与一致性（例如文件被移动或以不同方式导入后路径可能不一致）。
+  - 在 Windows 系统上，路径可能含有前缀或不同的大小写，故前端做了归一化；若仍无法匹配，可考虑在导入/扫描阶段统一规范路径或在后端返回相对/ID 映射（更稳妥）。
+
+---
+
 ### 3. 数据访问层 (Data Access Layer)
 
 #### Tauri Bridge 模式

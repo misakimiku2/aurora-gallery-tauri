@@ -1,4 +1,3 @@
-
 export const translations = {
   zh: {
     app: {
@@ -506,6 +505,9 @@ export const translations = {
       updatedDate: '更新时间',
       clearFilter: '清除筛选',
       to: '至'
+    },
+    color: {
+      pickColor: "选取颜色"
     }
   },
   en: {
@@ -1014,6 +1016,26 @@ export const translations = {
       updatedDate: 'Updated Date',
       clearFilter: 'Clear Filter',
       to: 'to'
+    },
+    color: {
+      pickColor: "Pick Color"
     }
   }
 };
+
+// 添加通用翻译函数
+export function translate(key: string, lang = 'zh'): string {
+  try {
+    const parts = key.split('.');
+    let cur: any = (translations as any)[lang];
+    for (const p of parts) {
+      if (!cur || typeof cur !== 'object' || !(p in cur)) {
+        return key;
+      }
+      cur = cur[p];
+    }
+    return typeof cur === 'string' ? cur : key;
+  } catch {
+    return key;
+  }
+}
