@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption } from '../types';
 import { 
   Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw, 
-  Search, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
+  Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
   ArrowDownUp, Calendar, PanelRight, X, Brain, Tag, 
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
   ChevronUp
@@ -23,7 +23,7 @@ interface TopBarProps {
   onTagClick: (tag: string, e: React.MouseEvent) => void;
   onRefresh: () => void;
   onSearchScopeChange: (scope: SearchScope) => void;
-  onPerformSearch: (query: string) => void;
+  onPerformSearch: (query: string) => Promise<void> | void;
   onSetToolbarQuery: (query: string) => void;
   onLayoutModeChange: (mode: LayoutMode) => void;
   onSortOptionChange: (option: SortOption) => void;
@@ -479,6 +479,20 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const colorInputRef = useRef<HTMLInputElement>(null);
+  const [isColorSearching, setIsColorSearching] = useState(false);
+
+  const handleColorSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const color = e.target.value;
+    setIsColorSearching(true);
+    try {
+      await onPerformSearch(`color:${color}`);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsColorSearching(false);
+    }
+  };
 
   const getScopeIcon = (scope: SearchScope) => {
     switch (scope) {
@@ -561,7 +575,22 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
 
-          <Search size={16} className={`mr-2 flex-shrink-0 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
+          {isColorSearching ? (
+             <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
+          ) : (
+             <Palette 
+               size={16} 
+               className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`}
+               onClick={() => colorInputRef.current?.click()}
+             />
+          )}
+
+          <input 
+            type="color" 
+            ref={colorInputRef} 
+            className="hidden" 
+            onChange={handleColorSelect} 
+          />
           
           <input
             ref={searchInputRef}

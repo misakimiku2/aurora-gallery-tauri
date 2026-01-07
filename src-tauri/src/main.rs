@@ -15,6 +15,7 @@ use tauri::menu::{Menu, MenuItem};
 use base64::{Engine as _, engine::general_purpose};
 use fast_image_resize as fr;
 use rayon::prelude::*;
+use palette::{FromColor, Srgb, Lab};
 
 // 导入颜色相关模块
 mod color_extractor;
@@ -115,6 +116,67 @@ fn generate_unique_file_path(dest_path: &str) -> String {
 // Check if file extension is supported
 fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
+}
+
+#[tauri::command]
+async fn search_by_color(
+    target_hex: String,
+    state: tauri::State<'_, Arc<color_db::ColorDbPool>>
+) -> Result<Vec<String>, String> {
+    
+    // 1. Hex 转 Lab
+    let hex_clean = target_hex.trim_start_matches('#');
+    if hex_clean.len() != 6 {
+        return Err("Invalid Hex Code".into());
+    }
+
+    let r = u8::from_str_radix(&hex_clean[0..2], 16).map_err(|_| "Invalid Hex")?;
+    let g = u8::from_str_radix(&hex_clean[2..4], 16).map_err(|_| "Invalid Hex")?;
+    let b = u8::from_str_radix(&hex_clean[4..6], 16).map_err(|_| "Invalid Hex")?;
+
+    let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let target_lab: Lab = Lab::from_color(srgb);
+
+    // 2. 获取数据
+    let pool = state.inner();
+    let all_images = pool.get_all_completed_colors()?;
+
+    // 3. 并行计算与计分
+    let mut scored_images: Vec<(String, f32)> = all_images.par_iter()
+        .map(|(path, colors)| {
+            let mut total_score = 0.0;
+            for (index, color) in colors.iter().enumerate() {
+                // 计算欧几里得距离
+                let dl = color.lab_l - target_lab.l;
+                let da = color.lab_a - target_lab.a;
+                let db = color.lab_b - target_lab.b;
+                let distance = (dl * dl + da * da + db * db).sqrt();
+
+                // 计分规则 - 增加权重机制
+                // 颜色在列表越靠前，权重越高 (index 0 是最主色)
+                if distance < 20.0 {
+                    // 使用权重衰减，让排位靠后的颜色得分降低
+                    // 这样主色调不匹配但包含少量目标色的图片排名会靠后
+                    let weight = 1.0 / ((index as f32 + 1.0).powf(1.0));
+                    total_score += (20.0 - distance) * weight;
+                }
+            }
+            (path.clone(), total_score)
+        })
+        .filter(|(_, score)| *score > 0.0)
+        .collect();
+
+    // 4. 排序与截断
+    // 分数从高到低排序
+    scored_images.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    // 取前 100
+    let top_paths: Vec<String> = scored_images.into_iter()
+        .take(100)
+        .map(|(path, _)| path)
+        .collect();
+
+    Ok(top_paths)
 }
 
 #[tauri::command]
@@ -1876,6 +1938,7 @@ fn main() {
             show_window,
             exit_app,
             get_dominant_colors,
+            search_by_color,
             color_worker::pause_color_extraction,
             color_worker::resume_color_extraction,
             force_wal_checkpoint,

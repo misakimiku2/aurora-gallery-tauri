@@ -16,7 +16,7 @@ import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, getAssetUrl, openPath } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -1604,12 +1604,17 @@ export const App: React.FC = () => {
     let candidates: FileNode[] = [];
     
     // AI Search Filter Logic - Optimized with early exits and Set lookups
-    if (activeTab.aiFilter && state.settings.search.isAISearchEnabled) {
-        const { keywords, colors, people, description } = activeTab.aiFilter;
+    if (activeTab.aiFilter && (state.settings.search.isAISearchEnabled || activeTab.aiFilter.filePaths)) {
+        const { keywords, colors, people, description, filePaths } = activeTab.aiFilter;
         
         candidates = allFiles.filter(f => {
             if (f.type !== FileType.IMAGE) return false;
             
+            // Exact file path match (e.g. from color search)
+            if (filePaths && filePaths.length > 0) {
+                return filePaths.includes(f.path);
+            }
+
             // Early return if no criteria match
             if (!keywords.length && !colors.length && !people.length && !description) {
                 return false;
@@ -4015,7 +4020,99 @@ export const App: React.FC = () => {
       }
   };
 
+// 替换 App.tsx 中的 onPerformSearch
   const onPerformSearch = async (query: string) => {
+      console.log("🚀 触发搜索:", query); // DEBUG
+
+      // 1. 颜色搜索逻辑
+      if (query.startsWith('color:')) {
+          let hex = query.replace('color:', '').trim();
+          if (hex.startsWith('#')) hex = hex.substring(1);
+
+          const taskId = startTask('ai', [], t('status.searching'), false);
+          
+          try {
+              console.log(`🎨 正在调用后端搜索颜色: #${hex}`); // DEBUG
+              const results = await searchByColor(`#${hex}`);
+              console.log(`📦 后端返回结果数量: ${results.length}`); // DEBUG
+              
+              if (results.length > 0) {
+                  console.log("📄 后端返回的第一条路径示例:", results[0]); // DEBUG
+              } else {
+                  console.warn("⚠️ 后端返回了空列表，可能是数据库没数据或阈值太高");
+              }
+
+              // 【核心修复 & 调试】：超级路径标准化
+              const allFiles = Object.values(state.files);
+              
+              // 打印一个前端现有的路径看看长什么样
+              if (allFiles.length > 0) {
+                 // 找一个带路径的文件打印出来对比
+                 const sample = allFiles.find(f => f.path); 
+                 if (sample) console.log("💻 前端现有路径示例:", sample.path);
+              }
+
+              const validPaths: string[] = [];
+              
+              // 优化的匹配逻辑：移除 \\?\ 前缀，统一斜杠，统一小写
+              const normalize = (p: string) => {
+                  if (!p) return '';
+                  // 1. 移除 Windows 长路径前缀 \\?\
+                  let clean = p.startsWith('\\\\?\\') ? p.slice(4) : p;
+                  // 2. 反斜杠转正斜杠
+                  clean = clean.replace(/\\/g, '/');
+                  // 3. 转小写
+                  return clean.toLowerCase();
+              };
+
+              results.forEach(rustPath => {
+                  const normRust = normalize(rustPath);
+                  
+                  // 在所有文件中查找
+                  const match = allFiles.find(f => {
+                      if (!f.path) return false;
+                      const normFront = normalize(f.path);
+                      // 这里的 debug 只在找不到时偶尔打印一下，防止刷屏
+                      // if (normRust.includes('g93') && normFront.includes('g93')) {
+                      //    console.log(`对比: \nRust: ${normRust} \nFront: ${normFront}`);
+                      // }
+                      return normFront === normRust;
+                  });
+                  
+                  if (match && match.path) {
+                      validPaths.push(match.path);
+                  }
+              });
+
+              console.log(`✅ 最终匹配到的有效文件数: ${validPaths.length}`); // DEBUG
+
+              if (validPaths.length === 0 && results.length > 0) {
+                  console.error("❌ 严重错误：后端搜到了图，但前端没匹配上！请检查控制台里的路径示例差异。");
+                  showToast(`后端找到 ${results.length} 张，但前端无法显示 (路径不匹配)`);
+              }
+
+              const aiFilter: AiSearchFilter = {
+                  keywords: [],
+                  colors: [hex],
+                  people: [],
+                  originalQuery: query,
+                  filePaths: validPaths
+              };
+              
+              // 强制跳转逻辑
+              pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+
+          } catch (e) {
+              console.error("Color search failed", e);
+              showToast("Color search failed");
+          } finally {
+              updateTask(taskId, { current: 1, status: 'completed' });
+              setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+          }
+          return;
+      }
+
+      // 2. 原有的普通搜索逻辑
       if (state.settings.search.isAISearchEnabled) {
           await performAiSearch(query);
       } else {
@@ -5817,7 +5914,7 @@ export const App: React.FC = () => {
           )}
         </div>
         <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
-          <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={handleViewerSearch} t={t} activeTab={activeTab} resourceRoot={state.settings.paths.resourceRoot} cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} />
+          <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={onPerformSearch} t={t} activeTab={activeTab} resourceRoot={state.settings.paths.resourceRoot} cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} />
         </div>
         <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} onPauseResume={onPauseResume} />
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">

@@ -178,6 +178,7 @@ export interface AiSearchFilter {
   people: string[];
   originalQuery: string;
   description?: string;
+  filePaths?: string[];
 }
 
 export type SearchScope = 'all' | 'file' | 'tag' | 'folder';

@@ -201,6 +201,30 @@ impl ColorDbPool {
         }
     }
     
+    // 获取所有状态为 completed 或 extracted 的图片及其颜色数据
+    pub fn get_all_completed_colors(&self) -> Result<Vec<(String, Vec<ColorResult>)>> {
+        let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
+        let mut stmt = conn.prepare(
+            "SELECT file_path, colors FROM dominant_colors WHERE status IN ('completed', 'extracted')"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([], |row| {
+            let file_path: String = row.get(0)?;
+            let colors_json: String = row.get(1)?;
+            Ok((file_path, colors_json))
+        }).map_err(|e| e.to_string())?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            if let Ok((file_path, colors_json)) = row {
+                if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
+                    results.push((file_path, colors));
+                }
+            }
+        }
+        Ok(results)
+    }
+
     // 获取数据库文件大小
     pub fn get_db_file_sizes(&self) -> Result<(u64, u64)> {
         eprintln!("=== get_db_file_sizes called ===");

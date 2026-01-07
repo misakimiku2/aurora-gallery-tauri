@@ -582,6 +582,20 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
 };
 
 /**
+ * 根据颜色搜索图片
+ * @param targetHex 目标颜色 HEX 值（如 "#FF0000"）
+ * @returns 匹配的图片路径列表
+ */
+export const searchByColor = async (targetHex: string): Promise<string[]> => {
+  try {
+    return await invoke<string[]>('search_by_color', { targetHex });
+  } catch (error) {
+    console.error('Failed to search by color:', error);
+    return [];
+  }
+};
+
+/**
  * 暂停主色调提取后台任务
  * @returns 是否成功暂停
  */
