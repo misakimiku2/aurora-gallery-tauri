@@ -101,7 +101,7 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             let frequency_weight = 1.0 / ((index as f32 + 1.0).powf(0.25));
             let score = (frequency_weight * 0.7) + (saturation * 0.3);
             
-            (color, saturation, luminance, score)
+            (color, saturation, luminance, score, index)
         })
         .collect();
     
@@ -110,12 +110,13 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
     
     // 8. 格式化所有颜色并返回前count个，同时确保颜色多样性
     // 优化去重：使用哈希表存储已添加颜色的RGB值，减少比较次数
-    let mut result = Vec::with_capacity(count);
+    // 使用临时向量存储(ColorResult, original_index)以便最后按比重排序
+    let mut temp_result = Vec::with_capacity(count);
     let mut added_rgb_set: std::collections::HashSet<[u8; 3]> = std::collections::HashSet::with_capacity(count);
     let mut added_labs: Vec<Lab> = Vec::with_capacity(count);
     
-    for (color, _, _, _) in &colored_palette {
-        if result.len() >= count {
+    for (color, _, _, _, original_index) in &colored_palette {
+        if temp_result.len() >= count {
             break;
         }
         
@@ -156,14 +157,14 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
             let luminance = 0.299 * color.r as f32 + 0.587 * color.g as f32 + 0.114 * color.b as f32;
             let is_dark = luminance < 128.0;
             
-            result.push(ColorResult {
+            temp_result.push((ColorResult {
                 hex,
                 rgb: new_rgb,
                 lab_l: lab.l,
                 lab_a: lab.a,
                 lab_b: lab.b,
                 is_dark,
-            });
+            }, *original_index));
             
             added_rgb_set.insert(new_rgb);
             added_labs.push(lab);
@@ -171,9 +172,9 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
     }
     
     // 如果去重后颜色数量不足，补充一些原始颜色
-    if result.len() < count {
-        for (color, _, _, _) in &colored_palette {
-            if result.len() >= count {
+    if temp_result.len() < count {
+        for (color, _, _, _, original_index) in &colored_palette {
+            if temp_result.len() >= count {
                 break;
             }
             
@@ -189,19 +190,69 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
                 let srgb = Srgb::new(color.r as f32 / 255.0, color.g as f32 / 255.0, color.b as f32 / 255.0);
                 let lab: Lab = Lab::from_color(srgb);
                 
-                result.push(ColorResult {
+                temp_result.push((ColorResult {
                     hex,
                     rgb: new_rgb,
                     lab_l: lab.l,
                     lab_a: lab.a,
                     lab_b: lab.b,
                     is_dark,
-                });
+                }, *original_index));
                 
                 added_rgb_set.insert(new_rgb);
             }
         }
     }
     
-    result
+    // 9. 最后按像素数量统计排序，确保最真实的占比
+    // 通过重新扫描缩放后的图片像素，统计每种颜色的像素数量
+    let mut pixel_counts: Vec<usize> = vec![0; temp_result.len()];
+    
+    // 采样步长，256x256以上图片也不需要遍历所有像素，采样1/4足以得到准确比例
+    let step = 2;
+    
+    // 使用Lab空间距离来计算归属，虽然比RGB慢，但已经缩放过图片，应该可以接受
+    // 预计算Srgb->Lab的转换
+    let palette_labs: Vec<Lab> = temp_result.iter().map(|(c, _)| {
+        let srgb = Srgb::new(c.rgb[0] as f32 / 255.0, c.rgb[1] as f32 / 255.0, c.rgb[2] as f32 / 255.0);
+        Lab::from_color(srgb)
+    }).collect();
+    
+    // 遍历像素并归类
+    for i in (0..filtered_pixels.len()).step_by(3 * step) {
+        if i + 2 >= filtered_pixels.len() { break; }
+        
+        let r = filtered_pixels[i];
+        let g = filtered_pixels[i+1];
+        let b = filtered_pixels[i+2];
+        
+        let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+        let pixel_lab: Lab = Lab::from_color(srgb);
+        
+        let mut min_dist_sq = f32::MAX;
+        let mut best_idx = 0;
+        
+        for (pl_idx, pl) in palette_labs.iter().enumerate() {
+            let dist_sq = (pl.l - pixel_lab.l).powi(2) + 
+                          (pl.a - pixel_lab.a).powi(2) + 
+                          (pl.b - pixel_lab.b).powi(2);
+            
+            if dist_sq < min_dist_sq {
+                min_dist_sq = dist_sq;
+                best_idx = pl_idx;
+            }
+        }
+        
+        pixel_counts[best_idx] += 1;
+    }
+    
+    // 将计数附加到结果上
+    let mut final_result: Vec<_> = temp_result.into_iter().enumerate().map(|(i, (c, _))| {
+        (c, pixel_counts[i])
+    }).collect();
+    
+    // 按计数降序排序
+    final_result.sort_by(|a, b| b.1.cmp(&a.1));
+    
+    final_result.into_iter().map(|(c, _)| c).collect()
 }

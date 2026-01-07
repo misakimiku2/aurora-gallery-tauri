@@ -145,6 +145,9 @@ async fn search_by_color(
     let mut scored_images: Vec<(String, f32)> = all_images.par_iter()
         .map(|(path, colors)| {
             let mut total_score = 0.0;
+            let mut best_match_index = usize::MAX;
+            let mut best_match_distance = f32::MAX;
+            
             for (index, color) in colors.iter().enumerate() {
                 // 计算欧几里得距离
                 let dl = color.lab_l - target_lab.l;
@@ -152,26 +155,56 @@ async fn search_by_color(
                 let db = color.lab_b - target_lab.b;
                 let distance = (dl * dl + da * da + db * db).sqrt();
 
-                // 计分规则 - 增加权重机制
+                // 记录最佳匹配
+                if distance < best_match_distance {
+                    best_match_distance = distance;
+                    best_match_index = index;
+                }
+
+                // 计分规则 - 调整为更平衡的权重分布
                 // 颜色在列表越靠前，权重越高 (index 0 是最主色)
-                if distance < 20.0 {
-                    // 使用权重衰减，让排位靠后的颜色得分降低
-                    // 这样主色调不匹配但包含少量目标色的图片排名会靠后
-                    let weight = 1.0 / ((index as f32 + 1.0).powf(1.0));
-                    total_score += (20.0 - distance) * weight;
+                if distance < 25.0 {
+                    // 改进的权重衰减机制：
+                    // 使用 1.5 的指数，使衰减更平缓，让次要颜色也能发挥作用
+                    // - 主色 (index 0): 权重 = 1.0 (100%)
+                    // - 第2色 (index 1): 权重 = 0.35 (35%)
+                    // - 第3色 (index 2): 权重 = 0.19 (19%)
+                    // - 第4色 (index 3): 权重 = 0.125 (12.5%)
+                    // - 第5色 (index 4): 权重 = 0.09 (9%)
+                    let weight = 1.0 / ((index as f32 + 1.0).powf(1.5));
+                    
+                    // 考虑前5个颜色，让更多辅助色计入得分
+                    if index < 5 {
+                        total_score += (25.0 - distance) * weight;
+                    }
                 }
             }
+            
+            // 添加最佳匹配位置惩罚：只对非常靠后的匹配进行显著惩罚
+            // 移除了对第3色(index 2)的惩罚，仅轻微惩罚第4色(index 3)
+            if best_match_index >= 4 {
+                total_score *= 0.3; // 第5色及以后，得分为30%
+            } else if best_match_index == 3 {
+                total_score *= 0.7; // 第4色，得分为70%
+            }
+            
             (path.clone(), total_score)
         })
         .filter(|(_, score)| *score > 0.0)
         .collect();
 
-    // 4. 排序与截断
+    // 4. 排序与过滤
     // 分数从高到低排序
     scored_images.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 取前 100
+    // 设置最小分数阈值，避免返回不相关的图片
+    // 只有当主色或次色接近目标颜色时，分数才会高于此阈值
+    const MIN_SCORE_THRESHOLD: f32 = 5.0;
+    
+    // 动态返回结果：不再固定100张，而是根据实际匹配质量决定
+    // 最多返回100张，但如果高质量匹配少，则只返回高质量的
     let top_paths: Vec<String> = scored_images.into_iter()
+        .filter(|(_, score)| *score >= MIN_SCORE_THRESHOLD)
         .take(100)
         .map(|(path, _)| path)
         .collect();
