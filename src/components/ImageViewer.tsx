@@ -5,7 +5,7 @@ import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight, 
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight, 
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
-  Copy, ExternalLink, Image as ImageIcon, Save, Brain, Move, Trash2, FolderOpen
+  Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen
 } from 'lucide-react';
 
 interface ViewerProps {
@@ -485,7 +485,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           {showSearch ? (
             <div className="relative w-full max-w-[672px] animate-fade-in">
-              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${isAISearchEnabled ? 'border-purple-500 shadow-sm shadow-purple-500/20' : localQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
+              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${localQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
                  <div className="relative flex-shrink-0">
                    <button 
                      ref={scopeBtnRef}
@@ -497,13 +497,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                      <ChevronDown size={12} className="ml-1 opacity-70"/>
                    </button>
                  </div>
-                <Search size={16} className={`mr-2 flex-shrink-0 ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'}`} />
+                <Search size={16} className="mr-2 flex-shrink-0 text-gray-400" />
                 <input
                   ref={searchInputRef}
                   type="text"
                   value={localQuery}
                   onChange={(e) => setLocalQuery(e.target.value)}
-                  placeholder={isAISearchEnabled ? t('settings.aiSmartSearch') : t('search.placeholder')}
+                  placeholder={t('search.placeholder')}
                   className="bg-transparent border-none flex-1 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
                   onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubmit(); }}
                 />
@@ -513,13 +513,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                       <X size={14} />
                     </button>
                   )}
-                  <button 
-                    onClick={onToggleAISearch}
-                    className={`p-1.5 rounded-full transition-colors ${isAISearchEnabled ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400'}`}
-                    title={t('settings.aiSmartSearch')}
-                  >
-                    <Brain size={16} />
-                  </button>
+                  {/* AI 切换按钮已移除（保留 props 与逻辑） */}
                 </div>
               </div>
             </div>
@@ -745,9 +739,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           
-          <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Brain size={14} className="mr-2 opacity-70"/> {t('context.aiAnalyze')}
-          </div>
+           <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+             <Sliders size={14} className="mr-2 opacity-70"/> {t('context.aiAnalyze')}
+           </div>
           
           <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
           

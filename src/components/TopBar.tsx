@@ -5,7 +5,7 @@ import { ColorPickerPopover } from './ColorPickerPopover';
 import { 
   Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw, 
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
-  ArrowDownUp, Calendar, PanelRight, X, Brain, Tag, 
+  ArrowDownUp, Calendar, PanelRight, X, Tag, 
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
   ChevronUp
 } from 'lucide-react';
@@ -549,8 +549,6 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
-            : isAISearchEnabled 
-            ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
             : activeTab.searchQuery 
               ? 'border-blue-500 shadow-sm' 
               : 'border-transparent'
@@ -595,7 +593,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              ) : (
                 <button
                   onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
-                  className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center`}
+                  className="mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors text-gray-400 flex items-center"
                   title="Search by color"
                   >
                   <Palette size={16} />
@@ -638,9 +636,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : isAISearchEnabled 
-                    ? t('settings.aiSmartSearch') 
-                    : t('search.placeholder')
+                  : t('search.placeholder')
             }
             value={toolbarQuery}
             onChange={(e) => onSetToolbarQuery(e.target.value)}
@@ -654,13 +650,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </button>
              )}
               
-             <button 
-                onClick={onToggleAISearch}
-                className={`p-1.5 rounded-full transition-colors ${isAISearchEnabled ? 'bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-300' : 'hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400'}`}
-                title={t('settings.aiSmartSearch')}
-             >
-                <Brain size={16} />
-             </button>
+             {/* AI 搜索模式切换按钮已移除（保留状态变量与逻辑） */}
           </div>
         </div>
       </div>
