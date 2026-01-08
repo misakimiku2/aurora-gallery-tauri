@@ -25,6 +25,7 @@ aurora-gallery-tauri/
 │   │   ├── SplashScreen.tsx         # 启动画面组件
 │   │   ├── Logo.tsx                 # Logo 组件
 │   │   └── FolderIcon.tsx           # 文件夹图标组件
+│   │   └── ColorPickerPopover.tsx   # 颜色选择弹出组件（拾色器、预设、取色器支持）
 │   ├── 📁 services/                 # 业务服务层
 │   │   ├── aiService.ts             # AI 服务 (OpenAI/Ollama/LM Studio)
 │   │   └── faceRecognitionService.ts # 人脸识别服务
@@ -159,6 +160,23 @@ aurora-gallery-tauri/
   - `ColorExtractionProgress`: 色彩提取进度
   - `AiSearchFilter`: AI 搜索过滤器
   - `DeletionTask`: 删除任务
+
+  #### **颜色选择器组件** (`src/components/ColorPickerPopover.tsx`)
+  - **功能**: 提供一个可复用的颜色选择弹出组件，支持：
+    - HSV 取色面板（饱和度/明度）和色相滑块
+    - 十六进制输入与 RGB 数值输入
+    - 预设颜色按钮
+    - 浏览器本地 Eyedropper API 的拾色器支持（若可用）
+  - **导出位置**: `src/components/ColorPickerPopover.tsx`
+  - **主要 Props**:
+    - `initialColor?: string` - 初始颜色（默认 `#ffffff`）
+    - `onChange: (color: string) => void` - 颜色变化回调，返回 `#RRGGBB` 格式
+    - `onClose: () => void` - 关闭弹窗的回调
+    - `className?: string` - 可选的定位/样式类
+    - `t?: (key: string) => string` - 可选的国际化函数
+  - **使用场景**:
+    - 在工具栏、弹出菜单或滤镜面板中嵌入以允许用户选择颜色；配合 `searchByColor` 可实现从 UI 直接发起颜色搜索。
+
 
 ### 2. 后端核心模块
 

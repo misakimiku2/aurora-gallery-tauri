@@ -1022,20 +1022,3 @@ export const translations = {
     }
   }
 };
-
-// 添加通用翻译函数
-export function translate(key: string, lang = 'zh'): string {
-  try {
-    const parts = key.split('.');
-    let cur: any = (translations as any)[lang];
-    for (const p of parts) {
-      if (!cur || typeof cur !== 'object' || !(p in cur)) {
-        return key;
-      }
-      cur = cur[p];
-    }
-    return typeof cur === 'string' ? cur : key;
-  } catch {
-    return key;
-  }
-}

@@ -264,10 +264,16 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                // Use native eyedropper if available
                // @ts-ignore
                if (window.EyeDropper) {
+                   // Create instance and start opening immediately before heavy React state updates
+                   // @ts-ignore
+                   const eyeDropper = new window.EyeDropper();
+                   const openPromise = eyeDropper.open();
+                   
+                   onClose(); // Hide UI in parallel
+                   
                    try {
-                       // @ts-ignore
-                       const result = await new window.EyeDropper().open();
-                       handleHexChange({ target: { value: result.sRGBHex } } as any);
+                       const result = await openPromise;
+                       onChange(result.sRGBHex); // Directly trigger search
                    } catch (e) {
                        console.log('Eyedropper canceled');
                    }
@@ -288,7 +294,10 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                key={c}
                className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200 dark:border-gray-700"
                style={{ backgroundColor: c }}
-               onClick={() => handleHexChange({ target: { value: c } } as any)}
+               onClick={() => {
+                   handleHexChange({ target: { value: c } } as any);
+                   onClose();
+               }}
              />
          ))}
       </div>

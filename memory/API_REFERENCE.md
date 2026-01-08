@@ -1,5 +1,63 @@
 # Aurora Gallery Tauri API 参考文档
 
+## UI 组件参考
+
+### `ColorPickerPopover` (src/components/ColorPickerPopover.tsx)
+- **功能**: 弹出式颜色选择器，支持 HSV 面板、色相滑块、十六进制与 RGB 输入、预设颜色与 Eyedropper（若浏览器支持）。
+- **Props 简要**:
+  - `initialColor?: string` - 初始颜色，默认 `#ffffff`。
+  - `onChange: (color: string) => void` - 颜色变更回调，返回 `#RRGGBB` 格式。
+  - `onClose: () => void` - 关闭回调。
+  - `className?: string` - 用于定位/样式的自定义类名。
+  - `t?: (key: string) => string` - 可选国际化函数，用于本地化按钮/提示文本。
+
+### ColorPicker 使用示例（集成到 UI 并触发颜色搜索）
+```tsx
+import React, { useState } from 'react'
+import { ColorPickerPopover } from '../components/ColorPickerPopover'
+import { searchByColor } from '../api/tauri-bridge'
+
+function normalizePath(p: string) {
+  if (!p) return ''
+  let clean = p.startsWith('\\\\?\\') ? p.slice(4) : p
+  clean = clean.replace(/\\\\/g, '/')
+  return clean.toLowerCase()
+}
+
+export const ColorSearchExample: React.FC = () => {
+  const [open, setOpen] = useState(false)
+  const [color, setColor] = useState('#ff0000')
+
+  const handleSearch = async (hex?: string) => {
+    const target = (hex || color).startsWith('#') ? (hex || color) : `#${hex || color}`
+    const results = await searchByColor(target)
+    // 前端对后端路径做归一化并尝试在本地索引中匹配
+    const normalized = results.map(r => normalizePath(r))
+    // 将 normalized 传入视图过滤器（例如 aiFilter.filePaths）以展示结果
+    console.log('匹配路径（已规范化）:', normalized)
+  }
+
+  return (
+    <div>
+      <button onClick={() => setOpen(true)}>打开颜色选择器</button>
+      {open && (
+        <ColorPickerPopover
+          initialColor={color}
+          onChange={(c) => setColor(c)}
+          onClose={() => setOpen(false)}
+        />
+      )}
+      <button onClick={() => handleSearch()}>按颜色搜索</button>
+    </div>
+  )
+}
+```
+
+说明:
+- `ColorPickerPopover` 的 `onChange` 返回 `#RRGGBB` 格式的字符串, 可直接作为 `searchByColor` 的参数。
+- 前端应对后端返回的绝对路径进行归一化（移除 `\\?\` 前缀、反斜杠转斜杠、转小写）以提高与 `state.files[*].path` 的匹配成功率。
+
+
 ## 前端 API (TypeScript)
 
 ### 1. 文件系统 API (`src/api/tauri-bridge.ts`)

@@ -185,9 +185,21 @@ interface FileNode {
   id: string
   parentId: string | null
   name: string
-  path: string
   type: FileType  // 'file' | 'folder' | 'image' | 'video' | 'audio'
   children?: string[]
+
+## 颜色选择器（Color Picker）
+
+- **功能简介**: 应用中新增 `ColorPickerPopover` 组件，用于在 UI 内快速选择颜色、输入十六进制或 RGB 值，并支持系统拾色器（Eyedropper API，若浏览器支持）。
+
+- **使用示例**:
+  - 打开颜色选择器（通常位于工具栏或筛选面板），选择或输入颜色。
+  - 点击确认后将得到 `#RRGGBB` 格式的颜色字符串；可将其传递给搜索接口 `searchByColor('#RRGGBB')` 来执行颜色相似度搜索。
+
+- **快捷与 UX**:
+  - 支持预设颜色快速选择。
+  - 当浏览器支持时可使用 Eyedropper 直接从屏幕取色。
+  - 输入框自动校验十六进制格式，RGB 数值可精确调整。
   tags: string[]
   description?: string
   sourceUrl?: string
