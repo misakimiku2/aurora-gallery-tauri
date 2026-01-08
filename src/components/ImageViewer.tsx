@@ -503,7 +503,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   type="text"
                   value={localQuery}
                   onChange={(e) => setLocalQuery(e.target.value)}
-                  placeholder={t('search.placeholder')}
+                  placeholder={
+                    searchScope === 'file' ? '搜索文件名' :
+                    searchScope === 'tag' ? '搜索标签' :
+                    searchScope === 'folder' ? '搜索文件夹' :
+                    t('search.placeholder')
+                  }
                   className="bg-transparent border-none flex-1 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
                   onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubmit(); }}
                 />

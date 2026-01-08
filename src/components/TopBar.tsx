@@ -636,7 +636,12 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : t('search.placeholder')
+                  : (
+                    activeTab.searchScope === 'file' ? '搜索文件名' :
+                    activeTab.searchScope === 'tag' ? '搜索标签' :
+                    activeTab.searchScope === 'folder' ? '搜索文件夹' :
+                    t('search.placeholder')
+                  )
             }
             value={toolbarQuery}
             onChange={(e) => onSetToolbarQuery(e.target.value)}
