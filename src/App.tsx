@@ -9,6 +9,7 @@ import { SequenceViewer } from './components/SequenceViewer';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
 import { FileGrid, InlineRenameInput } from './components/FileGrid';
+import { TopicModule } from './components/TopicModule';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
@@ -17,7 +18,7 @@ import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, getAssetUrl, openPath } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
+import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
 import { aiService } from './services/aiService';
 
@@ -162,6 +163,77 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
       </div> 
     </div> 
   ); 
+};
+
+const AddToTopicModal = ({ topics, onConfirm, onClose, t }: any) => {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const mainTopics = Object.values(topics).filter((t: any) => !t.parentId);
+  const getSubTopics = (parentId: string) => Object.values(topics).filter((t: any) => t.parentId === parentId);
+
+  const toggleExpand = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 max-h-[500px] flex flex-col animate-zoom-in">
+      <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('sidebar.topics')}</h3>
+      <div className="flex-1 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded p-2 mb-4 max-h-[300px]">
+        {mainTopics.length === 0 && <div className="text-gray-500 text-center py-4 text-sm">{t('context.noFiles')}</div>}
+        {mainTopics.map((topic: any) => {
+          const subTopics = getSubTopics(topic.id);
+          const hasSubs = subTopics.length > 0;
+          const isExpanded = expanded[topic.id];
+          const isSelected = selectedId === topic.id;
+
+          return (
+            <div key={topic.id} className="mb-1">
+              <div 
+                className={`flex items-center p-2 rounded cursor-pointer ${isSelected ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+                onClick={() => setSelectedId(topic.id)}
+              >
+                <div 
+                  className={`p-1 mr-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ${hasSubs ? 'visible' : 'invisible'}`}
+                  onClick={(e) => toggleExpand(topic.id, e)}
+                >
+                  {isExpanded ? <ChevronsDown size={14} /> : <ChevronRight size={14} />}
+                </div>
+                <Layout size={16} className="mr-2" />
+                <span className="truncate text-sm">{topic.name}</span>
+              </div>
+              
+              {hasSubs && isExpanded && (
+                <div className="ml-6 border-l border-gray-200 dark:border-gray-700 pl-2 mt-1 space-y-1">
+                  {subTopics.map((sub: any) => (
+                    <div 
+                      key={sub.id} 
+                      className={`flex items-center p-2 rounded cursor-pointer ${selectedId === sub.id ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
+                      onClick={() => setSelectedId(sub.id)}
+                    >
+                       <Layout size={14} className="mr-2 opacity-70" />
+                       <span className="truncate text-sm">{sub.name}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex justify-end space-x-2">
+        <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button>
+        <button 
+          onClick={() => selectedId && onConfirm(selectedId)} 
+          disabled={!selectedId}
+          className={`px-3 py-1.5 rounded text-sm text-white transition-colors ${selectedId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}`}
+        >
+          {t('settings.confirm')}
+        </button>
+      </div>
+    </div>
+  );
 };
 const TagEditor = ({ file, files, onUpdate, onClose, t }: any) => { const [input, setInput] = useState(''); const allTags = new Set<string>(); Object.values(files as Record<string, FileNode>).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t))); const allTagsList = Array.from(allTags); const addTag = (tag: string) => { if (!file.tags.includes(tag)) { onUpdate(file.id, { tags: [...file.tags, tag] }); } setInput(''); }; return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.editTags')}</h3><div className="flex flex-wrap gap-2 mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-100 dark:border-gray-700 min-h-[40px]">{file.tags.map((tag: string) => ( <span key={tag} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs flex items-center">{tag}<button onClick={() => onUpdate(file.id, { tags: file.tags.filter((t: string) => t !== tag) })} className="ml-1 hover:text-red-500"><X size={10}/></button></span> ))}</div><div className="relative mb-4"><input id="add-tag-input" name="add-tag-input" className="w-full border dark:border-gray-600 rounded p-2 bg-transparent text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 ring-blue-500" placeholder={t('meta.addTagPlaceholder')} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if(e.key === 'Enter') addTag(input); }} autoFocus />{input && ( <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 shadow-lg z-50 max-h-32 overflow-y-auto">{allTagsList.filter(t => t.toLowerCase().includes(input.toLowerCase())).map(t => ( <div key={t} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs cursor-pointer" onClick={() => addTag(t)}>{t}</div> ))}</div> )}</div><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">{t('viewer.done')}</button></div></div> ); };
 const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onConfirm, t }: any) => {
@@ -312,7 +384,7 @@ const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onCon
   );
 };
 const getPinyinGroup = (char: string) => { if (!char) return '#'; const c = char.charAt(0); if (/^[a-zA-Z]/.test(c)) return c.toUpperCase(); if (/^[0-9]/.test(c)) return c; if (/[\u4e00-\u9fa5]/.test(c)) { try { const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'accent' }); const boundaries = [{ char: '阿', group: 'A' }, { char: '芭', group: 'B' }, { char: '擦', group: 'C' }, { char: '搭', group: 'D' }, { char: '蛾', group: 'E' }, { char: '发', group: 'F' }, { char: '噶', group: 'G' }, { char: '哈', group: 'H' }, { char: '击', group: 'J' }, { char: '喀', group: 'K' }, { char: '垃', group: 'L' }, { char: '妈', group: 'M' }, { char: '拿', group: 'N' }, { char: '哦', group: 'O' }, { char: '啪', group: 'P' }, { char: '期', group: 'Q' }, { char: '然', group: 'R' }, { char: '撒', group: 'S' }, { char: '塌', group: 'T' }, { char: '挖', group: 'W' }, { char: '昔', group: 'X' }, { char: '压', group: 'Y' }, { char: '匝', group: 'Z' }]; for (let i = boundaries.length - 1; i >= 0; i--) { if (collator.compare(c, boundaries[i].char) >= 0) return boundaries[i].group; } } catch (e) { console.warn('Native pinyin grouping failed', e); } } return '#'; };
-const DUMMY_TAB: TabState = { id: 'dummy', folderId: '', viewingFileId: null, viewMode: 'browser' as const, layoutMode: 'grid', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null, selectedFileIds: [], lastSelectedId: null, selectedTagIds: [], selectedPersonIds: [], dateFilter: { start: null, end: null, mode: 'created' }, history: { stack: [], currentIndex: -1 }, scrollTop: 0 };
+const DUMMY_TAB: TabState = { id: 'dummy', folderId: '', viewingFileId: null, viewMode: 'browser' as const, layoutMode: 'grid', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null, activeTopicId: null, selectedFileIds: [], selectedTopicIds: [], lastSelectedId: null, selectedTagIds: [], selectedPersonIds: [], dateFilter: { start: null, end: null, mode: 'created' }, history: { stack: [], currentIndex: -1 }, scrollTop: 0 };
 
 const ExitConfirmModal = ({ remember, onConfirm, onCancel, onRememberChange, t }: any) => {
     return (
@@ -720,7 +792,7 @@ declare global {
 
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
-    roots: [], files: {}, people: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
+    roots: [], files: {}, people: {}, topics: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
     slideshowConfig: { interval: 3000, transition: 'fade', isRandom: false, enableZoom: true },
     settings: {
         theme: 'system',
@@ -1130,6 +1202,7 @@ export const App: React.FC = () => {
           rootPaths,
           customTags: state.customTags,
           people: state.people,
+          topics: state.topics,
           folderSettings: state.folderSettings,
           settings: state.settings,
           fileMetadata
@@ -1143,7 +1216,7 @@ export const App: React.FC = () => {
           }
       }, 1000);
       return () => clearTimeout(timer);
-  }, [state.roots, state.files, state.customTags, state.people, state.settings, state.folderSettings]);
+  }, [state.roots, state.files, state.customTags, state.people, state.topics, state.settings, state.folderSettings]);
 
   useEffect(() => {
     const init = async () => {
@@ -1193,6 +1266,7 @@ export const App: React.FC = () => {
                             ...prev,
                             customTags: savedData.customTags || [],
                             people: savedData.people || {},
+                            topics: savedData.topics || {},
                             folderSettings: savedData.folderSettings || {},
                             settings: finalSettings
                         }));
@@ -3444,6 +3518,63 @@ export const App: React.FC = () => {
       showToast(t('context.saved'));
   };
 
+  const handleManualAddToTopic = (topicId: string) => {
+      // Get IDs from modal data or active selection
+      let targetFileIds: string[] = [];
+      let targetPersonIds: string[] = [];
+      
+      // Check modal data first
+      if (state.activeModal.type === 'add-to-topic' && state.activeModal.data) {
+          if (state.activeModal.data.fileIds) targetFileIds = state.activeModal.data.fileIds;
+          if (state.activeModal.data.personIds) targetPersonIds = state.activeModal.data.personIds;
+      }
+      
+      // Fallback to active selection if modal data is empty/null
+      if (targetFileIds.length === 0 && targetPersonIds.length === 0) {
+           if (activeTab.viewMode === 'people-overview') {
+               targetPersonIds = activeTab.selectedPersonIds;
+           } else {
+               targetFileIds = activeTab.selectedFileIds;
+           }
+      }
+
+      if (targetFileIds.length === 0 && targetPersonIds.length === 0) {
+           setState(s => ({ ...s, activeModal: { type: null } }));
+           return;
+      }
+
+      setState(current => {
+          const topic = current.topics[topicId];
+          if (!topic) return current;
+
+          const updatedTopic = { ...topic };
+          
+          if (targetFileIds.length > 0) {
+              const existingFiles = new Set(updatedTopic.fileIds || []);
+              targetFileIds.forEach(id => existingFiles.add(id));
+              updatedTopic.fileIds = Array.from(existingFiles);
+          }
+
+          if (targetPersonIds.length > 0) {
+              const existingPeople = new Set(updatedTopic.peopleIds || []);
+              targetPersonIds.forEach(id => existingPeople.add(id));
+              updatedTopic.peopleIds = Array.from(existingPeople);
+          }
+          
+          updatedTopic.updatedAt = new Date().toISOString();
+
+          return {
+              ...current,
+              topics: {
+                  ...current.topics,
+                  [topicId]: updatedTopic
+              },
+              activeModal: { type: null }
+          };
+      });
+      showToast(t('context.saved'));
+  };
+
   // Handle close confirmation actions
   const handleCloseConfirmation = async (action: 'minimize' | 'exit', alwaysAsk: boolean) => {
     setShowCloseConfirmation(false);
@@ -3694,17 +3825,17 @@ export const App: React.FC = () => {
   };
   
   // Navigation helpers
-  const pushHistory = (folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null) => { 
+  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null) => { 
       const currentScrollTop = selectionRef.current?.scrollTop ?? activeTab.scrollTop;
       updateActiveTab(prevTab => { 
           const stackCopy = [...prevTab.history.stack];
           if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < stackCopy.length) {
               stackCopy[prevTab.history.currentIndex] = { ...stackCopy[prevTab.history.currentIndex], scrollTop: currentScrollTop };
           }
-          const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop }]; 
-          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
+          const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId }]; 
+          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
       }); 
-  };
+  }, [activeTab.scrollTop]);
 
 
   
@@ -3805,6 +3936,47 @@ export const App: React.FC = () => {
       pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
   };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
+
+  const handleNavigateTopic = useCallback((topicId: string | null) => {
+      pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId);
+  }, [activeTab.folderId, pushHistory]);
+
+  const handleNavigateTopics = useCallback(() => {
+    handleNavigateTopic(null);
+  }, [handleNavigateTopic]);
+  
+  const handleCreateTopic = useCallback((parentId: string | null) => {
+      const id = Math.random().toString(36).substr(2, 9);
+      const newTopic: Topic = {
+          id,
+          parentId,
+          name: t('context.newTopicDefault') || 'New Topic',
+          peopleIds: [],
+          fileIds: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+      };
+      setState(prev => ({ ...prev, topics: { ...prev.topics, [id]: newTopic } }));
+  }, [t]);
+
+  const handleUpdateTopic = useCallback((topicId: string, updates: Partial<Topic>) => {
+      setState(prev => ({
+          ...prev,
+          topics: {
+              ...prev.topics,
+              [topicId]: { ...prev.topics[topicId], ...updates, updatedAt: new Date().toISOString() }
+          }
+      }));
+  }, []);
+
+  const handleDeleteTopic = useCallback((topicId: string) => {
+      setState(prev => {
+          const newTopics = { ...prev.topics };
+          delete newTopics[topicId];
+          return { ...prev, topics: newTopics };
+      });
+  }, []);
+
   const handleToggleFolder = (id: string) => {
     setState(prev => {
       const isCurrentlyExpanded = prev.expandedFolderIds.includes(id);
@@ -3829,7 +4001,7 @@ export const App: React.FC = () => {
           if (prevTab.history.currentIndex > 0) { 
               const newIndex = prevTab.history.currentIndex - 1; 
               const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           return {}; 
       }); 
@@ -3839,7 +4011,7 @@ export const App: React.FC = () => {
           if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { 
               const newIndex = prevTab.history.currentIndex + 1; 
               const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           return {}; 
       }); 
@@ -3847,7 +4019,7 @@ export const App: React.FC = () => {
   
   const closeViewer = () => { 
       if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) { 
-          pushHistory(activeTab.folderId, null, activeTab.viewMode, activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, activeTab.scrollTop, activeTab.aiFilter); 
+          pushHistory(activeTab.folderId, null, activeTab.viewMode as any, activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, activeTab.scrollTop, activeTab.aiFilter, activeTab.activeTopicId); 
       } else { 
           updateActiveTab({ viewingFileId: null }); 
       } 
@@ -3855,7 +4027,7 @@ export const App: React.FC = () => {
   
   const enterViewer = (fileId: string) => {
       const scrollTop = selectionRef.current?.scrollTop || 0;
-      pushHistory(activeTab.folderId, fileId, 'browser', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, scrollTop, activeTab.aiFilter);
+      pushHistory(activeTab.folderId, fileId, 'browser', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, scrollTop, activeTab.aiFilter, activeTab.activeTopicId);
   };
 
   const handleViewerNavigate = (direction: 'next' | 'prev' | 'random') => {
@@ -4018,7 +4190,7 @@ export const App: React.FC = () => {
           let hex = query.replace('color:', '').trim();
           if (hex.startsWith('#')) hex = hex.substring(1);
 
-          const taskId = startTask('ai', [], t('tasks.searching'), false);
+          const taskId = startTask('ai', [], t('status.searching'), false);
           
           try {
               const results = await searchByColor(`#${hex}`);
@@ -4030,12 +4202,12 @@ export const App: React.FC = () => {
               // 【核心修复 & 调试】：超级路径标准化
               const allFiles = Object.values(state.files);
               
-                // (debug) sample path checked during development — suppressed in production
-                if (allFiles.length > 0) {
-                  // 保留查找逻辑以备将来调试，但不在控制台打印
-                  const sample = allFiles.find(f => f.path);
-                  void sample;
-                }
+              // 打印一个前端现有的路径看看长什么样
+              if (allFiles.length > 0) {
+                 // 找一个带路径的文件打印出来对比
+                 const sample = allFiles.find(f => f.path); 
+                 if (sample) console.log("💻 前端现有路径示例:", sample.path);
+              }
 
               const validPaths: string[] = [];
               
@@ -4248,7 +4420,21 @@ export const App: React.FC = () => {
     setContextMenu({ visible: true, x: e.clientX, y: e.clientY, type: menuType, targetId: id }); 
   };
   const closeContextMenu = () => setContextMenu({ ...contextMenu, visible: false });
-  const handleNavigateUp = () => { if (activeTab.activePersonId) { enterPeopleOverview(); } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview') { enterFolder(activeTab.folderId); } else { const current = state.files[activeTab.folderId]; if (current && current.parentId) { enterFolder(current.parentId); } } };
+  const handleNavigateUp = () => { 
+      if (activeTab.activeTopicId) {
+          const currentTopic = state.topics[activeTab.activeTopicId];
+          handleNavigateTopic(currentTopic?.parentId || null);
+      } else if (activeTab.activePersonId) { 
+          enterPeopleOverview(); 
+      } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') { 
+          enterFolder(activeTab.folderId); 
+      } else { 
+          const current = state.files[activeTab.folderId]; 
+          if (current && current.parentId) { 
+              enterFolder(current.parentId); 
+          } 
+      } 
+  };
   const minimizeTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: true } : t) })); };
   const onRestoreTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: false } : t) })); };
 
@@ -4391,6 +4577,8 @@ export const App: React.FC = () => {
           searchScope: 'all',
           activeTags: [],
           activePersonId: null,
+          activeTopicId: null,
+          selectedTopicIds: [],
           selectedFileIds: [fileId],
           lastSelectedId: fileId,
           selectedTagIds: [],
@@ -5604,7 +5792,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
         
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
@@ -5708,22 +5896,11 @@ export const App: React.FC = () => {
                       </div>
                       
                       {activeTab.aiFilter && (
-                          activeTab.aiFilter.originalQuery.startsWith('color:') ? (
-                            <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
-                                <div 
-                                    className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
-                                    style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '') }}
-                                />
-                                <span className="font-mono">{activeTab.aiFilter.originalQuery.replace('color:', '')}</span>
-                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12}/></button>
-                            </div>
-                          ) : (
-                            <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
-                                <Brain size={10} className="mr-1"/>
-                                <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
-                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
-                            </div>
-                          )
+                          <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
+                              <Brain size={10} className="mr-1"/>
+                              <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
+                              <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
+                          </div>
                       )}
 
                       {activeTab.dateFilter.start && (
@@ -5754,98 +5931,119 @@ export const App: React.FC = () => {
               )}
               
               <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-950 overflow-hidden">
-                <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950/50 backdrop-blur shrink-0 relative z-20">
-                  {activeTab.viewMode === 'tags-overview' ? (
-                    <div className="flex items-center w-full">
-                      <div className="flex items-center">
-                        <Tag size={12} className="mr-1"/>
-                        <span className="font-medium">{t('context.allTagsOverview')}</span>
-                      </div>
-                      <div className="flex-1 flex justify-end">
-                        <div className="relative" style={{ width: '250px' }}>
-                          <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${tagSearchQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
-                            <Search size={14} className="mr-2 text-gray-400" />
-                            <input
-                              type="text"
-                              placeholder={t('search.placeholder')}
-                              value={tagSearchQuery}
-                              onChange={(e) => setTagSearchQuery(e.target.value)}
-                              className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
-                            />
-                            {tagSearchQuery && (
-                              <button
-                                onClick={() => setTagSearchQuery('')}
-                                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400"
-                              >
-                                <X size={12} />
-                              </button>
-                            )}
+                {activeTab.viewMode !== 'topics-overview' && (
+                  <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950/50 backdrop-blur shrink-0 relative z-20">
+                    {activeTab.viewMode === 'tags-overview' ? (
+                      <div className="flex items-center w-full">
+                        <div className="flex items-center">
+                          <Tag size={12} className="mr-1"/>
+                          <span className="font-medium">{t('context.allTagsOverview')}</span>
+                        </div>
+                        <div className="flex-1 flex justify-end">
+                          <div className="relative" style={{ width: '250px' }}>
+                            <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${tagSearchQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
+                              <Search size={14} className="mr-2 text-gray-400" />
+                              <input
+                                type="text"
+                                placeholder={t('search.placeholder')}
+                                value={tagSearchQuery}
+                                onChange={(e) => setTagSearchQuery(e.target.value)}
+                                className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
+                              />
+                              {tagSearchQuery && (
+                                <button
+                                  onClick={() => setTagSearchQuery('')}
+                                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400"
+                                >
+                                  <X size={12} />
+                                </button>
+                              )}
+                            </div>
+                            {/* 智能联想下拉列表 */}
+                            {(() => {
+                              const allTags = new Set<string>();
+                              Object.values(state.files).forEach((f: any) => {
+                                if (f.tags) {
+                                  f.tags.forEach((t: string) => allTags.add(t));
+                                }
+                              });
+                              state.customTags.forEach(t => allTags.add(t));
+                              
+                              const allTagsList = Array.from(allTags);
+                              const filteredTags = allTagsList.filter(tag => 
+                                tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
+                              );
+                              
+                              // 只有当有多个匹配标签或者当前搜索词与匹配标签不完全相同时才显示下拉列表
+                              const shouldShow = tagSearchQuery && 
+                                                filteredTags.length > 0 && 
+                                                !(filteredTags.length === 1 && filteredTags[0] === tagSearchQuery);
+                              
+                              if (!shouldShow) return null;
+                              
+                              return (
+                                <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+                                  {filteredTags.map(tag => (
+                                    <div 
+                                      key={tag} 
+                                      className="px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-sm cursor-pointer text-gray-800 dark:text-gray-200"
+                                      onClick={() => setTagSearchQuery(tag)}
+                                    >
+                                      {tag}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </div>
-                          {/* 智能联想下拉列表 */}
-                          {(() => {
-                            const allTags = new Set<string>();
-                            Object.values(state.files).forEach((f: any) => {
-                              if (f.tags) {
-                                f.tags.forEach((t: string) => allTags.add(t));
-                              }
-                            });
-                            state.customTags.forEach(t => allTags.add(t));
-                            
-                            const allTagsList = Array.from(allTags);
-                            const filteredTags = allTagsList.filter(tag => 
-                              tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
-                            );
-                            
-                            // 只有当有多个匹配标签或者当前搜索词与匹配标签不完全相同时才显示下拉列表
-                            const shouldShow = tagSearchQuery && 
-                                              filteredTags.length > 0 && 
-                                              !(filteredTags.length === 1 && filteredTags[0] === tagSearchQuery);
-                            
-                            if (!shouldShow) return null;
-                            
-                            return (
-                              <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
-                                {filteredTags.map(tag => (
-                                  <div 
-                                    key={tag} 
-                                    className="px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-sm cursor-pointer text-gray-800 dark:text-gray-200"
-                                    onClick={() => setTagSearchQuery(tag)}
-                                  >
-                                    {tag}
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()}
                         </div>
                       </div>
-                    </div>
-                  ) : activeTab.viewMode === 'people-overview' ? (
-                    <div className="flex items-center w-full justify-between">
-                      <div className="flex items-center">
-                        <User size={12} className="mr-1"/>
-                        <span>{t('context.allPeople')}</span>
+                    ) : activeTab.viewMode === 'people-overview' ? (
+                      <div className="flex items-center w-full justify-between">
+                        <div className="flex items-center">
+                          <User size={12} className="mr-1"/>
+                          <span>{t('context.allPeople')}</span>
+                        </div>
+                        <div className="text-[10px] opacity-60">
+                          {Object.keys(state.people).length} {t('context.items')}
+                        </div>
                       </div>
-                      <div className="text-[10px] opacity-60">
-                        {Object.keys(state.people).length} {t('context.items')}
+                    ) : (
+                      <div className="flex items-center w-full justify-between">
+                        <div className="flex items-center space-x-1 overflow-hidden">
+                          <HardDrive size={12}/>
+                          <span>/</span>
+                          {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
+                          {activeTab.activeTags.length > 0 && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
+                        </div>
+                        <div className="text-[10px] opacity-60">
+                          {displayFileIds.length} {t('context.items')}
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center w-full justify-between">
-                      <div className="flex items-center space-x-1 overflow-hidden">
-                        <HardDrive size={12}/>
-                        <span>/</span>
-                        {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
-                        {activeTab.activeTags.length > 0 && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
-                      </div>
-                      <div className="text-[10px] opacity-60">
-                        {displayFileIds.length} {t('context.items')}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex-1 overflow-hidden relative" id="file-grid-container">
-                  {displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
+                  {activeTab.viewMode === 'topics-overview' ? (
+                     <TopicModule 
+                        topics={state.topics}
+                        files={state.files}
+                        people={state.people}
+                        currentTopicId={activeTab.activeTopicId || null}
+                        selectedTopicIds={activeTab.selectedTopicIds || []} // Pass selectedTopicIds
+                        onNavigateTopic={handleNavigateTopic}
+                        onUpdateTopic={handleUpdateTopic}
+                        onCreateTopic={handleCreateTopic}
+                        onDeleteTopic={handleDeleteTopic}
+                        onSelectTopics={(ids) => {
+                             updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [] });
+                        }}
+                        onSelectFiles={(ids) => {
+                             updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [] });
+                        }}
+                        t={t}
+                     />
+                  ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                      <div className="w-full h-full flex flex-col items-center justify-center text-gray-400" onMouseDown={handleMouseDown} onContextMenu={(e) => handleContextMenu(e, 'background', '')}>
                         <div className="text-6xl mb-4 opacity-20"><FolderOpen/></div>
                         <p>{t('context.noFiles')}</p>
@@ -5921,7 +6119,7 @@ export const App: React.FC = () => {
       </div>
       
       {/* ... (Modals Logic) ... */}
-      {state.activeModal.type && ( <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">{state.activeModal.type === 'alert' && state.activeModal.data && ( <AlertModal message={state.activeModal.data.message} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'add-to-person' && ( <AddToPersonModal people={state.people} files={state.files} onConfirm={handleManualAddPerson} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'rename-tag' && state.activeModal.data && ( <RenameTagModal initialTag={state.activeModal.data.tag} onConfirm={handleRenameTag} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'batch-rename' && ( <BatchRenameModal count={activeTab.selectedFileIds.length} onConfirm={handleBatchRename} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'rename-person' && state.activeModal.data && ( <RenamePersonModal initialName={state.people[state.activeModal.data.personId]?.name || ''} onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && ( <ConfirmModal title={t('context.deleteTagConfirmTitle')} message={t('context.deleteTagConfirmMsg')} confirmText={t('context.deleteTagConfirmBtn')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleConfirmDeleteTags(state.activeModal.data.tags); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && ( <ConfirmModal title={t('context.deletePersonConfirmTitle')} message={t('context.deletePersonConfirmMsg')} subMessage={typeof state.activeModal.data.personId === 'string' ? state.people[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} confirmText={t('settings.confirm')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleDeletePerson(state.activeModal.data.personId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'edit-tags' && state.activeModal.data && ( <TagEditor file={state.files[state.activeModal.data.fileId]} files={state.files} onUpdate={handleUpdateFile} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && ( <FolderPickerModal type={state.activeModal.type} files={state.files} roots={state.roots} selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={(targetId: string) => { const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); else handleMoveFiles(fileIds, targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={t('settings.fileCollisionMsg')} subMessage={`"${state.activeModal.data.desiredName}"`} confirmText={t('settings.renameAuto')} confirmIcon={FilePlus} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={t('settings.folderCollisionMsg')} subMessage={t('settings.mergeDesc')} confirmText={t('settings.mergeFolder')} confirmIcon={Merge} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && ( <ConfirmModal title={t('settings.extensionChangeTitle')} message={t('settings.extensionChangeMsg')} subMessage={t('settings.extensionChangeConfirm')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} subMessage={state.activeModal.data.files.slice(0, 5).join(', ')+(state.activeModal.data.files.length > 5 ? `...` : '')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => { state.activeModal.data.onCancel?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} onConfirm={() => { state.activeModal.data.onConfirm?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}
+      {state.activeModal.type && ( <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">{state.activeModal.type === 'alert' && state.activeModal.data && ( <AlertModal message={state.activeModal.data.message} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'add-to-person' && ( <AddToPersonModal people={state.people} files={state.files} onConfirm={handleManualAddPerson} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'add-to-topic' && ( <AddToTopicModal topics={state.topics} onConfirm={handleManualAddToTopic} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'rename-tag' && state.activeModal.data && ( <RenameTagModal initialTag={state.activeModal.data.tag} onConfirm={handleRenameTag} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'batch-rename' && ( <BatchRenameModal count={activeTab.selectedFileIds.length} onConfirm={handleBatchRename} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'rename-person' && state.activeModal.data && ( <RenamePersonModal initialName={state.people[state.activeModal.data.personId]?.name || ''} onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && ( <ConfirmModal title={t('context.deleteTagConfirmTitle')} message={t('context.deleteTagConfirmMsg')} confirmText={t('context.deleteTagConfirmBtn')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleConfirmDeleteTags(state.activeModal.data.tags); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && ( <ConfirmModal title={t('context.deletePersonConfirmTitle')} message={t('context.deletePersonConfirmMsg')} subMessage={typeof state.activeModal.data.personId === 'string' ? state.people[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} confirmText={t('settings.confirm')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleDeletePerson(state.activeModal.data.personId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'edit-tags' && state.activeModal.data && ( <TagEditor file={state.files[state.activeModal.data.fileId]} files={state.files} onUpdate={handleUpdateFile} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} /> )}{(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && ( <FolderPickerModal type={state.activeModal.type} files={state.files} roots={state.roots} selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={(targetId: string) => { const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); else handleMoveFiles(fileIds, targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={t('settings.fileCollisionMsg')} subMessage={`"${state.activeModal.data.desiredName}"`} confirmText={t('settings.renameAuto')} confirmIcon={FilePlus} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={t('settings.folderCollisionMsg')} subMessage={t('settings.mergeDesc')} confirmText={t('settings.mergeFolder')} confirmIcon={Merge} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && ( <ConfirmModal title={t('settings.extensionChangeTitle')} message={t('settings.extensionChangeMsg')} subMessage={t('settings.extensionChangeConfirm')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}{state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && ( <ConfirmModal title={t('settings.collisionTitle')} message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} subMessage={state.activeModal.data.files.slice(0, 5).join(', ')+(state.activeModal.data.files.length > 5 ? `...` : '')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => { state.activeModal.data.onCancel?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} onConfirm={() => { state.activeModal.data.onConfirm?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} /> )}
       {state.activeModal.type === 'crop-avatar' && state.activeModal.data && (
           <CropAvatarModal 
              fileUrl={state.activeModal.data.fileUrl}
@@ -6103,6 +6301,7 @@ export const App: React.FC = () => {
                         closeContextMenu();
                     }
                 }}><XCircle size={14} className="mr-2 opacity-70"/> {t('context.clearPersonInfo')}</div></> )}
+                {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && ( <div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { const targetIds = activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : (contextMenu.targetId ? [contextMenu.targetId] : []); setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { fileIds: targetIds } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70"/> {t('context.addToTopic') || '添加到主题'}</div> )}
                 {contextMenu.type === 'file-single' && contextMenu.targetId && ( <><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: contextMenu.targetId! } } })); closeContextMenu(); }}>{t('context.editTags')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCopyTags([contextMenu.targetId!]); closeContextMenu(); }}>{t('context.copyTag')}</div></> )}
                 {/* 只有当所有选中的项目都是文件时才显示粘贴标签选项 */}
                 {(() => {
@@ -6152,20 +6351,22 @@ export const App: React.FC = () => {
           </> )}
           {contextMenu.type === 'person' && ( <> 
             {activeTab.selectedPersonIds.length > 1 ? (
-                // Multiple people selected: only show delete option
+                <>
+                <div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { personIds: activeTab.selectedPersonIds } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70"/> {t('context.addToTopic') || '添加到主题'}</div>
                 <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => {
                     setState(s => ({ ...s, activeModal: { type: 'confirm-delete-person', data: { personId: activeTab.selectedPersonIds } } }));
                     closeContextMenu();
                 }}>
                     <Trash2 size={14} className="mr-2 opacity-70"/> {t('context.delete')}
                 </div>
+                </>
             ) : contextMenu.targetId ? (
                 // Single person selected: show full menu
                 <> 
                     <div className="px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1">{state.people[contextMenu.targetId]?.name}</div>
                     <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { enterPersonView(contextMenu.targetId!); closeContextMenu(); }}>{t('context.viewTagged')}</div>
                     <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleSetAvatar(contextMenu.targetId!); closeContextMenu(); }}><Crop size={14} className="mr-2 opacity-70"/> {t('context.setAvatar')}</div>
-                    <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId: contextMenu.targetId! } } })); closeContextMenu(); }}><Edit3 size={14} className="mr-2 opacity-70"/> {t('context.renamePerson')}</div>
+                    <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId: contextMenu.targetId! } } })); closeContextMenu(); }}><Edit3 size={14} className="mr-2 opacity-70"/> {t('context.renamePerson')}</div><div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { personIds: [contextMenu.targetId!] } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70"/> {t('context.addToTopic') || '添加到主题'}</div>
                     <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
                     <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => {
                         setState(s => ({ ...s, activeModal: { type: 'confirm-delete-person', data: { personId: contextMenu.targetId! } } }));

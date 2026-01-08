@@ -2367,7 +2367,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
       activeTab.layoutMode,
       containerRect.width,
       thumbnailSize,
-      activeTab.viewMode,
+      activeTab.viewMode as any,
       groupedTags,
       people,
       activeTab.searchQuery

@@ -38,18 +38,22 @@ const findImagesDeeply = (
         .slice(0, limit);
 };
 import { createPortal } from 'react-dom';
-import { FileNode, FileType, Person, TabState } from '../types';
+import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw } from 'lucide-react';
+import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './FileGrid';
 
 interface MetadataProps {
   files: Record<string, FileNode>;
   selectedFileIds: string[];
   people?: Record<string, Person>;
+  topics?: Record<string, Topic>;
   selectedPersonIds?: string[];
+  selectedTopicIds?: string[];
   onUpdate: (id: string, updates: Partial<FileNode>) => void;
   onUpdatePerson?: (id: string, updates: Partial<Person>) => void;
+  onUpdateTopic?: (id: string, updates: Partial<Topic>) => void;
+  onDeleteTopic?: (id: string) => void;
   onNavigateToFolder: (folderId: string) => void;
   onNavigateToTag: (tag: string) => void;
   onSearch: (query: string) => void;
@@ -206,10 +210,20 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, selectedPersonIds, onUpdate, onUpdatePerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
   
+  // Topic Handling
+  const selectedTopicCount = selectedTopicIds ? selectedTopicIds.length : 0;
+  const topic = selectedTopicCount === 1 && topics && selectedTopicIds ? topics[selectedTopicIds[0]] : null;
+  
+  // state for topic
+  const [topicName, setTopicName] = useState('');
+  const [topicDesc, setTopicDesc] = useState('');
+  const [topicSource, setTopicSource] = useState('');
+  const [showSavedTopic, setShowSavedTopic] = useState(false);
+
   // 处理人物选择
   const isMultiPerson = selectedPersonIds && selectedPersonIds.length > 1;
   const selectedPeopleCount = selectedPersonIds ? selectedPersonIds.length : 0;
@@ -387,6 +401,12 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       setSource('');
     }
     
+    if (topic) {
+        setTopicName(topic.name);
+        setTopicDesc(topic.description || '');
+        setTopicSource(topic.sourceUrl || '');
+    }
+    
     if (person) {
         setPersonName(person.name);
         setPersonDesc(person.description || '');
@@ -400,6 +420,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     setShowSavedPerson(false);
     setPaletteMenu({ visible: false, x: 0, y: 0, color: null });
   }, [file?.id, selectedFileIds, isMulti, files, person?.id, onUpdate]);
+
+  const handleUpdateTopicMeta = () => {
+      if (topic && onUpdateTopic) {
+          onUpdateTopic(topic.id, { name: topicName, description: topicDesc, sourceUrl: topicSource, updatedAt: new Date().toISOString() });
+          setShowSavedTopic(true);
+          setTimeout(() => setShowSavedTopic(false), 2000);
+      }
+  };
 
   useEffect(() => {
     if (textareaRef.current) {
@@ -720,6 +748,141 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           onUpdate(file.id, { category });
       }
   };
+
+  if (topic) {
+      const coverUrl = topic.coverFileId && files[topic.coverFileId] ? convertFileSrc(files[topic.coverFileId].path) : null;
+      const subTopics = topics ? Object.values(topics).filter(t => t.parentId === topic.id) : [];
+      const topicPeople = people ? topic.peopleIds.map(id => people[id]).filter(Boolean) : [];
+
+      return (
+        <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+           <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0">
+               {coverUrl ? (
+                   <div className="w-full h-full bg-cover bg-center" style={{backgroundImage: `url("${coverUrl}")`}} />
+               ) : (
+                   <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
+                       <Layout size={48} className="mb-2 opacity-50" />
+                       <span className="text-xs uppercase tracking-wider">{t('sidebar.topics')}</span>
+                   </div>
+               )}
+               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-6">
+                   <h2 className="text-white text-3xl font-serif font-bold tracking-tight drop-shadow-md leading-tight mb-2 line-clamp-2">{topic.name}</h2>
+                   <div className="flex items-center text-white/80 text-xs font-medium space-x-3">
+                       {topic.createdAt && <span>{new Date(topic.createdAt).getFullYear()} ISSUE</span>}
+                       <span className="w-1 h-1 bg-white/50 rounded-full"></span>
+                       <span>{topicPeople.length} {t('context.people')}</span>
+                   </div>
+               </div>
+           </div>
+
+           <div className="p-5 space-y-6">
+               <div className="space-y-2">
+                   <label className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">{t('meta.description')}</label>
+                   <div className="relative group">
+                       <textarea 
+                           className="w-full bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm min-h-[100px] focus:ring-2 ring-blue-500 focus:border-transparent tracking-wide leading-relaxed dark:text-gray-200"
+                           value={topicDesc}
+                           onChange={e => setTopicDesc(e.target.value)}
+                           placeholder={t('meta.description')}
+                       />
+                       <button 
+                           onClick={handleUpdateTopicMeta}
+                           className={`absolute bottom-3 right-3 p-1.5 rounded-md bg-blue-500 text-white shadow-sm transition-opacity ${topicDesc !== (topic.description || '') || topicName !== topic.name || topicSource !== (topic.sourceUrl || '') ? 'opacity-100' : 'opacity-0'}`}
+                       >
+                           <Save size={14} />
+                       </button>
+                   </div>
+               </div>
+
+                <div className="space-y-2">
+                    <label className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Detail Info</label>
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-3 border border-gray-100 dark:border-gray-700">
+                        <div>
+                           <div className="flex justify-between items-center mb-1">
+                               <span className="text-xs text-gray-400">Name</span>
+                           </div>
+                           <input 
+                               value={topicName}
+                               onChange={e => setTopicName(e.target.value)}
+                               className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-sm dark:text-white focus:outline-none focus:border-blue-500"
+                           />
+                        </div>
+                         <div>
+                            <div className="flex justify-between items-center mb-1">
+                                <span className="text-xs text-gray-400">Source</span>
+                                {topic.sourceUrl && <a href={topic.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-600"><ExternalLink size={12}/></a>}
+                            </div>
+                            <input 
+                                value={topicSource}
+                                onChange={e => setTopicSource(e.target.value)}
+                                className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-sm dark:text-white focus:outline-none focus:border-blue-500"
+                                placeholder="http://"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {!topic.parentId && subTopics.length > 0 && (
+                    <div className="space-y-3">
+                         <div className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider flex justify-between items-center">
+                             <span>{t('context.subTopics')}</span>
+                             <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded text-[10px]">{subTopics.length}</span>
+                         </div>
+                         <div className="grid grid-cols-2 gap-2">
+                             {subTopics.map(sub => (
+                                 <div key={sub.id} className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-800 p-2 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600">
+                                     <Folder size={14} className="text-blue-500" />
+                                     <span className="text-xs truncate dark:text-gray-300">{sub.name}</span>
+                                 </div>
+                             ))}
+                         </div>
+                    </div>
+                )}
+
+                {topicPeople.length > 0 && (
+                    <div className="space-y-3">
+                         <div className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider flex justify-between items-center">
+                             <span>{t('context.people')}</span>
+                             <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded text-[10px]">{topicPeople.length}</span>
+                         </div>
+                         <div className="grid grid-cols-3 gap-2">
+                             {topicPeople.map(p => {
+                                 const pCover = files[p.coverFileId];
+                                 return (
+                                     <div key={p.id} className="flex flex-col items-center p-2 bg-gray-50 dark:bg-gray-800 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition">
+                                         <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mb-1">
+                                             {pCover ? (
+                                                <div className="w-full h-full bg-cover bg-center" style={{backgroundImage: `url("${convertFileSrc(pCover.path)}")`}} />
+                                             ) : <User className="w-full h-full p-2 text-gray-400"/>}
+                                         </div>
+                                         <span className="text-[10px] text-center w-full truncate dark:text-gray-300">{p.name}</span>
+                                     </div>
+                                 );
+                             })}
+                         </div>
+                    </div>
+                )}
+
+                <div className="pt-6 border-t border-gray-100 dark:border-gray-800">
+                    <button 
+                        onClick={() => onDeleteTopic && onDeleteTopic(topic.id)}
+                        className="w-full py-2.5 flex items-center justify-center text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors text-sm font-medium"
+                    >
+                        <Trash2 size={16} className="mr-2" />
+                        Delete Topic
+                    </button>
+                </div>
+           </div>
+
+           {showSavedTopic && (
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg backdrop-blur animate-fade-in flex items-center">
+                  <Check size={12} className="mr-1.5"/>
+                  {t('context.saved')}
+              </div>
+          )}
+        </div>
+      );
+  }
 
   // 多个人物选择情况
   if (isMultiPerson) {

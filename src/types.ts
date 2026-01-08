@@ -79,6 +79,19 @@ export interface Person {
   faceBox?: { x: number; y: number; w: number; h: number }; // Percentages 0-100
 }
 
+export interface Topic {
+  id: string;
+  parentId: string | null;
+  name: string;
+  description?: string;
+  coverFileId?: string;
+  peopleIds: string[];
+  fileIds?: string[];
+  sourceUrl?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface UserProfile {
   name: string;
   avatarUrl: string;
@@ -164,6 +177,7 @@ export interface AppSettings {
     refreshInterval: number; // 毫秒
   };
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析
+  topics?: Record<string, Topic>;
 }
 
 export interface DateFilter {
@@ -203,11 +217,12 @@ export interface FileGroup {
 export interface HistoryItem {
   folderId: string;
   viewingId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview';
   searchQuery: string;
   searchScope: SearchScope;
   activeTags: string[];
   activePersonId: string | null;
+  activeTopicId?: string | null;
   aiFilter?: AiSearchFilter | null;
   scrollTop?: number;
 }
@@ -216,13 +231,15 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview'; 
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview'; 
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;
   aiFilter?: AiSearchFilter | null;
   activeTags: string[];
   activePersonId: string | null;
+  activeTopicId: string | null;
+  selectedTopicIds: string[];
   dateFilter: DateFilter;
   selectedFileIds: string[];
   lastSelectedId: string | null;
@@ -248,6 +265,7 @@ export interface DragState {
 export interface AppState {
   roots: string[];
   files: Record<string, FileNode>;
+  topics: Record<string, Topic>;
   people: Record<string, Person>;
   expandedFolderIds: string[];
   tabs: TabState[];
@@ -272,7 +290,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';

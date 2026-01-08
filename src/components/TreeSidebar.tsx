@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction } from '../api/tauri-bridge';
 
@@ -463,6 +463,36 @@ const TagSection: React.FC<TagSectionProps> = ({
   );
 }
 
+interface TopicSectionProps {
+  onNavigateTopics: () => void;
+  onCreateTopic: () => void;
+  t: (key: string) => string;
+}
+
+const TopicSection: React.FC<TopicSectionProps> = ({ onNavigateTopics, onCreateTopic, t }) => {
+  return (
+      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+        <div 
+          className="flex items-center py-1 px-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-800 mt-2 group"
+          onClick={onNavigateTopics}
+        >
+          <div className="p-1 mr-1 rounded opacity-0"></div>
+          <div className="flex items-center flex-1">
+            <Layout size={14} className="mr-2 text-pink-500 dark:text-pink-400" />
+            <span className="font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider group-hover:text-black dark:group-hover:text-white transition-colors">{t('sidebar.topics')}</span>
+          </div>
+          <button 
+           className="p-1 rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors opacity-0 group-hover:opacity-100"
+           onClick={(e) => { e.stopPropagation(); onCreateTopic(); }}
+           title={t('context.newTopic')}
+          >
+           <Plus size={14} />
+          </button>
+        </div>
+      </div>
+  );
+};
+
 export const Sidebar: React.FC<{
   roots: string[];
   files: Record<string, FileNode>;
@@ -487,9 +517,11 @@ export const Sidebar: React.FC<{
   onPauseResume: (taskId: string, taskType: string) => void;
   onStartRenamePerson: (personId: string) => void;
   onCreatePerson: () => void;
+  onNavigateTopics: () => void;
+  onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
-}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onDropOnFolder, t }) => {
+}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -528,6 +560,14 @@ export const Sidebar: React.FC<{
            onContextMenu={onContextMenu}
            onStartRenamePerson={onStartRenamePerson}
            onCreatePerson={onCreatePerson}
+           t={t}
+        />
+
+        <div className="my-2 border-t border-gray-200 dark:border-gray-800"></div>
+
+        <TopicSection 
+           onNavigateTopics={onNavigateTopics}
+           onCreateTopic={onCreateTopic}
            t={t}
         />
 
