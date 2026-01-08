@@ -7,6 +7,7 @@ import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film }
 import md5 from 'md5';
 import { startDragToExternal } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
@@ -1220,6 +1221,16 @@ const PersonCard = React.memo(({
   
   const coverFile = files[person.coverFileId];
   const hasCover = !!coverFile;
+  const coverSrc = coverFile?.path ? convertFileSrc(coverFile.path) : null;
+  const faceBoxStyle = person.faceBox ? {
+    backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
+    backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
+    backgroundRepeat: 'no-repeat'
+  } : {
+    backgroundSize: 'cover',
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat'
+  };
   const { width, height, x, y } = style;
   const avatarSize = Math.min(width, height - 60); // Allow space for text
 
@@ -1241,25 +1252,14 @@ const PersonCard = React.memo(({
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
         <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
-          {hasCover ? (
-            person.faceBox ? (
-              <div 
-                className="w-full h-full"
-                style={{
-                  // Note: In Tauri, file.url is a file path. We need to load thumbnail separately.
-                  // For now, use a placeholder background
-                  backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
-                  backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
-                  backgroundRepeat: 'no-repeat',
-                  backgroundColor: 'rgba(0,0,0,0.1)'
-                }}
-              />
-            ) : (
-              // Note: In Tauri, file.url is a file path, not a usable URL. Use placeholder for now.
-              <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                <User size={avatarSize * 0.4} className="text-gray-400 dark:text-gray-500" />
-              </div>
-            )
+          {hasCover && coverSrc ? (
+            <div
+              className="w-full h-full"
+              style={{
+                backgroundImage: `url("${coverSrc}")`,
+                ...faceBoxStyle
+              }}
+            />
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
               <User size={avatarSize * 0.4} strokeWidth={1.5} />

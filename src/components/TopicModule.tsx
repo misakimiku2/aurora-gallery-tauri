@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import { Topic, FileNode, Person, FileType } from '../types';
+import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon } from 'lucide-react';
 
 interface TopicModuleProps {
     topics: Record<string, Topic>;
@@ -11,7 +11,7 @@ interface TopicModuleProps {
     selectedTopicIds: string[];
     onNavigateTopic: (topicId: string | null) => void;
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
-    onCreateTopic: (parentId: string | null) => void;
+    onCreateTopic: (parentId: string | null, name?: string) => void;
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[]) => void;
     onSelectFiles: (ids: string[]) => void;
@@ -29,6 +29,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const selectionRef = useRef<HTMLDivElement>(null);
     const lastSelectedIdRef = useRef<string | null>(null);
     
+    // Context menu state
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple'; topicId?: string } | null>(null);
+    
+    // Modal states
+    const [showCreateModal, setShowCreateModal] = useState(false);
+    const [showRenameModal, setShowRenameModal] = useState(false);
+    const [showCoverModal, setShowCoverModal] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [currentEditingTopic, setCurrentEditingTopic] = useState<Topic | null>(null);
+    const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
+    
     // Helper to get cover image URL
     const getCoverUrl = (topic: Topic) => {
         if (topic.coverFileId && files[topic.coverFileId]) {
@@ -40,6 +51,36 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             if (firstFile) return convertFileSrc(firstFile.path);
         }
         return null; // Should render placeholder
+    };
+
+    const getCoverStyle = (topic: Topic): React.CSSProperties | undefined => {
+        const coverUrl = getCoverUrl(topic);
+        if (!coverUrl) return undefined;
+
+        const style: React.CSSProperties = {
+            backgroundImage: `url("${coverUrl}")`,
+            backgroundRepeat: 'no-repeat'
+        };
+
+        const crop = topic.coverCrop;
+        if (crop && crop.width > 0 && crop.height > 0) {
+            const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
+            const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
+
+            const sizeW = 10000 / safeWidth;
+            const sizeH = 10000 / safeHeight;
+
+            const posX = (crop.x / (100 - safeWidth)) * 100;
+            const posY = (crop.y / (100 - safeHeight)) * 100;
+
+            style.backgroundSize = `${sizeW}% ${sizeH}%`;
+            style.backgroundPosition = `${posX}% ${posY}%`;
+        } else {
+            style.backgroundSize = 'cover';
+            style.backgroundPosition = 'center';
+        }
+
+        return style;
     };
 
     const currentTopic = currentTopicId ? topics[currentTopicId] : null;
@@ -93,6 +134,54 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             };
         }
     }, [handleWheel]);
+
+    // Close context menu when clicking anywhere or scrolling
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            // Check if click is outside the context menu
+            const target = e.target as HTMLElement;
+            if (!target.closest('.context-menu')) {
+                setContextMenu(null);
+            }
+        };
+        
+        const handleScroll = () => {
+            setContextMenu(null);
+        };
+        
+        if (contextMenu) {
+            // Add slight delay to prevent immediate closing from the same click that opened it
+            setTimeout(() => {
+                document.addEventListener('click', handleClickOutside);
+                document.addEventListener('scroll', handleScroll, true); // Use capture phase for all scroll events
+            }, 0);
+        }
+        
+        return () => {
+            document.removeEventListener('click', handleClickOutside);
+            document.removeEventListener('scroll', handleScroll, true);
+        };
+    }, [contextMenu]);
+
+    // Handle right-click context menu
+    const handleContextMenu = useCallback((e: React.MouseEvent, topicId?: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        if (!topicId) {
+            // Clicked on blank area
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'blank' });
+        } else if (selectedTopicIds.length > 1 && selectedTopicIds.includes(topicId)) {
+            // Right-clicked on a selected topic when multiple are selected
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'multiple' });
+        } else {
+            // Right-clicked on a single topic
+            if (!selectedTopicIds.includes(topicId)) {
+                onSelectTopics([topicId]);
+            }
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'single', topicId });
+        }
+    }, [selectedTopicIds, onSelectTopics]);
 
     // Mouse event handlers for box selection
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -190,6 +279,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const handleTopicClick = useCallback((e: React.MouseEvent, topicId: string, allTopicIds: string[]) => {
         e.stopPropagation();
         
+        // Close context menu when clicking on a topic
+        setContextMenu(null);
+        
         if (e.ctrlKey || e.metaKey) {
             // Ctrl/Cmd+Click: Toggle selection
             if (selectedTopicIds.includes(topicId)) {
@@ -223,6 +315,54 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         e.stopPropagation();
         onNavigateTopic(topicId);
     }, [onNavigateTopic]);
+
+    // Context menu action handlers
+    const handleOpenInNewTab = useCallback((topicId: string) => {
+        // TODO: Implement open in new tab functionality
+        console.log('Open in new tab:', topicId);
+        setContextMenu(null);
+    }, []);
+
+    const handleSetCover = useCallback((topicId: string) => {
+        const topic = topics[topicId];
+        if (topic) {
+            setCurrentEditingTopic(topic);
+            setShowCoverModal(true);
+        }
+        setContextMenu(null);
+    }, [topics]);
+
+    const handleRename = useCallback((topicId: string) => {
+        const topic = topics[topicId];
+        if (topic) {
+            setCurrentEditingTopic(topic);
+            setShowRenameModal(true);
+        }
+        setContextMenu(null);
+    }, [topics]);
+
+    const handleDelete = useCallback((topicIds: string[]) => {
+        setDeleteTargetIds(topicIds);
+        setShowDeleteConfirm(true);
+        setContextMenu(null);
+    }, []);
+
+    const confirmDelete = useCallback(() => {
+        deleteTargetIds.forEach(id => onDeleteTopic(id));
+        setShowDeleteConfirm(false);
+        setDeleteTargetIds([]);
+        onSelectTopics([]);
+    }, [deleteTargetIds, onDeleteTopic, onSelectTopics]);
+
+    const handleCreateTopic = useCallback(() => {
+        setShowCreateModal(true);
+        setContextMenu(null);
+    }, []);
+    
+    const handleCreateTopicWithName = useCallback((name: string) => {
+        onCreateTopic(currentTopicId, name);
+        setShowCreateModal(false);
+    }, [currentTopicId, onCreateTopic]);
 
     const { layoutItems, totalHeight } = useMemo(() => {
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
@@ -278,6 +418,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
+                onContextMenu={(e) => handleContextMenu(e)}
             >
                  <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
@@ -285,7 +426,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         {t('sidebar.topics')}
                     </h2>
                     <button 
-                        onClick={() => onCreateTopic(null)}
+                        onClick={handleCreateTopic}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-blue-700 transition"
                     >
                         <Plus size={18} className="mr-2" />
@@ -295,7 +436,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                 <div className="relative" style={{ height: totalHeight }}>
                     {layoutItems.map(({ topic, x, y, width, height }) => {
-                        const coverUrl = getCoverUrl(topic);
+                        const coverStyle = getCoverStyle(topic);
                         const personCount = topic.peopleIds.length;
                         const subTopicCount = Object.values(topics).filter(t => t.parentId === topic.id).length;
                         const isSelected = selectedTopicIds.includes(topic.id);
@@ -315,11 +456,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 }}
                                 onClick={(e) => handleTopicClick(e, topic.id, allTopicIds)}
                                 onDoubleClick={(e) => handleTopicDoubleClick(e, topic.id)}
+                                onContextMenu={(e) => handleContextMenu(e, topic.id)}
                             >
                                 <div className={`absolute inset-0 transform transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-700 shadow-lg">
-                                        {coverUrl ? (
-                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={{ backgroundImage: `url("${coverUrl}")` }} />
+                                        {coverStyle ? (
+                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={coverStyle} />
                                         ) : (
                                             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
                                                 <Layout size={48} className="text-white opacity-50" />
@@ -386,6 +528,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
         const topicPeople = currentTopic.peopleIds.map(id => people[id]).filter(Boolean);
         const allSubTopicIds = subTopics.map(t => t.id);
+        const heroUrl = getCoverUrl(currentTopic);
 
         return (
             <div 
@@ -395,13 +538,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
+                onContextMenu={(e) => handleContextMenu(e)}
             >
                 {/* Header / Hero */}
                 <div className="relative h-64 md:h-80 w-full overflow-hidden">
                     {/* Background */}
                     <div className="absolute inset-0">
-                        {getCoverUrl(currentTopic) ? (
-                            <div className="absolute inset-0 bg-cover bg-center blur-sm scale-110 opacity-50" style={{ backgroundImage: `url("${getCoverUrl(currentTopic)}")` }} />
+                        {heroUrl ? (
+                            <div className="absolute inset-0 bg-cover bg-center blur-sm scale-110 opacity-50" style={{ backgroundImage: `url("${heroUrl}")` }} />
                         ) : (
                             <div className="absolute inset-0 bg-gradient-to-r from-slate-900 to-slate-800" />
                         )}
@@ -441,45 +585,49 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                     <Folder className="mr-2 text-yellow-500" />
                                     {t('context.subTopics') || 'Sub Topics'}
                                 </h3>
-                                <button onClick={() => onCreateTopic(currentTopic.id)} className="text-sm text-blue-500 hover:text-blue-400 font-medium">
+                                <button onClick={handleCreateTopic} className="text-sm text-blue-500 hover:text-blue-400 font-medium">
                                     + {t('context.newTopic')}
                                 </button>
                              </div>
                              
                              {subTopics.length > 0 ? (
                                  <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                                     {subTopics.map(sub => (
-                                         <div 
-                                            key={sub.id} 
-                                            className={`topic-item group flex flex-col cursor-pointer transition-all duration-300`}
-                                            data-topic-id={sub.id}
-                                            style={{ zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0 }}
-                                            onClick={(e) => handleTopicClick(e, sub.id, allSubTopicIds)}
-                                            onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
-                                         >
-                                             <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 group-hover:-translate-y-2 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
-                                                 <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
-                                                     {getCoverUrl(sub) ? (
-                                                         <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={{ backgroundImage: `url("${getCoverUrl(sub)}")` }} />
-                                                     ) : (
-                                                        <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
-                                                            <Layout size={32} className="text-white opacity-50" />
-                                                        </div>
-                                                     )}
-                                                 </div>
-                                             </div>
-                                             
-                                             <div className="mt-4 text-center px-1">
-                                                 <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                                    {sub.name}
-                                                 </h4>
-                                                 <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
-                                                    <span className="flex items-center"><User size={12} className="mr-1"/> {sub.peopleIds.length}</span>
-                                                    <span className="flex items-center"><Folder size={12} className="mr-1"/> {sub.fileIds?.length || 0}</span>
-                                                 </div>
-                                             </div>
-                                         </div>
-                                     ))}
+                                    {subTopics.map(sub => {
+                                        const subCoverStyle = getCoverStyle(sub);
+                                        return (
+                                            <div 
+                                                key={sub.id} 
+                                                className={`topic-item group flex flex-col cursor-pointer transition-all duration-300`}
+                                                data-topic-id={sub.id}
+                                                style={{ zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0 }}
+                                                onClick={(e) => handleTopicClick(e, sub.id, allSubTopicIds)}
+                                                onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
+                                                onContextMenu={(e) => handleContextMenu(e, sub.id)}
+                                            >
+                                                <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 group-hover:-translate-y-2 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
+                                                    <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
+                                                        {subCoverStyle ? (
+                                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={subCoverStyle} />
+                                                        ) : (
+                                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+                                                                <Layout size={32} className="text-white opacity-50" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="mt-4 text-center px-1">
+                                                    <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                                        {sub.name}
+                                                    </h4>
+                                                    <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
+                                                        <span className="flex items-center"><User size={12} className="mr-1"/> {sub.peopleIds.length}</span>
+                                                        <span className="flex items-center"><Folder size={12} className="mr-1"/> {sub.fileIds?.length || 0}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
                                  </div>
                              ) : (
                                 <div className="text-sm text-gray-400 italic">No sub-topics yet.</div>
@@ -556,5 +704,723 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 )}            </div>
         );
     };
-    return currentTopicId ? renderDetail() : renderGallery();
+    
+    // Render context menu
+    const renderContextMenu = () => {
+        if (!contextMenu) return null;
+        
+        return (
+            <div 
+                className="context-menu fixed bg-white dark:bg-gray-800 shadow-lg rounded-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[200px]"
+                style={{ 
+                    left: contextMenu.x, 
+                    top: contextMenu.y 
+                }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                {contextMenu.type === 'blank' && (
+                    <button
+                        className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                        onClick={handleCreateTopic}
+                    >
+                        <Plus size={16} className="mr-3" />
+                        {t('context.newTopic')}
+                    </button>
+                )}
+                
+                {contextMenu.type === 'single' && contextMenu.topicId && (
+                    <>
+                        <button
+                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            onClick={() => handleOpenInNewTab(contextMenu.topicId!)}
+                        >
+                            <ExternalLinkIcon size={16} className="mr-3" />
+                            {t('context.openInNewTab') || '在新标签页中打开'}
+                        </button>
+                        <button
+                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            onClick={() => handleSetCover(contextMenu.topicId!)}
+                        >
+                            <FileImage size={16} className="mr-3" />
+                            {t('context.setCover') || '设置专题封面'}
+                        </button>
+                        <button
+                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            onClick={() => handleRename(contextMenu.topicId!)}
+                        >
+                            <Edit2 size={16} className="mr-3" />
+                            {t('context.rename') || '重命名'}
+                        </button>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <button
+                            className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"
+                            onClick={() => handleDelete([contextMenu.topicId!])}
+                        >
+                            <Trash2 size={16} className="mr-3" />
+                            {t('context.delete') || '删除'}
+                        </button>
+                    </>
+                )}
+                
+                {contextMenu.type === 'multiple' && (
+                    <button
+                        className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"
+                        onClick={() => handleDelete(selectedTopicIds)}
+                    >
+                        <Trash2 size={16} className="mr-3" />
+                        {t('context.delete') || '删除'}
+                    </button>
+                )}
+            </div>
+        );
+    };
+    
+    return (
+        <>
+            {currentTopicId ? renderDetail() : renderGallery()}
+            {renderContextMenu()}
+            
+            {/* Create Topic Modal */}
+            {showCreateModal && (
+                <CreateTopicModal
+                    onClose={() => setShowCreateModal(false)}
+                    onCreate={handleCreateTopicWithName}
+                    t={t}
+                />
+            )}
+            
+            {/* Rename Topic Modal */}
+            {showRenameModal && currentEditingTopic && (
+                <RenameTopicModal
+                    topic={currentEditingTopic}
+                    onClose={() => {
+                        setShowRenameModal(false);
+                        setCurrentEditingTopic(null);
+                    }}
+                    onRename={(name) => {
+                        onUpdateTopic(currentEditingTopic.id, { name });
+                        setShowRenameModal(false);
+                        setCurrentEditingTopic(null);
+                    }}
+                    t={t}
+                />
+            )}
+            
+            {/* Set Cover Modal */}
+            {showCoverModal && currentEditingTopic && (
+                <SetCoverModal
+                    topic={currentEditingTopic}
+                    topics={topics}
+                    files={files}
+                    onClose={() => {
+                        setShowCoverModal(false);
+                        setCurrentEditingTopic(null);
+                    }}
+                    onSetCover={(fileId, cropData) => {
+                            onUpdateTopic(currentEditingTopic.id, { coverFileId: fileId, coverCrop: cropData });
+                        setShowCoverModal(false);
+                        setCurrentEditingTopic(null);
+                    }}
+                    t={t}
+                />
+            )}
+            
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <DeleteConfirmModal
+                    count={deleteTargetIds.length}
+                    onClose={() => {
+                        setShowDeleteConfirm(false);
+                        setDeleteTargetIds([]);
+                    }}
+                    onConfirm={confirmDelete}
+                    t={t}
+                />
+            )}
+        </>
+    );
+};
+
+// Modal Components
+
+interface CreateTopicModalProps {
+    onClose: () => void;
+    onCreate: (name: string) => void;
+    t: (key: string) => string;
+}
+
+const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, t }) => {
+    const [name, setName] = useState('');
+    
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (name.trim()) {
+            onCreate(name.trim());
+        }
+    };
+    
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">
+                    {t('context.newTopic')}
+                </h3>
+                <form onSubmit={handleSubmit}>
+                    <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-4 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        autoFocus
+                    />
+                    <div className="flex justify-end space-x-3">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+                        >
+                            {t('context.cancel') || '取消'}
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!name.trim()}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {t('context.create') || '创建'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+interface RenameTopicModalProps {
+    topic: Topic;
+    onClose: () => void;
+    onRename: (name: string) => void;
+    t: (key: string) => string;
+}
+
+const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onRename, t }) => {
+    const [name, setName] = useState(topic.name);
+    
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (name.trim() && name !== topic.name) {
+            onRename(name.trim());
+        }
+    };
+    
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <h3 className="text-xl font-bold mb-4 text-gray-900 dark:text-white">
+                    {t('context.rename') || '重命名'}
+                </h3>
+                <form onSubmit={handleSubmit}>
+                    <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-4 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        autoFocus
+                    />
+                    <div className="flex justify-end space-x-3">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+                        >
+                            {t('context.cancel') || '取消'}
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={!name.trim() || name === topic.name}
+                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {t('context.confirm') || '确认'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+interface DeleteConfirmModalProps {
+    count: number;
+    onClose: () => void;
+    onConfirm: () => void;
+    t: (key: string) => string;
+}
+
+const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({ count, onClose, onConfirm, t }) => {
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center mb-4">
+                    <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center mr-4">
+                        <Trash2 className="text-red-600 dark:text-red-400" size={24} />
+                    </div>
+                    <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                        {t('context.confirmDelete') || '确认删除'}
+                    </h3>
+                </div>
+                <p className="text-gray-600 dark:text-gray-300 mb-6">
+                    {count === 1 
+                        ? (t('context.deleteTopicWarning') || '确定要删除这个专题吗？此操作无法撤销。')
+                        : (t('context.deleteTopicsWarning') || `确定要删除这 ${count} 个专题吗？此操作无法撤销。`)}
+                </p>
+                <div className="flex justify-end space-x-3">
+                    <button
+                        onClick={onClose}
+                        className="px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition"
+                    >
+                        {t('context.cancel') || '取消'}
+                    </button>
+                    <button
+                        onClick={onConfirm}
+                        className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"
+                    >
+                        {t('context.delete') || '删除'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+interface SetCoverModalProps {
+    topic: Topic;
+    topics: Record<string, Topic>;
+    files: Record<string, FileNode>;
+    onClose: () => void;
+    onSetCover: (fileId: string, cropData: CoverCropData) => void;
+    t: (key: string) => string;
+}
+
+const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, onClose, onSetCover, t }) => {
+    const [selectedFileId, setSelectedFileId] = useState<string | null>(() => {
+        if (topic.coverFileId) return topic.coverFileId;
+        if (topic.fileIds?.length) {
+            for (const id of topic.fileIds) {
+                if (files[id]?.type === FileType.IMAGE) return id;
+            }
+        }
+        return null;
+    });
+    const [searchQuery, setSearchQuery] = useState('');
+    const [scale, setScale] = useState(1);
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+    const imgRef = useRef<HTMLImageElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    
+    // 定义裁剪区域尺寸
+    const VIEWPORT_SIZE = 500;
+    const CROP_WIDTH = 300;  // 3:4 ratio
+    const CROP_HEIGHT = 400;
+    const OFFSET_X = (VIEWPORT_SIZE - CROP_WIDTH) / 2;
+    const OFFSET_Y = (VIEWPORT_SIZE - CROP_HEIGHT) / 2;
+    
+    // Get all images from this topic
+    const topicImages = (topic.fileIds || [])
+        .map(id => files[id])
+        .filter(f => f && f.type === FileType.IMAGE);
+    
+    // Group by sub-topic if this is a parent topic
+    const imageGroups: { name: string; images: FileNode[] }[] = [];
+    
+    if (!topic.parentId) {
+        // This is a parent topic, group by sub-topics
+        const subTopics = Object.values(topics).filter(t => t.parentId === topic.id);
+        
+        // Images directly in parent topic
+        const directImages = topicImages.filter(img => {
+            return !subTopics.some(sub => sub.fileIds?.includes(img.id));
+        });
+        
+        if (directImages.length > 0) {
+            imageGroups.push({ name: topic.name, images: directImages });
+        }
+        
+        // Images in each sub-topic
+        subTopics.forEach(sub => {
+            const subImages = (sub.fileIds || [])
+                .map(id => files[id])
+                .filter(f => f && f.type === FileType.IMAGE);
+            if (subImages.length > 0) {
+                imageGroups.push({ name: sub.name, images: subImages });
+            }
+        });
+    } else {
+        // This is a sub-topic, just show all images
+        imageGroups.push({ name: topic.name, images: topicImages });
+    }
+    
+    // Filter by search query
+    const filteredGroups = imageGroups.map(group => ({
+        ...group,
+        images: group.images.filter(img => 
+            img.name.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+    })).filter(group => group.images.length > 0);
+    
+    const selectedFile = selectedFileId ? files[selectedFileId] : null;
+    
+    // 处理图片加载
+    const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+        const img = e.currentTarget;
+        // 计算最小缩放比例，确保图片能覆盖整个裁剪框
+        const minScaleX = CROP_WIDTH / img.naturalWidth;
+        const minScaleY = CROP_HEIGHT / img.naturalHeight;
+        const initialScale = Math.max(minScaleX, minScaleY, 0.5);
+        
+        // 居中显示
+        const initialPosition = {
+            x: (VIEWPORT_SIZE - img.naturalWidth * initialScale) / 2,
+            y: (VIEWPORT_SIZE - img.naturalHeight * initialScale) / 2
+        };
+        
+        setScale(initialScale);
+        setPosition(initialPosition);
+    };
+    
+    // 处理鼠标按下开始拖拽
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+        setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    }, [position]);
+    
+    // 处理鼠标移动拖拽
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (isDragging && imgRef.current) {
+            let newX = e.clientX - dragStart.x;
+            let newY = e.clientY - dragStart.y;
+            
+            const w = imgRef.current.naturalWidth * scale;
+            const h = imgRef.current.naturalHeight * scale;
+            
+            // 计算边界限制
+            const minX = OFFSET_X + CROP_WIDTH - w;
+            const maxX = OFFSET_X;
+            const minY = OFFSET_Y + CROP_HEIGHT - h;
+            const maxY = OFFSET_Y;
+            
+            // 应用边界限制
+            if (newX > maxX) newX = maxX;
+            if (newX < minX) newX = minX;
+            if (newY > maxY) newY = maxY;
+            if (newY < minY) newY = minY;
+            
+            setPosition({ x: newX, y: newY });
+        }
+    }, [isDragging, dragStart, scale]);
+    
+    // 处理鼠标释放
+    const handleMouseUp = useCallback(() => {
+        setIsDragging(false);
+    }, []);
+    
+    // 处理滚轮缩放
+    const handleWheel = useCallback((e: WheelEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!imgRef.current) return;
+        
+        const ZOOM_SPEED = 0.1;
+        const direction = Math.sign(e.deltaY);
+        let newScale = scale;
+        
+        if (direction < 0) {
+            newScale = scale * (1 + ZOOM_SPEED);
+        } else {
+            newScale = scale / (1 + ZOOM_SPEED);
+        }
+        
+        // 计算最小缩放
+        const minScaleX = CROP_WIDTH / imgRef.current.naturalWidth;
+        const minScaleY = CROP_HEIGHT / imgRef.current.naturalHeight;
+        const minScale = Math.max(minScaleX, minScaleY);
+        newScale = Math.max(minScale, Math.min(newScale, 5));
+        
+        const w = imgRef.current.naturalWidth * newScale;
+        const h = imgRef.current.naturalHeight * newScale;
+        
+        let newX = position.x;
+        let newY = position.y;
+        
+        // 以裁剪框中心为缩放中心
+        const cx = (OFFSET_X + CROP_WIDTH/2 - position.x) / scale;
+        const cy = (OFFSET_Y + CROP_HEIGHT/2 - position.y) / scale;
+        
+        newX = OFFSET_X + CROP_WIDTH/2 - cx * newScale;
+        newY = OFFSET_Y + CROP_HEIGHT/2 - cy * newScale;
+        
+        // 应用边界限制
+        const minX = OFFSET_X + CROP_WIDTH - w;
+        const maxX = OFFSET_X;
+        const minY = OFFSET_Y + CROP_HEIGHT - h;
+        const maxY = OFFSET_Y;
+        
+        if (newX > maxX) newX = maxX;
+        if (newX < minX) newX = minX;
+        if (newY > maxY) newY = maxY;
+        if (newY < minY) newY = minY;
+        
+        setScale(newScale);
+        setPosition({ x: newX, y: newY });
+    }, [scale, position]);
+    
+    // 注册滚轮事件
+    useEffect(() => {
+        const el = containerRef.current;
+        if (el) {
+            el.addEventListener('wheel', handleWheel, { passive: false });
+            return () => el.removeEventListener('wheel', handleWheel);
+        }
+    }, [handleWheel]);
+    
+    // 处理文件选择
+    const handleImageSelect = useCallback((fileId: string) => {
+        setSelectedFileId(fileId);
+        // 重置缩放和位置
+        setScale(1);
+        setPosition({ x: 0, y: 0 });
+    }, []);
+    
+    // 处理保存
+    const handleSave = useCallback(() => {
+        if (!imgRef.current || !selectedFileId) return;
+        
+        const natW = imgRef.current.naturalWidth;
+        const natH = imgRef.current.naturalHeight;
+        
+        // 计算裁剪框在原图中的位置和尺寸（百分比）
+        const x = (OFFSET_X - position.x) / scale;
+        const y = (OFFSET_Y - position.y) / scale;
+        const w = CROP_WIDTH / scale;
+        const h = CROP_HEIGHT / scale;
+
+        const safeNatW = Math.max(1, natW);
+        const safeNatH = Math.max(1, natH);
+        const rawXPercent = (x / safeNatW) * 100;
+        const rawYPercent = (y / safeNatH) * 100;
+        const widthPercent = Math.min(Math.max((w / safeNatW) * 100, 0.1), 100);
+        const heightPercent = Math.min(Math.max((h / safeNatH) * 100, 0.1), 100);
+        const xPercent = Math.min(Math.max(rawXPercent, 0), Math.max(0, 100 - widthPercent));
+        const yPercent = Math.min(Math.max(rawYPercent, 0), Math.max(0, 100 - heightPercent));
+
+        onSetCover(selectedFileId, {
+            x: xPercent,
+            y: yPercent,
+            width: widthPercent,
+            height: heightPercent
+        });
+    }, [selectedFileId, scale, position, onSetCover]);
+    
+    return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+            <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-6xl h-[85vh] shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+                {/* Header */}
+                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 rounded-t-lg">
+                    <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                        {t('context.setTopicCover') || '设置专题封面'}
+                    </h3>
+                </div>
+
+                {/* Main Content Area */}
+                <div className="flex-1 flex flex-row overflow-hidden">
+                    {/* Left: Crop Preview - Fixed Width */}
+                    <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-700">
+                        <div 
+                            ref={containerRef}
+                            className="relative bg-gray-200 dark:bg-black overflow-hidden cursor-move select-none shadow-lg rounded-lg mb-4"
+                            style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                        >
+                            {selectedFile && (
+                                <>
+                                    <img 
+                                        ref={imgRef}
+                                        src={convertFileSrc(selectedFile.path)}
+                                        draggable={false}
+                                        onLoad={handleImageLoad}
+                                        className="max-w-none absolute origin-top-left pointer-events-none"
+                                        style={{ 
+                                            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
+                                        }}
+                                        alt="Cover preview"
+                                    />
+                                    
+                                    {/* Crop mask overlay */}
+                                    <div className="absolute inset-0 pointer-events-none">
+                                        <svg width="100%" height="100%">
+                                            <defs>
+                                                <mask id="topicCropMask">
+                                                    <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                                                    <rect x={OFFSET_X} y={OFFSET_Y} width={CROP_WIDTH} height={CROP_HEIGHT} fill="black" rx="8" />
+                                                </mask>
+                                            </defs>
+                                            <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#topicCropMask)" />
+                                            
+                                            <rect 
+                                                x={OFFSET_X} 
+                                                y={OFFSET_Y} 
+                                                width={CROP_WIDTH} 
+                                                height={CROP_HEIGHT} 
+                                                fill="none" 
+                                                stroke="white" 
+                                                strokeWidth="2" 
+                                                rx="8"
+                                                style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
+                                            />
+                                        </svg>
+                                    </div>
+                                </>
+                            )}
+                            
+                            {!selectedFile && (
+                                <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-center">
+                                    <div>
+                                        <FileImage size={48} className="mx-auto mb-2 opacity-50" />
+                                        <p>{t('context.selectImage') || '请选择图片'}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-700">
+                             {t('context.cropHint') || '拖拽图片调整位置 • 滚轮缩放'}
+                        </div>
+                    </div>
+                    
+                    {/* Right: File Selection - Flex 1 */}
+                    <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800">
+                        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                            <input
+                                type="text"
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder={t('context.searchFiles') || '搜索文件名...'}
+                                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                            />
+                        </div>
+                        
+                        {/* Image Grid */}
+                        <div className="flex-1 overflow-y-auto p-4 content-start">
+                            {filteredGroups.length === 0 ? (
+                                <div className="text-center text-gray-400 py-8 flex flex-col items-center">
+                                    <FileImage size={48} className="mb-4 opacity-20" />
+                                    <span>{t('context.noImages') || '没有找到图片'}</span>
+                                </div>
+                            ) : (
+                                filteredGroups.map(group => (
+                                    <div key={group.name} className="mb-6 last:mb-0">
+                                        {!topic.parentId && (
+                                            <h5 className="font-bold text-xs uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-3 ml-1">
+                                                {group.name}
+                                            </h5>
+                                        )}
+                                        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                            {group.images.map(img => {
+                                                const isSelected = selectedFileId === img.id;
+                                                return (
+                                                    <div
+                                                        key={img.id}
+                                                        onClick={() => handleImageSelect(img.id)}
+                                                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all shadow-sm ${
+                                                            isSelected
+                                                                ? 'border-blue-500 ring-2 ring-blue-500/30'
+                                                                : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
+                                                        }`}
+                                                    >
+                                                        <div className="relative aspect-square">
+                                                            <div 
+                                                                className="absolute inset-0 bg-cover bg-center"
+                                                                style={{ backgroundImage: `url("${convertFileSrc(img.path)}")` }}
+                                                            />
+                                                            {isSelected && (
+                                                                <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                                                                    <div className="bg-blue-500 rounded-full p-1">
+                                                                        <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                                                        </svg>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="p-2 bg-gray-50 dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800">
+                                                            <p className="text-xs text-gray-600 dark:text-gray-300 truncate font-medium">
+                                                                {img.name}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                </div>
+                
+                {/* Footer */}
+                <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 rounded-b-lg flex items-center justify-between">
+                    {/* Zoom Control - Moved to footer */}
+                    <div className="flex-1 max-w-xs mr-4">
+                        {selectedFile && (
+                            <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <span className="text-xs font-medium text-gray-500 whitespace-nowrap">缩放</span>
+                                <span className="text-xs text-gray-400 select-none">-</span>
+                                <input 
+                                    type="range" 
+                                    min="0.1" 
+                                    max="5" 
+                                    step="0.01" 
+                                    value={scale}
+                                    onChange={(e) => {
+                                        const newScale = parseFloat(e.target.value);
+                                        if (imgRef.current) {
+                                            const minScaleX = CROP_WIDTH / imgRef.current.naturalWidth;
+                                            const minScaleY = CROP_HEIGHT / imgRef.current.naturalHeight;
+                                            const minScale = Math.max(minScaleX, minScaleY);
+                                            if (newScale >= minScale) setScale(newScale);
+                                        } else {
+                                            setScale(newScale);
+                                        }
+                                    }}
+                                    className="flex-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                                <span className="text-xs text-gray-400 select-none">+</span>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex space-x-3">
+                        <button
+                            onClick={onClose}
+                            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
+                        >
+                            {t('context.cancel') || '取消'}
+                        </button>
+                        <button
+                            onClick={handleSave}
+                            disabled={!selectedFileId}
+                            className="px-6 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform active:scale-95 duration-100"
+                        >
+                            {t('context.confirm') || '确认'}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 };

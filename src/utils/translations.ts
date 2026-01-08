@@ -39,7 +39,9 @@ export const translations = {
       nas: 'NAS 存储',
       nasDisconnected: '未连接',
       nasConnected: '已连接',
-      tasks: '后台任务'
+      tasks: '后台任务',
+      topics: '专题',
+      noDescription: '暂无描述'
     },
     context: {
       viewInExplorer: '在系统文件管理器中查看',
@@ -131,7 +133,25 @@ export const translations = {
       copy: '复制',
       move: '移动',
       successfully: '成功',
-      selectedPeople: '位已选人物'
+      selectedPeople: '位已选人物',
+      newTopic: '新建专题',
+      setCover: '设置专题封面',
+      subTopics: '子专题',
+      people: '人物',
+      topicNamePlaceholder: '请输入专题名称',
+      cancel: '取消',
+      create: '创建',
+      confirm: '确认',
+      confirmDelete: '确认删除',
+      deleteTopicWarning: '确定要删除这个专题吗？此操作无法撤销。',
+      deleteTopicsWarning: '确定要删除这些专题吗？此操作无法撤销。',
+      preview: '预览',
+      selectImage: '请选择图片',
+      zoom: '缩放',
+      selectFromTopic: '从专题中选择',
+      searchFiles: '搜索文件名...',
+      noImages: '没有找到图片',
+      cropHint: '使用鼠标滚轮缩放，拖拽移动图片'
     },
     drag: {
       releaseToComplete: '松开即可完成操作',
@@ -550,7 +570,9 @@ export const translations = {
       nas: 'NAS Storage',
       nasDisconnected: 'Disconnected',
       nasConnected: 'Connected',
-      tasks: 'Background Tasks'
+      tasks: 'Background Tasks',
+      topics: 'TOPICS',
+      noDescription: 'No description'
     },
     context: {
       viewInExplorer: 'View in File Explorer',
@@ -642,7 +664,25 @@ export const translations = {
       copy: 'Copy',
       move: 'Move',
       successfully: 'Successfully',
-      selectedPeople: 'Selected People'
+      selectedPeople: 'selected people',
+      newTopic: 'New Topic',
+      setCover: 'Set Topic Cover',
+      subTopics: 'Sub Topics',
+      people: 'People',
+      topicNamePlaceholder: 'Enter topic name',
+      cancel: 'Cancel',
+      create: 'Create',
+      confirm: 'Confirm',
+      confirmDelete: 'Confirm Deletion',
+      deleteTopicWarning: 'Are you sure you want to delete this topic? This action cannot be undone.',
+      deleteTopicsWarning: 'Are you sure you want to delete these topics? This action cannot be undone.',
+      preview: 'Preview',
+      selectImage: 'Please select an image',
+      zoom: 'Zoom',
+      selectFromTopic: 'Select from Topic',
+      searchFiles: 'Search filenames...',
+      noImages: 'No images found',
+      cropHint: 'Use mouse wheel to zoom, drag to move image'
     },
     drag: {
       releaseToComplete: 'Release to complete the operation',

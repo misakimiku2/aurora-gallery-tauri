@@ -3945,12 +3945,12 @@ export const App: React.FC = () => {
     handleNavigateTopic(null);
   }, [handleNavigateTopic]);
   
-  const handleCreateTopic = useCallback((parentId: string | null) => {
+  const handleCreateTopic = useCallback((parentId: string | null, name?: string) => {
       const id = Math.random().toString(36).substr(2, 9);
       const newTopic: Topic = {
           id,
           parentId,
-          name: t('context.newTopicDefault') || 'New Topic',
+          name: name || t('context.newTopicDefault') || 'New Topic',
           peopleIds: [],
           fileIds: [],
           createdAt: new Date().toISOString(),

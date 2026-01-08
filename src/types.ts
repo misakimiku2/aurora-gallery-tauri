@@ -79,12 +79,20 @@ export interface Person {
   faceBox?: { x: number; y: number; w: number; h: number }; // Percentages 0-100
 }
 
+export interface CoverCropData {
+  x: number; // Top-left percentage relative to the original image
+  y: number;
+  width: number; // Width of the cropped area as a percentage of the original image
+  height: number; // Height of the cropped area as a percentage of the original image
+}
+
 export interface Topic {
   id: string;
   parentId: string | null;
   name: string;
   description?: string;
   coverFileId?: string;
+  coverCrop?: CoverCropData;
   peopleIds: string[];
   fileIds?: string[];
   sourceUrl?: string;
