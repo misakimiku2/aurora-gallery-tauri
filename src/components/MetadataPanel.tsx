@@ -774,7 +774,35 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
       const coverUrl = getCoverUrlInternal(topic);
       const subTopics = topics ? Object.values(topics).filter(t => t.parentId === topic.id) : [];
-      const topicPeople = people ? topic.peopleIds.map(id => people[id]).filter(Boolean) : [];
+      // Aggregate people: include people from descendant subtopics when viewing a main topic
+      let topicPeople: Person[] = [];
+      // Map personId -> number of descendant subtopics (exclude root topic itself)
+      const peopleSubtopicCount: Record<string, number> = {};
+      if (people) {
+          if (!topic.parentId && topics) {
+              const stack: string[] = [topic.id];
+              const collected = new Set<string>();
+              while (stack.length > 0) {
+                  const tid = stack.pop()!;
+                  const t = topics[tid];
+                  if (!t) continue;
+                  // collect people ids
+                  (t.peopleIds || []).forEach(pid => collected.add(pid));
+                  // count occurrences for descendant subtopics only
+                  if (tid !== topic.id) {
+                      (t.peopleIds || []).forEach(pid => {
+                          peopleSubtopicCount[pid] = (peopleSubtopicCount[pid] || 0) + 1;
+                      });
+                  }
+                  Object.values(topics).forEach(sub => {
+                      if (sub.parentId === tid) stack.push(sub.id);
+                  });
+              }
+              topicPeople = Array.from(collected).map(id => people[id]).filter(Boolean);
+          } else {
+              topicPeople = topic.peopleIds.map(id => people[id]).filter(Boolean);
+          }
+      }
       
       // 计算文件数量
       const topicFileCount = topic.fileIds ? topic.fileIds.length : 0;
@@ -885,7 +913,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                </div>
 
-               {/* 专题内人物 - 方圆头像网格 */}
+               {/* 专题内人物 - 圆形头像网格，姓名置于下方，右上角显示子专题出现次数 */}
                {topicPeople.length > 0 && (
                    <div className="space-y-4">
                         <div className="flex justify-between items-center px-1">
@@ -896,38 +924,49 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 {topicPeople.length}
                             </span>
                         </div>
-                        <div className="grid grid-cols-4 gap-4">
+                        <div className="grid grid-cols-3 gap-5">
                             {topicPeople.map(p => {
                                 const pCover = files[p.coverFileId];
+                                const subCount = peopleSubtopicCount && (peopleSubtopicCount[p.id] || 0);
                                 return (
                                     <div 
                                         key={p.id} 
-                                        className="group/avatar flex flex-col items-center gap-2 cursor-pointer transition-transform active:scale-90" 
+                                        className="group/avatar flex flex-col items-center gap-2 cursor-pointer" 
                                         title={p.name}
                                         onClick={() => onSelectPerson && onSelectPerson(p.id)}
                                     >
-                                        <div className="relative w-full aspect-square rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
-                                            {pCover ? (
-                                               p.faceBox ? (
-                                                   <img 
-                                                       src={convertFileSrc(pCover.path)}
-                                                       className="absolute max-w-none transition-transform duration-500 group-hover/avatar:scale-110"
-                                                       decoding="async"
-                                                       style={{
-                                                           width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
-                                                           height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                                           left: 0,
-                                                           top: 0,
-                                                           transformOrigin: 'top left',
-                                                           transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
-                                                       }}
-                                                   />
-                                               ) : (
-                                                   <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover transition-transform duration-500 group-hover/avatar:scale-110" />
-                                               )
-                                            ) : <User className="w-full h-full p-3 text-gray-400"/>}
+                                        <div className="relative w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-800 border border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
+                                            <div className="relative w-full h-full rounded-full overflow-hidden">
+                                                <div className="w-full h-full transition-transform duration-500 group-hover/avatar:scale-110">
+                                                    {pCover ? (
+                                                       p.faceBox ? (
+                                                           <img 
+                                                               src={convertFileSrc(pCover.path)}
+                                                               className="absolute max-w-none"
+                                                               decoding="async"
+                                                               style={{
+                                                                   width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
+                                                                   height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
+                                                                   left: 0,
+                                                                   top: 0,
+                                                                   transformOrigin: 'top left',
+                                                                   transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                               }}
+                                                           />
+                                                       ) : (
+                                                           <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover" />
+                                                       )
+                                                    ) : <User className="w-full h-full p-3 text-gray-400"/>}
+                                                </div>
+                                            </div>
+
+                                            {subCount > 0 && (
+                                                <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] font-bold rounded-full w-6 h-6 flex items-center justify-center shadow-md border-2 border-white dark:border-gray-900">
+                                                    {subCount}
+                                                </div>
+                                            )}
                                         </div>
-                                        <span className="text-[10px] font-bold text-gray-600 dark:text-gray-400 truncate w-full text-center">
+                                        <span className="text-xs font-bold text-gray-600 dark:text-gray-400 truncate w-full text-center group-hover/avatar:text-blue-500 transition-colors">
                                             {p.name}
                                         </span>
                                     </div>

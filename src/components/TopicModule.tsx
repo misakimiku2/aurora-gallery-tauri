@@ -243,6 +243,8 @@ interface TopicModuleProps {
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[]) => void;
     onSelectFiles: (ids: string[]) => void;
+    onSelectPerson?: (personId: string, e: React.MouseEvent) => void;
+    onNavigatePerson?: (personId: string) => void;
     // Optional: resource root and cache path for thumbnail generation
     resourceRoot?: string;
     cachePath?: string;
@@ -254,7 +256,7 @@ interface TopicModuleProps {
 export const TopicModule: React.FC<TopicModuleProps> = ({ 
     topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [],
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
-    resourceRoot, cachePath, onOpenFile, t 
+    onSelectPerson, onNavigatePerson, resourceRoot, cachePath, onOpenFile, t 
 }) => {
     
     // Selection state for box selection
@@ -319,23 +321,49 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
     const currentTopic = currentTopicId ? topics[currentTopicId] : null;
 
+    // Local selection state for people in topic view (click to select, second click to navigate)
+    const [clickedOncePerson, setClickedOncePerson] = useState<string | null>(null);
+    const clickTimerRef = useRef<number | null>(null);
+
     const [coverHeight, setCoverHeight] = useState(350);
     const requestRef = useRef<number | undefined>(undefined);
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
     const [layoutMode, setLayoutMode] = useState<LayoutMode>('grid');
 
-    // Click timer ref for distinguishing click vs dblclick on images
-    const clickTimerRef = useRef<number | null>(null);
-
+    // Cleanup timer on unmount
     useEffect(() => {
         return () => {
             if (clickTimerRef.current) {
-                clearTimeout(clickTimerRef.current);
+                window.clearTimeout(clickTimerRef.current);
                 clickTimerRef.current = null;
             }
         };
     }, []);
+
+    const handlePersonClickLocal = (personId: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        // Notify parent to update global selection state
+        onSelectPerson && onSelectPerson(personId, e);
+
+        if (clickedOncePerson === personId) {
+            // Second click — navigate
+            onNavigatePerson && onNavigatePerson(personId);
+            setClickedOncePerson(null);
+            if (clickTimerRef.current) {
+                window.clearTimeout(clickTimerRef.current);
+                clickTimerRef.current = null;
+            }
+        } else {
+            setClickedOncePerson(personId);
+            // Clear after a short window so user can click again to navigate
+            if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+            clickTimerRef.current = window.setTimeout(() => {
+                setClickedOncePerson(null);
+                clickTimerRef.current = null;
+            }, 800);
+        }
+    };
 
     // Callback ref to set both containerRef and selectionRef
     const setRefs = useCallback((node: HTMLDivElement | null) => {
@@ -629,8 +657,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const minItemWidth = minItemHeight * ASPECT;
         
         const cols = Math.max(1, Math.floor((width + GAP_X) / (minItemWidth + GAP_X)));
-        const itemWidth = (width - (cols - 1) * GAP_X) / cols;
-        const itemHeight = itemWidth / ASPECT;
+        const itemWidth = minItemWidth;
+        const itemHeight = minItemHeight;
         
         const validItems = rootTopics.map((topic, index) => {
             const row = Math.floor(index / cols);
@@ -705,10 +733,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 onDoubleClick={(e) => handleTopicDoubleClick(e, topic.id)}
                                 onContextMenu={(e) => handleContextMenu(e, topic.id)}
                             >
-                                <div className={`absolute inset-0 transform transition-all duration-300 group-hover:-translate-y-2 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
+                                <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-700 shadow-lg">
                                         {coverStyle ? (
-                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={coverStyle} />
+                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={coverStyle} />
                                         ) : (
                                             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
                                                 <Layout size={48} className="text-white opacity-50" />
@@ -773,7 +801,29 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         const subTopics = Object.values(topics).filter(t => t.parentId === currentTopic.id);
         const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
-        const topicPeople = currentTopic.peopleIds.map(id => people[id]).filter(Boolean);
+        // Aggregate people for main topics (include descendant subtopics). For subtopics, keep direct people only.
+        let topicPeople = currentTopic.peopleIds.map(id => people[id]).filter(Boolean);
+        // Map personId -> number of descendant subtopics (excluding current topic)
+        const peopleSubtopicCount: Record<string, number> = {};
+        if (!currentTopic.parentId && topics) {
+            const stack: string[] = [currentTopic.id];
+            const collected = new Set<string>();
+            while (stack.length > 0) {
+                const tid = stack.pop()!;
+                const t = topics[tid];
+                if (!t) continue;
+                (t.peopleIds || []).forEach(pid => collected.add(pid));
+                if (tid !== currentTopic.id) {
+                    (t.peopleIds || []).forEach(pid => {
+                        peopleSubtopicCount[pid] = (peopleSubtopicCount[pid] || 0) + 1;
+                    });
+                }
+                Object.values(topics).forEach(sub => {
+                    if (sub.parentId === tid) stack.push(sub.id);
+                });
+            }
+            topicPeople = Array.from(collected).map(id => people[id]).filter(Boolean);
+        }
         const allSubTopicIds = subTopics.map(t => t.id);
         const heroUrl = getCoverUrl(currentTopic);
 
@@ -837,46 +887,75 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 </button>
                              </div>
                              
-                             {subTopics.length > 0 ? (
-                                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
-                                    {subTopics.map(sub => {
-                                        const subCoverStyle = getCoverStyle(sub);
-                                        return (
-                                            <div 
-                                                key={sub.id} 
-                                                className={`topic-item group flex flex-col cursor-pointer transition-all duration-300`}
-                                                data-topic-id={sub.id}
-                                                style={{ zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0 }}
-                                                onClick={(e) => handleTopicClick(e, sub.id, allSubTopicIds)}
-                                                onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
-                                                onContextMenu={(e) => handleContextMenu(e, sub.id)}
-                                            >
-                                                <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 group-hover:-translate-y-2 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
-                                                    <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
-                                                        {subCoverStyle ? (
-                                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-105" style={subCoverStyle} />
-                                                        ) : (
-                                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
-                                                                <Layout size={32} className="text-white opacity-50" />
-                                                            </div>
-                                                        )}
+                             {subTopics.length > 0 ? (() => {
+                                 const subSafeWidth = containerRect.width > 0 ? containerRect.width : 1280;
+                                 const subAvailableWidth = Math.max(100, subSafeWidth - 48); // px-6 * 2
+                                 const subGap = 32; // Use same GAP_X as main gallery
+                                 const ASPECT = 0.75;
+                                 
+                                 const subItemHeight = coverHeight;
+                                 const subItemWidth = subItemHeight * ASPECT;
+                                 const subCols = Math.max(1, Math.floor((subAvailableWidth + subGap) / (subItemWidth + subGap)));
+                                 
+                                 const subTotalGridWidth = subCols * subItemWidth + (subCols - 1) * subGap;
+                                 
+                                 const subTextAreaHeight = 64;
+                                 const subTotalItemHeight = subItemHeight + subTextAreaHeight;
+                                 
+                                 const subRows = Math.ceil(subTopics.length / subCols);
+                                 const subTotalHeight = subRows * subTotalItemHeight + Math.max(0, subRows - 1) * 48; // Use GAP_Y = 48
+
+                                 return (
+                                     <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTotalHeight }}>
+                                        {subTopics.map((sub, index) => {
+                                            const subCoverStyle = getCoverStyle(sub);
+                                            const row = Math.floor(index / subCols);
+                                            const col = index % subCols;
+                                            const x = col * (subItemWidth + subGap);
+                                            const y = row * (subTotalItemHeight + 48);
+
+                                            return (
+                                                <div 
+                                                    key={sub.id} 
+                                                    className={`topic-item group flex flex-col cursor-pointer absolute transition-all duration-300 ease-out`}
+                                                    data-topic-id={sub.id}
+                                                    style={{ 
+                                                        zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0,
+                                                        left: x,
+                                                        top: y,
+                                                        width: subItemWidth
+                                                    }}
+                                                    onClick={(e) => handleTopicClick(e, sub.id, allSubTopicIds)}
+                                                    onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
+                                                    onContextMenu={(e) => handleContextMenu(e, sub.id)}
+                                                >
+                                                    <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
+                                                        <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
+                                                            {subCoverStyle ? (
+                                                                <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={subCoverStyle} />
+                                                            ) : (
+                                                                <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+                                                                    <Layout size={32} className="text-white opacity-50" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    
+                                                    <div className="mt-4 text-center px-1">
+                                                        <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+                                                            {sub.name}
+                                                        </h4>
+                                                        <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
+                                                            <span className="flex items-center"><User size={12} className="mr-1"/> {sub.peopleIds.length}</span>
+                                                            <span className="flex items-center"><Folder size={12} className="mr-1"/> {sub.fileIds?.length || 0}</span>
+                                                        </div>
                                                     </div>
                                                 </div>
-                                                
-                                                <div className="mt-4 text-center px-1">
-                                                    <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
-                                                        {sub.name}
-                                                    </h4>
-                                                    <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
-                                                        <span className="flex items-center"><User size={12} className="mr-1"/> {sub.peopleIds.length}</span>
-                                                        <span className="flex items-center"><Folder size={12} className="mr-1"/> {sub.fileIds?.length || 0}</span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                 </div>
-                             ) : (
+                                            );
+                                        })}
+                                     </div>
+                                 );
+                             })() : (
                                 <div className="text-sm text-gray-400 italic">No sub-topics yet.</div>
                              )}
                         </section>
@@ -888,27 +967,86 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                              <User className="mr-2 text-purple-500" />
                              {t('context.people') || 'People'}
                          </h3>
-                         {topicPeople.length > 0 ? (
-                             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                                 {topicPeople.map(p => {
-                                      const coverFile = files[p.coverFileId];
-                                      const bgStyle = coverFile ? {
-                                        backgroundImage: `url("${convertFileSrc(coverFile.path)}")`,
-                                        backgroundSize: p.faceBox ? `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%` : 'cover',
-                                        backgroundPosition: p.faceBox ? `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%` : 'center',
-                                      } : {};
+                         {topicPeople.length > 0 ? (() => {
+                             // Match the "Files" grid behavior: fixed padding + fixed gap + smooth layout transition
+                             const ITEM_SIZE = 120;
+                             const PADDING_X = 20;
+                             const GAP_X = 20;
+                             const GAP_Y = 36;
+                             const ITEM_HEIGHT = ITEM_SIZE + 28; // avatar + name/spacing
 
-                                      return (
-                                        <div key={p.id} className="flex items-center space-x-3 bg-gray-50 dark:bg-gray-800 p-2 rounded-lg border border-gray-100 dark:border-gray-700">
-                                            <div className="w-10 h-10 rounded-full bg-gray-200 flex-shrink-0 overflow-hidden" style={bgStyle}>
-                                                {!coverFile && <User className="w-full h-full p-2 text-gray-400" />}
-                                            </div>
-                                            <div className="truncate text-sm font-medium dark:text-gray-200">{p.name}</div>
-                                        </div>
-                                      );
-                                 })}
-                             </div>
-                         ) : (
+                             const safeWidth = containerRect.width > 0 ? containerRect.width : 1280;
+                             const availableWidth = Math.max(100, safeWidth - PADDING_X * 2);
+                             const cols = Math.max(1, Math.floor((availableWidth + GAP_X) / (ITEM_SIZE + GAP_X)));
+                             const rows = Math.ceil(topicPeople.length / cols);
+                             const totalHeight = rows * ITEM_HEIGHT + Math.max(0, rows - 1) * GAP_Y;
+
+                             return (
+                                 <div className="relative w-full transition-all duration-300 ease-out" style={{ height: totalHeight }}>
+                                     {topicPeople.map((p, index) => {
+                                         const coverFile = files[p.coverFileId];
+                                         const subCount = peopleSubtopicCount && (peopleSubtopicCount[p.id] || 0);
+
+                                         const row = Math.floor(index / cols);
+                                         const col = index % cols;
+                                         const x = PADDING_X + col * (ITEM_SIZE + GAP_X);
+                                         const y = row * (ITEM_HEIGHT + GAP_Y);
+
+                                         return (
+                                             <div
+                                                 key={p.id}
+                                                 className="absolute transition-all duration-300 ease-out"
+                                                 style={{ left: x, top: y, width: ITEM_SIZE }}
+                                             >
+                                                 <div
+                                                     className="group/person flex flex-col items-center gap-2 cursor-pointer"
+                                                     title={p.name}
+                                                     onClick={(e) => handlePersonClickLocal(p.id, e)}
+                                                 >
+                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-2' : ''}`}>
+                                                         <div className="relative w-full h-full rounded-full overflow-hidden">
+                                                             <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
+                                                                 {coverFile ? (
+                                                                     p.faceBox ? (
+                                                                         <img
+                                                                             src={convertFileSrc(coverFile.path)}
+                                                                             className="absolute max-w-none"
+                                                                             decoding="async"
+                                                                             style={{
+                                                                                 width: `${10000 / Math.min(p.faceBox.w, 99.9)}%`,
+                                                                                 height: `${10000 / Math.min(p.faceBox.h, 99.9)}%`,
+                                                                                 left: 0,
+                                                                                 top: 0,
+                                                                                 transformOrigin: 'top left',
+                                                                                 transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                                             }}
+                                                                         />
+                                                                     ) : (
+                                                                         <img
+                                                                             src={convertFileSrc(coverFile.path)}
+                                                                             className="w-full h-full object-cover"
+                                                                         />
+                                                                     )
+                                                                 ) : (
+                                                                     <User className="w-full h-full p-6 text-gray-400" />
+                                                                 )}
+                                                             </div>
+                                                         </div>
+
+                                                         {subCount > 0 && (
+                                                             <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-white dark:border-gray-900">
+                                                                 {subCount}
+                                                             </div>
+                                                         )}
+                                                     </div>
+                                                     <div className="text-sm font-bold dark:text-gray-200 truncate text-center w-full group-hover/person:text-blue-500 transition-colors">{p.name}</div>
+                                                 </div>
+                                             </div>
+                                         );
+                                     })}
+                                 </div>
+                             );
+                         })() : (
                              <div className="text-sm text-gray-400 italic">No people added.</div>
                          )}
                      </section>

@@ -6073,6 +6073,8 @@ export const App: React.FC = () => {
                         onSelectFiles={(ids) => {
                              updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [] });
                         }}
+                        onSelectPerson={handlePersonClick}
+                        onNavigatePerson={handleNavigatePerson}
                         selectedFileIds={activeTab.selectedFileIds}
                         // Provide resource root / cache for thumbnails and open action
                         resourceRoot={state.settings.paths.resourceRoot}

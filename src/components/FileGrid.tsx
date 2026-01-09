@@ -1233,7 +1233,7 @@ const PersonCard = React.memo(({
       onContextMenu={(e) => onPersonContextMenu(e, person.id)}
     >
       <div 
-        className={`rounded-full p-1 transition-all duration-300 relative shadow-md group-hover:shadow-xl group-hover:-translate-y-1
+        className={`rounded-full p-1 transition-all duration-300 relative shadow-md
           ${isSelected 
             ? 'bg-blue-600 scale-110 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
             : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
@@ -1243,37 +1243,39 @@ const PersonCard = React.memo(({
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
         <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
-          {hasCover && coverSrc ? (
-             person.faceBox ? (
-                <img 
-                    src={coverSrc} 
-                    alt={person.name}
-                    className="absolute max-w-none"
-                    decoding="async"
-                    style={{
-                        width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                        height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                        left: 0,
-                        top: 0,
-                        transformOrigin: 'top left',
-                        transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                        willChange: 'transform, width, height',
-                        backfaceVisibility: 'hidden',
-                        imageRendering: 'auto'
-                    }}
-                />
+          <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
+            {hasCover && coverSrc ? (
+               person.faceBox ? (
+                  <img 
+                      src={coverSrc} 
+                      alt={person.name}
+                      className="absolute max-w-none"
+                      decoding="async"
+                      style={{
+                          width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                          height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                          left: 0,
+                          top: 0,
+                          transformOrigin: 'top left',
+                          transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
+                          willChange: 'transform, width, height',
+                          backfaceVisibility: 'hidden',
+                          imageRendering: 'auto'
+                      }}
+                  />
+              ) : (
+                  <img 
+                      src={coverSrc} 
+                      alt={person.name}
+                      className="w-full h-full object-cover" 
+                  />
+              )
             ) : (
-                <img 
-                    src={coverSrc} 
-                    alt={person.name}
-                    className="w-full h-full object-cover" 
-                />
-            )
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
-              <User size={avatarSize * 0.4} strokeWidth={1.5} />
-            </div>
-          )}
+              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
+                <User size={avatarSize * 0.4} strokeWidth={1.5} />
+              </div>
+            )}
+          </div>
         </div>
         
         {/* Selection Checkmark */}
