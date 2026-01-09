@@ -231,6 +231,8 @@ export interface HistoryItem {
   activeTags: string[];
   activePersonId: string | null;
   activeTopicId?: string | null;
+  selectedTopicIds?: string[];
+  selectedPersonIds?: string[];
   aiFilter?: AiSearchFilter | null;
   scrollTop?: number;
 }

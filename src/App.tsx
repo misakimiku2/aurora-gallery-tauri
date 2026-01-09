@@ -3848,17 +3848,22 @@ export const App: React.FC = () => {
   };
   
   // Navigation helpers
-  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null) => { 
-      const currentScrollTop = selectionRef.current?.scrollTop ?? activeTab.scrollTop;
+  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = []) => { 
       updateActiveTab(prevTab => { 
+          const currentScrollTop = selectionRef.current?.scrollTop ?? prevTab.scrollTop;
           const stackCopy = [...prevTab.history.stack];
           if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < stackCopy.length) {
-              stackCopy[prevTab.history.currentIndex] = { ...stackCopy[prevTab.history.currentIndex], scrollTop: currentScrollTop };
+              stackCopy[prevTab.history.currentIndex] = { 
+                ...stackCopy[prevTab.history.currentIndex], 
+                scrollTop: currentScrollTop, 
+                selectedTopicIds: prevTab.selectedTopicIds,
+                selectedPersonIds: prevTab.selectedPersonIds 
+              };
           }
-          const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId }]; 
-          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedFileIds: viewingId ? [viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
+          const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds }]; 
+          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds, selectedFileIds: viewingId ? [viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
       }); 
-  }, [activeTab.scrollTop]);
+  }, []);
 
 
   
@@ -3961,7 +3966,11 @@ export const App: React.FC = () => {
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
-      pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId);
+      pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
+  }, [activeTab.folderId, pushHistory]);
+
+  const handleNavigatePerson = useCallback((personId: string | null) => {
+      pushHistory(activeTab.folderId, null, 'people-overview', '', 'all', [], null, 0, null, null, [], personId ? [personId] : []);
   }, [activeTab.folderId, pushHistory]);
 
   const handleNavigateTopics = useCallback(() => {
@@ -4024,7 +4033,7 @@ export const App: React.FC = () => {
           if (prevTab.history.currentIndex > 0) { 
               const newIndex = prevTab.history.currentIndex - 1; 
               const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           return {}; 
       }); 
@@ -4034,7 +4043,7 @@ export const App: React.FC = () => {
           if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { 
               const newIndex = prevTab.history.currentIndex + 1; 
               const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedPersonIds: [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           return {}; 
       }); 
@@ -6134,7 +6143,27 @@ export const App: React.FC = () => {
           )}
         </div>
         <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
-          <MetadataPanel files={state.files} selectedFileIds={activeTab.selectedFileIds} people={state.people} selectedPersonIds={activeTab.selectedPersonIds} onUpdate={handleUpdateFile} onUpdatePerson={handleUpdatePerson} onNavigateToFolder={handleNavigateFolder} onNavigateToTag={enterTagView} onSearch={onPerformSearch} t={t} activeTab={activeTab} resourceRoot={state.settings.paths.resourceRoot} cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} />
+          <MetadataPanel 
+            files={state.files} 
+            selectedFileIds={activeTab.selectedFileIds} 
+            people={state.people} 
+            topics={state.topics} 
+            selectedPersonIds={activeTab.selectedPersonIds} 
+            selectedTopicIds={activeTab.selectedTopicIds} 
+            onUpdate={handleUpdateFile} 
+            onUpdatePerson={handleUpdatePerson} 
+            onUpdateTopic={handleUpdateTopic} 
+            onDeleteTopic={handleDeleteTopic} 
+            onSelectTopic={handleNavigateTopic}
+            onSelectPerson={handleNavigatePerson}
+            onNavigateToFolder={handleNavigateFolder} 
+            onNavigateToTag={enterTagView} 
+            onSearch={onPerformSearch} 
+            t={t} 
+            activeTab={activeTab} 
+            resourceRoot={state.settings.paths.resourceRoot} 
+            cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)} 
+          />
         </div>
         <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} onPauseResume={onPauseResume} />
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">

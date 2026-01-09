@@ -54,6 +54,8 @@ interface MetadataProps {
   onUpdatePerson?: (id: string, updates: Partial<Person>) => void;
   onUpdateTopic?: (id: string, updates: Partial<Topic>) => void;
   onDeleteTopic?: (id: string) => void;
+  onSelectTopic?: (id: string) => void;
+  onSelectPerson?: (id: string) => void;
   onNavigateToFolder: (folderId: string) => void;
   onNavigateToTag: (tag: string) => void;
   onSearch: (query: string) => void;
@@ -210,7 +212,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
   
@@ -750,155 +752,293 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
   };
 
   if (topic) {
-      const coverUrl = topic.coverFileId && files[topic.coverFileId] ? convertFileSrc(files[topic.coverFileId].path) : null;
+      // 封面获取逻辑增强：增加首个文件作为回退
+      const getCoverUrlInternal = (t: Topic) => {
+          if (t.coverFileId && files[t.coverFileId]) {
+              return convertFileSrc(files[t.coverFileId].path);
+          }
+          if (t.fileIds && t.fileIds.length > 0) {
+              // 优先查找第一个图片文件
+              for (const fid of t.fileIds) {
+                  const f = files[fid];
+                  if (f && f.type === FileType.IMAGE) {
+                      return convertFileSrc(f.path);
+                  }
+              }
+              // 如果没有找到明确标记为图片的文件，回退到第一个对应的文件
+              const firstFile = files[t.fileIds[0]];
+              if (firstFile) return convertFileSrc(firstFile.path);
+          }
+          return null;
+      };
+
+      const coverUrl = getCoverUrlInternal(topic);
       const subTopics = topics ? Object.values(topics).filter(t => t.parentId === topic.id) : [];
       const topicPeople = people ? topic.peopleIds.map(id => people[id]).filter(Boolean) : [];
+      
+      // 计算文件数量
+      const topicFileCount = topic.fileIds ? topic.fileIds.length : 0;
+
+      // 获取封面样式 - 与 TopicModule 保持一致的算法
+      const getCoverStyle = (t: Topic, overrideUrl?: string | null): React.CSSProperties => {
+          const url = overrideUrl || getCoverUrlInternal(t);
+          if (!url) return {};
+          
+          const style: React.CSSProperties = {
+              backgroundImage: `url("${url}")`,
+              backgroundRepeat: 'no-repeat'
+          };
+          
+          const crop = t.coverCrop;
+          // 复用 TopicModule.tsx 中的裁剪算法，确保显示一致
+          if (crop && crop.width > 0 && crop.height > 0) {
+              const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
+              const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
+
+              const sizeW = 10000 / safeWidth;
+              const sizeH = 10000 / safeHeight;
+
+              // 计算位置百分比: (offset / remaining_space) * 100
+              // 当 safeWidth 是 100 时，分母为 0，所以上面做了 99.9 的限制
+              const posX = (crop.x / (100 - safeWidth)) * 100;
+              const posY = (crop.y / (100 - safeHeight)) * 100;
+
+              style.backgroundSize = `${sizeW}% ${sizeH}%`;
+              style.backgroundPosition = `${posX}% ${posY}%`;
+          } else {
+              style.backgroundSize = 'cover';
+              style.backgroundPosition = 'center';
+          }
+          return style;
+      };
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+           {/* 现代化封面 Header */}
            <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
                {coverUrl ? (
-                   <img src={coverUrl} className="w-full h-full object-cover" />
+                   <div 
+                       className="w-full h-full bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
+                       style={getCoverStyle(topic, coverUrl)}
+                   />
                ) : (
-                   <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
-                       <Layout size={48} className="mb-2 opacity-50" />
-                       <span className="text-xs uppercase tracking-wider">{t('sidebar.topics')}</span>
+                   <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 dark:text-gray-600">
+                       <Layout size={64} className="mb-4 opacity-20" />
+                       <span className="text-xs uppercase tracking-[0.2em] font-medium">{t('sidebar.topics')}</span>
                    </div>
                )}
-               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent flex flex-col justify-end p-6">
-                   <h2 className="text-white text-3xl font-serif font-bold tracking-tight drop-shadow-md leading-tight mb-2 line-clamp-2">{topic.name}</h2>
-                   <div className="flex items-center text-white/80 text-xs font-medium space-x-3">
-                       {topic.createdAt && <span>{new Date(topic.createdAt).getFullYear()} ISSUE</span>}
-                       <span className="w-1 h-1 bg-white/50 rounded-full"></span>
-                       <span>{topicPeople.length} {t('context.people')}</span>
-                   </div>
-               </div>
+               {/* 底部渐变遮罩 */}
+               <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
            </div>
 
-           <div className="p-5 space-y-6">
-               <div className="space-y-2">
-                   <label className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">{t('meta.description')}</label>
-                   <div className="relative group">
+           {/* 浮动内容面板 */}
+           <div className="px-6 py-8 space-y-8 flex-1 relative bg-white dark:bg-gray-900 rounded-t-[2rem] -mt-8 shadow-2xl">
+               {/* 标题与统计药丸 */}
+               <div className="space-y-5">
+                   <h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight text-center">
+                       {topic.name}
+                   </h2>
+                   
+                   <div className="flex flex-wrap gap-2.5 justify-center">
+                       <div className="flex items-center gap-2 px-3.5 py-1.5 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 rounded-full border border-blue-100/50 dark:border-blue-800/30 text-[11px] font-bold uppercase tracking-wider">
+                           <User size={14} />
+                           <span>{topicPeople.length} {t('context.people')}</span>
+                       </div>
+                       <div className="flex items-center gap-2 px-3.5 py-1.5 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 rounded-full border border-purple-100/50 dark:border-purple-800/30 text-[11px] font-bold uppercase tracking-wider">
+                           <ImageIcon size={14} />
+                           <span>{topicFileCount} {t('context.files')}</span>
+                       </div>
+                       {topic.updatedAt && (
+                           <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full border border-gray-100 dark:border-gray-700 text-[11px] font-bold uppercase tracking-wider">
+                               <Clock size={14} />
+                               <span>{new Date(topic.updatedAt).toLocaleDateString()}</span>
+                           </div>
+                       )}
+                   </div>
+               </div>
+
+               {/* 高端简介输入框 */}
+               <div className="space-y-3">
+                   <div className="flex justify-between items-center px-1">
+                       <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                           {t('meta.description')}
+                       </label>
+                   </div>
+                   <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                        <textarea 
-                           className="w-full bg-transparent border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm min-h-[100px] focus:ring-2 ring-blue-500 focus:border-transparent tracking-wide leading-relaxed dark:text-gray-200"
+                           className="w-full bg-transparent border-none p-4 text-sm text-gray-700 dark:text-gray-300 min-h-[140px] focus:ring-0 resize-none leading-relaxed placeholder:text-gray-400/50"
                            value={topicDesc}
                            onChange={e => setTopicDesc(e.target.value)}
-                           placeholder={t('meta.description')}
+                           placeholder={t('meta.addDesc')}
                        />
-                       <button 
-                           onClick={handleUpdateTopicMeta}
-                           className={`absolute bottom-3 right-3 p-1.5 rounded-md bg-blue-500 text-white shadow-sm transition-opacity ${topicDesc !== (topic.description || '') || topicName !== topic.name || topicSource !== (topic.sourceUrl || '') ? 'opacity-100' : 'opacity-0'}`}
-                       >
-                           <Save size={14} />
-                       </button>
+                       {topicDesc !== (topic.description || '') && (
+                           <div className="absolute bottom-3 right-3 animate-fade-in">
+                               <button 
+                                   onClick={handleUpdateTopicMeta}
+                                   className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                               >
+                                   <Save size={16} />
+                                   {t('meta.save')}
+                               </button>
+                           </div>
+                       )}
                    </div>
                </div>
 
-                <div className="space-y-2">
-                    <label className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider">Detail Info</label>
-                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 space-y-3 border border-gray-100 dark:border-gray-700">
-                        <div>
-                           <div className="flex justify-between items-center mb-1">
-                               <span className="text-xs text-gray-400">Name</span>
-                           </div>
+               {/* 专题内人物 - 方圆头像网格 */}
+               {topicPeople.length > 0 && (
+                   <div className="space-y-4">
+                        <div className="flex justify-between items-center px-1">
+                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                                {t('context.people')}
+                            </label>
+                            <span className="text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
+                                {topicPeople.length}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-4 gap-4">
+                            {topicPeople.map(p => {
+                                const pCover = files[p.coverFileId];
+                                return (
+                                    <div 
+                                        key={p.id} 
+                                        className="group/avatar flex flex-col items-center gap-2 cursor-pointer transition-transform active:scale-90" 
+                                        title={p.name}
+                                        onClick={() => onSelectPerson && onSelectPerson(p.id)}
+                                    >
+                                        <div className="relative w-full aspect-square rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
+                                            {pCover ? (
+                                               p.faceBox ? (
+                                                   <img 
+                                                       src={convertFileSrc(pCover.path)}
+                                                       className="absolute max-w-none transition-transform duration-500 group-hover/avatar:scale-110"
+                                                       decoding="async"
+                                                       style={{
+                                                           width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
+                                                           height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
+                                                           left: 0,
+                                                           top: 0,
+                                                           transformOrigin: 'top left',
+                                                           transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                       }}
+                                                   />
+                                               ) : (
+                                                   <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover transition-transform duration-500 group-hover/avatar:scale-110" />
+                                               )
+                                            ) : <User className="w-full h-full p-3 text-gray-400"/>}
+                                        </div>
+                                        <span className="text-[10px] font-bold text-gray-600 dark:text-gray-400 truncate w-full text-center">
+                                            {p.name}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                   </div>
+               )}
+
+               {/* 现代化来源输入区 */}
+               <div className="space-y-3">
+                   <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] ml-1">
+                       {t('context.sourceUrl')}
+                   </label>
+                   <div className="flex gap-2">
+                       <div className="flex-1 group/input relative">
                            <input 
-                               value={topicName}
-                               onChange={e => setTopicName(e.target.value)}
-                               className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-sm dark:text-white focus:outline-none focus:border-blue-500"
+                               value={topicSource}
+                               onChange={e => setTopicSource(e.target.value)}
+                               className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700/50 rounded-2xl px-4 py-3 text-sm dark:text-white focus:outline-none focus:ring-2 ring-blue-500/20 focus:bg-white dark:focus:bg-gray-800 transition-all placeholder:text-gray-400/50"
+                               placeholder="https://"
                            />
+                           {topicSource !== (topic.sourceUrl || '') && (
+                               <button 
+                                   onClick={handleUpdateTopicMeta}
+                                   className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 active:scale-95"
+                               >
+                                   <Save size={14} />
+                               </button>
+                           )}
+                       </div>
+                       {topicSource && (
+                           <a 
+                               href={topicSource} 
+                               target="_blank" 
+                               rel="noreferrer" 
+                               className="flex items-center justify-center w-12 h-12 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-blue-500 hover:text-white hover:bg-blue-500 hover:border-blue-500 rounded-2xl shadow-sm transition-all active:scale-95"
+                               title={t('context.openInBrowser')}
+                           >
+                               <ExternalLink size={20}/>
+                           </a>
+                       )}
+                   </div>
+               </div>
+
+               {/* 现代子专题列表 - 改为3:4比例网格 */}
+               {!topic.parentId && subTopics.length > 0 && (
+                   <div className="space-y-4">
+                        <div className="flex justify-between items-center px-1">
+                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                                {t('context.subTopics')}
+                            </label>
+                            <span className="text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
+                                {subTopics.length}
+                            </span>
                         </div>
-                         <div>
-                            <div className="flex justify-between items-center mb-1">
-                                <span className="text-xs text-gray-400">Source</span>
-                                {topic.sourceUrl && <a href={topic.sourceUrl} target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-600"><ExternalLink size={12}/></a>}
-                            </div>
-                            <input 
-                                value={topicSource}
-                                onChange={e => setTopicSource(e.target.value)}
-                                className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded px-2 py-1.5 text-sm dark:text-white focus:outline-none focus:border-blue-500"
-                                placeholder="http://"
-                            />
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+                            {subTopics.map(sub => {
+                                const subCoverUrl = getCoverUrlInternal(sub);
+                                return (
+                                    <div 
+                                        key={sub.id} 
+                                        className="group/sub flex flex-col gap-2.5 cursor-pointer transition-all active:scale-95"
+                                        onClick={() => onSelectTopic && onSelectTopic(sub.id)}
+                                    >
+                                        <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
+                                            {subCoverUrl ? (
+                                                <div 
+                                                    className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110" 
+                                                    style={getCoverStyle(sub, subCoverUrl)}
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 dark:bg-gray-800/50">
+                                                    <Folder size={24} className="opacity-20 mb-1" />
+                                                    <span className="text-[9px] uppercase tracking-widest font-bold opacity-30">Topic</span>
+                                                </div>
+                                            )}
+                                            {/* 底部渐显遮罩 */}
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover/sub:opacity-100 transition-opacity pointer-events-none" />
+                                        </div>
+                                        <div className="px-1 min-w-0">
+                                            <div className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate group-hover/sub:text-blue-500 transition-colors">
+                                                {sub.name}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                    </div>
-                </div>
+                   </div>
+               )}
 
-                {!topic.parentId && subTopics.length > 0 && (
-                    <div className="space-y-3">
-                         <div className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider flex justify-between items-center">
-                             <span>{t('context.subTopics')}</span>
-                             <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded text-[10px]">{subTopics.length}</span>
-                         </div>
-                         <div className="grid grid-cols-2 gap-2">
-                             {subTopics.map(sub => (
-                                 <div key={sub.id} className="flex items-center space-x-2 bg-gray-50 dark:bg-gray-800 p-2 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-600">
-                                     <Folder size={14} className="text-blue-500" />
-                                     <span className="text-xs truncate dark:text-gray-300">{sub.name}</span>
-                                 </div>
-                             ))}
-                         </div>
-                    </div>
-                )}
-
-                {topicPeople.length > 0 && (
-                    <div className="space-y-3">
-                         <div className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wider flex justify-between items-center">
-                             <span>{t('context.people')}</span>
-                             <span className="bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 px-1.5 py-0.5 rounded text-[10px]">{topicPeople.length}</span>
-                         </div>
-                         <div className="grid grid-cols-3 gap-2">
-                             {topicPeople.map(p => {
-                                 const pCover = files[p.coverFileId];
-                                 return (
-                                     <div key={p.id} className="flex flex-col items-center p-2 bg-gray-50 dark:bg-gray-800 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                                         <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mb-1 relative">
-                                             {pCover ? (
-                                                p.faceBox ? (
-                                                    <img 
-                                                        src={convertFileSrc(pCover.path)}
-                                                        className="absolute max-w-none"
-                                                        decoding="async"
-                                                        style={{
-                                                            width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
-                                                            height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                                            left: 0,
-                                                            top: 0,
-                                                            transformOrigin: 'top left',
-                                                            transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
-                                                            willChange: 'transform, width, height',
-                                                            backfaceVisibility: 'hidden',
-                                                            imageRendering: 'auto'
-                                                        }}
-                                                    />
-                                                ) : (
-                                                    <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover" />
-                                                )
-                                             ) : <User className="w-full h-full p-2 text-gray-400"/>}
-                                         </div>
-                                         <span className="text-[10px] text-center w-full truncate dark:text-gray-300">{p.name}</span>
-                                     </div>
-                                 );
-                             })}
-                         </div>
-                    </div>
-                )}
-
-                <div className="pt-6 border-t border-gray-100 dark:border-gray-800">
-                    <button 
-                        onClick={() => onDeleteTopic && onDeleteTopic(topic.id)}
-                        className="w-full py-2.5 flex items-center justify-center text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors text-sm font-medium"
-                    >
-                        <Trash2 size={16} className="mr-2" />
-                        Delete Topic
-                    </button>
-                </div>
+               {/* 底部功能区 - 删除按钮 */}
+               <div className="pt-8 pb-4 flex justify-center">
+                   <button 
+                       onClick={() => onDeleteTopic && onDeleteTopic(topic.id)}
+                       className="flex items-center gap-2 px-6 py-3 text-red-500/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-2xl transition-all text-sm font-bold tracking-tight opacity-70 hover:opacity-100"
+                   >
+                       <Trash2 size={16} />
+                       {t('context.deleteTopic')}
+                   </button>
+               </div>
            </div>
 
+           {/* 现代化保存消息提示 */}
            {showSavedTopic && (
-              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg backdrop-blur animate-fade-in flex items-center">
-                  <Check size={12} className="mr-1.5"/>
+              <div className="fixed bottom-8 left-[calc(100%-160px)] transform -translate-x-1/2 bg-gray-900/90 dark:bg-white/90 text-white dark:text-gray-900 text-xs font-bold px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md animate-toast-up flex items-center z-50">
+                  <Check size={14} className="mr-2 text-green-500"/>
                   {t('context.saved')}
               </div>
-          )}
+           )}
         </div>
       );
   }
@@ -928,9 +1068,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
                   
                   return (
-                    <div key={personId} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
+                    <div 
+                      key={personId} 
+                      className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
+                      onClick={() => onSelectPerson && onSelectPerson(personId)}
+                    >
                       {/* Avatar */}
-                      <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0 relative">
+                      <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
                         {coverUrl ? (
                           selectedPerson.faceBox ? (
                             <img 
@@ -1350,11 +1494,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                 {Array.from(faceNames)
                                                     .sort()
                                                     .slice(0, 8)
-                                                    .map(name => (
-                                                        <span key={name} className="px-2 py-1 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 text-[10px] rounded border border-purple-100 dark:border-purple-900/30 flex items-center">
-                                                            {name}
-                                                        </span>
-                                                    ))}
+                                                    .map(name => {
+                                                        const personEntry = people ? Object.values(people).find(p => p.name === name) : null;
+                                                        return (
+                                                            <span 
+                                                                key={name} 
+                                                                className={`px-2 py-1 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 text-[10px] rounded border border-purple-100 dark:border-purple-900/30 flex items-center transition-all ${personEntry ? 'cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-800/30 active:scale-95' : ''}`}
+                                                                onClick={() => personEntry && onSelectPerson && onSelectPerson(personEntry.id)}
+                                                            >
+                                                                {name}
+                                                            </span>
+                                                        );
+                                                    })}
                                             </div>
                                         </div>
                                     );
@@ -1436,7 +1587,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Smile size={10} className="mr-1"/> {t('meta.aiFaces')}</div>
                                         <div className="flex flex-wrap gap-1.5">
                                             {file.aiData.faces.map(face => (
-                                                <div key={face.id} className="flex items-center bg-white dark:bg-gray-800 px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm">
+                                                <div 
+                                                    key={face.id} 
+                                                    className={`flex items-center bg-white dark:bg-gray-800 px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm transition-all ${face.personId ? 'cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-95' : ''}`}
+                                                    onClick={() => face.personId && onSelectPerson && onSelectPerson(face.personId)}
+                                                >
                                                     <User size={10} className="mr-1 text-purple-500"/>
                                                     <span className="text-gray-700 dark:text-gray-300">{face.name}</span>
                                                 </div>
