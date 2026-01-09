@@ -231,6 +231,30 @@ interface MetadataPanelProps {
 - 缩略图生成
 - 分组显示
 
+#### `TopicModule.tsx` - 专题模块
+**位置**: `src/components/TopicModule.tsx`
+
+**功能（白话说明）**:
+- 在「画廊」视图中展示所有专题，双击或点击专题可以进入该专题的详情页，详情页显示专题下的图片和相关人物。
+- 支持用户创建、重命名和删除专题；可以为专题选择封面并对封面进行裁剪来调整显示区域。
+- 支持多选（Ctrl/Shift）、框选与右键菜单，方便对多个专题执行批量操作（例如删除、设置封面等）。
+- 支持子专题（父/子层级）、把文件加入/移出专题，以及在新标签中打开专题进行并行查看。
+- 与人物数据库联动，可以查看专题中出现的人物并为专题关联或解除人物。
+
+**主要 Props（白话说明）**:
+- `topics`: 专题对象的字典（id -> Topic），包含专题名、文件 id 列表、关联人物 id 等信息
+- `files`: 文件对象字典（id -> FileNode），用于显示封面和专题内的图片
+- `people`: 人物对象字典（id -> Person），用于在专题详情中显示和关联人物
+- `currentTopicId`: 当前打开的专题 id；为 `null` 时显示专题画廊
+- `selectedTopicIds`: 当前被选中的专题 id 列表（用于批量操作）
+- 回调（在父组件中实现，用于状态变更）:
+  - `onNavigateTopic(topicId | null)`: 打开或关闭专题详情
+  - `onCreateTopic(parentId | null, name?)`: 在指定父专题下创建新专题
+  - `onUpdateTopic(topicId, updates)`: 更新专题信息（如名称、描述、封面等）
+  - `onDeleteTopic(topicId)`: 删除指定专题
+  - `onSelectTopics(ids)`: 更新选中的专题集合
+  - `onSelectFiles(fileIds)`: 更新专题内被选中文件的状态
+
 #### `TreeSidebar.tsx` - 树形侧边栏
 **位置**: `src/components/TreeSidebar.tsx`  
 **功能**: 文件夹树形导航

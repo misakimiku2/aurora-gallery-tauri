@@ -43,7 +43,9 @@ aurora-gallery-tauri/
 │   │   ├── main.rs                  # Tauri 主程序入口 (400+ 行)
 │   │   ├── color_db.rs              # 色彩数据库操作 (300+ 行)
 │   │   ├── color_extractor.rs       # 色彩提取算法 (200+ 行)
-│   │   └── color_worker.rs          # 后台色彩处理工作器 (760+ 行)
+│   │   ├── color_worker.rs          # 后台色彩处理工作器 (760+ 行)
+│   │   └── db/
+│   │       └── persons.rs           # 人物数据库操作（插入/更新/删除/头像更新）
 │   ├── 📁 icons/                    # 应用图标 (多尺寸)
 │   │   ├── icon.png
 │   │   ├── 32x32.png

@@ -237,7 +237,26 @@ interface Person {
   coverFileId: string
   count: number
   description?: string
-  descriptor?: any
+  descriptor?: any  // 人脸特征向量（序列化）
+  faceBox?: { x: number, y: number, w: number, h: number }
+  updatedAt?: string
+}
+```
+
+### 后端 API（新增：人物数据库）
+```rust
+#[tauri::command]
+fn db_get_all_people() -> Result<Vec<db::persons::Person>, String>
+
+#[tauri::command]
+fn db_upsert_person(person: db::persons::Person) -> Result<(), String>
+
+#[tauri::command]
+fn db_delete_person(id: String) -> Result<(), String>
+
+#[tauri::command]
+fn db_update_person_avatar(person_id: String, cover_file_id: String, face_box: Option<db::persons::FaceBox>) -> Result<(), String>
+```
   faceBox?: { x: number; y: number; w: number; h: number }
 }
 ```

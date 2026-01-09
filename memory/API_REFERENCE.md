@@ -57,6 +57,28 @@ export const ColorSearchExample: React.FC = () => {
 - `ColorPickerPopover` 的 `onChange` 返回 `#RRGGBB` 格式的字符串, 可直接作为 `searchByColor` 的参数。
 - 前端应对后端返回的绝对路径进行归一化（移除 `\\?\` 前缀、反斜杠转斜杠、转小写）以提高与 `state.files[*].path` 的匹配成功率。
 
+### TopicModule (src/components/TopicModule.tsx)
+- **功能**: 专题（Topic）画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物（Person）的关联、封面设置与裁剪、以及主题内文件的浏览与选择。
+- **主要 Props**:
+  - `topics: Record<string, Topic>`
+  - `files: Record<string, FileNode>`
+  - `people: Record<string, Person>`
+  - `currentTopicId: string | null`
+  - `selectedTopicIds: string[]`
+  - `onNavigateTopic: (topicId: string | null) => void`
+  - `onCreateTopic: (parentId: string | null, name?: string) => void`
+  - `onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void`
+  - `onDeleteTopic: (topicId: string) => void`
+  - `onSelectTopics: (ids: string[]) => void`
+  - `onSelectFiles: (fileIds: string[]) => void`
+
+**使用场景**:
+- 在侧栏或概览页显示专题集合（专题画廊）
+- 双击专题或在专题中打开专题详情页以查看该专题下的图片和关联的人物
+- 右键菜单支持批量操作、重命名与删除
+
+---
+
 
 ## 前端 API (TypeScript)
 
@@ -358,6 +380,16 @@ const paths = await getDefaultPaths()
 console.log('资源根目录:', paths.resourceRoot)
 console.log('缓存根目录:', paths.cacheRoot)
 ```
+
+---
+
+### 数据库 / 人物 API
+- `dbGetAllPeople(): Promise<Person[]>` - 从后端读取所有人物
+- `dbUpsertPerson(person: Person): Promise<void>` - 插入或更新人物信息（用于 AI 识别后保存）
+- `dbDeletePerson(id: string): Promise<void>` - 删除人物记录
+- `dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void>` - 更新人物头像信息（包括脸部框）
+
+**后端对应命令 (Tauri)**: `db_get_all_people`, `db_upsert_person`, `db_delete_person`, `db_update_person_avatar`
 
 ---
 

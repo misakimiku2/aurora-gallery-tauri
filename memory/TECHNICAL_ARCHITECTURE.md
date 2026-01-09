@@ -47,7 +47,8 @@ App (根组件)
 ├── MainContent (主内容区)
 │   ├── FileGrid (文件网格)
 │   ├── ImageViewer (图片查看器)
-│   └── SequenceViewer (序列查看器)
+│   ├── SequenceViewer (序列查看器)
+│   └── TopicModule (专题模块)  - 白话：在画廊中展示专题，点开可以查看专题详情（包含图片和关联人物）。支持创建/重命名/删除专题、为专题设置并裁剪封面、对专题进行多选与批量操作等（见 `src/components/TopicModule.tsx`）。
 ├── MetadataPanel (元数据面板)
 ├── Modals (模态框)
 │   ├── SettingsModal (设置)
@@ -195,6 +196,14 @@ export class TauriBridge {
   static async getPendingFiles(limit: number): Promise<string[]> {
     return await invoke('get_pending_files', { limit })
   }
+
+  // 人物数据库 API（白话）：
+  // - dbGetAllPeople(): 返回所有保存的人物，供 UI 列表或选择使用
+  // - dbUpsertPerson(person): 插入或更新人物信息（通常由 AI 识别或用户编辑触发）
+  // - dbDeletePerson(id): 删除指定人物记录
+  // - dbUpdatePersonAvatar(personId, coverFileId, faceBox): 更新人物头像信息（保存封面文件 id 和脸部框）
+  
+  // 示例：前端调用这些方法以同步识别结果到后端数据库、或读取人物列表展示给用户
   
   // 进度监听
   static async listenProgress(callback: (progress: any) => void): Promise<void> {
@@ -204,6 +213,13 @@ export class TauriBridge {
     return unlisten
   }
 }
+
+---
+
+-- 人物（persons）表（白话说明） --
+-- 存储已识别的人物信息：包括人物 id、名字、封面文件 id（cover_file_id）、出现次数计数（count）、可选描述、头像的人脸框（face_box_x/face_box_y/face_box_w/face_box_h）以及最后更新时间（updated_at）。
+-- 前端通过 Tauri 命令（如 dbUpsertPerson、dbUpdatePersonAvatar、dbDeletePerson）来维护该表，UI 可以调用 dbGetAllPeople 列出人物供选择或管理。
+
 ```
 
 #### Rust 后端架构
