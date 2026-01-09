@@ -1033,8 +1033,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                              </div>
                                                          </div>
 
-                                                         {subCount > 0 && (
-                                                             <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-white dark:border-gray-900">
+                                                         {subCount > 1 && (
+                                                             <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-white dark:border-gray-900 opacity-0 group-hover/person:opacity-100 transform scale-90 group-hover/person:scale-100 transition-all duration-150 pointer-events-none">
                                                                  {subCount}
                                                              </div>
                                                          )}
@@ -1223,6 +1223,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     topic={currentEditingTopic}
                     topics={topics}
                     files={files}
+                    resourceRoot={resourceRoot}
+                    cachePath={cachePath}
                     onClose={() => {
                         setShowCoverModal(false);
                         setCurrentEditingTopic(null);
@@ -1408,12 +1410,14 @@ interface SetCoverModalProps {
     topic: Topic;
     topics: Record<string, Topic>;
     files: Record<string, FileNode>;
+    resourceRoot?: string;
+    cachePath?: string;
     onClose: () => void;
     onSetCover: (fileId: string, cropData: CoverCropData) => void;
     t: (key: string) => string;
 }
 
-const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, onClose, onSetCover, t }) => {
+const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, resourceRoot, cachePath, onClose, onSetCover, t }) => {
     const [selectedFileId, setSelectedFileId] = useState<string | null>(() => {
         if (topic.coverFileId) return topic.coverFileId;
         if (topic.fileIds?.length) {
@@ -1641,7 +1645,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, onC
                 {/* Header */}
                 <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 rounded-t-lg">
                     <h3 className="font-bold text-lg text-gray-900 dark:text-white">
-                        {t('context.setTopicCover') || '设置专题封面'}
+                        {t('context.setCover') || '设置专题封面'}
                     </h3>
                 </div>
 
@@ -1753,12 +1757,19 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, onC
                                                         }`}
                                                     >
                                                         <div className="relative aspect-square">
-                                                            <div 
-                                                                className="absolute inset-0 bg-cover bg-center"
-                                                                style={{ backgroundImage: `url("${convertFileSrc(img.path)}")` }}
+                                                            <ImageThumbnail
+                                                                src={''}
+                                                                alt={img.name}
+                                                                isSelected={isSelected}
+                                                                filePath={img.path}
+                                                                modified={img.updatedAt}
+                                                                isHovering={false}
+                                                                fileMeta={img.meta}
+                                                                resourceRoot={resourceRoot}
+                                                                cachePath={cachePath}
                                                             />
                                                             {isSelected && (
-                                                                <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
+                                                                <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center pointer-events-none">
                                                                     <div className="bg-blue-500 rounded-full p-1">
                                                                         <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
                                                                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -1789,7 +1800,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, onC
                     <div className="flex-1 max-w-xs mr-4">
                         {selectedFile && (
                             <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700">
-                                <span className="text-xs font-medium text-gray-500 whitespace-nowrap">缩放</span>
+                                <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{t('context.zoom') || '缩放'}</span>
                                 <span className="text-xs text-gray-400 select-none">-</span>
                                 <input 
                                     type="range" 

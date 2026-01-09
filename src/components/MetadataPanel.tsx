@@ -960,8 +960,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                 </div>
                                             </div>
 
-                                            {subCount > 0 && (
-                                                <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] font-bold rounded-full w-6 h-6 flex items-center justify-center shadow-md border-2 border-white dark:border-gray-900">
+                                            {subCount > 1 && (
+                                                <div className="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] font-bold rounded-full w-6 h-6 flex items-center justify-center shadow-md border-2 border-white dark:border-gray-900 opacity-0 group-hover/avatar:opacity-100 transform scale-90 group-hover/avatar:scale-100 transition-all duration-150 pointer-events-none">
                                                     {subCount}
                                                 </div>
                                             )}

@@ -8,7 +8,7 @@ import { ImageViewer } from './components/ImageViewer';
 import { SequenceViewer } from './components/SequenceViewer';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
-import { FileGrid, InlineRenameInput } from './components/FileGrid';
+import { FileGrid, InlineRenameInput, ImageThumbnail } from './components/FileGrid';
 import { TopicModule } from './components/TopicModule';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
@@ -427,7 +427,7 @@ const ToastItem: React.FC<ToastItemProps> = ({ task, onUndo, onDismiss: onDismis
 const WelcomeModal = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t }: any) => { const [step, setStep] = useState(1); if (!show) return null; return ( <div className="fixed inset-0 z-[200] bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-8 animate-fade-in"><div className="max-w-2xl w-full bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col md:flex-row h-[500px]"><div className="w-full md:w-1/2 bg-blue-600 p-8 flex flex-col justify-between text-white relative overflow-hidden"><div className="z-10"><div className="flex items-center space-x-2 mb-4"><AuroraLogo size={40} className="shadow-lg" /><span className="font-bold text-xl tracking-wider">AURORA</span></div><h1 className="text-3xl font-bold leading-tight mb-4">{step === 1 ? t('welcome.step1Title') : t('welcome.step2Title')}</h1><p className="text-blue-100 opacity-90">{step === 1 ? t('welcome.step1Desc') : t('welcome.step2Desc')}</p></div><div className="absolute -bottom-20 -right-20 w-64 h-64 bg-blue-500 rounded-full opacity-50 blur-3xl"></div><div className="absolute top-20 -left-20 w-48 h-48 bg-purple-500 rounded-full opacity-30 blur-3xl"></div><div className="flex space-x-2 z-10"><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 1 ? 'bg-white' : 'bg-white/30'}`}></div><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 2 ? 'bg-white' : 'bg-white/30'}`}></div></div></div><div className="w-full md:w-1/2 p-8 flex flex-col relative bg-gray-50 dark:bg-gray-900">{step === 1 && (<div className="flex-1 flex flex-col justify-center space-y-6"><div className="text-center"><div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400"><HardDrive size={32} /></div><button onClick={onSelectFolder} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center justify-center w-full">{t('welcome.selectFolder')}</button></div>{currentPath && (<div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center"><div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div><div className="text-sm font-mono truncate px-2">{currentPath}</div></div>)}</div>)}{step === 2 && (<div className="flex-1 space-y-6 flex flex-col justify-center"><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label><div className="grid grid-cols-2 gap-3">{['zh', 'en'].map(lang => (<button key={lang} onClick={() => onUpdateSettings({ language: lang })} className={`px-3 py-2 rounded-lg border text-sm font-medium transition-all ${settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{lang === 'zh' ? '中文' : 'English'}</button>))}</div></div><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.theme')}</label><div className="grid grid-cols-3 gap-2">{['light', 'dark', 'system'].map(theme => (<button key={theme} onClick={() => onUpdateSettings({ theme })} className={`px-2 py-2 rounded-lg border text-xs font-medium transition-all flex flex-col items-center justify-center ${settings.theme === theme ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{theme === 'light' && <Sun size={16} className="mb-1"/>}{theme === 'dark' && <Moon size={16} className="mb-1"/>}{theme === 'system' && <Monitor size={16} className="mb-1"/>}{t(`settings.theme${theme.charAt(0).toUpperCase() + theme.slice(1)}`)}</button>))}</div></div></div>)}<div className="mt-6 flex justify-between items-center pt-6 border-t border-gray-100 dark:border-gray-800">{step === 2 ? (<button onClick={onFinish} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm font-medium px-4">{t('welcome.skip')}</button>) : (<div></div>)}<button onClick={() => { if (step === 1) { if (currentPath) setStep(2); } else { onFinish(); } }} disabled={step === 1 && !currentPath} className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && !currentPath ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}>{step === 1 ? t('welcome.next') : t('welcome.finish')}<ChevronRight size={16} className="ml-2" /></button></div></div></div></div> ); };
 
 // ... (CropAvatarModal and other helpers remain unchanged)
-const CropAvatarModal = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t }: any) => {
+const CropAvatarModal = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t, resourceRoot, cachePath }: any) => {
   // 基础状态
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -639,137 +639,171 @@ const CropAvatarModal = ({ fileUrl, initialBox, personId, allFiles, people, onCo
 
   return (
     <div className="fixed inset-0 z-[150] bg-black/70 flex items-center justify-center p-4 animate-fade-in" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col md:flex-row w-full max-w-4xl max-h-[90vh]">
-            {/* 左侧：裁剪区域 */}
-            <div className="flex flex-col w-full md:w-1/2 p-6">
-                <div className="font-bold text-gray-800 dark:text-white mb-4">
-                    <span>{t('context.cropAvatar')}</span>
-                </div>
-                <div 
-                    ref={containerRef}
-                    className="relative bg-gray-100 dark:bg-black overflow-hidden cursor-move select-none flex-shrink-0"
-                    style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE, margin: '0 auto' }}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                >
-                    <img 
-                       ref={imgRef}
-                       src={fileUrl}
-                       draggable={false}
-                       onLoad={handleImageLoad}
-                       className="max-w-none absolute origin-top-left pointer-events-none"
-                       style={{ 
-                           transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
-                       }}
-                    />
-                    <div className="absolute inset-0 pointer-events-none">
-                        <svg width="100%" height="100%">
-                            <defs>
-                                <mask id="cropMask">
-                                    <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                                    <circle cx={VIEWPORT_SIZE/2} cy={VIEWPORT_SIZE/2} r={CROP_SIZE/2} fill="black" />
-                                </mask>
-                            </defs>
-                            <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#cropMask)" />
-                            
-                            <circle 
-                                cx={VIEWPORT_SIZE/2} 
-                                cy={VIEWPORT_SIZE/2} 
-                                r={CROP_SIZE/2} 
-                                fill="none" 
-                                stroke="white" 
-                                strokeWidth="2" 
-                                style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
-                            />
-                        </svg>
-                    </div>
-                </div>
-                <div className="mt-6 space-y-4">
-                    <div className="flex items-center space-x-3">
-                        <Minus size={16} className="text-gray-500"/>
-                        <input 
-                        type="range" 
-                        id="crop-zoom-slider"
-                        name="crop-zoom-slider"
-                        min="0.1" 
-                        max="5" 
-                        step="0.01" 
-                        value={scale}
-                        onChange={(e) => {
-                            const newScale = parseFloat(e.target.value);
-                            if (imgRef.current) {
-                                const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
-                                if (newScale >= minScale) setScale(newScale);
-                            } else {
-                                setScale(newScale);
-                            }
-                        }}
-                        className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer"
-                    />
-                        <Plus size={16} className="text-gray-500"/>
-                    </div>
-                    <div className="flex justify-end space-x-3">
-                        <button onClick={onClose} className="px-4 py-2 rounded text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">{t('settings.cancel')}</button>
-                        <button onClick={handleSave} className="px-6 py-2 rounded text-sm bg-blue-600 text-white hover:bg-blue-700 font-bold shadow-lg">{t('settings.confirm')}</button>
-                    </div>
-                </div>
+        <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col w-full max-w-5xl h-[85vh]" onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/20">
+                <h3 className="font-bold text-lg text-gray-800 dark:text-white">
+                    {t('context.setAvatar') || '设置头像'}
+                </h3>
             </div>
-            
-            {/* 右侧：文件列表 */}
-            <div className="w-full md:w-1/2 border-l border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-800">
-                    <div className="relative">
-                        <input
-                            type="text"
-                            placeholder={t('search.placeholder')}
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+
+            {/* Main Content Area */}
+            <div className="flex-1 flex flex-row overflow-hidden">
+                {/* Left: Crop Preview */}
+                <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-800">
+                    <div 
+                        ref={containerRef}
+                        className="relative bg-gray-200 dark:bg-black overflow-hidden cursor-move select-none shadow-lg rounded-full mb-6"
+                        style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                    >
+                        <img 
+                           ref={imgRef}
+                           src={fileUrl}
+                           draggable={false}
+                           onLoad={handleImageLoad}
+                           className="max-w-none absolute origin-top-left pointer-events-none"
+                           style={{ 
+                               transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
+                           }}
+                           alt="Avatar preview"
                         />
-                        <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <div className="absolute inset-0 pointer-events-none">
+                            <svg width="100%" height="100%">
+                                <defs>
+                                    <mask id="cropMask">
+                                        <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                                        <circle cx={VIEWPORT_SIZE/2} cy={VIEWPORT_SIZE/2} r={CROP_SIZE/2} fill="black" />
+                                    </mask>
+                                </defs>
+                                <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#cropMask)" />
+                                
+                                <circle 
+                                    cx={VIEWPORT_SIZE/2} 
+                                    cy={VIEWPORT_SIZE/2} 
+                                    r={CROP_SIZE/2} 
+                                    fill="none" 
+                                    stroke="white" 
+                                    strokeWidth="2" 
+                                    style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
+                                />
+                            </svg>
+                        </div>
+                    </div>
+                    
+                    <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-800">
+                        {t('context.cropHint') || '拖拽图片调整位置 • 滚轮缩放'}
                     </div>
                 </div>
                 
-                <div className="flex-1 overflow-y-auto p-4">
-                    {filteredImages.length === 0 ? (
-                        <div className="text-center text-gray-500 dark:text-gray-400 py-8">
-                            <p>{t('context.noImagesFound')}</p>
-                            {searchQuery && <p className="text-sm mt-2">{t('context.noImagesMatchingQuery')}</p>}
+                {/* Right: File Selection */}
+                <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-gray-900">
+                    <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-black/10">
+                        <div className="relative">
+                            <input
+                                type="text"
+                                placeholder={t('search.placeholder') || '搜索...'}
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-sm"
+                            />
+                            <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                         </div>
-                    ) : (
-                        <div className="grid grid-cols-3 gap-3">
-                            {filteredImages.map((file) => {
-                                const isSelected = selectedFile === file.id;
-                                return (
-                                    <div
-                                        key={file.id}
-                                        onClick={() => handleImageSelect(file)}
-                                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all duration-200 hover:shadow-md ${
-                                            isSelected ? 'border-blue-500 shadow-lg' : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700'
-                                        }`}
-                                    >
-                                        <div className="relative">
-                                            <img
-                                                src={convertFileSrc(file.path)}
-                                                className="w-full h-24 object-cover"
-                                                alt={file.name}
-                                            />
-                                            {isSelected && (
-                                                <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center">
-                                                    <Check size={24} className="text-white" />
-                                                </div>
-                                            )}
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-4">
+                        {filteredImages.length === 0 ? (
+                            <div className="text-center text-gray-500 dark:text-gray-400 py-12 flex flex-col items-center">
+                                <ImageIcon size={48} className="mb-4 opacity-10" />
+                                <p>{t('context.noImagesFound')}</p>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+                                {filteredImages.map((file) => {
+                                    const isSelected = selectedFile === file.id;
+                                    return (
+                                        <div
+                                            key={file.id}
+                                            onClick={() => handleImageSelect(file)}
+                                            className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all duration-200 shadow-sm ${
+                                                isSelected ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md' : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
+                                            }`}
+                                        >
+                                            <div className="relative aspect-square">
+                                                <ImageThumbnail
+                                                    src={''}
+                                                    alt={file.name}
+                                                    isSelected={isSelected}
+                                                    filePath={file.path}
+                                                    modified={file.updatedAt}
+                                                    isHovering={false}
+                                                    fileMeta={file.meta}
+                                                    resourceRoot={resourceRoot}
+                                                    cachePath={cachePath}
+                                                />
+                                                {isSelected && (
+                                                    <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center pointer-events-none">
+                                                        <div className="bg-blue-500 rounded-full p-1 shadow-lg">
+                                                            <Check size={20} className="text-white" />
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="p-2 bg-gray-50 dark:bg-black/20 border-t border-gray-100 dark:border-gray-800">
+                                                <p className="text-xs text-gray-600 dark:text-gray-300 truncate font-medium">
+                                                    {file.name}
+                                                </p>
+                                            </div>
                                         </div>
-                                        <div className="p-2 bg-white dark:bg-gray-800">
-                                            <p className="text-xs text-gray-600 dark:text-gray-300 truncate">
-                                                {file.name}
-                                            </p>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/30 rounded-b-xl flex items-center justify-between">
+                {/* Zoom Control */}
+                <div className="flex-1 max-w-xs">
+                    <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
+                        <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{t('context.zoom') || '缩放'}</span>
+                        <input 
+                            type="range" 
+                            min="0.1" 
+                            max="5" 
+                            step="0.01" 
+                            value={scale}
+                            onChange={(e) => {
+                                const newScale = parseFloat(e.target.value);
+                                if (imgRef.current) {
+                                    const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
+                                    if (newScale >= minScale) setScale(newScale);
+                                } else {
+                                    setScale(newScale);
+                                }
+                            }}
+                            className="flex-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                        />
+                    </div>
+                </div>
+
+                <div className="flex space-x-3">
+                    <button 
+                        onClick={onClose} 
+                        className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
+                    >
+                        {t('settings.cancel') || '取消'}
+                    </button>
+                    <button 
+                        onClick={handleSave} 
+                        disabled={!selectedFile}
+                        className="px-8 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform active:scale-95"
+                    >
+                        {t('settings.confirm') || '确认'}
+                    </button>
                 </div>
             </div>
         </div>
@@ -6189,6 +6223,8 @@ export const App: React.FC = () => {
              onConfirm={(box: any) => handleSaveAvatarCrop(state.activeModal.data.personId, box)}
              onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))}
              t={t}
+             resourceRoot={state.settings.paths.resourceRoot}
+             cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
           />
       )}
       {state.activeModal.type === 'exit-confirm' && (

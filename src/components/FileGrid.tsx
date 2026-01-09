@@ -1235,7 +1235,7 @@ const PersonCard = React.memo(({
       <div 
         className={`rounded-full p-1 transition-all duration-300 relative shadow-md
           ${isSelected 
-            ? 'bg-blue-600 scale-110 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
+            ? 'bg-blue-600 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
             : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
           }
         `}
@@ -1277,13 +1277,6 @@ const PersonCard = React.memo(({
             )}
           </div>
         </div>
-        
-        {/* Selection Checkmark */}
-        {isSelected && (
-          <div className="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1.5 border-2 border-white dark:border-gray-900 shadow-lg ring-2 ring-blue-400/50">
-            <Check size={Math.max(14, avatarSize * 0.17)} strokeWidth={3} />
-          </div>
-        )}
       </div>
       
       <div className="mt-4 text-center w-full px-2">
