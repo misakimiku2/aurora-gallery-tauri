@@ -734,3 +734,47 @@ export const startDragToExternal = async (
   }
 };
 
+// ==========================================
+// Database / Person APIs
+// ==========================================
+
+export const dbGetAllPeople = async (): Promise<any[]> => {
+  if (!isTauriEnvironment()) return [];
+  try {
+    return await invoke('db_get_all_people');
+  } catch (e) {
+    console.error('Failed to get people from db:', e);
+    return [];
+  }
+};
+
+export const dbUpsertPerson = async (person: any): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('db_upsert_person', { person });
+  } catch (e) {
+    console.error('Failed to upsert person:', e);
+    throw e;
+  }
+};
+
+export const dbDeletePerson = async (id: string): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('db_delete_person', { id });
+  } catch (e) {
+    console.error('Failed to delete person:', e);
+    throw e;
+  }
+};
+
+export const dbUpdatePersonAvatar = async (personId: string, coverFileId: string, faceBox: any): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('db_update_person_avatar', { personId, coverFileId, faceBox });
+  } catch (e) {
+    console.error('Failed to update person avatar:', e);
+    throw e;
+  }
+};
+

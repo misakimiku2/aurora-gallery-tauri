@@ -21,6 +21,9 @@ use palette::{FromColor, Srgb, Lab};
 mod color_extractor;
 mod color_db;
 mod color_worker;
+mod db;
+
+use db::AppDbPool;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1938,6 +1941,35 @@ async fn get_dominant_colors(
     Ok(colors)
 }
 
+#[tauri::command]
+fn db_get_all_people(pool: tauri::State<AppDbPool>) -> Result<Vec<db::persons::Person>, String> {
+    let conn = pool.get_connection();
+    db::persons::get_all_people(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_upsert_person(pool: tauri::State<AppDbPool>, person: db::persons::Person) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::persons::upsert_person(&conn, &person).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_delete_person(pool: tauri::State<AppDbPool>, id: String) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::persons::delete_person(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_update_person_avatar(
+    pool: tauri::State<AppDbPool>, 
+    person_id: String, 
+    cover_file_id: String, 
+    face_box: Option<db::persons::FaceBox>
+) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::persons::update_person_avatar(&conn, &person_id, &cover_file_id, face_box.as_ref()).map_err(|e| e.to_string())
+}
+
 fn main() {
     
     tauri::Builder::default()
@@ -1975,7 +2007,11 @@ fn main() {
             color_worker::pause_color_extraction,
             color_worker::resume_color_extraction,
             force_wal_checkpoint,
-            get_wal_info
+            get_wal_info,
+            db_get_all_people,
+            db_upsert_person,
+            db_delete_person,
+            db_update_person_avatar
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -2060,6 +2096,26 @@ fn main() {
             // 将数据库连接池保存到应用状态
             let pool_arc = Arc::new(pool);
             app.manage(pool_arc.clone());
+
+            // 初始化应用通用数据库 (Metadata/Persons)
+            let app_db_path = app_data_dir.join("metadata.db");
+            let app_db_pool = match AppDbPool::new(&app_db_path) {
+                Ok(pool) => {
+                    // Limit the scope of the connection guard so it is dropped
+                    // before we move the pool out of this match arm.
+                    {
+                        let conn = pool.get_connection();
+                        if let Err(e) = db::init_db(&conn) {
+                             eprintln!("Failed to initialize app database: {}", e);
+                        }
+                    }
+                    pool
+                },
+                Err(e) => {
+                    panic!("Failed to create app database pool: {}", e);
+                }
+            };
+            app.manage(app_db_pool);
             
             // 启动后台颜色提取任务
             // 持续处理待处理文件，每批最多处理50个文件

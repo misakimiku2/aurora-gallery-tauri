@@ -6,6 +6,8 @@ authors = ["you"]
 license = ""
 repository = ""
 edition = "2021"
+# Ensure `cargo run` picks the app binary when multiple bins exist (e.g., debug helpers)
+default-run = "aurora-gallery-tauri"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
