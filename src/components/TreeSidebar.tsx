@@ -213,19 +213,30 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSe
                            >
                               <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
                                  {coverFile ? (
-                                   <div 
-                                     className="w-full h-full" 
-                                     style={{
-                                       backgroundImage: `url("${convertFileSrc(coverFile.path)}")`,
-                                       backgroundSize: person.faceBox 
-                                         ? `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%` 
-                                         : 'cover',
-                                       backgroundPosition: person.faceBox 
-                                         ? `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%` 
-                                         : 'center',
-                                       backgroundRepeat: 'no-repeat'
-                                     }}
-                                   />
+                                     person.faceBox ? (
+                                        <img 
+                                          src={convertFileSrc(coverFile.path)} 
+                                          alt={person.name}
+                                          className="absolute max-w-none"
+                                          decoding="async"
+                                          style={{
+                                              width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                                              height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                              left: 0,
+                                              top: 0,
+                                              transformOrigin: 'top left',
+                                              transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
+                                              willChange: 'transform, width, height',
+                                              backfaceVisibility: 'hidden'
+                                          }}
+                                        />
+                                     ) : (
+                                        <img 
+                                          src={convertFileSrc(coverFile.path)} 
+                                          alt={person.name}
+                                          className="w-full h-full object-cover" 
+                                        />
+                                     )
                                  ) : (
                                    <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={16}/></div>
                                  )}

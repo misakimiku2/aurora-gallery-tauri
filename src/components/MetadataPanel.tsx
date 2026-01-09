@@ -756,9 +756,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-           <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0">
+           <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
                {coverUrl ? (
-                   <div className="w-full h-full bg-cover bg-center" style={{backgroundImage: `url("${coverUrl}")`}} />
+                   <img src={coverUrl} className="w-full h-full object-cover" />
                ) : (
                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
                        <Layout size={48} className="mb-2 opacity-50" />
@@ -850,9 +850,28 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                  const pCover = files[p.coverFileId];
                                  return (
                                      <div key={p.id} className="flex flex-col items-center p-2 bg-gray-50 dark:bg-gray-800 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                                         <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mb-1">
+                                         <div className="w-10 h-10 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mb-1 relative">
                                              {pCover ? (
-                                                <div className="w-full h-full bg-cover bg-center" style={{backgroundImage: `url("${convertFileSrc(pCover.path)}")`}} />
+                                                p.faceBox ? (
+                                                    <img 
+                                                        src={convertFileSrc(pCover.path)}
+                                                        className="absolute max-w-none"
+                                                        decoding="async"
+                                                        style={{
+                                                            width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
+                                                            height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
+                                                            left: 0,
+                                                            top: 0,
+                                                            transformOrigin: 'top left',
+                                                            transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                            willChange: 'transform, width, height',
+                                                            backfaceVisibility: 'hidden',
+                                                            imageRendering: 'auto'
+                                                        }}
+                                                    />
+                                                ) : (
+                                                    <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover" />
+                                                )
                                              ) : <User className="w-full h-full p-2 text-gray-400"/>}
                                          </div>
                                          <span className="text-[10px] text-center w-full truncate dark:text-gray-300">{p.name}</span>
@@ -911,17 +930,24 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   return (
                     <div key={personId} className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all">
                       {/* Avatar */}
-                      <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0">
+                      <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0 relative">
                         {coverUrl ? (
                           selectedPerson.faceBox ? (
-                            <div 
-                              className="w-full h-full"
-                              style={{
-                                backgroundImage: `url("${coverUrl}")`,
-                                backgroundSize: `${10000 / Math.min(selectedPerson.faceBox.w, 99.9)}% ${10000 / Math.min(selectedPerson.faceBox.h, 99.9)}%`,
-                                backgroundPosition: `${selectedPerson.faceBox.x / (100 - Math.min(selectedPerson.faceBox.w, 99.9)) * 100}% ${selectedPerson.faceBox.y / (100 - Math.min(selectedPerson.faceBox.h, 99.9)) * 100}%`,
-                                backgroundRepeat: 'no-repeat'
-                              }}
+                            <img 
+                                src={coverUrl} 
+                                className="absolute max-w-none"
+                                decoding="async"
+                                style={{
+                                    width: `${10000 / Math.max(selectedPerson.faceBox.w, 2.0)}%`,
+                                    height: `${10000 / Math.max(selectedPerson.faceBox.h, 2.0)}%`,
+                                    left: 0,
+                                    top: 0,
+                                    transformOrigin: 'top left',
+                                    transform: `translate3d(${-selectedPerson.faceBox.x}%, ${-selectedPerson.faceBox.y}%, 0)`,
+                                    willChange: 'transform, width, height',
+                                    backfaceVisibility: 'hidden',
+                                    imageRendering: 'auto'
+                                }}
                             />
                           ) : (
                             <img 
@@ -975,13 +1001,20 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-gray-200 dark:bg-gray-700 mb-4 relative group">
                     {coverUrl ? (
                        person.faceBox ? (
-                          <div 
-                              className="w-full h-full transition-transform duration-300 group-hover:scale-110"
+                          <img 
+                              src={coverUrl}
+                              className="absolute max-w-none transition-transform duration-300 group-hover:scale-110"
+                              decoding="async"
                               style={{
-                                  backgroundImage: `url("${coverUrl}")`,
-                                  backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
-                                  backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
-                                  backgroundRepeat: 'no-repeat'
+                                  width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                                  height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                  left: 0,
+                                  top: 0,
+                                  transformOrigin: 'top left',
+                                  transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
+                                  willChange: 'transform, width, height',
+                                  backfaceVisibility: 'hidden',
+                                  imageRendering: 'auto'
                               }}
                            />
                        ) : (

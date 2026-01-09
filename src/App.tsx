@@ -17,7 +17,7 @@ import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, getAssetUrl, openPath } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -1261,34 +1261,6 @@ export const App: React.FC = () => {
                             }
                         };
                         
-                        // 如果没有做过迁移，尝试将 user_data.json 中的 people 迁移到数据库（仅在 DB 为空时执行）
-                        if (!savedData._migratedToDb) {
-                            try {
-                                const existing = await dbGetAllPeople();
-                                if ((!existing || existing.length === 0) && savedData.people && Object.keys(savedData.people).length > 0) {
-                                    // 逐条写入数据库
-                                    for (const id of Object.keys(savedData.people)) {
-                                        const p: any = savedData.people[id];
-                                        const toUpsert = {
-                                            id: p.id || id,
-                                            name: p.name || '',
-                                            coverFileId: p.coverFileId || '',
-                                            count: p.count || 0,
-                                            description: p.description || null,
-                                            faceBox: p.faceBox || null,
-                                            updatedAt: Date.now()
-                                        };
-                                        await dbUpsertPerson(toUpsert);
-                                    }
-                                    // 标记已迁移，避免重复迁移
-                                    await tauriSaveUserData({ ...savedData, _migratedToDb: true });
-                                    showToast('People migrated to database');
-                                }
-                            } catch (err) {
-                                console.error('People migration failed:', err);
-                            }
-                        }
-
                         // 更新 state 中的 customTags 和 people
                         setState(prev => ({
                             ...prev,
@@ -1787,6 +1759,29 @@ export const App: React.FC = () => {
         const tagName = activeTab.searchQuery.replace('tag:', '');
         candidates = allFiles.filter((f) => f.tags?.includes(tagName)); 
     } 
+    else if (activeTab.activeTopicId) {
+        // Topic View Filter
+        const topicId = activeTab.activeTopicId;
+        const topic = state.topics[topicId];
+        
+        if (topic) {
+            // Get all images from this topic (and subtopics if it's a parent)
+            const topicFileIds = new Set<string>();
+            
+            // Add images from current topic
+            topic.fileIds?.forEach(id => topicFileIds.add(id));
+            
+            // If it's a parent topic, add images from subtopics
+            if (!topic.parentId) {
+                const subTopics = Object.values(state.topics).filter(t => t.parentId === topic.id);
+                subTopics.forEach(sub => sub.fileIds?.forEach(id => topicFileIds.add(id)));
+            }
+            
+            candidates = allFiles.filter(f => topicFileIds.has(f.id));
+        } else {
+             candidates = [];
+        }
+    }
     else { 
         if (!state.files[activeTab.folderId]) { 
             if (activeTab.searchQuery && activeTab.searchScope !== 'all') { /* continue */ } else { return []; } 
@@ -3472,70 +3467,18 @@ export const App: React.FC = () => {
       }));
   };
 
-  const handleDeletePerson = async (personId: string | string[]) => {
-      const idsToDelete = typeof personId === 'string' ? [personId] : personId;
-
-      // Work on local copies first
-      const prevState = state;
-      const newPeople: Record<string, Person> = { ...prevState.people };
-      const newFiles: Record<string, FileNode> = { ...prevState.files };
-
-      // Remove people from map
-      idsToDelete.forEach(id => delete newPeople[id]);
-
-      // Remove faces associated with deleted people from files
-      Object.keys(newFiles).forEach(fid => {
-          const file = newFiles[fid];
-          if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
-              const filtered = file.aiData.faces.filter(face => !idsToDelete.includes(face.personId));
-              if (filtered.length !== file.aiData.faces.length) {
-                  // Update aiData (create shallow copies to keep immutability)
-                  newFiles[fid] = { ...file, aiData: { ...file.aiData, faces: filtered } };
-              }
-          }
+  const handleDeletePerson = (personId: string | string[]) => {
+      setState(prev => {
+          const newPeople = { ...prev.people };
+          
+          // Handle both single person and multiple people deletion
+          const idsToDelete = typeof personId === 'string' ? [personId] : personId;
+          idsToDelete.forEach(id => {
+              delete newPeople[id];
+          });
+          
+          return { ...prev, people: newPeople, activeModal: { type: null } };
       });
-
-      // Recompute counts for remaining people
-      const counts = new Map<string, number>();
-      Object.values(newFiles).forEach(f => {
-          if (f.type === FileType.IMAGE && f.aiData?.faces) {
-              f.aiData.faces.forEach(face => {
-                  counts.set(face.personId, (counts.get(face.personId) || 0) + 1);
-              });
-          }
-      });
-
-      // Apply new counts to people
-      Object.keys(newPeople).forEach(pid => {
-          const p = newPeople[pid];
-          newPeople[pid] = { ...p, count: counts.get(pid) || 0 };
-      });
-
-      // Update front-end state immediately
-      setState(prev => ({ ...prev, people: newPeople, files: newFiles, activeModal: { type: null } }));
-
-      // Persist deletion and updated counts to DB
-      try {
-          // Delete persons from DB
-          await Promise.all(idsToDelete.map(id => dbDeletePerson(id)));
-
-          // Upsert remaining people counts to DB (only those whose count changed)
-          const upserts = Object.values(newPeople).map(p => ({
-              id: p.id,
-              name: p.name,
-              coverFileId: p.coverFileId || '',
-              count: p.count || 0,
-              description: p.description || null,
-              faceBox: p.faceBox || null,
-              updatedAt: Date.now()
-          }));
-          await Promise.all(upserts.map(u => dbUpsertPerson(u)));
-
-          showToast(t('context.deletedItems').replace('{count}', idsToDelete.length.toString()));
-      } catch (err) {
-          console.error('Failed to persist person deletions:', err);
-          showToast('Failed to persist deletion to database');
-      }
   };
 
   const handleManualAddPerson = (personId: string) => {
@@ -6121,6 +6064,11 @@ export const App: React.FC = () => {
                         onSelectFiles={(ids) => {
                              updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [] });
                         }}
+                        selectedFileIds={activeTab.selectedFileIds}
+                        // Provide resource root / cache for thumbnails and open action
+                        resourceRoot={state.settings.paths.resourceRoot}
+                        cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
+                        onOpenFile={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
                         t={t}
                      />
                   ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (

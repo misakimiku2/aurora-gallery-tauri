@@ -1222,15 +1222,6 @@ const PersonCard = React.memo(({
   const coverFile = files[person.coverFileId];
   const hasCover = !!coverFile;
   const coverSrc = coverFile?.path ? convertFileSrc(coverFile.path) : null;
-  const faceBoxStyle = person.faceBox ? {
-    backgroundSize: `${10000 / Math.min(person.faceBox.w, 99.9)}% ${10000 / Math.min(person.faceBox.h, 99.9)}%`,
-    backgroundPosition: `${person.faceBox.x / (100 - Math.min(person.faceBox.w, 99.9)) * 100}% ${person.faceBox.y / (100 - Math.min(person.faceBox.h, 99.9)) * 100}%`,
-    backgroundRepeat: 'no-repeat'
-  } : {
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat'
-  };
   const { width, height, x, y } = style;
   const avatarSize = Math.min(width, height - 60); // Allow space for text
 
@@ -1253,13 +1244,31 @@ const PersonCard = React.memo(({
       >
         <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
           {hasCover && coverSrc ? (
-            <div
-              className="w-full h-full"
-              style={{
-                backgroundImage: `url("${coverSrc}")`,
-                ...faceBoxStyle
-              }}
-            />
+             person.faceBox ? (
+                <img 
+                    src={coverSrc} 
+                    alt={person.name}
+                    className="absolute max-w-none"
+                    decoding="async"
+                    style={{
+                        width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                        height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                        left: 0,
+                        top: 0,
+                        transformOrigin: 'top left',
+                        transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
+                        willChange: 'transform, width, height',
+                        backfaceVisibility: 'hidden',
+                        imageRendering: 'auto'
+                    }}
+                />
+            ) : (
+                <img 
+                    src={coverSrc} 
+                    alt={person.name}
+                    className="w-full h-full object-cover" 
+                />
+            )
           ) : (
             <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
               <User size={avatarSize * 0.4} strokeWidth={1.5} />

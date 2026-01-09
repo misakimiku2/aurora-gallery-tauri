@@ -1,7 +1,234 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns } from 'lucide-react';
+import { ImageThumbnail } from './FileGrid';
+
+type LayoutMode = 'grid' | 'adaptive' | 'masonry';
+
+interface LayoutItem {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+const useLayout = (
+  items: string[],
+  files: Record<string, FileNode>,
+  layoutMode: LayoutMode,
+  containerWidth: number,
+  thumbnailSize: number = 200
+) => {
+  const aspectRatios = useMemo(() => {
+    const ratios: Record<string, number> = {};
+    items.forEach(id => {
+      const file = files[id];
+      ratios[id] = file?.meta?.width && file?.meta?.height 
+        ? file.meta.width / file.meta.height 
+        : 1;
+    });
+    return ratios;
+  }, [items, files]);
+
+  return useMemo(() => {
+    const layout: LayoutItem[] = [];
+    let totalHeight = 0;
+    const GAP = 16;
+    const PADDING = 0; // TopicModule already has padding on container
+    
+    const safeContainerWidth = containerWidth > 0 ? containerWidth : 1280; 
+    // Subtract parent padding (approx 48px from px-6) if we want to be precise, 
+    // but here we are passed the container width which should be the content width if we are careful.
+    // Actually containerRect comes from ResizeObserver on the scrolling container, which includes padding? 
+    // containerRef is on "topic-gallery-container" which has "px-6 py-8". 
+    // So safeContainerWidth includes the padding. We should subtract it.
+    const availableWidth = Math.max(100, safeContainerWidth - 48); // px-6 * 2 = 3rem = 48px
+
+    if (layoutMode === 'grid') {
+        const minColWidth = thumbnailSize;
+        const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
+        const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+        const itemHeight = itemWidth; // Square
+
+        items.forEach((id, index) => {
+            const row = Math.floor(index / cols);
+            const col = index % cols;
+            layout.push({
+                id,
+                x: col * (itemWidth + GAP),
+                y: row * (itemHeight + GAP),
+                width: itemWidth,
+                height: itemHeight
+            });
+        });
+        const rows = Math.ceil(items.length / cols);
+        totalHeight = rows * (itemHeight + GAP);
+    } else if (layoutMode === 'adaptive') {
+        let currentRow: any[] = [];
+        let currentWidth = 0;
+        let y = 0;
+        const targetHeight = thumbnailSize;
+
+        items.forEach((id) => {
+            const aspect = aspectRatios[id];
+            const w = targetHeight * aspect;
+            
+            if (currentWidth + w + GAP > availableWidth) {
+                // Determine scale to fit row exactly
+                const scale = (availableWidth - (currentRow.length - 1) * GAP) / currentWidth;
+                const rowHeight = targetHeight * scale;
+                if (rowHeight > targetHeight * 2.0) { // Limit max height boost
+                     // If just one item and it's super wide (or row is very short), don't explode it?
+                     // Standard adaptive logic usually accepts the height.
+                }
+
+                let x = 0;
+                currentRow.forEach(item => {
+                    const finalW = item.w * scale;
+                    layout.push({ id: item.id, x, y, width: finalW, height: rowHeight });
+                    x += finalW + GAP;
+                });
+                
+                y += rowHeight + GAP;
+                currentRow = [];
+                currentWidth = 0;
+            }
+            
+            currentRow.push({ id, w });
+            currentWidth += w;
+        });
+
+        // Last row - don't scale up, just place
+        if (currentRow.length > 0) {
+            let x = 0;
+            currentRow.forEach(item => {
+                layout.push({ id: item.id, x, y, width: item.w, height: targetHeight });
+                x += item.w + GAP;
+            });
+            y += targetHeight + GAP;
+        }
+        totalHeight = y;
+
+    } else if (layoutMode === 'masonry') {
+        const minColWidth = thumbnailSize;
+        const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
+        const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+        const colHeights = new Array(cols).fill(0);
+
+        items.forEach(id => {
+            const aspect = aspectRatios[id];
+            const imgHeight = itemWidth / aspect;
+            
+            let minCol = 0;
+            let minHeight = colHeights[0];
+            for (let i = 1; i < cols; i++) {
+                if (colHeights[i] < minHeight) {
+                    minCol = i;
+                    minHeight = colHeights[i];
+                }
+            }
+
+            layout.push({
+                id,
+                x: minCol * (itemWidth + GAP),
+                y: colHeights[minCol],
+                width: itemWidth,
+                height: imgHeight
+            });
+
+            colHeights[minCol] += imgHeight + GAP;
+        });
+        totalHeight = Math.max(...colHeights);
+    }
+
+    return { layout, totalHeight };
+  }, [items, files, layoutMode, containerWidth, thumbnailSize, aspectRatios]);
+};
+
+// Extracted component to manage layout rendering properly
+const TopicFileGrid = React.memo(({ 
+    fileIds, 
+    files, 
+    layoutMode, 
+    containerWidth, 
+    selectedFileIds,
+    onSelectFiles,
+    onOpenFile,
+    resourceRoot,
+    cachePath 
+}: {
+    fileIds: string[],
+    files: Record<string, FileNode>,
+    layoutMode: LayoutMode,
+    containerWidth: number,
+    selectedFileIds: string[],
+    onSelectFiles: (ids: string[]) => void,
+    onOpenFile?: (id: string) => void,
+    resourceRoot?: string,
+    cachePath?: string
+}) => {
+    // Calculate layout at the top level of this component
+    const { layout, totalHeight } = useLayout(
+        fileIds,
+        files,
+        layoutMode,
+        containerWidth,
+        200
+    );
+
+    return (
+        <div className="relative w-full transition-all duration-300 ease-out" style={{ height: totalHeight }}>
+            {layout.map(item => {
+                const file = files[item.id];
+                if (!file) return null;
+                
+                return (
+                    <div 
+                        key={file.id} 
+                        className="absolute overflow-hidden cursor-pointer group rounded-lg transition-all duration-300"
+                        style={{ 
+                            left: item.x, 
+                            top: item.y, 
+                            width: item.width, 
+                            height: item.height 
+                        }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectFiles([file.id]);
+                        }}
+                        onDoubleClick={(e) => {
+                            e.stopPropagation();
+                            onOpenFile?.(file.id);
+                        }}
+                    >
+                        <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110 overflow-hidden relative">
+                            <ImageThumbnail
+                                src={''}
+                                alt={file.name}
+                                isSelected={selectedFileIds.includes(file.id)}
+                                filePath={file.path}
+                                modified={file.updatedAt}
+                                size={undefined}
+                                isHovering={false}
+                                fileMeta={file.meta}
+                                resourceRoot={resourceRoot}
+                                cachePath={cachePath}
+                            />
+
+                            {/* Hover overlay to restore original hover feedback */}
+                            <div className="absolute inset-0 pointer-events-none flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="w-full bg-black/40 text-white text-xs rounded-md px-2 py-1 backdrop-blur-sm truncate">{file.name}</div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })}
+        </div>
+    );
+});
 
 interface TopicModuleProps {
     topics: Record<string, Topic>;
@@ -9,18 +236,25 @@ interface TopicModuleProps {
     people: Record<string, Person>;
     currentTopicId: string | null;
     selectedTopicIds: string[];
+    selectedFileIds?: string[];
     onNavigateTopic: (topicId: string | null) => void;
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
     onCreateTopic: (parentId: string | null, name?: string) => void;
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[]) => void;
     onSelectFiles: (ids: string[]) => void;
+    // Optional: resource root and cache path for thumbnail generation
+    resourceRoot?: string;
+    cachePath?: string;
+    // Called to open a file in viewer (double-click)
+    onOpenFile?: (fileId: string) => void;
     t: (key: string) => string;
 }
 
 export const TopicModule: React.FC<TopicModuleProps> = ({ 
-    topics, files, people, currentTopicId, selectedTopicIds,
-    onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles, t 
+    topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [],
+    onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
+    resourceRoot, cachePath, onOpenFile, t 
 }) => {
     
     // Selection state for box selection
@@ -89,6 +323,19 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const requestRef = useRef<number | undefined>(undefined);
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
+    const [layoutMode, setLayoutMode] = useState<LayoutMode>('grid');
+
+    // Click timer ref for distinguishing click vs dblclick on images
+    const clickTimerRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        return () => {
+            if (clickTimerRef.current) {
+                clearTimeout(clickTimerRef.current);
+                clickTimerRef.current = null;
+            }
+        };
+    }, []);
 
     // Callback ref to set both containerRef and selectionRef
     const setRefs = useCallback((node: HTMLDivElement | null) => {
@@ -575,7 +822,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     </div>
                 </div>
 
-                <div className="max-w-7xl mx-auto px-6 py-8 space-y-12">
+                <div className="w-full px-6 py-8 space-y-12">
                      
                      {/* Sub Topics */}
                      {!currentTopic.parentId && (
@@ -667,23 +914,49 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                      </section>
 
                      {/* Files Grid (Simplistic for now) */}
-                     <section>
-                        <h3 className="text-xl font-bold flex items-center mb-4 dark:text-gray-200">
-                            <Image className="mr-2 text-green-500" />
-                            {t('context.files') || 'Gallery'}
-                        </h3>
-                        {topicImages.length > 0 ? (
-                            <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                                {topicImages.map(file => (
-                                    <div 
-                                        key={file.id} 
-                                        className="aspect-square rounded-lg overflow-hidden cursor-pointer relative group"
-                                        onClick={() => onSelectFiles([file.id])} // Ideally should open image viewer
-                                    >
-                                        <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={{ backgroundImage: `url("${convertFileSrc(file.path)}")` }} />
-                                    </div>
-                                ))}
+                     <section className="files-section">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold flex items-center dark:text-gray-200">
+                                <Image className="mr-2 text-green-500" />
+                                {t('context.files') || 'Gallery'}
+                            </h3>
+                            <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                                <button 
+                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                    onClick={() => setLayoutMode('grid')}
+                                    title={t('view.grid') || "网格视图"}
+                                >
+                                    <Grid3X3 size={16}/>
+                                </button>
+                                <button 
+                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'adaptive' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                    onClick={() => setLayoutMode('adaptive')}
+                                    title={t('view.adaptive') || "自适应视图"}
+                                >
+                                    <Rows size={16}/>
+                                </button>
+                                <button 
+                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'masonry' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                    onClick={() => setLayoutMode('masonry')}
+                                    title={t('view.masonry') || "瀑布流视图"}
+                                >
+                                    <Columns size={16}/>
+                                </button>
                             </div>
+                        </div>
+
+                        {topicImages.length > 0 ? (
+                            <TopicFileGrid 
+                                fileIds={topicImages.map(f => f.id)}
+                                files={files}
+                                layoutMode={layoutMode}
+                                containerWidth={containerRect.width}
+                                selectedFileIds={selectedFileIds}
+                                onSelectFiles={onSelectFiles}
+                                onOpenFile={onOpenFile}
+                                resourceRoot={resourceRoot}
+                                cachePath={cachePath}
+                            />
                         ) : (
                             <div className="text-sm text-gray-400 italic">No images in this topic.</div>
                         )}
