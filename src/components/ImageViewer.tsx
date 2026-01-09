@@ -347,6 +347,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         if (showSearch) setShowSearch(false);
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
         else if (slideshowActive) setSlideshowActive(false);
+        else if (canGoBack) onNavigateBack();
         else onClose();
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -356,7 +357,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, slideshowActive, showSlideshowSettings, showSearch, localQuery]); 
+  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery]); 
 
   const handleNext = () => {
     setAnimationClass('animate-slide-left');

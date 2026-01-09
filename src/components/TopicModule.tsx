@@ -156,6 +156,7 @@ const TopicFileGrid = React.memo(({
     selectedFileIds,
     onSelectFiles,
     onOpenFile,
+    onContextMenu,
     resourceRoot,
     cachePath 
 }: {
@@ -166,6 +167,7 @@ const TopicFileGrid = React.memo(({
     selectedFileIds: string[],
     onSelectFiles: (ids: string[]) => void,
     onOpenFile?: (id: string) => void,
+    onContextMenu?: (e: React.MouseEvent, id: string) => void,
     resourceRoot?: string,
     cachePath?: string
 }) => {
@@ -202,6 +204,10 @@ const TopicFileGrid = React.memo(({
                         onDoubleClick={(e) => {
                             e.stopPropagation();
                             onOpenFile?.(file.id);
+                        }}
+                        onContextMenu={(e) => {
+                            e.stopPropagation();
+                            onContextMenu && onContextMenu(e, file.id);
                         }}
                     >
                         <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110 overflow-hidden relative">
@@ -245,6 +251,11 @@ interface TopicModuleProps {
     onSelectFiles: (ids: string[]) => void;
     onSelectPerson?: (personId: string, e: React.MouseEvent) => void;
     onNavigatePerson?: (personId: string) => void;
+    // Optional: provide a handler to open a topic/person/file in a new tab, or to open file folder
+    onOpenTopicInNewTab?: (topicId: string) => void;
+    onOpenPersonInNewTab?: (personId: string) => void;
+    onOpenFileInNewTab?: (fileId: string) => void;
+    onOpenFileFolder?: (folderId: string) => void;
     // Optional: resource root and cache path for thumbnail generation
     resourceRoot?: string;
     cachePath?: string;
@@ -256,7 +267,7 @@ interface TopicModuleProps {
 export const TopicModule: React.FC<TopicModuleProps> = ({ 
     topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [],
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
-    onSelectPerson, onNavigatePerson, resourceRoot, cachePath, onOpenFile, t 
+    onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t 
 }) => {
     
     // Selection state for box selection
@@ -266,7 +277,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const lastSelectedIdRef = useRef<string | null>(null);
     
     // Context menu state
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple'; topicId?: string } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple' | 'person' | 'file'; topicId?: string; personId?: string; fileId?: string } | null>(null);
     
     // Modal states
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -364,6 +375,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             }, 800);
         }
     };
+
+    const handlePersonContextMenu = useCallback((e: React.MouseEvent, personId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        // Ensure the person is selected in parent state
+        onSelectPerson && onSelectPerson(personId, e);
+        setContextMenu({ x: e.clientX, y: e.clientY, type: 'person', personId });
+    }, [onSelectPerson]);
+
+    const handleRemovePersonFromTopic = useCallback((personId: string) => {
+        if (!currentTopic) return;
+        const newPeople = (currentTopic.peopleIds || []).filter(pid => pid !== personId);
+        onUpdateTopic(currentTopic.id, { peopleIds: newPeople });
+        setContextMenu(null);
+    }, [currentTopic, onUpdateTopic]);
 
     // Callback ref to set both containerRef and selectionRef
     const setRefs = useCallback((node: HTMLDivElement | null) => {
@@ -593,10 +619,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
     // Context menu action handlers
     const handleOpenInNewTab = useCallback((topicId: string) => {
-        // TODO: Implement open in new tab functionality
-        console.log('Open in new tab:', topicId);
+        if (typeof onOpenTopicInNewTab === 'function') {
+            onOpenTopicInNewTab(topicId);
+        } else {
+            // Fallback: navigate in current tab
+            onNavigateTopic(topicId);
+        }
         setContextMenu(null);
-    }, []);
+    }, [onOpenTopicInNewTab, onNavigateTopic]);
 
     const handleSetCover = useCallback((topicId: string) => {
         const topic = topics[topicId];
@@ -638,6 +668,20 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         onCreateTopic(currentTopicId, name);
         setShowCreateModal(false);
     }, [currentTopicId, onCreateTopic]);
+
+    const handleFileContextMenu = useCallback((e: React.MouseEvent, fileId: string) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onSelectFiles && onSelectFiles([fileId]);
+        setContextMenu({ x: e.clientX, y: e.clientY, type: 'file', fileId });
+    }, [onSelectFiles]);
+
+    const handleRemoveFileFromTopic = useCallback((fileId: string) => {
+        if (!currentTopic) return;
+        const newFiles = (currentTopic.fileIds || []).filter(fid => fid !== fileId);
+        onUpdateTopic(currentTopic.id, { fileIds: newFiles });
+        setContextMenu(null);
+    }, [currentTopic, onUpdateTopic]);
 
     const { layoutItems, totalHeight } = useMemo(() => {
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
@@ -1002,6 +1046,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                      className="group/person flex flex-col items-center gap-2 cursor-pointer"
                                                      title={p.name}
                                                      onClick={(e) => handlePersonClickLocal(p.id, e)}
+                                                     onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
                                                  >
                                                      <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-2' : ''}`}>
                                                          <div className="relative w-full h-full rounded-full overflow-hidden">
@@ -1092,6 +1137,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 selectedFileIds={selectedFileIds}
                                 onSelectFiles={onSelectFiles}
                                 onOpenFile={onOpenFile}
+                                onContextMenu={handleFileContextMenu}
                                 resourceRoot={resourceRoot}
                                 cachePath={cachePath}
                             />
@@ -1172,7 +1218,33 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         </button>
                     </>
                 )}
-                
+
+                {contextMenu.type === 'person' && contextMenu.personId && (
+                    <>
+                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenPersonInNewTab) onOpenPersonInNewTab(contextMenu.personId!); else onNavigatePerson && onNavigatePerson(contextMenu.personId!); setContextMenu(null); }}>
+                            <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
+                        </div>
+                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { handleRemovePersonFromTopic(contextMenu.personId!); }}>
+                            <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
+                        </div>
+                    </>
+                )}
+
+                {contextMenu.type === 'file' && contextMenu.fileId && (
+                    <>
+                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) onOpenFileInNewTab(contextMenu.fileId!); else onOpenFile && onOpenFile(contextMenu.fileId!); setContextMenu(null); }}>
+                            <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
+                        </div>
+                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId && onOpenFileFolder) onOpenFileFolder(parentId); setContextMenu(null); }}>
+                            {t('context.openFolder')}
+                        </div>
+                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { handleRemoveFileFromTopic(contextMenu.fileId!); }}>
+                            <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
+                        </div>
+                    </>
+                )}
+
                 {contextMenu.type === 'multiple' && (
                     <button
                         className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"

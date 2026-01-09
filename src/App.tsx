@@ -4657,6 +4657,56 @@ export const App: React.FC = () => {
       setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
   };
 
+  const handleOpenTopicInNewTab = (topicId: string) => {
+      const newTab: TabState = {
+          id: Math.random().toString(36).substr(2, 9),
+          folderId: state.roots[0] || '',
+          viewingFileId: null,
+          viewMode: 'topics-overview',
+          layoutMode: 'grid',
+          searchQuery: '',
+          searchScope: 'all',
+          activeTags: [],
+          activePersonId: null,
+          activeTopicId: topicId,
+          selectedTopicIds: [topicId],
+          selectedFileIds: [],
+          lastSelectedId: null,
+          selectedTagIds: [],
+          selectedPersonIds: [],
+          dateFilter: { start: null, end: null, mode: 'created' },
+          history: { stack: [], currentIndex: 0 },
+          scrollTop: 0
+      };
+      newTab.history.stack = [{ folderId: newTab.folderId, viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }];
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  };
+
+  const handleOpenPersonInNewTab = (personId: string) => {
+      const newTab: TabState = {
+          id: Math.random().toString(36).substr(2, 9),
+          folderId: state.roots[0] || '',
+          viewingFileId: null,
+          viewMode: 'people-overview',
+          layoutMode: 'grid',
+          searchQuery: '',
+          searchScope: 'all',
+          activeTags: [],
+          activePersonId: personId,
+          activeTopicId: null,
+          selectedTopicIds: [],
+          selectedFileIds: [],
+          lastSelectedId: null,
+          selectedTagIds: [],
+          selectedPersonIds: [personId],
+          dateFilter: { start: null, end: null, mode: 'created' },
+          history: { stack: [], currentIndex: 0 },
+          scrollTop: 0
+      };
+      newTab.history.stack = [{ folderId: newTab.folderId, viewingId: null, viewMode: 'people-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: personId }];
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  };
+
   const handleGenerateThumbnails = async (folderIds: string[]) => {
       const getAllImageFilesInFolder = (folderId: string): string[] => {
           const folder = state.files[folderId];
@@ -5841,7 +5891,7 @@ export const App: React.FC = () => {
       
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
+      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={state.people} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
         // Check user's exit action preference from ref (always latest value)
         const exitAction = exitActionRef.current;
 
@@ -5879,6 +5929,7 @@ export const App: React.FC = () => {
                               isSidebarOpen={state.layout.isSidebarVisible}
                               onToggleSidebar={() => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: !s.layout.isSidebarVisible } }))}
                               onDelete={(id) => requestDelete([id])}
+                              onNavigateBack={goBack}
                               t={t}
                           />
                       );
@@ -5962,11 +6013,22 @@ export const App: React.FC = () => {
                       </div>
                       
                       {activeTab.aiFilter && (
-                          <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
-                              <Brain size={10} className="mr-1"/>
-                              <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
-                              <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
-                          </div>
+                          activeTab.aiFilter.originalQuery.startsWith('color:') ? (
+                            <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
+                                <div 
+                                    className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
+                                    style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '') }}
+                                />
+                                <span className="font-mono">{activeTab.aiFilter.originalQuery.replace('color:', '')}</span>
+                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12}/></button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
+                                <Brain size={10} className="mr-1"/>
+                                <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
+                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12}/></button>
+                            </div>
+                          )
                       )}
 
                       {activeTab.dateFilter.start && (
@@ -6109,6 +6171,11 @@ export const App: React.FC = () => {
                         }}
                         onSelectPerson={handlePersonClick}
                         onNavigatePerson={handleNavigatePerson}
+                        onOpenTopicInNewTab={handleOpenTopicInNewTab}
+                        // New-tab & open-folder handlers for people/files inside TopicModule
+                        onOpenPersonInNewTab={handleOpenPersonInNewTab}
+                        onOpenFileInNewTab={handleOpenInNewTab}
+                        onOpenFileFolder={handleNavigateFolder}
                         selectedFileIds={activeTab.selectedFileIds}
                         // Provide resource root / cache for thumbnails and open action
                         resourceRoot={state.settings.paths.resourceRoot}

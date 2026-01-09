@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { TabState } from '../types';
-import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Minus, Square, Minimize2 } from 'lucide-react';
+import { TabState, Topic, Person } from '../types';
+import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2 } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
@@ -8,6 +8,8 @@ interface TabBarProps {
   tabs: TabState[];
   activeTabId: string;
   files: Record<string, any>;
+  topics: Record<string, Topic>;
+  people: Record<string, Person>;
   onSwitchTab: (id: string) => void;
   onCloseTab: (e: React.MouseEvent, id: string) => void;
   onNewTab: () => void;
@@ -21,6 +23,8 @@ export const TabBar: React.FC<TabBarProps> = ({
   tabs,
   activeTabId,
   files,
+  topics,
+  people,
   onSwitchTab,
   onCloseTab,
   onNewTab,
@@ -83,7 +87,18 @@ export const TabBar: React.FC<TabBarProps> = ({
 
   const getTabTitle = (tab: TabState) => {
     if (tab.viewMode === 'tags-overview') return t('sidebar.allTags');
-    
+
+    if (tab.viewMode === 'topics-overview') {
+      // If a specific topic is active, show its name; otherwise show generic Topics label
+      if (tab.activeTopicId) return topics?.[tab.activeTopicId]?.name || t('sidebar.topics');
+      return t('sidebar.topics');
+    }
+
+    if (tab.viewMode === 'people-overview') {
+      if (tab.activePersonId) return people?.[tab.activePersonId]?.name || t('context.allPeople');
+      return t('context.allPeople');
+    }
+
     // Check if viewing a file inside a Book or Sequence folder
     if (tab.viewingFileId) {
         const file = files[tab.viewingFileId];
@@ -102,6 +117,10 @@ export const TabBar: React.FC<TabBarProps> = ({
 
   const getTabIcon = (tab: TabState) => {
     if (tab.viewMode === 'tags-overview') return <Tag size={12} className="mr-1 text-purple-500" />;
+
+    if (tab.viewMode === 'topics-overview') return <Layout size={12} className="mr-1 text-pink-500 dark:text-pink-400" />;
+
+    if (tab.viewMode === 'people-overview') return <User size={12} className="mr-1 text-purple-500 dark:text-purple-400" />;
     
     if (tab.viewingFileId) {
         const file = files[tab.viewingFileId];

@@ -549,9 +549,11 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
-            : activeTab.searchQuery 
-              ? 'border-blue-500 shadow-sm' 
-              : 'border-transparent'
+            : isAISearchEnabled 
+              ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
+              : activeTab.searchQuery 
+                ? 'border-blue-500 shadow-sm' 
+                : 'border-transparent'
         }`}>
           
           {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
@@ -593,7 +595,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              ) : (
                 <button
                   onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
-                  className="mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors text-gray-400 flex items-center"
+                  className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center`}
                   title="Search by color"
                   >
                   <Palette size={16} />
@@ -636,12 +638,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : (
-                    activeTab.searchScope === 'file' ? '搜索文件名' :
-                    activeTab.searchScope === 'tag' ? '搜索标签' :
-                    activeTab.searchScope === 'folder' ? '搜索文件夹' :
-                    t('search.placeholder')
-                  )
+                  : isAISearchEnabled 
+                    ? t('settings.aiSmartSearch') 
+                    : t('search.placeholder')
             }
             value={toolbarQuery}
             onChange={(e) => onSetToolbarQuery(e.target.value)}
@@ -654,8 +653,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <X size={14} />
                 </button>
              )}
-              
-             {/* AI 搜索模式切换按钮已移除（保留状态变量与逻辑） */}
+              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑） */}
           </div>
         </div>
       </div>

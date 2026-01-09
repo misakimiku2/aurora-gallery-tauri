@@ -14,6 +14,7 @@ interface SequenceViewerProps {
   sortedFileIds: string[];
   onClose: () => void;
   onNavigate: (id: string) => void;
+  onNavigateBack?: () => void;
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
   onDelete?: (id: string) => void;
@@ -27,6 +28,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
   sortedFileIds,
   onClose,
   onNavigate,
+  onNavigateBack,
   isSidebarOpen,
   onToggleSidebar,
   onDelete,
@@ -183,12 +185,13 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
         setIsPlaying(false);
       }
       if (e.key === 'Escape') {
-        onClose();
+        if (onNavigateBack) onNavigateBack();
+        else onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, totalFrames, validFileIds, onNavigate, onClose, isPlaying]);
+  }, [currentIndex, totalFrames, validFileIds, onNavigate, onClose, onNavigateBack, isPlaying]);
 
   // Zoom Handler
   const handleWheel = (e: React.WheelEvent) => {
