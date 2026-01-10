@@ -345,7 +345,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const requestRef = useRef<number | undefined>(undefined);
     const containerRef = useRef<HTMLDivElement>(null);
     const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
-    const [layoutMode, setLayoutMode] = useState<LayoutMode>('grid');
+    const [layoutMode, setLayoutMode] = useState<LayoutMode>(() => {
+        return (localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid';
+    });
 
     // Cleanup timer on unmount
     useEffect(() => {
@@ -420,24 +422,23 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // Scroll Restoration Logic
     const isRestoringScrollRef = useRef(false);
     const hasRestoredRef = useRef(false);
+    const restoreTimeoutRef = useRef<any>(null);
+
     // Reset restoration flag when navigation occurs or visibility changes
     useLayoutEffect(() => {
         if (isVisible) {
              hasRestoredRef.current = false;
+             if (restoreTimeoutRef.current) {
+                 clearTimeout(restoreTimeoutRef.current);
+             }
+             isRestoringScrollRef.current = false;
         }
     }, [currentTopicId, isVisible]); 
 
     // Perform restoration
     useLayoutEffect(() => {
-        // If not visible, container invalid, or already restored, skip
-        if (!isVisible || !containerRef.current || hasRestoredRef.current || containerRect.width <= 0) {
-             // If width is ready and target is 0, we can mark as restored immediately
-             if (containerRef.current && !hasRestoredRef.current && containerRect.width > 0 && (!scrollTop || scrollTop === 0)) {
-                 hasRestoredRef.current = true;
-             }
-             return;
-        }
-
+        if (!isVisible) return;
+        
         let rafId: number;
         let timeoutId: any;
 
@@ -445,58 +446,76 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             if (!containerRef.current || hasRestoredRef.current) return;
             
             const targetScroll = scrollTop || 0;
-            const currentScrollHeight = containerRef.current.scrollHeight;
-            const clientHeight = containerRef.current.clientHeight;
-            const maxScroll = Math.max(0, currentScrollHeight - clientHeight);
             
-            // If target scroll is significantly larger than what's currently possible,
-            // it means content presumably hasn't finished loading/layout yet.
-            // Wait for next frame.
-            if (targetScroll > maxScroll + 50) { // 50px tolerance
-                rafId = requestAnimationFrame(attemptRestore);
-                return;
+            // Wait for width to be ready
+            if (containerRect.width <= 0) {
+                 rafId = requestAnimationFrame(attemptRestore);
+                 return;
             }
 
-            // Restore
-            isRestoringScrollRef.current = true;
-            containerRef.current.scrollTop = targetScroll;
-            logInfo('[TopicModule] restoredScroll', { action: 'restoredScroll', topicId: currentTopicId || 'root', targetScroll });
-            
-            // Manually sync internal scroll state if needed (though we rely on props for that)
-            // Call onScrollTopChange to ensure parent state is in sync with the restored position,
-            // just in case it drifted or clamped.
-            if (onScrollTopChange) {
-                // Don't call this immediately if we want to suppress updates during restore mechanism,
-                // but usually it's good to ack the final position.
-                // However, we set isRestoringScrollRef to true to BLOCK the scroll listener from firing.
-            }
-
-            // Lock for a short period to prevent jitter from layout shifts
-            timeoutId = setTimeout(() => {
-                isRestoringScrollRef.current = false;
+            if (targetScroll > 0) {
+                 const currentScrollHeight = containerRef.current.scrollHeight;
+                 const clientHeight = containerRef.current.clientHeight;
+                 const maxScroll = Math.max(0, currentScrollHeight - clientHeight);
+                 
+                 // If target is unreachable currently, wait
+                 // But if we are very close or valid, try to set logic
+                 
+                 // Try to set it first
+                 isRestoringScrollRef.current = true;
+                 containerRef.current.scrollTop = targetScroll;
+                 
+                 const currentScroll = containerRef.current.scrollTop;
+                 const isClamped = Math.abs(currentScroll - targetScroll) > 20; // 20px tolerance
+                 
+                 // If strictly unreachable (e.g. content not loaded), continue retrying
+                 if (isClamped) {
+                     // Check if height is plausibly going to increase? 
+                     // Just keep retrying until timeout
+                     rafId = requestAnimationFrame(attemptRestore);
+                 } else {
+                     // Success
+                     hasRestoredRef.current = true;
+                     logInfo('[TopicModule] restoredScroll.success', { topicId: currentTopicId || 'root', targetScroll, actual: currentScroll });
+                     
+                     if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+                     restoreTimeoutRef.current = setTimeout(() => {
+                         isRestoringScrollRef.current = false;
+                     }, 100);
+                 }
+            } else {
+                // Explicitly reset to 0
+                if (Math.abs(containerRef.current.scrollTop) > 5) { // Only force if drift > 5px
+                    isRestoringScrollRef.current = true;
+                    containerRef.current.scrollTop = 0;
+                    
+                    if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+                    restoreTimeoutRef.current = setTimeout(() => {
+                        isRestoringScrollRef.current = false;
+                    }, 50);
+                }
                 hasRestoredRef.current = true;
-            }, 100);
+            }
         };
 
-        // Start attempt loop
-        rafId = requestAnimationFrame(attemptRestore);
-
-        // Safety timeout: if restoration condition never met (e.g. content actually shrank), force restore after 500ms
+        if (!hasRestoredRef.current) {
+            attemptRestore();
+        }
+        
+        // Safety timeout to stop infinite retries
         const safetyTimeout = setTimeout(() => {
-            if (!hasRestoredRef.current && containerRef.current) {
-                isRestoringScrollRef.current = true;
-                containerRef.current.scrollTop = scrollTop || 0;
-                logInfo('[TopicModule] safetyRestoreScroll', { action: 'safetyRestoreScroll', topicId: currentTopicId || 'root', targetScroll: (scrollTop || 0) });
-                setTimeout(() => {
-                    isRestoringScrollRef.current = false;
-                    hasRestoredRef.current = true;
-                }, 50);
+            if (containerRef.current && !hasRestoredRef.current) {
+               // Final attempt force
+               if ((scrollTop || 0) > 0) {
+                   logInfo('[TopicModule] safetyRestoreScroll.timeout', { target: scrollTop, current: containerRef.current.scrollTop, scrollHeight: containerRef.current.scrollHeight });
+               }
+               hasRestoredRef.current = true;
             }
-        }, 500);
+            if (rafId) cancelAnimationFrame(rafId);
+        }, 2000);
 
         return () => {
             if (rafId) cancelAnimationFrame(rafId);
-            if (timeoutId) clearTimeout(timeoutId);
             clearTimeout(safetyTimeout);
         };
     }, [currentTopicId, scrollTop, containerRect.width, isVisible]);
@@ -1237,21 +1256,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
                                 <button 
                                     className={`p-1.5 rounded-md transition-all ${layoutMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => setLayoutMode('grid')}
+                                    onClick={() => { setLayoutMode('grid'); localStorage.setItem('aurora_topic_layout_mode', 'grid'); }}
                                     title={t('view.grid') || "网格视图"}
                                 >
                                     <Grid3X3 size={16}/>
                                 </button>
                                 <button 
                                     className={`p-1.5 rounded-md transition-all ${layoutMode === 'adaptive' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => setLayoutMode('adaptive')}
+                                    onClick={() => { setLayoutMode('adaptive'); localStorage.setItem('aurora_topic_layout_mode', 'adaptive'); }}
                                     title={t('view.adaptive') || "自适应视图"}
                                 >
                                     <Rows size={16}/>
                                 </button>
                                 <button 
                                     className={`p-1.5 rounded-md transition-all ${layoutMode === 'masonry' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => setLayoutMode('masonry')}
+                                    onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
                                     title={t('view.masonry') || "瀑布流视图"}
                                 >
                                     <Columns size={16}/>
