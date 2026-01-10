@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
@@ -2152,6 +2152,7 @@ interface FileGridProps {
   isDraggingInternal?: boolean;
   setIsDraggingInternal?: (isDragging: boolean) => void;
   setDraggedFilePaths?: (paths: string[]) => void;
+  isVisible?: boolean;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -2202,7 +2203,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   dragOverTarget,
   isDraggingInternal,
   setIsDraggingInternal,
-  setDraggedFilePaths
+  setDraggedFilePaths,
+  isVisible = true
 }) => {
   // #region agent log
   // Removed debug logs
@@ -2281,34 +2283,45 @@ export const FileGrid: React.FC<FileGridProps> = ({
   
   // Track if we're in the middle of a programmatic scroll restore
   const isRestoringScrollRef = useRef(false);
+  // Track if we have successfully restored scroll position for the current view
+  const hasRestoredRef = useRef(false);
+  const restoreTimeoutRef = useRef<any>(null);
+  // Store target scroll in ref to avoid closure trap in scroll handler
+  const targetScrollRef = useRef(activeTab.scrollTop);
 
+  // Reset restoration flag when key view parameters change
+  useLayoutEffect(() => {
+    if (isVisible) {
+        hasRestoredRef.current = false;
+        // Clear any pending timeout when reseting
+        if (restoreTimeoutRef.current) {
+             clearTimeout(restoreTimeoutRef.current);
+        }
+        isRestoringScrollRef.current = false;
+    }
+  }, [activeTab.id, activeTab.folderId, activeTab.viewMode, isVisible, activeTab.viewingFileId, activeTab.history?.currentIndex]);
+
+  // Keep targetScrollRef in sync with activeTab.scrollTop
   useEffect(() => {
-      if (containerRef?.current && !isRestoringScrollRef.current) {
-          requestAnimationFrame(() => {
-              if(containerRef.current) {
-                  // Only restore scroll position if it's significantly different (10px threshold)
-                  const currentScroll = containerRef.current.scrollTop;
-                  const targetScroll = activeTab.scrollTop;
-                  
-                  if (Math.abs(currentScroll - targetScroll) > 10) {
-                      isRestoringScrollRef.current = true;
-                      containerRef.current.scrollTop = targetScroll;
-                      
-                      // Reset the flag after a short delay to allow user scrolling to take over
-                      setTimeout(() => {
-                          isRestoringScrollRef.current = false;
-                      }, 100);
-                  }
-              }
-          });
-      }
-  }, [activeTab.id, activeTab.folderId, activeTab.viewMode, activeTab.scrollTop]);
+      targetScrollRef.current = activeTab.scrollTop;
+  }, [activeTab.scrollTop]);
+
+  const handleMouseDownInternal = useCallback((e: React.MouseEvent) => {
+      // If user interacts, assume restoration is done/overridden
+      hasRestoredRef.current = true;
+      onMouseDown?.(e);
+  }, [onMouseDown]);
 
   useEffect(() => {
     const container = containerRef?.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
+        // Build-in interaction check
+        if (!e.ctrlKey) {
+             hasRestoredRef.current = true;
+        }
+
         if (e.ctrlKey && onThumbnailSizeChange) {
             e.preventDefault();
             const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
@@ -2349,11 +2362,29 @@ export const FileGrid: React.FC<FileGridProps> = ({
     });
     observer.observe(containerRef.current);
     
+    // Use a stable handler ref or check current status inside handler
     const handleScroll = () => {
         if (containerRef.current) {
-            const scrollTop = containerRef.current.scrollTop;
-            setScrollTop(scrollTop);
-            onScrollTopChange?.(scrollTop);
+            // Skip reporting scroll updates if we are in the middle of restoring
+            // or if layout is likely invalid (width 0)
+            if (isRestoringScrollRef.current || containerRef.current.clientWidth === 0) {
+                return;
+            }
+
+            const currentScroll = containerRef.current.scrollTop;
+            const targetScroll = targetScrollRef.current; // Use ref to avoid closure trap
+            
+            // Defense against clamping:
+            // If we haven't successfully restored yet, and the current scroll is significantly smaller
+            // than the target scroll, it's likely due to container height being insufficient (clamped).
+            // In this case, we should NOT update the parent state, so the original target remains for
+            // subsequent attempts (e.g. after layout resize).
+            if (!hasRestoredRef.current && targetScroll > 0 && currentScroll < targetScroll - 100) {
+                 return;
+            }
+
+            setScrollTop(currentScroll);
+            onScrollTopChange?.(currentScroll);
         }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
@@ -2377,6 +2408,50 @@ export const FileGrid: React.FC<FileGridProps> = ({
       activeTab.searchQuery
   );
 
+  useLayoutEffect(() => {
+      if (!isVisible) return;
+
+      if (containerRef?.current && !hasRestoredRef.current && containerRect.width > 0) {
+           const targetScroll = activeTab.scrollTop;
+          
+           if(targetScroll > 0) {
+               isRestoringScrollRef.current = true;
+               containerRef.current.scrollTop = targetScroll;
+               setScrollTop(targetScroll);
+               
+               if (restoreTimeoutRef.current) {
+                   clearTimeout(restoreTimeoutRef.current);
+               }
+
+               restoreTimeoutRef.current = setTimeout(() => {
+                   isRestoringScrollRef.current = false;
+               }, 100);
+
+               const currentScroll = containerRef.current.scrollTop;
+               const isClamped = Math.abs(currentScroll - targetScroll) > 10;
+               
+               if (!isClamped) {
+                   hasRestoredRef.current = true;
+               }
+           } else {
+              // Explicitly reset to 0 to ensure we don't inherit scroll from previous folder
+              if (containerRef.current.scrollTop !== 0 || scrollTop !== 0) {
+                  isRestoringScrollRef.current = true;
+                  containerRef.current.scrollTop = 0;
+                  setScrollTop(0);
+                  
+                  if (restoreTimeoutRef.current) {
+                      clearTimeout(restoreTimeoutRef.current);
+                  }
+                  restoreTimeoutRef.current = setTimeout(() => {
+                      isRestoringScrollRef.current = false;
+                  }, 50);
+              }
+              hasRestoredRef.current = true;
+           }
+      }
+  }, [activeTab.id, activeTab.folderId, activeTab.viewMode, activeTab.scrollTop, containerRect.width, totalHeight, isVisible]);
+
   const visibleItems = useMemo(() => {
       const buffer = 800; 
       const minY = scrollTop - buffer;
@@ -2396,7 +2471,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               ref={containerRef}
               className="w-full h-full overflow-auto px-6 pb-6 relative"
               onContextMenu={onBackgroundContextMenu}
-              onMouseDown={onMouseDown}
+              onMouseDown={handleMouseDownInternal}
               onMouseMove={onMouseMove}
               onMouseUp={onMouseUp}
           >

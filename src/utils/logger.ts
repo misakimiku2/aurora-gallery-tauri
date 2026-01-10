@@ -4,7 +4,8 @@
 import * as tauriLog from '@tauri-apps/plugin-log';
 
 // Vite 提供的开发模式检测标志
-const IS_DEV = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
+// NOTE: 强制启用日志（开发阶段），取消基于环境的自动识别
+const IS_DEV = true;
 
 /**
  * 日志配置
@@ -16,6 +17,30 @@ const LOG_CONFIG = {
   enableTauriConsole: IS_DEV,
 };
 
+// 在页面层面确保 `__AURORA_DEBUG_LOGS__` 已初始化（便于在 DevTools 直接查看）
+if (typeof window !== 'undefined') {
+  (window as any).__AURORA_DEBUG_LOGS__ = (window as any).__AURORA_DEBUG_LOGS__ || [];
+}
+
+// 将日志推入页面上的调试覆盖层（如果存在）
+const pushToOverlay = (level: string, message: string, ...args: any[]) => {
+  try {
+    const win: any = typeof window !== 'undefined' ? window : undefined;
+    if (!win) return;
+    win.__AURORA_DEBUG_LOGS__ = win.__AURORA_DEBUG_LOGS__ || [];
+    const formattedArgs = args.map(arg => {
+      if (typeof arg === 'object' && arg !== null) {
+        try { return JSON.stringify(arg); } catch { return String(arg); }
+      }
+      return String(arg);
+    });
+    const full = [message, ...formattedArgs].filter(Boolean).join(' ');
+    win.__AURORA_DEBUG_LOGS__.push({ level, message: full, ts: new Date().toISOString() });
+    if (win.__AURORA_DEBUG_LOGS__.length > 500) win.__AURORA_DEBUG_LOGS__.shift();
+  } catch (e) {
+    // ignore
+  }
+};
 /**
  * 统一日志记录函数
  * @param level 日志级别
@@ -31,15 +56,19 @@ const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...arg
     switch (level) {
       case 'debug':
         console.debug(message, ...args);
+        pushToOverlay('debug', message, ...args);
         break;
       case 'info':
         console.log(message, ...args);
+        pushToOverlay('info', message, ...args);
         break;
       case 'warn':
         console.warn(message, ...args);
+        pushToOverlay('warn', message, ...args);
         break;
       case 'error':
         console.error(message, ...args);
+        pushToOverlay('error', message, ...args);
         break;
     }
   }
@@ -119,10 +148,13 @@ export const error = (message: string, ...args: any[]) => {
  * 替换全局console对象，确保所有日志都通过Tauri日志插件输出
  */
 export const setupGlobalLogger = () => {
-  // 如果不是开发模式，覆盖 console 方法为空函数以禁止日志输出
-  if (!IS_DEV) {
+  // 如果不是开发模式，则通常静默日志；但当我们在 Tauri 的开发流程中（如 clean:dev）
+  // 需要查看日志时，可通过设置 VITE_FORCE_DEV_LOGS=true 强制开启日志转发。
+  const FORCE_DEV_LOGS = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.VITE_FORCE_DEV_LOGS === 'true');
+
+  if (!IS_DEV && !(typeof window !== 'undefined' && '__TAURI__' in window && FORCE_DEV_LOGS)) {
     if (typeof console !== 'undefined') {
-      // 保留 error/warn 也一并静默（用户要求仅开发模式打印）
+      // 保留 error/warn 也一并静默（仅在真正生产环境时静默）
       console.log = (() => {}) as any;
       console.debug = (() => {}) as any;
       console.info = (() => {}) as any;
@@ -145,6 +177,7 @@ export const setupGlobalLogger = () => {
     // 替换console对象
     console.log = (message: any, ...args: any[]) => {
       originalConsole.log(message, ...args);
+      pushToOverlay('info', message, ...args);
       if (typeof message === 'string') {
         tauriLog.info(message + ' ' + args.map(arg => String(arg)).join(' ')).catch(() => {});
       } else {
@@ -154,6 +187,7 @@ export const setupGlobalLogger = () => {
 
     console.debug = (message: any, ...args: any[]) => {
       originalConsole.debug(message, ...args);
+      pushToOverlay('debug', message, ...args);
       if (typeof message === 'string') {
         tauriLog.debug(message + ' ' + args.map(arg => String(arg)).join(' ')).catch(() => {});
       } else {
@@ -163,6 +197,7 @@ export const setupGlobalLogger = () => {
 
     console.info = (message: any, ...args: any[]) => {
       originalConsole.info(message, ...args);
+      pushToOverlay('info', message, ...args);
       if (typeof message === 'string') {
         tauriLog.info(message + ' ' + args.map(arg => String(arg)).join(' ')).catch(() => {});
       } else {
@@ -172,6 +207,7 @@ export const setupGlobalLogger = () => {
 
     console.warn = (message: any, ...args: any[]) => {
       originalConsole.warn(message, ...args);
+      pushToOverlay('warn', message, ...args);
       if (typeof message === 'string') {
         tauriLog.warn(message + ' ' + args.map(arg => String(arg)).join(' ')).catch(() => {});
       } else {
@@ -181,6 +217,7 @@ export const setupGlobalLogger = () => {
 
     console.error = (message: any, ...args: any[]) => {
       originalConsole.error(message, ...args);
+      pushToOverlay('error', message, ...args);
       if (typeof message === 'string') {
         tauriLog.error(message + ' ' + args.map(arg => String(arg)).join(' ')).catch(() => {});
       } else {

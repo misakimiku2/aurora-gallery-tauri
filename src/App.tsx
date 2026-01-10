@@ -14,6 +14,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
+import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/logger';
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
@@ -1495,7 +1496,7 @@ export const App: React.FC = () => {
         });
       } catch (error) {
         // Not in Tauri environment or error occurred, ignore
-        console.log('Window close listener not available:', error);
+        logWarn('Window close listener not available', error);
       }
     };
 
@@ -2453,9 +2454,9 @@ export const App: React.FC = () => {
   const handleCopyFiles = async (fileIds: string[], targetFolderId: string) => {
       // 开始记录复制操作性能
       const copyTimer = performanceMonitor.start('handleCopyFiles');
-      console.log('[CopyFiles] Starting copy operation', { fileIds, targetFolderId });
+      logInfo('[CopyFiles] Starting copy operation', { fileIds, targetFolderId });
       const targetFolder = state.files[targetFolderId];
-      console.log('[CopyFiles] Target folder info', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
+      logDebug('[CopyFiles] targetFolder', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
       
       if (!targetFolder || !targetFolder.path) {
           console.error('[CopyFiles] Invalid target folder or path');
@@ -2465,7 +2466,7 @@ export const App: React.FC = () => {
       }
       
       const taskId = startTask('copy', fileIds, t('tasks.copying'), false); // 禁用自动进度
-      console.log('[CopyFiles] Task started with ID', taskId);
+      logInfo('[CopyFiles] Task started', { taskId });
       
       const separator = targetFolder.path.includes('/') ? '/' : '\\';
       let copiedCount = 0;
@@ -2490,13 +2491,13 @@ export const App: React.FC = () => {
               if (!fileInfo) return;
               
               try {
-                  console.log('[CopyFiles] Copying file', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
+                  logDebug('[CopyFiles] copyingFile', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
                   
                   // Use Tauri API directly
                   await copyFile(fileInfo.sourcePath, fileInfo.newPath);
                   
                   // Scan only the newly copied file instead of entire directory
-                  console.log('[CopyFiles] Scanning newly copied file:', fileInfo.newPath);
+                  logDebug('[CopyFiles] scanningCopiedFile', { newPath: fileInfo.newPath });
                   const scannedFile = await scanFile(fileInfo.newPath, targetFolderId);
                   
                   // Store scanned file info for batch update
@@ -2504,7 +2505,7 @@ export const App: React.FC = () => {
                   
                   // Update progress
                   copiedCount++;
-                  console.log('[CopyFiles] Copy count:', copiedCount);
+                  logDebug('[CopyFiles] copyCount', { copiedCount });
                   // 手动更新任务进度
                   updateTask(taskId, { current: copiedCount });
               } catch (error) {
@@ -2555,7 +2556,7 @@ export const App: React.FC = () => {
           }
           
           showToast(t('context.copied'));
-          console.log('[CopyFiles] Copy operation completed successfully');
+          logInfo('[CopyFiles] completed');
           // 完成任务
           updateTask(taskId, { current: fileIds.length, status: 'completed' });
           // 1秒后移除任务
@@ -2595,7 +2596,7 @@ export const App: React.FC = () => {
   const handleMoveFiles = async (fileIds: string[], targetFolderId: string) => {
       // 开始记录移动操作性能
       const moveTimer = performanceMonitor.start('handleMoveFiles');
-      console.log('[MoveFiles] Starting move operation', { fileIds, targetFolderId });
+      logInfo('[MoveFiles] Starting move operation', { fileIds, targetFolderId });
       
       if (fileIds.includes(targetFolderId)) {
           console.error('[MoveFiles] Cannot move a folder into itself');
@@ -2605,7 +2606,7 @@ export const App: React.FC = () => {
       }
       
       const targetFolder = state.files[targetFolderId];
-      console.log('[MoveFiles] Target folder info', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
+      logDebug('[MoveFiles] targetFolder', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
       
       if (!targetFolder || !targetFolder.path) {
           console.error('[MoveFiles] Invalid target folder or path');
@@ -2615,7 +2616,7 @@ export const App: React.FC = () => {
       }
       
       const taskId = startTask('move', fileIds, t('tasks.moving'), false); // 禁用自动进度
-      console.log('[MoveFiles] Task started with ID', taskId);
+      logInfo('[MoveFiles] Task started', { taskId });
       
       const separator = targetFolder.path.includes('/') ? '/' : '\\';
       // Collect all unique source parent IDs
@@ -2649,7 +2650,7 @@ export const App: React.FC = () => {
           }
           
           // Check for existing files before performing file system operations - Parallel check
-          console.log('[MoveFiles] Checking for existing files in parallel');
+          logDebug('[MoveFiles] checkingForExistingFiles');
           let existingFiles: string[] = [];
           
           // Parallel file existence check
@@ -2670,7 +2671,7 @@ export const App: React.FC = () => {
           
           // If any files exist at destination, show confirmation modal
           if (existingFiles.length > 0) {
-              console.log('[MoveFiles] Found existing files, showing confirmation');
+              logInfo('[MoveFiles] foundExistingFiles');
               // Create a promise that resolves when user confirms or rejects
               await new Promise<void>((resolve, reject) => {
                   setState(prev => ({
@@ -2694,21 +2695,21 @@ export const App: React.FC = () => {
           }
           
           // Perform actual file system operations - Parallel move with limited concurrency
-          console.log('[MoveFiles] Performing actual file system operations in parallel');
+          logInfo('[MoveFiles] performingOperations');
           
           await asyncPool(10, fileIds, async (id) => {
               const fileInfo = filePathsMap.get(id);
               if (!fileInfo) return;
               
               try {
-                  console.log('[MoveFiles] Moving file', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
+                  logDebug('[MoveFiles] movingFile', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
                   
                   // Use Tauri API directly
                   await moveFile(fileInfo.sourcePath, fileInfo.newPath);
-                  console.log('[MoveFiles] File moved successfully');
+                  logInfo('[MoveFiles] fileMoved');
                   
                   movedCount++;
-                  console.log('[MoveFiles] Move count:', movedCount);
+                  logDebug('[MoveFiles] moveCount', { movedCount });
                   // 手动更新任务进度
                   updateTask(taskId, { current: movedCount });
               } catch (error) {
@@ -2718,9 +2719,9 @@ export const App: React.FC = () => {
           });
           
           // Update local state after file system operations are complete
-          console.log('[MoveFiles] Updating state after file system operations');
+          logDebug('[MoveFiles] updatingStateAfterOps');
           setState(prev => {
-              console.log('[MoveFiles] State update callback called');
+              logDebug('[MoveFiles] stateUpdateCallbackCalled');
               const newFiles = { ...prev.files };
               const updatedTargetFolder = { ...newFiles[targetFolderId] };
               updatedTargetFolder.children = [...(updatedTargetFolder.children || [])];
@@ -2734,7 +2735,7 @@ export const App: React.FC = () => {
                   const file = newFiles[id];
                   if (!fileInfo || !file || !file.path) continue;
                   
-                  console.log('[MoveFiles] Processing file ID in state update', id);
+                  logDebug('[MoveFiles] processingFileInStateUpdate', { fileId: id });
                   
                   // Get source parent
                   if (fileInfo.parentId) {
@@ -2752,7 +2753,7 @@ export const App: React.FC = () => {
                   
                   // Update file's parent and path
                   const newPath = `${updatedTargetFolder.path}${separator}${fileInfo.filename}`;
-                  console.log('[MoveFiles] Updating file state', { fileId: id, oldParent: fileInfo.parentId, newParent: targetFolderId, oldPath: file.path, newPath });
+                  logDebug('[MoveFiles] updatingFileState', { fileId: id, oldParent: fileInfo.parentId, newParent: targetFolderId, oldPath: file.path, newPath });
                   
                   // Check if target folder already has a file with the same name
                   const existingFileId: string | undefined = updatedTargetFolder.children.find(childId => {
@@ -2762,7 +2763,7 @@ export const App: React.FC = () => {
                   
                   // If existing file found, remove it from target folder's children and files map
                   if (existingFileId) {
-                      console.log('[MoveFiles] Removing existing file from target folder', { existingFileId, filename: fileInfo.filename });
+                      logInfo('[MoveFiles] removingExistingFile', { existingFileId, filename: fileInfo.filename });
                       // Remove from target folder's children array
                       updatedTargetFolder.children = updatedTargetFolder.children.filter((childId: string) => childId !== existingFileId);
                       // Remove from files map
@@ -2777,25 +2778,25 @@ export const App: React.FC = () => {
                   
                   // Add to target folder's children
                   updatedTargetFolder.children.push(id);
-                  console.log('[MoveFiles] Added file to target folder children');
+                  logDebug('[MoveFiles] addedFileToTargetChildren');
                   
                   // Remove from source parent's children
                   if (fileInfo.parentId && sourceParentsToUpdate.has(fileInfo.parentId)) {
                       const sourceParent = sourceParentsToUpdate.get(fileInfo.parentId);
                       sourceParent.children = sourceParent.children.filter((childId: string) => childId !== id);
-                      console.log('[MoveFiles] Removed file from source parent children');
+                      logDebug('[MoveFiles] removedFileFromSourceParent');
                   }
               }
               
               // Apply source parent updates
               sourceParentsToUpdate.forEach((updatedParent, parentId) => {
                   newFiles[parentId] = updatedParent;
-                  console.log('[MoveFiles] Updated source parent', parentId);
+                  logDebug('[MoveFiles] updatedSourceParent', { parentId });
               });
               
               // Apply target folder update
               newFiles[targetFolderId] = updatedTargetFolder;
-              console.log('[MoveFiles] Updated target folder', targetFolderId);
+              logDebug('[MoveFiles] updatedTarget', { targetFolderId });
               
               return {
                   ...prev,
@@ -2804,7 +2805,7 @@ export const App: React.FC = () => {
           });
           
           showToast(t('context.moved'));
-          console.log('[MoveFiles] Move operation completed successfully');
+          logInfo('[MoveFiles] completed');
           // 完成任务
           updateTask(taskId, { current: fileIds.length, status: 'completed' });
           // 1秒后移除任务
@@ -2859,11 +2860,11 @@ export const App: React.FC = () => {
           // 这里需要获取目标路径，我们可以使用save dialog让用户选择，或者默认复制到桌面
           // 为了简化，我们暂时不实现文件选择，而是通过拖拽到外部时自动处理
           // 在实际应用中，我们需要使用系统级的拖拽API来获取目标路径
-          console.log('Would copy file:', filePath);
+          logDebug('[ExternalCopy] wouldCopyFile', { filePath });
         }
         
         // 显示控制台通知
-        console.log(`已复制 ${draggedFilePaths.length} 个文件`);
+        logInfo('[ExternalCopy] copiedCount', { count: draggedFilePaths.length });
       } catch (error) {
         console.error('Error copying files:', error);
       } finally {
@@ -2921,7 +2922,7 @@ export const App: React.FC = () => {
     
     // 如果没有悬停在复制区域，不执行任何操作
     if (!action) {
-      console.log('[ExternalDrag] Not hovering on copy zone, ignoring drop');
+      logDebug('[ExternalDrag] notHoveringOnCopyZone');
       return;
     }
     
@@ -2974,7 +2975,7 @@ export const App: React.FC = () => {
     
     try {
       
-      console.log('[ExternalCopy] Starting copy operation:', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
+      logInfo('[ExternalCopy] Starting copy operation', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
       
       // Save folder ID to local variable for use in async operations
       const targetFolderId = activeTab.folderId;
@@ -2990,12 +2991,12 @@ export const App: React.FC = () => {
           const bytes = new Uint8Array(arrayBuffer);
           
           // Write file to destination
-          console.log('[ExternalCopy] Copying file:', { fileName: file.name, destPath });
+          logDebug('[ExternalCopy] copyingFile', { fileName: file.name, destPath });
           await writeFileFromBytes(destPath, bytes);
-          console.log('[ExternalCopy] File copied successfully');
+          logInfo('[ExternalCopy] fileCopied');
           
           // Scan the new file immediately
-          console.log('[ExternalCopy] Scanning new file:', file.name);
+          logDebug('[ExternalCopy] scanningNewFile', { fileName: file.name });
           const scannedFile = await scanFile(destPath, targetFolderId);
           
           // Update state with the new file immediately after copying and scanning
@@ -3052,7 +3053,7 @@ export const App: React.FC = () => {
       
       // Auto-remove task after 1 second
       setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-      console.log('[ExternalCopy] Copy operation completed successfully');
+      logInfo('[ExternalCopy] completed');
     } catch (error) {
       console.error('[ExternalCopy] Failed to copy external items:', error);
       updateTask(taskId, { status: 'completed' });
@@ -3076,7 +3077,7 @@ export const App: React.FC = () => {
     
     try {
       
-      console.log('[ExternalMove] Starting move operation:', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
+      logInfo('[ExternalMove] Starting move operation', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
       
       // First copy files to destination
       let current = 0;
@@ -3088,16 +3089,16 @@ export const App: React.FC = () => {
         const bytes = new Uint8Array(arrayBuffer);
         
         // Write file to destination
-        console.log('[ExternalMove] Moving file:', { fileName: file.name, destPath });
+        logDebug('[ExternalMove] movingFile', { fileName: file.name, destPath });
         await writeFileFromBytes(destPath, bytes);
-        console.log('[ExternalMove] File moved successfully');
+        logInfo('[ExternalMove] fileMoved');
         
         // Update task progress
         current++;
         updateTask(taskId, { current });
       }
       
-      console.log('[ExternalMove] Scanning new files individually (performance optimized)');
+      logDebug('[ExternalMove] scanningNewFilesIndividually');
       // Scan only the new files individually instead of scanning entire directory
       // This is much faster for large directories
       
@@ -3155,7 +3156,7 @@ export const App: React.FC = () => {
       // Show success toast
       // Show success toast
       showToast(t('context.moved'));
-      console.log('[ExternalMove] Move operation completed successfully');
+      logInfo('[ExternalMove] completed');
     } catch (error) {
       console.error('[ExternalMove] Failed to move external items:', error);
       // Complete task
@@ -3273,6 +3274,7 @@ export const App: React.FC = () => {
   const handleCreateNewTag = () => { 
       setIsCreatingTag(true); 
       if (!state.layout.isSidebarVisible) {
+          logInfo('[App] ensureSidebarOpen', { action: 'ensureSidebarOpen' });
           setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: true } })); 
       }
   };
@@ -3883,6 +3885,8 @@ export const App: React.FC = () => {
   
   // Navigation helpers
   const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = []) => { 
+      // Set global navigation timestamp BEFORE state update
+      (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
       updateActiveTab(prevTab => { 
           const currentScrollTop = selectionRef.current?.scrollTop ?? prevTab.scrollTop;
           const stackCopy = [...prevTab.history.stack];
@@ -3995,6 +3999,8 @@ export const App: React.FC = () => {
   }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings]);
 
   const enterFolder = (folderId: string) => {
+      const scroll = selectionRef.current?.scrollTop || 0;
+      logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll });
       pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
   };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
@@ -4062,39 +4068,131 @@ export const App: React.FC = () => {
       };
     });
   };
+  
+  // Global navigation timestamp for scroll event filtering across component boundaries
+  const setNavigationTimestamp = () => {
+      (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
+  };
+  
   const goBack = () => { 
+      setNavigationTimestamp(); // Set timestamp BEFORE state update
+      const currentScroll = selectionRef.current?.scrollTop || 0;
+      logDebug('[App] goBack.invoked', { action: 'goBack', currentIndex: activeTab.history.currentIndex, container: 'main', containerScroll: currentScroll });
+      
       updateActiveTab(prevTab => { 
+          // Save current scroll position to stack before navigating
+          const newStack = [...prevTab.history.stack];
+          if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < newStack.length) {
+              newStack[prevTab.history.currentIndex] = {
+                  ...newStack[prevTab.history.currentIndex],
+                  scrollTop: currentScroll,
+                  selectedTopicIds: prevTab.selectedTopicIds,
+                  selectedPersonIds: prevTab.selectedPersonIds 
+              };
+          }
+
           if (prevTab.history.currentIndex > 0) { 
               const newIndex = prevTab.history.currentIndex - 1; 
-              const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              const step = newStack[newIndex]; 
+              logDebug('[App] goBack.target', { action: 'goBack.target', newIndex, restoreScroll: step.scrollTop || 0, viewingId: step.viewingId, folderId: step.folderId });
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newIndex } }; 
           } 
+          console.log('[App] goBack -> at history beginning, nothing to do');
           return {}; 
       }); 
   };
+
   const goForward = () => { 
+      setNavigationTimestamp(); // Set timestamp BEFORE state update
+      const currentScroll = selectionRef.current?.scrollTop || 0;
+      console.log(`[App] goForward invoked. currentIndex=${activeTab.history.currentIndex}, currentScrollTop=${currentScroll}`);
+      
       updateActiveTab(prevTab => { 
-          if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { 
+          // Save current scroll position to stack before navigating
+          const newStack = [...prevTab.history.stack];
+          if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < newStack.length) {
+              newStack[prevTab.history.currentIndex] = {
+                  ...newStack[prevTab.history.currentIndex],
+                  scrollTop: currentScroll,
+                  selectedTopicIds: prevTab.selectedTopicIds,
+                  selectedPersonIds: prevTab.selectedPersonIds 
+              };
+          }
+
+          if (prevTab.history.currentIndex < newStack.length - 1) { 
               const newIndex = prevTab.history.currentIndex + 1; 
-              const step = prevTab.history.stack[newIndex]; 
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
+              const step = newStack[newIndex]; 
+              console.log(`[App] goForward -> newIndex=${newIndex}, restoreScroll=${step.scrollTop || 0}, viewingId=${step.viewingId}`);
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newIndex } }; 
           } 
+          console.log('[App] goForward -> at history end, nothing to do');
           return {}; 
       }); 
   };
   
   const closeViewer = () => { 
+      const currentScroll = selectionRef.current?.scrollTop || 0;
       if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) { 
+          logInfo('[App] closeViewer.pop', { action: 'closeViewer', mode: 'pop', container: 'main', containerScroll: currentScroll });
           pushHistory(activeTab.folderId, null, activeTab.viewMode as any, activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, activeTab.scrollTop, activeTab.aiFilter, activeTab.activeTopicId); 
       } else { 
+          logInfo('[App] closeViewer.clear', { action: 'closeViewer', mode: 'clear', container: 'main', containerScroll: currentScroll });
           updateActiveTab({ viewingFileId: null }); 
       } 
   };
   
   const enterViewer = (fileId: string) => {
       const scrollTop = selectionRef.current?.scrollTop || 0;
+      logInfo('[App] enterViewer', { action: 'enterViewer', fileId, container: 'main', containerScroll: scrollTop });
       pushHistory(activeTab.folderId, fileId, 'browser', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, scrollTop, activeTab.aiFilter, activeTab.activeTopicId);
   };
+
+  // Toggle helpers for sidebars
+  const toggleSidebar = () => {
+      const next = !state.layout.isSidebarVisible;
+      logInfo('[App] toggleSidebar', { action: 'toggleSidebar', next });
+      setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
+  };
+
+  const toggleMetadata = () => {
+      const next = !state.layout.isMetadataVisible;
+      logInfo('[App] toggleMetadata', { action: 'toggleMetadata', next });
+      setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
+  };
+
+  const onLayoutToggle = (part: 'sidebar' | 'metadata') => {
+      if (part === 'sidebar') toggleSidebar(); else toggleMetadata();
+  };
+
+  // Log layout state changes (sidebar / metadata) for debugging layout issues
+  const prevLayoutRef = useRef(state.layout);
+  useEffect(() => {
+      const prev = prevLayoutRef.current;
+      if (prev.isSidebarVisible !== state.layout.isSidebarVisible) {
+          logInfo('[App] sidebar.stateChange', { isSidebarVisible: state.layout.isSidebarVisible });
+      }
+      if (prev.isMetadataVisible !== state.layout.isMetadataVisible) {
+          logInfo('[App] metadata.stateChange', { isMetadataVisible: state.layout.isMetadataVisible });
+      }
+
+      // Measure main grid & panels after layout change to help debug layout issues
+      setTimeout(() => {
+          try {
+              const mainEl = document.getElementById('file-grid-container') as HTMLElement | null;
+              const mainWidth = mainEl ? mainEl.clientWidth : null;
+              const sidebarEl = document.querySelector('.border-r') as HTMLElement | null; // left sidebar
+              const sidebarWidth = sidebarEl ? sidebarEl.clientWidth : null;
+              const metadataEl = document.querySelector('.metadata-panel-container') as HTMLElement | null; // right panel
+              const metadataWidth = metadataEl ? metadataEl.clientWidth : null;
+
+              logDebug('[App] layout.measure', { mainWidth, sidebarWidth, metadataWidth, isSidebarVisible: state.layout.isSidebarVisible, isMetadataVisible: state.layout.isMetadataVisible });
+          } catch (e) {
+              logDebug('[App] layout.measure.failed', { error: String(e) });
+          }
+      }, 0);
+
+      prevLayoutRef.current = state.layout;
+  }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible]);
 
   const handleViewerNavigate = (direction: 'next' | 'prev' | 'random') => {
       if (!activeTab.viewingFileId) return;
@@ -4272,7 +4370,7 @@ export const App: React.FC = () => {
               if (allFiles.length > 0) {
                  // 找一个带路径的文件打印出来对比
                  const sample = allFiles.find(f => f.path); 
-                 if (sample) console.log("💻 前端现有路径示例:", sample.path);
+                 if (sample) logDebug('[ColorExtraction] samplePath', { path: sample.path });
               }
 
               const validPaths: string[] = [];
@@ -4808,7 +4906,7 @@ export const App: React.FC = () => {
     
     // 确保路径是绝对路径
     const targetPath = file.path;
-    console.log('handleViewInExplorer:', { id, path: targetPath, type: file.type, name: file.name });
+    logDebug('[App] handleViewInExplorer', { id, path: targetPath, type: file.type, name: file.name });
     
     try {
       if (isTauriEnvironment()) {
@@ -4816,7 +4914,7 @@ export const App: React.FC = () => {
         const { openPath } = await import('./api/tauri-bridge');
         // 传入 isFile 参数：非文件夹都是文件，需要选中；文件夹直接打开
         const isFile = file.type !== FileType.FOLDER;
-        console.log('Calling openPath:', { path: targetPath, isFile });
+        logDebug('[App] callingOpenPath', { path: targetPath, isFile });
         await openPath(targetPath, isFile);
       }
     } catch (error) {
@@ -5927,7 +6025,7 @@ export const App: React.FC = () => {
                               onClose={closeViewer}
                               onNavigate={handleViewerJump}
                               isSidebarOpen={state.layout.isSidebarVisible}
-                              onToggleSidebar={() => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: !s.layout.isSidebarVisible } }))}
+                              onToggleSidebar={toggleSidebar}
                               onDelete={(id) => requestDelete([id])}
                               onNavigateBack={goBack}
                               t={t}
@@ -5942,7 +6040,7 @@ export const App: React.FC = () => {
                           files={state.files}
                           layout={state.layout}
                           slideshowConfig={state.slideshowConfig}
-                          onLayoutToggle={(part) => setState(s => ({ ...s, layout: { ...s.layout, [part === 'sidebar' ? 'isSidebarVisible' : 'isMetadataVisible']: !s.layout[part === 'sidebar' ? 'isSidebarVisible' : 'isMetadataVisible'] } }))}
+                          onLayoutToggle={onLayoutToggle}
                           onClose={closeViewer}
                           onNext={(random) => handleViewerNavigate(random ? 'random' : 'next')}
                           onPrev={() => handleViewerNavigate('prev')}
@@ -5972,15 +6070,14 @@ export const App: React.FC = () => {
                   );
               })()
           )}
-          {!activeTab.viewingFileId && (
-            <>
+          <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
               <TopBar 
                 activeTab={activeTab} 
                 state={state} 
                 toolbarQuery={toolbarQuery} 
                 groupedTags={groupedTags} 
                 tagSearchQuery={tagSearchQuery} 
-                onToggleSidebar={() => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: !s.layout.isSidebarVisible } }))} 
+                onToggleSidebar={toggleSidebar} 
                 onGoBack={goBack} 
                 onGoForward={goForward} 
                 onNavigateUp={handleNavigateUp} 
@@ -5994,7 +6091,7 @@ export const App: React.FC = () => {
                 onSortOptionChange={(opt) => setState(s => ({ ...s, sortBy: opt }))} 
                 onSortDirectionChange={() => setState(s => ({ ...s, sortDirection: s.sortDirection === 'asc' ? 'desc' : 'asc' }))} 
                 onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))} 
-                onToggleMetadata={() => setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: !s.layout.isMetadataVisible } }))} 
+                onToggleMetadata={toggleMetadata} 
                 onToggleSettings={toggleSettings} 
                 onUpdateDateFilter={(f) => updateActiveTab({ dateFilter: f })} 
                 groupBy={groupBy}
@@ -6182,6 +6279,9 @@ export const App: React.FC = () => {
                         cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
                         onOpenFile={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
                         t={t}
+                        scrollTop={activeTab.scrollTop}
+                        onScrollTopChange={(scrollTop) => { logDebug('[App] topic.scrollUpdate', { action: 'topic.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
+                        isVisible={!activeTab.viewingFileId}
                      />
                   ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                      <div className="w-full h-full flex flex-col items-center justify-center text-gray-400" onMouseDown={handleMouseDown} onContextMenu={(e) => handleContextMenu(e, 'background', '')}>
@@ -6191,6 +6291,7 @@ export const App: React.FC = () => {
                   ) :  (
                     <FileGrid 
                         displayFileIds={displayFileIds} 
+                        isVisible={!activeTab.viewingFileId}
                         files={state.files} 
                         activeTab={activeTab} 
                         renamingId={state.renamingId} 
@@ -6226,7 +6327,7 @@ export const App: React.FC = () => {
                         onToggleGroup={toggleGroup}
                         isSelecting={isSelecting}
                         selectionBox={selectionBox}
-                        onScrollTopChange={(scrollTop) => updateActiveTab({ scrollTop })}
+                        onScrollTopChange={(scrollTop) => { logDebug('[App] filegrid.scrollUpdate', { action: 'filegrid.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
                         t={t} 
                         onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                         onUpdateFile={handleUpdateFile}
@@ -6242,8 +6343,7 @@ export const App: React.FC = () => {
                   )}
                 </div>
               </div>
-            </>
-          )}
+          </div>
         </div>
         <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
           <MetadataPanel 

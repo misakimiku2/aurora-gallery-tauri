@@ -500,6 +500,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                  </div>
                 <Search size={16} className="mr-2 flex-shrink-0 text-gray-400" />
                 <input
+                  id="viewer-search-input"
+                  name="viewer-search-input"
                   ref={searchInputRef}
                   type="text"
                   value={localQuery}

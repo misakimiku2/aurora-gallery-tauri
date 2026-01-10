@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns } from 'lucide-react';
 import { ImageThumbnail } from './FileGrid';
+import { debug as logDebug, info as logInfo } from '../utils/logger';
 
 type LayoutMode = 'grid' | 'adaptive' | 'masonry';
 
@@ -262,12 +263,16 @@ interface TopicModuleProps {
     // Called to open a file in viewer (double-click)
     onOpenFile?: (fileId: string) => void;
     t: (key: string) => string;
+    scrollTop?: number;
+    onScrollTopChange?: (scrollTop: number) => void;
+    isVisible?: boolean;
 }
 
 export const TopicModule: React.FC<TopicModuleProps> = ({ 
     topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [],
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
-    onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t 
+    onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
+    scrollTop, onScrollTopChange, isVisible = true
 }) => {
     
     // Selection state for box selection
@@ -411,6 +416,107 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         observer.observe(elem);
         return () => observer.disconnect();
     }, []);
+
+    // Scroll Restoration Logic
+    const isRestoringScrollRef = useRef(false);
+    const hasRestoredRef = useRef(false);
+    // Reset restoration flag when navigation occurs or visibility changes
+    useLayoutEffect(() => {
+        if (isVisible) {
+             hasRestoredRef.current = false;
+        }
+    }, [currentTopicId, isVisible]); 
+
+    // Perform restoration
+    useLayoutEffect(() => {
+        // If not visible, container invalid, or already restored, skip
+        if (!isVisible || !containerRef.current || hasRestoredRef.current || containerRect.width <= 0) {
+             // If width is ready and target is 0, we can mark as restored immediately
+             if (containerRef.current && !hasRestoredRef.current && containerRect.width > 0 && (!scrollTop || scrollTop === 0)) {
+                 hasRestoredRef.current = true;
+             }
+             return;
+        }
+
+        let rafId: number;
+        let timeoutId: any;
+
+        const attemptRestore = () => {
+            if (!containerRef.current || hasRestoredRef.current) return;
+            
+            const targetScroll = scrollTop || 0;
+            const currentScrollHeight = containerRef.current.scrollHeight;
+            const clientHeight = containerRef.current.clientHeight;
+            const maxScroll = Math.max(0, currentScrollHeight - clientHeight);
+            
+            // If target scroll is significantly larger than what's currently possible,
+            // it means content presumably hasn't finished loading/layout yet.
+            // Wait for next frame.
+            if (targetScroll > maxScroll + 50) { // 50px tolerance
+                rafId = requestAnimationFrame(attemptRestore);
+                return;
+            }
+
+            // Restore
+            isRestoringScrollRef.current = true;
+            containerRef.current.scrollTop = targetScroll;
+            logInfo('[TopicModule] restoredScroll', { action: 'restoredScroll', topicId: currentTopicId || 'root', targetScroll });
+            
+            // Manually sync internal scroll state if needed (though we rely on props for that)
+            // Call onScrollTopChange to ensure parent state is in sync with the restored position,
+            // just in case it drifted or clamped.
+            if (onScrollTopChange) {
+                // Don't call this immediately if we want to suppress updates during restore mechanism,
+                // but usually it's good to ack the final position.
+                // However, we set isRestoringScrollRef to true to BLOCK the scroll listener from firing.
+            }
+
+            // Lock for a short period to prevent jitter from layout shifts
+            timeoutId = setTimeout(() => {
+                isRestoringScrollRef.current = false;
+                hasRestoredRef.current = true;
+            }, 100);
+        };
+
+        // Start attempt loop
+        rafId = requestAnimationFrame(attemptRestore);
+
+        // Safety timeout: if restoration condition never met (e.g. content actually shrank), force restore after 500ms
+        const safetyTimeout = setTimeout(() => {
+            if (!hasRestoredRef.current && containerRef.current) {
+                isRestoringScrollRef.current = true;
+                containerRef.current.scrollTop = scrollTop || 0;
+                logInfo('[TopicModule] safetyRestoreScroll', { action: 'safetyRestoreScroll', topicId: currentTopicId || 'root', targetScroll: (scrollTop || 0) });
+                setTimeout(() => {
+                    isRestoringScrollRef.current = false;
+                    hasRestoredRef.current = true;
+                }, 50);
+            }
+        }, 500);
+
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            if (timeoutId) clearTimeout(timeoutId);
+            clearTimeout(safetyTimeout);
+        };
+    }, [currentTopicId, scrollTop, containerRect.width, isVisible]);
+
+    // Track scroll position
+    useEffect(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        const handleScroll = () => {
+            if (isRestoringScrollRef.current) return;
+            onScrollTopChange?.(container.scrollTop);
+                logDebug('[TopicModule] scroll', { action: 'scroll', topicId: currentTopicId || 'root', containerScroll: container.scrollTop });
+        };
+
+        container.addEventListener('scroll', handleScroll, { passive: true });
+        return () => container.removeEventListener('scroll', handleScroll);
+    }, [containerRect, onScrollTopChange]); // Re-bind when containerRect changes (meaning layout might have changed), or when onScrollTopChange changes. Also implicitly when containerRef.current (node) changes because of effect cleanup/re-run if we used valid dependencies.
+    // Note: containerRef.current is not a valid dependency for useEffect in standard React unless we use the callback ref pattern for force update. 
+    // However, since we have the ResizeObserver effect above, `containerRect` changes will act as a signal that the container is ready/changed.
 
     const handleWheel = useCallback((e: WheelEvent) => {
         if (e.ctrlKey) {
@@ -675,6 +781,31 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         onSelectFiles && onSelectFiles([fileId]);
         setContextMenu({ x: e.clientX, y: e.clientY, type: 'file', fileId });
     }, [onSelectFiles]);
+
+    // Helpers to log scroll positions and delegate opens
+    const getContainerScroll = () => containerRef.current ? containerRef.current.scrollTop : 0;
+
+    
+    const handleOpenFileLocal = (fileId: string) => {
+        const scroll = getContainerScroll();
+        const file = files[fileId];
+        const target = file?.type === FileType.FOLDER ? 'folder' : 'viewer';
+        logInfo('[TopicModule] open', { action: 'open', target, fileId, topicId: currentTopicId || 'root', containerScroll: scroll });
+        if (onOpenFile) onOpenFile(fileId);
+    };
+
+    const handleOpenFolderLocal = (folderId: string) => {
+        const scroll = getContainerScroll();
+        logInfo('[TopicModule] enterFolder', { action: 'enterFolder', folderId, topicId: currentTopicId || 'root', containerScroll: scroll });
+        if (onOpenFileFolder) onOpenFileFolder(folderId);
+    };
+
+    const handleOpenInNewTabLocal = (fileId: string) => {
+        const scroll = getContainerScroll();
+        logInfo('[TopicModule] openInNewTab', { action: 'openInNewTab', fileId, topicId: currentTopicId || 'root', containerScroll: scroll });
+        if (onOpenFileInNewTab) onOpenFileInNewTab(fileId);
+    };
+
 
     const handleRemoveFileFromTopic = useCallback((fileId: string) => {
         if (!currentTopic) return;
@@ -1136,7 +1267,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 containerWidth={containerRect.width}
                                 selectedFileIds={selectedFileIds}
                                 onSelectFiles={onSelectFiles}
-                                onOpenFile={onOpenFile}
+                                onOpenFile={handleOpenFileLocal}
                                 onContextMenu={handleFileContextMenu}
                                 resourceRoot={resourceRoot}
                                 cachePath={cachePath}
@@ -1232,10 +1363,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                 {contextMenu.type === 'file' && contextMenu.fileId && (
                     <>
-                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) onOpenFileInNewTab(contextMenu.fileId!); else onOpenFile && onOpenFile(contextMenu.fileId!); setContextMenu(null); }}>
+                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId && onOpenFileFolder) onOpenFileFolder(parentId); setContextMenu(null); }}>
+                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId); setContextMenu(null); }}>
                             {t('context.openFolder')}
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>

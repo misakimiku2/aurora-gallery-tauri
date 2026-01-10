@@ -48,7 +48,7 @@ App (根组件)
 │   ├── FileGrid (文件网格)
 │   ├── ImageViewer (图片查看器)
 │   ├── SequenceViewer (序列查看器)
-│   └── TopicModule (专题模块)  - 白话：在画廊中展示专题，点开可以查看专题详情（包含图片和关联人物）。支持创建/重命名/删除专题、为专题设置并裁剪封面、对专题进行多选与批量操作等（见 `src/components/TopicModule.tsx`）。
+│   └── TopicModule (专题模块)  - 专题画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物的关联、封面设置与封面裁剪（见 `src/components/TopicModule.tsx`）
 ├── MetadataPanel (元数据面板)
 ├── Modals (模态框)
 │   ├── SettingsModal (设置)
@@ -197,13 +197,19 @@ export class TauriBridge {
     return await invoke('get_pending_files', { limit })
   }
 
-  // 人物数据库 API（白话）：
-  // - dbGetAllPeople(): 返回所有保存的人物，供 UI 列表或选择使用
-  // - dbUpsertPerson(person): 插入或更新人物信息（通常由 AI 识别或用户编辑触发）
-  // - dbDeletePerson(id): 删除指定人物记录
-  // - dbUpdatePersonAvatar(personId, coverFileId, faceBox): 更新人物头像信息（保存封面文件 id 和脸部框）
-  
-  // 示例：前端调用这些方法以同步识别结果到后端数据库、或读取人物列表展示给用户
+  // 人物数据库 API
+  static async dbGetAllPeople(): Promise<Person[]> {
+    return await invoke('db_get_all_people')
+  }
+  static async dbUpsertPerson(person: Person): Promise<void> {
+    return await invoke('db_upsert_person', { person })
+  }
+  static async dbDeletePerson(id: string): Promise<void> {
+    return await invoke('db_delete_person', { id })
+  }
+  static async dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void> {
+    return await invoke('db_update_person_avatar', { personId, coverFileId, faceBox })
+  }
   
   // 进度监听
   static async listenProgress(callback: (progress: any) => void): Promise<void> {
@@ -216,9 +222,20 @@ export class TauriBridge {
 
 ---
 
--- 人物（persons）表（白话说明） --
--- 存储已识别的人物信息：包括人物 id、名字、封面文件 id（cover_file_id）、出现次数计数（count）、可选描述、头像的人脸框（face_box_x/face_box_y/face_box_w/face_box_h）以及最后更新时间（updated_at）。
--- 前端通过 Tauri 命令（如 dbUpsertPerson、dbUpdatePersonAvatar、dbDeletePerson）来维护该表，UI 可以调用 dbGetAllPeople 列出人物供选择或管理。
+-- Persons 表（示例） --
+-- persons 表用于持久化已知人物信息并支持头像更新/计数维护
+CREATE TABLE IF NOT EXISTS persons (
+    id TEXT PRIMARY KEY,
+    name TEXT,
+    cover_file_id TEXT,
+    count INTEGER DEFAULT 0,
+    description TEXT,
+    face_box_x REAL,
+    face_box_y REAL,
+    face_box_w REAL,
+    face_box_h REAL,
+    updated_at DATETIME
+);
 
 ```
 
