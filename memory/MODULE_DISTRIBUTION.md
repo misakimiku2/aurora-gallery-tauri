@@ -12,21 +12,31 @@
 **文件系统操作**:
 ```typescript
 // 目录扫描
-export async function scanDirectory(path: string, recursive?: boolean): Promise<ScanResult>
+export async function scanDirectory(path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 export async function scanFile(filePath: string, parentId?: string): Promise<FileNode>
 
 // 文件操作
 export async function renameFile(oldPath: string, newPath: string): Promise<void>
 export async function deleteFile(path: string): Promise<void>
-export async function copyFile(source: string, destination: string): Promise<void>
-export async function moveFile(source: string, destination: string): Promise<void>
-export async function writeFileFromBytes(path: string, bytes: Uint8Array): Promise<void>
+export async function copyFile(srcPath: string, destPath: string): Promise<void>
+export async function moveFile(srcPath: string, destPath: string): Promise<void>
+export async function writeFileFromBytes(filePath: string, bytes: Uint8Array): Promise<void>
 
 // 目录管理
 export async function openDirectory(): Promise<string | null>
 export async function ensureDirectory(path: string): Promise<void>
+// Deprecated: ensureCacheDirectory(rootPath: string) exists as a compatibility adapter but is deprecated
 export async function createFolder(path: string): Promise<void>
 export async function openPath(path: string, isFile?: boolean): Promise<void>
+
+// 缩略图与图像相关
+export async function getThumbnail(filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null>
+export function getAssetUrl(filePath: string): string
+export async function readFileAsBase64(path: string): Promise<string | null>
+export async function getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
+export async function searchByColor(targetHex: string): Promise<string[]>
+export async function generateDragPreview(thumbnailPaths: string[], totalCount: number, cacheRoot: string): Promise<string | null>
+export async function startDragToExternal(filePaths: string[], thumbnailPaths?: string[], cacheRoot?: string, onDragEnd?: () => void): Promise<void>
 ```
 
 **用户数据管理**:
@@ -36,14 +46,7 @@ export async function loadUserData(): Promise<any>
 export async function getDefaultPaths(): Promise<{ resourceRoot: string, cacheRoot: string }>
 ```
 
-**缩略图和图像处理**:
-```typescript
-export async function getThumbnail(
-  filePath: string, 
-  updatedAt: string, 
-  resourceRoot: string
-): Promise<string>
-```
+**缩略图和图像处理**: 请参见上方“**缩略图与图像相关**”小节，包含 `getThumbnail`, `getAssetUrl`, `readFileAsBase64`, `getDominantColors`, `searchByColor`, `generateDragPreview`, `startDragToExternal` 等接口。
 
 **窗口管理**:
 ```typescript
@@ -54,13 +57,13 @@ export async function exitApp(): Promise<void>
 
 **色彩提取控制**:
 ```typescript
-export async function pauseColorExtraction(): Promise<void>
-export async function resumeColorExtraction(): Promise<void>
+export async function pauseColorExtraction(): Promise<boolean>
+export async function resumeColorExtraction(): Promise<boolean>
 ```
 
 **辅助功能**:
 ```typescript
-export async function readFileAsBase64(path: string): Promise<string>
+export async function readFileAsBase64(path: string): Promise<string | null>
 ```
 
 ### 2. 组件库 (`src/components/`)

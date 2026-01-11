@@ -87,30 +87,29 @@ export const ColorSearchExample: React.FC = () => {
 #### `scanDirectory`
 ```typescript
 async function scanDirectory(
-  path: string, 
-  recursive: boolean = false
-): Promise<ScanResult>
+  path: string,
+  forceRefresh?: boolean
+): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 ```
 
-**描述**: 扫描指定目录，返回文件树结构
+**描述**: 扫描指定目录并返回文件树结构。
+- 目前前端实现会把 `path` 传给后端的 `scan_directory` 命令；`forceRefresh` 参数为可选（当前实现没有把该标志转发给后端，但保留在调用签名中以便未来扩展）。
 
 **参数**:
 - `path`: string - 要扫描的目录路径
-- `recursive`: boolean - 是否递归扫描子目录 (默认: false)
+- `forceRefresh?`: boolean - 可选的强制刷新标志（当前未使用）
 
-**返回**: `Promise<ScanResult>`
+**返回**: `Promise<{ roots: string[]; files: Record<string, FileNode> }>`
 ```typescript
-interface ScanResult {
-  roots: string[]        // 根目录 ID 数组
-  files: Record<string, FileNode>  // 文件节点映射
-}
+// roots: 包含 parentId 为 null 且类型为文件夹的根目录 id
+// files: id -> FileNode 映射（注意：Rust 返回的 url 字段在前端会被忽略，前端使用 getThumbnail()/getAssetUrl() 来获取可用的资源 URL）
 ```
 
 **示例**:
 ```typescript
-const result = await scanDirectory('/home/user/Pictures', true)
-console.log(result.roots)  // ['root1', 'root2']
-console.log(result.files) // { root1: {...}, root2: {...} }
+const result = await scanDirectory('/home/user/Pictures')
+console.log(result.roots)
+console.log(result.files)
 ```
 
 **错误处理**:
@@ -398,30 +397,95 @@ console.log('缓存根目录:', paths.cacheRoot)
 #### `getThumbnail`
 ```typescript
 async function getThumbnail(
-  filePath: string, 
-  updatedAt: string, 
-  resourceRoot: string
-): Promise<string>
+  filePath: string,
+  modified?: string,
+  rootPath?: string,
+  signal?: AbortSignal,
+  onColors?: (colors: DominantColor[] | null) => void
+): Promise<string | null>
 ```
 
-**描述**: 获取或生成缩略图
+**描述**: 获取或生成缩略图，前端实现对多个缩略图请求进行聚合（batch）以减少与后端的调用次数。
+- **行为要点**:
+  - 需要提供 `rootPath`（资源根）以用于计算缓存目录（实现中使用 `${rootPath}/.Aurora_Cache` 或 Windows 路径分隔符形式）。
+  - 返回值是通过 `convertFileSrc` 转换后的资源 URL（前端会向最终调用者返回可在 `<img>` 中直接使用的 URL），如果失败则返回 `null`。
+  - 支持 `onColors` 回调：当后端同时返回主色调信息时，会通过此回调传出 `DominantColor[] | null`。
+  - 前端内部以 ~50ms 的聚合窗口对请求进行批量调用（见 `ThumbnailBatcher` 实现），以降低开销。
 
 **参数**:
 - `filePath`: string - 原图路径
-- `updatedAt`: string - 文件更新时间（用于缓存失效）
-- `resourceRoot`: string - 资源根目录
+- `modified?`: string - 文件最近修改时间（用于控制缓存失效）
+- `rootPath?`: string - 资源根目录（必需以便正确定位缓存）
+- `signal?`: AbortSignal - 可选的取消信号，用于中止请求
+- `onColors?`: (colors: DominantColor[] | null) => void - 可选回调，当后端返回颜色信息时触发
 
-**返回**: `Promise<string>` - 缩略图 Data URL 或缓存路径
+**返回**: `Promise<string | null>` - 可直接用作 `img.src` 的资源 URL，或 `null`（失败/不可用）
 
 **示例**:
 ```typescript
 const thumbnail = await getThumbnail(
   '/home/user/Pictures/photo.jpg',
-  '2024-01-01T12:00:00Z',
-  '/home/user/Pictures'
+  '2026-01-01T12:00:00Z',
+  '/home/user/Pictures',
+  undefined,
+  (colors) => console.log('dominant colors', colors)
 )
-// 返回: "data:image/jpeg;base64,..." 或 "/cache/thumbnails/xxx.jpg"
+// 返回: "http://localhost.../file:///.../cache/thumb.jpg" 或 null
 ```
+
+---
+
+#### `getAssetUrl`
+```typescript
+function getAssetUrl(filePath: string): string
+```
+
+**描述**: 将本地文件路径转换为可在前端直接使用的资源 URL（使用 `convertFileSrc` 实现）。
+
+---
+
+#### `readFileAsBase64`
+```typescript
+async function readFileAsBase64(path: string): Promise<string | null>
+```
+
+**描述**: 读取完整文件并返回 Base64 编码的数据 URL，若失败则返回 `null`。常用于需要把图片直接发送给 AI 服务或本地处理的场景。
+
+---
+
+#### `getDominantColors`
+```typescript
+async function getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
+```
+
+**描述**: 向后端请求特定图片的主色调（默认为最多 8 个）。返回 `DominantColor[]`，失败时返回空数组。
+
+---
+
+#### `searchByColor`
+```typescript
+async function searchByColor(targetHex: string): Promise<string[]>
+```
+
+**描述**: 在后端基于已存储的色彩数据检索与目标颜色相似的图片，返回匹配图片的绝对路径数组（前端需做路径归一化以匹配 `state.files[*].path`）。
+
+---
+
+#### `generateDragPreview`
+```typescript
+async function generateDragPreview(thumbnailPaths: string[], totalCount: number, cacheRoot: string): Promise<string | null>
+```
+
+**描述**: 为外部拖拽生成合成的预览图（最多使用前 3 个缩略图），返回生成的预览图路径或 `null`。
+
+---
+
+#### `startDragToExternal`
+```typescript
+async function startDragToExternal(filePaths: string[], thumbnailPaths?: string[], cacheRoot?: string, onDragEnd?: () => void): Promise<void>
+```
+
+**描述**: 使用 `tauri-plugin-drag` 启动从应用拖拽文件到外部应用的流程。函数会尽力生成或选择合适的图标（合成预览图、缓存缩略图或原始图片），并以复制模式（`copy`）开始拖拽。仅在 Tauri 环境下有效。
 
 ---
 
@@ -450,20 +514,20 @@ let results: Vec<String> = invoke("search_by_color", { targetHex: "#ff0000" }).a
 
 #### `readFileAsBase64`
 ```typescript
-async function readFileAsBase64(path: string): Promise<string>
+async function readFileAsBase64(path: string): Promise<string | null>
 ```
 
-**描述**: 读取文件为 Base64 编码
+**描述**: 读取文件为 Base64 编码，失败时返回 `null`。
 
 **参数**:
 - `path`: string - 文件路径
 
-**返回**: `Promise<string>` - Base64 编码的文件内容
+**返回**: `Promise<string | null>` - Base64 编码的数据 URL 或 `null`
 
 **示例**:
 ```typescript
 const base64 = await readFileAsBase64('/home/user/Pictures/photo.jpg')
-// 返回: "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+// 返回: "data:image/jpeg;base64,/9j/4AAQSkZJRg..." 或 null
 ```
 
 ---
@@ -539,28 +603,28 @@ await exitApp()
 
 #### `pauseColorExtraction`
 ```typescript
-async function pauseColorExtraction(): Promise<void>
+async function pauseColorExtraction(): Promise<boolean>
 ```
 
-**描述**: 暂停色彩提取任务
+**描述**: 暂停色彩提取任务，返回是否成功
 
 **示例**:
 ```typescript
-await pauseColorExtraction()
+const ok = await pauseColorExtraction()
 ```
 
 ---
 
 #### `resumeColorExtraction`
 ```typescript
-async function resumeColorExtraction(): Promise<void>
+async function resumeColorExtraction(): Promise<boolean>
 ```
 
-**描述**: 恢复色彩提取任务
+**描述**: 恢复色彩提取任务，返回是否成功
 
 **示例**:
 ```typescript
-await resumeColorExtraction()
+const ok = await resumeColorExtraction()
 ```
 
 ---

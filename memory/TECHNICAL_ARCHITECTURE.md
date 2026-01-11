@@ -144,13 +144,18 @@ class FaceRecognitionService {
 #### 文件处理流程
 ```typescript
 // 文件扫描流程
-async function scanDirectory(path: string, recursive: boolean = false): Promise<ScanResult> {
+async function scanDirectory(path: string, forceRefresh?: boolean): Promise<ScanResult> {
   // 1. 读取目录内容
   // 2. 过滤支持的文件类型
   // 3. 递归处理子目录（如果需要）
   // 4. 构建文件树结构
   // 5. 返回结果
 }
+
+// 缩略图批量获取说明
+// 前端对缩略图请求做了短时间聚合以减少与后端的调用（聚合窗口约为 50ms），
+// 并根据资源根路径计算缓存目录（`${rootPath}/.Aurora_Cache` 或 Windows 路径形式），
+// getThumbnail 会返回已使用 `convertFileSrc` 转换后的可直接用于 <img> 的 URL 或 null，并可通过 onColors 回调接收主色调信息。
 
 // 文件处理管道
 File Path → Type Detection → Metadata Extraction → AI Analysis → Color Extraction → Database Storage

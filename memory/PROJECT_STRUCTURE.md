@@ -79,12 +79,11 @@ aurora-gallery-tauri/
 │   ├── react.svg                    # React Logo
 │   └── tauri.svg                    # Tauri Logo
 ├── 📁 memory/                       # 项目文档
-│   ├── architecture.md              # 架构设计文档
-│   ├── context.md                   # 项目上下文文档
-│   ├── drag-drop-complete-implementation.md # 拖拽实现文档
-│   ├── product.md                   # 产品需求文档
-│   ├── tasks.md                     # 任务列表文档
-│   └── tech.md                      # 技术栈文档
+│   ├── API_REFERENCE.md             # API 参考文档（与代码实现对应）
+│   ├── MODULE_DISTRIBUTION.md       # 模块分布说明（组件与服务映射）
+│   ├── PROJECT_STRUCTURE.md         # 项目结构文档（本文件）
+│   ├── QUICK_REFERENCE.md           # 快速参考指南（常用命令与 API 速查）
+│   └── TECHNICAL_ARCHITECTURE.md    # 技术架构文档（系统/并发/数据库等）
 ├── 📁 .vscode/                      # VSCode 配置
 │   ├── settings.json
 │   └── extensions.json

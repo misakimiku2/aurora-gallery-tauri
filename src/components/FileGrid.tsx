@@ -2434,19 +2434,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
                    hasRestoredRef.current = true;
                }
            } else {
-              // Explicitly reset to 0 to ensure we don't inherit scroll from previous folder
-              if (containerRef.current.scrollTop !== 0 || scrollTop !== 0) {
-                  isRestoringScrollRef.current = true;
-                  containerRef.current.scrollTop = 0;
-                  setScrollTop(0);
-                  
-                  if (restoreTimeoutRef.current) {
-                      clearTimeout(restoreTimeoutRef.current);
-                  }
-                  restoreTimeoutRef.current = setTimeout(() => {
-                      isRestoringScrollRef.current = false;
-                  }, 50);
-              }
               hasRestoredRef.current = true;
            }
       }
@@ -2469,7 +2456,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
       return (
           <div
               ref={containerRef}
-              className="w-full h-full overflow-auto px-6 pb-6 relative"
+              className="w-full h-full overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
               onContextMenu={onBackgroundContextMenu}
               onMouseDown={handleMouseDownInternal}
               onMouseMove={onMouseMove}
@@ -2581,7 +2568,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   return (
       <div
           ref={containerRef}
-          className={`relative w-full h-full min-w-0 overflow-auto transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
+          className={`relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
           onContextMenu={onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
@@ -2677,7 +2664,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   ))}
               </div>
           ) : activeTab.layoutMode === 'list' ? (
-              <div className="w-full h-full min-w-0 overflow-auto">
+              <div className="w-full h-full min-w-0 overflow-y-auto overflow-x-hidden">
                   <div className="p-6">
                       {displayFileIds.map((id) => {
                           const file = files[id];

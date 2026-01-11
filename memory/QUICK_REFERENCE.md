@@ -96,7 +96,7 @@ cargo tauri info
 #### 文件系统
 ```typescript
 // 扫描目录
-await scanDirectory(path: string, recursive?: boolean): Promise<ScanResult>
+await scanDirectory(path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 
 // 扫描单个文件
 await scanFile(filePath: string, parentId?: string): Promise<FileNode>
@@ -104,13 +104,21 @@ await scanFile(filePath: string, parentId?: string): Promise<FileNode>
 // 文件操作
 await renameFile(oldPath: string, newPath: string): Promise<void>
 await deleteFile(path: string): Promise<void>
-await copyFile(source: string, destination: string): Promise<void>
-await moveFile(source: string, destination: string): Promise<void>
+await copyFile(srcPath: string, destPath: string): Promise<void>
+await moveFile(srcPath: string, destPath: string): Promise<void>
+await writeFileFromBytes(filePath: string, bytes: Uint8Array): Promise<void>
 
 // 目录管理
 await openDirectory(): Promise<string | null>
 await createFolder(path: string): Promise<void>
 await ensureDirectory(path: string): Promise<void>
+await openPath(path: string, isFile?: boolean): Promise<void>
+
+// 缩略图与图像
+await getThumbnail(filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null>
+await getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
+await readFileAsBase64(path: string): Promise<string | null>
+await searchByColor(targetHex: string): Promise<string[]>
 ```
 
 #### 用户数据
@@ -130,8 +138,8 @@ await exitApp(): Promise<void>
 
 #### 色彩提取控制
 ```typescript
-await pauseColorExtraction(): Promise<void>
-await resumeColorExtraction(): Promise<void>
+await pauseColorExtraction(): Promise<boolean>
+await resumeColorExtraction(): Promise<boolean>
 ```
 
 ### 后端 API (Rust Commands)
