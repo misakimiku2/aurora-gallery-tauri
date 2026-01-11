@@ -531,7 +531,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     <div className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 z-30 space-x-4">
       {/* Left: Navigation */}
       <div className="flex items-center space-x-2 min-w-fit">
-        <button onClick={onToggleSidebar} className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isSidebarVisible ? 'text-gray-600 dark:text-gray-300' : 'text-gray-400'}`} title={t('viewer.toggleSidebar')}>
+        <button onClick={onToggleSidebar} className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
           <Sidebar size={18} />
         </button>
         <div className="flex space-x-1">

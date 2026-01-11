@@ -421,7 +421,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     setShowSavedSource(false);
     setShowSavedPerson(false);
     setPaletteMenu({ visible: false, x: 0, y: 0, color: null });
-  }, [file?.id, selectedFileIds, isMulti, files, person?.id, onUpdate]);
+  }, [file?.id, selectedFileIds.join(','), isMulti, person?.id, topic?.id]);
 
   const handleUpdateTopicMeta = () => {
       if (topic && onUpdateTopic) {
@@ -1238,42 +1238,54 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           </div>
 
           <div className="p-5 space-y-6 flex-1">
-              {/* Description Card */}
-              <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden flex flex-col">
-                  <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center justify-between">
-                     <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center">
-                        <FileText size={14} className="mr-1.5"/> {t('meta.description')}
-                     </div>
-                     {showSavedPerson && <span className="text-green-500 flex items-center text-[10px] animate-fade-in"><Check size={12} className="mr-1"/>{t('meta.saved')}</span>}
+              {/* 高端简介输入框 */}
+              <div className="space-y-3">
+                  <div className="flex justify-between items-center px-1">
+                      <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                          {t('meta.description')}
+                      </label>
                   </div>
-                  <div className="p-0">
+                  <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                       <textarea
                           ref={personDescRef}
                           value={personDesc}
                           onChange={(e) => setPersonDesc(e.target.value)}
-                          onBlur={handleUpdatePersonMeta}
                           placeholder={t('meta.addDesc')}
-                          className="w-full bg-transparent border-none p-4 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-0 leading-relaxed min-h-[200px]"
+                          className="w-full bg-transparent border-none p-4 text-sm text-gray-700 dark:text-gray-300 min-h-[140px] focus:ring-0 resize-none leading-relaxed placeholder:text-gray-400/50"
                       />
-                  </div>
-                  <div className="px-4 py-3 bg-gray-50 dark:bg-gray-800/30 border-t border-gray-100 dark:border-gray-700 flex justify-end gap-2">
-                      <button
-                          onClick={handleUpdatePersonMeta}
-                          className="px-3 py-1.5 text-xs font-medium bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm transition-colors flex items-center"
-                      >
-                          <Save size={12} className="mr-1.5"/> {t('meta.save')}
-                      </button>
+                      {personDesc !== (person.description || '') && (
+                          <div className="absolute bottom-3 right-3 animate-fade-in">
+                              <button
+                                  onClick={handleUpdatePersonMeta}
+                                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                              >
+                                  <Save size={16} />
+                                  {t('meta.save')}
+                              </button>
+                          </div>
+                      )}
                   </div>
               </div>
 
               {/* Danger Zone */}
-              <div className="pt-6 mt-2">
-                  <button className="w-full flex items-center justify-center px-4 py-3 bg-white dark:bg-gray-800 border border-red-200 dark:border-red-900/30 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 hover:border-red-300 dark:hover:border-red-900/50 rounded-xl transition-all text-sm font-medium group shadow-sm">
-                      <Trash2 size={16} className="mr-2 group-hover:scale-110 transition-transform"/>
+              <div className="pt-8 pb-4 flex justify-center">
+                  <button 
+                      onClick={() => onDeleteTopic && onDeleteTopic(person.id)}
+                      className="flex items-center gap-2 px-6 py-3 text-red-500/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-2xl transition-all text-sm font-bold tracking-tight opacity-70 hover:opacity-100"
+                  >
+                      <Trash2 size={16} />
                       {t('context.deletePerson')}
                   </button>
               </div>
           </div>
+
+          {/* 现代化保存消息提示 */}
+          {showSavedPerson && (
+              <div className="fixed bottom-8 left-[calc(100%-160px)] transform -translate-x-1/2 bg-gray-900/90 dark:bg-white/90 text-white dark:text-gray-900 text-xs font-bold px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md animate-toast-up flex items-center z-50">
+                  <Check size={14} className="mr-2 text-green-500"/>
+                  {t('context.saved')}
+              </div>
+          )}
         </div>
       );
   }

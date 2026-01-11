@@ -461,26 +461,28 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="flex items-center space-x-2">
           <button 
             onClick={() => onLayoutToggle('sidebar')}
-            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layout.isSidebarVisible ? 'text-gray-500 dark:text-gray-400' : 'text-gray-500 dark:text-gray-400'}`}
+            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
             title={t('viewer.toggleSidebar')}
           >
             <Sidebar size={18} />
           </button>
-          <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-2"></div>
-          <button 
-            onClick={onNavigateBack} disabled={!canGoBack}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-500 dark:text-gray-400"
-            title={t('viewer.back')}
-          >
-            <ArrowLeft size={18} />
-          </button>
-          <button 
-            onClick={onNavigateForward} disabled={!canGoForward}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-500 dark:text-gray-400"
-            title={t('viewer.forward')}
-          >
-            <ArrowRight size={18} />
-          </button>
+          
+          <div className="flex space-x-1">
+            <button 
+              onClick={onNavigateBack} disabled={!canGoBack}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
+              title={t('viewer.back')}
+            >
+              <ChevronLeft size={18} />
+            </button>
+            <button 
+              onClick={onNavigateForward} disabled={!canGoForward}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
+              title={t('viewer.forward')}
+            >
+              <ChevronRight size={18} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
@@ -572,7 +574,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           
           <button 
             onClick={() => onLayoutToggle('metadata')}
-            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${layout.isMetadataVisible ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
             title={t('viewer.toggleMeta')}
           >
             <PanelRight size={18} />
