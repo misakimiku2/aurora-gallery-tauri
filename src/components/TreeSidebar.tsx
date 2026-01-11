@@ -12,7 +12,7 @@ interface TreeProps {
   currentFolderId: string;
   expandedIds: string[];
   onToggle: (id: string) => void;
-  onNavigate: (id: string) => void;
+  onNavigate: (id: string, options?: { resetScroll?: boolean }) => void;
   onContextMenu: (e: React.MouseEvent, type: 'file' | 'tag' | 'root-folder', id: string) => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   depth?: number;
@@ -36,7 +36,7 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
   };
 
   const handleClick = () => {
-    onNavigate(nodeId);
+    onNavigate(nodeId, { resetScroll: true });
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -513,7 +513,7 @@ export const Sidebar: React.FC<{
   expandedIds: string[];
   tasks?: TaskProgress[];
   onToggle: (id: string) => void;
-  onNavigate: (id: string) => void;
+  onNavigate: (id: string, options?: { resetScroll?: boolean }) => void;
   onTagSelect: (tag: string) => void;
   onNavigateAllTags: () => void;
   onPersonSelect: (personId: string) => void;

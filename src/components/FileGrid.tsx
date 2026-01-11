@@ -2153,6 +2153,7 @@ interface FileGridProps {
   setIsDraggingInternal?: (isDragging: boolean) => void;
   setDraggedFilePaths?: (paths: string[]) => void;
   isVisible?: boolean;
+  onConsumeScrollToItem?: () => void;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -2204,7 +2205,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   isDraggingInternal,
   setIsDraggingInternal,
   setDraggedFilePaths,
-  isVisible = true
+  isVisible = true,
+  onConsumeScrollToItem
 }) => {
   // #region agent log
   // Removed debug logs
@@ -2438,6 +2440,51 @@ export const FileGrid: React.FC<FileGridProps> = ({
            }
       }
   }, [activeTab.id, activeTab.folderId, activeTab.viewMode, activeTab.scrollTop, containerRect.width, totalHeight, isVisible]);
+
+  // Handle scrolling to specific item
+  useEffect(() => {
+      // Only run if we have a target item ID and layout is ready
+      // IMPORTANT: Must wait for containerRect.width > 0 to ensure layout is calculated correctly based on container width
+      if (!isVisible || !activeTab.scrollToItemId || !containerRef?.current || layout.length === 0 || containerRect.width <= 0 || containerRect.height <= 0) return;
+
+      const item = layout.find(i => i.id === activeTab.scrollToItemId);
+      
+      if (item) {
+         const containerHeight = containerRect.height;
+         const itemTop = item.y;
+         const itemHeight = item.height;
+         
+         // Calculate scroll position to center the item
+         let newScrollTop = itemTop - (containerHeight / 2) + (itemHeight / 2);
+         
+         // Clamp based on total layout height
+         newScrollTop = Math.max(0, Math.min(newScrollTop, totalHeight - containerHeight));
+         
+         // If totalHeight is smaller than container, scrollTop should be 0
+         if (totalHeight < containerHeight) {
+            newScrollTop = 0;
+         }
+
+         // Log for debugging
+         // console.log(`[FileGrid] ScrollToItem: ${activeTab.scrollToItemId}, itemY=${itemTop}, newScroll=${newScrollTop}, containerH=${containerHeight}`);
+         
+         // Temporarily block scroll updates to state
+         isRestoringScrollRef.current = true;
+         containerRef.current.scrollTop = newScrollTop;
+         setScrollTop(newScrollTop);
+         
+         if (restoreTimeoutRef.current) {
+             clearTimeout(restoreTimeoutRef.current);
+         }
+         
+         // Slightly longer timeout to ensure scroll settles
+         restoreTimeoutRef.current = setTimeout(() => {
+             isRestoringScrollRef.current = false;
+         }, 150);
+
+         onConsumeScrollToItem?.();
+      }
+  }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
       const buffer = 800; 

@@ -277,7 +277,7 @@ interface TopicModuleProps {
     lastSelectedId?: string | null;
     onNavigateTopic: (topicId: string | null) => void;
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
-    onCreateTopic: (parentId: string | null, name?: string) => void;
+    onCreateTopic: (parentId: string | null, name?: string, type?: string) => void;
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[]) => void;
     // Note: onSelectFiles now accepts an optional lastSelectedId to allow caller to set it
@@ -290,7 +290,7 @@ interface TopicModuleProps {
     onOpenTopicInNewTab?: (topicId: string) => void;
     onOpenPersonInNewTab?: (personId: string) => void;
     onOpenFileInNewTab?: (fileId: string) => void;
-    onOpenFileFolder?: (folderId: string) => void;
+    onOpenFileFolder?: (folderId: string, options?: { targetId?: string }) => void;
     // Optional: resource root and cache path for thumbnail generation
     resourceRoot?: string;
     cachePath?: string;
@@ -911,8 +911,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         setContextMenu(null);
     }, []);
     
-    const handleCreateTopicWithName = useCallback((name: string) => {
-        onCreateTopic(currentTopicId, name);
+    const handleCreateTopicWithName = useCallback((name: string, type?: string) => {
+        onCreateTopic(currentTopicId, name, type ? type.slice(0, 12) : undefined);
         setShowCreateModal(false);
     }, [currentTopicId, onCreateTopic]);
 
@@ -943,10 +943,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (onOpenFile) onOpenFile(fileId);
     };
 
-    const handleOpenFolderLocal = (folderId: string) => {
+    const handleOpenFolderLocal = (folderId: string, targetId?: string) => {
         const scroll = getContainerScroll();
-        logInfo('[TopicModule] enterFolder', { action: 'enterFolder', folderId, topicId: currentTopicId || 'root', containerScroll: scroll });
-        if (onOpenFileFolder) onOpenFileFolder(folderId);
+        logInfo('[TopicModule] enterFolder', { action: 'enterFolder', folderId, topicId: currentTopicId || 'root', containerScroll: scroll, targetId });
+        if (onOpenFileFolder) onOpenFileFolder(folderId, { targetId });
     };
 
     const handleOpenInNewTabLocal = (fileId: string) => {
@@ -1092,10 +1092,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                                         {/* Info Overlay */}
                                         <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-12">
-                                            <p className="text-white/80 text-xs font-medium uppercase tracking-wider mb-1">
-                                                {topic.createdAt ? new Date(topic.createdAt).getFullYear() : '2024'} ISSUE
-                                            </p>
-                                            <div className="flex justify-between items-end text-white">
+                                                <div className="flex justify-between items-end text-white">
                                                 <div>
                                                     <div className="text-xs opacity-70 flex items-center mb-0.5">
                                                         <User size={10} className="mr-1" /> {personCount}
@@ -1104,9 +1101,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                         <Folder size={10} className="mr-1" /> {subTopicCount}
                                                     </div>
                                                 </div>
-                                                <span className="text-xs border border-white/30 rounded-full px-2 py-0.5 backdrop-blur-sm">
-                                                    READ
-                                                </span>
+                                                {topic.type && topic.type.trim() ? (
+                                                    <span className="text-xs border border-white/30 rounded-full px-2 py-0.5 backdrop-blur-sm">
+                                                        {topic.type.length > 12 ? `${topic.type.slice(0,12)}…` : topic.type}
+                                                    </span>
+                                                ) : null}
                                             </div>
                                         </div>
                                     </div>
@@ -1213,7 +1212,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             topicPeople = Array.from(collected).map(id => people[id]).filter(Boolean);
         }
         const allSubTopicIds = subTopics.map(t => t.id);
-        const heroUrl = getCoverUrl(currentTopic);
+        const backgroundFile = currentTopic.backgroundFileId ? files[currentTopic.backgroundFileId] : null;
+        const heroUrl = backgroundFile ? convertFileSrc(backgroundFile.path) : getCoverUrl(currentTopic);
 
         return (
             <div 
@@ -1327,6 +1327,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                                     <Layout size={32} className="text-white opacity-50" />
                                                                 </div>
                                                             )}
+
+                                                            {/* 类型角标（可选） */}
+                                                            {sub.type && sub.type.trim() ? (
+                                                                <div className="absolute top-3 right-3">
+                                                                    <span className="text-xs border border-white/30 rounded-full px-2 py-0.5 backdrop-blur-sm bg-black/20 text-white">
+                                                                        {sub.type.length > 12 ? `${sub.type.slice(0,12)}…` : sub.type}
+                                                                    </span>
+                                                                </div>
+                                                            ) : null}
                                                         </div>
                                                     </div>
                                                     
@@ -1592,8 +1601,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId); setContextMenu(null); }}>
+                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
                             {t('context.openFolder')}
+                        </div>
+                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { 
+                            if (currentTopicId) {
+                                onUpdateTopic(currentTopicId, { backgroundFileId: contextMenu.fileId }); 
+                                if (onShowToast) onShowToast(t('context.setAsBackgroundSuccess') || '已设置为专题背景');
+                            }
+                            setContextMenu(null); 
+                        }}>
+                            <FileImage size={14} className="mr-3" /> {t('context.setAsBackground') || '设置为专题背景'}
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
                         <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic([contextMenu.fileId!]); }}>
@@ -1643,8 +1661,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         setShowRenameModal(false);
                         setCurrentEditingTopic(null);
                     }}
-                    onRename={(name) => {
-                        onUpdateTopic(currentEditingTopic.id, { name });
+                    onRename={(name, type) => {
+                        onUpdateTopic(currentEditingTopic.id, { name, ...(typeof type === 'string' ? { type } : {}) });
                         setShowRenameModal(false);
                         setCurrentEditingTopic(null);
                     }}
@@ -1693,17 +1711,20 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
 interface CreateTopicModalProps {
     onClose: () => void;
-    onCreate: (name: string) => void;
+    onCreate: (name: string, type?: string) => void;
     t: (key: string) => string;
 }
 
 const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, t }) => {
     const [name, setName] = useState('');
+    // 默认类型为 TOPIC
+    const [type, setType] = useState('TOPIC');
     
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (name.trim()) {
-            onCreate(name.trim());
+        const trimmed = name.trim();
+        if (trimmed) {
+            onCreate(trimmed, type.trim().slice(0, 12));
         }
     };
     
@@ -1719,9 +1740,23 @@ const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, 
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-4 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         autoFocus
                     />
+
+                    <div className="mb-4">
+                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最多12字)'}</label>
+                        <input
+                            type="text"
+                            value={type}
+                            maxLength={12}
+                            onChange={(e) => setType(e.target.value.slice(0, 12))}
+                            placeholder={t('context.typePlaceholder') || '请输入类型（最多12字）'}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                        />
+                        <div className="text-xs text-gray-400 mt-1">{type.length}/12</div>
+                    </div>
+
                     <div className="flex justify-end space-x-3">
                         <button
                             type="button"
@@ -1747,17 +1782,21 @@ const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, 
 interface RenameTopicModalProps {
     topic: Topic;
     onClose: () => void;
-    onRename: (name: string) => void;
+    // onRename now accepts optional `type` (max 12 chars)
+    onRename: (name: string, type?: string) => void;
     t: (key: string) => string;
 }
 
 const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onRename, t }) => {
     const [name, setName] = useState(topic.name);
+    const [type, setType] = useState<string>(topic.type || '');
     
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (name.trim() && name !== topic.name) {
-            onRename(name.trim());
+        const trimmedName = name.trim();
+        const trimmedType = type.trim().slice(0, 12);
+        if (trimmedName && (trimmedName !== topic.name || trimmedType !== (topic.type || ''))) {
+            onRename(trimmedName, trimmedType);
         }
     };
     
@@ -1773,9 +1812,24 @@ const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onR
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-4 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         autoFocus
                     />
+
+                    {/* 新增：类型字段（最多12字） */}
+                    <div className="mb-4">
+                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最多12字)'}</label>
+                        <input
+                            type="text"
+                            value={type}
+                            maxLength={12}
+                            onChange={(e) => setType(e.target.value.slice(0, 12))}
+                            placeholder={t('context.typePlaceholder') || '请输入类型（最多12字）'}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                        />
+                        <div className="text-xs text-gray-400 mt-1">{type.length}/12</div>
+                    </div>
+
                     <div className="flex justify-end space-x-3">
                         <button
                             type="button"
@@ -1786,7 +1840,7 @@ const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onR
                         </button>
                         <button
                             type="submit"
-                            disabled={!name.trim() || name === topic.name}
+                            disabled={!name.trim() || (name.trim() === topic.name && type.trim() === (topic.type || ''))}
                             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             {t('context.confirm') || '确认'}

@@ -91,7 +91,10 @@ export interface Topic {
   parentId: string | null;
   name: string;
   description?: string;
+  /** 可选：自定义显示的类型 / 标签，最多 12 字 */
+  type?: string;
   coverFileId?: string;
+  backgroundFileId?: string;
   coverCrop?: CoverCropData;
   peopleIds: string[];
   fileIds?: string[];
@@ -255,6 +258,7 @@ export interface TabState {
   lastSelectedId: string | null;
   selectedTagIds: string[];
   selectedPersonIds: string[];
+  scrollToItemId?: string;
   history: {
     stack: HistoryItem[];
     currentIndex: number;

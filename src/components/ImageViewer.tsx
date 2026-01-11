@@ -29,7 +29,7 @@ interface ViewerProps {
   onViewInExplorer: (id: string) => void;
   onCopyToFolder: (fileId: string) => void;
   onMoveToFolder: (fileId: string) => void;
-  onNavigateToFolder: (folderId: string) => void;
+  onNavigateToFolder: (folderId: string, options?: { targetId?: string }) => void;
   searchQuery: string;
   onSearch: (query: string) => void; 
   searchScope: SearchScope;
@@ -714,7 +714,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} 
                 onClick={() => { 
                   if (!isUnavailable && parentId) { 
-                    onNavigateToFolder(parentId); 
+                    onNavigateToFolder(parentId, { targetId: file.id }); 
                     setContextMenu({...contextMenu, visible: false}); 
                   }
                 }}

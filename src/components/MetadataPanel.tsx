@@ -56,7 +56,7 @@ interface MetadataProps {
   onDeleteTopic?: (id: string) => void;
   onSelectTopic?: (id: string) => void;
   onSelectPerson?: (id: string) => void;
-  onNavigateToFolder: (folderId: string) => void;
+  onNavigateToFolder: (folderId: string, options?: { targetId?: string }) => void;
   onNavigateToTag: (tag: string) => void;
   onSearch: (query: string) => void;
   t: (key: string) => string;
@@ -1704,7 +1704,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             <button 
                 onClick={() => {
                     if (file.parentId && !(activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId)) {
-                        onNavigateToFolder(file.parentId);
+                        onNavigateToFolder(file.parentId, { targetId: file.id });
                     }
                 }}
                 className={`w-full flex items-center justify-center py-2.5 px-4 text-sm font-medium rounded-lg transition-colors border border-gray-200 dark:border-gray-700 group ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'}`}

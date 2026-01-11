@@ -1806,19 +1806,11 @@ export const App: React.FC = () => {
         const topic = state.topics[topicId];
         
         if (topic) {
-            // Get all images from this topic (and subtopics if it's a parent)
-            const topicFileIds = new Set<string>();
-            
-            // Add images from current topic
-            topic.fileIds?.forEach(id => topicFileIds.add(id));
-            
-            // If it's a parent topic, add images from subtopics
-            if (!topic.parentId) {
-                const subTopics = Object.values(state.topics).filter(t => t.parentId === topic.id);
-                subTopics.forEach(sub => sub.fileIds?.forEach(id => topicFileIds.add(id)));
-            }
-            
-            candidates = allFiles.filter(f => topicFileIds.has(f.id));
+            // Get all images from this topic (only current topic, preserve order)
+            // Use map on topic.fileIds to ensure the order matches the TopicModule view
+            candidates = (topic.fileIds || [])
+                .map(id => state.files[id])
+                .filter(f => f && f.type === FileType.IMAGE);
         } else {
              candidates = [];
         }
@@ -1914,6 +1906,9 @@ export const App: React.FC = () => {
     }
     
     // Sort and return IDs
+    if (activeTab.activeTopicId) {
+        return candidates.map(f => f.id);
+    }
     return sortFiles(candidates).map(f => f.id);
   }, [allFiles, activeTab, state.sortBy, state.sortDirection, state.settings.search.isAISearchEnabled]);
 
@@ -3373,7 +3368,9 @@ export const App: React.FC = () => {
       }
       
       // Sort people alphabetically by name, same as in useLayout
-      allPeople.sort((a, b) => a.name.localeCompare(b.name));
+      // FIXED: Do NOT sort here, because FileGrid (people-overview) does NOT sort. 
+      // We must match the display order (Object.values order) for range selection to work correctly.
+      // allPeople.sort((a, b) => a.name.localeCompare(b.name));
       
       const allPersonIds = allPeople.map(person => person.id);
       
@@ -3890,7 +3887,7 @@ export const App: React.FC = () => {
   };
   
   // Navigation helpers
-  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = []) => { 
+  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => { 
       // Set global navigation timestamp BEFORE state update
       (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
       updateActiveTab(prevTab => { 
@@ -3905,7 +3902,7 @@ export const App: React.FC = () => {
               };
           }
           const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds }]; 
-          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds, selectedFileIds: viewingId ? [viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
+          return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds, selectedFileIds: scrollToItemId ? [scrollToItemId] : (viewingId ? [viewingId] : []), scrollToItemId, selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } }; 
       }); 
   }, []);
 
@@ -4004,12 +4001,14 @@ export const App: React.FC = () => {
       }
   }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings]);
 
-  const enterFolder = (folderId: string) => {
+  const enterFolder = (folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
       const scroll = selectionRef.current?.scrollTop || 0;
-      logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll });
-      pushHistory(folderId, null, 'browser', '', 'all', [], null, scroll);
+      logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll, ...options });
+      // If resetScroll is explicitly true, or implicitly we want to reset (default behavior for entering folder)
+      const nextScroll = options?.resetScroll ? 0 : 0; 
+      pushHistory(folderId, null, 'browser', '', 'all', [], null, nextScroll, null, null, [], [], options?.scrollToItemId);
   };
-  const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
+  const handleNavigateFolder = (id: string, options?: { targetId?: string, resetScroll?: boolean }) => { closeContextMenu(); enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll }); };
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
       pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -4023,12 +4022,14 @@ export const App: React.FC = () => {
     handleNavigateTopic(null);
   }, [handleNavigateTopic]);
   
-  const handleCreateTopic = useCallback((parentId: string | null, name?: string) => {
+  const handleCreateTopic = useCallback((parentId: string | null, name?: string, type?: string) => {
       const id = Math.random().toString(36).substr(2, 9);
       const newTopic: Topic = {
           id,
           parentId,
           name: name || t('context.newTopicDefault') || 'New Topic',
+          // 默认类型为 TOPIC（若传入 type 则截断到 12 字）
+          type: type ? type.slice(0, 12) : 'TOPIC',
           peopleIds: [],
           fileIds: [],
           createdAt: new Date().toISOString(),
@@ -6033,7 +6034,7 @@ export const App: React.FC = () => {
                           onViewInExplorer={handleViewInExplorer}
                           onCopyToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }))}
                           onMoveToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }))}
-                          onNavigateToFolder={(fid) => enterFolder(fid)}
+                          onNavigateToFolder={(fid, options) => enterFolder(fid, options && options.targetId ? { scrollToItemId: options.targetId } : undefined)}
                           searchQuery={activeTab.searchQuery}
                           onSearch={handleViewerSearch}
                           searchScope={activeTab.searchScope}
@@ -6327,6 +6328,7 @@ export const App: React.FC = () => {
                         isSelecting={isSelecting}
                         selectionBox={selectionBox}
                         onScrollTopChange={(scrollTop) => { logDebug('[App] filegrid.scrollUpdate', { action: 'filegrid.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
+                        onConsumeScrollToItem={() => updateActiveTab({ scrollToItemId: undefined })}
                         t={t} 
                         onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                         onUpdateFile={handleUpdateFile}
@@ -6496,7 +6498,7 @@ export const App: React.FC = () => {
                 )}
                 
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={14} className="mr-2 opacity-70"/> {t('context.viewInExplorer')}</div>
-                {contextMenu.type === 'file-single' && state.files[contextMenu.targetId!] && ( (() => { const file = state.files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return ( <div className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId); closeContextMenu(); } }}>{t('context.openFolder')}</div> ); })() )}
+                {contextMenu.type === 'file-single' && state.files[contextMenu.targetId!] && ( (() => { const file = state.files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return ( <div className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>{t('context.openFolder')}</div> ); })() )}
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
                 
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>{t('context.copyTo')}</div>
@@ -6653,6 +6655,14 @@ export const App: React.FC = () => {
                   updateActiveTab({ selectedFileIds: displayFileIds });
                   closeContextMenu(); 
                 }}>{t('context.selectAll')}</div>
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { 
+                  if (selectionRef.current) selectionRef.current.scrollTop = 0;
+                  closeContextMenu(); 
+                }}>{t('context.scrollToTop')}</div>
+                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { 
+                  if (selectionRef.current) selectionRef.current.scrollTop = selectionRef.current.scrollHeight;
+                  closeContextMenu(); 
+                }}>{t('context.scrollToBottom')}</div>
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateFolder(); closeContextMenu(); }}>{t('context.newFolder')}</div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateNewTag(); closeContextMenu(); }}>{t('context.newTag')}</div>
