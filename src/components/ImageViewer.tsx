@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { FileNode, SlideshowConfig, SearchScope } from '../types';
 import { 
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight, 
@@ -7,6 +7,79 @@ import {
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen
 } from 'lucide-react';
+
+
+// 全局高分辨率图片 Blob 缓存 - 增大容量到 200 张
+const blobCache = new Map<string, string>();
+const MAX_CACHE_SIZE = 200;
+
+// 正在加载中的 Promise 缓存，防止重复请求
+const loadingPromises = new Map<string, Promise<string>>();
+
+// 同步获取缓存（如果存在）- 用于无闪烁切换
+export const getBlobCacheSync = (path: string): string | null => {
+    if (blobCache.has(path)) {
+        const url = blobCache.get(path)!;
+        // LRU: 移动到最后
+        blobCache.delete(path);
+        blobCache.set(path, url);
+        return url;
+    }
+    return null;
+};
+
+// 检查缓存是否存在
+export const hasBlobCache = (path: string): boolean => {
+    return blobCache.has(path);
+};
+
+const loadToCache = async (path: string): Promise<string> => {
+    // 如果已在缓存中，直接返回
+    const cached = getBlobCacheSync(path);
+    if (cached) return cached;
+    
+    // 如果已经在加载中，等待现有的 Promise
+    if (loadingPromises.has(path)) {
+        return loadingPromises.get(path)!;
+    }
+    
+    // 创建新的加载 Promise
+    const loadPromise = (async () => {
+        try {
+            const src = convertFileSrc(path);
+            const res = await fetch(src);
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            
+            // 缓存淘汰
+            if (blobCache.size >= MAX_CACHE_SIZE) {
+                const firstKey = blobCache.keys().next().value;
+                if (firstKey) {
+                    URL.revokeObjectURL(blobCache.get(firstKey)!);
+                    blobCache.delete(firstKey);
+                }
+            }
+            
+            blobCache.set(path, url);
+            return url;
+        } catch (e) {
+            console.error("Failed to load image to cache", path, e);
+            return convertFileSrc(path); 
+        } finally {
+            loadingPromises.delete(path);
+        }
+    })();
+    
+    loadingPromises.set(path, loadPromise);
+    return loadPromise;
+};
+
+// 预加载图片到缓存（静默，不返回结果）
+export const preloadToCache = (path: string): void => {
+    if (!blobCache.has(path) && !loadingPromises.has(path)) {
+        loadToCache(path).catch(() => {});
+    }
+};
 
 interface ViewerProps {
   file: FileNode;
@@ -116,42 +189,118 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const [animationClass, setAnimationClass] = useState('animate-zoom-in');
   const lastFileIdRef = useRef(file.id);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string>('');
+  
+  // 真正的双缓冲机制：两个图层交替显示
+  // activeLayer: 0 或 1，表示当前显示的是哪个图层
+  const [activeLayer, setActiveLayer] = useState<0 | 1>(0);
+  // 增加 Layer ID 状态，用于记录图层当前加载的是哪个文件路径，防止旧内容闪烁
+  const [layer0Id, setLayer0Id] = useState<string>(file.path || '');
+  const [layer1Id, setLayer1Id] = useState<string>('');
+  
+  const [layer0Url, setLayer0Url] = useState<string>(() => {
+    if (file.path) {
+      const cached = getBlobCacheSync(file.path);
+      if (cached) return cached;
+    }
+    return '';
+  });
+  const [layer1Url, setLayer1Url] = useState<string>('');
+  const [layer0Ready, setLayer0Ready] = useState(!!layer0Url);
+  const [layer1Ready, setLayer1Ready] = useState(false);
+  
+  // 用于追踪当前正在加载的文件路径
+  const currentLoadingPath = useRef<string>('');
+  // 追踪当前目标图层
+  const targetLayerRef = useRef<0 | 1>(0);
+  // 追踪每个图层期望的 URL，用于验证 onLoad 是否是我们期望的图片
+  const expectedLayer0Url = useRef<string>(layer0Url);
+  const expectedLayer1Url = useRef<string>('');
 
-  // Load image with asset protocol and preloading
+  // Load image using Blob Cache - 真正的双缓冲
   useEffect(() => {
-    let isMounted = true;
     if (!file.path) {
-      setImageUrl('');
+      setLayer0Url('');
+      setLayer1Url('');
       return;
     }
     
-    const targetSrc = convertFileSrc(file.path);
+    const path = file.path;
+    currentLoadingPath.current = path;
     
-    // Initial load
-    if (!imageUrl) {
-      setImageUrl(targetSrc);
-      return;
+    // 确定目标图层（与当前显示的图层相反）
+    const targetLayer = activeLayer === 0 ? 1 : 0;
+    targetLayerRef.current = targetLayer;
+    
+    // 尝试同步获取缓存
+    const cachedUrl = getBlobCacheSync(path);
+    
+    if (cachedUrl) {
+      // 缓存命中：设置到目标图层，并重置 ready 状态
+      if (targetLayer === 0) {
+        expectedLayer0Url.current = cachedUrl;
+        setLayer0Ready(false); // 重置 ready，等待新图片的 onLoad
+        setLayer0Url(cachedUrl);
+        setLayer0Id(path); // 标记此图层的内容归属
+      } else {
+        expectedLayer1Url.current = cachedUrl;
+        setLayer1Ready(false); // 重置 ready，等待新图片的 onLoad
+        setLayer1Url(cachedUrl);
+        setLayer1Id(path); // 标记此图层的内容归属
+      }
+    } else {
+      // 缓存未命中：先重置目标图层的 ready 状态
+      if (targetLayer === 0) {
+        setLayer0Ready(false);
+      } else {
+        setLayer1Ready(false);
+      }
+      
+      // 异步加载到目标图层
+      loadToCache(path).then(url => {
+        if (currentLoadingPath.current === path) {
+          if (targetLayerRef.current === 0) {
+            expectedLayer0Url.current = url;
+            setLayer0Url(url);
+            setLayer0Id(path); // 标记此图层的内容归属
+          } else {
+            expectedLayer1Url.current = url;
+            setLayer1Url(url);
+            setLayer1Id(path); // 标记此图层的内容归属
+          }
+        }
+      });
     }
-
-    // If source is different, preload then switch
-    if (imageUrl !== targetSrc) {
-       // Create a temp image to preload
-       const img = new Image();
-       img.src = targetSrc;
-       img.onload = () => {
-          if (isMounted) setImageUrl(targetSrc);
-       };
-       img.onerror = () => {
-          if (isMounted) setImageUrl(targetSrc); // Switch anyway on error
-       };
-    }
-
-    return () => {
-        isMounted = false;
-    };
   }, [file.path]);
+  
+  // 处理图层 0 的 onLoad - 验证是期望的图片才设置 ready
+  const handleLayer0Load = useCallback(() => {
+    // 只有当加载的是我们期望的 URL 时才设置 ready
+    if (layer0Url === expectedLayer0Url.current) {
+      setLayer0Ready(true);
+    }
+  }, [layer0Url]);
+  
+  // 处理图层 1 的 onLoad
+  const handleLayer1Load = useCallback(() => {
+    if (layer1Url === expectedLayer1Url.current) {
+      setLayer1Ready(true);
+    }
+  }, [layer1Url]);
+  
+  // 当目标图层准备好后，切换显示
+  useEffect(() => {
+    const targetLayer = targetLayerRef.current;
+    
+    // 只有当图层 URL、图层内容 ID 都匹配当前文件时，才允许切换
+    if (targetLayer === 0 && layer0Ready && layer0Url && layer0Id === file.path && currentLoadingPath.current === file.path) {
+      setActiveLayer(0);
+    } else if (targetLayer === 1 && layer1Ready && layer1Url && layer1Id === file.path && currentLoadingPath.current === file.path) {
+      setActiveLayer(1);
+    }
+  }, [layer0Ready, layer1Ready, layer0Url, layer1Url, layer0Id, layer1Id, file.path]);
+  
+  // 便捷变量：当前显示的 URL
+  const displayUrl = activeLayer === 0 ? layer0Url : layer1Url;
 
 
   // --- Calculate Preload Nodes ---
@@ -166,25 +315,40 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           return files[sortedFileIds[idx]];
       };
 
-      // Preload previous 2 and next 2 (only if they have paths)
-      const nodes = [
-          getNeighbor(-2),
-          getNeighbor(-1),
-          getNeighbor(1),
-          getNeighbor(2)
-      ].filter(node => node && node.path && node.id !== file.id);
+      const nodes = [];
+      // 增加预加载范围到 +/- 10 张，确保快速切换时有足够的缓存
+      for (let i = 1; i <= 10; i++) {
+          nodes.push(getNeighbor(-i));
+          nodes.push(getNeighbor(i));
+      }
 
-      return nodes;
+      return nodes.filter(node => node && node.path && node.id !== file.id);
   }, [file.id, sortedFileIds, files]);
 
-  // Preload neighbors
+  // Preload neighbors into Blob Cache - 使用优化后的静默预加载
   useEffect(() => {
-     preloadImages.forEach(node => {
+     // 优先预加载前后各3张（最可能被访问的）
+     const priorityCount = 3;
+     const priorityNodes = preloadImages.slice(0, priorityCount * 2);
+     const restNodes = preloadImages.slice(priorityCount * 2);
+     
+     // 立即预加载优先级高的图片
+     priorityNodes.forEach(node => {
         if (node.path) {
-           const img = new Image();
-           img.src = convertFileSrc(node.path);
+           preloadToCache(node.path);
         }
      });
+     
+     // 延迟预加载其余图片，避免阻塞
+     const timeoutId = setTimeout(() => {
+         restNodes.forEach(node => {
+            if (node.path) {
+               preloadToCache(node.path);
+            }
+         });
+     }, 100);
+     
+     return () => clearTimeout(timeoutId);
   }, [preloadImages]);
   // ------------------------------
 
@@ -592,40 +756,61 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         onContextMenu={handleContextMenu}
         style={slideshowActive ? { cursor: 'none' } : {}}
       >
-        {!isLoaded && (
+        {/* 只有在完全没有图片时才显示加载指示器 */}
+        {!layer0Url && !layer1Url && (
            <div className="absolute inset-0 flex items-center justify-center z-0">
                <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
            </div>
         )}
 
         <div className={`w-full h-full flex items-center justify-center pointer-events-none ${animationClass}`}>
-           {imageUrl ? (
-             <img 
-               ref={imgRef}
-               // Removed key={file.id} to prevent unmounting and flickering
-               src={imageUrl} 
-               alt={file.name}
-               className={`max-w-none transition-opacity duration-150 ${isLoaded ? 'opacity-100' : 'opacity-0'} ${slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''}`}
-               onLoad={() => setIsLoaded(true)}
-               loading="eager"
-               decoding="async"
-               style={{
-                 width: '100%',
-                 height: '100%',
-                 objectFit: 'contain',
-                 transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                 transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear, opacity 150ms ease-in-out'),
-                 pointerEvents: slideshowActive ? 'none' : 'auto',
-                 transformOrigin: 'center center',
-                 ...filterStyle
-               }}
-               draggable={false}
-             />
-           ) : (
-             <div className="flex items-center justify-center">
-               <Loader2 className="animate-spin text-gray-400" size={32} />
-             </div>
-           )}
+           {/* 图层 0 - 始终存在 */}
+           <img 
+             ref={activeLayer === 0 ? imgRef : undefined}
+             src={layer0Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+             alt={activeLayer === 0 ? file.name : ''}
+             className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && activeLayer === 0 ? 'animate-ken-burns' : ''}`}
+             onLoad={handleLayer0Load}
+             loading="eager"
+             decoding="sync"
+             style={{
+               width: '100%',
+               height: '100%',
+               objectFit: 'contain',
+               transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+               transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+               pointerEvents: slideshowActive ? 'none' : (activeLayer === 0 ? 'auto' : 'none'),
+               transformOrigin: 'center center',
+               opacity: activeLayer === 0 && layer0Url ? 1 : 0,
+               zIndex: activeLayer === 0 ? 2 : 1,
+               ...filterStyle
+             }}
+             draggable={false}
+           />
+           
+           {/* 图层 1 - 始终存在 */}
+           <img 
+             ref={activeLayer === 1 ? imgRef : undefined}
+             src={layer1Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+             alt={activeLayer === 1 ? file.name : ''}
+             className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && activeLayer === 1 ? 'animate-ken-burns' : ''}`}
+             onLoad={handleLayer1Load}
+             loading="eager"
+             decoding="sync"
+             style={{
+               width: '100%',
+               height: '100%',
+               objectFit: 'contain',
+               transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+               transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+               pointerEvents: slideshowActive ? 'none' : (activeLayer === 1 ? 'auto' : 'none'),
+               transformOrigin: 'center center',
+               opacity: activeLayer === 1 && layer1Url ? 1 : 0,
+               zIndex: activeLayer === 1 ? 2 : 1,
+               ...filterStyle
+             }}
+             draggable={false}
+           />
         </div>
 
         {!slideshowActive && (

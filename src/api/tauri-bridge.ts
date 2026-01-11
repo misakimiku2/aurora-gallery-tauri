@@ -142,23 +142,55 @@ export const openDirectory = async (): Promise<string | null> => {
 
 // 批量请求管理器
 class ThumbnailBatcher {
-    private batch: Map<string, {
+    private batch: Map<string, Array<{
         resolve: (value: string | null) => void;
         reject: (reason?: any) => void;
         cacheRoot: string;
         onColors?: (colors: DominantColor[] | null) => void;
-    }> = new Map();
+        signal?: AbortSignal;
+    }>> = new Map();
     private timeoutId: ReturnType<typeof setTimeout> | null = null;
     private readonly BATCH_DELAY = 50; // 50ms 聚合时间
 
-    add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> {
+    add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void, signal?: AbortSignal): Promise<string | null> {
         return new Promise((resolve, reject) => {
-            // 如果已经在队列中，暂不处理覆盖，假设相同请求会得到相同结果
-            if (this.batch.has(filePath)) {
-               // 可选：将新请求关联到旧请求的 Promise，但这里简化处理
+            if (signal?.aborted) {
+                return resolve(null);
             }
-            
-            this.batch.set(filePath, { resolve, reject, cacheRoot, onColors });
+
+            const handler = () => {
+                // 如果在队列中被取消，尝试移除
+                if (this.batch.has(filePath)) {
+                    const list = this.batch.get(filePath)!;
+                    const index = list.findIndex(r => r.resolve === resolve);
+                    if (index !== -1) {
+                         list.splice(index, 1);
+                         if (list.length === 0) this.batch.delete(filePath);
+                    }
+                }
+                resolve(null);
+            }
+            signal?.addEventListener('abort', handler);
+
+            const request = { 
+                resolve: (val: string | null) => {
+                    signal?.removeEventListener('abort', handler);
+                    resolve(val);
+                }, 
+                reject: (err: any) => {
+                    signal?.removeEventListener('abort', handler);
+                    reject(err);
+                },
+                cacheRoot, 
+                onColors,
+                signal 
+            };
+
+            if (this.batch.has(filePath)) {
+               this.batch.get(filePath)!.push(request);
+            } else {
+               this.batch.set(filePath, [request]);
+            }
 
             if (!this.timeoutId) {
                 this.timeoutId = setTimeout(() => this.processBatch(), this.BATCH_DELAY);
@@ -171,14 +203,31 @@ class ThumbnailBatcher {
         if (this.batch.size === 0) return;
 
         // 取出所有待处理项
-        const currentBatch = new Map(this.batch);
+        // Filter out aborted requests before processing
+        const currentBatch = new Map<string, Array<{
+             resolve: (value: string | null) => void;
+             reject: (reason?: any) => void;
+             cacheRoot: string;
+             onColors?: (colors: DominantColor[] | null) => void;
+             signal?: AbortSignal;
+        }>>();
+
+        for (const [path, requests] of this.batch.entries()) {
+             const activeRequests = requests.filter(r => !r.signal?.aborted);
+             if (activeRequests.length > 0) {
+                 currentBatch.set(path, activeRequests);
+             }
+        }
         this.batch.clear();
+
+        if (currentBatch.size === 0) return;
 
         try {
             // 按照 cacheRoot 分组
             const batchesByRoot: Record<string, string[]> = {};
             
-            for (const [path, item] of currentBatch.entries()) {
+            for (const [path, items] of currentBatch.entries()) {
+                const item = items[0]; // Use the first item's cacheRoot (assume same for same path)
                 if (!batchesByRoot[item.cacheRoot]) {
                     batchesByRoot[item.cacheRoot] = [];
                 }
@@ -193,8 +242,8 @@ class ThumbnailBatcher {
                     
                     // 监听通道消息 (流式结果！)
                     channel.onmessage = ({ path, url, colors }) => {
-                        const item = currentBatch.get(path);
-                        if (item) {
+                        const items = currentBatch.get(path);
+                        if (items) {
                             if (url) {
                                 // 同时缓存原始路径（用于外部拖拽时作为图标）
                                 // 确保缓存存在，如果不存在则创建
@@ -230,16 +279,26 @@ class ThumbnailBatcher {
                                 }
                                 const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
                                 pathCache.set(path, url);
-                                item.resolve(convertFileSrc(url));
+                                
+                                const src = convertFileSrc(url);
+                                items.forEach(item => {
+                                    if (!item.signal?.aborted) item.resolve(src);
+                                });
                             } else {
-                                item.resolve(null);
+                                items.forEach(item => {
+                                    if (!item.signal?.aborted) item.resolve(null);
+                                });
                             }
                             
                             // 回调颜色数据
-                            if (item.onColors && colors) {
-                                item.onColors(colors);
-                            } else if (item.onColors) {
-                                item.onColors(null);
+                            if (colors) {
+                                items.forEach(item => {
+                                    if (item.onColors && !item.signal?.aborted) item.onColors(colors);
+                                });
+                            } else {
+                                items.forEach(item => {
+                                     if (item.onColors && !item.signal?.aborted) item.onColors(null);
+                                });
                             }
                         }
                     };
@@ -254,10 +313,12 @@ class ThumbnailBatcher {
                     console.error('Batch processing failed:', err);
                     // 局部失败
                     paths.forEach(path => {
-                        const item = currentBatch.get(path);
-                        if (item) {
-                            item.resolve(null);
-                            if (item.onColors) item.onColors(null);
+                        const items = currentBatch.get(path);
+                        if (items) {
+                             items.forEach(item => {
+                                item.resolve(null);
+                                if (item.onColors) item.onColors(null);
+                             });
                         }
                     });
                 }
@@ -266,9 +327,11 @@ class ThumbnailBatcher {
         } catch (error) {
             console.error('Global batch error:', error);
             // 全局失败
-            for (const item of currentBatch.values()) {
-                item.resolve(null);
-                if (item.onColors) item.onColors(null);
+            for (const items of currentBatch.values()) {
+                 items.forEach(item => {
+                    item.resolve(null);
+                    if (item.onColors) item.onColors(null);
+                 });
             }
         }
     }
@@ -294,7 +357,7 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
     const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
 
     // 使用批量处理器
-    return thumbnailBatcher.add(filePath, cachePath, onColors);
+    return thumbnailBatcher.add(filePath, cachePath, onColors, signal);
 };
 
 /**

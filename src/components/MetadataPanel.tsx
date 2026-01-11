@@ -42,6 +42,8 @@ import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './FileGrid';
+// 导入 ImageViewer 的高分辨率缓存
+import { getBlobCacheSync, preloadToCache } from './ImageViewer';
 
 interface MetadataProps {
   files: Record<string, FileNode>;
@@ -82,17 +84,22 @@ const getGlobalCache = () => {
 };
 
 const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resourceRoot?: string, cachePath?: string }) => {
-  // 初始化时尝试从全局缓存读取
+  // 初始化时优先从 ImageViewer 的高分辨率 Blob 缓存获取
   const [imageUrl, setImageUrl] = useState<string | null>(() => {
       if (!file.path) return null;
-      const key = file.path;
+      // 优先使用高分辨率缓存
+      const blobUrl = getBlobCacheSync(file.path);
+      if (blobUrl) return blobUrl;
+      // 其次使用缩略图缓存
       const cache = getGlobalCache();
-      return cache.get(key) || null;
+      return cache?.get(file.path) || null;
   });
   
   const [isLoading, setIsLoading] = useState(!imageUrl);
   
   useEffect(() => {
+    const controller = new AbortController();
+
     const loadImage = async () => {
       if (!file.path) {
         setImageUrl(null);
@@ -100,10 +107,17 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
         return;
       }
       
-      // 检查全局缓存中是否已有缩略图
+      // 优先检查 ImageViewer 的高分辨率 Blob 缓存
+      const blobUrl = getBlobCacheSync(file.path);
+      if (blobUrl) {
+        setImageUrl(blobUrl);
+        setIsLoading(false);
+        return;
+      }
+      
+      // 检查全局缩略图缓存
       const cache = getGlobalCache();
-      const key = file.path;
-      const cachedUrl = cache.get(key);
+      const cachedUrl = cache?.get(file.path);
       
       if (cachedUrl) {
         setImageUrl(cachedUrl);
@@ -117,24 +131,40 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
       try {
         // Use getThumbnail for preview (smaller, faster)
         const { getThumbnail } = await import('../api/tauri-bridge');
-        const dataUrl = await getThumbnail(file.path, undefined, resourceRoot);
+        
+        if (controller.signal.aborted) return;
+
+        let dataUrl = await getThumbnail(file.path, undefined, resourceRoot, controller.signal);
+        
+        if (controller.signal.aborted) return;
+
+        // Fallback or use full image if thumbnail generation fails or returns null
+        // But do not fallback if it was aborted!
+        if (!dataUrl && file.path && !controller.signal.aborted) {
+             const { convertFileSrc } = await import('@tauri-apps/api/core');
+             dataUrl = convertFileSrc(file.path);
+        }
         
         if (dataUrl) {
           // 更新全局缓存
-          cache.set(key, dataUrl);
-          setImageUrl(dataUrl);
+          if (cache) cache.set(file.path, dataUrl);
+          if (!controller.signal.aborted) setImageUrl(dataUrl);
         } else {
-          setImageUrl(null);
+          if (!controller.signal.aborted) setImageUrl(null);
         }
       } catch (error) {
         console.error('Failed to load preview image:', error);
-        setImageUrl(null);
+        if (!controller.signal.aborted) setImageUrl(null);
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
     
     loadImage();
+
+    return () => {
+      controller.abort();
+    };
   }, [file.path, file.id, resourceRoot]);
   
   return (
@@ -279,6 +309,34 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     Object.values(files).forEach((f: FileNode) => f.tags.forEach(tag => tags.add(tag)));
     return Array.from(tags).sort();
   }, [files]);
+
+  // Find which topic the selected file belongs to
+  const fileTopic = useMemo(() => {
+    if (!file || !topics) return null;
+    
+    // Find the topic that contains this file's ID in its fileIds
+    const topicList = Object.values(topics);
+    // Note: We prioritize finding sub-topics (topics with parentId) first
+    // as a file might technically be in both if the logic allows, 
+    // but usually it's assigned to a specific sub-topic.
+    const targetTopic = topicList.find(t => t.fileIds?.includes(file.id) && t.parentId) 
+                     || topicList.find(t => t.fileIds?.includes(file.id));
+    
+    if (!targetTopic) return null;
+    
+    // Check if it has a parent (meaning it's a sub-topic)
+    if (targetTopic.parentId && topics[targetTopic.parentId]) {
+      return {
+        main: topics[targetTopic.parentId],
+        sub: targetTopic
+      };
+    }
+    
+    return {
+      main: targetTopic,
+      sub: null
+    };
+  }, [file?.id, topics]);
 
   useEffect(() => {
     if (file) {
@@ -1341,7 +1399,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         )}
 
         {/* Color Palette (8 Card Grid) */}
-        {!isMulti && file && file.type === FileType.IMAGE && colors.length > 0 && (
+        {!isMulti && file && file.type === FileType.IMAGE && (
             <div>
                 <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
                     <div className="flex items-center">
@@ -1408,25 +1466,34 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     </button>
                 </div>
                 <div className="flex flex-wrap gap-2 justify-center">
-                    {colors.slice(0, 8).map((color, i) => (
-                        <div
-                            key={i}
-                            className="w-6 h-6 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
-                            style={{ backgroundColor: color }}
-                            onClick={() => onSearch(`color:${color.replace('#', '')}`)}
-                            onContextMenu={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                // 计算菜单宽度（根据菜单项内容估算）
-                                const menuWidth = 180;
-                                // 对于最右边的色块，将菜单显示在鼠标左边
-                                const isRightmost = i === 7; // 最后一个色块
-                                const x = isRightmost ? e.clientX - menuWidth : e.clientX;
-                                setPaletteMenu({ visible: true, x, y: e.clientY, color });
-                            }}
-                            title={color}
-                        />
-                    ))}
+                    {colors.length > 0 ? (
+                        colors.slice(0, 8).map((color, i) => (
+                            <div
+                                key={i}
+                                className="w-6 h-6 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
+                                style={{ backgroundColor: color }}
+                                onClick={() => onSearch(`color:${color.replace('#', '')}`)}
+                                onContextMenu={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    // 计算菜单宽度（根据菜单项内容估算）
+                                    const menuWidth = 180;
+                                    // 对于最右边的色块，将菜单显示在鼠标左边
+                                    const isRightmost = i === 7; // 最后一个色块
+                                    const x = isRightmost ? e.clientX - menuWidth : e.clientX;
+                                    setPaletteMenu({ visible: true, x, y: e.clientY, color });
+                                }}
+                                title={color}
+                            />
+                        ))
+                    ) : (
+                        Array.from({ length: 8 }).map((_, i) => (
+                            <div
+                                key={i}
+                                className="w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-800 animate-pulse ring-1 ring-black/5 dark:ring-white/5"
+                            />
+                        ))
+                    )}
                 </div>
             </div>
         )}
@@ -1769,6 +1836,29 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 onChange={handleCategoryChange}
                 t={t}
             />
+        )}
+
+        {/* Topic Display Button */}
+        {!isMulti && file && fileTopic && (
+            <div>
+                <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center">
+                    <Layout size={12} className="mr-1.5 text-indigo-500"/> {t('sidebar.topics')}
+                </div>
+                <button
+                    onClick={() => onSelectTopic && onSelectTopic(fileTopic.sub?.id || fileTopic.main.id)}
+                    className="flex w-full items-center justify-center px-4 py-2 bg-indigo-50/50 dark:bg-indigo-900/10 text-indigo-600 dark:text-indigo-400 rounded-full border border-indigo-100 dark:border-indigo-800/20 hover:bg-indigo-100 dark:hover:bg-indigo-800/20 transition-all group"
+                >
+                    <span className="text-xs font-bold tracking-tight truncate">
+                        {fileTopic.main.name}
+                        {fileTopic.sub && (
+                            <>
+                                <span className="mx-2 opacity-30">|</span>
+                                {fileTopic.sub.name}
+                            </>
+                        )}
+                    </span>
+                </button>
+            </div>
         )}
 
         {/* Tags Section */}
