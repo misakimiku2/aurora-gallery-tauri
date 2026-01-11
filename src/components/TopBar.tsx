@@ -39,8 +39,11 @@ interface TopBarProps {
   onToggleAISearch: () => void;
   onRememberFolderSettings?: () => void;
   hasFolderSettings?: boolean;
+  // --- Topic view specific controls ---
+  topicLayoutMode?: LayoutMode;
+  onTopicLayoutModeChange?: (mode: LayoutMode) => void;
   t: (key: string) => string;
-}
+} 
 
 const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearchQuery }: { groupedTags: Record<string, string[]>, onTagClick: (tag: string, e: React.MouseEvent) => void, t: (key: string) => string, tagSearchQuery: string, onSetTagSearchQuery: (query: string) => void }) => {
   const [localSearchQuery, setLocalSearchQuery] = React.useState(tagSearchQuery);
@@ -472,6 +475,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleAISearch,
   onRememberFolderSettings,
   hasFolderSettings,
+  // Topic view props
+  topicLayoutMode,
+  onTopicLayoutModeChange,
   t
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
@@ -661,7 +667,8 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Right: Tools & Settings */}
       <div className="flex items-center space-x-2 min-w-fit">
         
-        {/* Sort & Group Menu */}
+        {/* Sort & Group Menu (hidden on topics view) */}
+        {activeTab.viewMode !== 'topics-overview' && (
         <div className="relative">
            <button 
              onClick={() => setSortMenuOpen(!sortMenuOpen)}
@@ -732,79 +739,103 @@ export const TopBar: React.FC<TopBarProps> = ({
              </>
            )}
         </div>
+        )}
 
-        {/* View Mode Menu */}
-        <div className="relative">
-           <button 
-             onClick={() => setViewMenuOpen(!viewMenuOpen)}
-             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${viewMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
-             title={t('layout.mode')}
-           >
-             {activeTab.layoutMode === 'grid' && <Grid size={18} />}
-             {activeTab.layoutMode === 'adaptive' && <LayoutGrid size={18} />}
-             {activeTab.layoutMode === 'list' && <List size={18} />}
-             {activeTab.layoutMode === 'masonry' && <LayoutTemplate size={18} />}
-           </button>
-           {viewMenuOpen && (
-             <>
-               <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
-                  <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
-                  {[
-                    { id: 'grid', icon: Grid, label: t('layout.grid') },
-                    { id: 'adaptive', icon: LayoutGrid, label: t('layout.adaptive') },
-                    { id: 'list', icon: List, label: t('layout.list') },
-                    { id: 'masonry', icon: LayoutTemplate, label: t('layout.masonry') }
-                  ].map(opt => (
-                    <button
-                      key={opt.id}
-                      onClick={() => { onLayoutModeChange(opt.id as LayoutMode); setViewMenuOpen(false); }}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
-                    >
-                      <div className="flex items-center">
-                        <opt.icon size={16} className="mr-2 opacity-70"/> {opt.label}
-                      </div>
-                      {activeTab.layoutMode === opt.id && <Check size={14} className="text-blue-500" />}
-                    </button>
-                  ))}
-                  
-                  <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
-                  <div className="px-4 py-2">
-                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                        <span>{t('layout.small')}</span>
-                        <span>{t('layout.large')}</span>
-                     </div>
-                     <input 
-                       type="range" 
-                       id="thumbnail-size-slider"
-                       name="thumbnail-size-slider"
-                       min={activeTab.viewMode === 'people-overview' ? 140 : 100}
-                       max={activeTab.viewMode === 'people-overview' ? 450 : 480}
-                       step="20"
-                       value={state.thumbnailSize}
-                       onChange={(e) => onThumbnailSizeChange(parseInt(e.target.value))}
-                       className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                     />
-                  </div>
-                  {onRememberFolderSettings && (
-                    <>
-                      <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
-                      <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
-                        <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
-                        <button 
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                        >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
-                      </div>
-                    </>
-                  )}
-               </div>
-             </>
-           )}
-        </div>
+        {/* View Mode Menu (or topic mode buttons) */}
+        {activeTab.viewMode !== 'topics-overview' && (
+          <div className="relative">
+             <button 
+               onClick={() => setViewMenuOpen(!viewMenuOpen)}
+               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${viewMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               title={t('layout.mode')}
+             >
+               {activeTab.layoutMode === 'grid' && <Grid size={18} />}
+               {activeTab.layoutMode === 'adaptive' && <LayoutGrid size={18} />}
+               {activeTab.layoutMode === 'list' && <List size={18} />}
+               {activeTab.layoutMode === 'masonry' && <LayoutTemplate size={18} />}
+             </button>
+             {viewMenuOpen && (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                    <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
+                    {[
+                      { id: 'grid', icon: Grid, label: t('layout.grid') },
+                      { id: 'adaptive', icon: LayoutGrid, label: t('layout.adaptive') },
+                      { id: 'list', icon: List, label: t('layout.list') },
+                      { id: 'masonry', icon: LayoutTemplate, label: t('layout.masonry') }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => { onLayoutModeChange(opt.id as LayoutMode); setViewMenuOpen(false); }}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      >
+                        <div className="flex items-center">
+                          <opt.icon size={16} className="mr-2 opacity-70"/> {opt.label}
+                        </div>
+                        {activeTab.layoutMode === opt.id && <Check size={14} className="text-blue-500" />}
+                      </button>
+                    ))}
+                    
+                    <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <div className="px-4 py-2">
+                       <div className="flex justify-between text-xs text-gray-500 mb-1">
+                          <span>{t('layout.small')}</span>
+                          <span>{t('layout.large')}</span>
+                       </div>
+                       <input 
+                         type="range" 
+                         id="thumbnail-size-slider"
+                         name="thumbnail-size-slider"
+                         min={activeTab.viewMode === 'people-overview' ? 140 : 100}
+                         max={activeTab.viewMode === 'people-overview' ? 450 : 480}
+                         step="20"
+                         value={state.thumbnailSize}
+                         onChange={(e) => onThumbnailSizeChange(parseInt(e.target.value))}
+                         className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                       />
+                    </div>
+                    {onRememberFolderSettings && (
+                      <>
+                        <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                        <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
+                          <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
+                          <button 
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                          >
+                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
+                          </button>
+                        </div>
+                      </>
+                    )}
+                 </div>
+               </>
+             )}
+          </div>
+        )}
 
-        {/* Date Filter */}
+        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && (
+          <div className="flex items-center space-x-2 mr-2">
+            <button
+              className={`p-2 rounded ${topicLayoutMode === 'grid' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              title={t('layout.grid')}
+              onClick={() => onTopicLayoutModeChange('grid')}
+            ><Grid size={16} /></button>
+            <button
+              className={`p-2 rounded ${topicLayoutMode === 'adaptive' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              title={t('layout.adaptive')}
+              onClick={() => onTopicLayoutModeChange('adaptive')}
+            ><LayoutGrid size={16} /></button>
+            <button
+              className={`p-2 rounded ${topicLayoutMode === 'masonry' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              title={t('layout.masonry')}
+              onClick={() => onTopicLayoutModeChange('masonry')}
+            ><LayoutTemplate size={16} /></button>
+          </div>
+        )}
+
+        {/* Date Filter (hidden on topics view) */}
+        {activeTab.viewMode !== 'topics-overview' && (
         <div className="relative">
            <button 
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
@@ -826,8 +857,10 @@ export const TopBar: React.FC<TopBarProps> = ({
              </>
            )}
         </div>
+        )}
 
-        {/* All Tags Widget */}
+        {/* All Tags Widget (hidden on topics view) */}
+        {activeTab.viewMode !== 'topics-overview' && (
         <div className="relative">
            <button 
              onClick={() => setTagsMenuOpen(!tagsMenuOpen)}
@@ -851,6 +884,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              </>
            )}
         </div>
+        )}
 
         <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
 

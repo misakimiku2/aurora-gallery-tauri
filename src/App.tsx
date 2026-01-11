@@ -919,6 +919,9 @@ export const App: React.FC = () => {
   const [toast, setToast] = useState<{msg: string, visible: boolean}>({ msg: '', visible: false });
   const [toolbarQuery, setToolbarQuery] = useState('');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
+  // Topic layout mode: controlled by TopBar when viewing topics overview
+  const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
+  const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) {} };
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [rememberExitChoice, setRememberExitChoice] = useState(false);
   // Ref to store the latest exit action preference (to avoid closure issues)
@@ -1596,7 +1599,10 @@ export const App: React.FC = () => {
   
   // 监听多文件选择，显示持久拖拽提示
   const selectedCount = activeTab.selectedFileIds.length;
-  const showDragHint = selectedCount > 1;
+  // 不在专题视图中显示该提示（专题视图没有拖拽到外部的逻辑）
+  // 另：当存在未最小化的后台任务弹窗时不显示（以免遮挡任务弹窗）
+  const activeTaskCount = state.tasks.filter(t => !t.minimized).length;
+  const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0;
   
   // ... (keep startTask and updateTask)
   // 存储所有定时器引用，用于组件卸载时清理
@@ -4001,7 +4007,7 @@ export const App: React.FC = () => {
   const enterFolder = (folderId: string) => {
       const scroll = selectionRef.current?.scrollTop || 0;
       logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll });
-      pushHistory(folderId, null, 'browser', '', 'all', [], null, 0);
+      pushHistory(folderId, null, 'browser', '', 'all', [], null, scroll);
   };
   const handleNavigateFolder = (id: string) => { closeContextMenu(); enterFolder(id); };
 
@@ -4078,52 +4084,27 @@ export const App: React.FC = () => {
       setNavigationTimestamp(); // Set timestamp BEFORE state update
       const currentScroll = selectionRef.current?.scrollTop || 0;
       logDebug('[App] goBack.invoked', { action: 'goBack', currentIndex: activeTab.history.currentIndex, container: 'main', containerScroll: currentScroll });
-      
       updateActiveTab(prevTab => { 
-          // Save current scroll position to stack before navigating
-          const newStack = [...prevTab.history.stack];
-          if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < newStack.length) {
-              newStack[prevTab.history.currentIndex] = {
-                  ...newStack[prevTab.history.currentIndex],
-                  scrollTop: currentScroll,
-                  selectedTopicIds: prevTab.selectedTopicIds,
-                  selectedPersonIds: prevTab.selectedPersonIds 
-              };
-          }
-
           if (prevTab.history.currentIndex > 0) { 
               const newIndex = prevTab.history.currentIndex - 1; 
-              const step = newStack[newIndex]; 
+              const step = prevTab.history.stack[newIndex]; 
               logDebug('[App] goBack.target', { action: 'goBack.target', newIndex, restoreScroll: step.scrollTop || 0, viewingId: step.viewingId, folderId: step.folderId });
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           console.log('[App] goBack -> at history beginning, nothing to do');
           return {}; 
       }); 
   };
-
   const goForward = () => { 
       setNavigationTimestamp(); // Set timestamp BEFORE state update
       const currentScroll = selectionRef.current?.scrollTop || 0;
       console.log(`[App] goForward invoked. currentIndex=${activeTab.history.currentIndex}, currentScrollTop=${currentScroll}`);
-      
       updateActiveTab(prevTab => { 
-          // Save current scroll position to stack before navigating
-          const newStack = [...prevTab.history.stack];
-          if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < newStack.length) {
-              newStack[prevTab.history.currentIndex] = {
-                  ...newStack[prevTab.history.currentIndex],
-                  scrollTop: currentScroll,
-                  selectedTopicIds: prevTab.selectedTopicIds,
-                  selectedPersonIds: prevTab.selectedPersonIds 
-              };
-          }
-
-          if (prevTab.history.currentIndex < newStack.length - 1) { 
+          if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) { 
               const newIndex = prevTab.history.currentIndex + 1; 
-              const step = newStack[newIndex]; 
+              const step = prevTab.history.stack[newIndex]; 
               console.log(`[App] goForward -> newIndex=${newIndex}, restoreScroll=${step.scrollTop || 0}, viewingId=${step.viewingId}`);
-              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { stack: newStack, currentIndex: newIndex } }; 
+              return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } }; 
           } 
           console.log('[App] goForward -> at history end, nothing to do');
           return {}; 
@@ -6099,6 +6080,9 @@ export const App: React.FC = () => {
                 isAISearchEnabled={state.settings.search.isAISearchEnabled}
                 onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
                 onRememberFolderSettings={activeTab.viewMode === 'browser' ? handleRememberFolderSettings : undefined}
+                // Topic layout control (used when in topics-overview)
+                topicLayoutMode={topicLayoutMode}
+                onTopicLayoutModeChange={handleTopicLayoutModeChange}
                 hasFolderSettings={activeTab.viewMode === 'browser' ? !!state.folderSettings[activeTab.folderId] : false}
                 t={t} 
               />
@@ -6261,12 +6245,22 @@ export const App: React.FC = () => {
                         onCreateTopic={handleCreateTopic}
                         onDeleteTopic={handleDeleteTopic}
                         onSelectTopics={(ids) => {
-                             updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [] });
+                             updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [], selectedPersonIds: [] });
                         }}
-                        onSelectFiles={(ids) => {
-                             updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [] });
+                        // onSelectFiles now accepts lastSelectedId; update to set both selectedFileIds and lastSelectedId
+                        onSelectFiles={(ids, lastId) => {
+                             updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [], selectedPersonIds: [], lastSelectedId: lastId ?? null });
                         }}
-                        onSelectPerson={handlePersonClick}
+                        onSelectPeople={(ids) => {
+                             updateActiveTab({ selectedPersonIds: ids, selectedFileIds: [], selectedTopicIds: [] });
+                        }}
+                        onSelectPerson={(pid, e) => {
+                             const isMultiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
+                             if (!isMultiSelect) {
+                                  updateActiveTab({ selectedFileIds: [], selectedTopicIds: [] });
+                             }
+                             handlePersonClick(pid, e);
+                        }}
                         onNavigatePerson={handleNavigatePerson}
                         onOpenTopicInNewTab={handleOpenTopicInNewTab}
                         // New-tab & open-folder handlers for people/files inside TopicModule
@@ -6274,6 +6268,8 @@ export const App: React.FC = () => {
                         onOpenFileInNewTab={handleOpenInNewTab}
                         onOpenFileFolder={handleNavigateFolder}
                         selectedFileIds={activeTab.selectedFileIds}
+                        selectedPersonIds={activeTab.selectedPersonIds}
+                        lastSelectedId={activeTab.lastSelectedId}
                         // Provide resource root / cache for thumbnails and open action
                         resourceRoot={state.settings.paths.resourceRoot}
                         cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
@@ -6282,6 +6278,9 @@ export const App: React.FC = () => {
                         scrollTop={activeTab.scrollTop}
                         onScrollTopChange={(scrollTop) => { logDebug('[App] topic.scrollUpdate', { action: 'topic.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
                         isVisible={!activeTab.viewingFileId}
+                        topicLayoutMode={(topicLayoutMode === 'grid' || topicLayoutMode === 'adaptive' || topicLayoutMode === 'masonry') ? topicLayoutMode : 'grid'}
+                        onTopicLayoutModeChange={handleTopicLayoutModeChange}
+                        onShowToast={showToast}
                      />
                   ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                      <div className="w-full h-full flex flex-col items-center justify-center text-gray-400" onMouseDown={handleMouseDown} onContextMenu={(e) => handleContextMenu(e, 'background', '')}>

@@ -155,7 +155,8 @@ const TopicFileGrid = React.memo(({
     layoutMode, 
     containerWidth, 
     selectedFileIds,
-    onSelectFiles,
+    // new: notify parent of a click (so parent can implement ctrl/shift/range selection)
+    onFileClick,
     onOpenFile,
     onContextMenu,
     resourceRoot,
@@ -166,7 +167,7 @@ const TopicFileGrid = React.memo(({
     layoutMode: LayoutMode,
     containerWidth: number,
     selectedFileIds: string[],
-    onSelectFiles: (ids: string[]) => void,
+    onFileClick?: (e: React.MouseEvent, id: string) => void,
     onOpenFile?: (id: string) => void,
     onContextMenu?: (e: React.MouseEvent, id: string) => void,
     resourceRoot?: string,
@@ -187,51 +188,77 @@ const TopicFileGrid = React.memo(({
                 const file = files[item.id];
                 if (!file) return null;
                 
-                return (
-                    <div 
-                        key={file.id} 
-                        className="absolute overflow-hidden cursor-pointer group rounded-lg transition-all duration-300"
-                        style={{ 
-                            left: item.x, 
-                            top: item.y, 
-                            width: item.width, 
-                            height: item.height 
-                        }}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onSelectFiles([file.id]);
-                        }}
-                        onDoubleClick={(e) => {
-                            e.stopPropagation();
-                            onOpenFile?.(file.id);
-                        }}
-                        onContextMenu={(e) => {
-                            e.stopPropagation();
-                            onContextMenu && onContextMenu(e, file.id);
-                        }}
-                    >
-                        <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110 overflow-hidden relative">
-                            <ImageThumbnail
-                                src={''}
-                                alt={file.name}
-                                isSelected={selectedFileIds.includes(file.id)}
-                                filePath={file.path}
-                                modified={file.updatedAt}
-                                size={undefined}
-                                isHovering={false}
-                                fileMeta={file.meta}
-                                resourceRoot={resourceRoot}
-                                cachePath={cachePath}
-                            />
+                {
+                    const isSelected = (selectedFileIds || []).includes(file.id);
+                    return (
+                        <div 
+                            key={file.id} 
+                            // Ensure outer wrapper does NOT scale on hover; only inner content scales
+                            className={`absolute cursor-pointer group rounded-lg transform-gpu group-hover:scale-100 transition-all duration-300 file-item ${isSelected ? 'z-20' : ''}`}
+                            data-file-id={file.id}
+                            style={{ 
+                                left: item.x, 
+                                top: item.y, 
+                                width: item.width, 
+                                height: item.height 
+                            }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                // Delegate click handling to parent when available so it can implement multi-select (ctrl/shift)
+                                if (onFileClick) {
+                                    onFileClick(e, file.id);
+                                } else {
+                                    // Fallback to single selection
+                                    (typeof (onContextMenu) !== 'undefined') && onContextMenu(e, file.id);
+                                }
+                            }}
+                            onDoubleClick={(e) => {
+                                e.stopPropagation();
+                                onOpenFile?.(file.id);
+                            }}
+                            onContextMenu={(e) => {
+                                e.stopPropagation();
+                                onContextMenu && onContextMenu(e, file.id);
+                            }}
+                        >
+                            {/* Inner scaled container: handles hover scale and clipping of the image only */}
+                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 overflow-hidden relative rounded-lg">
+                                <div className="w-full h-full transform transition-transform duration-500 origin-center group-hover:scale-110 will-change-transform">
+                                    <ImageThumbnail
+                                        src={''}
+                                        alt={file.name}
+                                        isSelected={isSelected}
+                                        filePath={file.path}
+                                        modified={file.updatedAt}
+                                        size={undefined}
+                                        isHovering={false}
+                                        fileMeta={file.meta}
+                                        resourceRoot={resourceRoot}
+                                        cachePath={cachePath}
+                                    />
 
-                            {/* Hover overlay to restore original hover feedback */}
-                            <div className="absolute inset-0 pointer-events-none flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <div className="w-full bg-black/40 text-white text-xs rounded-md px-2 py-1 backdrop-blur-sm truncate">{file.name}</div>
+                                    {/* Hover overlay to restore original hover feedback (kept inside scaled area) */}
+                                    <div className="absolute inset-0 pointer-events-none flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="w-full bg-black/40 text-white text-xs rounded-md px-2 py-1 backdrop-blur-sm truncate">{file.name}</div>
+                                    </div>
+                                </div>
                             </div>
+
+                            {/* Selection overlay placed on outer container so it is NOT clipped by inner overflow-hidden */}
+                            {isSelected && (
+                                <div className="absolute inset-0 pointer-events-none rounded-lg z-30">
+                                    <div className="absolute inset-0 rounded-lg ring-4 ring-blue-500 ring-offset-2 transition-all" />
+                                    <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg z-40">
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                </div>
+                            )}
                         </div>
-                    </div>
-                );
+                    );
+                }
             })}
         </div>
     );
@@ -244,12 +271,19 @@ interface TopicModuleProps {
     currentTopicId: string | null;
     selectedTopicIds: string[];
     selectedFileIds?: string[];
+    // New: selected people for multi-select support (controlled by parent)
+    selectedPersonIds?: string[];
+    // New: last selected id (used for shift+range selection)
+    lastSelectedId?: string | null;
     onNavigateTopic: (topicId: string | null) => void;
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
     onCreateTopic: (parentId: string | null, name?: string) => void;
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[]) => void;
-    onSelectFiles: (ids: string[]) => void;
+    // Note: onSelectFiles now accepts an optional lastSelectedId to allow caller to set it
+    onSelectFiles: (ids: string[], lastSelectedId?: string | null) => void;
+    // New: allow bulk selection of people
+    onSelectPeople?: (ids: string[]) => void;
     onSelectPerson?: (personId: string, e: React.MouseEvent) => void;
     onNavigatePerson?: (personId: string) => void;
     // Optional: provide a handler to open a topic/person/file in a new tab, or to open file folder
@@ -266,13 +300,17 @@ interface TopicModuleProps {
     scrollTop?: number;
     onScrollTopChange?: (scrollTop: number) => void;
     isVisible?: boolean;
+    // Optional: allow parent to control topic layout mode (TopBar will render buttons when provided)
+    topicLayoutMode?: LayoutMode;
+    onTopicLayoutModeChange?: (mode: LayoutMode) => void;
+    onShowToast?: (message: string) => void;
 }
 
 export const TopicModule: React.FC<TopicModuleProps> = ({ 
-    topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [],
+    topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [], selectedPersonIds = [], lastSelectedId = null,
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
-    onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
-    scrollTop, onScrollTopChange, isVisible = true
+    onSelectPeople, onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
+    scrollTop, onScrollTopChange, isVisible = true, topicLayoutMode, onTopicLayoutModeChange, onShowToast
 }) => {
     
     // Selection state for box selection
@@ -282,7 +320,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const lastSelectedIdRef = useRef<string | null>(null);
     
     // Context menu state
-    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple' | 'person' | 'file'; topicId?: string; personId?: string; fileId?: string } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple' | 'person' | 'file' | 'multiplePerson' | 'multipleFile'; topicId?: string; personId?: string; fileId?: string } | null>(null);
     
     // Modal states
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -374,29 +412,84 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             }
         } else {
             setClickedOncePerson(personId);
-            // Clear after a short window so user can click again to navigate
-            if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
-            clickTimerRef.current = window.setTimeout(() => {
-                setClickedOncePerson(null);
+            // Clear previous timer if exists
+            if (clickTimerRef.current) {
+                window.clearTimeout(clickTimerRef.current);
                 clickTimerRef.current = null;
-            }, 800);
+            }
         }
     };
 
     const handlePersonContextMenu = useCallback((e: React.MouseEvent, personId: string) => {
         e.preventDefault();
         e.stopPropagation();
-        // Ensure the person is selected in parent state
-        onSelectPerson && onSelectPerson(personId, e);
+        // If multiple people are selected and the clicked one is part of selection, show multiple-person menu
+        if ((selectedPersonIds || []).length > 1 && (selectedPersonIds || []).includes(personId)) {
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'multiplePerson' });
+            return;
+        }
+        // Otherwise: ensure the clicked person is selected (but don't clear an existing multi-selection unnecessarily)
+        if (!((selectedPersonIds || []).includes(personId))) {
+            if (typeof onSelectPeople === 'function') {
+                onSelectPeople([personId]);
+            } else {
+                onSelectPerson && onSelectPerson(personId, e);
+            }
+        }
         setContextMenu({ x: e.clientX, y: e.clientY, type: 'person', personId });
-    }, [onSelectPerson]);
+    }, [onSelectPerson, onSelectPeople, selectedPersonIds]);
 
-    const handleRemovePersonFromTopic = useCallback((personId: string) => {
-        if (!currentTopic) return;
-        const newPeople = (currentTopic.peopleIds || []).filter(pid => pid !== personId);
-        onUpdateTopic(currentTopic.id, { peopleIds: newPeople });
+    const removePeopleFromCurrentTopic = useCallback((personIds: string[]) => {
+        if (!currentTopic || personIds.length === 0) {
+            setContextMenu(null);
+            return;
+        }
+
+        const idsToRemove = new Set(personIds);
+        const topicsToUpdate: Record<string, string[]> = {};
+
+        const markTopic = (topicId: string) => {
+            const topic = topics[topicId];
+            if (!topic) return;
+            const existingPeople = topic.peopleIds || [];
+            const filtered = existingPeople.filter(pid => !idsToRemove.has(pid));
+            if (filtered.length !== existingPeople.length) {
+                topicsToUpdate[topicId] = filtered;
+            }
+        };
+
+        markTopic(currentTopic.id);
+        if (!currentTopic.parentId) {
+             const traverse = (parentId: string) => {
+                 Object.values(topics).forEach(child => {
+                     if (child.parentId === parentId) {
+                         markTopic(child.id);
+                         traverse(child.id);
+                     }
+                 });
+             };
+             traverse(currentTopic.id);
+        }
+
+        if (Object.keys(topicsToUpdate).length === 0) {
+             setContextMenu(null);
+             return;
+        }
+
+        Object.entries(topicsToUpdate).forEach(([topicId, newPeople]) => {
+            onUpdateTopic(topicId, { peopleIds: newPeople });
+        });
+
+        if (onShowToast) {
+             onShowToast(t('context.removedFromTopic') || '已从专题中移除');
+        }
+
+        if (typeof onSelectPeople === 'function') {
+             onSelectPeople([]);
+        }
+
         setContextMenu(null);
-    }, [currentTopic, onUpdateTopic]);
+    }, [currentTopic, topics, onSelectPeople, onUpdateTopic, onShowToast, t]);
 
     // Callback ref to set both containerRef and selectionRef
     const setRefs = useCallback((node: HTMLDivElement | null) => {
@@ -695,11 +788,40 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 }
             }
         });
-        
-        onSelectTopics(selectedIds);
+
+        // Also check for people and file items when viewing a topic detail
+        const selectedPersonIds: string[] = [];
+        const personElements = container.querySelectorAll('.person-item');
+        personElements.forEach(element => {
+            const id = element.getAttribute('data-person-id');
+            if (id) {
+                const rect = element.getBoundingClientRect();
+                if (rect.left < selectionRight && rect.right > selectionLeft && rect.top < selectionBottom && rect.bottom > selectionTop) {
+                    selectedPersonIds.push(id);
+                }
+            }
+        });
+
+        const selectedFileIdsFromBox: string[] = [];
+        const fileElements = container.querySelectorAll('.file-item');
+        fileElements.forEach(element => {
+            const id = element.getAttribute('data-file-id');
+            if (id) {
+                const rect = element.getBoundingClientRect();
+                if (rect.left < selectionRight && rect.right > selectionLeft && rect.top < selectionBottom && rect.bottom > selectionTop) {
+                    selectedFileIdsFromBox.push(id);
+                }
+            }
+        });
+
+        // Notify parent
+        if (selectedIds.length > 0) onSelectTopics(selectedIds);
+        if (selectedPersonIds.length > 0 && typeof onSelectPeople === 'function') onSelectPeople(selectedPersonIds);
+        if (selectedFileIdsFromBox.length > 0) onSelectFiles(selectedFileIdsFromBox, selectedFileIdsFromBox[selectedFileIdsFromBox.length - 1]);
+
         setIsSelecting(false);
         setSelectionBox(null);
-    }, [isSelecting, selectionBox, onSelectTopics]);
+    }, [isSelecting, selectionBox, onSelectTopics, onSelectPeople, onSelectFiles]);
 
     // Handle topic click with ctrl/shift support
     const handleTopicClick = useCallback((e: React.MouseEvent, topicId: string, allTopicIds: string[]) => {
@@ -797,9 +919,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const handleFileContextMenu = useCallback((e: React.MouseEvent, fileId: string) => {
         e.preventDefault();
         e.stopPropagation();
-        onSelectFiles && onSelectFiles([fileId]);
+        // If multiple files are selected and the clicked one is part of selection, show multiple-file menu
+        if ((selectedFileIds || []).length > 1 && (selectedFileIds || []).includes(fileId)) {
+            setContextMenu({ x: e.clientX, y: e.clientY, type: 'multipleFile' });
+            return;
+        }
+        // Otherwise, if clicked file is not selected, select it (single selection)
+        if (!((selectedFileIds || []).includes(fileId))) {
+            onSelectFiles && onSelectFiles([fileId], fileId);
+        }
         setContextMenu({ x: e.clientX, y: e.clientY, type: 'file', fileId });
-    }, [onSelectFiles]);
+    }, [onSelectFiles, selectedFileIds]);
 
     // Helpers to log scroll positions and delegate opens
     const getContainerScroll = () => containerRef.current ? containerRef.current.scrollTop : 0;
@@ -826,12 +956,28 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     };
 
 
-    const handleRemoveFileFromTopic = useCallback((fileId: string) => {
-        if (!currentTopic) return;
-        const newFiles = (currentTopic.fileIds || []).filter(fid => fid !== fileId);
+    const removeFilesFromCurrentTopic = useCallback((fileIds: string[]) => {
+        if (!currentTopic || fileIds.length === 0) {
+            setContextMenu(null);
+            return;
+        }
+
+        const fileIdSet = new Set(fileIds);
+        const previousFileIds = currentTopic.fileIds || [];
+        const newFiles = previousFileIds.filter(id => !fileIdSet.has(id));
+
+        if (newFiles.length === previousFileIds.length) {
+            setContextMenu(null);
+            return;
+        }
+
         onUpdateTopic(currentTopic.id, { fileIds: newFiles });
+        onSelectFiles && onSelectFiles([], null);
+        if (onShowToast) {
+             onShowToast(t('context.removedFromTopic') || '已从专题中移除');
+        }
         setContextMenu(null);
-    }, [currentTopic, onUpdateTopic]);
+    }, [currentTopic, onUpdateTopic, onSelectFiles, onShowToast, t]);
 
     const { layoutItems, totalHeight } = useMemo(() => {
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
@@ -995,6 +1141,54 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         const subTopics = Object.values(topics).filter(t => t.parentId === currentTopic.id);
         const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
+        // File click handler for multi-select support
+        const handleFileClickLocal = (e: React.MouseEvent, id: string) => {
+            e.stopPropagation();
+            if (isSelecting) return;
+
+            const isCtrl = e.ctrlKey || e.metaKey;
+            const isShift = e.shiftKey;
+
+            let newSelectedFileIds: string[] = [];
+            const allFileIds = topicImages.map(f => f.id);
+
+            if (isCtrl) {
+                // Toggle
+                if ((selectedFileIds || []).includes(id)) {
+                    newSelectedFileIds = (selectedFileIds || []).filter(fid => fid !== id);
+                } else {
+                    newSelectedFileIds = [...(selectedFileIds || []), id];
+                }
+                // Notify parent and set lastSelectedId
+                onSelectFiles(newSelectedFileIds, id);
+                return;
+            } else if (isShift) {
+                // Range selection using lastSelectedId (from props)
+                let lastId = lastSelectedId;
+                if (!lastId) {
+                    lastId = (selectedFileIds && selectedFileIds.length > 0) ? selectedFileIds[0] : id;
+                }
+
+                const lastIndex = allFileIds.indexOf(lastId!);
+                const currentIndex = allFileIds.indexOf(id);
+
+                if (lastIndex !== -1 && currentIndex !== -1) {
+                    const start = Math.min(lastIndex, currentIndex);
+                    const end = Math.max(lastIndex, currentIndex);
+                    newSelectedFileIds = allFileIds.slice(start, end + 1);
+                } else {
+                    newSelectedFileIds = [id];
+                }
+                onSelectFiles(newSelectedFileIds, id);
+                return;
+            } else {
+                // Normal click
+                newSelectedFileIds = [id];
+                onSelectFiles(newSelectedFileIds, id);
+                return;
+            }
+        };
+
         // Aggregate people for main topics (include descendant subtopics). For subtopics, keep direct people only.
         let topicPeople = currentTopic.peopleIds.map(id => people[id]).filter(Boolean);
         // Map personId -> number of descendant subtopics (excluding current topic)
@@ -1085,6 +1279,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                  const subSafeWidth = containerRect.width > 0 ? containerRect.width : 1280;
                                  const subAvailableWidth = Math.max(100, subSafeWidth - 48); // px-6 * 2
                                  const subGap = 32; // Use same GAP_X as main gallery
+                                 const subGapY = 20; // vertical gap between subtopic rows (reduced)
                                  const ASPECT = 0.75;
                                  
                                  const subItemHeight = coverHeight;
@@ -1097,7 +1292,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                  const subTotalItemHeight = subItemHeight + subTextAreaHeight;
                                  
                                  const subRows = Math.ceil(subTopics.length / subCols);
-                                 const subTotalHeight = subRows * subTotalItemHeight + Math.max(0, subRows - 1) * 48; // Use GAP_Y = 48
+                                 const subTotalHeight = subRows * subTotalItemHeight + Math.max(0, subRows - 1) * subGapY; // Use GAP_Y = subGapY
 
                                  return (
                                      <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTotalHeight }}>
@@ -1106,7 +1301,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                             const row = Math.floor(index / subCols);
                                             const col = index % subCols;
                                             const x = col * (subItemWidth + subGap);
-                                            const y = row * (subTotalItemHeight + 48);
+                                            const y = row * (subTotalItemHeight + subGapY);
 
                                             return (
                                                 <div 
@@ -1135,7 +1330,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                         </div>
                                                     </div>
                                                     
-                                                    <div className="mt-4 text-center px-1">
+                                                    <div className="mt-2 text-center px-1">
                                                         <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                                             {sub.name}
                                                         </h4>
@@ -1189,7 +1384,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                          return (
                                              <div
                                                  key={p.id}
-                                                 className="absolute transition-all duration-300 ease-out"
+                                                 className="absolute transition-all duration-300 ease-out person-item"
+                                                 data-person-id={p.id}
                                                  style={{ left: x, top: y, width: ITEM_SIZE }}
                                              >
                                                  <div
@@ -1198,7 +1394,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                      onClick={(e) => handlePersonClickLocal(p.id, e)}
                                                      onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
                                                  >
-                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-2' : ''}`}>
+                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-2' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-2' : '')}`}>
                                                          <div className="relative w-full h-full rounded-full overflow-hidden">
                                                              <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
                                                                  {coverFile ? (
@@ -1253,39 +1449,44 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 <Image className="mr-2 text-green-500" />
                                 {t('context.files') || 'Gallery'}
                             </h3>
-                            <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-                                <button 
-                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => { setLayoutMode('grid'); localStorage.setItem('aurora_topic_layout_mode', 'grid'); }}
-                                    title={t('view.grid') || "网格视图"}
-                                >
-                                    <Grid3X3 size={16}/>
-                                </button>
-                                <button 
-                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'adaptive' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => { setLayoutMode('adaptive'); localStorage.setItem('aurora_topic_layout_mode', 'adaptive'); }}
-                                    title={t('view.adaptive') || "自适应视图"}
-                                >
-                                    <Rows size={16}/>
-                                </button>
-                                <button 
-                                    className={`p-1.5 rounded-md transition-all ${layoutMode === 'masonry' ? 'bg-white dark:bg-gray-700 shadow-sm text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                    onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
-                                    title={t('view.masonry') || "瀑布流视图"}
-                                >
-                                    <Columns size={16}/>
-                                </button>
-                            </div>
+                            {/* Topic layout controls: hidden when parent provides external control */}
+                            {!onTopicLayoutModeChange && (
+                              <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                                  <button 
+                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'grid' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                      onClick={() => { setLayoutMode('grid'); localStorage.setItem('aurora_topic_layout_mode', 'grid'); }}
+                                      title={t('view.grid') || "网格视图"}
+                                  >
+                                      <Grid3X3 size={16}/>
+                                  </button>
+                                  <button 
+                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'adaptive' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                      onClick={() => { setLayoutMode('adaptive'); localStorage.setItem('aurora_topic_layout_mode', 'adaptive'); }}
+                                      title={t('view.adaptive') || "自适应视图"}
+                                  >
+                                      <Rows size={16}/>
+                                  </button>
+                                  <button 
+                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'masonry' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                      onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
+                                      title={t('view.masonry') || "瀑布流视图"}
+                                  >
+                                      <Columns size={16}/>
+                                  </button>
+                              </div>
+                            )}
+
+                            {/* When parent controls layout, we still render the grid using external mode */}
                         </div>
 
                         {topicImages.length > 0 ? (
                             <TopicFileGrid 
                                 fileIds={topicImages.map(f => f.id)}
                                 files={files}
-                                layoutMode={layoutMode}
+                                layoutMode={topicLayoutMode ?? layoutMode}
                                 containerWidth={containerRect.width}
                                 selectedFileIds={selectedFileIds}
-                                onSelectFiles={onSelectFiles}
+                                onFileClick={handleFileClickLocal}
                                 onOpenFile={handleOpenFileLocal}
                                 onContextMenu={handleFileContextMenu}
                                 resourceRoot={resourceRoot}
@@ -1374,10 +1575,16 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenPersonInNewTab) onOpenPersonInNewTab(contextMenu.personId!); else onNavigatePerson && onNavigatePerson(contextMenu.personId!); setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { handleRemovePersonFromTopic(contextMenu.personId!); }}>
+                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic([contextMenu.personId!]); }}>
                             <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                         </div>
                     </>
+                )}
+
+                {contextMenu.type === 'multiplePerson' && (
+                    <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic(selectedPersonIds || []); }}>
+                        <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
+                    </div>
                 )}
 
                 {contextMenu.type === 'file' && contextMenu.fileId && (
@@ -1389,10 +1596,16 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             {t('context.openFolder')}
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { handleRemoveFileFromTopic(contextMenu.fileId!); }}>
+                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic([contextMenu.fileId!]); }}>
                             <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                         </div>
                     </>
+                )}
+
+                {contextMenu.type === 'multipleFile' && (
+                    <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic(selectedFileIds || []); }}>
+                        <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
+                    </div>
                 )}
 
                 {contextMenu.type === 'multiple' && (

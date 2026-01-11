@@ -154,7 +154,10 @@ export const translations = {
       selectFromTopic: '从专题中选择',
       searchFiles: '搜索文件名...',
       noImages: '没有找到图片',
-      cropHint: '使用鼠标滚轮缩放，拖拽移动图片'
+      cropHint: '使用鼠标滚轮缩放，拖拽移动图片',
+      removedFromTopic: '已从专题中移除',
+      addToTopic: '添加到专题',
+      sourceUrl: '来源网址'
     },
     drag: {
       releaseToComplete: '松开即可完成操作',
@@ -688,7 +691,10 @@ export const translations = {
       selectFromTopic: 'Select from Topic',
       searchFiles: 'Search filenames...',
       noImages: 'No images found',
-      cropHint: 'Use mouse wheel to zoom, drag to move image'
+      cropHint: 'Use mouse wheel to zoom, drag to move image',
+      removedFromTopic: 'Removed from Topic',
+      addToTopic: 'Add to Topic',
+      sourceUrl: 'Source URL'
     },
     drag: {
       releaseToComplete: 'Release to complete the operation',
