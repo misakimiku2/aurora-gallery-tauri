@@ -1405,65 +1405,127 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     <div className="flex items-center">
                         <PaletteIcon size={12} className="mr-1.5"/> {t('meta.palette')}
                     </div>
-                    <button
-                        onClick={() => {
-                            if (file && file.type === FileType.IMAGE && file.path) {
-                                // Remove from cache to force re-extraction
-                                extractedCache.current.delete(file.id);
-                                
-                                // Re-extract palette using direct file path
-                                (async () => {
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={async () => {
+                                if (colors.length > 0) {
+                                    // 搜索相似氛围 (全色板搜索)
+                                    // 为每个颜色添加前缀 color: 用于触发UI搜索逻辑，
+                                    // 但实际上我们需要一种新的搜索模式。
+                                    // 目前 onSearch 仅用于 UI 搜索框输入。
+                                    // 更好的方式是直接通过 bridge 调用后端，然后更新搜索结果，
+                                    // 但那样需要入侵性修改主 FileGrid 的状态。
+                                    // 这里我们通过特殊的搜索指令 `palette:hex1,hex2...` 来触发 FileGrid 的响应
+                                    // 或者，更简单的方法：我们在这里直接使用 onSearch('palette:c1,c2...')
+                                    // 并让 App.tsx 解析这个指令。
+                                    // 假设 App.tsx 会处理这个逻辑，或者我们直接调用 bridge 并将结果视为搜索结果。
+                                    
+                                    // 临时方案：使用 onSearch 传递特殊前缀，
+                                    // 用户代码需要确保 App.tsx 或搜索组件能解析这个。
+                                    // 根据用户当前需求描述 "调用 searchByPalette，并通过 onSearch 触发 UI 更新"
+                                    
                                     try {
-                                        const { getDominantColors } = await import('../api/tauri-bridge');
+                                        const { searchByPalette } = await import('../api/tauri-bridge');
                                         
-                                        // 尝试从全局缩略图路径缓存中获取缩略图路径
-                                        let thumbnailPath: string | null = null;
-                                        const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                        if (pathCache && pathCache.get) {
-                                            thumbnailPath = pathCache.get(file.path!);
-                                        }
+                                        // 氛围搜索：只使用前5个主色调（占比最大的颜色）
+                                        // 忽略后面占比小但鲜艳的点缀色，避免搜索结果过于宽泛
+                                        const atmosphereColors = colors.slice(0, 5);
                                         
-                                        // 如果缓存中没有，尝试生成缩略图
-                                        if (!thumbnailPath && resourceRoot) {
-                                            try {
-                                                const { getThumbnail } = await import('../api/tauri-bridge');
-                                                const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
-                                                if (thumbUrl) {
-                                                    thumbnailPath = pathCache.get(file.path!);
-                                                }
-                                            } catch (err) {
-                                                console.log('Failed to generate thumbnail:', err);
+                                        // 执行搜索
+                                        const results = await searchByPalette(atmosphereColors);
+                                        // 这里我们需要告知主 UI 显示这些结果。
+                                        // 通常 onSearch 是更新搜索框的文字。
+                                        // 我们可以构造一个特殊的查询字符串。
+                                        // 或者这里只是为了触发一次搜索动作。
+                                        
+                                        // 由于现在的架构限制，最快的方法是构造一个特殊的搜索字符串
+                                        // 并在 FileGrid / App 层面拦截它。
+                                        // 这里我们先只是调用 onSearch，传入一种特殊格式。
+                                        // 最好是 "palette:hex1,hex2,hex3"
+                                        const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
+                                        console.log('[AtmosphereSearch] Triggering search:', searchQuery);
+                                        console.log('[AtmosphereSearch] File path:', file.path);
+                                        console.log('[AtmosphereSearch] Using top 5 colors (out of', colors.length, '):', atmosphereColors);
+                                        onSearch(searchQuery);
+                                    } catch (e) {
+                                        console.error('[AtmosphereSearch] Search failed:', e);
+                                    }
+                                } else {
+                                    console.log('[AtmosphereSearch] Conditions not met:', {
+                                        hasFile: !!file,
+                                        isImage: file?.type === FileType.IMAGE,
+                                        hasPalette: !!file?.meta?.palette,
+                                        paletteLength: file?.meta?.palette?.length || 0
+                                    });
+                                }
+                            }}
+                            className="p-1 px-2 flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors text-[10px] text-gray-500 font-medium"
+                            title={t('meta.searchAtmosphere')}
+                        >
+                           <Sparkles size={10} className="text-purple-500" />
+                           {t('meta.atmosphere')}
+                        </button>
+                    
+                        <button
+                            onClick={() => {
+                                if (file && file.type === FileType.IMAGE && file.path) {
+                                    // Remove from cache to force re-extraction
+                                    extractedCache.current.delete(file.id);
+                                    
+                                    // Re-extract palette using direct file path
+                                    (async () => {
+                                        try {
+                                            const { getDominantColors } = await import('../api/tauri-bridge');
+                                            
+                                            // 尝试从全局缩略图路径缓存中获取缩略图路径
+                                            let thumbnailPath: string | null = null;
+                                            const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                            if (pathCache && pathCache.get) {
+                                                thumbnailPath = pathCache.get(file.path!);
                                             }
-                                        }
-                                        
-                                        const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
-                                         
-                                        if (colors && colors.length > 0) {
-                                            const hexColors = colors.map(c => c.hex);
-                                            onUpdate(file.id, {
-                                                meta: { ...file.meta!, palette: hexColors }
-                                            });
-                                        } else {
-                                            // If extraction fails or returns empty, clear the palette
+                                            
+                                            // 如果缓存中没有，尝试生成缩略图
+                                            if (!thumbnailPath && resourceRoot) {
+                                                try {
+                                                    const { getThumbnail } = await import('../api/tauri-bridge');
+                                                    const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
+                                                    if (thumbUrl) {
+                                                        thumbnailPath = pathCache.get(file.path!);
+                                                    }
+                                                } catch (err) {
+                                                    console.log('Failed to generate thumbnail:', err);
+                                                }
+                                            }
+                                            
+                                            const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
+                                             
+                                            if (colors && colors.length > 0) {
+                                                const hexColors = colors.map(c => c.hex);
+                                                onUpdate(file.id, {
+                                                    meta: { ...file.meta!, palette: hexColors }
+                                                });
+                                            } else {
+                                                // If extraction fails or returns empty, clear the palette
+                                                onUpdate(file.id, {
+                                                    meta: { ...file.meta!, palette: [] }
+                                                });
+                                            }
+                                        } catch (err) {
+                                            console.error('Failed to extract palette:', err);
+                                            // Clear palette on error
                                             onUpdate(file.id, {
                                                 meta: { ...file.meta!, palette: [] }
                                             });
                                         }
-                                    } catch (err) {
-                                        console.error('Failed to extract palette:', err);
-                                        // Clear palette on error
-                                        onUpdate(file.id, {
-                                            meta: { ...file.meta!, palette: [] }
-                                        });
-                                    }
-                                })();
-                            }
-                        }}
-                        className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors flex items-center justify-center"
-                        title={t('meta.regeneratePalette')}
-                    >
-                        <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
-                    </button>
+                                    })();
+                                }
+                            }}
+                            className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors flex items-center justify-center"
+                            title={t('meta.regeneratePalette')}
+                        >
+                            <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
+                        </button>
+                    </div>
                 </div>
                 <div className="flex flex-wrap gap-2 justify-center">
                     {colors.length > 0 ? (

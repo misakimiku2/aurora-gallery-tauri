@@ -43,6 +43,50 @@ interface RustFileNode {
 }
 
 /**
+ * 搜索指定色彩氛围的图片 (Search by Palette)
+ * @param palette Hex 颜色数组
+ * @returns 图片文件路径列表 (按相似度排序)
+ */
+export const searchByPalette = async (palette: string[]): Promise<string[]> => {
+  if (!isTauriEnvironment()) {
+    return Promise.resolve([]); // 浏览器环境不支持
+  }
+  
+  try {
+    const results = await invoke('search_by_palette', { targetPalette: palette });
+    if (Array.isArray(results) && results.every(item => typeof item === 'string')) {
+      return results as string[];
+    }
+    return [];
+  } catch (error) {
+    console.error('Failed to search by palette:', error);
+    return [];
+  }
+};
+
+/**
+ * 搜索单色图片 (Search by Color)
+ * @param color Hex 颜色 string
+ * @returns 图片文件路径列表 (按相似度排序)
+ */
+export const searchByColor = async (color: string): Promise<string[]> => {
+  if (!isTauriEnvironment()) {
+    return Promise.resolve([]); 
+  }
+  
+  try {
+    const results = await invoke('search_by_color', { color });
+    if (Array.isArray(results) && results.every(item => typeof item === 'string')) {
+      return results as string[];
+    }
+    return [];
+  } catch (error) {
+    console.error('Failed to search by color:', error);
+    return [];
+  }
+};
+
+/**
  * 扫描目录并返回文件列表
  * @param path 目录路径
  * @param forceRefresh 是否强制刷新（暂时未使用，保留以兼容现有代码）
@@ -644,19 +688,6 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
   }
 };
 
-/**
- * 根据颜色搜索图片
- * @param targetHex 目标颜色 HEX 值（如 "#FF0000"）
- * @returns 匹配的图片路径列表
- */
-export const searchByColor = async (targetHex: string): Promise<string[]> => {
-  try {
-    return await invoke<string[]>('search_by_color', { targetHex });
-  } catch (error) {
-    console.error('Failed to search by color:', error);
-    return [];
-  }
-};
 
 /**
  * 暂停主色调提取后台任务

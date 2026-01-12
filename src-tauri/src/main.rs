@@ -16,12 +16,369 @@ use base64::{Engine as _, engine::general_purpose};
 use fast_image_resize as fr;
 use rayon::prelude::*;
 use palette::{FromColor, Srgb, Lab};
+use palette::color_difference::Ciede2000;
 
 // 导入颜色相关模块
 mod color_extractor;
 mod color_db;
 mod color_worker;
 mod db;
+
+// --- Color Search Implementation ---
+
+// Helper: Hex string to Lab color
+fn hex_to_lab(hex: &str) -> Option<Lab> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return None; }
+    
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    
+    // Normalize to 0.0 - 1.0
+    let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    Some(Lab::from_color(srgb))
+}
+
+#[tauri::command]
+async fn search_by_palette(
+    pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
+    target_palette: Vec<String>
+) -> Result<Vec<String>, String> {
+    eprintln!("[search_by_palette] Called with {} colors: {:?}", target_palette.len(), target_palette);
+    let pool = pool_state.inner();
+    let all_colors = pool.get_all_completed_colors().map_err(|e| e.to_string())?;
+    eprintln!("[search_by_palette] Loaded {} images from database", all_colors.len());
+    
+    // Parse target palette to Lab
+    let target_labs: Vec<Lab> = target_palette.iter()
+        .filter_map(|h| hex_to_lab(h))
+        .collect();
+    eprintln!("[search_by_palette] Parsed {} valid Lab colors", target_labs.len());
+        
+    if target_labs.is_empty() {
+        eprintln!("[search_by_palette] No valid colors, returning empty");
+        return Ok(Vec::new());
+    }
+
+    let is_single_color = target_labs.len() == 1;
+    let is_atmosphere_search = target_labs.len() >= 5; // 5色以上视为氛围搜索
+    
+    // Use rayon for parallel processing
+    let mut results: Vec<(String, f32)> = all_colors.par_iter()
+        .filter_map(|image_data| {
+             // Parse candidate colors (cache this in DB ideally, but parsing is fast enough for now vs disk IO)
+             // 颜色已经按像素占比从高到低排序
+             let candidate_labs: Vec<Lab> = image_data.colors.iter()
+                 .filter_map(|h| hex_to_lab(h))
+                 .collect();
+             
+             if candidate_labs.is_empty() { return None; }
+             
+             let score: f32;
+             let threshold: f32;
+
+             if is_single_color {
+                 // ========== 单色搜索：考虑颜色位置权重 ==========
+                 // 核心思想：用户搜索红色时，想找的是"红色氛围为主"的图片
+                 // 所以不仅要找到相似颜色，还要求该颜色在图片中占比足够大（位置靠前）
+                 
+                 let target = &target_labs[0];
+                 
+                 // 位置权重：第1位=1.0, 第2位=0.6, 第3位=0.4, 第4位=0.25, 之后更低
+                 // 更快的衰减确保只有真正占主导地位的颜色才能贡献高分
+                 let position_weights = [1.0f32, 0.6, 0.4, 0.25, 0.15, 0.1, 0.06, 0.03];
+                 
+                 let mut best_weighted_score = 0.0f32;
+                 
+                 for (idx, candidate) in candidate_labs.iter().enumerate() {
+                     let dist = candidate.difference(*target); // CIEDE2000
+                     
+                     // 相似度分数：距离越小，分数越高
+                     // DeltaE < 10 认为是相似颜色，< 5 非常相似
+                     let similarity = if dist < 5.0 {
+                         100.0
+                     } else if dist < 10.0 {
+                         100.0 - (dist - 5.0) * 4.0 // 5-10 -> 100-80
+                     } else if dist < 20.0 {
+                         80.0 - (dist - 10.0) * 3.0 // 10-20 -> 80-50
+                     } else if dist < 30.0 {
+                         50.0 - (dist - 20.0) * 2.0 // 20-30 -> 50-30
+                     } else {
+                         (30.0 - (dist - 30.0).min(30.0)).max(0.0) // 30+ -> 30-0
+                     };
+                     
+                     // 位置权重
+                     let pos_weight = if idx < position_weights.len() {
+                         position_weights[idx]
+                     } else {
+                         0.05 // 第8个以后的颜色权重很低
+                     };
+                     
+                     // 加权分数 = 相似度 * 位置权重
+                     let weighted_score = similarity * pos_weight;
+                     
+                     if weighted_score > best_weighted_score {
+                         best_weighted_score = weighted_score;
+                     }
+                 }
+                 
+                 score = best_weighted_score;
+                 // 阈值：需要 score >= 68 才认为是"红色氛围为主"的图片
+                 // 这意味着目标颜色必须在前2-3位，或者第1位非常接近
+                 threshold = 68.0;
+                 
+             } else if is_atmosphere_search {
+                 // ========== 氛围搜索（5色以上）：整体调色板结构匹配 ==========
+                 // 核心思想：找与参考图片整体色调相似的图片
+                 // 要求双向匹配：目标颜色能在候选中找到 + 候选主色也要在目标中有对应
+                 // 同时避免将黑白漫画与彩色图片匹配（通过彩度检测）
+                 
+                 // 辅助函数：计算颜色的"色彩程度"（基于Lab空间）
+                 // 在Lab空间中，a和b值决定了色彩，值越大表示色彩越饱和
+                 fn calc_colorfulness(lab_a: f32, lab_b: f32) -> f32 {
+                     // 计算a、b值的欧氏距离，表示离灰色轴（a=0, b=0）有多远
+                     (lab_a * lab_a + lab_b * lab_b).sqrt() / 127.0 // 除以Lab色彩空间的最大值作为归一化
+                 }
+                 
+                 // 计算目标调色板的整体色彩程度
+                 let target_colorfulness: Vec<f32> = target_labs.iter()
+                     .take(5)
+                     .map(|lab| calc_colorfulness(lab.a, lab.b))
+                     .collect();
+                 
+                 let target_avg_colorfulness = if !target_colorfulness.is_empty() {
+                     target_colorfulness.iter().sum::<f32>() / target_colorfulness.len() as f32
+                 } else {
+                     0.0
+                 };
+                 
+                 // 计算候选调色板的整体色彩程度
+                 let candidate_colorfulness: Vec<f32> = candidate_labs.iter()
+                     .take(5)
+                     .map(|lab| calc_colorfulness(lab.a, lab.b))
+                     .collect();
+                 
+                 let candidate_avg_colorfulness = if !candidate_colorfulness.is_empty() {
+                     candidate_colorfulness.iter().sum::<f32>() / candidate_colorfulness.len() as f32
+                 } else {
+                     0.0
+                 };
+                 
+                 // 策略1：计算加权最小距离（考虑位置）
+                 // 目标调色板中的前几个颜色更重要
+                 let target_weights = [1.0f32, 0.85, 0.7, 0.55, 0.4];
+                 
+                 let mut weighted_total_dist = 0.0f32;
+                 let mut total_weight = 0.0f32;
+                 
+                 for (t_idx, t) in target_labs.iter().enumerate() {
+                     let t_weight = if t_idx < target_weights.len() {
+                         target_weights[t_idx]
+                     } else {
+                         0.05
+                     };
+                     
+                     // 找候选颜色中最佳匹配，同时考虑候选位置
+                     let mut best_match_dist = f32::INFINITY;
+                     let mut best_match_pos = candidate_labs.len();
+                     
+                     for (c_idx, c) in candidate_labs.iter().enumerate() {
+                         let dist = c.difference(*t);
+                         if dist < best_match_dist {
+                             best_match_dist = dist;
+                             best_match_pos = c_idx;
+                         }
+                     }
+                     
+                     // 位置惩罚：如果目标的主色（前3位）只能在候选的后面找到匹配，大幅增加惩罚
+                     let position_penalty = if t_idx < 3 {
+                         if best_match_pos > 4 {
+                             best_match_dist * 0.8 // 主色匹配在后面，增加80%惩罚
+                         } else if best_match_pos > 2 {
+                             best_match_dist * 0.4 // 主色匹配在中间，增加40%惩罚
+                         } else {
+                             0.0 // 主色匹配在前面，无惩罚
+                         }
+                     } else {
+                         0.0
+                     };
+                     
+                     let adjusted_dist = best_match_dist + position_penalty;
+                     weighted_total_dist += adjusted_dist * t_weight;
+                     total_weight += t_weight;
+                 }
+                 
+                 let avg_weighted_dist = weighted_total_dist / total_weight;
+                 
+                 // 策略2：严格的双向匹配 - 候选图片的主色也必须在目标调色板中找到对应
+                 // 这是关键：防止完全不同氛围的图片被匹配进来
+                 let mut reverse_mismatch_penalty = 0.0f32;
+                 
+                 // 检查候选图片的前5个主色
+                 for (c_idx, c) in candidate_labs.iter().take(5).enumerate() {
+                     let min_dist_to_target = target_labs.iter()
+                         .map(|t| c.difference(*t))
+                         .fold(f32::INFINITY, |a, b| a.min(b));
+                     
+                     // 更严格的不匹配阈值：DeltaE > 12 就开始惩罚
+                     // 第1个主色最重要，第2、3个次之
+                     if min_dist_to_target > 12.0 {
+                         let penalty_weight = match c_idx {
+                             0 => 10.0,  // 第1个主色不匹配，重罚
+                             1 => 7.5,   // 第2个主色
+                             2 => 5.5,   // 第3个主色
+                             3 => 4.0,   // 第4个主色
+                             _ => 2.5,   // 第5个主色
+                         };
+                         
+                         // 惩罚力度：差异越大，惩罚越重
+                         let excess_dist = min_dist_to_target - 12.0;
+                         reverse_mismatch_penalty += excess_dist * penalty_weight * 0.18;
+                     }
+                 }
+                 
+                 // 策略3：色彩程度不匹配惩罚 - 防止将黑白漫画与彩色图片匹配
+                 // 改进版：区分纯黑白、低饱和度彩色、高饱和度彩色三种情况
+                 let mut colorfulness_mismatch_penalty = 0.0f32;
+                 
+                 // 辅助函数：判断是否为"纯黑白/灰度"图片
+                 // 纯黑白图片的特征：所有颜色的 colorfulness 都非常低（< 0.03）
+                 fn is_pure_grayscale(colorfulness_values: &[f32]) -> bool {
+                     if colorfulness_values.is_empty() { return true; }
+                     let max_cf = colorfulness_values.iter().cloned().fold(0.0f32, f32::max);
+                     // 如果最大 colorfulness 都 < 0.03，认为是纯灰度
+                     max_cf < 0.03
+                 }
+                 
+                 // 辅助函数：判断颜色是否有明确的色相方向（而不是散乱或接近灰色轴）
+                 // 通过检查 a、b 值是否有一致的倾向
+                 fn has_color_tendency(labs: &[Lab]) -> bool {
+                     if labs.len() < 2 { return false; }
+                     
+                     // 统计有意义的色彩值（colorfulness > 0.02 的颜色）
+                     let meaningful_colors: Vec<(f32, f32)> = labs.iter()
+                         .take(5)
+                         .filter(|lab| {
+                             let cf = (lab.a * lab.a + lab.b * lab.b).sqrt() / 127.0;
+                             cf > 0.02  // 只考虑有一点色彩的颜色
+                         })
+                         .map(|lab| (lab.a, lab.b))
+                         .collect();
+                     
+                     // 如果没有足够的有意义颜色，没有色彩倾向
+                     if meaningful_colors.len() < 2 { return false; }
+                     
+                     // 计算平均 a、b 值
+                     let avg_a = meaningful_colors.iter().map(|(a, _)| *a).sum::<f32>() / meaningful_colors.len() as f32;
+                     let avg_b = meaningful_colors.iter().map(|(_, b)| *b).sum::<f32>() / meaningful_colors.len() as f32;
+                     
+                     // 如果平均值离原点有一定距离，说明有色彩倾向
+                     let avg_chroma = (avg_a * avg_a + avg_b * avg_b).sqrt();
+                     avg_chroma > 3.0  // Lab 空间中，a/b 差异 > 3 就有可感知的颜色倾向
+                 }
+                 
+                 let target_is_pure_grayscale = is_pure_grayscale(&target_colorfulness);
+                 let candidate_is_pure_grayscale = is_pure_grayscale(&candidate_colorfulness);
+                 let target_has_color = has_color_tendency(&target_labs);
+                 let candidate_has_color = has_color_tendency(&candidate_labs);
+                 
+                 // 核心逻辑：目标有颜色倾向，但候选是纯灰度 → 重罚
+                 if target_has_color && candidate_is_pure_grayscale {
+                     // 目标是低饱和度彩色（如暖色调），候选是纯黑白 → 绝对排除
+                     colorfulness_mismatch_penalty = 50.0;
+                 } else if target_has_color && !candidate_has_color {
+                     // 目标有色彩倾向，候选没有明确色彩倾向 → 强惩罚
+                     colorfulness_mismatch_penalty = 40.0;
+                 } else if !target_is_pure_grayscale && candidate_is_pure_grayscale {
+                     // 目标有一点色彩（可能是轻微偏色的图），候选是纯黑白 → 强惩罚
+                     colorfulness_mismatch_penalty = 35.0;
+                 } else if target_is_pure_grayscale && !candidate_is_pure_grayscale {
+                     // 目标是纯黑白，候选有颜色 → 中等惩罚
+                     colorfulness_mismatch_penalty = 25.0;
+                 } else {
+                     // 两者都有颜色或都是灰度，检查 colorfulness 差异
+                     let colorfulness_diff = (target_avg_colorfulness - candidate_avg_colorfulness).abs();
+                     
+                     if target_avg_colorfulness > 0.2 && candidate_avg_colorfulness < 0.05 {
+                         // 高饱和目标 vs 极低饱和候选
+                         colorfulness_mismatch_penalty = colorfulness_diff * 40.0;
+                     } else if colorfulness_diff > 0.1 {
+                         // 一般的色彩程度差异惩罚
+                         colorfulness_mismatch_penalty = (colorfulness_diff - 0.1) * 15.0;
+                     }
+                 }
+                 
+                 // 最终分数
+                 let raw_score = 100.0 - avg_weighted_dist - reverse_mismatch_penalty - colorfulness_mismatch_penalty;
+                 score = raw_score.max(0.0);
+                 
+                 // 氛围搜索阈值提高到85分
+                 // 这确保只有真正氛围相似的图片才能通过
+                 threshold = 85.0;
+                 
+             } else {
+                 // ========== 中等数量颜色搜索（2-4色）==========
+                 // 混合策略：要求每个目标颜色都能找到匹配，但也考虑位置
+                 
+                 let mut total_min_dist = 0.0f32;
+                 let mut position_bonus = 0.0f32;
+                 
+                 for t in &target_labs {
+                     let mut min_dist = f32::INFINITY;
+                     let mut best_pos = candidate_labs.len();
+                     
+                     for (idx, c) in candidate_labs.iter().enumerate() {
+                         let dist = c.difference(*t);
+                         if dist < min_dist {
+                             min_dist = dist;
+                             best_pos = idx;
+                         }
+                     }
+                     
+                     total_min_dist += min_dist;
+                     
+                     // 如果匹配颜色在前4位，给予位置奖励
+                     if best_pos < 4 && min_dist < 15.0 {
+                         position_bonus += (4.0 - best_pos as f32) * 2.0;
+                     }
+                 }
+                 
+                 let avg_dist = total_min_dist / target_labs.len() as f32;
+                 score = 100.0 - avg_dist + position_bonus / target_labs.len() as f32;
+                 threshold = 88.0;
+             }
+             
+             if score >= threshold {
+                 Some((image_data.file_path.clone(), score))
+             } else {
+                 None
+             }
+        })
+        .collect();
+
+    // Sort by score descending (best match first)
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    
+    let threshold_used = if is_single_color { 68.0 } else if is_atmosphere_search { 85.0 } else { 88.0 };
+    let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
+    eprintln!("[search_by_palette] Returning {} results (threshold={}, colors={}, mode={})", 
+        final_results.len(), threshold_used, target_labs.len(),
+        if is_single_color { "single" } else if is_atmosphere_search { "atmosphere" } else { "multi" });
+    if !final_results.is_empty() {
+        eprintln!("[search_by_palette] Top 5 scores: {:?}", results.iter().take(5).map(|(p, s)| (p.split(&['/', '\\']).last().unwrap_or("?"), s)).collect::<Vec<_>>());
+    }
+    
+    Ok(final_results)
+}
+
+#[tauri::command]
+async fn search_by_color(
+     pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
+     color: String
+) -> Result<Vec<String>, String> {
+    search_by_palette(pool_state, vec![color]).await
+}
 
 use db::AppDbPool;
 
@@ -121,99 +478,6 @@ fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
 }
 
-#[tauri::command]
-async fn search_by_color(
-    target_hex: String,
-    state: tauri::State<'_, Arc<color_db::ColorDbPool>>
-) -> Result<Vec<String>, String> {
-    
-    // 1. Hex 转 Lab
-    let hex_clean = target_hex.trim_start_matches('#');
-    if hex_clean.len() != 6 {
-        return Err("Invalid Hex Code".into());
-    }
-
-    let r = u8::from_str_radix(&hex_clean[0..2], 16).map_err(|_| "Invalid Hex")?;
-    let g = u8::from_str_radix(&hex_clean[2..4], 16).map_err(|_| "Invalid Hex")?;
-    let b = u8::from_str_radix(&hex_clean[4..6], 16).map_err(|_| "Invalid Hex")?;
-
-    let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-    let target_lab: Lab = Lab::from_color(srgb);
-
-    // 2. 获取数据
-    let pool = state.inner();
-    let all_images = pool.get_all_completed_colors()?;
-
-    // 3. 并行计算与计分
-    let mut scored_images: Vec<(String, f32)> = all_images.par_iter()
-        .map(|(path, colors)| {
-            let mut total_score = 0.0;
-            let mut best_match_index = usize::MAX;
-            let mut best_match_distance = f32::MAX;
-            
-            for (index, color) in colors.iter().enumerate() {
-                // 计算欧几里得距离
-                let dl = color.lab_l - target_lab.l;
-                let da = color.lab_a - target_lab.a;
-                let db = color.lab_b - target_lab.b;
-                let distance = (dl * dl + da * da + db * db).sqrt();
-
-                // 记录最佳匹配
-                if distance < best_match_distance {
-                    best_match_distance = distance;
-                    best_match_index = index;
-                }
-
-                // 计分规则 - 调整为更平衡的权重分布
-                // 颜色在列表越靠前，权重越高 (index 0 是最主色)
-                if distance < 25.0 {
-                    // 改进的权重衰减机制：
-                    // 使用 1.5 的指数，使衰减更平缓，让次要颜色也能发挥作用
-                    // - 主色 (index 0): 权重 = 1.0 (100%)
-                    // - 第2色 (index 1): 权重 = 0.35 (35%)
-                    // - 第3色 (index 2): 权重 = 0.19 (19%)
-                    // - 第4色 (index 3): 权重 = 0.125 (12.5%)
-                    // - 第5色 (index 4): 权重 = 0.09 (9%)
-                    let weight = 1.0 / ((index as f32 + 1.0).powf(1.5));
-                    
-                    // 考虑前5个颜色，让更多辅助色计入得分
-                    if index < 5 {
-                        total_score += (25.0 - distance) * weight;
-                    }
-                }
-            }
-            
-            // 添加最佳匹配位置惩罚：只对非常靠后的匹配进行显著惩罚
-            // 移除了对第3色(index 2)的惩罚，仅轻微惩罚第4色(index 3)
-            if best_match_index >= 4 {
-                total_score *= 0.3; // 第5色及以后，得分为30%
-            } else if best_match_index == 3 {
-                total_score *= 0.7; // 第4色，得分为70%
-            }
-            
-            (path.clone(), total_score)
-        })
-        .filter(|(_, score)| *score > 0.0)
-        .collect();
-
-    // 4. 排序与过滤
-    // 分数从高到低排序
-    scored_images.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-
-    // 设置最小分数阈值，避免返回不相关的图片
-    // 只有当主色或次色接近目标颜色时，分数才会高于此阈值
-    const MIN_SCORE_THRESHOLD: f32 = 5.0;
-    
-    // 动态返回结果：不再固定100张，而是根据实际匹配质量决定
-    // 最多返回100张，但如果高质量匹配少，则只返回高质量的
-    let top_paths: Vec<String> = scored_images.into_iter()
-        .filter(|(_, score)| *score >= MIN_SCORE_THRESHOLD)
-        .take(100)
-        .map(|(path, _)| path)
-        .collect();
-
-    Ok(top_paths)
-}
 
 #[tauri::command]
 async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
@@ -1981,6 +2245,8 @@ fn main() {
         .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
             greet,
+            search_by_palette,
+            search_by_color,
             scan_directory,
             save_user_data,
             load_user_data,
@@ -2004,6 +2270,7 @@ fn main() {
             exit_app,
             get_dominant_colors,
             search_by_color,
+            search_by_palette,
             color_worker::pause_color_extraction,
             color_worker::resume_color_extraction,
             force_wal_checkpoint,

@@ -7,6 +7,12 @@ use serde_json;
 
 use crate::color_extractor::ColorResult;
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct ImageColors {
+    pub file_path: String,
+    pub colors: Vec<String>,
+}
+
 // 自定义结果类型
 type Result<T> = std::result::Result<T, String>;
 
@@ -201,28 +207,61 @@ impl ColorDbPool {
         }
     }
     
-    // 获取所有状态为 completed 或 extracted 的图片及其颜色数据
-    pub fn get_all_completed_colors(&self) -> Result<Vec<(String, Vec<ColorResult>)>> {
+    // 获取所有状态为 completed 的图片及其颜色数据
+    pub fn get_all_completed_colors(&self) -> Result<Vec<ImageColors>> {
+        eprintln!("[ColorDB] get_all_completed_colors called");
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
+        
+        // 先检查数据库中的记录总数和状态分布
+        let total_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors", [], |row| row.get(0))
+            .unwrap_or(0);
+        eprintln!("[ColorDB] Total records in database: {}", total_count);
+        
+        // 查询各种状态的数量
+        let completed_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'completed'", [], |row| row.get(0))
+            .unwrap_or(0);
+        let pending_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'pending'", [], |row| row.get(0))
+            .unwrap_or(0);
+        let processing_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'processing'", [], |row| row.get(0))
+            .unwrap_or(0);
+        
+        eprintln!("[ColorDB] Status distribution: completed={}, pending={}, processing={}", 
+            completed_count, pending_count, processing_count);
+        
+        // 查询实际的status值（显示前10个唯一状态）
+        if total_count > 0 {
+            let mut stmt_status = conn.prepare("SELECT DISTINCT status FROM dominant_colors LIMIT 10").unwrap();
+            let status_values: Vec<String> = stmt_status.query_map([], |row| row.get(0)).unwrap()
+                .filter_map(|r| r.ok())
+                .collect();
+            eprintln!("[ColorDB] Actual status values in DB: {:?}", status_values);
+        }
+        
         let mut stmt = conn.prepare(
-            "SELECT file_path, colors FROM dominant_colors WHERE status IN ('completed', 'extracted')"
+            "SELECT file_path, colors FROM dominant_colors WHERE status = 'extracted'"
         ).map_err(|e| e.to_string())?;
 
         let rows = stmt.query_map([], |row| {
-            let file_path: String = row.get(0)?;
-            let colors_json: String = row.get(1)?;
-            Ok((file_path, colors_json))
-        }).map_err(|e| e.to_string())?;
-
-        let mut results = Vec::new();
-        for row in rows {
-            if let Ok((file_path, colors_json)) = row {
-                if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
-                    results.push((file_path, colors));
-                }
-            }
-        }
-        Ok(results)
+             let file_path: String = row.get(0)?;
+             let colors_json: String = row.get(1)?;
+             Ok((file_path, colors_json))
+         }).map_err(|e| e.to_string())?;
+ 
+         let mut results = Vec::new();
+         for row in rows {
+             if let Ok((file_path, colors_json)) = row {
+                 if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
+                     // 只提取 Hex 字符串
+                     let hex_colors = colors.into_iter().map(|c| c.hex).collect();
+                     results.push(ImageColors {
+                         file_path,
+                         colors: hex_colors,
+                     });
+                 }
+             }
+         }
+         eprintln!("[ColorDB] Found {} images with completed colors", results.len());
+         Ok(results)
     }
 
     // 获取数据库文件大小

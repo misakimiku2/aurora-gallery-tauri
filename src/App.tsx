@@ -18,7 +18,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, getAssetUrl, openPath } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -1462,6 +1462,68 @@ export const App: React.FC = () => {
   const activeTab = useMemo(() => {
      return state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB;
   }, [state.tabs, state.activeTabId]);
+
+  // Handle Special Search Queries (palette:, color:)
+  useEffect(() => {
+     const query = activeTab.searchQuery?.trim() || '';
+     
+     if (query.startsWith('palette:') || query.startsWith('color:')) {
+         const isPalette = query.startsWith('palette:');
+         const content = query.replace(/^(palette:|color:)/, '').trim();
+         
+         console.log('[ColorSearch] Query detected:', { isPalette, query, content });
+         
+         if (!content) {
+             console.log('[ColorSearch] Empty content, skipping');
+             return;
+         }
+
+         const colors = content.split(/[,\s]+/).map(c => c.trim()).filter(Boolean);
+         console.log('[ColorSearch] Parsed colors:', colors);
+         
+         if (colors.length === 0) {
+             console.log('[ColorSearch] No valid colors, skipping');
+             return;
+         }
+
+         // Fetch results from Rust backend
+         const searchFn = isPalette ? searchByPalette : searchByColor;
+         const arg = isPalette ? colors : colors[0];
+
+         console.log('[ColorSearch] Calling backend with:', { isPalette, arg });
+         
+         // @ts-ignore - Argument types are handled inside wrapper functions
+         searchFn(arg).then((paths: string[]) => {
+             console.log('[ColorSearch] Backend returned:', paths.length, 'paths');
+             if (paths.length > 0) {
+                 console.log('[ColorSearch] Sample paths:', paths.slice(0, 3));
+             }
+             
+             // Update active tab with AI Filter results
+             // We map the results to aiFilter.filePaths to drive the view
+             updateActiveTab({
+                 aiFilter: {
+                     keywords: [],
+                     colors: colors,
+                     people: [],
+                     description: '',
+                     filePaths: paths,
+                     originalQuery: query
+                 }
+             });
+         }).catch(err => {
+             console.error('[ColorSearch] Backend error:', err);
+         });
+     } else {
+        // Clear AI filter if we exit special search mode
+        if (activeTab.aiFilter?.filePaths && activeTab.aiFilter.colors?.length > 0) {
+            // Only clear if it looks like a color search (no keywords/people)
+            if (!activeTab.aiFilter.keywords.length && !activeTab.aiFilter.people.length) {
+                updateActiveTab({ aiFilter: undefined });
+            }
+        }
+     }
+  }, [activeTab.searchQuery]);
 
 
   // Update exitActionRef when state changes
@@ -4341,55 +4403,55 @@ export const App: React.FC = () => {
           try {
               const results = await searchByColor(`#${hex}`);
               
-              if (results.length > 0) {
-              } else {
-              }
-
-              // 【核心修复 & 调试】：超级路径标准化
               const allFiles = Object.values(state.files);
-              
-              // 打印一个前端现有的路径看看长什么样
-              if (allFiles.length > 0) {
-                 // 找一个带路径的文件打印出来对比
-                 const sample = allFiles.find(f => f.path); 
-                 if (sample) logDebug('[ColorExtraction] samplePath', { path: sample.path });
-              }
-
               const validPaths: string[] = [];
-              
-              // 优化的匹配逻辑：移除 \\?\ 前缀，统一斜杠，统一小写
+              const missingPaths: string[] = [];
+              const newFilesMap: Record<string, FileNode> = {};
+
               const normalize = (p: string) => {
                   if (!p) return '';
-                  // 1. 移除 Windows 长路径前缀 \\?\
                   let clean = p.startsWith('\\\\?\\') ? p.slice(4) : p;
-                  // 2. 反斜杠转正斜杠
                   clean = clean.replace(/\\/g, '/');
-                  // 3. 转小写
                   return clean.toLowerCase();
               };
 
               results.forEach(rustPath => {
                   const normRust = normalize(rustPath);
-                  
-                  // 在所有文件中查找
                   const match = allFiles.find(f => {
                       if (!f.path) return false;
                       const normFront = normalize(f.path);
-                      // 这里的 debug 只在找不到时偶尔打印一下，防止刷屏
-                      // if (normRust.includes('g93') && normFront.includes('g93')) {
-                      //    console.log(`对比: \nRust: ${normRust} \nFront: ${normFront}`);
-                      // }
                       return normFront === normRust;
                   });
-                  
                   if (match && match.path) {
                       validPaths.push(match.path);
+                  } else {
+                      missingPaths.push(rustPath);
                   }
               });
 
+              // 加载缺失文件
+              if (missingPaths.length > 0) {
+                  await asyncPool(10, missingPaths, async (path) => {
+                      try {
+                          const node = await scanFile(path);
+                          if (node) {
+                              newFilesMap[node.id] = node;
+                              validPaths.push(node.path);
+                          }
+                      } catch (e) {}
+                  });
+              }
+
+              // 更新 State
+              if (Object.keys(newFilesMap).length > 0) {
+                  setState(prev => ({
+                      ...prev,
+                      files: { ...prev.files, ...newFilesMap }
+                  }));
+              }
 
               if (validPaths.length === 0 && results.length > 0) {
-                  showToast(`后端找到 ${results.length} 张，但前端无法显示 (路径不匹配)`);
+                  showToast(t('errors.fileNotFound'));
               }
 
               const aiFilter: AiSearchFilter = {
@@ -4400,12 +4462,111 @@ export const App: React.FC = () => {
                   filePaths: validPaths
               };
               
-              // 强制跳转逻辑 - 颜色搜索不再在搜索框保留文本，仅保留在 aiFilter 中
               pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
 
           } catch (e) {
               console.error("Color search failed", e);
               showToast("Color search failed");
+          } finally {
+              updateTask(taskId, { current: 1, status: 'completed' });
+              setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+          }
+          return;
+      }
+      
+      // 1.5 氛围/色板搜索逻辑 (Palette)
+      if (query.startsWith('palette:')) {
+          const rawPalette = query.replace('palette:', '').trim();
+          if (!rawPalette) return;
+          
+          const palette = rawPalette.split(',').map(c => {
+              let hex = c.trim();
+              if (!hex.startsWith('#')) hex = '#' + hex;
+              return hex;
+          });
+
+          const taskId = startTask('ai', [], t('status.searching'), false);
+          
+          try {
+              const results = await searchByPalette(palette);
+              
+              const allFiles = Object.values(state.files);
+              const validPaths: string[] = [];
+              const missingPaths: string[] = [];
+              const newFilesMap: Record<string, FileNode> = {};
+
+              const normalize = (p: string) => {
+                  if (!p) return '';
+                  let clean = p.startsWith('\\\\?\\') ? p.slice(4) : p;
+                  clean = clean.replace(/\\/g, '/');
+                  return clean.toLowerCase();
+              };
+
+              // 1. 先在内存中查找
+              results.forEach(rustPath => {
+                  const normRust = normalize(rustPath);
+                  const match = allFiles.find(f => {
+                      if (!f.path) return false;
+                      const normFront = normalize(f.path);
+                      return normFront === normRust;
+                  });
+                  if (match && match.path) {
+                      validPaths.push(match.path);
+                  } else {
+                      missingPaths.push(rustPath);
+                  }
+              });
+
+              // 2. 对于内存中没有的文件，尝试按需扫描
+              if (missingPaths.length > 0) {
+                  // showToast(`正在加载额外的 ${missingPaths.length} 个文件...`);
+                  // 并发扫描，限制并发数
+                  await asyncPool(10, missingPaths, async (path) => {
+                      try {
+                          const node = await scanFile(path);
+                          if (node) {
+                              newFilesMap[node.id] = node;
+                              validPaths.push(node.path);
+                          }
+                      } catch (e) {
+                         // 忽略扫描失败的文件
+                         console.warn('Failed to load search result file:', path);
+                      }
+                  });
+              }
+
+              // 3. 如果有新加载的文件，更新到全局 state
+              if (Object.keys(newFilesMap).length > 0) {
+                  setState(prev => ({
+                      ...prev,
+                      files: { ...prev.files, ...newFilesMap }
+                  }));
+              }
+
+              if (validPaths.length === 0 && results.length > 0) {
+                 // 此时真的是找不到或者读不到了
+                 showToast(t('errors.fileNotFound'));
+              }
+
+              const aiFilter: AiSearchFilter = {
+                  keywords: [],
+                  colors: palette,
+                  people: [],
+                  originalQuery: query,
+                  filePaths: validPaths
+              };
+              
+              pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+              
+              if (validPaths.length > 0) {
+                  showToast(t('context.found') + ` ${validPaths.length} ` + t('context.files'));
+              } else {
+                  showToast(t('context.noFiles'));
+              }
+
+          } catch (e) {
+              console.error("Palette search failed", e);
+              showToast("Palette search failed: " + e);
           } finally {
               updateTask(taskId, { current: 1, status: 'completed' });
               setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
@@ -6327,7 +6488,7 @@ export const App: React.FC = () => {
                         onToggleGroup={toggleGroup}
                         isSelecting={isSelecting}
                         selectionBox={selectionBox}
-                        onScrollTopChange={(scrollTop) => { logDebug('[App] filegrid.scrollUpdate', { action: 'filegrid.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
+                        onScrollTopChange={(scrollTop) => updateActiveTab({ scrollTop })}
                         onConsumeScrollToItem={() => updateActiveTab({ scrollToItemId: undefined })}
                         t={t} 
                         onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}

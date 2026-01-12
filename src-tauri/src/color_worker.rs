@@ -104,6 +104,9 @@ pub async fn color_extraction_worker(
     
     // 创建结果通道（无界）
     let (result_sender, result_receiver): (Sender<ProcessingResult>, Receiver<ProcessingResult>) = unbounded();
+
+    // 创建批次信息通道（无界）
+    let (batch_info_sender, batch_info_receiver): (Sender<(u64, usize)>, Receiver<(u64, usize)>) = unbounded();
     
     // 使用互斥锁跟踪当前处理的文件，用于进度报告
     let current_file = Arc::new(Mutex::new(String::new()));
@@ -111,7 +114,7 @@ pub async fn color_extraction_worker(
     // 1. 启动生产者任务：持续从数据库获取待处理文件
     let pool_producer = pool.clone();
     let producer_handle = task::spawn(async move {
-        producer_loop(pool_producer, batch_size, task_sender).await;
+        producer_loop(pool_producer, batch_size, task_sender, batch_info_sender).await;
     });
     
     // 2. 启动多个消费者任务：并行处理文件
@@ -144,7 +147,8 @@ pub async fn color_extraction_worker(
         result_processor(
             pool_result,
             result_receiver,
-            app_handle_result
+            app_handle_result,
+            batch_info_receiver
         ).await;
     });
     
@@ -160,7 +164,8 @@ pub async fn color_extraction_worker(
 async fn producer_loop(
     pool: Arc<ColorDbPool>,
     batch_size: usize,
-    task_sender: Sender<Task>
+    task_sender: Sender<Task>,
+    batch_info_sender: Sender<(u64, usize)>
 ) {
     // 等待时间变量，用于文件聚合
     let mut debounce_deadline: Option<tokio::time::Instant> = None;
@@ -257,6 +262,11 @@ async fn producer_loop(
         let batch_id = generate_batch_id();
         eprintln!("=== Starting new batch {} with {} files ===", batch_id, final_pending_count);
         
+        // 发送批次信息给结果处理器
+        if let Err(e) = batch_info_sender.send((batch_id, final_pending_count)) {
+            eprintln!("Failed to send batch info: {}", e);
+        }
+
         // 重置防抖计时器
         debounce_deadline = None;
         last_pending_count = 0;
@@ -427,7 +437,8 @@ fn consumer_loop(
 async fn result_processor(
     pool: Arc<ColorDbPool>,
     result_receiver: Receiver<ProcessingResult>,
-    app_handle: Option<Arc<AppHandle>>
+    app_handle: Option<Arc<AppHandle>>,
+    batch_info_receiver: Receiver<(u64, usize)>
 ) {
     use std::collections::HashMap;
     
@@ -452,6 +463,23 @@ async fn result_processor(
     
     // 持续处理结果
     loop {
+        // 0. 优先处理批次信息更新
+        while let Ok((id, total)) = batch_info_receiver.try_recv() {
+            batch_states.entry(id)
+                .and_modify(|s| {
+                    if s.total != total {
+                        eprintln!("=== Updating batch {} total: {} -> {} ===", id, s.total, total);
+                        s.total = total;
+                    }
+                })
+                .or_insert(BatchState {
+                    id,
+                    total,
+                    processed: 0,
+                    started: true,
+                });
+        }
+
         // 1. 尝试接收结果
         match result_receiver.try_recv() {
             Ok(result) => {
