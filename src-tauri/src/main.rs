@@ -85,9 +85,30 @@ async fn search_by_palette(
                  
                  let target = &target_labs[0];
                  
-                 // 位置权重：第1位=1.0, 第2位=0.6, 第3位=0.4, 第4位=0.25, 之后更低
-                 // 更快的衰减确保只有真正占主导地位的颜色才能贡献高分
-                 let position_weights = [1.0f32, 0.6, 0.4, 0.25, 0.15, 0.1, 0.06, 0.03];
+                 // 辅助函数：计算颜色的"色彩程度"（基于Lab空间）
+                 fn calc_colorfulness(lab_a: f32, lab_b: f32) -> f32 {
+                     (lab_a * lab_a + lab_b * lab_b).sqrt() / 127.0
+                 }
+                 
+                 // 检查目标颜色是否有明显色彩（非灰色）
+                 let target_colorfulness = calc_colorfulness(target.a, target.b);
+                 let target_is_colorful = target_colorfulness > 0.05; // 目标颜色有色彩
+                 
+                 // 检查候选图片是否为纯黑白/灰度
+                 let candidate_max_colorfulness = candidate_labs.iter()
+                     .take(5)
+                     .map(|lab| calc_colorfulness(lab.a, lab.b))
+                     .fold(0.0f32, f32::max);
+                 let candidate_is_grayscale = candidate_max_colorfulness < 0.03;
+                 
+                 // 如果搜索的是彩色，但候选图是纯灰度，直接排除
+                 if target_is_colorful && candidate_is_grayscale {
+                     return None;
+                 }
+                 
+                 // 位置权重：第1位=1.0, 第2位=0.7, 第3位=0.5, 第4位=0.35, 之后更低
+                 // 这确保占比大的颜色能贡献高分，但也允许第2-3位的颜色有一定权重
+                 let position_weights = [1.0f32, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08];
                  
                  let mut best_weighted_score = 0.0f32;
                  
@@ -124,9 +145,9 @@ async fn search_by_palette(
                  }
                  
                  score = best_weighted_score;
-                 // 阈值：需要 score >= 68 才认为是"红色氛围为主"的图片
-                 // 这意味着目标颜色必须在前2-3位，或者第1位非常接近
-                 threshold = 68.0;
+                 // 阈值：需要 score >= 60 才认为是"红色氛围为主"的图片
+                 // 这意味着要么前3位颜色中有相似颜色，要么第1位颜色非常接近
+                 threshold = 60.0;
                  
              } else if is_atmosphere_search {
                  // ========== 氛围搜索（5色以上）：整体调色板结构匹配 ==========
@@ -360,7 +381,7 @@ async fn search_by_palette(
     // Sort by score descending (best match first)
     results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     
-    let threshold_used = if is_single_color { 68.0 } else if is_atmosphere_search { 85.0 } else { 88.0 };
+    let threshold_used = if is_single_color { 60.0 } else if is_atmosphere_search { 85.0 } else { 88.0 };
     let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
     eprintln!("[search_by_palette] Returning {} results (threshold={}, colors={}, mode={})", 
         final_results.len(), threshold_used, target_labs.len(),
