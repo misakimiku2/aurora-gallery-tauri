@@ -107,6 +107,16 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
     }
   };
 
+  useEffect(() => {
+    if (initialColor && /^#[0-9A-Fa-f]{6}$/i.test(initialColor)) {
+      setHex(initialColor);
+      const rgb = hexToRgb(initialColor);
+      if (rgb) {
+        setHsv(rgbToHsv(rgb));
+      }
+    }
+  }, [initialColor]);
+
   const svRef = useRef<HTMLDivElement>(null);
   const hueRef = useRef<HTMLDivElement>(null);
   const [isDraggingSV, setIsDraggingSV] = useState(false);

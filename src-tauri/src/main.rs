@@ -46,39 +46,39 @@ async fn search_by_palette(
     target_palette: Vec<String>
 ) -> Result<Vec<String>, String> {
     eprintln!("[search_by_palette] Called with {} colors: {:?}", target_palette.len(), target_palette);
-    let pool = pool_state.inner();
-    let all_colors = pool.get_all_completed_colors().map_err(|e| e.to_string())?;
-    eprintln!("[search_by_palette] Loaded {} images from database", all_colors.len());
     
-    // Parse target palette to Lab
+    // Parse target palette to Lab once
     let target_labs: Vec<Lab> = target_palette.iter()
         .filter_map(|h| hex_to_lab(h))
         .collect();
     eprintln!("[search_by_palette] Parsed {} valid Lab colors", target_labs.len());
         
     if target_labs.is_empty() {
-        eprintln!("[search_by_palette] No valid colors, returning empty");
         return Ok(Vec::new());
     }
 
     let is_single_color = target_labs.len() == 1;
-    let is_atmosphere_search = target_labs.len() >= 5; // 5色以上视为氛围搜索
-    
-    // Use rayon for parallel processing
-    let mut results: Vec<(String, f32)> = all_colors.par_iter()
-        .filter_map(|image_data| {
-             // Parse candidate colors (cache this in DB ideally, but parsing is fast enough for now vs disk IO)
-             // 颜色已经按像素占比从高到低排序
-             let candidate_labs: Vec<Lab> = image_data.colors.iter()
-                 .filter_map(|h| hex_to_lab(h))
-                 .collect();
-             
-             if candidate_labs.is_empty() { return None; }
-             
-             let score: f32;
-             let threshold: f32;
+    let is_atmosphere_search = target_labs.len() >= 5;
 
-             if is_single_color {
+    let pool = pool_state.inner().clone();
+    
+    // Offload compute-intensive task to blocking threadpool
+    // Using access_cache to avoid copying data
+    let results = tokio::task::spawn_blocking(move || {
+        pool.access_cache(|all_colors| {
+             eprintln!("[search_by_palette] Searching in {} cached images", all_colors.len());
+             
+             let mut results: Vec<(String, f32)> = all_colors.par_iter()
+                .filter_map(|image_data| {
+                     // Use PRECOMPUTED Labs! No hex_to_lab parsing here anymore.
+                     let candidate_labs = &image_data.labs;
+                     
+                     if candidate_labs.is_empty() { return None; }
+                     
+                     let score: f32;
+                     let threshold: f32;
+    
+                     if is_single_color {
                  // ========== 单色搜索：考虑颜色位置权重 ==========
                  // 核心思想：用户搜索红色时，想找的是"红色氛围为主"的图片
                  // 所以不仅要找到相似颜色，还要求该颜色在图片中占比足够大（位置靠前）
@@ -378,17 +378,21 @@ async fn search_by_palette(
         })
         .collect();
 
-    // Sort by score descending (best match first)
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        // Sort by score descending (best match first)
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        
+        // Return top results directly here inside the closure
+        (results, is_single_color, is_atmosphere_search)
+        }) // End of access_cache closure
+    }).await.map_err(|e| format!("Search task failed: {}", e))? // End of spawn_blocking, handle JoinError
+    .map_err(|e| format!("Cache access failed: {}", e))?; // Handle access_cache error
+
+    // Destructure results
+    let (results, _, _) = results; // is_single_color etc are from inside, but we have them outside too.
     
     let threshold_used = if is_single_color { 60.0 } else if is_atmosphere_search { 85.0 } else { 88.0 };
     let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
-    eprintln!("[search_by_palette] Returning {} results (threshold={}, colors={}, mode={})", 
-        final_results.len(), threshold_used, target_labs.len(),
-        if is_single_color { "single" } else if is_atmosphere_search { "atmosphere" } else { "multi" });
-    if !final_results.is_empty() {
-        eprintln!("[search_by_palette] Top 5 scores: {:?}", results.iter().take(5).map(|(p, s)| (p.split(&['/', '\\']).last().unwrap_or("?"), s)).collect::<Vec<_>>());
-    }
+    eprintln!("[search_by_palette] Returning {} results", final_results.len());
     
     Ok(final_results)
 }
@@ -2207,19 +2211,20 @@ async fn get_dominant_colors(
         
         // 在单独线程中执行数据库操作
         let _ = tokio::task::spawn_blocking(move || {
-            let mut conn = pool.get_connection();
-            
-            // 先检查是否存在记录
-            match color_db::get_colors_by_file_path(&mut conn, &file_path_clone) {
-                Ok(None) => {
-                    // 不存在记录，插入待处理状态
-                    let _ = color_db::add_pending_files(&mut conn, &[file_path_clone.clone()]);
-                },
-                _ => {}
-            }
+            {
+                let mut conn = pool.get_connection();
+                // 先检查是否存在记录
+                match color_db::get_colors_by_file_path(&mut conn, &file_path_clone) {
+                    Ok(None) => {
+                        // 不存在记录，插入待处理状态
+                        let _ = color_db::add_pending_files(&mut conn, &[file_path_clone.clone()]);
+                    },
+                    _ => {}
+                }
+            } // Drop lock
             
             // 保存颜色数据
-            color_db::save_colors(&mut conn, &file_path_clone, &colors_clone)
+            pool.save_colors(&file_path_clone, &colors_clone)
         }).await;
     }
     
@@ -2369,6 +2374,11 @@ fn main() {
                     eprintln!("Failed to reset processing files to pending: {}", e);
                 }
             }
+            // 刷新缓存（加载所有已完成的颜色到内存）
+            if let Err(e) = pool_instance.refresh_cache() {
+                eprintln!("Failed to refresh color cache: {}", e);
+            }
+
             // 记录初始化后的数据库文件大小
             if let Err(e) = pool_instance.get_db_file_sizes() {
                 eprintln!("Failed to get database file sizes: {}", e);

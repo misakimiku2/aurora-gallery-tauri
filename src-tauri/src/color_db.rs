@@ -1,16 +1,37 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use rusqlite::{Connection, params};
 use std::fs;
 use std::time::SystemTime;
 use serde_json;
+use palette::{FromColor, Srgb, Lab};
 
 use crate::color_extractor::ColorResult;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 pub struct ImageColors {
     pub file_path: String,
     pub colors: Vec<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CachedImage {
+    pub file_path: String,
+    pub colors: Vec<String>,
+    pub labs: Vec<Lab>,
+}
+
+// Helper for cache conversion
+fn hex_to_lab(hex: &str) -> Option<Lab> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 { return None; }
+    
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    
+    let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    Some(Lab::from_color(srgb))
 }
 
 // 自定义结果类型
@@ -20,6 +41,7 @@ type Result<T> = std::result::Result<T, String>;
 pub struct ColorDbPool {
     conn: Arc<Mutex<Connection>>,
     db_path: String,
+    cache: Arc<RwLock<Vec<CachedImage>>>,
 }
 
 impl Clone for ColorDbPool {
@@ -27,6 +49,7 @@ impl Clone for ColorDbPool {
         Self {
             conn: Arc::clone(&self.conn),
             db_path: self.db_path.clone(),
+            cache: Arc::clone(&self.cache),
         }
     }
 }
@@ -78,6 +101,7 @@ impl ColorDbPool {
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path_str,
+            cache: Arc::new(RwLock::new(Vec::new())),
         })
     }
     
@@ -207,35 +231,49 @@ impl ColorDbPool {
         }
     }
     
-    // 获取所有状态为 completed 的图片及其颜色数据
-    pub fn get_all_completed_colors(&self) -> Result<Vec<ImageColors>> {
-        eprintln!("[ColorDB] get_all_completed_colors called");
-        let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
+    pub fn refresh_cache(&self) -> Result<()> {
+        let colors = self.load_from_db_internal()?;
         
-        // 先检查数据库中的记录总数和状态分布
-        let total_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors", [], |row| row.get(0))
-            .unwrap_or(0);
-        eprintln!("[ColorDB] Total records in database: {}", total_count);
-        
-        // 查询各种状态的数量
-        let completed_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'completed'", [], |row| row.get(0))
-            .unwrap_or(0);
-        let pending_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'pending'", [], |row| row.get(0))
-            .unwrap_or(0);
-        let processing_count: i64 = conn.query_row("SELECT COUNT(*) FROM dominant_colors WHERE status = 'processing'", [], |row| row.get(0))
-            .unwrap_or(0);
-        
-        eprintln!("[ColorDB] Status distribution: completed={}, pending={}, processing={}", 
-            completed_count, pending_count, processing_count);
-        
-        // 查询实际的status值（显示前10个唯一状态）
-        if total_count > 0 {
-            let mut stmt_status = conn.prepare("SELECT DISTINCT status FROM dominant_colors LIMIT 10").unwrap();
-            let status_values: Vec<String> = stmt_status.query_map([], |row| row.get(0)).unwrap()
-                .filter_map(|r| r.ok())
+        // Convert to cache format with precomputed Labs
+        let cached_images: Vec<CachedImage> = colors.into_iter().map(|item| {
+            let labs = item.colors.iter()
+                .filter_map(|h| hex_to_lab(h))
                 .collect();
-            eprintln!("[ColorDB] Actual status values in DB: {:?}", status_values);
+            CachedImage {
+                file_path: item.file_path,
+                colors: item.colors,
+                labs,
+            }
+        }).collect();
+        
+        let mut cache = self.cache.write().map_err(|e| e.to_string())?;
+        *cache = cached_images;
+        eprintln!("[ColorDB] Cache refreshed with {} items (precomputed Labs)", cache.len());
+        Ok(())
+    }
+
+    // Direct access to cache for high-performance searching
+    // Runs the closure `f` with a reference to the cache, avoiding cloning.
+    pub fn access_cache<F, R>(&self, f: F) -> Result<R>
+    where F: FnOnce(&[CachedImage]) -> R 
+    {
+        // Try to verify cache content
+        {
+             let cache = self.cache.read().map_err(|e| e.to_string())?;
+             if !cache.is_empty() {
+                 return Ok(f(&cache));
+             }
         }
+        
+        // Refresh and retry
+        self.refresh_cache()?;
+        let cache = self.cache.read().map_err(|e| e.to_string())?;
+        Ok(f(&cache))
+    }
+
+    fn load_from_db_internal(&self) -> Result<Vec<ImageColors>> {
+        eprintln!("[ColorDB] load_from_db_internal called");
+        let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
         
         let mut stmt = conn.prepare(
             "SELECT file_path, colors FROM dominant_colors WHERE status = 'extracted'"
@@ -260,8 +298,179 @@ impl ColorDbPool {
                  }
              }
          }
-         eprintln!("[ColorDB] Found {} images with completed colors", results.len());
+         eprintln!("[ColorDB] Loaded {} images from DB", results.len());
          Ok(results)
+    }
+
+    // 获取所有状态为 completed 的图片及其颜色数据 (Read from Cache)
+    pub fn get_all_completed_colors(&self) -> Result<Vec<ImageColors>> {
+        // Use access_cache to safely read and clone (if needed for compatibility)
+        self.access_cache(|cache| {
+            cache.iter().map(|c| ImageColors {
+                file_path: c.file_path.clone(),
+                colors: c.colors.clone(),
+            }).collect()
+        })
+    }
+
+    // 保存主色调数据 (Method)
+    pub fn save_colors(&self, file_path: &str, colors: &[ColorResult]) -> Result<()> {
+        let mut conn = self.get_connection();
+        let current_ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs() as i64;
+    
+        let colors_json = serde_json::to_string(colors)
+            .map_err(|e| e.to_string())?;
+    
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "INSERT OR IGNORE INTO dominant_colors 
+             (file_path, colors, created_at, updated_at, status) 
+             VALUES (?, ?, ?, ?, ?)",
+            params![file_path, colors_json, current_ts, current_ts, "extracted"],
+        ).map_err(|e| format!("Database error in save_colors: {}", e))?;
+    
+        tx.execute(
+            "UPDATE dominant_colors
+             SET colors = ?, updated_at = ?, status = ?
+             WHERE file_path = ?",
+            params![colors_json, current_ts, "extracted", file_path],
+        ).map_err(|e| format!("Database error in save_colors: {}", e))?;
+
+        // 更新 image_color_indices 表
+        tx.execute("DELETE FROM image_color_indices WHERE file_path = ?", params![file_path])
+           .map_err(|e| format!("Failed to delete old indices: {}", e))?;
+      
+        {
+            let mut stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
+                .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+            
+            for color in colors {
+                stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b])
+                    .map_err(|e| format!("Failed to insert index: {}", e))?;
+            }
+        }
+    
+        tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
+        
+        // Update Cache
+        let hex_colors: Vec<String> = colors.iter().map(|c| c.hex.clone()).collect();
+        // Compute Labs for cache
+        let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+        
+        let mut cache = self.cache.write().map_err(|e| e.to_string())?;
+        
+        if let Some(pos) = cache.iter().position(|x| x.file_path == file_path) {
+            cache[pos].colors = hex_colors;
+            cache[pos].labs = labs;
+        } else {
+            cache.push(CachedImage {
+                file_path: file_path.to_string(),
+                colors: hex_colors,
+                labs,
+            });
+        }
+        Ok(())
+    }
+
+    // 批量保存主色调数据 (Method)
+    pub fn batch_save_colors(
+        &self,
+        color_data: &[(&str, &[ColorResult])]
+    ) -> Result<()> {
+        if color_data.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.get_connection();
+        let current_ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs() as i64;
+    
+        let start_time = std::time::Instant::now();
+        
+        let tx = conn.transaction().map_err(|e| format!("Failed to start transaction: {}", e))?;
+    
+        let mut success_count = 0;
+        let mut error_count = 0;
+        
+        {
+            let mut delete_indices_stmt = tx.prepare("DELETE FROM image_color_indices WHERE file_path = ?")
+                .map_err(|e| format!("Failed to prepare delete statement: {}", e))?;
+            let mut insert_indices_stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
+                .map_err(|e| format!("Failed to prepare insert statement: {}", e))?;
+    
+            for (file_path, colors) in color_data {
+                let colors_json = match serde_json::to_string(colors) {
+                    Ok(json) => json,
+                    Err(e) => {
+                        eprintln!("Failed to serialize colors for {}: {}", file_path, e);
+                        error_count += 1;
+                        continue;
+                    }
+                };
+    
+                let _ = tx.execute(
+                    "INSERT OR IGNORE INTO dominant_colors 
+                     (file_path, colors, created_at, updated_at, status) 
+                     VALUES (?, ?, ?, ?, ?)",
+                    params![file_path, colors_json, current_ts, current_ts, "extracted"],
+                );
+    
+                match tx.execute(
+                    "UPDATE dominant_colors
+                     SET colors = ?, updated_at = ?, status = ?
+                     WHERE file_path = ?",
+                    params![colors_json, current_ts, "extracted", file_path],
+                ) {
+                    Ok(_) => {
+                        success_count += 1;
+                        let _ = delete_indices_stmt.execute(params![file_path]);
+                        for color in *colors {
+                            let _ = insert_indices_stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b]);
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Database error for {}: {}", file_path, e);
+                        error_count += 1;
+                    }
+                }
+            }
+        }
+    
+        match tx.commit() {
+            Ok(_) => {
+                let duration = start_time.elapsed();
+                eprintln!("Transaction committed successfully: {} success, {} errors, took {:?}",
+                         success_count, error_count, duration);
+                
+                // Update Cache (only for successful items currently in color_data)
+                // Note: Actual success tracking per item is loose here, assuming optimistic update of cache is okay.
+                // Or I can iterate color_data again.
+                // To be safe, let's only strictly update cache if transaction committed.
+                let mut cache = self.cache.write().map_err(|e| e.to_string())?;
+                for (file_path, colors) in color_data {
+                     let hex_colors: Vec<String> = colors.iter().map(|c| c.hex.clone()).collect();
+                     let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+                     
+                     if let Some(pos) = cache.iter().position(|x| x.file_path == *file_path) {
+                         cache[pos].colors = hex_colors;
+                         cache[pos].labs = labs;
+                     } else {
+                         cache.push(CachedImage {
+                             file_path: file_path.to_string(),
+                             colors: hex_colors,
+                             labs,
+                         });
+                     }
+                }
+                Ok(())
+            },
+            Err(e) => Err(format!("Failed to commit transaction: {}", e))
+        }
     }
 
     // 获取数据库文件大小
@@ -411,220 +620,9 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     Ok(added_count)
 }
 
-// 保存主色调数据
-pub fn save_colors(
-    conn: &mut Connection, 
-    file_path: &str, 
-    colors: &[ColorResult]
-) -> Result<()> {
-    let current_ts = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs() as i64;
-    
-    let colors_json = serde_json::to_string(colors)
-        .map_err(|e| e.to_string())?;
-    
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    tx.execute(
-        "INSERT OR IGNORE INTO dominant_colors 
-         (file_path, colors, created_at, updated_at, status) 
-         VALUES (?, ?, ?, ?, ?)",
-        params![file_path, colors_json, current_ts, current_ts, "extracted"],
-    ).map_err(|e| format!("Database error in save_colors: {}", e))?;
-    
-    tx.execute(
-        "UPDATE dominant_colors
-         SET colors = ?, updated_at = ?, status = ?
-         WHERE file_path = ?",
-        params![colors_json, current_ts, "extracted", file_path],
-    ).map_err(|e| format!("Database error in save_colors: {}", e))?;
 
-    // 更新 image_color_indices 表
-    tx.execute("DELETE FROM image_color_indices WHERE file_path = ?", params![file_path])
-      .map_err(|e| format!("Failed to delete old indices: {}", e))?;
-      
-    {
-        let mut stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
-            .map_err(|e| format!("Failed to prepare statement: {}", e))?;
-            
-        for color in colors {
-            stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b])
-                .map_err(|e| format!("Failed to insert index: {}", e))?;
-        }
-    }
-    
-    tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
-    
-    Ok(())
-}
 
-// 批量保存主色调数据
-pub fn batch_save_colors(
-    conn: &mut Connection,
-    color_data: &[(&str, &[ColorResult])]
-) -> Result<()> {
-    if color_data.is_empty() {
-        return Ok(());
-    }
-
-    let current_ts = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
-        .as_secs() as i64;
-
-    // 记录开始时间
-    let start_time = std::time::Instant::now();
-
-    eprintln!("Starting database transaction for {} files", color_data.len());
-    
-    // 记录WAL检查点前状态
-    match conn.query_row(
-        "PRAGMA wal_checkpoint(PASSIVE)",
-        [],
-        |row| {
-            let wal_size: i64 = row.get(0)?;
-            let frames_in_wal: i64 = row.get(1)?;
-            let frames_checkpointed: i64 = row.get(2)?;
-            eprintln!("WAL status before transaction: size={}, frames_in_wal={}, frames_checkpointed={}", 
-                      wal_size, frames_in_wal, frames_checkpointed);
-            Ok(wal_size)
-        }
-    ) {
-        Ok(wal_size) => {
-            // 如果WAL文件较大，建议执行检查点
-            if wal_size > 4000 * 1024 { // 4MB
-                eprintln!("WAL file is large ({} bytes), consider executing checkpoint", wal_size);
-            }
-        },
-        Err(e) => {
-            eprintln!("Failed to get WAL status before transaction: {}", e);
-        }
-    }
-
-    let tx = conn.transaction().map_err(|e| format!("Failed to start transaction: {}", e))?;
-
-    let mut success_count = 0;
-    let mut error_count = 0;
-    
-    // 预编译语句以提高性能
-    {
-        let mut delete_indices_stmt = tx.prepare("DELETE FROM image_color_indices WHERE file_path = ?")
-            .map_err(|e| format!("Failed to prepare delete statement: {}", e))?;
-        let mut insert_indices_stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
-            .map_err(|e| format!("Failed to prepare insert statement: {}", e))?;
-
-        for (file_path, colors) in color_data {
-            let colors_json = match serde_json::to_string(colors) {
-                Ok(json) => json,
-                Err(e) => {
-                    eprintln!("Failed to serialize colors for {}: {}", file_path, e);
-                    error_count += 1;
-                    continue;
-                }
-            };
-
-            match tx.execute(
-                "INSERT OR IGNORE INTO dominant_colors 
-                 (file_path, colors, created_at, updated_at, status) 
-                 VALUES (?, ?, ?, ?, ?)",
-                params![file_path, colors_json, current_ts, current_ts, "extracted"],
-            ) {
-                Ok(_) => {},
-                Err(e) => {
-                    eprintln!("Database error for {}: {}", file_path, e);
-                    error_count += 1;
-                    continue;
-                }
-            }
-
-            match tx.execute(
-                "UPDATE dominant_colors
-                 SET colors = ?, updated_at = ?, status = ?
-                 WHERE file_path = ?",
-                params![colors_json, current_ts, "extracted", file_path],
-            ) {
-                Ok(_) => {
-                    success_count += 1;
-                    
-                    // 更新索引表
-                    if let Err(e) = delete_indices_stmt.execute(params![file_path]) {
-                        eprintln!("Failed to delete old indices for {}: {}", file_path, e);
-                    }
-                    
-                    for color in *colors {
-                        if let Err(e) = insert_indices_stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b]) {
-                            eprintln!("Failed to insert index for {}: {}", file_path, e);
-                        }
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Database error for {}: {}", file_path, e);
-                    error_count += 1;
-                }
-            }
-        }
-    } // 结束语句的作用域以便提交事务
-
-    // 提交事务
-    match tx.commit() {
-        Ok(_) => {
-            let duration = start_time.elapsed();
-            eprintln!("Transaction committed successfully: {} success, {} errors, took {:?}",
-                     success_count, error_count, duration);
-            
-            // 验证数据是否真的写入了数据库
-            match conn.query_row(
-                "SELECT COUNT(*) FROM dominant_colors WHERE status = 'extracted'",
-                [],
-                |row| {
-                    let count: i64 = row.get(0)?;
-                    eprintln!("Total extracted records in database after transaction: {}", count);
-                    Ok(count)
-                }
-            ) {
-                Ok(count) => {
-                    eprintln!("Database verification: {} extracted records found", count);
-                },
-                Err(e) => {
-                    eprintln!("Failed to verify database records: {}", e);
-                }
-            }
-            
-            // 记录WAL检查点后状态
-            match conn.query_row(
-                "PRAGMA wal_checkpoint(PASSIVE)",
-                [],
-                |row| {
-                    let wal_size: i64 = row.get(0)?;
-                    let frames_in_wal: i64 = row.get(1)?;
-                    let frames_checkpointed: i64 = row.get(2)?;
-                    eprintln!("WAL status after transaction: size={}, frames_in_wal={}, frames_checkpointed={}", 
-                              wal_size, frames_in_wal, frames_checkpointed);
-                    Ok(wal_size)
-                }
-            ) {
-                Ok(wal_size) => {
-                    // 如果WAL文件较大，建议执行检查点
-                    if wal_size > 4000 * 1024 { // 4MB
-                        eprintln!("WAL file is large ({} bytes), consider executing checkpoint", wal_size);
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Failed to get WAL status after transaction: {}", e);
-                }
-            }
-            
-            Ok(())
-        },
-        Err(e) => {
-            let duration = start_time.elapsed();
-            eprintln!("Transaction commit failed after {:?}: {}", duration, e);
-            Err(format!("Failed to commit transaction: {}", e))
-        }
-    }
-}
 
 // 根据文件路径获取颜色数据
 pub fn get_colors_by_file_path(

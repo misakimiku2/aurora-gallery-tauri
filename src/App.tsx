@@ -4398,7 +4398,7 @@ export const App: React.FC = () => {
           let hex = query.replace('color:', '').trim();
           if (hex.startsWith('#')) hex = hex.substring(1);
 
-          const taskId = startTask('ai', [], t('status.searching'), false);
+          const taskId = startTask('ai', [], t('tasks.searchingColor'), false);
           
           try {
               const results = await searchByColor(`#${hex}`);
@@ -4485,7 +4485,7 @@ export const App: React.FC = () => {
               return hex;
           });
 
-          const taskId = startTask('ai', [], t('status.searching'), false);
+          const taskId = startTask('ai', [], t('tasks.searchingPalette'), false);
           
           try {
               const results = await searchByPalette(palette);
@@ -6260,9 +6260,23 @@ export const App: React.FC = () => {
                             <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
                                 <div 
                                     className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
-                                    style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '') }}
+                                    style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '').startsWith('#') ? activeTab.aiFilter.originalQuery.replace('color:', '') : '#' + activeTab.aiFilter.originalQuery.replace('color:', '') }}
                                 />
                                 <span className="font-mono">{activeTab.aiFilter.originalQuery.replace('color:', '')}</span>
+                                <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12}/></button>
+                            </div>
+                          ) : activeTab.aiFilter.originalQuery.startsWith('palette:') ? (
+                            <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
+                                <div className="flex -space-x-1 mr-1.5">
+                                    {activeTab.aiFilter.originalQuery.replace('palette:', '').split(',').map((c, i) => (
+                                        <div 
+                                            key={i}
+                                            className="w-3 h-3 rounded-full border border-white dark:border-gray-700 flex-shrink-0 shadow-sm z-10"
+                                            style={{ backgroundColor: c.startsWith('#') ? c : '#' + c }}
+                                        />
+                                    ))}
+                                </div>
+                                <span className="font-mono text-[10px] text-gray-500 dark:text-gray-400">{t('meta.atmosphere')}</span>
                                 <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12}/></button>
                             </div>
                           ) : (

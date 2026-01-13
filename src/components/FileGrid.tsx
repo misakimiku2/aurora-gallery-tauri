@@ -8,6 +8,7 @@ import md5 from 'md5';
 import { startDragToExternal } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { useLayout, LayoutItem } from './useLayoutHook';
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
@@ -1926,181 +1927,11 @@ const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGro
   );
 });
 
-interface LayoutItem {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
+// removed local useLayout
+// import { useLayout } from './useLayoutHook';
+// interface LayoutItem was imported from useLayoutHook
 
-const useLayout = (
-  items: string[],
-  files: Record<string, FileNode>,
-  layoutMode: LayoutMode,
-  containerWidth: number,
-  thumbnailSize: number,
-  viewMode: 'browser' | 'tags-overview' | 'people-overview',
-  groupedTags?: Record<string, string[]>,
-  people?: Record<string, Person>,
-  searchQuery?: string
-) => {
-  const aspectRatios = useMemo(() => {
-    const ratios: Record<string, number> = {};
-    if (viewMode === 'browser') {
-      items.forEach(id => {
-        const file = files[id];
-        ratios[id] = file?.meta?.width && file?.meta?.height 
-          ? file.meta.width / file.meta.height 
-          : (file?.type === FileType.FOLDER ? 1 : 1);
-      });
-    }
-    return ratios;
-  }, [items, files, viewMode]);
 
-  return useMemo(() => {
-    const layout: LayoutItem[] = [];
-    let totalHeight = 0;
-    const GAP = 16;
-    const PADDING = 24;
-    
-    // Ensure we have a reasonable width. If containerWidth is 0 (initial render), fall back to window width.
-    const safeContainerWidth = containerWidth > 0 ? containerWidth : (typeof window !== 'undefined' ? window.innerWidth : 1280); 
-    const availableWidth = Math.max(100, safeContainerWidth - (PADDING * 2));
-    // Use actual available width without forcing a minimum - let the layout adapt to container size
-    const finalAvailableWidth = availableWidth;
-
-    if (viewMode === 'browser') {
-        if (layoutMode === 'list') {
-            const itemHeight = 44;
-            items.forEach((id, index) => {
-                layout.push({ id, x: PADDING, y: PADDING + index * itemHeight, width: finalAvailableWidth, height: itemHeight });
-            });
-            totalHeight = PADDING + items.length * itemHeight;
-        } else if (layoutMode === 'grid') {
-            const minColWidth = thumbnailSize;
-            const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
-            const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
-            const itemHeight = itemWidth + 40;
-
-            items.forEach((id, index) => {
-                const row = Math.floor(index / cols);
-                const col = index % cols;
-                layout.push({
-                    id,
-                    x: PADDING + col * (itemWidth + GAP),
-                    y: PADDING + row * (itemHeight + GAP),
-                    width: itemWidth,
-                    height: itemHeight
-                });
-            });
-            const rows = Math.ceil(items.length / cols);
-            totalHeight = PADDING + rows * (itemHeight + GAP);
-        } else if (layoutMode === 'adaptive') {
-            let currentRow: any[] = [];
-            let currentWidth = 0;
-            let y = PADDING;
-            const targetHeight = thumbnailSize;
-
-            items.forEach((id, index) => {
-                const aspect = aspectRatios[id];
-                const w = targetHeight * aspect;
-                
-                if (currentWidth + w + GAP > finalAvailableWidth) {
-                    const scale = (finalAvailableWidth - (currentRow.length - 1) * GAP) / currentWidth;
-                    const rowHeight = targetHeight * scale;
-                    
-                    let x = PADDING;
-                    currentRow.forEach(item => {
-                        const finalW = item.w * scale;
-                        layout.push({ id: item.id, x, y, width: finalW, height: rowHeight + 40 });
-                        x += finalW + GAP;
-                    });
-                    
-                    y += rowHeight + 40 + GAP;
-                    currentRow = [];
-                    currentWidth = 0;
-                }
-                
-                currentRow.push({ id, w });
-                currentWidth += w;
-            });
-
-            if (currentRow.length > 0) {
-                let x = PADDING;
-                currentRow.forEach(item => {
-                    layout.push({ id: item.id, x, y, width: item.w, height: targetHeight + 40 });
-                    x += item.w + GAP;
-                });
-                y += targetHeight + 40 + GAP;
-            }
-            totalHeight = y;
-
-        } else if (layoutMode === 'masonry') {
-            const minColWidth = thumbnailSize;
-            const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
-            const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
-            const colHeights = new Array(cols).fill(PADDING);
-
-            items.forEach(id => {
-                const aspect = aspectRatios[id];
-                const imgHeight = itemWidth / aspect;
-                const totalItemHeight = imgHeight + 40;
-
-                let minCol = 0;
-                let minHeight = colHeights[0];
-                for (let i = 1; i < cols; i++) {
-                    if (colHeights[i] < minHeight) {
-                        minCol = i;
-                        minHeight = colHeights[i];
-                    }
-                }
-
-                layout.push({
-                    id,
-                    x: PADDING + minCol * (itemWidth + GAP),
-                    y: colHeights[minCol],
-                    width: itemWidth,
-                    height: totalItemHeight
-                });
-
-                colHeights[minCol] += totalItemHeight + GAP;
-            });
-            totalHeight = Math.max(...colHeights);
-        }
-    } else if (viewMode === 'people-overview') {
-        // Use provided people dictionary to generate IDs, ignore 'items' prop
-        // Filter people by search query if provided
-        let itemsList = Object.values(people || {});
-        if (searchQuery && searchQuery.trim()) {
-            const query = searchQuery.toLowerCase().trim();
-            itemsList = itemsList.filter(person => 
-                person.name.toLowerCase().includes(query)
-            );
-        }
-        const minColWidth = thumbnailSize;
-        const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
-        const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
-        const itemHeight = itemWidth + 60; // Extra space for text
-
-        itemsList.forEach((person, index) => {
-            const row = Math.floor(index / cols);
-            const col = index % cols;
-            layout.push({
-                id: person.id,
-                x: PADDING + col * (itemWidth + GAP),
-                y: PADDING + row * (itemHeight + GAP),
-                width: itemWidth,
-                height: itemHeight
-            });
-        });
-        const rows = Math.ceil(itemsList.length / cols);
-        totalHeight = PADDING + rows * (itemHeight + GAP);
-    } 
-
-    return { layout, totalHeight };
-  }, [items, files, layoutMode, containerWidth, thumbnailSize, viewMode, aspectRatios, people, searchQuery]);
-};
 
 interface FileGridProps {
   displayFileIds: string[];

@@ -688,7 +688,6 @@ async fn save_batch_results(
     // 保存结果到数据库
     let pool_clone = pool.clone();
     let save_result = tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone.get_connection();
         
         // 将结果转换为batch_save_colors所需的格式
         let batch_data_refs: Vec<(&str, &[color_extractor::ColorResult])> = batch_data
@@ -696,7 +695,7 @@ async fn save_batch_results(
             .map(|(file_path, colors)| (file_path.as_str(), colors.as_slice()))
             .collect();
         
-        color_db::batch_save_colors(&mut conn, &batch_data_refs)
+        pool_clone.batch_save_colors(&batch_data_refs)
     }).await;
     
     if let Err(e) = save_result {
@@ -781,8 +780,7 @@ async fn process_single_file(pool: Arc<ColorDbPool>, file_path: String) -> Resul
     let file_path_clone = file_path.clone();
     let colors_clone = colors.clone();
     tokio::task::spawn_blocking(move || {
-        let mut conn = pool_clone.get_connection();
-        color_db::save_colors(&mut conn, &file_path_clone, &colors_clone)
+        pool_clone.save_colors(&file_path_clone, &colors_clone)
     }).await.map_err(|e| format!("Failed to save colors: {}", e))?
         .map_err(|e| format!("Database error: {}", e))?;
     

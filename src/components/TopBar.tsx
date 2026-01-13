@@ -494,7 +494,27 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const currentSearchColor = useMemo(() => isColorSearchQuery ? toolbarQuery.replace('color:', '') : '', [isColorSearchQuery, toolbarQuery]);
 
-  // Debounce color search slightly to prevent event flooding, but keep it responsive (50ms)
+  const pickerInitialColor = useMemo(() => {
+    // 1. Current typing in toolbar
+    if (currentSearchColor) return currentSearchColor;
+    
+    // 2. Active search query string
+    if (activeTab.searchQuery.startsWith('color:')) {
+      return activeTab.searchQuery.replace('color:', '');
+    }
+    
+    // 3. AI Filter structured data (if parsed)
+    if (activeTab.aiFilter && activeTab.aiFilter.colors && activeTab.aiFilter.colors.length > 0) {
+        // Return the first color found in the filter
+        return activeTab.aiFilter.colors[0];
+    }
+    
+    return '#ffffff';
+  }, [currentSearchColor, activeTab.searchQuery, activeTab.aiFilter]);
+
+  // Debounce color search to prevent event flooding
+  // Increased to 300ms to avoid UI lag during dragging when search results are large
+  // This ensures smooth color picking interaction
   const debouncedColorSearch = useMemo(() => 
     debounce(async (color: string) => {
        setIsColorSearching(true);
@@ -505,7 +525,7 @@ export const TopBar: React.FC<TopBarProps> = ({
        } finally {
          setIsColorSearching(false);
        }
-    }, 30)
+    }, 300)
   , [onPerformSearch]);
 
   const handleColorSelect = (color: string) => {
@@ -618,7 +638,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                        <ColorPickerPopover 
                           onChange={handleColorSelect}
                           onClose={() => setIsColorPickerOpen(false)}
-                          initialColor="#ffffff"
+                          initialColor={pickerInitialColor}
                          t={t}
                        />
                    </div>
