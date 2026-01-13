@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen } from 'lucide-react';
 import { ImageThumbnail } from './FileGrid';
 import { debug as logDebug, info as logInfo } from '../utils/logger';
 
@@ -669,17 +669,18 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         };
         
         if (contextMenu) {
-            // Add slight delay to prevent immediate closing from the same click that opened it
-            setTimeout(() => {
-                document.addEventListener('click', handleClickOutside);
-                document.addEventListener('scroll', handleScroll, true); // Use capture phase for all scroll events
+            // Use mousedown and capture phase to ensure we catch the event before stopPropagation()
+            // Add slight delay to avoid catching the same event that opened the menu
+            const timeoutId = setTimeout(() => {
+                document.addEventListener('mousedown', handleClickOutside, true);
+                document.addEventListener('scroll', handleScroll, true);
             }, 0);
+            return () => {
+                clearTimeout(timeoutId);
+                document.removeEventListener('mousedown', handleClickOutside, true);
+                document.removeEventListener('scroll', handleScroll, true);
+            };
         }
-        
-        return () => {
-            document.removeEventListener('click', handleClickOutside);
-            document.removeEventListener('scroll', handleScroll, true);
-        };
     }, [contextMenu]);
 
     // Handle right-click context menu
@@ -1602,6 +1603,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
                         <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
+                            <FolderOpen size={14} className="mr-3 opacity-70" />
                             {t('context.openFolder')}
                         </div>
                         <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { 

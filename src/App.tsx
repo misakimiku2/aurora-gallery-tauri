@@ -20,7 +20,7 @@ import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
-import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause } from 'lucide-react';
+import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
 
 // ... (helper components remain unchanged)
@@ -6673,14 +6673,29 @@ export const App: React.FC = () => {
                 )}
                 
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={14} className="mr-2 opacity-70"/> {t('context.viewInExplorer')}</div>
-                {contextMenu.type === 'file-single' && state.files[contextMenu.targetId!] && ( (() => { const file = state.files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return ( <div className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>{t('context.openFolder')}</div> ); })() )}
+                {contextMenu.type === 'file-single' && state.files[contextMenu.targetId!] && ( (() => { const file = state.files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return ( <div className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
+                    <FolderOpen size={14} className="mr-2 opacity-70"/>
+                    {t('context.openFolder')}
+                </div> ); })() )}
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
                 
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>{t('context.copyTo')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>{t('context.moveTo')}</div>
-                {contextMenu.type === 'folder-single' && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { navigator.clipboard.writeText(state.files[contextMenu.targetId!]?.path || ''); showToast(t('context.copied')); closeContextMenu(); }}>{t('context.copyFolderPath')}</div> )}
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>
+                    <Copy size={14} className="mr-2 opacity-70"/>
+                    {t('context.copyTo')}
+                </div>
+                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>
+                    <MoveHorizontal size={14} className="mr-2 opacity-70"/>
+                    {t('context.moveTo')}
+                </div>
+                {contextMenu.type === 'folder-single' && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { navigator.clipboard.writeText(state.files[contextMenu.targetId!]?.path || ''); showToast(t('context.copied')); closeContextMenu(); }}>
+                    <Link size={14} className="mr-2 opacity-70"/>
+                    {t('context.copyFolderPath')}
+                </div> )}
                 <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-                {(contextMenu.type === 'file-single' || contextMenu.type === 'folder-single') && contextMenu.targetId && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { startRename(contextMenu.targetId!); closeContextMenu(); }}>{t('context.rename')}</div> )}
+                {(contextMenu.type === 'file-single' || contextMenu.type === 'folder-single') && contextMenu.targetId && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { startRename(contextMenu.targetId!); closeContextMenu(); }}>
+                    <Type size={14} className="mr-2 opacity-70"/>
+                    {t('context.rename')}
+                </div> )}
                 {contextMenu.type === 'folder-single' && contextMenu.targetId && state.aiConnectionStatus === 'connected' && (
                     <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
                         handleFolderAIAnalysis(contextMenu.targetId!);
@@ -6697,7 +6712,10 @@ export const App: React.FC = () => {
                         <Sparkles size={14} className="mr-2 opacity-70"/> {t('context.aiAnalyze')}
                     </div>
                 )}
-                {contextMenu.type === 'file-multi' && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'batch-rename', data: null } })); closeContextMenu(); }}>{t('context.batchRename')}</div> )}
+                {contextMenu.type === 'file-multi' && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'batch-rename', data: null } })); closeContextMenu(); }}>
+                    <Type size={14} className="mr-2 opacity-70"/>
+                    {t('context.batchRename')}
+                </div> )}
                 {(contextMenu.type === 'file-multi') && state.aiConnectionStatus === 'connected' && (
                     <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
                         handleAIAnalysis(activeTab.selectedFileIds);
@@ -6740,7 +6758,16 @@ export const App: React.FC = () => {
                     }
                 }}><XCircle size={14} className="mr-2 opacity-70"/> {t('context.clearPersonInfo')}</div></> )}
                 {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && ( <div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { const targetIds = activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : (contextMenu.targetId ? [contextMenu.targetId] : []); setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { fileIds: targetIds } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70"/> {t('context.addToTopic') || '添加到主题'}</div> )}
-                {contextMenu.type === 'file-single' && contextMenu.targetId && ( <><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: contextMenu.targetId! } } })); closeContextMenu(); }}>{t('context.editTags')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCopyTags([contextMenu.targetId!]); closeContextMenu(); }}>{t('context.copyTag')}</div></> )}
+                {contextMenu.type === 'file-single' && contextMenu.targetId && ( <>
+                    <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: contextMenu.targetId! } } })); closeContextMenu(); }}>
+                        <Tag size={14} className="mr-2 opacity-70"/>
+                        {t('context.editTags')}
+                    </div>
+                    <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyTags([contextMenu.targetId!]); closeContextMenu(); }}>
+                        <Copy size={14} className="mr-2 opacity-70"/>
+                        {t('context.copyTag')}
+                    </div>
+                </> )}
                 {/* 只有当所有选中的项目都是文件时才显示粘贴标签选项 */}
                 {(() => {
                   // 检查所有选中的项目是否都是文件
@@ -6748,7 +6775,10 @@ export const App: React.FC = () => {
                     const file = state.files[id];
                     return file && file.type !== FileType.FOLDER;
                   });
-                  return allAreFiles && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handlePasteTags(activeTab.selectedFileIds); closeContextMenu(); }}>{t('context.pasteTag')}</div> );
+                  return allAreFiles && ( <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handlePasteTags(activeTab.selectedFileIds); closeContextMenu(); }}>
+                      <Clipboard size={14} className="mr-2 opacity-70"/>
+                      {t('context.pasteTag')}
+                  </div> );
                 })()}
 
                 {/* 只有文件夹类型才显示生成缩略图选项 */}
