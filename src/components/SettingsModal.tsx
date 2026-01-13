@@ -183,7 +183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[600px] shadow-2xl border border-gray-200 dark:border-gray-600 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl border border-gray-100 dark:border-gray-600 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
           
           <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col">
               {/* ... (Sidebar buttons, same as before) ... */}
@@ -407,17 +407,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
                                   <Brain size={20} className="mr-2 text-purple-500"/> {t('settings.catAi')}
                               </h3>
-                              <div className={`flex items-center px-2 py-1 rounded text-xs font-bold ${
-                                  connectionStatus === 'connected' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                                  connectionStatus === 'disconnected' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                                  'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
-                              }`}>
-                                  {connectionStatus === 'connected' && <Check size={12} className="mr-1"/>}
-                                  {connectionStatus === 'disconnected' && <XCircle size={12} className="mr-1"/>}
-                                  {connectionStatus === 'checking' && <Activity size={12} className="mr-1 animate-spin"/>}
-                                  {connectionStatus === 'connected' ? t('settings.statusConnected') : 
-                                   connectionStatus === 'disconnected' ? t('settings.statusDisconnected') : 
-                                   t('settings.statusChecking')}
+                              <div className="flex items-center space-x-3">
+                                  <div className={`flex items-center px-2 py-1 rounded text-xs font-bold ${
+                                      connectionStatus === 'connected' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
+                                      connectionStatus === 'disconnected' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                      'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                                  }`}>
+                                      {connectionStatus === 'connected' && <Check size={12} className="mr-1"/>}
+                                      {connectionStatus === 'disconnected' && <XCircle size={12} className="mr-1"/>}
+                                      {connectionStatus === 'checking' && <Activity size={12} className="mr-1 animate-spin"/>}
+                                      {connectionStatus === 'connected' ? t('settings.statusConnected') : 
+                                       connectionStatus === 'disconnected' ? t('settings.statusDisconnected') : 
+                                       t('settings.statusChecking')}
+                                  </div>
+                                  <button
+                                      onClick={() => checkConnection(true)}
+                                      disabled={isTesting}
+                                      title={t('settings.testConnection')}
+                                      className={`inline-flex items-center px-3 py-1 text-xs font-bold rounded transition-colors text-white disabled:opacity-60 disabled:cursor-not-allowed ${
+                                          connectionStatus === 'connected' ? 'bg-green-600 hover:bg-green-500' :
+                                          connectionStatus === 'disconnected' ? 'bg-red-600 hover:bg-red-500' :
+                                          'bg-purple-600 hover:bg-purple-500'
+                                      }`}
+                                  >
+                                      {isTesting ? <Activity size={12} className="mr-1 animate-spin"/> : <Zap size={12} className="mr-1"/>}
+                                      <span className="hidden sm:inline text-[11px]">{isTesting ? t('settings.testing') : t('settings.testConnection')}</span>
+                                  </button>
                               </div>
                           </div>
                           
@@ -593,25 +608,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </div>
                                   </>
                               )}
+
+                              <div className="pt-2 border-t border-gray-200 dark:border-gray-600">
+                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="ai-system-prompt">{t('settings.systemPrompt')}</label>
+                                 <textarea
+                                     id="ai-system-prompt"
+                                     value={state.settings.ai.systemPrompt || ''}
+                                     onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, systemPrompt: e.target.value } })}
+                                     className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[60px]"
+                                     placeholder="..."
+                                 />
+                              </div>
                           </div>
 
-                          <div className="mt-6">
-                              <button 
-                                  onClick={() => checkConnection(true)}
-                                  disabled={isTesting}
-                                  className={`w-full py-2.5 rounded-lg text-sm font-bold flex items-center justify-center transition-all ${
-                                      testStatus === 'success' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' :
-                                      testStatus === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                                      'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-500/30'
-                                  }`}
-                              >
-                                  {isTesting ? <Activity size={16} className="mr-2 animate-spin"/> : <Zap size={16} className="mr-2"/>}
-                                  {isTesting ? t('settings.testing') : 
-                                   testStatus === 'success' ? t('settings.connectionSuccess') : 
-                                   testStatus === 'failed' ? t('settings.connectionFailed') : 
-                                   t('settings.testConnection')}
-                              </button>
-                          </div>
+
 
                           <div className="mt-6 space-y-3">
                               <div className="flex items-center justify-between">

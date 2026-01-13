@@ -170,6 +170,7 @@ export interface AIConfig {
   enableTranslation: boolean;
   targetLanguage: 'zh' | 'en' | 'ja' | 'ko';
   confidenceThreshold: number;
+  systemPrompt?: string;
 }
 
 export interface AppSettings {

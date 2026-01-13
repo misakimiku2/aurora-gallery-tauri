@@ -5718,9 +5718,15 @@ export const App: React.FC = () => {
 
               if (provider === 'openai') {
                   // ... (keep openai logic)
+                  const messages: any[] = [];
+                  if (aiConfig.systemPrompt) {
+                      messages.push({ role: "system", content: aiConfig.systemPrompt });
+                  }
+                  messages.push({ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] });
+
                   const body = {
                       model: aiConfig.openai.model,
-                      messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] }],
+                      messages: messages,
                       max_tokens: 1000
                   };
                   try {
@@ -5736,7 +5742,10 @@ export const App: React.FC = () => {
                   }
               } else if (provider === 'ollama') {
                   // ... (keep ollama logic)
-                  const body = { model: aiConfig.ollama.model, prompt: prompt, images: [base64Data], stream: false, format: "json" };
+                  const body: any = { model: aiConfig.ollama.model, prompt: prompt, images: [base64Data], stream: false, format: "json" };
+                  if (aiConfig.systemPrompt) {
+                      body.system = aiConfig.systemPrompt;
+                  }
                   try {
                       const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
                           method: 'POST',
@@ -5750,7 +5759,13 @@ export const App: React.FC = () => {
                   }
               } else if (provider === 'lmstudio') {
                   // ... (keep lmstudio logic)
-                  const body = { model: aiConfig.lmstudio.model, messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] }], max_tokens: 1000, stream: false };
+                  const messages: any[] = [];
+                  if (aiConfig.systemPrompt) {
+                      messages.push({ role: "system", content: aiConfig.systemPrompt });
+                  }
+                  messages.push({ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] });
+
+                  const body = { model: aiConfig.lmstudio.model, messages: messages, max_tokens: 1000, stream: false };
                   let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
                   if (!endpoint.endsWith('/v1')) endpoint += '/v1';
                   try {

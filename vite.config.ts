@@ -16,14 +16,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 1421,
+    port: 1422,
     strictPort: true,
-    host: 'localhost',
-    hmr: {
-      protocol: 'ws',
-      host: 'localhost',
-      port: 1421,
-    },
+    // Listen on all interfaces to ensure availability
+    host: '0.0.0.0',
+    // Let Vite determine HMR settings automatically based on host
+    hmr: undefined,
     watch: {
       ignored: ['**/src-tauri/**'],
     },
