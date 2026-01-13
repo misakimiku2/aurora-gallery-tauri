@@ -2267,6 +2267,20 @@ export const FileGrid: React.FC<FileGridProps> = ({
                    hasRestoredRef.current = true;
                }
            } else {
+              // Explicitly reset scroll to 0 if target is 0, to handle component reuse
+              if (containerRef.current.scrollTop !== 0) {
+                  isRestoringScrollRef.current = true;
+                  containerRef.current.scrollTop = 0;
+                  setScrollTop(0);
+                  
+                  if (restoreTimeoutRef.current) {
+                      clearTimeout(restoreTimeoutRef.current);
+                  }
+   
+                  restoreTimeoutRef.current = setTimeout(() => {
+                      isRestoringScrollRef.current = false;
+                  }, 50);
+              }
               hasRestoredRef.current = true;
            }
       }
