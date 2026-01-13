@@ -24,6 +24,65 @@ mod color_db;
 mod color_worker;
 mod db;
 
+// --- Window State Management ---
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SavedWindowState {
+    width: f64,
+    height: f64,
+    x: f64,
+    y: f64,
+    maximized: bool,
+}
+
+impl Default for SavedWindowState {
+    fn default() -> Self {
+        Self { width: 1280.0, height: 800.0, x: 100.0, y: 100.0, maximized: false }
+    }
+}
+
+fn get_window_state_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
+    app_handle.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("window_state.json")
+}
+
+fn save_window_state(app_handle: &tauri::AppHandle) {
+    let window = match app_handle.get_webview_window("main") {
+        Some(w) => w,
+        None => return,
+    };
+
+    let path = get_window_state_path(app_handle);
+    let mut state = if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<SavedWindowState>(&s).ok())
+            .unwrap_or(SavedWindowState::default())
+    } else {
+        SavedWindowState::default()
+    };
+
+    if window.is_maximized().unwrap_or(false) {
+        state.maximized = true;
+    } else {
+        state.maximized = false;
+        // Don't save if minimized
+        if !window.is_minimized().unwrap_or(false) {
+            if let (Ok(pos), Ok(size), Ok(factor)) = (window.outer_position(), window.inner_size(), window.scale_factor()) {
+                let l_pos = pos.to_logical::<f64>(factor);
+                let l_size = size.to_logical::<f64>(factor);
+                state.x = l_pos.x;
+                state.y = l_pos.y;
+                state.width = l_size.width;
+                state.height = l_size.height;
+            }
+        }
+    }
+    
+    if let Ok(json) = serde_json::to_string(&state) {
+        let _ = fs::write(path, json);
+    }
+}
+
 // --- Color Search Implementation ---
 
 // Helper: Hex string to Lab color
@@ -1775,6 +1834,7 @@ struct ThumbnailBatchResult {
     path: String,
     url: Option<String>,
     colors: Option<Vec<color_extractor::ColorResult>>,
+    from_cache: bool,
 }
 
 #[tauri::command]
@@ -1804,6 +1864,7 @@ async fn get_thumbnails_batch(
                     path: path.clone(),
                     url: None,
                     colors: None,
+                    from_cache: false,
                 });
                 return;
             }
@@ -1816,6 +1877,7 @@ async fn get_thumbnails_batch(
                         path: path.clone(),
                         url: None,
                         colors: None,
+                        from_cache: false,
                     });
                     return;
                 }
@@ -1832,6 +1894,7 @@ async fn get_thumbnails_batch(
                         path: path.clone(),
                         url: None,
                         colors: None,
+                        from_cache: false,
                     });
                     return;
                 }
@@ -1853,6 +1916,7 @@ async fn get_thumbnails_batch(
                     path: path.clone(),
                     url,
                     colors: None, // 跳过颜色提取，提高响应速度
+                    from_cache: true,
                 });
                 return;
             }
@@ -1863,6 +1927,7 @@ async fn get_thumbnails_batch(
                     path: path.clone(),
                     url,
                     colors: None, // 跳过颜色提取，提高响应速度
+                    from_cache: true,
                 });
                 return;
             }
@@ -1875,6 +1940,7 @@ async fn get_thumbnails_batch(
                 path: path.clone(),
                 url,
                 colors: None, // 跳过颜色提取，提高响应速度
+                from_cache: false,
             });
         });
         
@@ -2102,6 +2168,7 @@ async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String
 // 窗口控制命令
 #[tauri::command]
 async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    save_window_state(&app_handle);
     let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
     window.hide().map_err(|e| e.to_string())
 }
@@ -2115,6 +2182,7 @@ async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    save_window_state(&app_handle);
     app_handle.exit(0);
     Ok(())
 }
@@ -2430,7 +2498,31 @@ fn main() {
                 ).await;
             });
             
+            // 恢复窗口位置和大小
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle_for_state = app.handle();
+                let path = get_window_state_path(app_handle_for_state);
+                if path.exists() {
+                    if let Ok(json) = fs::read_to_string(&path) {
+                        if let Ok(state) = serde_json::from_str::<SavedWindowState>(&json) {
+                            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: state.width, height: state.height }));
+                            let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x: state.x, y: state.y }));
+                            if state.maximized {
+                                let _ = window.maximize();
+                            }
+                        }
+                    }
+                }
+                let _ = window.show();
+            }
+
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                // 保存窗口状态
+                save_window_state(window.app_handle());
+            }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -97,7 +97,7 @@ const ConfirmModal = ({ title, message, subMessage, confirmText, confirmIcon: Ic
 const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input id="rename-tag-input" name="rename-tag-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input id="rename-person-input" name="rename-person-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
 const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-pattern">{t('settings.namePattern')}</label><input id="batch-rename-pattern" name="batch-rename-pattern" className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-start">{t('settings.startNumber')}</label><input type="number" id="batch-rename-start" name="batch-rename-start" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div> ); };
-const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"><div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">{hasCover ? (<div className="w-full h-full" style={{ backgroundImage: `url("${convertFileSrc(coverFile.path)}")`, backgroundSize: p.faceBox ? `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%` : 'cover', backgroundPosition: p.faceBox ? `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%` : 'center', backgroundRepeat: 'no-repeat' }} />) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)}</div><span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span></div> ); })}</div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
+const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return ( <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400"/><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return ( <div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"> <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative"> {hasCover ? ( p.faceBox ? ( <img src={convertFileSrc(coverFile.path)} alt={p.name} className="absolute max-w-none" decoding="async" style={{ width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`, height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`, left: 0, top: 0, transformOrigin: 'top left', transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`, willChange: 'transform, width, height', backfaceVisibility: 'hidden' }} /> ) : ( <img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" /> ) ) : ( <User size={14} className="text-gray-400 dark:text-gray-500" /> ) } </div> <span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span> </div> ); })} </div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div> ); }; 
 
 const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any) => { 
   // Get all unique people from selected files 
@@ -145,8 +145,29 @@ const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any
           const isSelected = selectedPeople.includes(p.id); 
           return ( 
             <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group border border-transparent ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}> 
-              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center">
-                {hasCover ? (<div className="w-full h-full" style={{ backgroundImage: `url("${convertFileSrc(coverFile.path)}")`, backgroundSize: p.faceBox ? `${10000 / Math.min(p.faceBox.w, 99.9)}% ${10000 / Math.min(p.faceBox.h, 99.9)}%` : 'cover', backgroundPosition: p.faceBox ? `${p.faceBox.x / (100 - Math.min(p.faceBox.w, 99.9)) * 100}% ${p.faceBox.y / (100 - Math.min(p.faceBox.h, 99.9)) * 100}%` : 'center', backgroundRepeat: 'no-repeat' }} />) : (
+              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative">
+                {hasCover ? (
+                  p.faceBox ? (
+                    <img
+                      src={convertFileSrc(coverFile.path)}
+                      alt={p.name}
+                      className="absolute max-w-none"
+                      decoding="async"
+                      style={{
+                        width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
+                        height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
+                        left: 0,
+                        top: 0,
+                        transformOrigin: 'top left',
+                        transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                        willChange: 'transform, width, height',
+                        backfaceVisibility: 'hidden'
+                      }}
+                    />
+                  ) : (
+                    <img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" />
+                  )
+                ) : (
                   <User size={14} className="text-gray-400 dark:text-gray-500" />
                 )}
               </div> 
@@ -6153,7 +6174,7 @@ export const App: React.FC = () => {
 
   return (
     <div 
-      className="w-full h-full flex flex-col bg-white dark:bg-gray-950 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" 
+      className="w-full h-full flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300" 
       onClick={closeContextMenu}
       onDragEnter={handleExternalDragEnter}
       onDragOver={handleExternalDragOver}
@@ -6190,11 +6211,11 @@ export const App: React.FC = () => {
         }
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
-        <div className={`bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
+        <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
           <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
-        
-        <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-950">
+
+        <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
           {activeTab.viewingFileId && (
               (() => {
                   const viewingFile = state.files[activeTab.viewingFileId];
@@ -6357,9 +6378,9 @@ export const App: React.FC = () => {
                   </div>
               )}
               
-              <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-950 overflow-hidden">
+              <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-900 overflow-hidden">
                 {activeTab.viewMode !== 'topics-overview' && (
-                  <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-950/50 backdrop-blur shrink-0 relative z-20">
+                  <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/50 backdrop-blur shrink-0 relative z-20">
                     {activeTab.viewMode === 'tags-overview' ? (
                       <div className="flex items-center w-full">
                         <div className="flex items-center">
@@ -6563,7 +6584,7 @@ export const App: React.FC = () => {
               </div>
           </div>
         </div>
-        <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
+        <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-850 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
           <MetadataPanel 
             files={state.files} 
             selectedFileIds={activeTab.selectedFileIds} 

@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen } from 'lucide-react';
@@ -248,7 +249,7 @@ const TopicFileGrid = React.memo(({
                             {/* Selection overlay placed on outer container so it is NOT clipped by inner overflow-hidden */}
                             {isSelected && (
                                 <div className="absolute inset-0 pointer-events-none rounded-lg z-30">
-                                    <div className="absolute inset-0 rounded-lg ring-4 ring-blue-500 ring-offset-2 transition-all" />
+                                    <div className="absolute inset-0 rounded-lg ring-4 ring-blue-500 ring-offset-0 transition-all" />
                                     <div className="absolute top-2 right-2 bg-blue-600 text-white rounded-full w-7 h-7 flex items-center justify-center shadow-lg z-40">
                                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={3}>
                                             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
@@ -315,12 +316,113 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     
     // Selection state for box selection
     const [isSelecting, setIsSelecting] = useState(false);
-    const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
     const selectionRef = useRef<HTMLDivElement>(null);
+    const selectionOverlayRef = useRef<HTMLDivElement>(null);
     const lastSelectedIdRef = useRef<string | null>(null);
+
+    const dragStateRef = useRef<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
+    const selectionRafRef = useRef<number | null>(null);
+    const detachSelectionListenersRef = useRef<(() => void) | null>(null);
+    const isDocTrackingSelectionRef = useRef(false);
+
+    const clearSelectionOverlay = useCallback(() => {
+        if (selectionRafRef.current) {
+            cancelAnimationFrame(selectionRafRef.current);
+            selectionRafRef.current = null;
+        }
+        const overlay = selectionOverlayRef.current;
+        if (overlay) {
+            overlay.style.display = 'none';
+            overlay.style.width = '0px';
+            overlay.style.height = '0px';
+            overlay.style.transform = 'translate(0px, 0px)';
+        }
+    }, []);
+
+    const updateSelectionOverlay = useCallback(() => {
+        const overlay = selectionOverlayRef.current;
+        const container = selectionRef.current;
+        const dragState = dragStateRef.current;
+        if (!overlay || !container || !dragState) return;
+
+        const left = Math.min(dragState.startX, dragState.currentX) - container.scrollLeft;
+        const top = Math.min(dragState.startY, dragState.currentY) - container.scrollTop;
+        const width = Math.abs(dragState.currentX - dragState.startX);
+        const height = Math.abs(dragState.currentY - dragState.startY);
+
+        overlay.style.display = 'block';
+        overlay.style.left = `${left}px`;
+        overlay.style.top = `${top}px`;
+        overlay.style.width = `${width}px`;
+        overlay.style.height = `${height}px`;
+    }, []);
+
+    const scheduleSelectionOverlayRender = useCallback(() => {
+        if (selectionRafRef.current) return;
+        selectionRafRef.current = requestAnimationFrame(() => {
+            selectionRafRef.current = null;
+            updateSelectionOverlay();
+        });
+    }, [updateSelectionOverlay]);
+
+    const updateSelectionFromPointer = useCallback((clientX: number, clientY: number) => {
+        const container = selectionRef.current;
+        const dragState = dragStateRef.current;
+        if (!container || !dragState) return;
+
+        const rect = container.getBoundingClientRect();
+        dragState.currentX = clientX - rect.left + container.scrollLeft;
+        dragState.currentY = clientY - rect.top + container.scrollTop;
+        scheduleSelectionOverlayRender();
+    }, [scheduleSelectionOverlayRender]);
+
+    const detachSelectionListeners = useCallback(() => {
+        if (detachSelectionListenersRef.current) {
+            detachSelectionListenersRef.current();
+            detachSelectionListenersRef.current = null;
+        }
+        isDocTrackingSelectionRef.current = false;
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            dragStateRef.current = null;
+            clearSelectionOverlay();
+            detachSelectionListeners();
+        };
+    }, [clearSelectionOverlay, detachSelectionListeners]);
     
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple' | 'person' | 'file' | 'multiplePerson' | 'multipleFile'; topicId?: string; personId?: string; fileId?: string } | null>(null);
+    const contextMenuRef = useRef<HTMLDivElement | null>(null);
+
+    // Reposition menu to ensure it fits within viewport
+    useEffect(() => {
+        const el = contextMenuRef.current;
+        if (!el || !contextMenu) return;
+        
+        // Use requestAnimationFrame to ensure the DOM has been updated by React (via Portal)
+        const rafId = requestAnimationFrame(() => {
+            const rect = el.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+
+            let left = contextMenu.x;
+            let top = contextMenu.y;
+
+            if (left + rect.width > window.innerWidth) {
+                left = Math.max(8, window.innerWidth - rect.width - 8);
+            }
+            if (top + rect.height > window.innerHeight) {
+                top = Math.max(8, window.innerHeight - rect.height - 8);
+            }
+
+            el.style.left = `${left}px`;
+            el.style.top = `${top}px`;
+            el.style.visibility = 'visible'; // Show it once positioned
+        });
+
+        return () => cancelAnimationFrame(rafId);
+    }, [contextMenu]);
     
     // Modal states
     const [showCreateModal, setShowCreateModal] = useState(false);
@@ -691,6 +793,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (!topicId) {
             // Clicked on blank area
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'blank' });
+            // Clear selections when right-clicking blank
+            onSelectTopics([]);
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            onSelectFiles && onSelectFiles([], null);
+            setClickedOncePerson(null);
         } else if (selectedTopicIds.length > 1 && selectedTopicIds.includes(topicId)) {
             // Right-clicked on a selected topic when multiple are selected
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'multiple' });
@@ -703,94 +810,55 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         }
     }, [selectedTopicIds, onSelectTopics]);
 
-    // Mouse event handlers for box selection
-    const handleMouseDown = useCallback((e: React.MouseEvent) => {
-        // Ignore if clicking on a topic item
-        if ((e.target as HTMLElement).closest('.topic-item')) {
-            return;
-        }
-        
-        if (e.button === 0) { // Left mouse button
-            const container = selectionRef.current;
-            if (container) {
-                const rect = container.getBoundingClientRect();
-                const startX = e.clientX - rect.left + container.scrollLeft;
-                const startY = e.clientY - rect.top + container.scrollTop;
-                setIsSelecting(true);
-                setSelectionBox({
-                    startX,
-                    startY,
-                    currentX: startX,
-                    currentY: startY
-                });
-                
-                // Clear selection on background click
-                onSelectTopics([]);
-            }
-        }
-    }, [onSelectTopics]);
+    const finalizeSelection = useCallback((clientX?: number, clientY?: number) => {
+        if (!dragStateRef.current) return;
 
-    const handleMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!isSelecting || !selectionBox) return;
-        
-        const container = selectionRef.current;
-        if (container) {
-            const rect = container.getBoundingClientRect();
-            const currentX = e.clientX - rect.left + container.scrollLeft;
-            const currentY = e.clientY - rect.top + container.scrollTop;
-            
-            setSelectionBox(prev => prev ? {
-                ...prev,
-                currentX,
-                currentY
-            } : null);
+        if (typeof clientX === 'number' && typeof clientY === 'number') {
+            updateSelectionFromPointer(clientX, clientY);
         }
-    }, [isSelecting, selectionBox]);
 
-    const handleMouseUp = useCallback((e: React.MouseEvent) => {
-        if (!isSelecting || !selectionBox) return;
-        
         const container = selectionRef.current;
-        if (!container) {
+        const dragState = dragStateRef.current;
+        if (!container || !dragState) {
+            dragStateRef.current = null;
             setIsSelecting(false);
-            setSelectionBox(null);
+            clearSelectionOverlay();
+            detachSelectionListeners();
             return;
         }
-        
-        // Calculate selection box boundaries
+
+        const width = Math.abs(dragState.currentX - dragState.startX);
+        const height = Math.abs(dragState.currentY - dragState.startY);
+
+        if (width < 5 && height < 5) {
+            dragStateRef.current = null;
+            setIsSelecting(false);
+            clearSelectionOverlay();
+            detachSelectionListeners();
+            return;
+        }
+
         const containerRect = container.getBoundingClientRect();
-        const selectionLeft = containerRect.left + (Math.min(selectionBox.startX, selectionBox.currentX) - container.scrollLeft);
-        const selectionTop = containerRect.top + (Math.min(selectionBox.startY, selectionBox.currentY) - container.scrollTop);
-        const selectionRight = containerRect.left + (Math.max(selectionBox.startX, selectionBox.currentX) - container.scrollLeft);
-        const selectionBottom = containerRect.top + (Math.max(selectionBox.startY, selectionBox.currentY) - container.scrollTop);
-        
-        // Check if selection box is too small
-        if (selectionRight - selectionLeft < 5 && selectionBottom - selectionTop < 5) {
-            setIsSelecting(false);
-            setSelectionBox(null);
-            return;
-        }
-        
-        // Get all topic elements and check intersection
+        const selectionLeft = containerRect.left + (Math.min(dragState.startX, dragState.currentX) - container.scrollLeft);
+        const selectionTop = containerRect.top + (Math.min(dragState.startY, dragState.currentY) - container.scrollTop);
+        const selectionRight = containerRect.left + (Math.max(dragState.startX, dragState.currentX) - container.scrollLeft);
+        const selectionBottom = containerRect.top + (Math.max(dragState.startY, dragState.currentY) - container.scrollTop);
+
         const selectedIds: string[] = [];
         const topicElements = container.querySelectorAll('.topic-item');
-        
         topicElements.forEach(element => {
             const id = element.getAttribute('data-topic-id');
             if (id) {
                 const rect = element.getBoundingClientRect();
-                
-                // Check if element overlaps with selection box
-                if (rect.left < selectionRight && 
-                    rect.right > selectionLeft && 
-                    rect.top < selectionBottom && 
+                if (rect.left < selectionRight &&
+                    rect.right > selectionLeft &&
+                    rect.top < selectionBottom &&
                     rect.bottom > selectionTop) {
                     selectedIds.push(id);
                 }
             }
         });
 
-        // Also check for people and file items when viewing a topic detail
         const selectedPersonIds: string[] = [];
         const personElements = container.querySelectorAll('.person-item');
         personElements.forEach(element => {
@@ -815,14 +883,67 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             }
         });
 
-        // Notify parent
         if (selectedIds.length > 0) onSelectTopics(selectedIds);
         if (selectedPersonIds.length > 0 && typeof onSelectPeople === 'function') onSelectPeople(selectedPersonIds);
         if (selectedFileIdsFromBox.length > 0) onSelectFiles(selectedFileIdsFromBox, selectedFileIdsFromBox[selectedFileIdsFromBox.length - 1]);
 
+        dragStateRef.current = null;
         setIsSelecting(false);
-        setSelectionBox(null);
-    }, [isSelecting, selectionBox, onSelectTopics, onSelectPeople, onSelectFiles]);
+        clearSelectionOverlay();
+        detachSelectionListeners();
+    }, [onSelectTopics, onSelectPeople, onSelectFiles, updateSelectionFromPointer, clearSelectionOverlay, detachSelectionListeners]);
+
+    // Mouse event handlers for box selection
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if ((e.target as HTMLElement).closest('.topic-item')) {
+            return;
+        }
+
+        if (e.button === 0) {
+            const container = selectionRef.current;
+            if (container) {
+                const rect = container.getBoundingClientRect();
+                const startX = e.clientX - rect.left + container.scrollLeft;
+                const startY = e.clientY - rect.top + container.scrollTop;
+
+                dragStateRef.current = { startX, startY, currentX: startX, currentY: startY };
+                setIsSelecting(true);
+                scheduleSelectionOverlayRender();
+
+                const handleDocMove = (event: MouseEvent) => {
+                    updateSelectionFromPointer(event.clientX, event.clientY);
+                };
+
+                const handleDocUp = (event: MouseEvent) => {
+                    finalizeSelection(event.clientX, event.clientY);
+                };
+
+                document.addEventListener('mousemove', handleDocMove);
+                document.addEventListener('mouseup', handleDocUp);
+                detachSelectionListenersRef.current = () => {
+                    document.removeEventListener('mousemove', handleDocMove);
+                    document.removeEventListener('mouseup', handleDocUp);
+                };
+                isDocTrackingSelectionRef.current = true;
+
+                // Clear topic selection and also clear people/files selection on background start
+                onSelectTopics([]);
+                if (typeof onSelectPeople === 'function') onSelectPeople([]);
+                onSelectFiles && onSelectFiles([], null);
+                // Clear local single-click state too
+                setClickedOncePerson(null);
+            }
+        }
+    }, [onSelectTopics, updateSelectionFromPointer, finalizeSelection, scheduleSelectionOverlayRender]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (isDocTrackingSelectionRef.current) return;
+        updateSelectionFromPointer(e.clientX, e.clientY);
+    }, [updateSelectionFromPointer]);
+
+    const handleMouseUp = useCallback((e: React.MouseEvent) => {
+        finalizeSelection(e.clientX, e.clientY);
+    }, [finalizeSelection]);
 
     // Handle topic click with ctrl/shift support
     const handleTopicClick = useCallback((e: React.MouseEvent, topicId: string, allTopicIds: string[]) => {
@@ -838,6 +959,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             } else {
                 onSelectTopics([...selectedTopicIds, topicId]);
             }
+            // Clear other selection types when selecting topics
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            onSelectFiles && onSelectFiles([], null);
+            // Clear local single-click person state
+            setClickedOncePerson(null);
             lastSelectedIdRef.current = topicId;
         } else if (e.shiftKey && lastSelectedIdRef.current) {
             // Shift+Click: Range selection
@@ -853,9 +979,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 const newSelection = [...new Set([...selectedTopicIds, ...rangeIds])];
                 onSelectTopics(newSelection);
             }
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            onSelectFiles && onSelectFiles([], null);
+            // Clear local single-click person state
+            setClickedOncePerson(null);
         } else {
             // Normal click: Single selection
             onSelectTopics([topicId]);
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            onSelectFiles && onSelectFiles([], null);
+            // Clear local single-click person state
+            setClickedOncePerson(null);
             lastSelectedIdRef.current = topicId;
         }
     }, [selectedTopicIds, onSelectTopics]);
@@ -1074,7 +1208,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 onDoubleClick={(e) => handleTopicDoubleClick(e, topic.id)}
                                 onContextMenu={(e) => handleContextMenu(e, topic.id)}
                             >
-                                <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
+                                <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-700 shadow-lg">
                                         {coverStyle ? (
                                             <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={coverStyle} />
@@ -1121,17 +1255,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     )}
                 </div>                
                 {/* Selection Box */}
-                {selectionBox && selectionRef.current && (
-                    <div
-                        className="absolute pointer-events-none border-2 border-blue-500 bg-blue-500/10 z-50"
-                        style={{
-                            left: Math.min(selectionBox.startX, selectionBox.currentX) - selectionRef.current.scrollLeft,
-                            top: Math.min(selectionBox.startY, selectionBox.currentY) - selectionRef.current.scrollTop,
-                            width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                            height: Math.abs(selectionBox.currentY - selectionBox.startY),
-                        }}
-                    />
-                )}            </div>
+                <div
+                    ref={selectionOverlayRef}
+                    className="absolute pointer-events-none border-2 border-blue-500 bg-blue-500/10 z-50 hidden"
+                    style={{ display: 'none', left: 0, top: 0 }}
+                />            </div>
         );
     };
 
@@ -1145,6 +1273,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const handleFileClickLocal = (e: React.MouseEvent, id: string) => {
             e.stopPropagation();
             if (isSelecting) return;
+
+            // When selecting a file, clear people selection and local single-click state
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            setClickedOncePerson(null);
 
             const isCtrl = e.ctrlKey || e.metaKey;
             const isShift = e.shiftKey;
@@ -1319,7 +1451,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                     onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
                                                     onContextMenu={(e) => handleContextMenu(e, sub.id)}
                                                 >
-                                                    <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-2 dark:ring-offset-gray-900 shadow-blue-500/20' : ''}`}>
+                                                    <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                                         <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
                                                             {subCoverStyle ? (
                                                                 <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={subCoverStyle} />
@@ -1404,7 +1536,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                      onClick={(e) => handlePersonClickLocal(p.id, e)}
                                                      onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
                                                  >
-                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-2' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-2' : '')}`}>
+                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
                                                          <div className="relative w-full h-full rounded-full overflow-hidden">
                                                              <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
                                                                  {coverFile ? (
@@ -1509,30 +1641,26 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 </div>
                 
                 {/* Selection Box */}
-                {selectionBox && selectionRef.current && (
-                    <div
-                        className="absolute pointer-events-none border-2 border-blue-500 bg-blue-500/10 z-50"
-                        style={{
-                            left: Math.min(selectionBox.startX, selectionBox.currentX) - selectionRef.current.scrollLeft,
-                            top: Math.min(selectionBox.startY, selectionBox.currentY) - selectionRef.current.scrollTop,
-                            width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                            height: Math.abs(selectionBox.currentY - selectionBox.startY),
-                        }}
-                    />
-                )}            </div>
+                <div
+                    ref={selectionOverlayRef}
+                    className="absolute pointer-events-none border-2 border-blue-500 bg-blue-500/10 z-50 hidden"
+                    style={{ display: 'none', left: 0, top: 0 }}
+                />            </div>
         );
     };
     
     // Render context menu
     const renderContextMenu = () => {
         if (!contextMenu) return null;
-        
-        return (
-            <div 
+
+        const menu = (
+            <div
+                ref={contextMenuRef}
                 className="context-menu fixed bg-white dark:bg-gray-800 shadow-lg rounded-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[200px]"
-                style={{ 
-                    left: contextMenu.x, 
-                    top: contextMenu.y 
+                style={{
+                    left: contextMenu.x,
+                    top: contextMenu.y,
+                    visibility: 'hidden' // Hidden until positioned by useEffect
                 }}
                 onClick={(e) => e.stopPropagation()}
             >
@@ -1545,7 +1673,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         {t('context.newTopic')}
                     </button>
                 )}
-                
+
                 {contextMenu.type === 'single' && contextMenu.topicId && (
                     <>
                         <button
@@ -1639,8 +1767,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 )}
             </div>
         );
+
+        // Render via portal so it doesn't get clipped by scrollable containers
+        return createPortal(menu, document.body);
     };
-    
     return (
         <>
             {currentTopicId ? renderDetail() : renderGallery()}

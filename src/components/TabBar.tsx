@@ -168,7 +168,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   };
 
   return (
-    <div className="flex items-center bg-gray-200 dark:bg-black border-b border-gray-300 dark:border-gray-800 h-[41px] select-none w-full" style={{ WebkitAppRegion: 'drag' } as any}>
+    <div className="flex items-center bg-gray-200 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 h-[41px] select-none w-full" style={{ WebkitAppRegion: 'drag' } as any}>
         <div
           ref={tabBarRef}
           onWheel={handleTabWheel}
@@ -181,8 +181,8 @@ export const TabBar: React.FC<TabBarProps> = ({
               className={`
                 group relative flex items-center min-w-[80px] max-w-[160px] h-9 px-4 rounded-t-lg text-xs cursor-pointer select-none transition-all duration-200
                 ${tab.id === activeTabId
-                  ? 'bg-white dark:bg-gray-950 text-blue-600 dark:text-blue-400 font-bold shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-10 -mb-px'
-                  : 'bg-transparent text-gray-500 dark:text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 mt-1'
+                  ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 font-bold shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-10 -mb-px'
+                  : 'bg-transparent text-gray-500 dark:text-gray-300 dark:bg-gray-900 hover:bg-gray-300 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 mt-1'
                 }
               `}
               title={getTabTitle(tab)}

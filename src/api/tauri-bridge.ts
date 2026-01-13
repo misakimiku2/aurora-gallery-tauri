@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { startDrag as tauriStartDrag } from '@crabnebula/tauri-plugin-drag';
 import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment } from '../utils/environment';
+import { performanceMonitor } from '../utils/performanceMonitor';
 
 /**
  * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
@@ -282,13 +283,19 @@ class ThumbnailBatcher {
             await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
                 try {
                     // 创建通道
-                    const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null }>();
+                    const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null; fromCache?: boolean }>();
                     
                     // 监听通道消息 (流式结果！)
-                    channel.onmessage = ({ path, url, colors }) => {
+                    channel.onmessage = ({ path, url, colors, fromCache }) => {
                         const items = currentBatch.get(path);
                         if (items) {
                             if (url) {
+                                // Backend indicates whether it was served from disk cache
+                                if (fromCache) {
+                                    performanceMonitor.increment('thumbnailCacheHit');
+                                } else {
+                                    performanceMonitor.increment('thumbnailCacheMiss');
+                                }
                                 // 同时缓存原始路径（用于外部拖拽时作为图标）
                                 // 确保缓存存在，如果不存在则创建
                                 if (!(window as any).__AURORA_THUMBNAIL_PATH_CACHE__) {
@@ -400,8 +407,16 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
     // 计算缓存目录路径
     const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
 
-    // 使用批量处理器
-    return thumbnailBatcher.add(filePath, cachePath, onColors, signal);
+    // 使用批量处理器，记录时长并绕过采样以确保收集到关键路径数据
+    const timerId = performanceMonitor.start('getThumbnail', undefined, true);
+    try {
+        const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
+        performanceMonitor.end(timerId, 'getThumbnail', { success: !!res, filePath });
+        return res;
+    } catch (err) {
+        performanceMonitor.end(timerId, 'getThumbnail', { success: false, filePath, error: true });
+        throw err;
+    }
 };
 
 /**

@@ -10,14 +10,14 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 z-[1000] bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-950 dark:to-gray-900 flex flex-col items-center justify-center pointer-events-auto">
+    <div className="fixed inset-0 z-[1000] bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-900 dark:to-gray-800 flex flex-col items-center justify-center pointer-events-auto">
       {/* 背景装饰 */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -left-40 w-80 h-80 bg-blue-500/10 dark:bg-blue-500/20 rounded-full blur-3xl"></div>
         <div className="absolute -bottom-40 -right-40 w-80 h-80 bg-purple-500/10 dark:bg-purple-500/20 rounded-full blur-3xl"></div>
       </div>
       {/* 顶部覆盖条，遮挡标题栏区域和窗口按钮 */}
-      <div className="absolute top-0 left-0 right-0 h-40 bg-gradient-to-b from-blue-50 to-transparent dark:from-gray-950 to-transparent pointer-events-auto z-[1001]"></div>
+      <div className="absolute top-0 left-0 right-0 h-40 bg-gradient-to-b from-blue-50 to-transparent dark:from-gray-900 to-transparent pointer-events-auto z-[1001]"></div>
 
       {/* 主内容 */}
       <div className="relative z-10 flex flex-col items-center justify-center h-full">

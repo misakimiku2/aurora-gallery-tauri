@@ -10,6 +10,7 @@ import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLayout, LayoutItem } from './useLayoutHook';
 import { PersonGrid } from './PersonGrid';
+import { performanceMonitor } from '../utils/performanceMonitor';
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
@@ -253,6 +254,17 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   // 如果有缓存，初始 loading 为 false
   const [loading, setLoading] = React.useState(!thumbnailSrc);
 
+  const hitRecordedRef = useRef(false);
+  const missRecordedRef = useRef(false);
+
+  // 如果初始就有 thumbnailSrc（来自缓存），在 mount 时也计为 hit
+  React.useEffect(() => {
+    if (thumbnailSrc && !hitRecordedRef.current) {
+      performanceMonitor.increment('thumbnailCacheHit');
+      hitRecordedRef.current = true;
+    }
+  }, [thumbnailSrc]);
+
   React.useEffect(() => {
     // Only load thumbnail if the component is in view or was previously in view
     if ((isInView || wasInView) && filePath && resourceRoot) {
@@ -262,6 +274,10 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       // 如果已经有图了（比如从缓存中读到的），且 URL 没变，就不用重新加载
       if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
           // 缓存命中，直接返回，避免不必要的请求
+          if (!hitRecordedRef.current) {
+              performanceMonitor.increment('thumbnailCacheHit');
+              hitRecordedRef.current = true;
+          }
           return;
       }
 
@@ -272,6 +288,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         
         try {
           const { getThumbnail } = await import('../api/tauri-bridge');
+
+
           const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal);
           
           if (!controller.signal.aborted && thumbnail) {
@@ -437,9 +455,21 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
       return validUrls;
   });
 
+  const previewCountedRef = useRef<Set<string>>(new Set());
+
   // 如果初始就有数据（哪怕只有一张），就不设为 loaded=false，避免闪烁
   const [loaded, setLoaded] = useState(previewSrcs.length > 0);
 
+  // 统计 imageChildren 中已缓存的项为 hit，防止初始缓存不计数
+  useEffect(() => {
+    const cache = getGlobalCache();
+    imageChildren.forEach(img => {
+      if (cache.get(img.path) && !previewCountedRef.current.has(img.path)) {
+        performanceMonitor.increment('thumbnailCacheHit');
+        previewCountedRef.current.add(img.path);
+      }
+    });
+  }, [imageChildren]);
   useEffect(() => {
     // 如果已经加载过了，且数量足够（或者等于子文件总数），就不再请求
     // 注意：这里简单判断，如果缓存里不够 3 张但实际有 3 张，还是会触发请求补全
@@ -458,9 +488,11 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
               // 先查缓存，如果有就不请求了 (虽然 getThumbnail 内部也有 batcher，但这里拦截更快)
               const cache = getGlobalCache();
               const cached = cache.get(img.path);
-              if (cached) return cached;
+              if (cached) {
+                  performanceMonitor.increment('thumbnailCacheHit');
+                  return cached;
+              }
 
-              // 请求新图
               const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, controller.signal);
               if (url) {
                   cache.set(img.path, url); // 更新缓存
@@ -657,7 +689,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
     <div className="relative">
       {/* 字母索引栏 */}
       {filteredKeys.length > 0 && (
-        <div className="fixed top-1/2 transform -translate-y-1/2 z-20 bg-white/80 dark:bg-gray-950/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
+        <div className="fixed top-1/2 transform -translate-y-1/2 z-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
              style={{ 
                right: 'calc(20px + var(--metadata-panel-width, 0px))',
                transform: 'translateY(-50%) translateY(10px)' // 向下调整10px，使其居中
@@ -708,7 +740,7 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
           const tagsInGroup = filteredGroupedTags[group];
           return (
               <div id={`tag-group-${group}`} key={group} className="mb-8 scroll-mt-4">
-                   <div className="flex items-center mb-0 border-b border-gray-100 dark:border-gray-800 pt-3 pb-3 sticky top-0 bg-white/95 dark:bg-gray-950/95 z-10 backdrop-blur-sm transition-colors h-16">
+                   <div className="flex items-center mb-0 border-b border-gray-100 dark:border-gray-800 pt-3 pb-3 sticky top-0 bg-white/95 dark:bg-gray-900/95 z-10 backdrop-blur-sm transition-colors h-16">
                        <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-lg mr-3 shadow-sm border border-blue-100 dark:border-blue-900/50">
                           {group}
                        </div>
