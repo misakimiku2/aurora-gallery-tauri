@@ -9,6 +9,7 @@ import { startDragToExternal } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLayout, LayoutItem } from './useLayoutHook';
+import { PersonGrid } from './PersonGrid';
 
 // 扩展 Window 接口以包含我们的全局缓存
 declare global {
@@ -1197,103 +1198,7 @@ const FileListItem = React.memo(({
   );
 });
 
-const PersonCard = React.memo(({
-  person,
-  files,
-  isSelected,
-  onPersonClick,
-  onPersonDoubleClick,
-  onStartRenamePerson,
-  onPersonContextMenu,
-  t,
-  style
-}: {
-  person: Person;
-  files: Record<string, FileNode>;
-  isSelected: boolean;
-  onPersonClick: (id: string, e: React.MouseEvent) => void;
-  onPersonDoubleClick: (id: string) => void;
-  onStartRenamePerson?: (id: string) => void;
-  onPersonContextMenu: (e: React.MouseEvent, id: string) => void;
-  t: (key: string) => string;
-  style: any;
-}) => {
-  if (!person) return null;
-  
-  const coverFile = files[person.coverFileId];
-  const hasCover = !!coverFile;
-  const coverSrc = coverFile?.path ? convertFileSrc(coverFile.path) : null;
-  const { width, height, x, y } = style;
-  const avatarSize = Math.min(width, height - 60); // Allow space for text
 
-  return (
-    <div
-      className="absolute flex flex-col items-center group cursor-pointer transition-all duration-300"
-      style={{ left: x, top: y, width, height }}
-      onClick={(e) => onPersonClick(person.id, e)}
-      onContextMenu={(e) => onPersonContextMenu(e, person.id)}
-    >
-      <div 
-        className={`rounded-full p-1 transition-all duration-300 relative shadow-md
-          ${isSelected 
-            ? 'bg-blue-600 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
-            : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
-          }
-        `}
-        style={{ width: avatarSize, height: avatarSize }}
-        onDoubleClick={() => onPersonDoubleClick(person.id)}
-      >
-        <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
-          <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
-            {hasCover && coverSrc ? (
-               person.faceBox ? (
-                  <img 
-                      src={coverSrc} 
-                      alt={person.name}
-                      className="absolute max-w-none"
-                      decoding="async"
-                      style={{
-                          width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                          height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                          left: 0,
-                          top: 0,
-                          transformOrigin: 'top left',
-                          transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                          willChange: 'transform, width, height',
-                          backfaceVisibility: 'hidden',
-                          imageRendering: 'auto'
-                      }}
-                  />
-              ) : (
-                  <img 
-                      src={coverSrc} 
-                      alt={person.name}
-                      className="w-full h-full object-cover" 
-                  />
-              )
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
-                <User size={avatarSize * 0.4} strokeWidth={1.5} />
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      
-      <div className="mt-4 text-center w-full px-2">
-        <div 
-          className={`font-bold text-base truncate transition-colors px-2 rounded-md ${isSelected ? 'text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/50 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'text-gray-800 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}
-          onDoubleClick={() => onStartRenamePerson?.(person.id)}
-        >
-          {person.name}
-        </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1 font-medium">
-          {person.count} {t('context.files')}
-        </div>
-      </div>
-    </div>
-  );
-});
 
 const FileCard = React.memo(({
   file,
@@ -2230,7 +2135,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [containerRef]);
 
   const { layout, totalHeight } = useLayout(
-      displayFileIds,
+      activeTab.viewMode === 'people-overview' ? [] : displayFileIds,
       files,
       activeTab.layoutMode,
       containerRect.width,
@@ -2487,38 +2392,20 @@ export const FileGrid: React.FC<FileGridProps> = ({
           </div>
 
           {activeTab.viewMode === 'people-overview' ? (
-              <div className="w-full min-w-0" style={{ position: 'relative', minHeight: '100%' }}>
-                  <div className="min-w-0" style={{ position: 'relative' }}>
-                      <div
-                          className="relative min-w-0"
-                          style={{
-                              width: '100%',
-                              maxWidth: '100%',
-                              height: totalHeight,
-                              position: 'relative'
-                          }}
-                      >
-                          {visibleItems.map((item) => {
-                              const person = people ? people[item.id] : null;
-                              if (!person) return null;
-                              return (
-                                  <PersonCard
-                                      key={person.id}
-                                      person={person}
-                                      files={files}
-                                      isSelected={activeTab.selectedPersonIds.includes(person.id)}
-                                      onPersonClick={handlePersonClick}
-                                      onPersonDoubleClick={handlePersonDoubleClick}
-                                      onStartRenamePerson={onStartRenamePerson || (() => {})}
-                                      onPersonContextMenu={handlePersonContextMenu}
-                                      t={t}
-                                      style={item}
-                                  />
-                              );
-                          })}
-                      </div>
-                  </div>
-              </div>
+              <PersonGrid
+                  people={people || {}}
+                  files={files}
+                  selectedPersonIds={activeTab.selectedPersonIds}
+                  onPersonClick={handlePersonClick}
+                  onPersonDoubleClick={handlePersonDoubleClick}
+                  onPersonContextMenu={handlePersonContextMenu}
+                  onStartRenamePerson={onStartRenamePerson}
+                  t={t}
+                  thumbnailSize={thumbnailSize}
+                  containerRect={containerRect}
+                  scrollTop={activeTab.scrollTop}
+                  containerRef={containerRef}
+              />
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
               <div className="w-full min-w-0">
                   {groupedFiles.map((group) => (

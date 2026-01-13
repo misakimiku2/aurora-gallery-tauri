@@ -18,7 +18,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -1299,11 +1299,22 @@ export const App: React.FC = () => {
                             }
                         };
                         
+                        // Load people from DB
+                        let peopleData = savedData.people || {};
+                        try {
+                             const dbPeople = await dbGetAllPeople();
+                             if (Array.isArray(dbPeople) && dbPeople.length > 0) {
+                                 const dbPeopleMap: Record<string, Person> = {};
+                                 dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
+                                 peopleData = dbPeopleMap;
+                             }
+                        } catch (e) { console.error("Failed to load people from DB", e); }
+                        
                         // 更新 state 中的 customTags 和 people
                         setState(prev => ({
                             ...prev,
                             customTags: savedData.customTags || [],
-                            people: savedData.people || {},
+                            people: peopleData,
                             topics: savedData.topics || {},
                             folderSettings: savedData.folderSettings || {},
                             settings: finalSettings
@@ -2344,6 +2355,28 @@ export const App: React.FC = () => {
       }
       
       // Sort people alphabetically by name, same as in handlePersonClick and useLayout
+      // FIXED: Use DOM based selection for accuracy
+      const personElements = container.querySelectorAll('.person-item');
+      personElements.forEach(element => {
+        const id = element.getAttribute('data-id');
+        if (id) {
+          const rect = element.getBoundingClientRect();
+          if (rect.left < selectionRight && 
+              rect.right > selectionLeft && 
+              rect.top < selectionBottom && 
+              rect.bottom > selectionTop) {
+            selectedPersonIds.push(id);
+          }
+        }
+      });
+      
+      updateActiveTab({
+        selectedPersonIds: selectedPersonIds,
+        lastSelectedId: selectedPersonIds[selectedPersonIds.length - 1] || null
+      });
+
+      /* 
+      // Manual layout calculation removed
       itemsList.sort((a, b) => a.name.localeCompare(b.name));
       
       // Calculate layout parameters (same as FileGrid)
@@ -2375,18 +2408,10 @@ export const App: React.FC = () => {
         const selContainerRight = Math.max(selectionBox.startX, selectionBox.currentX);
         const selContainerBottom = Math.max(selectionBox.startY, selectionBox.currentY);
         
-        // Check if person overlaps with selection box in container coordinates
-        // This works correctly regardless of scrolling
-        if (personContainerLeft < selContainerRight && 
-            personContainerRight > selContainerLeft && 
-            personContainerTop < selContainerBottom && 
-            personContainerBottom > selContainerTop) {
-          selectedPersonIds.push(person.id);
-        }
-      });
+      */
       
       // Always update selection, even if no people were selected (consistent with file selection)
-      updateActiveTab({ selectedPersonIds });
+      // updateActiveTab({ selectedPersonIds });
     }
     
     // End selection box
@@ -3429,10 +3454,9 @@ export const App: React.FC = () => {
         );
       }
       
-      // Sort people alphabetically by name, same as in useLayout
-      // FIXED: Do NOT sort here, because FileGrid (people-overview) does NOT sort. 
-      // We must match the display order (Object.values order) for range selection to work correctly.
-      // allPeople.sort((a, b) => a.name.localeCompare(b.name));
+      // Sort people by count descending, same as in PersonGrid
+      // We must match the display order for range selection to work correctly.
+      allPeople.sort((a, b) => b.count - a.count);
       
       const allPersonIds = allPeople.map(person => person.id);
       
@@ -3532,24 +3556,34 @@ export const App: React.FC = () => {
   
   const handleRenamePerson = (personId: string, newName: string) => {
       if (!newName.trim()) return;
-      setState(prev => ({
-          ...prev,
-          people: {
-              ...prev.people,
-              [personId]: { ...prev.people[personId], name: newName }
-          },
-          activeModal: { type: null }
-      }));
+      setState(prev => {
+          const updatedPerson = { ...prev.people[personId], name: newName };
+          dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person name in DB", e));
+          
+          return {
+            ...prev,
+            people: {
+                ...prev.people,
+                [personId]: updatedPerson
+            },
+            activeModal: { type: null }
+          };
+      });
   };
 
   const handleUpdatePerson = (personId: string, updates: Partial<Person>) => {
-      setState(prev => ({
-          ...prev,
-          people: {
-              ...prev.people,
-              [personId]: { ...prev.people[personId], ...updates }
-          }
-      }));
+      setState(prev => {
+          const updatedPerson = { ...prev.people[personId], ...updates };
+          dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person in DB", e));
+          
+          return {
+            ...prev,
+            people: {
+                ...prev.people,
+                [personId]: updatedPerson
+            }
+          };
+      });
   };
 
   const handleCreatePerson = () => {
@@ -3561,6 +3595,10 @@ export const App: React.FC = () => {
           count: 0,
           description: ''
       };
+      
+      // Save to database
+      dbUpsertPerson(newPerson).catch(e => console.error("Failed to create person in DB", e));
+
       setState(prev => ({
           ...prev,
           people: { ...prev.people, [newId]: newPerson },
@@ -3569,11 +3607,15 @@ export const App: React.FC = () => {
   };
 
   const handleDeletePerson = (personId: string | string[]) => {
+      const idsToDelete = typeof personId === 'string' ? [personId] : personId;
+      idsToDelete.forEach(id => {
+          dbDeletePerson(id).catch(e => console.error("Failed to delete person from DB", e));
+      });
+
       setState(prev => {
           const newPeople = { ...prev.people };
           
           // Handle both single person and multiple people deletion
-          const idsToDelete = typeof personId === 'string' ? [personId] : personId;
           idsToDelete.forEach(id => {
               delete newPeople[id];
           });
