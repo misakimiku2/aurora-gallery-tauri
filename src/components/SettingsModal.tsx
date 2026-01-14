@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2 } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings } from '../types';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 
@@ -19,6 +19,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   // Use AI connection status from AppState instead of local state
   const connectionStatus = state.aiConnectionStatus;
+
+  const [editingPresetName, setEditingPresetName] = useState('');
+
+  useEffect(() => {
+      const currentPreset = state.settings.ai.promptPresets?.find(p => p.id === state.settings.ai.currentPresetId);
+      if (currentPreset) {
+          setEditingPresetName(currentPreset.name);
+      } else {
+          setEditingPresetName(t('settings.newPresetName'));
+      }
+  }, [state.settings.ai.currentPresetId, state.settings.ai.promptPresets?.length]);
 
   const checkConnection = async (manual: boolean = false) => {
       // ... (keep existing implementation)
@@ -424,11 +435,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       onClick={() => checkConnection(true)}
                                       disabled={isTesting}
                                       title={t('settings.testConnection')}
-                                      className={`inline-flex items-center px-3 py-1 text-xs font-bold rounded transition-colors text-white disabled:opacity-60 disabled:cursor-not-allowed ${
-                                          connectionStatus === 'connected' ? 'bg-green-600 hover:bg-green-500' :
-                                          connectionStatus === 'disconnected' ? 'bg-red-600 hover:bg-red-500' :
-                                          'bg-purple-600 hover:bg-purple-500'
-                                      }`}
+                                      className={`inline-flex items-center px-3 py-1 text-xs font-bold rounded transition-colors bg-purple-600 hover:bg-purple-500 text-white disabled:opacity-60 disabled:cursor-not-allowed`}
                                   >
                                       {isTesting ? <Activity size={12} className="mr-1 animate-spin"/> : <Zap size={12} className="mr-1"/>}
                                       <span className="hidden sm:inline text-[11px]">{isTesting ? t('settings.testing') : t('settings.testConnection')}</span>
@@ -609,19 +616,97 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                   </>
                               )}
 
-                              <div className="pt-2 border-t border-gray-200 dark:border-gray-600">
-                                 <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="ai-system-prompt">{t('settings.systemPrompt')}</label>
-                                 <textarea
-                                     id="ai-system-prompt"
-                                     value={state.settings.ai.systemPrompt || ''}
-                                     onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, systemPrompt: e.target.value } })}
-                                     className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[60px]"
-                                     placeholder="..."
-                                 />
-                              </div>
                           </div>
 
+                          <div className="mt-6">
+                              <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-2">{t('settings.systemPrompt')}</h4>
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                                  <textarea
+                                      id="ai-system-prompt"
+                                      value={state.settings.ai.systemPrompt || ''}
+                                      onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, systemPrompt: e.target.value } })}
+                                      className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[80px]"
+                                      placeholder="..."
+                                  />
+                                  
+                                  {/* 预设工具栏 */}
+                                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600 flex flex-wrap items-center gap-2">
+                                      <select 
+                                          id="ai-preset-select"
+                                          value={state.settings.ai.currentPresetId || ''}
+                                          onChange={(e) => {
+                                              const pid = e.target.value;
+                                              const preset = state.settings.ai.promptPresets?.find(p => p.id === pid);
+                                              if (preset) {
+                                                  onUpdateSettingsData({ ai: { ...state.settings.ai, currentPresetId: pid, systemPrompt: preset.content } });
+                                              } else {
+                                                  onUpdateSettingsData({ ai: { ...state.settings.ai, currentPresetId: undefined } });
+                                              }
+                                          }}
+                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                                      >
+                                          <option value="">{t('settings.selectPreset')}</option>
+                                          {state.settings.ai.promptPresets?.map(p => (
+                                              <option key={p.id} value={p.id}>{p.name}</option>
+                                          ))}
+                                      </select>
 
+                                      <input 
+                                          type="text"
+                                          value={editingPresetName}
+                                          onChange={(e) => setEditingPresetName(e.target.value)}
+                                          placeholder={t('settings.presetName')}
+                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                                      />
+
+                                      <div className="flex items-center gap-1">
+                                          <button 
+                                              onClick={() => {
+                                                  const currentPresets = state.settings.ai.promptPresets || [];
+                                                  const pid = state.settings.ai.currentPresetId;
+                                                  if (pid) {
+                                                      const updated = currentPresets.map(p => p.id === pid ? { ...p, name: editingPresetName, content: state.settings.ai.systemPrompt || '' } : p);
+                                                      onUpdateSettingsData({ ai: { ...state.settings.ai, promptPresets: updated } });
+                                                  }
+                                              }}
+                                              disabled={!state.settings.ai.currentPresetId}
+                                              title={t('settings.savePreset')}
+                                              className="p-1.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800/50 disabled:opacity-50"
+                                          >
+                                              <Save size={16} />
+                                          </button>
+                                          
+                                          <button 
+                                              onClick={() => {
+                                                  const newId = `preset_${Date.now()}`;
+                                                  const newPreset = { id: newId, name: editingPresetName || t('settings.newPresetName'), content: state.settings.ai.systemPrompt || '' };
+                                                  const updated = [...(state.settings.ai.promptPresets || []), newPreset];
+                                                  onUpdateSettingsData({ ai: { ...state.settings.ai, promptPresets: updated, currentPresetId: newId } });
+                                              }}
+                                              title={t('settings.saveAsNewPreset')}
+                                              className="p-1.5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-800/50"
+                                          >
+                                              <PlusCircle size={16} />
+                                          </button>
+
+                                          <button 
+                                              onClick={() => {
+                                                  const pid = state.settings.ai.currentPresetId;
+                                                  if (pid) {
+                                                      const updated = (state.settings.ai.promptPresets || []).filter(p => p.id !== pid);
+                                                      onUpdateSettingsData({ ai: { ...state.settings.ai, promptPresets: updated, currentPresetId: undefined } });
+                                                  }
+                                              }}
+                                              disabled={!state.settings.ai.currentPresetId}
+                                              title={t('settings.deletePreset')}
+                                              className="p-1.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-800/50 disabled:opacity-50"
+                                          >
+                                              <Trash2 size={16} />
+                                          </button>
+                                      </div>
+                                  </div>
+                              </div>
+                          </div>
 
                           <div className="mt-6 space-y-3">
                               <div className="flex items-center justify-between">

@@ -21,7 +21,11 @@ export default defineConfig({
     // Listen on all interfaces to ensure availability
     host: '0.0.0.0',
     // Let Vite determine HMR settings automatically based on host
-    hmr: undefined,
+    hmr:  {
+      protocol: 'ws',
+      host: '127.0.0.1',
+      port: 1422,
+    },
     watch: {
       ignored: ['**/src-tauri/**'],
     },

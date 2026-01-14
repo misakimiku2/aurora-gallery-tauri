@@ -4,8 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.aurora.gallery",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1422",
+    "beforeDevCommand": "",
+    "devUrl": "http://127.0.0.1:1422",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },

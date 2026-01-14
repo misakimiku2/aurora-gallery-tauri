@@ -146,6 +146,12 @@ export interface SearchSettings {
 
 export type AIProvider = 'openai' | 'ollama' | 'lmstudio';
 
+export interface PromptPreset {
+  id: string;
+  name: string;
+  content: string;
+}
+
 export interface AIConfig {
   provider: AIProvider;
   openai: {
@@ -171,6 +177,8 @@ export interface AIConfig {
   targetLanguage: 'zh' | 'en' | 'ja' | 'ko';
   confidenceThreshold: number;
   systemPrompt?: string;
+  promptPresets?: PromptPreset[];
+  currentPresetId?: string;
 }
 
 export interface AppSettings {
