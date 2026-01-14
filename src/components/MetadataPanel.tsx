@@ -40,7 +40,7 @@ const findImagesDeeply = (
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
+import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './FileGrid';
 // 导入 ImageViewer 的高分辨率缓�?
 import { getBlobCacheSync, preloadToCache } from './ImageViewer';
@@ -175,7 +175,18 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
             <ImageIcon className="animate-pulse text-gray-400" size={32} />
           </div>
         ) : imageUrl ? (
-          <img src={imageUrl} className="max-w-full max-h-[300px] object-contain rounded" alt={file.name} />
+          <img 
+            src={imageUrl} 
+            className="max-w-full max-h-[300px] object-contain rounded" 
+            alt={file.name} 
+            decoding="async"
+            style={{
+                willChange: 'transform, width, height',
+                WebkitBackfaceVisibility: 'hidden',
+                backfaceVisibility: 'hidden',
+                transform: 'translate3d(0, 0, 0)',
+            }}
+          />
         ) : (
           <div className="flex items-center justify-center">
             <ImageIcon className="text-gray-400" size={32} />
@@ -282,6 +293,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
   const [newTagInput, setNewTagInput] = useState('');
   const [toast, setToast] = useState<{msg: string, visible: boolean}>({ msg: '', visible: false });
   const [paletteMenu, setPaletteMenu] = useState<{ visible: boolean, x: number, y: number, color: string | null }>({ visible: false, x: 0, y: 0, color: null });
+  const [expandedTopicIds, setExpandedTopicIds] = useState<Set<string>>(new Set());
   
   // Palette menu close handler for scroll events
   useEffect(() => {
@@ -903,10 +915,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
            {/* 现代化封�?Header */}
            <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
                {coverUrl ? (
-                   <div 
-                       className="w-full h-full bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
-                       style={getCoverStyle(topic, coverUrl)}
-                   />
+                   <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
+                       <div 
+                           className="w-full h-full bg-cover bg-center"
+                           style={{
+                               ...getCoverStyle(topic, coverUrl),
+                               willChange: 'transform, width, height',
+                               WebkitBackfaceVisibility: 'hidden',
+                               backfaceVisibility: 'hidden',
+                               transform: 'translate3d(0, 0, 0)',
+                           }}
+                       />
+                   </div>
                ) : (
                    <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 dark:text-gray-600">
                        <Layout size={64} className="mb-4 opacity-20" />
@@ -1012,7 +1032,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                                }}
                                                            />
                                                        ) : (
-                                                           <img src={convertFileSrc(pCover.path)} className="w-full h-full object-cover" />
+                                                           <img 
+                                                               src={convertFileSrc(pCover.path)} 
+                                                               alt={p.name}
+                                                               className="w-full h-full object-cover" 
+                                                               decoding="async"
+                                                               style={{
+                                                                   willChange: 'transform, width, height',
+                                                                   WebkitBackfaceVisibility: 'hidden',
+                                                                   backfaceVisibility: 'hidden',
+                                                                   transform: 'translate3d(0, 0, 0)',
+                                                               }}
+                                                           />
                                                        )
                                                     ) : <User className="w-full h-full p-3 text-gray-400"/>}
                                                 </div>
@@ -1037,8 +1068,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                {/* 现代子专题列�?- 改为3:4比例网格 */}
                {!topic.parentId && subTopics.length > 0 && (
                    <div className="space-y-4">
-                        <div className="flex justify-center items-center px-1">
-                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                        <div className="flex items-center px-1">
+                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] ml-1">
                                 {t('context.subTopics')}
                             </label>
                         </div>
@@ -1053,10 +1084,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     >
                                         <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
                                             {subCoverUrl ? (
-                                                <div 
-                                                    className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110" 
-                                                    style={getCoverStyle(sub, subCoverUrl)}
-                                                />
+                                                <div className="w-full h-full transition-transform duration-500 group-hover/sub:scale-110">
+                                                    <div 
+                                                        className="w-full h-full bg-cover bg-center" 
+                                                        style={{
+                                                            ...getCoverStyle(sub, subCoverUrl),
+                                                            willChange: 'transform, width, height',
+                                                            WebkitBackfaceVisibility: 'hidden',
+                                                            backfaceVisibility: 'hidden',
+                                                            transform: 'translate3d(0, 0, 0)',
+                                                        }}
+                                                    />
+                                                </div>
                                             ) : (
                                                 <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 dark:bg-gray-800/50">
                                                     <Folder size={24} className="opacity-20 mb-1" />
@@ -1184,28 +1223,60 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   
                   const coverUrl = getTopicCover(topic);
                   const isMainTopic = !topic.parentId;
-                  const subTopics = isMainTopic 
+                  const allSubTopics = isMainTopic 
                         ? Object.values(topics).filter(sub => sub.parentId === topic.id)
+                              .sort((a,b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
                         : [];
+                  
+                  const isExpanded = expandedTopicIds.has(topicId);
+                  const visibleSubtopics = isExpanded ? allSubTopics : allSubTopics.slice(0, 2);
                   
                   return (
                     <div 
                       key={topicId} 
-                      className="flex items-start gap-3.5 p-3.5 bg-gray-50/50 dark:bg-gray-900/30 rounded-xl border border-gray-100 dark:border-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
+                      className="flex items-start gap-3.5 p-3.5 bg-gray-50/50 dark:bg-gray-900/30 rounded-xl border border-gray-100 dark:border-gray-800/50 hover:bg-gray-200/70 dark:hover:bg-black/50 transition-all cursor-pointer group/item active:scale-[0.98]"
                       onClick={() => onSelectTopic && onSelectTopic(topicId)}
                     >
                       {/* Cover with 3:4 Ratio */}
-                      <div className="w-[66px] h-[88px] rounded-lg border border-gray-200/60 dark:border-gray-700/60 shadow-sm overflow-hidden bg-gray-200 dark:bg-gray-800 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
+                      <div className="w-[66px] h-[88px] rounded-lg border border-gray-200/60 dark:border-gray-700/60 shadow-sm overflow-hidden bg-gray-200 dark:bg-gray-800 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-all">
                         {coverUrl ? (
-                            <img 
-                                src={coverUrl}
-                                className="w-full h-full object-cover block will-change-transform"
-                                style={{ 
-                                    imageRendering: 'auto',
-                                    transform: 'translateZ(0)',
-                                    backfaceVisibility: 'hidden'
-                                }} 
-                            />
+                            <div className="w-full h-full transition-shadow duration-200 group-hover/item:shadow-md">
+                                {/* Use the same crop display scheme as Person avatar for crisp result */}
+                                {topic.coverCrop ? (
+                                    <div className="w-full h-full relative overflow-hidden">
+                                        <img
+                                            src={coverUrl}
+                                            alt={topic.name}
+                                            className="absolute max-w-none"
+                                            decoding="async"
+                                            style={{
+                                                width: `${10000 / Math.max(topic.coverCrop.width, 2.0)}%`,
+                                                height: `${10000 / Math.max(topic.coverCrop.height, 2.0)}%`,
+                                                left: 0,
+                                                top: 0,
+                                                transformOrigin: 'top left',
+                                                transform: `translate3d(${-topic.coverCrop.x}%, ${-topic.coverCrop.y}%, 0)`,
+                                                willChange: 'transform, width, height',
+                                                backfaceVisibility: 'hidden',
+                                                imageRendering: 'auto'
+                                            }}
+                                        />
+                                    </div>
+                                ) : (
+                                    <img 
+                                        src={coverUrl}
+                                        alt={topic.name}
+                                        className="w-full h-full object-cover block"
+                                        decoding="async"
+                                        style={{ 
+                                            WebkitBackfaceVisibility: 'hidden',
+                                            backfaceVisibility: 'hidden',
+                                            transform: 'none',
+                                            imageRendering: 'auto'
+                                        }} 
+                                    />
+                                )}
+                            </div>
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
                               <Layout size={24} className="opacity-30"/>
@@ -1214,8 +1285,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                       </div>
                       
                       {/* Info Area */}
-                      <div className="flex-1 min-w-0 flex flex-col py-0.5">
-                        <div className="font-bold text-sm text-gray-900 dark:text-white truncate leading-tight mb-2 group-hover/item:text-blue-500 transition-colors">{topic.name}</div>
+                      <div className="flex-1 min-w-0 flex flex-col py-0.5 relative">
+                        <div className="font-bold text-sm text-gray-900 dark:text-white truncate leading-tight mb-2 group-hover/item:text-blue-500 transition-colors flex items-center justify-between">
+                            <span className="truncate flex-1 mr-3">{topic.name}</span>
+                            {topic.type && (
+                                <span className="ml-2 flex-shrink-0 px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-[9px] font-black text-gray-400 dark:text-gray-500 rounded uppercase tracking-widest border border-gray-200/30 dark:border-gray-600/30">
+                                    {topic.type}
+                                </span>
+                            )}
+                        </div>
                         
                         {/* Stats Row */}
                         <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-2.5">
@@ -1225,26 +1303,40 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                              <span className="flex items-center bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded" title={`${topic.fileIds?.length || 0} Files`}>
                                 <ImageIcon size={10} className="mr-1 opacity-70"/> {topic.fileIds?.length || 0}
                              </span>
-                             {isMainTopic && subTopics.length > 0 && (
-                                 <span className="flex items-center bg-blue-50 dark:bg-blue-900/20 text-blue-500 px-1.5 py-0.5 rounded" title={`${subTopics.length} Subtopics`}>
-                                    <FolderIcon size={10} className="mr-1 opacity-70"/> {subTopics.length}
+                             {isMainTopic && allSubTopics.length > 0 && (
+                                 <span className="flex items-center bg-blue-50 dark:bg-blue-900/20 text-blue-500 px-1.5 py-0.5 rounded" title={`${allSubTopics.length} Subtopics`}>
+                                    <FolderIcon size={10} className="mr-1 opacity-70"/> {allSubTopics.length}
                                  </span>
                              )}
                         </div>
 
                         {/* Subtopics List (Vertical List) */}
-                        {isMainTopic && subTopics.length > 0 && (
-                            <div className="space-y-1.5 pt-1.5 border-t border-gray-100 dark:border-gray-800/50">
-                                {subTopics.slice(0, 3).map(sub => (
+                        {isMainTopic && allSubTopics.length > 0 && (
+                            <div className="space-y-1.5 pt-1.5 border-t border-gray-100 dark:border-gray-800/50 relative">
+                                {visibleSubtopics.map(sub => (
                                     <div key={sub.id} className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center group/sub">
                                         <FolderIcon size={10} className="mr-2 opacity-50 shrink-0 text-blue-500/80 group-hover/sub:opacity-100" />
                                         <span className="truncate">{sub.name}</span>
                                     </div>
                                 ))}
-                                {subTopics.length > 3 && (
-                                    <div className="text-[9px] text-gray-400 dark:text-gray-500 pl-4.5 font-medium italic opacity-60">
-                                        + {subTopics.length - 3} {t('context.more') || 'more...'}
-                                    </div>
+                                
+                                {/* Fold/Expand Button */}
+                                {allSubTopics.length > 2 && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            setExpandedTopicIds(prev => {
+                                                const next = new Set(prev);
+                                                if (next.has(topicId)) next.delete(topicId);
+                                                else next.add(topicId);
+                                                return next;
+                                            });
+                                        }}
+                                        className="absolute bottom-0 right-0 p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors text-blue-500/80 hover:text-blue-600"
+                                        title={isExpanded ? "Collapse" : `Show all ${allSubTopics.length} subtopics`}
+                                    >
+                                        {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                                    </button>
                                 )}
                             </div>
                         )}
@@ -1333,6 +1425,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             <img 
                               src={coverUrl} 
                               className="w-full h-full object-cover"
+                              decoding="async"
+                              style={{
+                                  willChange: 'transform, width, height',
+                                  WebkitBackfaceVisibility: 'hidden',
+                                  backfaceVisibility: 'hidden',
+                                  transform: 'translate3d(0, 0, 0)',
+                              }}
                             />
                           )
                         ) : (
@@ -1380,29 +1479,37 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* Avatar */}
                 <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-gray-200 dark:bg-gray-700 mb-4 relative group">
                     {coverUrl ? (
-                       person.faceBox ? (
-                          <img 
-                              src={coverUrl}
-                              className="absolute max-w-none transition-transform duration-300 group-hover:scale-110"
-                              decoding="async"
-                              style={{
-                                  width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                                  height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                  left: 0,
-                                  top: 0,
-                                  transformOrigin: 'top left',
-                                  transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                                  willChange: 'transform, width, height',
-                                  backfaceVisibility: 'hidden',
-                                  imageRendering: 'auto'
-                              }}
-                           />
-                       ) : (
-                           <img 
-                               src={coverUrl} 
-                               className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                           />
-                       )
+                       <div className="w-full h-full transition-transform duration-300 group-hover:scale-110">
+                           {person.faceBox ? (
+                              <img 
+                                  src={coverUrl}
+                                  className="absolute max-w-none"
+                                  decoding="async"
+                                  style={{
+                                      width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                                      height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                      left: 0,
+                                      top: 0,
+                                      transformOrigin: 'top left',
+                                      transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
+                                      willChange: 'transform, width, height',
+                                      backfaceVisibility: 'hidden'
+                                  }}
+                               />
+                           ) : (
+                               <img 
+                                   src={coverUrl} 
+                                   className="w-full h-full object-cover"
+                                   decoding="async"
+                                   style={{
+                                      willChange: 'transform, width, height',
+                                      WebkitBackfaceVisibility: 'hidden',
+                                      backfaceVisibility: 'hidden',
+                                      transform: 'translate3d(0, 0, 0)',
+                                   }}
+                               />
+                           )}
+                       </div>
                     ) : (
                        <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={32}/></div>
                     )}

@@ -195,7 +195,7 @@ const TopicFileGrid = React.memo(({
                         <div
                             key={file.id}
                             // Ensure outer wrapper does NOT scale on hover; only inner content scales
-                            className={`absolute cursor-pointer group rounded-lg transform-gpu group-hover:scale-100 transition-all duration-300 file-item ${isSelected ? 'z-20' : ''}`}
+                            className={`absolute cursor-pointer group rounded-lg transform-gpu transition-all duration-300 file-item ${isSelected ? 'z-20' : ''}`}
                             data-file-id={file.id}
                             style={{
                                 left: item.x,
@@ -224,20 +224,22 @@ const TopicFileGrid = React.memo(({
                             }}
                         >
                             {/* Inner scaled container: handles hover scale and clipping of the image only */}
-                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 overflow-hidden relative rounded-lg">
-                                <div className="w-full h-full transform transition-transform duration-500 origin-center group-hover:scale-110 will-change-transform">
-                                    <ImageThumbnail
-                                        src={''}
-                                        alt={file.name}
-                                        isSelected={isSelected}
-                                        filePath={file.path}
-                                        modified={file.updatedAt}
-                                        size={undefined}
-                                        isHovering={false}
-                                        fileMeta={file.meta}
-                                        resourceRoot={resourceRoot}
-                                        cachePath={cachePath}
-                                    />
+                            <div className="w-full h-full bg-cover bg-center overflow-hidden relative rounded-lg">
+                                <div className="w-full h-full transition-shadow duration-300 origin-center group-hover:shadow-lg">
+                                    <div className="w-full h-full transition-transform duration-500 group-hover:scale-110 origin-center">
+                                        <ImageThumbnail
+                                            src={''}
+                                            alt={file.name}
+                                            isSelected={isSelected}
+                                            filePath={file.path}
+                                            modified={file.updatedAt}
+                                            size={undefined}
+                                            isHovering={false}
+                                            fileMeta={file.meta}
+                                            resourceRoot={resourceRoot}
+                                            cachePath={cachePath}
+                                        />
+                                    </div>
 
                                     {/* Hover overlay to restore original hover feedback (kept inside scaled area) */}
                                     <div className="absolute inset-0 pointer-events-none flex items-end p-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1295,7 +1297,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         return (
                             <div
                                 key={topic.id}
-                                className={`topic-item group absolute cursor-pointer perspective-1000`}
+                                className={`topic-item group/topic absolute cursor-pointer perspective-1000`}
                                 data-topic-id={topic.id}
                                 style={{
                                     left: x,
@@ -1313,7 +1315,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-lg">
                                         {coverStyle ? (
-                                            <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={coverStyle} />
+                                            <div className="w-full h-full overflow-hidden">
+                                                <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/topic:scale-110 origin-center" style={coverStyle} />
+                                            </div>
                                         ) : (
                                             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
                                                 <Layout size={48} className="text-white opacity-50" />
@@ -1572,7 +1576,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                             return (
                                                 <div
                                                     key={sub.id}
-                                                    className={`topic-item group flex flex-col cursor-pointer absolute transition-all duration-300 ease-out`}
+                                                    className={`topic-item group/sub flex flex-col cursor-pointer absolute transition-all duration-300 ease-out`}
                                                     data-topic-id={sub.id}
                                                     style={{
                                                         zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0,
@@ -1585,10 +1589,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                     onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
                                                     onContextMenu={(e) => handleContextMenu(e, sub.id)}
                                                 >
-                                                    <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
+                                                    <div className={`relative aspect-[3/4] w-full transform transition-transform duration-300 origin-center group-hover:scale-105 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                                         <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-800 bg-gray-200 dark:bg-gray-800">
                                                             {subCoverStyle ? (
-                                                                <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={subCoverStyle} />
+                                                                <div className="w-full h-full overflow-hidden">
+                                                                    <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110 origin-center" style={subCoverStyle} />
+                                                                </div>
                                                             ) : (
                                                                 <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
                                                                     <Layout size={32} className="text-white opacity-50" />

@@ -52,7 +52,7 @@ const PersonCard = React.memo(({
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
         <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
-          <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
+          <div className="w-full h-full transition-shadow duration-300 group-hover:shadow-lg">
             {hasCover && coverSrc ? (
                person.faceBox ? (
                   <img 
