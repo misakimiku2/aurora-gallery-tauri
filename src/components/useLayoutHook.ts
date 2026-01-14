@@ -45,18 +45,15 @@ export const useLayout = (
 
   // Initialize worker
   useEffect(() => {
-    console.log('[useLayout] Initializing LayoutWorker...');
     workerRef.current = new LayoutWorker();
     if (workerRef.current) {
         workerRef.current.onmessage = (e: MessageEvent) => {
-            console.log('[useLayout] Received result from worker:', e.data);
             setLayoutState(e.data);
-        };
+        }; 
     }
     return () => {
-        console.log('[useLayout] Terminating worker');
         workerRef.current?.terminate();
-    };
+    }; 
   }, []);
 
   // Post message to worker when inputs change
@@ -65,11 +62,6 @@ export const useLayout = (
       
       // If container width is 0, don't calculate yet
       if (containerWidth <= 0) return;
-
-      console.log('[useLayout] Posting task to worker:', {
-          itemsCount: items.length,
-          containerWidth
-      });
 
       workerRef.current.postMessage({
           items,

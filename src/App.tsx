@@ -6527,8 +6527,8 @@ export const App: React.FC = () => {
                     onUpdateTopic={handleUpdateTopic}
                     onCreateTopic={handleCreateTopic}
                     onDeleteTopic={handleDeleteTopic}
-                    onSelectTopics={(ids) => {
-                      updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [], selectedPersonIds: [] });
+                    onSelectTopics={(ids, lastId) => {
+                      updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [], selectedPersonIds: [], lastSelectedId: lastId ?? null });
                     }}
                     // onSelectFiles now accepts lastSelectedId; update to set both selectedFileIds and lastSelectedId
                     onSelectFiles={(ids, lastId) => {
@@ -6559,7 +6559,7 @@ export const App: React.FC = () => {
                     onOpenFile={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
                     t={t}
                     scrollTop={activeTab.scrollTop}
-                    onScrollTopChange={(scrollTop) => { logDebug('[App] topic.scrollUpdate', { action: 'topic.scrollUpdate', scrollTop }); updateActiveTab({ scrollTop }); }}
+                    onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
                     isVisible={!activeTab.viewingFileId}
                     topicLayoutMode={(topicLayoutMode === 'grid' || topicLayoutMode === 'adaptive' || topicLayoutMode === 'masonry') ? topicLayoutMode : 'grid'}
                     onTopicLayoutModeChange={handleTopicLayoutModeChange}

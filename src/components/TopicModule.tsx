@@ -2,166 +2,166 @@
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check } from 'lucide-react';
 import { ImageThumbnail } from './FileGrid';
 import { debug as logDebug, info as logInfo } from '../utils/logger';
 
 type LayoutMode = 'grid' | 'adaptive' | 'masonry';
 
 interface LayoutItem {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+    id: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
 }
 
 const useLayout = (
-  items: string[],
-  files: Record<string, FileNode>,
-  layoutMode: LayoutMode,
-  containerWidth: number,
-  thumbnailSize: number = 200
+    items: string[],
+    files: Record<string, FileNode>,
+    layoutMode: LayoutMode,
+    containerWidth: number,
+    thumbnailSize: number = 200
 ) => {
-  const aspectRatios = useMemo(() => {
-    const ratios: Record<string, number> = {};
-    items.forEach(id => {
-      const file = files[id];
-      ratios[id] = file?.meta?.width && file?.meta?.height 
-        ? file.meta.width / file.meta.height 
-        : 1;
-    });
-    return ratios;
-  }, [items, files]);
-
-  return useMemo(() => {
-    const layout: LayoutItem[] = [];
-    let totalHeight = 0;
-    const GAP = 16;
-    const PADDING = 0; // TopicModule already has padding on container
-    
-    const safeContainerWidth = containerWidth > 0 ? containerWidth : 1280; 
-    // Subtract parent padding (approx 48px from px-6) if we want to be precise, 
-    // but here we are passed the container width which should be the content width if we are careful.
-    // Actually containerRect comes from ResizeObserver on the scrolling container, which includes padding? 
-    // containerRef is on "topic-gallery-container" which has "px-6 py-8". 
-    // So safeContainerWidth includes the padding. We should subtract it.
-    const availableWidth = Math.max(100, safeContainerWidth - 48); // px-6 * 2 = 3rem = 48px
-
-    if (layoutMode === 'grid') {
-        const minColWidth = thumbnailSize;
-        const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-        const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
-        const itemHeight = itemWidth; // Square
-
-        items.forEach((id, index) => {
-            const row = Math.floor(index / cols);
-            const col = index % cols;
-            layout.push({
-                id,
-                x: col * (itemWidth + GAP),
-                y: row * (itemHeight + GAP),
-                width: itemWidth,
-                height: itemHeight
-            });
+    const aspectRatios = useMemo(() => {
+        const ratios: Record<string, number> = {};
+        items.forEach(id => {
+            const file = files[id];
+            ratios[id] = file?.meta?.width && file?.meta?.height
+                ? file.meta.width / file.meta.height
+                : 1;
         });
-        const rows = Math.ceil(items.length / cols);
-        totalHeight = rows * (itemHeight + GAP);
-    } else if (layoutMode === 'adaptive') {
-        let currentRow: any[] = [];
-        let currentWidth = 0;
-        let y = 0;
-        const targetHeight = thumbnailSize;
+        return ratios;
+    }, [items, files]);
 
-        items.forEach((id) => {
-            const aspect = aspectRatios[id];
-            const w = targetHeight * aspect;
-            
-            if (currentWidth + w + GAP > availableWidth) {
-                // Determine scale to fit row exactly
-                const scale = (availableWidth - (currentRow.length - 1) * GAP) / currentWidth;
-                const rowHeight = targetHeight * scale;
-                if (rowHeight > targetHeight * 2.0) { // Limit max height boost
-                     // If just one item and it's super wide (or row is very short), don't explode it?
-                     // Standard adaptive logic usually accepts the height.
+    return useMemo(() => {
+        const layout: LayoutItem[] = [];
+        let totalHeight = 0;
+        const GAP = 16;
+        const PADDING = 0; // TopicModule already has padding on container
+
+        const safeContainerWidth = containerWidth > 0 ? containerWidth : 1280;
+        // Subtract parent padding (approx 48px from px-6) if we want to be precise, 
+        // but here we are passed the container width which should be the content width if we are careful.
+        // Actually containerRect comes from ResizeObserver on the scrolling container, which includes padding? 
+        // containerRef is on "topic-gallery-container" which has "px-6 py-8". 
+        // So safeContainerWidth includes the padding. We should subtract it.
+        const availableWidth = Math.max(100, safeContainerWidth - 48); // px-6 * 2 = 3rem = 48px
+
+        if (layoutMode === 'grid') {
+            const minColWidth = thumbnailSize;
+            const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
+            const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+            const itemHeight = itemWidth; // Square
+
+            items.forEach((id, index) => {
+                const row = Math.floor(index / cols);
+                const col = index % cols;
+                layout.push({
+                    id,
+                    x: col * (itemWidth + GAP),
+                    y: row * (itemHeight + GAP),
+                    width: itemWidth,
+                    height: itemHeight
+                });
+            });
+            const rows = Math.ceil(items.length / cols);
+            totalHeight = rows * (itemHeight + GAP);
+        } else if (layoutMode === 'adaptive') {
+            let currentRow: any[] = [];
+            let currentWidth = 0;
+            let y = 0;
+            const targetHeight = thumbnailSize;
+
+            items.forEach((id) => {
+                const aspect = aspectRatios[id];
+                const w = targetHeight * aspect;
+
+                if (currentWidth + w + GAP > availableWidth) {
+                    // Determine scale to fit row exactly
+                    const scale = (availableWidth - (currentRow.length - 1) * GAP) / currentWidth;
+                    const rowHeight = targetHeight * scale;
+                    if (rowHeight > targetHeight * 2.0) { // Limit max height boost
+                        // If just one item and it's super wide (or row is very short), don't explode it?
+                        // Standard adaptive logic usually accepts the height.
+                    }
+
+                    let x = 0;
+                    currentRow.forEach(item => {
+                        const finalW = item.w * scale;
+                        layout.push({ id: item.id, x, y, width: finalW, height: rowHeight });
+                        x += finalW + GAP;
+                    });
+
+                    y += rowHeight + GAP;
+                    currentRow = [];
+                    currentWidth = 0;
                 }
 
+                currentRow.push({ id, w });
+                currentWidth += w;
+            });
+
+            // Last row - don't scale up, just place
+            if (currentRow.length > 0) {
                 let x = 0;
                 currentRow.forEach(item => {
-                    const finalW = item.w * scale;
-                    layout.push({ id: item.id, x, y, width: finalW, height: rowHeight });
-                    x += finalW + GAP;
+                    layout.push({ id: item.id, x, y, width: item.w, height: targetHeight });
+                    x += item.w + GAP;
                 });
-                
-                y += rowHeight + GAP;
-                currentRow = [];
-                currentWidth = 0;
+                y += targetHeight + GAP;
             }
-            
-            currentRow.push({ id, w });
-            currentWidth += w;
-        });
+            totalHeight = y;
 
-        // Last row - don't scale up, just place
-        if (currentRow.length > 0) {
-            let x = 0;
-            currentRow.forEach(item => {
-                layout.push({ id: item.id, x, y, width: item.w, height: targetHeight });
-                x += item.w + GAP;
-            });
-            y += targetHeight + GAP;
-        }
-        totalHeight = y;
+        } else if (layoutMode === 'masonry') {
+            const minColWidth = thumbnailSize;
+            const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
+            const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
+            const colHeights = new Array(cols).fill(0);
 
-    } else if (layoutMode === 'masonry') {
-        const minColWidth = thumbnailSize;
-        const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-        const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
-        const colHeights = new Array(cols).fill(0);
+            items.forEach(id => {
+                const aspect = aspectRatios[id];
+                const imgHeight = itemWidth / aspect;
 
-        items.forEach(id => {
-            const aspect = aspectRatios[id];
-            const imgHeight = itemWidth / aspect;
-            
-            let minCol = 0;
-            let minHeight = colHeights[0];
-            for (let i = 1; i < cols; i++) {
-                if (colHeights[i] < minHeight) {
-                    minCol = i;
-                    minHeight = colHeights[i];
+                let minCol = 0;
+                let minHeight = colHeights[0];
+                for (let i = 1; i < cols; i++) {
+                    if (colHeights[i] < minHeight) {
+                        minCol = i;
+                        minHeight = colHeights[i];
+                    }
                 }
-            }
 
-            layout.push({
-                id,
-                x: minCol * (itemWidth + GAP),
-                y: colHeights[minCol],
-                width: itemWidth,
-                height: imgHeight
+                layout.push({
+                    id,
+                    x: minCol * (itemWidth + GAP),
+                    y: colHeights[minCol],
+                    width: itemWidth,
+                    height: imgHeight
+                });
+
+                colHeights[minCol] += imgHeight + GAP;
             });
+            totalHeight = Math.max(...colHeights);
+        }
 
-            colHeights[minCol] += imgHeight + GAP;
-        });
-        totalHeight = Math.max(...colHeights);
-    }
-
-    return { layout, totalHeight };
-  }, [items, files, layoutMode, containerWidth, thumbnailSize, aspectRatios]);
+        return { layout, totalHeight };
+    }, [items, files, layoutMode, containerWidth, thumbnailSize, aspectRatios]);
 };
 
 // Extracted component to manage layout rendering properly
-const TopicFileGrid = React.memo(({ 
-    fileIds, 
-    files, 
-    layoutMode, 
-    containerWidth, 
+const TopicFileGrid = React.memo(({
+    fileIds,
+    files,
+    layoutMode,
+    containerWidth,
     selectedFileIds,
     // new: notify parent of a click (so parent can implement ctrl/shift/range selection)
     onFileClick,
     onOpenFile,
     onContextMenu,
     resourceRoot,
-    cachePath 
+    cachePath
 }: {
     fileIds: string[],
     files: Record<string, FileNode>,
@@ -188,20 +188,20 @@ const TopicFileGrid = React.memo(({
             {layout.map(item => {
                 const file = files[item.id];
                 if (!file) return null;
-                
+
                 {
                     const isSelected = (selectedFileIds || []).includes(file.id);
                     return (
-                        <div 
-                            key={file.id} 
+                        <div
+                            key={file.id}
                             // Ensure outer wrapper does NOT scale on hover; only inner content scales
                             className={`absolute cursor-pointer group rounded-lg transform-gpu group-hover:scale-100 transition-all duration-300 file-item ${isSelected ? 'z-20' : ''}`}
                             data-file-id={file.id}
-                            style={{ 
-                                left: item.x, 
-                                top: item.y, 
-                                width: item.width, 
-                                height: item.height 
+                            style={{
+                                left: item.x,
+                                top: item.y,
+                                width: item.width,
+                                height: item.height
                             }}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
@@ -280,7 +280,7 @@ interface TopicModuleProps {
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
     onCreateTopic: (parentId: string | null, name?: string, type?: string) => void;
     onDeleteTopic: (topicId: string) => void;
-    onSelectTopics: (ids: string[]) => void;
+    onSelectTopics: (ids: string[], lastSelectedId?: string | null) => void;
     // Note: onSelectFiles now accepts an optional lastSelectedId to allow caller to set it
     onSelectFiles: (ids: string[], lastSelectedId?: string | null) => void;
     // New: allow bulk selection of people
@@ -307,13 +307,13 @@ interface TopicModuleProps {
     onShowToast?: (message: string) => void;
 }
 
-export const TopicModule: React.FC<TopicModuleProps> = ({ 
+export const TopicModule: React.FC<TopicModuleProps> = ({
     topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [], selectedPersonIds = [], lastSelectedId = null,
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
     onSelectPeople, onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
     scrollTop, onScrollTopChange, isVisible = true, topicLayoutMode, onTopicLayoutModeChange, onShowToast
 }) => {
-    
+
     // Selection state for box selection
     const [isSelecting, setIsSelecting] = useState(false);
     const selectionRef = useRef<HTMLDivElement>(null);
@@ -391,7 +391,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             detachSelectionListeners();
         };
     }, [clearSelectionOverlay, detachSelectionListeners]);
-    
+
     // Context menu state
     const [contextMenu, setContextMenu] = useState<{ x: number; y: number; type: 'blank' | 'single' | 'multiple' | 'person' | 'file' | 'multiplePerson' | 'multipleFile'; topicId?: string; personId?: string; fileId?: string } | null>(null);
     const contextMenuRef = useRef<HTMLDivElement | null>(null);
@@ -400,7 +400,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     useEffect(() => {
         const el = contextMenuRef.current;
         if (!el || !contextMenu) return;
-        
+
         // Use requestAnimationFrame to ensure the DOM has been updated by React (via Portal)
         const rafId = requestAnimationFrame(() => {
             const rect = el.getBoundingClientRect();
@@ -423,7 +423,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         return () => cancelAnimationFrame(rafId);
     }, [contextMenu]);
-    
+
     // Modal states
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showRenameModal, setShowRenameModal] = useState(false);
@@ -431,7 +431,40 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
     const [currentEditingTopic, setCurrentEditingTopic] = useState<Topic | null>(null);
     const [deleteTargetIds, setDeleteTargetIds] = useState<string[]>([]);
-    
+
+    const [topicSortMode, setTopicSortMode] = useState<'name' | 'time'>(() => {
+        return (localStorage.getItem('aurora_topic_sort_mode') as 'name' | 'time') || 'time';
+    });
+    const [topicSortOrder, setTopicSortOrder] = useState<'asc' | 'desc'>(() => {
+        return (localStorage.getItem('aurora_topic_sort_order') as 'asc' | 'desc') || 'desc';
+    });
+    const [showTopicSortMenu, setShowTopicSortMenu] = useState(false);
+    const topicSortButtonRef = useRef<HTMLButtonElement>(null);
+
+    const sortTopics = useCallback((topicsList: Topic[]) => {
+        return [...topicsList].sort((a, b) => {
+            let comparison = 0;
+            if (topicSortMode === 'name') {
+                comparison = (a.name || '').localeCompare(b.name || '');
+            } else {
+                comparison = (a.createdAt || '').localeCompare(b.createdAt || '');
+            }
+            return topicSortOrder === 'asc' ? comparison : -comparison;
+        });
+    }, [topicSortMode, topicSortOrder]);
+
+    const toggleSortMode = (mode: 'name' | 'time') => {
+        if (topicSortMode === mode) {
+            const nextOrder = topicSortOrder === 'asc' ? 'desc' : 'asc';
+            setTopicSortOrder(nextOrder);
+            localStorage.setItem('aurora_topic_sort_order', nextOrder);
+        } else {
+            setTopicSortMode(mode);
+            localStorage.setItem('aurora_topic_sort_mode', mode);
+        }
+        setShowTopicSortMenu(false);
+    };
+
     // Helper to get cover image URL
     const getCoverUrl = (topic: Topic) => {
         if (topic.coverFileId && files[topic.coverFileId]) {
@@ -562,20 +595,20 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         markTopic(currentTopic.id);
         if (!currentTopic.parentId) {
-             const traverse = (parentId: string) => {
-                 Object.values(topics).forEach(child => {
-                     if (child.parentId === parentId) {
-                         markTopic(child.id);
-                         traverse(child.id);
-                     }
-                 });
-             };
-             traverse(currentTopic.id);
+            const traverse = (parentId: string) => {
+                Object.values(topics).forEach(child => {
+                    if (child.parentId === parentId) {
+                        markTopic(child.id);
+                        traverse(child.id);
+                    }
+                });
+            };
+            traverse(currentTopic.id);
         }
 
         if (Object.keys(topicsToUpdate).length === 0) {
-             setContextMenu(null);
-             return;
+            setContextMenu(null);
+            return;
         }
 
         Object.entries(topicsToUpdate).forEach(([topicId, newPeople]) => {
@@ -583,11 +616,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         });
 
         if (onShowToast) {
-             onShowToast(t('context.removedFromTopic') || '已从专题中移除');
+            onShowToast(t('context.removedFromTopic') || '已从专题中移除');
         }
 
         if (typeof onSelectPeople === 'function') {
-             onSelectPeople([]);
+            onSelectPeople([]);
         }
 
         setContextMenu(null);
@@ -602,14 +635,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     useEffect(() => {
         const elem = containerRef.current;
         if (!elem) return;
-        
+
         const observer = new ResizeObserver(entries => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
                 setContainerRect({ width, height });
             }
         });
-        
+
         observer.observe(elem);
         return () => observer.disconnect();
     }, []);
@@ -622,68 +655,68 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // Reset restoration flag when navigation occurs or visibility changes
     useLayoutEffect(() => {
         if (isVisible) {
-             hasRestoredRef.current = false;
-             if (restoreTimeoutRef.current) {
-                 clearTimeout(restoreTimeoutRef.current);
-             }
-             isRestoringScrollRef.current = false;
+            hasRestoredRef.current = false;
+            if (restoreTimeoutRef.current) {
+                clearTimeout(restoreTimeoutRef.current);
+            }
+            isRestoringScrollRef.current = false;
         }
-    }, [currentTopicId, isVisible]); 
+    }, [currentTopicId, isVisible]);
 
     // Perform restoration
     useLayoutEffect(() => {
         if (!isVisible) return;
-        
+
         let rafId: number;
         let timeoutId: any;
 
         const attemptRestore = () => {
             if (!containerRef.current || hasRestoredRef.current) return;
-            
+
             const targetScroll = scrollTop || 0;
-            
+
             // Wait for width to be ready
             if (containerRect.width <= 0) {
-                 rafId = requestAnimationFrame(attemptRestore);
-                 return;
+                rafId = requestAnimationFrame(attemptRestore);
+                return;
             }
 
             if (targetScroll > 0) {
-                 const currentScrollHeight = containerRef.current.scrollHeight;
-                 const clientHeight = containerRef.current.clientHeight;
-                 const maxScroll = Math.max(0, currentScrollHeight - clientHeight);
-                 
-                 // If target is unreachable currently, wait
-                 // But if we are very close or valid, try to set logic
-                 
-                 // Try to set it first
-                 isRestoringScrollRef.current = true;
-                 containerRef.current.scrollTop = targetScroll;
-                 
-                 const currentScroll = containerRef.current.scrollTop;
-                 const isClamped = Math.abs(currentScroll - targetScroll) > 20; // 20px tolerance
-                 
-                 // If strictly unreachable (e.g. content not loaded), continue retrying
-                 if (isClamped) {
-                     // Check if height is plausibly going to increase? 
-                     // Just keep retrying until timeout
-                     rafId = requestAnimationFrame(attemptRestore);
-                 } else {
-                     // Success
-                     hasRestoredRef.current = true;
-                     logInfo('[TopicModule] restoredScroll.success', { topicId: currentTopicId || 'root', targetScroll, actual: currentScroll });
-                     
-                     if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
-                     restoreTimeoutRef.current = setTimeout(() => {
-                         isRestoringScrollRef.current = false;
-                     }, 100);
-                 }
+                const currentScrollHeight = containerRef.current.scrollHeight;
+                const clientHeight = containerRef.current.clientHeight;
+                const maxScroll = Math.max(0, currentScrollHeight - clientHeight);
+
+                // If target is unreachable currently, wait
+                // But if we are very close or valid, try to set logic
+
+                // Try to set it first
+                isRestoringScrollRef.current = true;
+                containerRef.current.scrollTop = targetScroll;
+
+                const currentScroll = containerRef.current.scrollTop;
+                const isClamped = Math.abs(currentScroll - targetScroll) > 20; // 20px tolerance
+
+                // If strictly unreachable (e.g. content not loaded), continue retrying
+                if (isClamped) {
+                    // Check if height is plausibly going to increase? 
+                    // Just keep retrying until timeout
+                    rafId = requestAnimationFrame(attemptRestore);
+                } else {
+                    // Success
+                    hasRestoredRef.current = true;
+                    logInfo('[TopicModule] restoredScroll.success', { topicId: currentTopicId || 'root', targetScroll, actual: currentScroll });
+
+                    if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+                    restoreTimeoutRef.current = setTimeout(() => {
+                        isRestoringScrollRef.current = false;
+                    }, 100);
+                }
             } else {
                 // Explicitly reset to 0
                 if (Math.abs(containerRef.current.scrollTop) > 5) { // Only force if drift > 5px
                     isRestoringScrollRef.current = true;
                     containerRef.current.scrollTop = 0;
-                    
+
                     if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
                     restoreTimeoutRef.current = setTimeout(() => {
                         isRestoringScrollRef.current = false;
@@ -696,15 +729,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (!hasRestoredRef.current) {
             attemptRestore();
         }
-        
+
         // Safety timeout to stop infinite retries
         const safetyTimeout = setTimeout(() => {
             if (containerRef.current && !hasRestoredRef.current) {
-               // Final attempt force
-               if ((scrollTop || 0) > 0) {
-                   logInfo('[TopicModule] safetyRestoreScroll.timeout', { target: scrollTop, current: containerRef.current.scrollTop, scrollHeight: containerRef.current.scrollHeight });
-               }
-               hasRestoredRef.current = true;
+                // Final attempt force
+                if ((scrollTop || 0) > 0) {
+                    logInfo('[TopicModule] safetyRestoreScroll.timeout', { target: scrollTop, current: containerRef.current.scrollTop, scrollHeight: containerRef.current.scrollHeight });
+                }
+                hasRestoredRef.current = true;
             }
             if (rafId) cancelAnimationFrame(rafId);
         }, 2000);
@@ -723,7 +756,6 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const handleScroll = () => {
             if (isRestoringScrollRef.current) return;
             onScrollTopChange?.(container.scrollTop);
-                logDebug('[TopicModule] scroll', { action: 'scroll', topicId: currentTopicId || 'root', containerScroll: container.scrollTop });
         };
 
         container.addEventListener('scroll', handleScroll, { passive: true });
@@ -736,9 +768,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (e.ctrlKey) {
             e.preventDefault();
             const delta = e.deltaY > 0 ? -20 : 20;
-            
+
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
-            
+
             requestRef.current = requestAnimationFrame(() => {
                 setCoverHeight(prev => Math.min(600, Math.max(200, prev + delta)));
             });
@@ -756,6 +788,19 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         }
     }, [handleWheel]);
 
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            if (showTopicSortMenu && !target.closest('.topic-sort-container')) {
+                setShowTopicSortMenu(false);
+            }
+        };
+        if (showTopicSortMenu) {
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => document.removeEventListener('mousedown', handleClickOutside);
+        }
+    }, [showTopicSortMenu]);
+
     // Close context menu when clicking anywhere or scrolling
     useEffect(() => {
         const handleClickOutside = (e: MouseEvent) => {
@@ -765,11 +810,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 setContextMenu(null);
             }
         };
-        
+
         const handleScroll = () => {
             setContextMenu(null);
         };
-        
+
         if (contextMenu) {
             // Use mousedown and capture phase to ensure we catch the event before stopPropagation()
             // Add slight delay to avoid catching the same event that opened the menu
@@ -789,7 +834,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const handleContextMenu = useCallback((e: React.MouseEvent, topicId?: string) => {
         e.preventDefault();
         e.stopPropagation();
-        
+
         if (!topicId) {
             // Clicked on blank area
             setContextMenu({ x: e.clientX, y: e.clientY, type: 'blank' });
@@ -948,51 +993,67 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // Handle topic click with ctrl/shift support
     const handleTopicClick = useCallback((e: React.MouseEvent, topicId: string, allTopicIds: string[]) => {
         e.stopPropagation();
-        
+
         // Close context menu when clicking on a topic
         setContextMenu(null);
-        
+
+        // Sync local ref with prop if it changed externally (e.g. from App state)
+        if (lastSelectedId !== lastSelectedIdRef.current) {
+            lastSelectedIdRef.current = lastSelectedId;
+        }
+
         if (e.ctrlKey || e.metaKey) {
             // Ctrl/Cmd+Click: Toggle selection
+            let newSelection = [];
             if (selectedTopicIds.includes(topicId)) {
-                onSelectTopics(selectedTopicIds.filter(id => id !== topicId));
+                newSelection = selectedTopicIds.filter(id => id !== topicId);
             } else {
-                onSelectTopics([...selectedTopicIds, topicId]);
+                newSelection = [...selectedTopicIds, topicId];
             }
-            // Clear other selection types when selecting topics
+            
+            // Clear other selection types when selecting topics first
             if (typeof onSelectPeople === 'function') onSelectPeople([]);
             onSelectFiles && onSelectFiles([], null);
             // Clear local single-click person state
             setClickedOncePerson(null);
+            
+            onSelectTopics(newSelection, topicId);
             lastSelectedIdRef.current = topicId;
         } else if (e.shiftKey && lastSelectedIdRef.current) {
             // Shift+Click: Range selection
             const lastIndex = allTopicIds.indexOf(lastSelectedIdRef.current);
             const currentIndex = allTopicIds.indexOf(topicId);
-            
+
+            // Clear other selection types when selecting topics first
+            if (typeof onSelectPeople === 'function') onSelectPeople([]);
+            onSelectFiles && onSelectFiles([], null);
+            setClickedOncePerson(null);
+
             if (lastIndex !== -1 && currentIndex !== -1) {
                 const start = Math.min(lastIndex, currentIndex);
                 const end = Math.max(lastIndex, currentIndex);
                 const rangeIds = allTopicIds.slice(start, end + 1);
-                
+
                 // Merge with existing selection
                 const newSelection = [...new Set([...selectedTopicIds, ...rangeIds])];
-                onSelectTopics(newSelection);
+                onSelectTopics(newSelection, topicId);
+            } else {
+                // Fallback if range invalid
+                 onSelectTopics([topicId], topicId);
             }
-            if (typeof onSelectPeople === 'function') onSelectPeople([]);
-            onSelectFiles && onSelectFiles([], null);
-            // Clear local single-click person state
-            setClickedOncePerson(null);
         } else {
             // Normal click: Single selection
-            onSelectTopics([topicId]);
+            // Clear other selection types when selecting topics first
             if (typeof onSelectPeople === 'function') onSelectPeople([]);
             onSelectFiles && onSelectFiles([], null);
             // Clear local single-click person state
             setClickedOncePerson(null);
+            
+            onSelectTopics([topicId], topicId);
             lastSelectedIdRef.current = topicId;
+
         }
-    }, [selectedTopicIds, onSelectTopics]);
+    }, [selectedTopicIds, lastSelectedId, onSelectTopics, onSelectPeople, onSelectFiles]);
 
     const handleTopicDoubleClick = useCallback((e: React.MouseEvent, topicId: string) => {
         e.stopPropagation();
@@ -1045,7 +1106,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         setShowCreateModal(true);
         setContextMenu(null);
     }, []);
-    
+
     const handleCreateTopicWithName = useCallback((name: string, type?: string) => {
         onCreateTopic(currentTopicId, name, type ? type.slice(0, 12) : undefined);
         setShowCreateModal(false);
@@ -1069,7 +1130,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // Helpers to log scroll positions and delegate opens
     const getContainerScroll = () => containerRef.current ? containerRef.current.scrollTop : 0;
 
-    
+
     const handleOpenFileLocal = (fileId: string) => {
         const scroll = getContainerScroll();
         const file = files[fileId];
@@ -1109,33 +1170,33 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         onUpdateTopic(currentTopic.id, { fileIds: newFiles });
         onSelectFiles && onSelectFiles([], null);
         if (onShowToast) {
-             onShowToast(t('context.removedFromTopic') || '已从专题中移除');
+            onShowToast(t('context.removedFromTopic') || '已从专题中移除');
         }
         setContextMenu(null);
     }, [currentTopic, onUpdateTopic, onSelectFiles, onShowToast, t]);
 
     const { layoutItems, totalHeight } = useMemo(() => {
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
-        
+
         const rootTopics = Object.values(topics).filter(topic => !topic.parentId);
-        rootTopics.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        const sortedRootTopics = sortTopics(rootTopics);
 
         const GAP_X = 32; // Increased horizontal gap
         const GAP_Y = 48; // Increased vertical gap for title room
         const ASPECT = 0.75;
-        
-        const width = containerRect.width; 
-        
+
+        const width = containerRect.width;
+
         if (width <= 0) return { layoutItems: [], totalHeight: 0 };
-        
+
         const minItemHeight = coverHeight;
         const minItemWidth = minItemHeight * ASPECT;
-        
+
         const cols = Math.max(1, Math.floor((width + GAP_X) / (minItemWidth + GAP_X)));
         const itemWidth = minItemWidth;
         const itemHeight = minItemHeight;
-        
-        const validItems = rootTopics.map((topic, index) => {
+
+        const validItems = sortedRootTopics.map((topic, index) => {
             const row = Math.floor(index / cols);
             const col = index % cols;
             return {
@@ -1146,23 +1207,23 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 height: itemHeight
             };
         });
-        
-        const rows = Math.ceil(rootTopics.length / cols);
+
+        const rows = Math.ceil(sortedRootTopics.length / cols);
         const height = rows > 0 ? rows * itemHeight + (rows - 1) * GAP_Y : 0;
-        
+
         return { layoutItems: validItems, totalHeight: height };
 
-    }, [topics, currentTopicId, containerRect.width, coverHeight]);
+    }, [topics, currentTopicId, containerRect.width, coverHeight, sortTopics]);
 
     // View: Topic Gallery (Root)
     const renderGallery = () => {
         const rootTopics = Object.values(topics).filter(topic => !topic.parentId);
-        rootTopics.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-        const allTopicIds = rootTopics.map(t => t.id);
-        
+        const sortedRootTopics = sortTopics(rootTopics);
+        const allTopicIds = sortedRootTopics.map(t => t.id);
+
         return (
-            <div 
-                id="topic-gallery-container" 
+            <div
+                id="topic-gallery-container"
                 ref={setRefs}
                 className="p-6 h-full overflow-y-auto"
                 onMouseDown={handleMouseDown}
@@ -1170,18 +1231,58 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 onMouseUp={handleMouseUp}
                 onContextMenu={(e) => handleContextMenu(e)}
             >
-                 <div className="flex justify-between items-center mb-6">
+                <div className="flex justify-between items-center mb-6">
                     <h2 className="text-2xl font-bold text-gray-800 dark:text-white flex items-center">
                         <Layout className="mr-3" />
                         {t('sidebar.topics')}
                     </h2>
-                    <button 
-                        onClick={handleCreateTopic}
-                        className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-blue-700 transition"
-                    >
-                        <Plus size={18} className="mr-2" />
-                        {t('context.newTopic')}
-                    </button>
+                    <div className="flex items-center space-x-2">
+                        <div className="relative topic-sort-container">
+                            <button
+                                ref={topicSortButtonRef}
+                                onClick={() => setShowTopicSortMenu(!showTopicSortMenu)}
+                                className={`p-2 rounded-lg transition border ${showTopicSortMenu ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                                title={t('sort.sortBy')}
+                            >
+                                <ArrowDownUp size={18} />
+                            </button>
+                            {showTopicSortMenu && (
+                                <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 z-[60]">
+                                    <button
+                                        onClick={() => toggleSortMode('name')}
+                                        className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                                    >
+                                        <span className="text-sm">{t('sort.name')}</span>
+                                        {topicSortMode === 'name' && (
+                                            <div className="flex items-center">
+                                                <Check size={14} className="text-blue-500 mr-1" />
+                                                <span className="text-[10px] uppercase font-bold text-gray-500">{topicSortOrder === 'asc' ? '↑' : '↓'}</span>
+                                            </div>
+                                        )}
+                                    </button>
+                                    <button
+                                        onClick={() => toggleSortMode('time')}
+                                        className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                                    >
+                                        <span className="text-sm">{t('sort.date')}</span>
+                                        {topicSortMode === 'time' && (
+                                            <div className="flex items-center">
+                                                <Check size={14} className="text-blue-500 mr-1" />
+                                                <span className="text-[10px] uppercase font-bold text-gray-500">{topicSortOrder === 'asc' ? '↑' : '↓'}</span>
+                                            </div>
+                                        )}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            onClick={handleCreateTopic}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg flex items-center hover:bg-blue-700 transition shadow-sm"
+                        >
+                            <Plus size={18} className="mr-2" />
+                            {t('context.newTopic')}
+                        </button>
+                    </div>
                 </div>
 
                 <div className="relative" style={{ height: totalHeight }}>
@@ -1192,18 +1293,19 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         const isSelected = selectedTopicIds.includes(topic.id);
 
                         return (
-                            <div 
+                            <div
                                 key={topic.id}
                                 className={`topic-item group absolute cursor-pointer perspective-1000`}
                                 data-topic-id={topic.id}
-                                style={{ 
-                                    left: x, 
-                                    top: y, 
-                                    width: width, 
+                                style={{
+                                    left: x,
+                                    top: y,
+                                    width: width,
                                     height: height,
                                     transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)',
                                     zIndex: isSelected ? 10 : 0
                                 }}
+                                onMouseDown={(e) => e.stopPropagation()}
                                 onClick={(e) => handleTopicClick(e, topic.id, allTopicIds)}
                                 onDoubleClick={(e) => handleTopicDoubleClick(e, topic.id)}
                                 onContextMenu={(e) => handleContextMenu(e, topic.id)}
@@ -1217,7 +1319,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                 <Layout size={48} className="text-white opacity-50" />
                                             </div>
                                         )}
-                                        
+
                                         {/* Magazine Title Overlay */}
                                         <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
                                             <h3 className="text-white font-serif text-2xl font-bold tracking-widest uppercase drop-shadow-md truncate">
@@ -1227,7 +1329,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                                         {/* Info Overlay */}
                                         <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-12">
-                                                <div className="flex justify-between items-end text-white">
+                                            <div className="flex justify-between items-end text-white">
                                                 <div>
                                                     <div className="text-xs opacity-70 flex items-center mb-0.5">
                                                         <User size={10} className="mr-1" /> {personCount}
@@ -1238,7 +1340,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                 </div>
                                                 {topic.type && topic.type.trim() ? (
                                                     <span className="text-xs border border-white/30 rounded-full px-2 py-0.5 backdrop-blur-sm">
-                                                        {topic.type.length > 12 ? `${topic.type.slice(0,12)}…` : topic.type}
+                                                        {topic.type.length > 12 ? `${topic.type.slice(0, 12)}…` : topic.type}
                                                     </span>
                                                 ) : null}
                                             </div>
@@ -1250,10 +1352,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     })}
                     {layoutItems.length === 0 && (
                         <div className="absolute inset-0 flex items-center justify-center text-gray-400" style={{ height: 200 }}>
-                           {/* Empty state placeholder */}
+                            {/* Empty state placeholder */}
                         </div>
                     )}
-                </div>                
+                </div>
                 {/* Selection Box */}
                 <div
                     ref={selectionOverlayRef}
@@ -1268,6 +1370,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (!currentTopic) return null;
 
         const subTopics = Object.values(topics).filter(t => t.parentId === currentTopic.id);
+        const sortedSubTopics = sortTopics(subTopics);
         const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
         // File click handler for multi-select support
         const handleFileClickLocal = (e: React.MouseEvent, id: string) => {
@@ -1344,13 +1447,13 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             }
             topicPeople = Array.from(collected).map(id => people[id]).filter(Boolean);
         }
-        const allSubTopicIds = subTopics.map(t => t.id);
+        const allSubTopicIds = sortedSubTopics.map(t => t.id);
         const backgroundFile = currentTopic.backgroundFileId ? files[currentTopic.backgroundFileId] : null;
         const heroUrl = backgroundFile ? convertFileSrc(backgroundFile.path) : getCoverUrl(currentTopic);
 
         return (
-            <div 
-                id="topic-gallery-container" 
+            <div
+                id="topic-gallery-container"
                 ref={setRefs}
                 className="h-full overflow-y-auto bg-white dark:bg-gray-900"
                 onMouseDown={handleMouseDown}
@@ -1380,9 +1483,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             </p>
                         </div>
                         {currentTopic.sourceUrl && (
-                            <a 
-                                href={currentTopic.sourceUrl} 
-                                target="_blank" 
+                            <a
+                                href={currentTopic.sourceUrl}
+                                target="_blank"
                                 rel="noreferrer"
                                 className="flex items-center text-blue-500 hover:text-blue-400 mt-2 md:mt-0 bg-white/10 backdrop-blur-md px-3 py-1 rounded-full text-sm"
                             >
@@ -1394,42 +1497,72 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 </div>
 
                 <div className="w-full px-6 py-8 space-y-12">
-                     
-                     {/* Sub Topics */}
-                     {!currentTopic.parentId && (
+
+                    {/* Sub Topics */}
+                    {!currentTopic.parentId && (
                         <section>
-                             <div className="flex justify-between items-center mb-4">
+                            <div className="flex justify-between items-center mb-4">
                                 <h3 className="text-xl font-bold flex items-center dark:text-gray-200">
                                     <Folder className="mr-2 text-yellow-500" />
                                     {t('context.subTopics') || 'Sub Topics'}
                                 </h3>
-                                <button onClick={handleCreateTopic} className="text-sm text-blue-500 hover:text-blue-400 font-medium">
-                                    + {t('context.newTopic')}
-                                </button>
-                             </div>
-                             
-                             {subTopics.length > 0 ? (() => {
-                                 const subSafeWidth = containerRect.width > 0 ? containerRect.width : 1280;
-                                 const subAvailableWidth = Math.max(100, subSafeWidth - 48); // px-6 * 2
-                                 const subGap = 32; // Use same GAP_X as main gallery
-                                 const subGapY = 20; // vertical gap between subtopic rows (reduced)
-                                 const ASPECT = 0.75;
-                                 
-                                 const subItemHeight = coverHeight;
-                                 const subItemWidth = subItemHeight * ASPECT;
-                                 const subCols = Math.max(1, Math.floor((subAvailableWidth + subGap) / (subItemWidth + subGap)));
-                                 
-                                 const subTotalGridWidth = subCols * subItemWidth + (subCols - 1) * subGap;
-                                 
-                                 const subTextAreaHeight = 64;
-                                 const subTotalItemHeight = subItemHeight + subTextAreaHeight;
-                                 
-                                 const subRows = Math.ceil(subTopics.length / subCols);
-                                 const subTotalHeight = subRows * subTotalItemHeight + Math.max(0, subRows - 1) * subGapY; // Use GAP_Y = subGapY
+                                <div className="flex items-center space-x-3">
+                                    <div className="relative topic-sort-container">
+                                        <button
+                                            onClick={() => setShowTopicSortMenu(!showTopicSortMenu)}
+                                            className={`flex items-center space-x-1 text-sm font-medium transition ${showTopicSortMenu ? 'text-blue-500' : 'text-gray-500 hover:text-blue-400'}`}
+                                            title={t('sort.sortBy')}
+                                        >
+                                            <ArrowDownUp size={14} />
+                                            <span>{topicSortMode === 'name' ? t('sort.name') : t('sort.date')}</span>
+                                        </button>
+                                        {showTopicSortMenu && (
+                                            <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 z-30">
+                                                <button
+                                                    onClick={() => toggleSortMode('name')}
+                                                    className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                                                >
+                                                    <span className="text-xs">{t('sort.name')}</span>
+                                                    {topicSortMode === 'name' && <Check size={12} className="text-blue-500" />}
+                                                </button>
+                                                <button
+                                                    onClick={() => toggleSortMode('time')}
+                                                    className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                                                >
+                                                    <span className="text-xs">{t('sort.date')}</span>
+                                                    {topicSortMode === 'time' && <Check size={12} className="text-blue-500" />}
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <button onClick={handleCreateTopic} className="text-sm text-blue-500 hover:text-blue-400 font-medium">
+                                        + {t('context.newTopic')}
+                                    </button>
+                                </div>
+                            </div>
 
-                                 return (
-                                     <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTotalHeight }}>
-                                        {subTopics.map((sub, index) => {
+                            {sortedSubTopics.length > 0 ? (() => {
+                                const subSafeWidth = containerRect.width > 0 ? containerRect.width : 1280;
+                                const subAvailableWidth = Math.max(100, subSafeWidth - 48); // px-6 * 2
+                                const subGap = 32; // Use same GAP_X as main gallery
+                                const subGapY = 20; // vertical gap between subtopic rows (reduced)
+                                const ASPECT = 0.75;
+
+                                const subItemHeight = coverHeight;
+                                const subItemWidth = subItemHeight * ASPECT;
+                                const subCols = Math.max(1, Math.floor((subAvailableWidth + subGap) / (subItemWidth + subGap)));
+
+                                const subTotalGridWidth = subCols * subItemWidth + (subCols - 1) * subGap;
+
+                                const subTextAreaHeight = 64;
+                                const subTotalItemHeight = subItemHeight + subTextAreaHeight;
+
+                                const subRows = Math.ceil(sortedSubTopics.length / subCols);
+                                const subTotalHeight = subRows * subTotalItemHeight + Math.max(0, subRows - 1) * subGapY; // Use GAP_Y = subGapY
+
+                                return (
+                                    <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTotalHeight }}>
+                                        {sortedSubTopics.map((sub, index) => {
                                             const subCoverStyle = getCoverStyle(sub);
                                             const row = Math.floor(index / subCols);
                                             const col = index % subCols;
@@ -1437,16 +1570,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                             const y = row * (subTotalItemHeight + subGapY);
 
                                             return (
-                                                <div 
-                                                    key={sub.id} 
+                                                <div
+                                                    key={sub.id}
                                                     className={`topic-item group flex flex-col cursor-pointer absolute transition-all duration-300 ease-out`}
                                                     data-topic-id={sub.id}
-                                                    style={{ 
+                                                    style={{
                                                         zIndex: selectedTopicIds.includes(sub.id) ? 10 : 0,
                                                         left: x,
                                                         top: y,
                                                         width: subItemWidth
                                                     }}
+                                                    onMouseDown={(e) => e.stopPropagation()}
                                                     onClick={(e) => handleTopicClick(e, sub.id, allSubTopicIds)}
                                                     onDoubleClick={(e) => handleTopicDoubleClick(e, sub.id)}
                                                     onContextMenu={(e) => handleContextMenu(e, sub.id)}
@@ -1465,127 +1599,127 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                             {sub.type && sub.type.trim() ? (
                                                                 <div className="absolute top-3 right-3">
                                                                     <span className="text-xs border border-white/30 rounded-full px-2 py-0.5 backdrop-blur-sm bg-black/20 text-white">
-                                                                        {sub.type.length > 12 ? `${sub.type.slice(0,12)}…` : sub.type}
+                                                                        {sub.type.length > 12 ? `${sub.type.slice(0, 12)}…` : sub.type}
                                                                     </span>
                                                                 </div>
                                                             ) : null}
                                                         </div>
                                                     </div>
-                                                    
+
                                                     <div className="mt-2 text-center px-1">
                                                         <h4 className="font-serif font-bold text-lg text-gray-900 dark:text-gray-100 truncate group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
                                                             {sub.name}
                                                         </h4>
                                                         <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
-                                                            <span className="flex items-center"><User size={12} className="mr-1"/> {sub.peopleIds.length}</span>
-                                                            <span className="flex items-center"><Folder size={12} className="mr-1"/> {sub.fileIds?.length || 0}</span>
+                                                            <span className="flex items-center"><User size={12} className="mr-1" /> {sub.peopleIds.length}</span>
+                                                            <span className="flex items-center"><Folder size={12} className="mr-1" /> {sub.fileIds?.length || 0}</span>
                                                         </div>
                                                     </div>
                                                 </div>
                                             );
                                         })}
-                                     </div>
-                                 );
-                             })() : (
+                                    </div>
+                                );
+                            })() : (
                                 <div className="text-sm text-gray-400 italic">No sub-topics yet.</div>
-                             )}
+                            )}
                         </section>
-                     )}
+                    )}
 
-                     {/* People */}
-                     <section>
-                         <h3 className="text-xl font-bold flex items-center mb-4 dark:text-gray-200">
-                             <User className="mr-2 text-purple-500" />
-                             {t('context.people') || 'People'}
-                         </h3>
-                         {topicPeople.length > 0 ? (() => {
-                             // Match the "Files" grid behavior: fixed padding + fixed gap + smooth layout transition
-                             const ITEM_SIZE = 120;
-                             const PADDING_X = 20;
-                             const GAP_X = 20;
-                             const GAP_Y = 36;
-                             const ITEM_HEIGHT = ITEM_SIZE + 28; // avatar + name/spacing
+                    {/* People */}
+                    <section>
+                        <h3 className="text-xl font-bold flex items-center mb-4 dark:text-gray-200">
+                            <User className="mr-2 text-purple-500" />
+                            {t('context.people') || 'People'}
+                        </h3>
+                        {topicPeople.length > 0 ? (() => {
+                            // Match the "Files" grid behavior: fixed padding + fixed gap + smooth layout transition
+                            const ITEM_SIZE = 120;
+                            const PADDING_X = 20;
+                            const GAP_X = 20;
+                            const GAP_Y = 36;
+                            const ITEM_HEIGHT = ITEM_SIZE + 28; // avatar + name/spacing
 
-                             const safeWidth = containerRect.width > 0 ? containerRect.width : 1280;
-                             const availableWidth = Math.max(100, safeWidth - PADDING_X * 2);
-                             const cols = Math.max(1, Math.floor((availableWidth + GAP_X) / (ITEM_SIZE + GAP_X)));
-                             const rows = Math.ceil(topicPeople.length / cols);
-                             const totalHeight = rows * ITEM_HEIGHT + Math.max(0, rows - 1) * GAP_Y;
+                            const safeWidth = containerRect.width > 0 ? containerRect.width : 1280;
+                            const availableWidth = Math.max(100, safeWidth - PADDING_X * 2);
+                            const cols = Math.max(1, Math.floor((availableWidth + GAP_X) / (ITEM_SIZE + GAP_X)));
+                            const rows = Math.ceil(topicPeople.length / cols);
+                            const totalHeight = rows * ITEM_HEIGHT + Math.max(0, rows - 1) * GAP_Y;
 
-                             return (
-                                 <div className="relative w-full transition-all duration-300 ease-out" style={{ height: totalHeight }}>
-                                     {topicPeople.map((p, index) => {
-                                         const coverFile = files[p.coverFileId];
-                                         const subCount = peopleSubtopicCount && (peopleSubtopicCount[p.id] || 0);
+                            return (
+                                <div className="relative w-full transition-all duration-300 ease-out" style={{ height: totalHeight }}>
+                                    {topicPeople.map((p, index) => {
+                                        const coverFile = files[p.coverFileId];
+                                        const subCount = peopleSubtopicCount && (peopleSubtopicCount[p.id] || 0);
 
-                                         const row = Math.floor(index / cols);
-                                         const col = index % cols;
-                                         const x = PADDING_X + col * (ITEM_SIZE + GAP_X);
-                                         const y = row * (ITEM_HEIGHT + GAP_Y);
+                                        const row = Math.floor(index / cols);
+                                        const col = index % cols;
+                                        const x = PADDING_X + col * (ITEM_SIZE + GAP_X);
+                                        const y = row * (ITEM_HEIGHT + GAP_Y);
 
-                                         return (
-                                             <div
-                                                 key={p.id}
-                                                 className="absolute transition-all duration-300 ease-out person-item"
-                                                 data-person-id={p.id}
-                                                 style={{ left: x, top: y, width: ITEM_SIZE }}
-                                             >
-                                                 <div
-                                                     className="group/person flex flex-col items-center gap-2 cursor-pointer"
-                                                     title={p.name}
-                                                     onClick={(e) => handlePersonClickLocal(p.id, e)}
-                                                     onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
-                                                 >
-                                                     <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
-                                                         <div className="relative w-full h-full rounded-full overflow-hidden">
-                                                             <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
-                                                                 {coverFile ? (
-                                                                     p.faceBox ? (
-                                                                         <img
-                                                                             src={convertFileSrc(coverFile.path)}
-                                                                             className="absolute max-w-none"
-                                                                             decoding="async"
-                                                                             style={{
-                                                                                 width: `${10000 / Math.min(p.faceBox.w, 99.9)}%`,
-                                                                                 height: `${10000 / Math.min(p.faceBox.h, 99.9)}%`,
-                                                                                 left: 0,
-                                                                                 top: 0,
-                                                                                 transformOrigin: 'top left',
-                                                                                 transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
-                                                                             }}
-                                                                         />
-                                                                     ) : (
-                                                                         <img
-                                                                             src={convertFileSrc(coverFile.path)}
-                                                                             className="w-full h-full object-cover"
-                                                                         />
-                                                                     )
-                                                                 ) : (
-                                                                     <User className="w-full h-full p-6 text-gray-400" />
-                                                                 )}
-                                                             </div>
-                                                         </div>
+                                        return (
+                                            <div
+                                                key={p.id}
+                                                className="absolute transition-all duration-300 ease-out person-item"
+                                                data-person-id={p.id}
+                                                style={{ left: x, top: y, width: ITEM_SIZE }}
+                                            >
+                                                <div
+                                                    className="group/person flex flex-col items-center gap-2 cursor-pointer"
+                                                    title={p.name}
+                                                    onClick={(e) => handlePersonClickLocal(p.id, e)}
+                                                    onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
+                                                >
+                                                    <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
+                                                        <div className="relative w-full h-full rounded-full overflow-hidden">
+                                                            <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
+                                                                {coverFile ? (
+                                                                    p.faceBox ? (
+                                                                        <img
+                                                                            src={convertFileSrc(coverFile.path)}
+                                                                            className="absolute max-w-none"
+                                                                            decoding="async"
+                                                                            style={{
+                                                                                width: `${10000 / Math.min(p.faceBox.w, 99.9)}%`,
+                                                                                height: `${10000 / Math.min(p.faceBox.h, 99.9)}%`,
+                                                                                left: 0,
+                                                                                top: 0,
+                                                                                transformOrigin: 'top left',
+                                                                                transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                                            }}
+                                                                        />
+                                                                    ) : (
+                                                                        <img
+                                                                            src={convertFileSrc(coverFile.path)}
+                                                                            className="w-full h-full object-cover"
+                                                                        />
+                                                                    )
+                                                                ) : (
+                                                                    <User className="w-full h-full p-6 text-gray-400" />
+                                                                )}
+                                                            </div>
+                                                        </div>
 
-                                                         {subCount > 1 && (
-                                                             <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-white dark:border-gray-900 opacity-0 group-hover/person:opacity-100 transform scale-90 group-hover/person:scale-100 transition-all duration-150 pointer-events-none">
-                                                                 {subCount}
-                                                             </div>
-                                                         )}
-                                                     </div>
-                                                     <div className="text-sm font-bold dark:text-gray-200 truncate text-center w-full group-hover/person:text-blue-500 transition-colors">{p.name}</div>
-                                                 </div>
-                                             </div>
-                                         );
-                                     })}
-                                 </div>
-                             );
-                         })() : (
-                             <div className="text-sm text-gray-400 italic">No people added.</div>
-                         )}
-                     </section>
+                                                        {subCount > 1 && (
+                                                            <div className="absolute -top-2 -right-2 bg-blue-600 text-white text-xs font-bold rounded-full w-8 h-8 flex items-center justify-center shadow-lg border-2 border-white dark:border-gray-900 opacity-0 group-hover/person:opacity-100 transform scale-90 group-hover/person:scale-100 transition-all duration-150 pointer-events-none">
+                                                                {subCount}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-sm font-bold dark:text-gray-200 truncate text-center w-full group-hover/person:text-blue-500 transition-colors">{p.name}</div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })() : (
+                            <div className="text-sm text-gray-400 italic">No people added.</div>
+                        )}
+                    </section>
 
-                     {/* Files Grid (Simplistic for now) */}
-                     <section className="files-section">
+                    {/* Files Grid (Simplistic for now) */}
+                    <section className="files-section">
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-xl font-bold flex items-center dark:text-gray-200">
                                 <Image className="mr-2 text-green-500" />
@@ -1593,36 +1727,36 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             </h3>
                             {/* Topic layout controls: hidden when parent provides external control */}
                             {!onTopicLayoutModeChange && (
-                              <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
-                                  <button 
-                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'grid' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                      onClick={() => { setLayoutMode('grid'); localStorage.setItem('aurora_topic_layout_mode', 'grid'); }}
-                                      title={t('view.grid') || "网格视图"}
-                                  >
-                                      <Grid3X3 size={16}/>
-                                  </button>
-                                  <button 
-                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'adaptive' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                      onClick={() => { setLayoutMode('adaptive'); localStorage.setItem('aurora_topic_layout_mode', 'adaptive'); }}
-                                      title={t('view.adaptive') || "自适应视图"}
-                                  >
-                                      <Rows size={16}/>
-                                  </button>
-                                  <button 
-                                      className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'masonry' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
-                                      onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
-                                      title={t('view.masonry') || '瀑布流视图'}
-                                  >
-                                      <Columns size={16}/>
-                                  </button>
-                              </div>
+                                <div className="flex items-center space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1">
+                                    <button
+                                        className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'grid' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                        onClick={() => { setLayoutMode('grid'); localStorage.setItem('aurora_topic_layout_mode', 'grid'); }}
+                                        title={t('view.grid') || "网格视图"}
+                                    >
+                                        <Grid3X3 size={16} />
+                                    </button>
+                                    <button
+                                        className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'adaptive' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                        onClick={() => { setLayoutMode('adaptive'); localStorage.setItem('aurora_topic_layout_mode', 'adaptive'); }}
+                                        title={t('view.adaptive') || "自适应视图"}
+                                    >
+                                        <Rows size={16} />
+                                    </button>
+                                    <button
+                                        className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'masonry' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+                                        onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
+                                        title={t('view.masonry') || '瀑布流视图'}
+                                    >
+                                        <Columns size={16} />
+                                    </button>
+                                </div>
                             )}
 
                             {/* When parent controls layout, we still render the grid using external mode */}
                         </div>
 
                         {topicImages.length > 0 ? (
-                            <TopicFileGrid 
+                            <TopicFileGrid
                                 fileIds={topicImages.map(f => f.id)}
                                 files={files}
                                 layoutMode={topicLayoutMode ?? layoutMode}
@@ -1637,9 +1771,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         ) : (
                             <div className="text-sm text-gray-400 italic">No images in this topic.</div>
                         )}
-                     </section>
+                    </section>
                 </div>
-                
+
                 {/* Selection Box */}
                 <div
                     ref={selectionOverlayRef}
@@ -1648,7 +1782,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 />            </div>
         );
     };
-    
+
     // Render context menu
     const renderContextMenu = () => {
         if (!contextMenu) return null;
@@ -1734,12 +1868,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             <FolderOpen size={14} className="mr-3 opacity-70" />
                             {t('context.openFolder')}
                         </div>
-                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { 
+                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => {
                             if (currentTopicId) {
-                                onUpdateTopic(currentTopicId, { backgroundFileId: contextMenu.fileId }); 
+                                onUpdateTopic(currentTopicId, { backgroundFileId: contextMenu.fileId });
                                 if (onShowToast) onShowToast(t('context.setAsBackgroundSuccess') || '已设置为专题背景');
                             }
-                            setContextMenu(null); 
+                            setContextMenu(null);
                         }}>
                             <FileImage size={14} className="mr-3" /> {t('context.setAsBackground') || '设置为专题背景'}
                         </div>
@@ -1775,7 +1909,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         <>
             {currentTopicId ? renderDetail() : renderGallery()}
             {renderContextMenu()}
-            
+
             {/* Create Topic Modal */}
             {showCreateModal && (
                 <CreateTopicModal
@@ -1784,7 +1918,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     t={t}
                 />
             )}
-            
+
             {/* Rename Topic Modal */}
             {showRenameModal && currentEditingTopic && (
                 <RenameTopicModal
@@ -1801,7 +1935,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     t={t}
                 />
             )}
-            
+
             {/* Set Cover Modal */}
             {showCoverModal && currentEditingTopic && (
                 <SetCoverModal
@@ -1815,14 +1949,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         setCurrentEditingTopic(null);
                     }}
                     onSetCover={(fileId, cropData) => {
-                            onUpdateTopic(currentEditingTopic.id, { coverFileId: fileId, coverCrop: cropData });
+                        onUpdateTopic(currentEditingTopic.id, { coverFileId: fileId, coverCrop: cropData });
                         setShowCoverModal(false);
                         setCurrentEditingTopic(null);
                     }}
                     t={t}
                 />
             )}
-            
+
             {/* Delete Confirmation Modal */}
             {showDeleteConfirm && (
                 <DeleteConfirmModal
@@ -1851,7 +1985,7 @@ const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, 
     const [name, setName] = useState('');
     // 默认类型�?TOPIC
     const [type, setType] = useState('TOPIC');
-    
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const trimmed = name.trim();
@@ -1859,7 +1993,7 @@ const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, 
             onCreate(trimmed, type.trim().slice(0, 12));
         }
     };
-    
+
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -1922,7 +2056,7 @@ interface RenameTopicModalProps {
 const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onRename, t }) => {
     const [name, setName] = useState(topic.name);
     const [type, setType] = useState<string>(topic.type || '');
-    
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const trimmedName = name.trim();
@@ -1931,7 +2065,7 @@ const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onR
             onRename(trimmedName, trimmedType);
         }
     };
-    
+
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={onClose}>
             <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-96 shadow-xl" onClick={(e) => e.stopPropagation()}>
@@ -2004,7 +2138,7 @@ const DeleteConfirmModal: React.FC<DeleteConfirmModalProps> = ({ count, onClose,
                     </h3>
                 </div>
                 <p className="text-gray-600 dark:text-gray-300 mb-6">
-                    {count === 1 
+                    {count === 1
                         ? (t('context.deleteTopicWarning') || '确定要删除这个专题吗？此操作无法撤销。')
                         : (t('context.deleteTopicsWarning') || `确定要删除这 ${count} 个专题吗？此操作无法撤销。`)}
                 </p>
@@ -2055,35 +2189,35 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const imgRef = useRef<HTMLImageElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    
+
     // 定义裁剪区域尺寸
     const VIEWPORT_SIZE = 500;
     const CROP_WIDTH = 300;  // 3:4 ratio
     const CROP_HEIGHT = 400;
     const OFFSET_X = (VIEWPORT_SIZE - CROP_WIDTH) / 2;
     const OFFSET_Y = (VIEWPORT_SIZE - CROP_HEIGHT) / 2;
-    
+
     // Get all images from this topic
     const topicImages = (topic.fileIds || [])
         .map(id => files[id])
         .filter(f => f && f.type === FileType.IMAGE);
-    
+
     // Group by sub-topic if this is a parent topic
     const imageGroups: { name: string; images: FileNode[] }[] = [];
-    
+
     if (!topic.parentId) {
         // This is a parent topic, group by sub-topics
         const subTopics = Object.values(topics).filter(t => t.parentId === topic.id);
-        
+
         // Images directly in parent topic
         const directImages = topicImages.filter(img => {
             return !subTopics.some(sub => sub.fileIds?.includes(img.id));
         });
-        
+
         if (directImages.length > 0) {
             imageGroups.push({ name: topic.name, images: directImages });
         }
-        
+
         // Images in each sub-topic
         subTopics.forEach(sub => {
             const subImages = (sub.fileIds || [])
@@ -2097,17 +2231,17 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         // This is a sub-topic, just show all images
         imageGroups.push({ name: topic.name, images: topicImages });
     }
-    
+
     // Filter by search query
     const filteredGroups = imageGroups.map(group => ({
         ...group,
-        images: group.images.filter(img => 
+        images: group.images.filter(img =>
             img.name.toLowerCase().includes(searchQuery.toLowerCase())
         )
     })).filter(group => group.images.length > 0);
-    
+
     const selectedFile = selectedFileId ? files[selectedFileId] : null;
-    
+
     // 处理图片加载
     const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
         const img = e.currentTarget;
@@ -2115,104 +2249,104 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         const minScaleX = CROP_WIDTH / img.naturalWidth;
         const minScaleY = CROP_HEIGHT / img.naturalHeight;
         const initialScale = Math.max(minScaleX, minScaleY, 0.5);
-        
+
         // 居中显示
         const initialPosition = {
             x: (VIEWPORT_SIZE - img.naturalWidth * initialScale) / 2,
             y: (VIEWPORT_SIZE - img.naturalHeight * initialScale) / 2
         };
-        
+
         setScale(initialScale);
         setPosition(initialPosition);
     };
-    
+
     // 处理鼠标按下开始拖�?
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         setIsDragging(true);
         setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
     }, [position]);
-    
+
     // 处理鼠标移动拖拽
     const handleMouseMove = useCallback((e: React.MouseEvent) => {
         if (isDragging && imgRef.current) {
             let newX = e.clientX - dragStart.x;
             let newY = e.clientY - dragStart.y;
-            
+
             const w = imgRef.current.naturalWidth * scale;
             const h = imgRef.current.naturalHeight * scale;
-            
+
             // 计算边界限制
             const minX = OFFSET_X + CROP_WIDTH - w;
             const maxX = OFFSET_X;
             const minY = OFFSET_Y + CROP_HEIGHT - h;
             const maxY = OFFSET_Y;
-            
+
             // 应用边界限制
             if (newX > maxX) newX = maxX;
             if (newX < minX) newX = minX;
             if (newY > maxY) newY = maxY;
             if (newY < minY) newY = minY;
-            
+
             setPosition({ x: newX, y: newY });
         }
     }, [isDragging, dragStart, scale]);
-    
+
     // 处理鼠标释放
     const handleMouseUp = useCallback(() => {
         setIsDragging(false);
     }, []);
-    
+
     // 处理滚轮缩放
     const handleWheel = useCallback((e: WheelEvent) => {
         e.preventDefault();
         e.stopPropagation();
         if (!imgRef.current) return;
-        
+
         const ZOOM_SPEED = 0.1;
         const direction = Math.sign(e.deltaY);
         let newScale = scale;
-        
+
         if (direction < 0) {
             newScale = scale * (1 + ZOOM_SPEED);
         } else {
             newScale = scale / (1 + ZOOM_SPEED);
         }
-        
+
         // 计算最小缩�?
         const minScaleX = CROP_WIDTH / imgRef.current.naturalWidth;
         const minScaleY = CROP_HEIGHT / imgRef.current.naturalHeight;
         const minScale = Math.max(minScaleX, minScaleY);
         newScale = Math.max(minScale, Math.min(newScale, 5));
-        
+
         const w = imgRef.current.naturalWidth * newScale;
         const h = imgRef.current.naturalHeight * newScale;
-        
+
         let newX = position.x;
         let newY = position.y;
-        
+
         // 以裁剪框中心为缩放中�?
-        const cx = (OFFSET_X + CROP_WIDTH/2 - position.x) / scale;
-        const cy = (OFFSET_Y + CROP_HEIGHT/2 - position.y) / scale;
-        
-        newX = OFFSET_X + CROP_WIDTH/2 - cx * newScale;
-        newY = OFFSET_Y + CROP_HEIGHT/2 - cy * newScale;
-        
+        const cx = (OFFSET_X + CROP_WIDTH / 2 - position.x) / scale;
+        const cy = (OFFSET_Y + CROP_HEIGHT / 2 - position.y) / scale;
+
+        newX = OFFSET_X + CROP_WIDTH / 2 - cx * newScale;
+        newY = OFFSET_Y + CROP_HEIGHT / 2 - cy * newScale;
+
         // 应用边界限制
         const minX = OFFSET_X + CROP_WIDTH - w;
         const maxX = OFFSET_X;
         const minY = OFFSET_Y + CROP_HEIGHT - h;
         const maxY = OFFSET_Y;
-        
+
         if (newX > maxX) newX = maxX;
         if (newX < minX) newX = minX;
         if (newY > maxY) newY = maxY;
         if (newY < minY) newY = minY;
-        
+
         setScale(newScale);
         setPosition({ x: newX, y: newY });
     }, [scale, position]);
-    
+
     // 注册滚轮事件
     useEffect(() => {
         const el = containerRef.current;
@@ -2221,7 +2355,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
             return () => el.removeEventListener('wheel', handleWheel);
         }
     }, [handleWheel]);
-    
+
     // 处理文件选择
     const handleImageSelect = useCallback((fileId: string) => {
         setSelectedFileId(fileId);
@@ -2229,14 +2363,14 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         setScale(1);
         setPosition({ x: 0, y: 0 });
     }, []);
-    
+
     // 处理保存
     const handleSave = useCallback(() => {
         if (!imgRef.current || !selectedFileId) return;
-        
+
         const natW = imgRef.current.naturalWidth;
         const natH = imgRef.current.naturalHeight;
-        
+
         // 计算裁剪框在原图中的位置和尺寸（百分比）
         const x = (OFFSET_X - position.x) / scale;
         const y = (OFFSET_Y - position.y) / scale;
@@ -2259,7 +2393,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
             height: heightPercent
         });
     }, [selectedFileId, scale, position, onSetCover]);
-    
+
     return (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
             <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-6xl h-[85vh] shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
@@ -2274,7 +2408,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                 <div className="flex-1 flex flex-row overflow-hidden">
                     {/* Left: Crop Preview - Fixed Width */}
                     <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-800">
-                        <div 
+                        <div
                             ref={containerRef}
                             className="relative bg-gray-200 dark:bg-black overflow-hidden cursor-move select-none shadow-lg rounded-lg mb-4"
                             style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
@@ -2283,18 +2417,18 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                         >
                             {selectedFile && (
                                 <>
-                                    <img 
+                                    <img
                                         ref={imgRef}
                                         src={convertFileSrc(selectedFile.path)}
                                         draggable={false}
                                         onLoad={handleImageLoad}
                                         className="max-w-none absolute origin-top-left pointer-events-none"
-                                        style={{ 
-                                            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})` 
+                                        style={{
+                                            transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`
                                         }}
                                         alt="Cover preview"
                                     />
-                                    
+
                                     {/* Crop mask overlay */}
                                     <div className="absolute inset-0 pointer-events-none">
                                         <svg width="100%" height="100%">
@@ -2305,15 +2439,15 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                                                 </mask>
                                             </defs>
                                             <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#topicCropMask)" />
-                                            
-                                            <rect 
-                                                x={OFFSET_X} 
-                                                y={OFFSET_Y} 
-                                                width={CROP_WIDTH} 
-                                                height={CROP_HEIGHT} 
-                                                fill="none" 
-                                                stroke="white" 
-                                                strokeWidth="2" 
+
+                                            <rect
+                                                x={OFFSET_X}
+                                                y={OFFSET_Y}
+                                                width={CROP_WIDTH}
+                                                height={CROP_HEIGHT}
+                                                fill="none"
+                                                stroke="white"
+                                                strokeWidth="2"
                                                 rx="8"
                                                 style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
                                             />
@@ -2321,7 +2455,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                                     </div>
                                 </>
                             )}
-                            
+
                             {!selectedFile && (
                                 <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-center">
                                     <div>
@@ -2331,12 +2465,12 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                                 </div>
                             )}
                         </div>
-                        
+
                         <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-800">
-                             {t('context.cropHint') || '拖拽图片调整位置 �?滚轮缩放'}
+                            {t('context.cropHint') || '拖拽图片调整位置 �?滚轮缩放'}
                         </div>
                     </div>
-                    
+
                     {/* Right: File Selection - Flex 1 */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800">
                         <div className="p-4 border-b border-gray-200 dark:border-gray-800">
@@ -2348,7 +2482,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                                 className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                             />
                         </div>
-                        
+
                         {/* Image Grid */}
                         <div className="flex-1 overflow-y-auto p-4 content-start">
                             {filteredGroups.length === 0 ? (
@@ -2371,11 +2505,10 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                                                     <div
                                                         key={img.id}
                                                         onClick={() => handleImageSelect(img.id)}
-                                                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all shadow-sm ${
-                                                            isSelected
-                                                                ? 'border-blue-500 ring-2 ring-blue-500/30'
-                                                                : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
-                                                        }`}
+                                                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all shadow-sm ${isSelected
+                                                            ? 'border-blue-500 ring-2 ring-blue-500/30'
+                                                            : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
+                                                            }`}
                                                     >
                                                         <div className="relative aspect-square">
                                                             <ImageThumbnail
@@ -2414,7 +2547,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                         </div>
                     </div>
                 </div>
-                
+
                 {/* Footer */}
                 <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 rounded-b-lg flex items-center justify-between">
                     {/* Zoom Control - Moved to footer */}
@@ -2423,11 +2556,11 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                             <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-800">
                                 <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{t('context.zoom') || '缩放'}</span>
                                 <span className="text-xs text-gray-400 select-none">-</span>
-                                <input 
-                                    type="range" 
-                                    min="0.1" 
-                                    max="5" 
-                                    step="0.01" 
+                                <input
+                                    type="range"
+                                    min="0.1"
+                                    max="5"
+                                    step="0.01"
                                     value={scale}
                                     onChange={(e) => {
                                         const newScale = parseFloat(e.target.value);

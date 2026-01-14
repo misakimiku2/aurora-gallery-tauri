@@ -1034,7 +1034,51 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                )}
 
-               {/* 现代化来源输入区 */}
+               {/* 现代子专题列�?- 改为3:4比例网格 */}
+               {!topic.parentId && subTopics.length > 0 && (
+                   <div className="space-y-4">
+                        <div className="flex justify-center items-center px-1">
+                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
+                                {t('context.subTopics')}
+                            </label>
+                        </div>
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+                            {subTopics.map(sub => {
+                                const subCoverUrl = getCoverUrlInternal(sub);
+                                return (
+                                    <div 
+                                        key={sub.id} 
+                                        className="group/sub flex flex-col gap-2.5 cursor-pointer transition-all active:scale-95"
+                                        onClick={() => onSelectTopic && onSelectTopic(sub.id)}
+                                    >
+                                        <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
+                                            {subCoverUrl ? (
+                                                <div 
+                                                    className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110" 
+                                                    style={getCoverStyle(sub, subCoverUrl)}
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 dark:bg-gray-800/50">
+                                                    <Folder size={24} className="opacity-20 mb-1" />
+                                                    <span className="text-[9px] uppercase tracking-widest font-bold opacity-30">Topic</span>
+                                                </div>
+                                            )}
+                                            {/* 底部渐显遮罩 */}
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover/sub:opacity-100 transition-opacity pointer-events-none" />
+                                        </div>
+                                        <div className="px-1 min-w-0">
+                                            <div className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate text-center group-hover/sub:text-blue-500 transition-colors">
+                                                {sub.name}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                   </div>
+               )}
+
+               {/* 来源网址栏 */}
                <div className="space-y-3">
                    <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] ml-1">
                        {t('context.sourceUrl')}
@@ -1070,55 +1114,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                </div>
 
-               {/* 现代子专题列�?- 改为3:4比例网格 */}
-               {!topic.parentId && subTopics.length > 0 && (
-                   <div className="space-y-4">
-                        <div className="flex justify-between items-center px-1">
-                            <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
-                                {t('context.subTopics')}
-                            </label>
-                            <span className="text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
-                                {subTopics.length}
-                            </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-6">
-                            {subTopics.map(sub => {
-                                const subCoverUrl = getCoverUrlInternal(sub);
-                                return (
-                                    <div 
-                                        key={sub.id} 
-                                        className="group/sub flex flex-col gap-2.5 cursor-pointer transition-all active:scale-95"
-                                        onClick={() => onSelectTopic && onSelectTopic(sub.id)}
-                                    >
-                                        <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
-                                            {subCoverUrl ? (
-                                                <div 
-                                                    className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110" 
-                                                    style={getCoverStyle(sub, subCoverUrl)}
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 dark:bg-gray-800/50">
-                                                    <Folder size={24} className="opacity-20 mb-1" />
-                                                    <span className="text-[9px] uppercase tracking-widest font-bold opacity-30">Topic</span>
-                                                </div>
-                                            )}
-                                            {/* 底部渐显遮罩 */}
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover/sub:opacity-100 transition-opacity pointer-events-none" />
-                                        </div>
-                                        <div className="px-1 min-w-0">
-                                            <div className="text-xs font-bold text-gray-800 dark:text-gray-200 truncate group-hover/sub:text-blue-500 transition-colors">
-                                                {sub.name}
-                                            </div>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                   </div>
-               )}
-
                {/* 底部功能�?- 删除按钮 */}
-               <div className="pt-8 pb-4 flex justify-center">
+               <div className="pt-8 pb-4 flex flex-col items-center">
                    <button 
                        onClick={() => onDeleteTopic && onDeleteTopic(topic.id)}
                        className="flex items-center gap-2 px-6 py-3 text-red-500/60 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-2xl transition-all text-sm font-bold tracking-tight opacity-70 hover:opacity-100"
@@ -1126,6 +1123,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                        <Trash2 size={16} />
                        {t('context.deleteTopic')}
                    </button>
+                   <p className="text-xs text-center text-gray-400 mt-2">
+                       {t('meta.deleteTopicHint')}
+                   </p>
                </div>
            </div>
 
@@ -1136,6 +1136,145 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   {t('context.saved')}
               </div>
            )}
+        </div>
+      );
+  }
+
+  // 多选专题的情况
+  if (selectedTopicCount > 1 && topics && selectedTopicIds && selectedTopicIds.length > 0) {
+      return (
+        <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+          <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
+            <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
+                {selectedTopicCount} {t('context.selectedTopics') || t('sidebar.topics')}
+            </div>
+            <div className="text-xs text-gray-400 dark:text-gray-500 font-medium">
+                {t('meta.multipleTopicsSelected') || 'Multiple topics selected'}
+            </div>
+          </div>
+
+          <div className="p-5 space-y-6">
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
+              <div className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] mb-4 flex items-center">
+                  <Layout size={12} className="mr-2 opacity-70" /> {t('sidebar.topics')}
+              </div>
+              
+              <div className="flex flex-col gap-4 overflow-y-auto">
+                {selectedTopicIds.map(topicId => {
+                  const topic = topics[topicId];
+                  if (!topic) return null;
+
+                  const getTopicCover = (t: Topic) => {
+                       if (t.coverFileId && files[t.coverFileId]) {
+                           return convertFileSrc(files[t.coverFileId].path);
+                       }
+                       if (t.backgroundFileId && files[t.backgroundFileId]) {
+                           return convertFileSrc(files[t.backgroundFileId].path);
+                       }
+                       if (t.fileIds && t.fileIds.length > 0) {
+                           for (const fid of t.fileIds) {
+                               const f = files[fid];
+                               if (f && f.type === FileType.IMAGE) {
+                                   return convertFileSrc(f.path);
+                               }
+                           }
+                       }
+                       return null;
+                  };
+                  
+                  const coverUrl = getTopicCover(topic);
+                  const isMainTopic = !topic.parentId;
+                  const subTopics = isMainTopic 
+                        ? Object.values(topics).filter(sub => sub.parentId === topic.id)
+                        : [];
+                  
+                  return (
+                    <div 
+                      key={topicId} 
+                      className="flex items-start gap-3.5 p-3.5 bg-gray-50/50 dark:bg-gray-900/30 rounded-xl border border-gray-100 dark:border-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
+                      onClick={() => onSelectTopic && onSelectTopic(topicId)}
+                    >
+                      {/* Cover with 3:4 Ratio */}
+                      <div className="w-[66px] h-[88px] rounded-lg border border-gray-200/60 dark:border-gray-700/60 shadow-sm overflow-hidden bg-gray-200 dark:bg-gray-800 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
+                        {coverUrl ? (
+                            <img 
+                                src={coverUrl}
+                                className="w-full h-full object-cover block will-change-transform"
+                                style={{ 
+                                    imageRendering: 'auto',
+                                    transform: 'translateZ(0)',
+                                    backfaceVisibility: 'hidden'
+                                }} 
+                            />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center text-gray-400 bg-gradient-to-br from-indigo-500/5 to-purple-500/5">
+                              <Layout size={24} className="opacity-30"/>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Info Area */}
+                      <div className="flex-1 min-w-0 flex flex-col py-0.5">
+                        <div className="font-bold text-sm text-gray-900 dark:text-white truncate leading-tight mb-2 group-hover/item:text-blue-500 transition-colors">{topic.name}</div>
+                        
+                        {/* Stats Row */}
+                        <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-2.5">
+                             <span className="flex items-center bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded" title={`${topic.peopleIds?.length || 0} People`}>
+                                <User size={10} className="mr-1 opacity-70"/> {topic.peopleIds?.length || 0}
+                             </span>
+                             <span className="flex items-center bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded" title={`${topic.fileIds?.length || 0} Files`}>
+                                <ImageIcon size={10} className="mr-1 opacity-70"/> {topic.fileIds?.length || 0}
+                             </span>
+                             {isMainTopic && subTopics.length > 0 && (
+                                 <span className="flex items-center bg-blue-50 dark:bg-blue-900/20 text-blue-500 px-1.5 py-0.5 rounded" title={`${subTopics.length} Subtopics`}>
+                                    <FolderIcon size={10} className="mr-1 opacity-70"/> {subTopics.length}
+                                 </span>
+                             )}
+                        </div>
+
+                        {/* Subtopics List (Vertical List) */}
+                        {isMainTopic && subTopics.length > 0 && (
+                            <div className="space-y-1.5 pt-1.5 border-t border-gray-100 dark:border-gray-800/50">
+                                {subTopics.slice(0, 3).map(sub => (
+                                    <div key={sub.id} className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center group/sub">
+                                        <FolderIcon size={10} className="mr-2 opacity-50 shrink-0 text-blue-500/80 group-hover/sub:opacity-100" />
+                                        <span className="truncate">{sub.name}</span>
+                                    </div>
+                                ))}
+                                {subTopics.length > 3 && (
+                                    <div className="text-[9px] text-gray-400 dark:text-gray-500 pl-4.5 font-medium italic opacity-60">
+                                        + {subTopics.length - 3} {t('context.more') || 'more...'}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            
+            {/* Batch Actions */}
+            {onDeleteTopic && (
+                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                     <button
+                        onClick={() => {
+                            if (window.confirm(`${t('context.delete')} ${selectedTopicIds.length} ${t('sidebar.topics')}?`)) {
+                                selectedTopicIds.forEach(id => onDeleteTopic(id));
+                            }
+                        }}
+                        className="w-full flex items-center justify-center px-4 py-2.5 bg-red-50 hover:bg-red-100 dark:bg-red-900/10 dark:hover:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl transition-all text-sm font-bold group"
+                     >
+                         <Trash2 size={16} className="mr-2 group-hover:scale-110 transition-transform"/>
+                         {t('context.delete')} ({selectedTopicIds.length})
+                     </button>
+                     <p className="text-[10px] text-center text-gray-400 mt-3 font-medium px-2">
+                         {t('meta.deleteTopicHint') || 'Deleting topics will not delete the source files.'}
+                     </p>
+                </div>
+            )}
+          </div>
         </div>
       );
   }

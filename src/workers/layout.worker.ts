@@ -37,8 +37,6 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
         viewMode 
     } = e.data;
 
-    console.log(`[LayoutWorker] Received task: ${items.length} items, width=${containerWidth}, mode=${layoutMode}`);
-
     const layout: LayoutItem[] = [];
     let totalHeight = 0;
     const GAP = 16;
@@ -158,7 +156,6 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
     }
     
     // Send back results
-    console.log(`[LayoutWorker] Finished calculation. Total height: ${totalHeight}`);
     // console.timeEnd('Worker Calculation');
     self.postMessage({ layout, totalHeight } as LayoutWorkerOutput);
 };
