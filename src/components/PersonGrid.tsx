@@ -35,14 +35,20 @@ const PersonCard = React.memo(({
 
   return (
     <div
-      className="person-item absolute flex flex-col items-center group cursor-pointer transition-all duration-300"
+      className="person-item absolute flex flex-col items-center group cursor-pointer perspective-1000"
       data-id={person.id}
-      style={{ left: x, top: y, width, height }}
+      style={{ 
+        left: x, 
+        top: y, 
+        width, 
+        height,
+        transition: 'all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)'
+      }}
       onClick={(e) => onPersonClick(person.id, e)}
       onContextMenu={(e) => onPersonContextMenu(e, person.id)}
     >
       <div 
-        className={`rounded-full p-1 transition-all duration-300 relative shadow-md
+        className={`rounded-full p-1 transition-all duration-300 relative shadow-md transform group-hover:scale-105 group-hover:-translate-y-1 group-hover:shadow-2xl
           ${isSelected 
             ? 'bg-blue-600 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg' 
             : 'bg-gradient-to-tr from-gray-200 to-gray-300 dark:from-gray-700 dark:to-gray-600 hover:from-blue-400 hover:to-blue-600'
@@ -52,7 +58,7 @@ const PersonCard = React.memo(({
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
         <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
-          <div className="w-full h-full transition-shadow duration-300 group-hover:shadow-lg">
+          <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
             {hasCover && coverSrc ? (
                person.faceBox ? (
                   <img 

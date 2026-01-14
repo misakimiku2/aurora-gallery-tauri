@@ -1259,7 +1259,7 @@ export const App: React.FC = () => {
     const dataToSave = {
       rootPaths,
       customTags: state.customTags,
-      people: state.people,
+      people: peopleWithDisplayCounts,
       topics: state.topics,
       folderSettings: state.folderSettings,
       settings: state.settings,
@@ -2454,7 +2454,7 @@ export const App: React.FC = () => {
 
     // Count files per person
     Object.values(state.files).forEach(file => {
-      if (file.type === FileType.IMAGE && file.aiData?.analyzed && file.aiData?.faces) {
+      if (file.type === FileType.IMAGE && file.aiData?.faces) {
         const personIds = new Set(file.aiData.faces.map(face => face.personId));
         personIds.forEach(personId => {
           counts.set(personId, (counts.get(personId) || 0) + 1);
@@ -2471,6 +2471,18 @@ export const App: React.FC = () => {
 
     return counts;
   }, [state.files, state.people]);
+
+  // Use a derived people object for UI that always has the correct counts based on files metadata
+  const peopleWithDisplayCounts = useMemo(() => {
+    const updatedPeople: Record<string, Person> = {};
+    Object.keys(state.people).forEach(personId => {
+      updatedPeople[personId] = {
+        ...state.people[personId],
+        count: personCounts.get(personId) || 0
+      };
+    });
+    return updatedPeople;
+  }, [state.people, personCounts]);
 
   const handleUpdateFile = (id: string, updates: Partial<FileNode>) => {
     setState(prev => {
@@ -6239,7 +6251,7 @@ export const App: React.FC = () => {
 
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={state.people} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
+      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
         // Check user's exit action preference from ref (always latest value)
         const exitAction = exitActionRef.current;
 
@@ -6256,7 +6268,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={state.people} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
@@ -6403,10 +6415,10 @@ export const App: React.FC = () => {
                   </div>
                 )}
 
-                {activeTab.activePersonId && state.people[activeTab.activePersonId] && (
+                {activeTab.activePersonId && peopleWithDisplayCounts[activeTab.activePersonId] && (
                   <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
                     <Brain size={10} className="mr-1" />
-                    <span>{state.people[activeTab.activePersonId].name}</span>
+                    <span>{peopleWithDisplayCounts[activeTab.activePersonId].name}</span>
                     <button onClick={() => handleClearPersonFilter()} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
                   </div>
                 )}
@@ -6497,7 +6509,7 @@ export const App: React.FC = () => {
                         <span>{t('context.allPeople')}</span>
                       </div>
                       <div className="text-[10px] opacity-60">
-                        {Object.keys(state.people).length} {t('context.items')}
+                        {Object.keys(peopleWithDisplayCounts).length} {t('context.items')}
                       </div>
                     </div>
                   ) : (
@@ -6520,7 +6532,7 @@ export const App: React.FC = () => {
                   <TopicModule
                     topics={state.topics}
                     files={state.files}
-                    people={state.people}
+                    people={peopleWithDisplayCounts}
                     currentTopicId={activeTab.activeTopicId || null}
                     selectedTopicIds={activeTab.selectedTopicIds || []} // Pass selectedTopicIds
                     onNavigateTopic={handleNavigateTopic}
@@ -6594,7 +6606,7 @@ export const App: React.FC = () => {
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
                     onBackgroundContextMenu={(e) => handleContextMenu(e, 'background', '')}
-                    people={state.people}
+                    people={peopleWithDisplayCounts}
                     groupedTags={groupedTags}
                     onPersonClick={(pid, e) => handlePersonClick(pid, e)}
                     onPersonContextMenu={(e, pid) => handleContextMenu(e, 'person', pid)}
@@ -6632,7 +6644,7 @@ export const App: React.FC = () => {
           <MetadataPanel
             files={state.files}
             selectedFileIds={activeTab.selectedFileIds}
-            people={state.people}
+            people={peopleWithDisplayCounts}
             topics={state.topics}
             selectedPersonIds={activeTab.selectedPersonIds}
             selectedTopicIds={activeTab.selectedTopicIds}
@@ -6662,14 +6674,14 @@ export const App: React.FC = () => {
       </div>
 
       {/* ... (Modals Logic) ... */}
-      {state.activeModal.type && (<div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">{state.activeModal.type === 'alert' && state.activeModal.data && (<AlertModal message={state.activeModal.data.message} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-person' && (<AddToPersonModal people={state.people} files={state.files} onConfirm={handleManualAddPerson} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-topic' && (<AddToTopicModal topics={state.topics} onConfirm={handleManualAddToTopic} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-tag' && state.activeModal.data && (<RenameTagModal initialTag={state.activeModal.data.tag} onConfirm={handleRenameTag} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'batch-rename' && (<BatchRenameModal count={activeTab.selectedFileIds.length} onConfirm={handleBatchRename} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-person' && state.activeModal.data && (<RenamePersonModal initialName={state.people[state.activeModal.data.personId]?.name || ''} onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && (<ConfirmModal title={t('context.deleteTagConfirmTitle')} message={t('context.deleteTagConfirmMsg')} confirmText={t('context.deleteTagConfirmBtn')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleConfirmDeleteTags(state.activeModal.data.tags); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && (<ConfirmModal title={t('context.deletePersonConfirmTitle')} message={t('context.deletePersonConfirmMsg')} subMessage={typeof state.activeModal.data.personId === 'string' ? state.people[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} confirmText={t('settings.confirm')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleDeletePerson(state.activeModal.data.personId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'edit-tags' && state.activeModal.data && (<TagEditor file={state.files[state.activeModal.data.fileId]} files={state.files} onUpdate={handleUpdateFile} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && (<FolderPickerModal type={state.activeModal.type} files={state.files} roots={state.roots} selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={(targetId: string) => { const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); else handleMoveFiles(fileIds, targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.fileCollisionMsg')} subMessage={`"${state.activeModal.data.desiredName}"`} confirmText={t('settings.renameAuto')} confirmIcon={FilePlus} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.folderCollisionMsg')} subMessage={t('settings.mergeDesc')} confirmText={t('settings.mergeFolder')} confirmIcon={Merge} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && (<ConfirmModal title={t('settings.extensionChangeTitle')} message={t('settings.extensionChangeMsg')} subMessage={t('settings.extensionChangeConfirm')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} subMessage={state.activeModal.data.files.slice(0, 5).join(', ') + (state.activeModal.data.files.length > 5 ? `...` : '')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => { state.activeModal.data.onCancel?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} onConfirm={() => { state.activeModal.data.onConfirm?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}
+      {state.activeModal.type && (<div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">{state.activeModal.type === 'alert' && state.activeModal.data && (<AlertModal message={state.activeModal.data.message} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-person' && (<AddToPersonModal people={peopleWithDisplayCounts} files={state.files} onConfirm={handleManualAddPerson} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-topic' && (<AddToTopicModal topics={state.topics} onConfirm={handleManualAddToTopic} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-tag' && state.activeModal.data && (<RenameTagModal initialTag={state.activeModal.data.tag} onConfirm={handleRenameTag} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'batch-rename' && (<BatchRenameModal count={activeTab.selectedFileIds.length} onConfirm={handleBatchRename} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-person' && state.activeModal.data && (<RenamePersonModal initialName={peopleWithDisplayCounts[state.activeModal.data.personId]?.name || ''} onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && (<ConfirmModal title={t('context.deleteTagConfirmTitle')} message={t('context.deleteTagConfirmMsg')} confirmText={t('context.deleteTagConfirmBtn')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleConfirmDeleteTags(state.activeModal.data.tags); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && (<ConfirmModal title={t('context.deletePersonConfirmTitle')} message={t('context.deletePersonConfirmMsg')} subMessage={typeof state.activeModal.data.personId === 'string' ? peopleWithDisplayCounts[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} confirmText={t('settings.confirm')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleDeletePerson(state.activeModal.data.personId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'edit-tags' && state.activeModal.data && (<TagEditor file={state.files[state.activeModal.data.fileId]} files={state.files} onUpdate={handleUpdateFile} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && (<FolderPickerModal type={state.activeModal.type} files={state.files} roots={state.roots} selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={(targetId: string) => { const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); else handleMoveFiles(fileIds, targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.fileCollisionMsg')} subMessage={`"${state.activeModal.data.desiredName}"`} confirmText={t('settings.renameAuto')} confirmIcon={FilePlus} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.folderCollisionMsg')} subMessage={t('settings.mergeDesc')} confirmText={t('settings.mergeFolder')} confirmIcon={Merge} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && (<ConfirmModal title={t('settings.extensionChangeTitle')} message={t('settings.extensionChangeMsg')} subMessage={t('settings.extensionChangeConfirm')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} subMessage={state.activeModal.data.files.slice(0, 5).join(', ') + (state.activeModal.data.files.length > 5 ? `...` : '')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => { state.activeModal.data.onCancel?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} onConfirm={() => { state.activeModal.data.onConfirm?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}
         {state.activeModal.type === 'crop-avatar' && state.activeModal.data && (
           <CropAvatarModal
             fileUrl={state.activeModal.data.fileUrl}
             initialBox={state.activeModal.data.initialBox}
             personId={state.activeModal.data.personId}
             allFiles={state.files}
-            people={state.people}
+            people={peopleWithDisplayCounts}
             onConfirm={(box: any) => handleSaveAvatarCrop(state.activeModal.data.personId, box)}
             onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))}
             t={t}
@@ -6689,7 +6701,7 @@ export const App: React.FC = () => {
           <ClearPersonModal
             files={state.files}
             fileIds={state.activeModal.data.fileIds}
-            people={state.people}
+            people={peopleWithDisplayCounts}
             onConfirm={(personIds: string[]) => {
               handleClearPersonInfo(state.activeModal.data.fileIds, personIds);
               setState(s => ({ ...s, activeModal: { type: null } }));
@@ -6836,7 +6848,7 @@ export const App: React.FC = () => {
                 <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
               </div>
             )}
-            {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && Object.keys(state.people).length > 0 && (<> <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-person', data: null } })); closeContextMenu(); }}><User size={14} className="mr-2 opacity-70" /> {t('context.addToPerson')}</div><div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
+            {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && Object.keys(peopleWithDisplayCounts).length > 0 && (<> <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-person', data: null } })); closeContextMenu(); }}><User size={14} className="mr-2 opacity-70" /> {t('context.addToPerson')}</div><div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
               // Check how many unique people are in selected files
               const fileIds = activeTab.selectedFileIds;
               const allPeople = new Set<string>();
@@ -6943,7 +6955,7 @@ export const App: React.FC = () => {
             ) : contextMenu.targetId ? (
               // Single person selected: show full menu
               <>
-                <div className="px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1">{state.people[contextMenu.targetId]?.name}</div>
+                <div className="px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1">{peopleWithDisplayCounts[contextMenu.targetId]?.name}</div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { enterPersonView(contextMenu.targetId!); closeContextMenu(); }}>{t('context.viewTagged')}</div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleSetAvatar(contextMenu.targetId!); closeContextMenu(); }}><Crop size={14} className="mr-2 opacity-70" /> {t('context.setAvatar')}</div>
                 <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId: contextMenu.targetId! } } })); closeContextMenu(); }}><Edit3 size={14} className="mr-2 opacity-70" /> {t('context.renamePerson')}</div><div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { personIds: [contextMenu.targetId!] } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>
