@@ -10,64 +10,166 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 z-[1000] bg-gradient-to-br from-blue-50 to-purple-50 dark:from-gray-900 dark:to-gray-800 flex flex-col items-center justify-center pointer-events-auto">
-      {/* 背景装饰 */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -left-40 w-80 h-80 bg-blue-500/10 dark:bg-blue-500/20 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -right-40 w-80 h-80 bg-purple-500/10 dark:bg-purple-500/20 rounded-full blur-3xl"></div>
-      </div>
-      {/* 顶部覆盖条，遮挡标题栏区域和窗口按钮 */}
-      <div className="absolute top-0 left-0 right-0 h-40 bg-gradient-to-b from-blue-50 to-transparent dark:from-gray-900 to-transparent pointer-events-auto z-[1001]"></div>
+    <div className="fixed inset-0 z-[1000] bg-[#fafafa] dark:bg-[#0a0a0a] flex flex-col items-center justify-center pointer-events-auto overflow-hidden font-sans">
+      <style>{`
+        @keyframes float {
+          0% { transform: translateY(0px) rotate(0deg); }
+          50% { transform: translateY(-15px) rotate(1deg); }
+          100% { transform: translateY(0px) rotate(0deg); }
+        }
+        @keyframes pulse-glow {
+          0%, 100% { opacity: 0.4; transform: scale(1); filter: blur(80px); }
+          50% { opacity: 0.7; transform: scale(1.1); filter: blur(100px); }
+        }
+        @keyframes mesh-move {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes progress-shimmer {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(100%); }
+        }
+        @keyframes text-shine {
+          0% { background-position: 0% 50%; }
+          100% { background-position: 100% 50%; }
+        }
+        .animate-float {
+          animation: float 6s ease-in-out infinite;
+        }
+        .animate-pulse-glow {
+          animation: pulse-glow 5s ease-in-out infinite;
+        }
+        .mesh-gradient {
+          background: radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.12), transparent 40%),
+                      radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.12), transparent 40%),
+                      radial-gradient(circle at 50% 50%, rgba(236, 72, 153, 0.04), transparent 50%);
+          background-size: 200% 200%;
+          animation: mesh-move 20s ease infinite;
+        }
+        .text-shimmer {
+          background: linear-gradient(
+            to right,
+            #3b82f6 0%,
+            #8b5cf6 25%,
+            #ec4899 50%,
+            #8b5cf6 75%,
+            #3b82f6 100%
+          );
+          background-size: 200% auto;
+          color: transparent;
+          -webkit-background-clip: text;
+          background-clip: text;
+          animation: text-shine 4s linear infinite;
+        }
+        .dark .text-shimmer {
+          background: linear-gradient(
+            to right,
+            #60a5fa 0%,
+            #a78bfa 25%,
+            #f472b6 50%,
+            #a78bfa 75%,
+            #60a5fa 100%
+          );
+          background-size: 200% auto;
+          -webkit-background-clip: text;
+          background-clip: text;
+        }
+        .noise-overlay {
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+        }
+        .delay-0 { animation-delay: 0s; }
+        .delay-15 { animation-delay: 0.15s; }
+        .delay-30 { animation-delay: 0.3s; }
+        .delay-neg-25 { animation-delay: -2.5s; }
+      `}</style>
 
-      {/* 主内�?*/}
-      <div className="relative z-10 flex flex-col items-center justify-center h-full">
-        {/* Logo 和名�?*/}
-        <div className="flex flex-col items-center space-y-4 mb-8">
-          {/* 去掉外框，放大图标，添加更明显的投影 */}
-          <div className="flex items-center justify-center">
-            {/* 使用drop-shadow滤镜，确保阴影只应用到图标实际形�?*/}
-            <div className="dark:hidden">
-              {/* 浅色模式投影 - 增强强度，向下偏�?0像素 */}
-              <AuroraLogo size={140} style={{ filter: 'drop-shadow(0 18px 16px rgba(59, 130, 246, 0.5)) drop-shadow(0 14px 8px rgba(59, 130, 246, 0.4))' }} />
-            </div>
-            <div className="hidden dark:block">
-              {/* 深色模式投影 - 增强强度，向下偏�?0像素 */}
-              <AuroraLogo size={140} style={{ filter: 'drop-shadow(0 18px 16px rgba(96, 165, 250, 0.6)) drop-shadow(0 14px 8px rgba(96, 165, 250, 0.5))' }} />
+      {/* 动态背景 */}
+      <div className="absolute inset-0 mesh-gradient pointer-events-none" />
+      
+      {/* 背景装饰光晕 */}
+      <div className="absolute top-[10%] -left-20 w-[400px] h-[400px] bg-blue-400/10 dark:bg-blue-600/5 rounded-full animate-pulse-glow delay-0" />
+      <div className="absolute bottom-[10%] -right-20 w-[400px] h-[400px] bg-purple-400/10 dark:bg-purple-600/5 rounded-full animate-pulse-glow delay-neg-25" />
+
+      {/* 顶部覆盖条（针对Tauri自定义标题栏） */}
+      <div className="absolute top-0 left-0 right-0 h-10 bg-white/5 dark:bg-black/5 backdrop-blur-sm z-[1001]" />
+
+      {/* 主内容容器 */}
+      <div className="relative z-10 flex flex-col items-center max-w-md w-full px-12">
+        {/* Logo 区域 */}
+        <div className="relative mb-14 animate-float">
+          {/* Logo 底部的发光效果 */}
+          <div className="absolute inset-0 bg-blue-500/15 dark:bg-blue-400/15 blur-3xl rounded-full scale-[2.5]" />
+          
+          <div className="relative flex flex-col items-center">
+            <div className="drop-shadow-[0_10px_40px_rgba(59,130,246,0.4)] dark:drop-shadow-[0_10px_40px_rgba(59,130,246,0.3)]">
+              <AuroraLogo size={160} />
             </div>
           </div>
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
+        </div>
+
+        {/* 标题 */}
+        <div className="text-center space-y-3 mb-16">
+          <h1 className="text-6xl font-black tracking-tighter text-shimmer">
             AURORA
           </h1>
+          <div className="flex items-center justify-center space-x-3">
+            <div className="h-[1px] w-8 bg-gradient-to-r from-transparent to-gray-300 dark:to-gray-700" />
+            <p className="text-gray-400 dark:text-gray-500 font-bold tracking-[0.4em] text-[10px] uppercase">
+              Beyond the Vision
+            </p>
+            <div className="h-[1px] w-8 bg-gradient-to-l from-transparent to-gray-300 dark:to-gray-700" />
+          </div>
         </div>
 
-        {/* 加载指示�?*/}
-        <div className="flex flex-col items-center space-y-3 mb-8">
-          <div className="w-16 h-16 relative">
-            {/* 旋转动画 */}
-            <div className="absolute inset-0 border-4 border-blue-200 dark:border-blue-800 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-            <div className="absolute inset-2 border-4 border-purple-200 dark:border-purple-800 border-b-purple-600 dark:border-b-purple-400 rounded-full animate-spin-slow"></div>
+        {/* 加载状态 */}
+        <div className="w-full space-y-8">
+          <div className="relative h-[2px] w-full bg-gray-200 dark:bg-gray-800/50 rounded-full overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-r from-blue-500 via-purple-500 to-blue-500 rounded-full w-full opacity-40 animate-pulse" />
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent w-full animate-[progress-shimmer_1.5s_infinite]" />
           </div>
-          <p className="text-gray-600 dark:text-gray-300 text-lg">
-            加载�?..
-          </p>
-        </div>
 
-        {/* 调试信息区域 */}
-        {loadingInfo.length > 0 && (
-          <div className="absolute bottom-[10px] mx-auto w-[270px] overflow-hidden text-left">
-            <pre className="text-xs text-gray-500 dark:text-gray-400 font-mono whitespace-nowrap overflow-hidden text-ellipsis">
-              {loadingInfo[loadingInfo.length - 1]}
-            </pre>
+          <div className="flex flex-col items-center justify-center space-y-6">
+            <div className="flex items-center space-x-1.5">
+              <div className="w-1 h-1 bg-blue-500 dark:bg-blue-400 rounded-full animate-bounce delay-0" />
+              <div className="w-1 h-1 bg-blue-500 dark:bg-blue-400 rounded-full animate-bounce delay-15" />
+              <div className="w-1 h-1 bg-blue-500 dark:bg-blue-400 rounded-full animate-bounce delay-30" />
+            </div>
+            
+            <div className="h-6 flex flex-col items-center justify-center overflow-hidden">
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 tracking-wide transition-all duration-500">
+                {loadingInfo.length > 0 ? (
+                  <span className="inline-block">
+                    {loadingInfo[loadingInfo.length - 1]}
+                  </span>
+                ) : (
+                  "INITIALIZING SYSTEM"
+                )}
+              </p>
+            </div>
           </div>
-        )}
-
-        {/* 版本信息 - 放在最下方 */}
-        <div className="absolute bottom-8 text-center">
-          <p className="text-gray-500 dark:text-gray-400 text-sm">
-            Version 1.1.0
-          </p>
         </div>
       </div>
+
+      {/* 底部信息 */}
+      <div className="absolute bottom-12 flex flex-col items-center space-y-4">
+        <div className="flex items-center space-x-4 opacity-40 grayscale hover:grayscale-0 transition-all duration-500 cursor-default">
+            <div className="text-[10px] font-bold text-gray-400 dark:text-gray-500 tracking-[0.3em] uppercase">
+              Next-Gen Gallery
+            </div>
+        </div>
+        <div className="flex flex-col items-center space-y-1">
+          <span className="text-[9px] font-black text-blue-500/50 dark:text-blue-400/40 tracking-widest uppercase">
+            Product of Aurora Labs
+          </span>
+          <span className="text-[10px] font-medium text-gray-400/60 dark:text-gray-500/60">
+            v1.1.0-stable
+          </span>
+        </div>
+      </div>
+
+      {/* 噪点纹理叠加 */}
+      <div className="absolute inset-0 pointer-events-none opacity-[0.02] dark:opacity-[0.04] mix-blend-overlay noise-overlay" />
     </div>
   );
 };

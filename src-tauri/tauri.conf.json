@@ -5,7 +5,7 @@
   "identifier": "com.aurora.gallery",
   "build": {
     "beforeDevCommand": "",
-    "devUrl": "http://127.0.0.1:1422",
+    "devUrl": "http://localhost:14422",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "Aurora Gallery Tauri",
+        "url": "index.html",
         "width": 1280,
         "height": 800,
         "minWidth": 1280,
@@ -30,7 +31,9 @@
       "dangerousDisableAssetCspModification": false,
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },

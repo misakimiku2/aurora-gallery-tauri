@@ -3,9 +3,14 @@
   "identifier": "default",
   "description": "Default capabilities for the application",
   "remote": {
-    "urls": ["http://127.0.0.1:1422"]
+    "urls": [
+      "http://localhost:14422",
+      "http://127.0.0.1:14422"
+    ]
   },
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:default",
@@ -32,7 +37,9 @@
     "drag:allow-start-drag",
     {
       "identifier": "fs:scope",
-      "allowPaths": ["**"]
+      "allowPaths": [
+        "**"
+      ]
     }
   ]
 }
