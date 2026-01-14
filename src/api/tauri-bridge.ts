@@ -41,6 +41,9 @@ interface RustFileNode {
     modified: string;
     format: string;
   } | null;
+  description?: string | null;
+  sourceUrl?: string | null;
+  aiData?: any | null;
 }
 
 /**
@@ -52,7 +55,7 @@ export const searchByPalette = async (palette: string[]): Promise<string[]> => {
   if (!isTauriEnvironment()) {
     return Promise.resolve([]); // 浏览器环境不支持
   }
-  
+
   try {
     const results = await invoke('search_by_palette', { targetPalette: palette });
     if (Array.isArray(results) && results.every(item => typeof item === 'string')) {
@@ -72,9 +75,9 @@ export const searchByPalette = async (palette: string[]): Promise<string[]> => {
  */
 export const searchByColor = async (color: string): Promise<string[]> => {
   if (!isTauriEnvironment()) {
-    return Promise.resolve([]); 
+    return Promise.resolve([]);
   }
-  
+
   try {
     const results = await invoke('search_by_color', { color });
     if (Array.isArray(results) && results.every(item => typeof item === 'string')) {
@@ -100,56 +103,59 @@ export const scanDirectory = async (
   try {
     // 调用 Rust 的 scan_directory 命令
     const rustFiles = await invoke<Record<string, RustFileNode>>('scan_directory', { path });
-    
+
     // 找到根目录节点（parentId 为 null 且类型为目录的节点）
     const rootIds: string[] = [];
     const fileMap: Record<string, FileNode> = {};
-    
+
     // 转换 Rust 返回的数据格式
     Object.entries(rustFiles).forEach(([id, node]) => {
-        // 转换类型枚举（注意：Rust 使用 camelCase 序列化，所以是 'image', 'folder', 'unknown'）
-        let fileType: FileType = FileType.UNKNOWN;
-        if (node.type === 'image') {
-            fileType = FileType.IMAGE;
-        } else if (node.type === 'folder') {
-            fileType = FileType.FOLDER;
-        }
-        
-        // Note: In Tauri, node.url is a file path, not a usable URL
-        // We should not use it directly as an image src to avoid thumbnail:// protocol errors
-        
-        const fileNode: FileNode = {
-            id: node.id,
-            parentId: node.parentId || null,
-            name: node.name,
-            type: fileType,
-            path: node.path,
-            size: node.size,
-            children: node.children && node.children.length > 0 ? node.children : undefined,
-            tags: node.tags || [],
-            createdAt: node.createdAt || undefined,
-            updatedAt: node.updatedAt || undefined,
-            // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
-            url: undefined, // Don't use file path as URL - use getThumbnail() instead
-            meta: node.meta ? {
-                width: node.meta.width || 0,
-                height: node.meta.height || 0,
-                sizeKb: node.meta.sizeKb || 0,
-                created: node.meta.created,
-                modified: node.meta.modified,
-                format: node.meta.format,
-            } : undefined,
-        };
-        
-        fileMap[id] = fileNode;
-        
-        // 如果是根目录（parentId 为 null）且类型为目录，添加到 roots
-        if (!fileNode.parentId && fileNode.type === FileType.FOLDER) {
-            rootIds.push(id);
-        }
+      // 转换类型枚举（注意：Rust 使用 camelCase 序列化，所以是 'image', 'folder', 'unknown'）
+      let fileType: FileType = FileType.UNKNOWN;
+      if (node.type === 'image') {
+        fileType = FileType.IMAGE;
+      } else if (node.type === 'folder') {
+        fileType = FileType.FOLDER;
+      }
+
+      // Note: In Tauri, node.url is a file path, not a usable URL
+      // We should not use it directly as an image src to avoid thumbnail:// protocol errors
+
+      const fileNode: FileNode = {
+        id: node.id,
+        parentId: node.parentId || null,
+        name: node.name,
+        type: fileType,
+        path: node.path,
+        size: node.size,
+        children: node.children && node.children.length > 0 ? node.children : undefined,
+        tags: node.tags || [],
+        createdAt: node.createdAt || undefined,
+        updatedAt: node.updatedAt || undefined,
+        // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
+        url: undefined, // Don't use file path as URL - use getThumbnail() instead
+        meta: node.meta ? {
+          width: node.meta.width || 0,
+          height: node.meta.height || 0,
+          sizeKb: node.meta.sizeKb || 0,
+          created: node.meta.created,
+          modified: node.meta.modified,
+          format: node.meta.format,
+        } : undefined,
+        description: node.description || undefined,
+        sourceUrl: node.sourceUrl || undefined,
+        aiData: node.aiData || undefined,
+      };
+
+      fileMap[id] = fileNode;
+
+      // 如果是根目录（parentId 为 null）且类型为目录，添加到 roots
+      if (!fileNode.parentId && fileNode.type === FileType.FOLDER) {
+        rootIds.push(id);
+      }
     });
-    
-    
+
+
     return {
       roots: rootIds,
       files: fileMap,
@@ -173,11 +179,11 @@ export const openDirectory = async (): Promise<string | null> => {
       multiple: false,
       title: '选择文件夹',
     });
-    
+
     if (selected && typeof selected === 'string') {
       return selected;
     }
-    
+
     return null;
   } catch (error) {
     console.error('Failed to open directory dialog:', error);
@@ -187,205 +193,205 @@ export const openDirectory = async (): Promise<string | null> => {
 
 // 批量请求管理器
 class ThumbnailBatcher {
-    private batch: Map<string, Array<{
-        resolve: (value: string | null) => void;
-        reject: (reason?: any) => void;
-        cacheRoot: string;
-        onColors?: (colors: DominantColor[] | null) => void;
-        signal?: AbortSignal;
-    }>> = new Map();
-    private timeoutId: ReturnType<typeof setTimeout> | null = null;
-    private readonly BATCH_DELAY = 50; // 50ms 聚合时间
+  private batch: Map<string, Array<{
+    resolve: (value: string | null) => void;
+    reject: (reason?: any) => void;
+    cacheRoot: string;
+    onColors?: (colors: DominantColor[] | null) => void;
+    signal?: AbortSignal;
+  }>> = new Map();
+  private timeoutId: ReturnType<typeof setTimeout> | null = null;
+  private readonly BATCH_DELAY = 50; // 50ms 聚合时间
 
-    add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void, signal?: AbortSignal): Promise<string | null> {
-        return new Promise((resolve, reject) => {
-            if (signal?.aborted) {
-                return resolve(null);
-            }
+  add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void, signal?: AbortSignal): Promise<string | null> {
+    return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        return resolve(null);
+      }
 
-            const handler = () => {
-                // 如果在队列中被取消，尝试移除
-                if (this.batch.has(filePath)) {
-                    const list = this.batch.get(filePath)!;
-                    const index = list.findIndex(r => r.resolve === resolve);
-                    if (index !== -1) {
-                         list.splice(index, 1);
-                         if (list.length === 0) this.batch.delete(filePath);
-                    }
-                }
-                resolve(null);
-            }
-            signal?.addEventListener('abort', handler);
-
-            const request = { 
-                resolve: (val: string | null) => {
-                    signal?.removeEventListener('abort', handler);
-                    resolve(val);
-                }, 
-                reject: (err: any) => {
-                    signal?.removeEventListener('abort', handler);
-                    reject(err);
-                },
-                cacheRoot, 
-                onColors,
-                signal 
-            };
-
-            if (this.batch.has(filePath)) {
-               this.batch.get(filePath)!.push(request);
-            } else {
-               this.batch.set(filePath, [request]);
-            }
-
-            if (!this.timeoutId) {
-                this.timeoutId = setTimeout(() => this.processBatch(), this.BATCH_DELAY);
-            }
-        });
-    }
-
-    private async processBatch() {
-        this.timeoutId = null;
-        if (this.batch.size === 0) return;
-
-        // 取出所有待处理项
-        // Filter out aborted requests before processing
-        const currentBatch = new Map<string, Array<{
-             resolve: (value: string | null) => void;
-             reject: (reason?: any) => void;
-             cacheRoot: string;
-             onColors?: (colors: DominantColor[] | null) => void;
-             signal?: AbortSignal;
-        }>>();
-
-        for (const [path, requests] of this.batch.entries()) {
-             const activeRequests = requests.filter(r => !r.signal?.aborted);
-             if (activeRequests.length > 0) {
-                 currentBatch.set(path, activeRequests);
-             }
+      const handler = () => {
+        // 如果在队列中被取消，尝试移除
+        if (this.batch.has(filePath)) {
+          const list = this.batch.get(filePath)!;
+          const index = list.findIndex(r => r.resolve === resolve);
+          if (index !== -1) {
+            list.splice(index, 1);
+            if (list.length === 0) this.batch.delete(filePath);
+          }
         }
-        this.batch.clear();
+        resolve(null);
+      }
+      signal?.addEventListener('abort', handler);
 
-        if (currentBatch.size === 0) return;
+      const request = {
+        resolve: (val: string | null) => {
+          signal?.removeEventListener('abort', handler);
+          resolve(val);
+        },
+        reject: (err: any) => {
+          signal?.removeEventListener('abort', handler);
+          reject(err);
+        },
+        cacheRoot,
+        onColors,
+        signal
+      };
 
+      if (this.batch.has(filePath)) {
+        this.batch.get(filePath)!.push(request);
+      } else {
+        this.batch.set(filePath, [request]);
+      }
+
+      if (!this.timeoutId) {
+        this.timeoutId = setTimeout(() => this.processBatch(), this.BATCH_DELAY);
+      }
+    });
+  }
+
+  private async processBatch() {
+    this.timeoutId = null;
+    if (this.batch.size === 0) return;
+
+    // 取出所有待处理项
+    // Filter out aborted requests before processing
+    const currentBatch = new Map<string, Array<{
+      resolve: (value: string | null) => void;
+      reject: (reason?: any) => void;
+      cacheRoot: string;
+      onColors?: (colors: DominantColor[] | null) => void;
+      signal?: AbortSignal;
+    }>>();
+
+    for (const [path, requests] of this.batch.entries()) {
+      const activeRequests = requests.filter(r => !r.signal?.aborted);
+      if (activeRequests.length > 0) {
+        currentBatch.set(path, activeRequests);
+      }
+    }
+    this.batch.clear();
+
+    if (currentBatch.size === 0) return;
+
+    try {
+      // 按照 cacheRoot 分组
+      const batchesByRoot: Record<string, string[]> = {};
+
+      for (const [path, items] of currentBatch.entries()) {
+        const item = items[0]; // Use the first item's cacheRoot (assume same for same path)
+        if (!batchesByRoot[item.cacheRoot]) {
+          batchesByRoot[item.cacheRoot] = [];
+        }
+        batchesByRoot[item.cacheRoot].push(path);
+      }
+
+      // 并行发送所有分组的批量请求
+      await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
         try {
-            // 按照 cacheRoot 分组
-            const batchesByRoot: Record<string, string[]> = {};
-            
-            for (const [path, items] of currentBatch.entries()) {
-                const item = items[0]; // Use the first item's cacheRoot (assume same for same path)
-                if (!batchesByRoot[item.cacheRoot]) {
-                    batchesByRoot[item.cacheRoot] = [];
-                }
-                batchesByRoot[item.cacheRoot].push(path);
-            }
+          // 创建通道
+          const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null; fromCache?: boolean }>();
 
-            // 并行发送所有分组的批量请求
-            await Promise.all(Object.entries(batchesByRoot).map(async ([cacheRoot, paths]) => {
-                try {
-                    // 创建通道
-                    const channel = new Channel<{ path: string; url: string | null; colors?: DominantColor[] | null; fromCache?: boolean }>();
-                    
-                    // 监听通道消息 (流式结果！)
-                    channel.onmessage = ({ path, url, colors, fromCache }) => {
-                        const items = currentBatch.get(path);
-                        if (items) {
-                            if (url) {
-                                // Backend indicates whether it was served from disk cache
-                                if (fromCache) {
-                                    performanceMonitor.increment('thumbnailCacheHit');
-                                } else {
-                                    performanceMonitor.increment('thumbnailCacheMiss');
-                                }
-                                // 同时缓存原始路径（用于外部拖拽时作为图标）
-                                // 确保缓存存在，如果不存在则创建
-                                if (!(window as any).__AURORA_THUMBNAIL_PATH_CACHE__) {
-                                    // 简单的 LRU 缓存实现
-                                    const cache = new Map<string, { value: string; timestamp: number }>();
-                                    const maxSize = 1000;
-                                    (window as any).__AURORA_THUMBNAIL_PATH_CACHE__ = {
-                                        get: (key: string) => {
-                                            const item = cache.get(key);
-                                            if (item) {
-                                                cache.set(key, { ...item, timestamp: Date.now() });
-                                                return item.value;
-                                            }
-                                            return undefined;
-                                        },
-                                        set: (key: string, value: string) => {
-                                            if (cache.size >= maxSize) {
-                                                let oldestKey: string | null = null;
-                                                let oldestTime = Infinity;
-                                                for (const [k, v] of cache.entries()) {
-                                                    if (v.timestamp < oldestTime) {
-                                                        oldestTime = v.timestamp;
-                                                        oldestKey = k;
-                                                    }
-                                                }
-                                                if (oldestKey) cache.delete(oldestKey);
-                                            }
-                                            cache.set(key, { value, timestamp: Date.now() });
-                                        },
-                                        has: (key: string) => cache.has(key)
-                                    };
-                                }
-                                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                pathCache.set(path, url);
-                                
-                                const src = convertFileSrc(url);
-                                items.forEach(item => {
-                                    if (!item.signal?.aborted) item.resolve(src);
-                                });
-                            } else {
-                                items.forEach(item => {
-                                    if (!item.signal?.aborted) item.resolve(null);
-                                });
-                            }
-                            
-                            // 回调颜色数据
-                            if (colors) {
-                                items.forEach(item => {
-                                    if (item.onColors && !item.signal?.aborted) item.onColors(colors);
-                                });
-                            } else {
-                                items.forEach(item => {
-                                     if (item.onColors && !item.signal?.aborted) item.onColors(null);
-                                });
-                            }
-                        }
-                    };
-
-                    // 调用 Rust 的流式批量接口
-                    await invoke('get_thumbnails_batch', {
-                        filePaths: paths,
-                        cacheRoot: cacheRoot,
-                        onEvent: channel // 传递通道
-                    });
-                } catch (err) {
-                    console.error('Batch processing failed:', err);
-                    // 局部失败
-                    paths.forEach(path => {
-                        const items = currentBatch.get(path);
-                        if (items) {
-                             items.forEach(item => {
-                                item.resolve(null);
-                                if (item.onColors) item.onColors(null);
-                             });
-                        }
-                    });
+          // 监听通道消息 (流式结果！)
+          channel.onmessage = ({ path, url, colors, fromCache }) => {
+            const items = currentBatch.get(path);
+            if (items) {
+              if (url) {
+                // Backend indicates whether it was served from disk cache
+                if (fromCache) {
+                  performanceMonitor.increment('thumbnailCacheHit');
+                } else {
+                  performanceMonitor.increment('thumbnailCacheMiss');
                 }
-            }));
-            
-        } catch (error) {
-            console.error('Global batch error:', error);
-            // 全局失败
-            for (const items of currentBatch.values()) {
-                 items.forEach(item => {
-                    item.resolve(null);
-                    if (item.onColors) item.onColors(null);
-                 });
+                // 同时缓存原始路径（用于外部拖拽时作为图标）
+                // 确保缓存存在，如果不存在则创建
+                if (!(window as any).__AURORA_THUMBNAIL_PATH_CACHE__) {
+                  // 简单的 LRU 缓存实现
+                  const cache = new Map<string, { value: string; timestamp: number }>();
+                  const maxSize = 1000;
+                  (window as any).__AURORA_THUMBNAIL_PATH_CACHE__ = {
+                    get: (key: string) => {
+                      const item = cache.get(key);
+                      if (item) {
+                        cache.set(key, { ...item, timestamp: Date.now() });
+                        return item.value;
+                      }
+                      return undefined;
+                    },
+                    set: (key: string, value: string) => {
+                      if (cache.size >= maxSize) {
+                        let oldestKey: string | null = null;
+                        let oldestTime = Infinity;
+                        for (const [k, v] of cache.entries()) {
+                          if (v.timestamp < oldestTime) {
+                            oldestTime = v.timestamp;
+                            oldestKey = k;
+                          }
+                        }
+                        if (oldestKey) cache.delete(oldestKey);
+                      }
+                      cache.set(key, { value, timestamp: Date.now() });
+                    },
+                    has: (key: string) => cache.has(key)
+                  };
+                }
+                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                pathCache.set(path, url);
+
+                const src = convertFileSrc(url);
+                items.forEach(item => {
+                  if (!item.signal?.aborted) item.resolve(src);
+                });
+              } else {
+                items.forEach(item => {
+                  if (!item.signal?.aborted) item.resolve(null);
+                });
+              }
+
+              // 回调颜色数据
+              if (colors) {
+                items.forEach(item => {
+                  if (item.onColors && !item.signal?.aborted) item.onColors(colors);
+                });
+              } else {
+                items.forEach(item => {
+                  if (item.onColors && !item.signal?.aborted) item.onColors(null);
+                });
+              }
             }
+          };
+
+          // 调用 Rust 的流式批量接口
+          await invoke('get_thumbnails_batch', {
+            filePaths: paths,
+            cacheRoot: cacheRoot,
+            onEvent: channel // 传递通道
+          });
+        } catch (err) {
+          console.error('Batch processing failed:', err);
+          // 局部失败
+          paths.forEach(path => {
+            const items = currentBatch.get(path);
+            if (items) {
+              items.forEach(item => {
+                item.resolve(null);
+                if (item.onColors) item.onColors(null);
+              });
+            }
+          });
         }
+      }));
+
+    } catch (error) {
+      console.error('Global batch error:', error);
+      // 全局失败
+      for (const items of currentBatch.values()) {
+        items.forEach(item => {
+          item.resolve(null);
+          if (item.onColors) item.onColors(null);
+        });
+      }
     }
+  }
 }
 
 const thumbnailBatcher = new ThumbnailBatcher();
@@ -400,23 +406,23 @@ const thumbnailBatcher = new ThumbnailBatcher();
  * @returns 缩略图 Asset URL，如果失败则返回 null
  */
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => {
-    // 验证参数
-    if (!filePath || filePath.trim() === '') return null;
-    if (!rootPath || rootPath.trim() === '') return null;
+  // 验证参数
+  if (!filePath || filePath.trim() === '') return null;
+  if (!rootPath || rootPath.trim() === '') return null;
 
-    // 计算缓存目录路径
-    const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+  // 计算缓存目录路径
+  const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
 
-    // 使用批量处理器，记录时长并绕过采样以确保收集到关键路径数据
-    const timerId = performanceMonitor.start('getThumbnail', undefined, true);
-    try {
-        const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
-        performanceMonitor.end(timerId, 'getThumbnail', { success: !!res, filePath });
-        return res;
-    } catch (err) {
-        performanceMonitor.end(timerId, 'getThumbnail', { success: false, filePath, error: true });
-        throw err;
-    }
+  // 使用批量处理器，记录时长并绕过采样以确保收集到关键路径数据
+  const timerId = performanceMonitor.start('getThumbnail', undefined, true);
+  try {
+    const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
+    performanceMonitor.end(timerId, 'getThumbnail', { success: !!res, filePath });
+    return res;
+  } catch (err) {
+    performanceMonitor.end(timerId, 'getThumbnail', { success: false, filePath, error: true });
+    throw err;
+  }
 };
 
 /**
@@ -431,7 +437,7 @@ export const readFileAsBase64 = async (filePath: string): Promise<string | null>
       console.error('readFileAsBase64: filePath is empty or invalid');
       return null;
     }
-    
+
     // Tauri 2.0 会自动将 TypeScript 的 camelCase (filePath) 转换为 Rust 的 snake_case (file_path)
     const dataUrl = await invoke<string | null>('read_file_as_base64', { filePath });
     return dataUrl;
@@ -456,14 +462,14 @@ export const ensureDirectory = async (path: string): Promise<void> => {
 
 // Deprecated: use ensureDirectory instead
 export const ensureCacheDirectory = async (rootPath: string): Promise<void> => {
-    // Adapter to new function logic if needed, or just keep as is but utilizing new rust command if logic matches
-    // But since we changed rust command name, we must update this or just replace usage.
-    // Let's replace usage in App.tsx mainly.
-    // But for safety, let's make this function call ensureDirectory with the appended path
-    const path = rootPath.endsWith('.Aurora_Cache') || rootPath.endsWith('.Aurora_Cache\\') || rootPath.endsWith('.Aurora_Cache/')
-        ? rootPath 
-        : `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
-    return ensureDirectory(path);
+  // Adapter to new function logic if needed, or just keep as is but utilizing new rust command if logic matches
+  // But since we changed rust command name, we must update this or just replace usage.
+  // Let's replace usage in App.tsx mainly.
+  // But for safety, let's make this function call ensureDirectory with the appended path
+  const path = rootPath.endsWith('.Aurora_Cache') || rootPath.endsWith('.Aurora_Cache\\') || rootPath.endsWith('.Aurora_Cache/')
+    ? rootPath
+    : `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+  return ensureDirectory(path);
 };
 
 /**
@@ -615,7 +621,7 @@ export const writeFileFromBytes = async (filePath: string, bytes: Uint8Array): P
 export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => {
   try {
     const rustFile = await invoke<RustFileNode>('scan_file', { filePath, parentId: parentId || null });
-    
+
     // Convert Rust FileNode to TypeScript FileNode
     return {
       id: rustFile.id,
@@ -636,7 +642,10 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
         created: rustFile.meta.created,
         modified: rustFile.meta.modified,
         format: rustFile.meta.format
-      } : undefined
+      } : undefined,
+      description: rustFile.description || undefined,
+      sourceUrl: rustFile.sourceUrl || undefined,
+      aiData: rustFile.aiData || undefined,
     };
   } catch (error) {
     console.error('Failed to scan file:', error);
@@ -780,7 +789,7 @@ export const startDragToExternal = async (
     console.warn('startDragToExternal is only available in Tauri environment');
     return;
   }
-  
+
   if (!filePaths || filePaths.length === 0) {
     console.warn('No files to drag');
     return;
@@ -788,7 +797,7 @@ export const startDragToExternal = async (
 
   try {
     let finalIconPath: string | undefined;
-    
+
     // 如果提供了缩略图路径和缓存目录，生成组合预览图
     if (thumbnailPaths && thumbnailPaths.length > 0 && cacheRoot) {
       // 过滤掉空路径
@@ -797,7 +806,7 @@ export const startDragToExternal = async (
         finalIconPath = await generateDragPreview(validPaths, filePaths.length, cacheRoot) || undefined;
       }
     }
-    
+
     // 如果没有生成预览图，尝试从缩略图缓存获取单个缩略图
     if (!finalIconPath) {
       const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
@@ -808,7 +817,7 @@ export const startDragToExternal = async (
         }
       }
     }
-    
+
     // 如果还是没有缩略图，使用原始文件（仅对图片）
     if (!finalIconPath) {
       const firstFilePath = filePaths[0];
@@ -817,7 +826,7 @@ export const startDragToExternal = async (
         finalIconPath = firstFilePath;
       }
     }
-    
+
     // 调用 tauri-plugin-drag 的 startDrag
     // item 是文件路径数组，icon 是预览图标路径
     await tauriStartDrag(
@@ -840,6 +849,27 @@ export const startDragToExternal = async (
     if (onDragEnd) {
       onDragEnd();
     }
+  }
+};
+
+/**
+ * 更新或插入文件元数据到数据库
+ * @param metadata 元数据对象
+ */
+export const dbUpsertFileMetadata = async (metadata: {
+  fileId: string;
+  path: string;
+  tags?: string[];
+  description?: string;
+  sourceUrl?: string;
+  aiData?: any;
+  updatedAt?: number;
+}): Promise<void> => {
+  try {
+    await invoke('db_upsert_file_metadata', { metadata });
+  } catch (error) {
+    console.error('Failed to upsert file metadata:', error);
+    throw error;
   }
 };
 

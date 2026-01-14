@@ -1,4 +1,4 @@
-
+﻿
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { FileNode, FileType } from '../types';
@@ -296,7 +296,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
               <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
               <Film className="text-purple-500" size={20} />
               <span className="font-bold text-lg truncate">{folder.name}</span>
-              <span className="text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full whitespace-nowrap border border-gray-200 dark:border-gray-700">
+              <span className="text-sm text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-2 py-0.5 rounded-full whitespace-nowrap border border-gray-200 dark:border-gray-800">
                  {currentFile?.name}
               </span>
            </div>
@@ -451,7 +451,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
             </div>
 
             {/* Frame Info */}
-            <div className="flex flex-col items-center justify-center w-24 font-mono text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 py-1.5 px-3 rounded-md border border-gray-200 dark:border-gray-700 ml-4 mb-1">
+            <div className="flex flex-col items-center justify-center w-24 font-mono text-sm text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 py-1.5 px-3 rounded-md border border-gray-200 dark:border-gray-800 ml-4 mb-1">
                 <span className="font-bold text-lg text-purple-600 dark:text-purple-400 leading-none">{currentIndex + 1}</span>
                 <span className="text-[10px] text-gray-400 mt-0.5">/ {totalFrames}</span>
             </div>
@@ -482,7 +482,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                             className={`flex-1 py-1.5 px-3 rounded text-xs font-bold border transition-all ${
                                 fps === val 
                                 ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-500 text-purple-600 dark:text-purple-300' 
-                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-purple-300'
+                                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-400 hover:border-purple-300'
                             }`}
                          >
                              {val} FPS
@@ -494,7 +494,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                         type="number" 
                         value={fps} 
                         onChange={e => setFps(Math.max(1, parseInt(e.target.value) || 24))} 
-                        className="w-16 bg-transparent text-sm font-bold text-center outline-none border-b border-gray-300 dark:border-gray-600 focus:border-purple-500 text-gray-800 dark:text-gray-200"
+                        className="w-16 bg-transparent text-sm font-bold text-center outline-none border-b border-gray-300 dark:border-gray-700 focus:border-purple-500 text-gray-800 dark:text-gray-200"
                      />
                      <span className="text-xs text-gray-500 ml-2">Custom FPS</span>
                  </div>
@@ -505,7 +505,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                  <div className="flex items-center text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">
                      <Repeat size={12} className="mr-1.5" /> {t('sequence.loop')}
                  </div>
-                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg border border-gray-200 dark:border-gray-700">
+                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg border border-gray-200 dark:border-gray-800">
                      <button
                         onClick={() => setIsLooping(false)}
                         className={`flex-1 py-2 px-3 rounded text-xs font-medium flex items-center justify-center transition-all ${
@@ -534,7 +534,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                  <div className="flex items-center text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider font-semibold mb-2">
                      <Info size={12} className="mr-1.5" /> {t('sequence.folderInfo')}
                  </div>
-                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+                 <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
                      <h3 className="font-bold text-sm text-gray-800 dark:text-gray-200 mb-1">{folder.name}</h3>
                      {folder.description ? (
                          <p className="text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap leading-relaxed">
@@ -553,7 +553,7 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
       {/* Context Menu */}
       {contextMenu.visible && (
         <div 
-          className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[200px] z-[60] animate-zoom-in"
+          className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[200px] z-[60] animate-zoom-in"
           style={{ 
             top: 'auto', 
             left: 'auto',
@@ -587,32 +587,32 @@ export const SequenceViewer: React.FC<SequenceViewerProps> = ({
                 y = 0;
               }
               
-              // 设置最终位置
+              // 设置最终位�?
               el.style.left = `${x}px`;
               el.style.top = `${y}px`;
             }
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { togglePlay(); setContextMenu({...contextMenu, visible: false}); }}>
+            <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { togglePlay(); setContextMenu({...contextMenu, visible: false}); }}>
                 {isPlaying ? <Pause size={14} className="mr-2"/> : <Play size={14} className="mr-2"/>} 
                 {isPlaying ? t('sequence.pause') : t('sequence.play')}
             </div>
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleNext(); setContextMenu({...contextMenu, visible: false}); }}>
+            <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleNext(); setContextMenu({...contextMenu, visible: false}); }}>
                 <ChevronRight size={14} className="mr-2"/> {t('sequence.next')}
             </div>
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handlePrev(); setContextMenu({...contextMenu, visible: false}); }}>
+            <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handlePrev(); setContextMenu({...contextMenu, visible: false}); }}>
                 <ChevronLeft size={14} className="mr-2"/> {t('sequence.prev')}
             </div>
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginal(); setContextMenu({...contextMenu, visible: false}); }}>
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+            <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginal(); setContextMenu({...contextMenu, visible: false}); }}>
                 <Maximize size={14} className="mr-2"/> {t('sequence.original')}
             </div>
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleReset(); setContextMenu({...contextMenu, visible: false}); }}>
+            <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleReset(); setContextMenu({...contextMenu, visible: false}); }}>
                 <Minimize size={14} className="mr-2"/> {t('sequence.fit')}
             </div>
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-            <div className="px-4 py-2 hover:bg-red-600 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={handleDeleteRequest}>
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+            <div className="px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={handleDeleteRequest}>
                 <Trash2 size={14} className="mr-2"/> {t('context.delete')}
             </div>
         </div>

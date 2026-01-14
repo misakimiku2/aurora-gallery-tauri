@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup } from '../types';
@@ -16,11 +16,11 @@ import { performanceMonitor } from '../utils/performanceMonitor';
 declare global {
   interface Window {
     __AURORA_THUMBNAIL_CACHE__?: LRUCache<string>;
-    __AURORA_THUMBNAIL_PATH_CACHE__?: LRUCache<string>; // 缩略图原始文件路径缓存（用于外部拖拽）
+    __AURORA_THUMBNAIL_PATH_CACHE__?: LRUCache<string>; // 缩略图原始文件路径缓存（用于外部拖拽�?
   }
 }
 
-// LRU缓存类，带大小限制
+// LRU缓存类，带大小限�?
 class LRUCache<T> {
   private cache: Map<string, { value: T; timestamp: number }>;
   private maxSize: number;
@@ -41,7 +41,7 @@ class LRUCache<T> {
   }
 
   set(key: string, value: T): void {
-    // 检查是否超过最大容量
+    // 检查是否超过最大容�?
     if (this.cache.size >= this.maxSize) {
       // 找出最久未使用的项
       let oldestKey: string | undefined;
@@ -76,10 +76,10 @@ class LRUCache<T> {
   }
 }
 
-// 获取或初始化全局缓存 (挂载在 window 上以防热更新丢失)
+// 获取或初始化全局缓存 (挂载�?window 上以防热更新丢失)
 const getGlobalCache = () => {
   if (!window.__AURORA_THUMBNAIL_CACHE__) {
-    // 限制缓存大小为1000个项目，约50-100MB内存
+    // 限制缓存大小�?000个项目，�?0-100MB内存
     window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(1000);
   }
   return window.__AURORA_THUMBNAIL_CACHE__;
@@ -241,7 +241,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
   
   // 初始化时尝试从全局缓存读取
-  // 简化 Key: 只使用 filePath，提高命中率。文件修改后 getThumbnail 仍会更新图片。
+  // 简�?Key: 只使�?filePath，提高命中率。文件修改后 getThumbnail 仍会更新图片�?
   const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(() => {
       if (!filePath) return null;
       // const key = `${filePath}|${modified || ''}`; 
@@ -251,7 +251,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   });
   
   const [animSrc, setAnimSrc] = React.useState<string | null>(null);
-  // 如果有缓存，初始 loading 为 false
+  // 如果有缓存，初始 loading �?false
   const [loading, setLoading] = React.useState(!thumbnailSrc);
 
   const hitRecordedRef = useRef(false);
@@ -269,7 +269,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     // Only load thumbnail if the component is in view or was previously in view
     if ((isInView || wasInView) && filePath && resourceRoot) {
       const cache = getGlobalCache();
-      const key = filePath; // 保持 Key 一致
+      const key = filePath; // 保持 Key 一�?
 
       // 如果已经有图了（比如从缓存中读到的），且 URL 没变，就不用重新加载
       if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
@@ -283,7 +283,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
       const controller = new AbortController();
       const loadThumbnail = async () => {
-        // 只有当没有当前数据时才显示 loading
+        // 只有当没有当前数据时才显�?loading
         if (!thumbnailSrc) setLoading(true);
         
         try {
@@ -325,7 +325,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
     const loadAnimation = async () => {
       if (isHovering && filePath) {
-        // 从文件路径提取格式
+        // 从文件路径提取格�?
         const fileName = filePath.split(/[\\/]/).pop() || '';
         const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
         const isAnimationFormat = (fileMeta?.format === 'gif' || fileMeta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
@@ -399,11 +399,11 @@ const findImagesDeeply = (
     limit: number = 3
 ): FileNode[] => {
     const images: FileNode[] = [];
-    // 使用栈进行 DFS，或者队列进行 BFS
+    // 使用栈进�?DFS，或者队列进�?BFS
     const stack: string[] = [...(rootFolder.children || [])];
     const visited = new Set<string>(); // 防止循环引用
     
-    // 设置一个遍历上限，防止超大文件夹卡死 UI
+    // 设置一个遍历上限，防止超大文件夹卡�?UI
     let traversalCount = 0;
     const MAX_TRAVERSAL = 500; 
 
@@ -423,7 +423,7 @@ const findImagesDeeply = (
         }
     }
     
-    // 排序并切片
+    // 排序并切�?
     return images
         .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
         .slice(0, limit);
@@ -432,7 +432,7 @@ const findImagesDeeply = (
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
   
-  // 1. 同步计算需要展示的子文件 (改为深度查找)
+  // 1. 同步计算需要展示的子文�?(改为深度查找)
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
       return findImagesDeeply(file, files, 3);
@@ -441,14 +441,14 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
   // 2. 初始化时尝试从全局缓存同步读取
   const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
       const cache = getGlobalCache();
-      // 尝试映射所有子文件到缓存中的 URL
+      // 尝试映射所有子文件到缓存中�?URL
       const cachedUrls = imageChildren.map(child => {
-          // 使用与 ImageThumbnail 相同的 Key 生成逻辑 (仅 filePath)
+          // 使用�?ImageThumbnail 相同�?Key 生成逻辑 (�?filePath)
           return cache.get(child.path) || null; 
       });
       
-      // 只有当所有需要的图片都有缓存时，才视为命中 (或者至少有一张？)
-      // 为了体验最好，只要有缓存就先用。过滤掉 null。
+      // 只有当所有需要的图片都有缓存时，才视为命�?(或者至少有一张？)
+      // 为了体验最好，只要有缓存就先用。过滤掉 null�?
       const validUrls = cachedUrls.filter((url): url is string => !!url);
       
       // 如果没有缓存，返回空数组
@@ -457,10 +457,10 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
 
   const previewCountedRef = useRef<Set<string>>(new Set());
 
-  // 如果初始就有数据（哪怕只有一张），就不设为 loaded=false，避免闪烁
+  // 如果初始就有数据（哪怕只有一张），就不设�?loaded=false，避免闪�?
   const [loaded, setLoaded] = useState(previewSrcs.length > 0);
 
-  // 统计 imageChildren 中已缓存的项为 hit，防止初始缓存不计数
+  // 统计 imageChildren 中已缓存的项�?hit，防止初始缓存不计数
   useEffect(() => {
     const cache = getGlobalCache();
     imageChildren.forEach(img => {
@@ -471,8 +471,8 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
     });
   }, [imageChildren]);
   useEffect(() => {
-    // 如果已经加载过了，且数量足够（或者等于子文件总数），就不再请求
-    // 注意：这里简单判断，如果缓存里不够 3 张但实际有 3 张，还是会触发请求补全
+    // 如果已经加载过了，且数量足够（或者等于子文件总数），就不再请�?
+    // 注意：这里简单判断，如果缓存里不�?3 张但实际�?3 张，还是会触发请求补�?
     if (loaded && previewSrcs.length === Math.min(3, imageChildren.length)) {
         return;
     }
@@ -485,7 +485,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
           
           // 并行请求所有子文件的缩略图
           const promises = imageChildren.map(async (img: FileNode) => {
-              // 先查缓存，如果有就不请求了 (虽然 getThumbnail 内部也有 batcher，但这里拦截更快)
+              // 先查缓存，如果有就不请求�?(虽然 getThumbnail 内部也有 batcher，但这里拦截更快)
               const cache = getGlobalCache();
               const cached = cache.get(img.path);
               if (cached) {
@@ -504,7 +504,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
           
           if (!controller.signal.aborted) {
             const validThumbnails = thumbnails.filter((t): t is string => !!t);
-            // 只有当结果不同时才更新状态
+            // 只有当结果不同时才更新状�?
             // 简单的数组比较
             setPreviewSrcs(prev => {
                 if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
@@ -592,7 +592,7 @@ const TagItem = React.memo(({ tag, count, isSelected, onTagClick, onTagDoubleCli
     <div 
       key={tag} 
       data-tag={tag}
-      className={`tag-item rounded-lg p-4 border-2 cursor-pointer group transition-all relative ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 shadow-lg ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-blue-500 dark:hover:border-blue-500'}`} 
+      className={`tag-item rounded-lg p-4 border-2 cursor-pointer group transition-all relative ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 shadow-lg ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-800 hover:border-blue-500 dark:hover:border-blue-500'}`} 
       onClick={(e) => { e.stopPropagation(); onTagClick && onTagClick(tag, e); }}
       onMouseDown={(e) => e.stopPropagation()}
       onDoubleClick={() => onTagDoubleClick && onTagDoubleClick(tag)} 
@@ -687,12 +687,12 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
 
   return (
     <div className="relative">
-      {/* 字母索引栏 */}
+      {/* 字母索引�?*/}
       {filteredKeys.length > 0 && (
         <div className="fixed top-1/2 transform -translate-y-1/2 z-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
              style={{ 
                right: 'calc(20px + var(--metadata-panel-width, 0px))',
-               transform: 'translateY(-50%) translateY(10px)' // 向下调整10px，使其居中
+               transform: 'translateY(-50%) translateY(10px)' // 向下调整10px，使其居�?
              }}
              onMouseEnter={() => {
               // 鼠标悬停时，确保索引栏显示在最前面
@@ -773,16 +773,16 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
 
       {hoveredTag && previewImages.length > 0 && hoveredTagPos && createPortal(
         <div 
-          className="fixed z-[100] bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+          className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
           style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
         >
-          <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-600 pb-1 font-bold flex items-center justify-between">
+          <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
              <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
              <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {previewImages.map((f: any) => (
-              <div key={f.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div key={f.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
                  {/* Note: In Tauri, file.url and file.previewUrl are file paths, not usable URLs. Use placeholder for now. */}
                  <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
                    <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
@@ -830,12 +830,12 @@ const FileListItem = React.memo(({
   const handleDragStart = (e: React.DragEvent) => {
     e.stopPropagation();
     
-    // 如果文件未被选中，拖拽时自动选中它
+    // 如果文件未被选中，拖拽时自动选中�?
     if (!isSelected) {
       onFileClick(e, file.id);
     }
     
-    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文件
+    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文�?
     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
       ? selectedFileIds 
       : [file.id];
@@ -859,11 +859,11 @@ const FileListItem = React.memo(({
         internalDrag: true // 添加内部拖拽标记
       }));
       
-      // 2. 设置text/uri-list格式，用于外部文件拖拽
+      // 2. 设置text/uri-list格式，用于外部文件拖�?
       const uriList = filePaths.map((path: string) => `file://${path.replace(/\\/g, '/')}`).join('\n');
       e.dataTransfer.setData('text/uri-list', uriList);
       
-      // 3. 设置简单的文本数据，用于显示拖拽信息
+      // 3. 设置简单的文本数据，用于显示拖拽信�?
       const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
       e.dataTransfer.setData('text/plain', textData);
       
@@ -893,7 +893,7 @@ const FileListItem = React.memo(({
     dragImageContainer.style.boxShadow = 'none';
     dragImageContainer.style.padding = '0px';
     
-    // 创建缩略图容器
+    // 创建缩略图容�?
     const thumbnailsContainer = document.createElement('div');
     thumbnailsContainer.style.position = 'relative';
     thumbnailsContainer.style.width = '100%';
@@ -905,14 +905,14 @@ const FileListItem = React.memo(({
     // 获取全局缓存
     const cache = getGlobalCache();
     
-    // 最多显示3个缩略图
+    // 最多显�?个缩略图
     const previewCount = Math.min(filesToDrag.length, 3);
     
-    // 确保拖拽的文件显示在预览中，并且优先级最高
+    // 确保拖拽的文件显示在预览中，并且优先级最�?
     const previewFiles: string[] = [];
     previewFiles.push(file.id);
     
-    // 从剩余选中的文件中添加其他文件，避免重复
+    // 从剩余选中的文件中添加其他文件，避免重�?
     for (const fileId of filesToDrag) {
       if (fileId !== file.id && previewFiles.length < previewCount) {
         previewFiles.push(fileId);
@@ -928,10 +928,10 @@ const FileListItem = React.memo(({
       // 获取缓存的缩略图
       const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
       
-      // 计算单个缩略图尺寸（基于拖拽容器大小）
+      // 计算单个缩略图尺寸（基于拖拽容器大小�?
       const singleThumbSize = dragThumbSize * 0.9;
       
-      // 创建单个缩略图元素
+      // 创建单个缩略图元�?
       const thumbElement = document.createElement('div');
       thumbElement.style.position = 'absolute';
       thumbElement.style.width = `${singleThumbSize}px`;
@@ -947,14 +947,14 @@ const FileListItem = React.memo(({
       // 设置z-index，确保拖拽的文件显示在最前面
       thumbElement.style.zIndex = `${previewCount - i}`;
       
-      // 计算位置和旋转（使用CSS变换）
+      // 计算位置和旋转（使用CSS变换�?
       const rotation = i === 0 ? 0 : (i === 1 ? -8 : 8);
       const offsetScale = singleThumbSize / 150;
       const offsetX = i === 0 ? 0 : (i === 1 ? -10 * offsetScale : 10 * offsetScale);
       const offsetY = i * 12 * offsetScale;
       thumbElement.style.transform = `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`;
       
-      // 绘制缩略图或占位符
+      // 绘制缩略图或占位�?
       if (cachedThumb) {
         const img = document.createElement('img');
         img.src = cachedThumb;
@@ -966,7 +966,7 @@ const FileListItem = React.memo(({
         thumbElement.appendChild(img);
       } else {
         if (draggedFile.type === FileType.IMAGE) {
-          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼️</div>`;
+          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼�?/div>`;
         } else if (draggedFile.type === FileType.FOLDER) {
           // 使用与软件内Folder3DIcon一致的设计
           thumbElement.innerHTML = `
@@ -994,7 +994,7 @@ const FileListItem = React.memo(({
       thumbnailsContainer.appendChild(thumbElement);
     }
     
-    // 绘制文件计数（如果超过3个）
+    // 绘制文件计数（如果超�?个）
     if (filesToDrag.length > 3) {
       const count = filesToDrag.length - 3;
       const countBadge = document.createElement('div');
@@ -1016,20 +1016,20 @@ const FileListItem = React.memo(({
       thumbnailsContainer.appendChild(countBadge);
     }
     
-    // 添加到容器
+    // 添加到容�?
     dragImageContainer.appendChild(thumbnailsContainer);
     document.body.appendChild(dragImageContainer);
     
     // 设置拖拽图像
     try {
-      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中心
+      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中�?
       const dragOffset = dragThumbSize / 2;
       e.dataTransfer.setDragImage(dragImageContainer, dragOffset, dragOffset);
     } catch (error) {
       // Error handling for drag image setup
     }
     
-    // 设置拖拽效果为move，用于内部拖拽
+    // 设置拖拽效果为move，用于内部拖�?
     e.dataTransfer.effectAllowed = 'move';
     
     // 获取要拖拽的实际文件路径
@@ -1041,7 +1041,7 @@ const FileListItem = React.memo(({
       setIsDraggingInternal(true);
     }
     
-    // 保存拖拽的文件路径
+    // 保存拖拽的文件路�?
     if (setDraggedFilePaths) {
       setDraggedFilePaths(draggedFilePaths);
     }
@@ -1057,12 +1057,12 @@ const FileListItem = React.memo(({
       }));
       
       // 不设置外部拖拽数据，避免触发外部拖拽行为
-      // 我们将在拖拽结束时检测是否拖拽到了外部
+      // 我们将在拖拽结束时检测是否拖拽到了外�?
     } catch (error) {
       console.error('Drag data setup error:', error);
     }
     
-    // 通知父组件开始拖拽
+    // 通知父组件开始拖�?
     if (onDragStart) {
       onDragStart(filesToDrag);
     }
@@ -1093,7 +1093,7 @@ const FileListItem = React.memo(({
     }
   };
   
-  // 用于追踪外部拖拽状态
+  // 用于追踪外部拖拽状�?
   const [isExternalDragging, setIsExternalDragging] = useState(false);
   
   return (
@@ -1130,7 +1130,7 @@ const FileListItem = React.memo(({
                             setIsDraggingInternal(true);
                         }
                         
-                        // 获取缩略图路径（最多3个）
+                        // 获取缩略图路径（最�?个）
                         const pathCache = getThumbnailPathCache();
                         const thumbnailPaths = filePaths
                             .slice(0, 3)
@@ -1271,12 +1271,12 @@ const FileCard = React.memo(({
     e.stopPropagation();
     setIsDragging(true);
     
-    // 如果文件未被选中，拖拽时自动选中它
+    // 如果文件未被选中，拖拽时自动选中�?
     if (!isSelected) {
       onFileClick(e, file.id);
     }
     
-    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文件
+    // 设置拖拽数据：如果文件被选中，拖拽所有选中的文件；否则只拖拽当前文�?
     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
       ? selectedFileIds 
       : [file.id];
@@ -1300,11 +1300,11 @@ const FileCard = React.memo(({
         internalDrag: true // 添加内部拖拽标记
       }));
       
-      // 2. 设置text/uri-list格式，用于外部文件拖拽
+      // 2. 设置text/uri-list格式，用于外部文件拖�?
       const uriList = filePaths.map((path: string) => `file://${path.replace(/\\/g, '/')}`).join('\n');
       e.dataTransfer.setData('text/uri-list', uriList);
       
-      // 3. 设置简单的文本数据，用于显示拖拽信息
+      // 3. 设置简单的文本数据，用于显示拖拽信�?
       const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
       e.dataTransfer.setData('text/plain', textData);
       
@@ -1314,11 +1314,11 @@ const FileCard = React.memo(({
       // Error handling for drag data setup
     }
     
-    // 计算拖拽缩略图尺寸
+    // 计算拖拽缩略图尺�?
     // 主界面图标大小范围：100px-480px
     // 拖拽缩略图大小范围：100px-380px
     // 线性映射：dragThumbSize = 100 + (mainThumbSize - 100) * (280 / 380)
-    const mainThumbSize = thumbnailSize; // 主界面图标大小
+    const mainThumbSize = thumbnailSize; // 主界面图标大�?
     const minMainSize = 100;
     const maxMainSize = 480;
     const minDragSize = 100;
@@ -1330,7 +1330,7 @@ const FileCard = React.memo(({
     ));
     
     // 优化方案：创建临时DOM元素作为拖拽预览
-    // 这种方法比Canvas更可靠，避免了Canvas绘制的时序问题
+    // 这种方法比Canvas更可靠，避免了Canvas绘制的时序问�?
     const dragImageContainer = document.createElement('div');
     dragImageContainer.style.position = 'absolute';
     dragImageContainer.style.left = '-9999px';
@@ -1350,7 +1350,7 @@ const FileCard = React.memo(({
     // 获取全局缓存
     const cache = getGlobalCache();
     
-    // 创建缩略图容器
+    // 创建缩略图容�?
     const thumbnailsContainer = document.createElement('div');
     thumbnailsContainer.style.position = 'relative';
     thumbnailsContainer.style.width = '100%';
@@ -1359,18 +1359,18 @@ const FileCard = React.memo(({
     thumbnailsContainer.style.alignItems = 'center';
     thumbnailsContainer.style.justifyContent = 'center';
     
-    // 最多显示3个缩略图
+    // 最多显�?个缩略图
     const previewCount = Math.min(filesToDrag.length, 3);
     
-    // 确保拖拽的文件显示在预览中，并且优先级最高
+    // 确保拖拽的文件显示在预览中，并且优先级最�?
     // 1. 首先添加当前拖拽的文件（file变量代表用户正在拖拽的文件）
-    // 2. 然后从剩余选中的文件中添加其他文件，最多显示3个
+    // 2. 然后从剩余选中的文件中添加其他文件，最多显�?�?
     const previewFiles: string[] = [];
     
-    // 确保当前拖拽的文件在预览中
+    // 确保当前拖拽的文件在预览�?
     previewFiles.push(file.id);
     
-    // 从剩余选中的文件中添加其他文件，避免重复
+    // 从剩余选中的文件中添加其他文件，避免重�?
     for (const fileId of filesToDrag) {
       if (fileId !== file.id && previewFiles.length < previewCount) {
         previewFiles.push(fileId);
@@ -1386,11 +1386,11 @@ const FileCard = React.memo(({
       // 获取缓存的缩略图
       const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
       
-      // 计算单个缩略图尺寸（基于拖拽容器大小）
-      // 增加单个缩略图尺寸，从容器的75%增加到90%，确保内部显示的缩略图更大
-      const singleThumbSize = dragThumbSize * 0.9; // 单个缩略图尺寸为容器的90%
+      // 计算单个缩略图尺寸（基于拖拽容器大小�?
+      // 增加单个缩略图尺寸，从容器的75%增加�?0%，确保内部显示的缩略图更�?
+      const singleThumbSize = dragThumbSize * 0.9; // 单个缩略图尺寸为容器�?0%
       
-      // 创建单个缩略图元素
+      // 创建单个缩略图元�?
       const thumbElement = document.createElement('div');
       thumbElement.style.position = 'absolute';
       thumbElement.style.width = `${singleThumbSize}px`;
@@ -1406,15 +1406,15 @@ const FileCard = React.memo(({
       // 设置z-index，确保拖拽的文件显示在最前面
       thumbElement.style.zIndex = `${previewCount - i}`;
       
-      // 计算位置和旋转（使用CSS变换）
+      // 计算位置和旋转（使用CSS变换�?
       const rotation = i === 0 ? 0 : (i === 1 ? -8 : 8);
       // 偏移量按比例调整
-      const offsetScale = singleThumbSize / 150; // 基于150px的基准尺寸
+      const offsetScale = singleThumbSize / 150; // 基于150px的基准尺�?
       const offsetX = i === 0 ? 0 : (i === 1 ? -10 * offsetScale : 10 * offsetScale);
       const offsetY = i * 12 * offsetScale;
       thumbElement.style.transform = `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`;
       
-      // 绘制缩略图或占位符
+      // 绘制缩略图或占位�?
       if (cachedThumb) {
         // 使用已缓存的缩略图URL
         const img = document.createElement('img');
@@ -1426,10 +1426,10 @@ const FileCard = React.memo(({
         img.draggable = false;
         thumbElement.appendChild(img);
       } else {
-        // 绘制占位符
+        // 绘制占位�?
         if (draggedFile.type === FileType.IMAGE) {
-          // 图片占位符
-          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼️</div>`;
+          // 图片占位�?
+          thumbElement.innerHTML = `<div style="font-size: 32px;">🖼�?/div>`;
         } else if (draggedFile.type === FileType.FOLDER) {
           // 文件夹占位符：使用与软件内Folder3DIcon一致的设计
           thumbElement.innerHTML = `
@@ -1455,7 +1455,7 @@ const FileCard = React.memo(({
             </div>
           `;
         } else {
-          // 其他文件类型占位符
+          // 其他文件类型占位�?
           thumbElement.innerHTML = `<div style="font-size: 32px;">📄</div>`;
         }
       }
@@ -1463,13 +1463,13 @@ const FileCard = React.memo(({
       thumbnailsContainer.appendChild(thumbElement);
     }
     
-    // 绘制文件计数（如果超过3个）
+    // 绘制文件计数（如果超�?个）
     if (filesToDrag.length > 3) {
       const count = filesToDrag.length - 3;
       const countBadge = document.createElement('div');
       countBadge.style.position = 'absolute';
-      // 计数徽章位置按比例调整
-      const badgeSize = 40 * (dragThumbSize / 200); // 基于200px容器的40px徽章
+      // 计数徽章位置按比例调�?
+      const badgeSize = 40 * (dragThumbSize / 200); // 基于200px容器�?0px徽章
       countBadge.style.right = `${12 * (dragThumbSize / 200)}px`;
       countBadge.style.bottom = `${12 * (dragThumbSize / 200)}px`;
       countBadge.style.width = `${badgeSize}px`;
@@ -1486,20 +1486,20 @@ const FileCard = React.memo(({
       thumbnailsContainer.appendChild(countBadge);
     }
     
-    // 添加到容器
+    // 添加到容�?
     dragImageContainer.appendChild(thumbnailsContainer);
     document.body.appendChild(dragImageContainer);
     
     // 设置拖拽图像
     try {
-      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中心
+      // 拖拽图像偏移量应为容器尺寸的一半，确保鼠标指针在中�?
       const dragOffset = dragThumbSize / 2;
       e.dataTransfer.setDragImage(dragImageContainer, dragOffset, dragOffset);
     } catch (error) {
       // Error handling for drag image setup
     }
     
-    // 设置拖拽效果为move，用于内部拖拽
+    // 设置拖拽效果为move，用于内部拖�?
     e.dataTransfer.effectAllowed = 'move';
     
     // 获取要拖拽的实际文件路径
@@ -1511,7 +1511,7 @@ const FileCard = React.memo(({
       setIsDraggingInternal(true);
     }
     
-    // 保存拖拽的文件路径
+    // 保存拖拽的文件路�?
     if (setDraggedFilePaths) {
       setDraggedFilePaths(draggedFilePaths);
     }
@@ -1527,12 +1527,12 @@ const FileCard = React.memo(({
       }));
       
       // 不设置外部拖拽数据，避免触发外部拖拽行为
-      // 我们将在拖拽结束时检测是否拖拽到了外部
+      // 我们将在拖拽结束时检测是否拖拽到了外�?
     } catch (error) {
       console.error('Drag data setup error:', error);
     }
     
-    // 通知父组件开始拖拽
+    // 通知父组件开始拖�?
     if (onDragStart) {
       onDragStart(filesToDrag);
     }
@@ -1609,7 +1609,7 @@ const FileCard = React.memo(({
                             setIsDraggingInternal(true);
                         }
                         
-                        // 获取缩略图路径（最多3个）
+                        // 获取缩略图路径（最�?个）
                         const pathCache = getThumbnailPathCache();
                         const thumbnailPaths = filePaths
                             .slice(0, 3)
@@ -1664,7 +1664,7 @@ const FileCard = React.memo(({
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
-                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
+                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
             `}
             style={{ 
                 height: height ? (height - 40) : '100%',
@@ -1768,7 +1768,7 @@ const GroupContent = React.memo(({
     'browser'
   );
 
-  // 移除虚拟滚动逻辑，直接使用所有项目
+  // 移除虚拟滚动逻辑，直接使用所有项�?
   const visibleItems = layout;
 
   return (
@@ -2331,7 +2331,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
           if (folderId) {
               const folder = files[folderId];
               if (folder && folder.type === FileType.FOLDER) {
-                  // 添加拖拽悬停的视觉效果
+                  // 添加拖拽悬停的视觉效�?
                   folderElement.classList.add('drop-target-active');
                   if (onDropOnFolder && dragOverTarget !== folderId) {
                       // 这里可以设置视觉反馈
@@ -2351,11 +2351,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
           const { type, ids } = JSON.parse(data);
           if (type !== 'file' || !ids || ids.length === 0) return;
           
-          // 清除所有悬停状态
+          // 清除所有悬停状�?
           const allFolders = document.querySelectorAll('.file-item[data-id]');
           allFolders.forEach(el => el.classList.remove('drop-target-active'));
           
-          // 检查是否拖拽到特定文件夹
+          // 检查是否拖拽到特定文件�?
           const target = e.target as HTMLElement;
           const folderElement = target.closest('.file-item[data-id]');
           
@@ -2375,13 +2375,13 @@ export const FileGrid: React.FC<FileGridProps> = ({
               // 拖拽到空白区域（移动到当前目录）
               const currentFolderId = activeTab.folderId;
               if (currentFolderId && onDropOnFolder) {
-                  // 检查是否所有文件都已经在当前文件夹中
+                  // 检查是否所有文件都已经在当前文件夹�?
                   const allFilesInCurrentFolder = ids.every((id: string) => {
                       const file = files[id];
                       return file && file.parentId === currentFolderId;
                   });
                   
-                  // 如果所有文件都在当前文件夹中，不执行任何操作
+                  // 如果所有文件都在当前文件夹中，不执行任何操�?
                   if (allFilesInCurrentFolder) {
                       return;
                   }

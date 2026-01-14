@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
@@ -49,7 +49,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const [localSearchQuery, setLocalSearchQuery] = React.useState(tagSearchQuery);
   const [isFocused, setIsFocused] = React.useState(false);
   
-  // 当外部tagSearchQuery变化时，更新本地状态
+  // 当外部tagSearchQuery变化时，更新本地状�?
   React.useEffect(() => {
     setLocalSearchQuery(tagSearchQuery);
   }, [tagSearchQuery]);
@@ -63,7 +63,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
     return Array.from(tagsSet);
   }, [groupedTags]);
   
-  // 过滤标签，只显示匹配搜索条件的标签
+  // 过滤标签，只显示匹配搜索条件的标�?
   const filteredGroupedTags = React.useMemo(() => {
     if (!localSearchQuery) return groupedTags;
     
@@ -79,7 +79,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
     return filtered;
   }, [groupedTags, localSearchQuery]);
   
-  // 智能联想的标签列表
+  // 智能联想的标签列�?
   const suggestedTags = React.useMemo(() => {
     if (!localSearchQuery || !isFocused) return [];
     return allTags
@@ -92,8 +92,8 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const totalTags = Object.values(filteredGroupedTags).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
-    <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[400px] font-sans border border-gray-200 dark:border-gray-700 z-50">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+    <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[400px] font-sans border border-gray-200 dark:border-gray-800 z-50">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-sm tracking-wide">{t('sidebar.allTags')}</span>
           <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded-full">
@@ -117,7 +117,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
               // 延迟关闭，以便点击建议项时能触发点击事件
               setTimeout(() => setIsFocused(false), 200);
             }}
-            className="w-full pl-8 pr-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-8 pr-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {localSearchQuery && (
             <button
@@ -133,7 +133,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           
           {/* 智能联想下拉列表 */}
           {suggestedTags.length > 0 && (
-            <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+            <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
               {suggestedTags.map(tag => (
                 <div 
                   key={tag} 
@@ -174,7 +174,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
             </div>
           ))}
         </div>
-        {/* 字母索引栏 */}
+        {/* 字母索引�?*/}
         {keys.length > 0 && (
           <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-gray-900/50 border-l border-gray-100 dark:border-gray-800">
             {keys.map(key => (
@@ -299,9 +299,9 @@ const CalendarWidget = ({
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
-      <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-700 z-50">
+      <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50">
           {/* Controls Header */}
-          <div className="flex items-center justify-between px-4 py-4 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between px-4 py-4 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-800">
               <div className="font-bold text-base tracking-wide pl-1 text-gray-800 dark:text-gray-100">
                   {year}年{month + 1}月
               </div>
@@ -329,7 +329,7 @@ const CalendarWidget = ({
                   {prevMonthDays.map((day) => {
                       const status = getDayStatus(day, 'prev');
                       let bgClass = 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700';
-                      if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600';
+                      if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600 dark:hover:bg-blue-700';
                       else if (status === 'in-range') bgClass = 'bg-blue-50 dark:bg-blue-900/20 text-gray-300 dark:text-gray-600';
                       
                       return (
@@ -388,7 +388,7 @@ const CalendarWidget = ({
                   {nextMonthDays.map((day) => {
                       const status = getDayStatus(day, 'next');
                       let bgClass = 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700';
-                      if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600';
+                      if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600 dark:hover:bg-blue-700';
                       else if (status === 'in-range') bgClass = 'bg-blue-50 dark:bg-blue-900/20 text-gray-300 dark:text-gray-600';
 
                       return (
@@ -404,7 +404,7 @@ const CalendarWidget = ({
           </div>
 
           {/* Mode Switcher */}
-          <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+          <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-bold">{t('date.filterBy')}</div>
               <div className="flex gap-2">
                   <button
@@ -412,7 +412,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'created' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
                       }`}
                   >
                       {t('date.createdDate')}
@@ -422,7 +422,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'updated' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
                       }`}
                   >
                       {t('date.updatedDate')}
@@ -586,7 +586,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <div className="relative flex-shrink-0">
               <button 
                 onClick={() => setScopeMenuOpen(!scopeMenuOpen)}
-                className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
+                className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-800 whitespace-nowrap"
               >
                 {getScopeIcon(activeTab.searchScope)}
                 <ChevronDown size={12} className="ml-1 opacity-70"/>
@@ -594,7 +594,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               {scopeMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
-                  <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
+                  <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
                     {[
                       { id: 'all', icon: Globe, label: t('search.scopeAll') },
                       { id: 'file', icon: FileText, label: t('search.scopeFile') },
@@ -648,7 +648,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           
           {isColorSearchQuery && (
             <div 
-                className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-600 mr-2 flex-shrink-0 shadow-sm"
+                className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
                 style={{ backgroundColor: currentSearchColor }}
             />
           )}
@@ -679,7 +679,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <X size={14} />
                 </button>
              )}
-              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑） */}
+              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑�?*/}
           </div>
         </div>
       </div>
@@ -700,7 +700,7 @@ export const TopBar: React.FC<TopBarProps> = ({
            {sortMenuOpen && (
              <>
                <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+               <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
                   {[
                     { id: 'name', label: t('sort.name') },
@@ -716,7 +716,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       {state.sortBy === opt.id && <Check size={14} className="text-blue-500" />}
                     </button>
                   ))}
-                  <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                  <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                   <button
                     onClick={onSortDirectionChange}
                     className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
@@ -725,7 +725,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                   </button>
                   
-                  <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                  <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                   {[
                     { id: 'none', label: t('groupBy.none') },
@@ -744,7 +744,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   ))}
                   {onRememberFolderSettings && (
                     <>
-                      <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                       <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
                         <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
                         <button 
@@ -777,7 +777,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {viewMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
                     {[
                       { id: 'grid', icon: Grid, label: t('layout.grid') },
@@ -797,7 +797,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       </button>
                     ))}
                     
-                    <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                     <div className="px-4 py-2">
                        <div className="flex justify-between text-xs text-gray-500 mb-1">
                           <span>{t('layout.small')}</span>
@@ -817,7 +817,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </div>
                     {onRememberFolderSettings && (
                       <>
-                        <div className="border-t border-gray-100 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                         <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
                           <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
                           <button 

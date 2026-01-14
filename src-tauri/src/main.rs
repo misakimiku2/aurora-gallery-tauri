@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tauri::Manager;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
+use serde_json;
 
 
 use base64::{Engine as _, engine::general_purpose};
@@ -500,6 +501,9 @@ pub struct FileNode {
     pub updated_at: Option<String>,
     pub url: Option<String>,
     pub meta: Option<ImageMeta>,
+    pub description: Option<String>,
+    pub source_url: Option<String>,
+    pub ai_data: Option<serde_json::Value>,
 }
 
 // Supported image extensions
@@ -579,6 +583,17 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     if !root_path.is_dir() {
         return Err(format!("Path is not a directory: {}", path));
     }
+
+    // Load metadata from database
+    let metadatas = {
+        let pool = app.state::<AppDbPool>();
+        let conn = pool.get_connection();
+        db::file_metadata::get_all_metadata(&conn).map_err(|e| e.to_string())?
+    };
+    let metadata_map: HashMap<String, db::file_metadata::FileMetadata> = metadatas
+        .into_iter()
+        .map(|m| (m.file_id.clone(), m))
+        .collect();
     
     let mut all_files: HashMap<String, FileNode> = HashMap::new();
     
@@ -623,6 +638,9 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
             }),
         url: None,
         meta: None,
+        description: None,
+        source_url: None,
+        ai_data: None,
     };
     
     all_files.insert(root_id.clone(), root_node.clone());
@@ -720,6 +738,9 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                         }),
                     url: None,
                     meta: None,
+                    description: None,
+                    source_url: None,
+                    ai_data: None,
                 };
                 
                 Some((file_id, folder_node, parent_path))
@@ -805,6 +826,9 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                                 .unwrap_or_default(),
                             format: extension,
                         }),
+                        description: None,
+                        source_url: None,
+                        ai_data: None,
                     };
                     
                     Some((file_id, image_node, parent_path))
@@ -837,6 +861,18 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
             }
         }
         
+        // Merge metadata if available
+        if let Some(meta) = metadata_map.get(&id) {
+            if let Some(tags_val) = &meta.tags {
+                if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
+                    node.tags = tags_vec;
+                }
+            }
+            node.description = meta.description.clone();
+            node.source_url = meta.source_url.clone();
+            node.ai_data = meta.ai_data.clone();
+        }
+
         all_files.insert(id.clone(), node);
     }
     
@@ -993,6 +1029,9 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
                 }),
             url: None,
             meta: None,
+            description: None,
+            source_url: None,
+            ai_data: None,
         })
     } else if is_image {
         // Create image file node
@@ -1050,6 +1089,9 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
                     .unwrap_or_default(),
                 format: extension,
             }),
+            description: None,
+            source_url: None,
+            ai_data: None,
         };
         
         // Add image to color database
@@ -1068,7 +1110,25 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             eprintln!("Database error when adding file: {}", e);
         }
         
-        Ok(image_node)
+        let mut final_node = image_node;
+        
+        // Merge metadata if available
+        {
+            let pool = app.state::<AppDbPool>();
+            let conn = pool.get_connection();
+            if let Ok(Some(meta)) = db::file_metadata::get_metadata_by_id(&conn, &final_node.id) {
+                if let Some(tags_val) = &meta.tags {
+                    if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
+                        final_node.tags = tags_vec;
+                    }
+                }
+                final_node.description = meta.description.clone();
+                final_node.source_url = meta.source_url.clone();
+                final_node.ai_data = meta.ai_data.clone();
+            }
+        }
+
+        Ok(final_node)
     } else {
         // Create unknown file node
         let file_size = metadata.len();
@@ -1100,6 +1160,9 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
                 }),
             url: None,
             meta: None,
+            description: None,
+            source_url: None,
+            ai_data: None,
         })
     }
 }
@@ -2328,6 +2391,15 @@ fn db_update_person_avatar(
     db::persons::update_person_avatar(&conn, &person_id, &cover_file_id, face_box.as_ref()).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn db_upsert_file_metadata(
+    pool: tauri::State<'_, AppDbPool>, 
+    metadata: db::file_metadata::FileMetadata
+) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::file_metadata::upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
+}
+
 fn main() {
     
     tauri::Builder::default()
@@ -2372,7 +2444,8 @@ fn main() {
             db_get_all_people,
             db_upsert_person,
             db_delete_person,
-            db_update_person_avatar
+            db_update_person_avatar,
+            db_upsert_file_metadata
         ])
         .setup(|app| {
             // 创建托盘菜单

@@ -1,42 +1,44 @@
 # Changelog: Updates from Code (generated from current code)
 
-**生成时间**: 2026-01-11
+**生成时间**: 2026-01-14
 
 ## 概要
 对 `memory/` 中文档做了一次代码驱动的同步更新，以保证文档以当前代码为准。
 
 **修改文件**:
-- `API_REFERENCE.md` ✅
-- `MODULE_DISTRIBUTION.md` ✅
-- `PROJECT_STRUCTURE.md` ✅
-- `QUICK_REFERENCE.md` ✅
-- `TECHNICAL_ARCHITECTURE.md` ✅
+- `API_REFERENCE.md` ✅ (minor updates)
+- `MODULE_DISTRIBUTION.md` ✅ (added PersonGrid component)
+- `PROJECT_STRUCTURE.md` ✅ (updated component list)
+- `QUICK_REFERENCE.md` ✅ (updated dependencies)
+- `TECHNICAL_ARCHITECTURE.md` ✅ (AI analysis changes)
 
 ## 主要变更点（按代码引用）
 
-1. tauri 桥接层（`src/api/tauri-bridge.ts`）
-   - 修正 `scanDirectory` 签名为 `scanDirectory(path: string, forceRefresh?: boolean)`，并说明 `forceRefresh` 当前未转发给后端（保留以便未来扩展）。
-   - 更新并记录 `getThumbnail` 的真实签名：
-     `getThumbnail(filePath, modified?, rootPath?, signal?, onColors?) : Promise<string | null>`，说明：需要 `rootPath` 用于缓存路径计算（`${rootPath}/.Aurora_Cache`），返回值是经 `convertFileSrc` 的 URL 或 `null`；支持 `onColors` 回调与批量请求聚合（约 50ms）。
-   - 新增并记录的函数：`getAssetUrl`, `readFileAsBase64 (-> Promise<string | null>)`, `getDominantColors`, `searchByColor`, `generateDragPreview`, `startDragToExternal`, `writeFileFromBytes`。
-   - 标注 `ensureCacheDirectory` 为兼容适配器并已弃用（保留用于向后兼容）。
-   - 人物数据库 API 的前端函数：`dbGetAllPeople`, `dbUpsertPerson`, `dbDeletePerson`, `dbUpdatePersonAvatar` 均存在并与代码一致。
+### 1. 前端组件重构 (src/components/)
+- **新增 PersonGrid 组件**: 将人物界面从 FileGrid 中分离出来形成独立的 `PersonGrid.tsx` 组件 (~219 行)，提供专门的人物网格视图和管理功能。
+- **SettingsModal 增强**: 新增系统提示预设功能，支持创建、编辑、删除和管理 AI 提示模板。
+- **ContextMenu 样式优化**: 针对不同类型的上下文菜单（文件、文件夹）应用不同的深色主题样式。
 
-2. Color extraction / Control APIs
-   - `pauseColorExtraction` / `resumeColorExtraction` 返回类型修正为 `Promise<boolean>`（文档已同步）。
+### 2. AI 服务优化 (src/App.tsx)
+- **AI 分析性能优化**: 移除了 AI 模型对 dominantColors 的分析，改为仅通过图像处理提取，减少 AI 计算开销。
+- **兼容性保持**: dominantColors 字段保留为空数组以保持向后兼容性。
 
-3. 文档结构
-   - `PROJECT_STRUCTURE.md` 中 `memory/` 的文件列表已更新为当前存在的五个文档（`API_REFERENCE.md`、`MODULE_DISTRIBUTION.md`、`PROJECT_STRUCTURE.md`、`QUICK_REFERENCE.md`、`TECHNICAL_ARCHITECTURE.md`）。
+### 3. 构建配置更新 (package.json)
+- **开发脚本优化**:
+  - `clean:dev`: 简化脚本，移除 VITE_FORCE_DEV_LOGS 环境变量设置
+  - `tauri:dev`: 改为使用 concurrently 并行运行前端开发服务器和 Tauri 开发模式
+- **新增依赖**:
+  - `concurrently@^9.2.1`: 支持并行运行多个命令
+  - `wait-on@^9.0.3`: 等待服务启动后再运行依赖命令
 
-4. 技术架构
-   - 在 `TECHNICAL_ARCHITECTURE.md` 中补充了缩略图批量获取与缓存路径计算的说明（短时聚合窗口 ~50ms，缓存目录约为 `${rootPath}/.Aurora_Cache`，并说明 onColors 回调）。
+### 4. 技术架构调整
+- **AI 分析流程**: dominantColors 现在通过专用图像处理算法提取，不再消耗 AI tokens
+- **并发开发**: 前后端开发模式现在并行运行，提高开发效率
 
 ## 下一步建议
-- 请 review 我所做的改动（特别是 API 的返回类型和签名）并确认是否需要更详细的示例或参数说明。
-- 如果希望我继续，我可以：
-  - 将这些改动转换为一个 commit（包含改动说明）并准备 PR 文案；
-  - 对文档进行拼写/格式化检查并统一样式（例如代码块风格、返回类型标注一致性）；
-  - 扩展文档中缺少的示例（例如 `startDragToExternal` 的使用示例）。
+- 考虑为 `file_metadata` 表添加全文搜索（FTS）支持，以进一步提升大规模描述信息的搜索速度。
+- 建议为数据库添加定期自动备份机制。
+- 继续优化 App.tsx，将其过于庞大的状态逻辑进一步组件化。
 
 ---
 

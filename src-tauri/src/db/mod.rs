@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 pub mod persons;
+pub mod file_metadata;
 
 #[derive(Clone)]
 pub struct AppDbPool {
@@ -52,13 +53,23 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         [],
     )?;
 
-    // Create indexes
+    // Create file_metadata table
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_persons_cover_file ON persons(cover_file_id)",
+        "CREATE TABLE IF NOT EXISTS file_metadata (
+            file_id TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            tags TEXT,
+            description TEXT,
+            source_url TEXT,
+            ai_data TEXT,
+            updated_at INTEGER
+        )",
         [],
     )?;
+
+    // Create indexes for file_metadata
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_persons_name ON persons(name)",
+        "CREATE INDEX IF NOT EXISTS idx_file_metadata_path ON file_metadata(path)",
         [],
     )?;
 

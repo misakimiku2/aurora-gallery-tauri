@@ -1,4 +1,4 @@
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 // 辅助函数：深度查找文件夹内的图片
@@ -8,11 +8,11 @@ const findImagesDeeply = (
     limit: number = 3
 ): FileNode[] => {
     const images: FileNode[] = [];
-    // 使用栈进行 DFS
+    // 使用栈进�?DFS
     const stack: string[] = [...(rootFolder.children || [])];
     const visited = new Set<string>(); // 防止循环引用
     
-    // 设置一个遍历上限，防止超大文件夹卡死 UI
+    // 设置一个遍历上限，防止超大文件夹卡�?UI
     let traversalCount = 0;
     const MAX_TRAVERSAL = 200;
 
@@ -32,7 +32,7 @@ const findImagesDeeply = (
         }
     }
     
-    // 排序并切片
+    // 排序并切�?
     return images
         .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
         .slice(0, limit);
@@ -42,7 +42,7 @@ import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './FileGrid';
-// 导入 ImageViewer 的高分辨率缓存
+// 导入 ImageViewer 的高分辨率缓�?
 import { getBlobCacheSync, preloadToCache } from './ImageViewer';
 
 interface MetadataProps {
@@ -73,7 +73,7 @@ const getGlobalCache = () => {
   // 使用类型断言来访问全局缓存，避免重新定义LRUCache类型
   const win = window as any;
   
-  // 只在缓存不存在时创建新实例
+  // 只在缓存不存在时创建新实�?
   if (!win.__AURORA_THUMBNAIL_CACHE__) {
     // 这里不重新定义LRUCache类，因为它已经在FileGrid.tsx中定义了
     // 我们假设当FileGrid组件加载时，已经初始化了缓存
@@ -84,13 +84,13 @@ const getGlobalCache = () => {
 };
 
 const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resourceRoot?: string, cachePath?: string }) => {
-  // 初始化时优先从 ImageViewer 的高分辨率 Blob 缓存获取
+  // 初始化时优先�?ImageViewer 的高分辨�?Blob 缓存获取
   const [imageUrl, setImageUrl] = useState<string | null>(() => {
       if (!file.path) return null;
       // 优先使用高分辨率缓存
       const blobUrl = getBlobCacheSync(file.path);
       if (blobUrl) return blobUrl;
-      // 其次使用缩略图缓存
+      // 其次使用缩略图缓�?
       const cache = getGlobalCache();
       return cache?.get(file.path) || null;
   });
@@ -107,7 +107,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
         return;
       }
       
-      // 优先检查 ImageViewer 的高分辨率 Blob 缓存
+      // 优先检�?ImageViewer 的高分辨�?Blob 缓存
       const blobUrl = getBlobCacheSync(file.path);
       if (blobUrl) {
         setImageUrl(blobUrl);
@@ -115,7 +115,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
         return;
       }
       
-      // 检查全局缩略图缓存
+      // 检查全局缩略图缓�?
       const cache = getGlobalCache();
       const cachedUrl = cache?.get(file.path);
       
@@ -125,7 +125,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
         return;
       }
       
-      // 如果缓存中没有，才显示加载状态
+      // 如果缓存中没有，才显示加载状�?
       setIsLoading(true);
       
       try {
@@ -224,7 +224,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
                     <div className="w-20 text-gray-500 dark:text-gray-400 font-medium truncate shrink-0" title={item.label}>
                         {item.label}
                     </div>
-                    <div className="flex-1 mx-3 h-2 bg-gray-100 dark:bg-gray-700/50 rounded-full overflow-hidden">
+                    <div className="flex-1 mx-3 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
                         <div 
                             className={`h-full rounded-full ${item.color} shadow-sm transition-all duration-700 ease-out`}
                             style={{ width: `${(item.value / max) * 100}%` }}
@@ -396,7 +396,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                const { getDominantColors } = await import('../api/tauri-bridge');
                
-               // 尝试从全局缩略图路径缓存中获取缩略图路径
+               // 尝试从全局缩略图路径缓存中获取缩略图路�?
                let thumbnailPath: string | null = null;
                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
                if (pathCache && pathCache.get) {
@@ -410,11 +410,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                if (!thumbnailPath && resourceRoot) {
                    try {
                        const { getThumbnail } = await import('../api/tauri-bridge');
-                       // getThumbnail 返回的是 convertFileSrc 后的 URL，我们需要原始路径
+                       // getThumbnail 返回的是 convertFileSrc 后的 URL，我们需要原始路�?
                        // 所以我们先调用 getThumbnail 确保缩略图存在，然后从缓存中获取路径
                        const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
                        if (thumbUrl) {
-                               // 重新从缓存获取原始路径
+                               // 重新从缓存获取原始路�?
                                thumbnailPath = pathCache.get(file.path!);
                            }
                    } catch (err) {
@@ -479,7 +479,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     setShowSavedSource(false);
     setShowSavedPerson(false);
     setPaletteMenu({ visible: false, x: 0, y: 0, color: null });
-  }, [file?.id, selectedFileIds.join(','), isMulti, person?.id, topic?.id]);
+  }, [file?.id, file?.description, file?.aiData, selectedFileIds.join(','), isMulti, person?.id, topic?.id, topics]);
 
   const handleUpdateTopicMeta = () => {
       if (topic && onUpdateTopic) {
@@ -567,11 +567,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     return win.__AURORA_THUMBNAIL_CACHE__ || null;
   };
 
-  // 文件夹预览图，与主界面保持一致
+  // 文件夹预览图，与主界面保持一�?
   const [folderPreviewImages, setFolderPreviewImages] = useState<string[]>([]);
   const [folderPreviewLoaded, setFolderPreviewLoaded] = useState(false);
 
-  // 当文件或资源根目录变化时，更新文件夹预览图
+  // 当文件或资源根目录变化时，更新文件夹预览�?
   useEffect(() => {
     if (!file || file.type !== FileType.FOLDER) {
       setFolderPreviewImages([]);
@@ -579,21 +579,21 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       return;
     }
 
-    // 1. 深度查找文件夹内的图片
+    // 1. 深度查找文件夹内的图�?
     const imageChildren = findImagesDeeply(file, files, 3);
     
     // 2. 检查全局缓存中是否已有缩略图
     const cache = getGlobalCache();
     if (cache) {
-      // 尝试映射所有子文件到缓存中的 URL
+      // 尝试映射所有子文件到缓存中�?URL
       const cachedUrls = imageChildren.map((child: FileNode) => {
           return cache.get(child.path) || null; 
       });
       
-      // 过滤掉 null 值
+      // 过滤�?null �?
       const validUrls = cachedUrls.filter((url: any): url is string => !!url);
       
-      // 如果缓存中有数据，立即更新
+      // 如果缓存中有数据，立即更�?
       if (validUrls.length > 0) {
         setFolderPreviewImages(validUrls);
       }
@@ -607,7 +607,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           
           // 并行请求所有子文件的缩略图
           const promises = imageChildren.map(async (img: FileNode) => {
-              // 先查缓存，如果有就不请求了
+              // 先查缓存，如果有就不请求�?
               const cache = getGlobalCache();
               if (cache) {
                 const cached = cache.get(img.path);
@@ -621,10 +621,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
           const thumbnails = await Promise.all(promises);
           
-          // 过滤掉 null 值
+          // 过滤�?null �?
           const validThumbnails = thumbnails.filter((t: any): t is string => !!t);
           
-          // 更新预览图
+          // 更新预览�?
           if (validThumbnails.length > 0) {
             setFolderPreviewImages(validThumbnails);
           }
@@ -816,7 +816,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
               return convertFileSrc(files[t.coverFileId].path);
           }
           if (t.fileIds && t.fileIds.length > 0) {
-              // 优先查找第一个图片文件
+              // 优先查找第一个图片文�?
               for (const fid of t.fileIds) {
                   const f = files[fid];
                   if (f && f.type === FileType.IMAGE) {
@@ -865,7 +865,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       // 计算文件数量
       const topicFileCount = topic.fileIds ? topic.fileIds.length : 0;
 
-      // 获取封面样式 - 与 TopicModule 保持一致的算法
+      // 获取封面样式 - �?TopicModule 保持一致的算法
       const getCoverStyle = (t: Topic, overrideUrl?: string | null): React.CSSProperties => {
           const url = overrideUrl || getCoverUrlInternal(t);
           if (!url) return {};
@@ -876,7 +876,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           };
           
           const crop = t.coverCrop;
-          // 复用 TopicModule.tsx 中的裁剪算法，确保显示一致
+          // 复用 TopicModule.tsx 中的裁剪算法，确保显示一�?
           if (crop && crop.width > 0 && crop.height > 0) {
               const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
               const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
@@ -884,8 +884,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
               const sizeW = 10000 / safeWidth;
               const sizeH = 10000 / safeHeight;
 
-              // 计算位置百分比: (offset / remaining_space) * 100
-              // 当 safeWidth 是 100 时，分母为 0，所以上面做了 99.9 的限制
+              // 计算位置百分�? (offset / remaining_space) * 100
+              // �?safeWidth �?100 时，分母�?0，所以上面做�?99.9 的限�?
               const posX = (crop.x / (100 - safeWidth)) * 100;
               const posY = (crop.y / (100 - safeHeight)) * 100;
 
@@ -900,7 +900,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-           {/* 现代化封面 Header */}
+           {/* 现代化封�?Header */}
            <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
                {coverUrl ? (
                    <div 
@@ -919,7 +919,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
            {/* 浮动内容面板 */}
            <div className="px-6 py-8 space-y-8 flex-1 relative bg-white dark:bg-gray-900 rounded-t-[2rem] -mt-8 shadow-2xl">
-               {/* 标题与统计药丸 */}
+               {/* 标题与统计药�?*/}
                <div className="space-y-5">
                    <h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight text-center">
                        {topic.name}
@@ -935,7 +935,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                            <span>{topicFileCount} {t('context.files')}</span>
                        </div>
                        {topic.updatedAt && (
-                           <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full border border-gray-100 dark:border-gray-700 text-[11px] font-bold uppercase tracking-wider">
+                           <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full border border-gray-100 dark:border-gray-800 text-[11px] font-bold uppercase tracking-wider">
                                <Clock size={14} />
                                <span>{new Date(topic.updatedAt).toLocaleDateString()}</span>
                            </div>
@@ -950,7 +950,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                            {t('meta.description')}
                        </label>
                    </div>
-                   <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
+                   <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                        <textarea 
                            className="w-full bg-transparent border-none p-4 text-sm text-gray-700 dark:text-gray-300 min-h-[140px] focus:ring-0 resize-none leading-relaxed placeholder:text-gray-400/50"
                            value={topicDesc}
@@ -971,7 +971,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                </div>
 
-               {/* 专题内人物 - 圆形头像网格，姓名置于下方，右上角显示子专题出现次数 */}
+               {/* 专题内人�?- 圆形头像网格，姓名置于下方，右上角显示子专题出现次数 */}
                {topicPeople.length > 0 && (
                    <div className="space-y-4">
                         <div className="flex justify-between items-center px-1">
@@ -1044,7 +1044,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                            <input 
                                value={topicSource}
                                onChange={e => setTopicSource(e.target.value)}
-                               className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-700/50 rounded-2xl px-4 py-3 text-sm dark:text-white focus:outline-none focus:ring-2 ring-blue-500/20 focus:bg-white dark:focus:bg-gray-800 transition-all placeholder:text-gray-400/50"
+                               className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800/50 rounded-2xl px-4 py-3 text-sm dark:text-white focus:outline-none focus:ring-2 ring-blue-500/20 focus:bg-white dark:focus:bg-gray-800 transition-all placeholder:text-gray-400/50"
                                placeholder="https://"
                            />
                            {topicSource !== (topic.sourceUrl || '') && (
@@ -1061,7 +1061,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                href={topicSource} 
                                target="_blank" 
                                rel="noreferrer" 
-                               className="flex items-center justify-center w-12 h-12 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-700 text-blue-500 hover:text-white hover:bg-blue-500 hover:border-blue-500 rounded-2xl shadow-sm transition-all active:scale-95"
+                               className="flex items-center justify-center w-12 h-12 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-800 text-blue-500 hover:text-white hover:bg-blue-500 hover:border-blue-500 rounded-2xl shadow-sm transition-all active:scale-95"
                                title={t('context.openInBrowser')}
                            >
                                <ExternalLink size={20}/>
@@ -1070,7 +1070,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                </div>
 
-               {/* 现代子专题列表 - 改为3:4比例网格 */}
+               {/* 现代子专题列�?- 改为3:4比例网格 */}
                {!topic.parentId && subTopics.length > 0 && (
                    <div className="space-y-4">
                         <div className="flex justify-between items-center px-1">
@@ -1090,7 +1090,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         className="group/sub flex flex-col gap-2.5 cursor-pointer transition-all active:scale-95"
                                         onClick={() => onSelectTopic && onSelectTopic(sub.id)}
                                     >
-                                        <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-700 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
+                                        <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
                                             {subCoverUrl ? (
                                                 <div 
                                                     className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110" 
@@ -1117,7 +1117,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    </div>
                )}
 
-               {/* 底部功能区 - 删除按钮 */}
+               {/* 底部功能�?- 删除按钮 */}
                <div className="pt-8 pb-4 flex justify-center">
                    <button 
                        onClick={() => onDeleteTopic && onDeleteTopic(topic.id)}
@@ -1129,7 +1129,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                </div>
            </div>
 
-           {/* 现代化保存消息提示 */}
+           {/* 现代化保存消息提�?*/}
            {showSavedTopic && (
               <div className="fixed bottom-8 left-[calc(100%-160px)] transform -translate-x-1/2 bg-gray-900/90 dark:bg-white/90 text-white dark:text-gray-900 text-xs font-bold px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md animate-toast-up flex items-center z-50">
                   <Check size={14} className="mr-2 text-green-500"/>
@@ -1152,7 +1152,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
           <div className="p-5 space-y-6">
             {/* Selected People List */}
-            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
               <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                   <User size={12} className="mr-1.5" /> {t('context.selectedPeople')}
               </div>
@@ -1167,7 +1167,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   return (
                     <div 
                       key={personId} 
-                      className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
+                      className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
                       onClick={() => onSelectPerson && onSelectPerson(personId)}
                     >
                       {/* Avatar */}
@@ -1283,11 +1283,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 {/* Stats */}
                 <div className="flex items-center gap-3">
-                    <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm backdrop-blur-sm min-w-[90px]">
+                    <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm backdrop-blur-sm min-w-[90px]">
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold tracking-wider mb-0.5">{t('context.files')}</span>
                         <span className="text-lg font-mono font-bold text-blue-600 dark:text-blue-400">{person.count}</span>
                     </div>
-                    <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-700 shadow-sm backdrop-blur-sm min-w-[90px]">
+                    <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm backdrop-blur-sm min-w-[90px]">
                         <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold tracking-wider mb-0.5">{t('meta.size')}</span>
                         <span className="text-lg font-mono font-bold text-purple-600 dark:text-purple-400">{personStats ? formatSize(personStats.totalSize) : '-'}</span>
                     </div>
@@ -1303,7 +1303,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                           {t('meta.description')}
                       </label>
                   </div>
-                  <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-700/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
+                  <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                       <textarea
                           ref={personDescRef}
                           value={personDesc}
@@ -1337,7 +1337,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
               </div>
           </div>
 
-          {/* 现代化保存消息提示 */}
+          {/* 现代化保存消息提�?*/}
           {showSavedPerson && (
               <div className="fixed bottom-8 left-[calc(100%-160px)] transform -translate-x-1/2 bg-gray-900/90 dark:bg-white/90 text-white dark:text-gray-900 text-xs font-bold px-5 py-2.5 rounded-2xl shadow-2xl backdrop-blur-md animate-toast-up flex items-center z-50">
                   <Check size={14} className="mr-2 text-green-500"/>
@@ -1374,14 +1374,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         
         {/* Multi-Selection Composition Chart */}
         {isMulti && batchStats && (
-             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+             <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
                 <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                     <PieChart size={12} className="mr-1.5" /> {t('meta.typeDistribution')}
                 </div>
                 <DistributionChart data={batchChartData} totalFiles={selectedFileIds.length} />
                 
                 {/* Total Files Summary */}
-                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-700">
+                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-800">
                     <span>{t('meta.totalFiles')}</span>
                     <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{selectedFileIds.length}</span>
                 </div>
@@ -1409,38 +1409,38 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         <button
                             onClick={async () => {
                                 if (colors.length > 0) {
-                                    // 搜索相似氛围 (全色板搜索)
-                                    // 为每个颜色添加前缀 color: 用于触发UI搜索逻辑，
-                                    // 但实际上我们需要一种新的搜索模式。
-                                    // 目前 onSearch 仅用于 UI 搜索框输入。
+                                    // 搜索相似氛围 (全色板搜�?
+                                    // 为每个颜色添加前缀 color: 用于触发UI搜索逻辑�?
+                                    // 但实际上我们需要一种新的搜索模式�?
+                                    // 目前 onSearch 仅用�?UI 搜索框输入�?
                                     // 更好的方式是直接通过 bridge 调用后端，然后更新搜索结果，
-                                    // 但那样需要入侵性修改主 FileGrid 的状态。
-                                    // 这里我们通过特殊的搜索指令 `palette:hex1,hex2...` 来触发 FileGrid 的响应
+                                    // 但那样需要入侵性修改主 FileGrid 的状态�?
+                                    // 这里我们通过特殊的搜索指�?`palette:hex1,hex2...` 来触�?FileGrid 的响�?
                                     // 或者，更简单的方法：我们在这里直接使用 onSearch('palette:c1,c2...')
-                                    // 并让 App.tsx 解析这个指令。
-                                    // 假设 App.tsx 会处理这个逻辑，或者我们直接调用 bridge 并将结果视为搜索结果。
+                                    // 并让 App.tsx 解析这个指令�?
+                                    // 假设 App.tsx 会处理这个逻辑，或者我们直接调�?bridge 并将结果视为搜索结果�?
                                     
-                                    // 临时方案：使用 onSearch 传递特殊前缀，
-                                    // 用户代码需要确保 App.tsx 或搜索组件能解析这个。
-                                    // 根据用户当前需求描述 "调用 searchByPalette，并通过 onSearch 触发 UI 更新"
+                                    // 临时方案：使�?onSearch 传递特殊前缀�?
+                                    // 用户代码需要确�?App.tsx 或搜索组件能解析这个�?
+                                    // 根据用户当前需求描�?"调用 searchByPalette，并通过 onSearch 触发 UI 更新"
                                     
                                     try {
                                         const { searchByPalette } = await import('../api/tauri-bridge');
                                         
-                                        // 氛围搜索：只使用前5个主色调（占比最大的颜色）
+                                        // 氛围搜索：只使用�?个主色调（占比最大的颜色�?
                                         // 忽略后面占比小但鲜艳的点缀色，避免搜索结果过于宽泛
                                         const atmosphereColors = colors.slice(0, 5);
                                         
                                         // 执行搜索
                                         const results = await searchByPalette(atmosphereColors);
-                                        // 这里我们需要告知主 UI 显示这些结果。
-                                        // 通常 onSearch 是更新搜索框的文字。
-                                        // 我们可以构造一个特殊的查询字符串。
-                                        // 或者这里只是为了触发一次搜索动作。
+                                        // 这里我们需要告知主 UI 显示这些结果�?
+                                        // 通常 onSearch 是更新搜索框的文字�?
+                                        // 我们可以构造一个特殊的查询字符串�?
+                                        // 或者这里只是为了触发一次搜索动作�?
                                         
-                                        // 由于现在的架构限制，最快的方法是构造一个特殊的搜索字符串
-                                        // 并在 FileGrid / App 层面拦截它。
-                                        // 这里我们先只是调用 onSearch，传入一种特殊格式。
+                                        // 由于现在的架构限制，最快的方法是构造一个特殊的搜索字符�?
+                                        // 并在 FileGrid / App 层面拦截它�?
+                                        // 这里我们先只是调�?onSearch，传入一种特殊格式�?
                                         // 最好是 "palette:hex1,hex2,hex3"
                                         const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
                                         console.log('[AtmosphereSearch] Triggering search:', searchQuery);
@@ -1477,14 +1477,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         try {
                                             const { getDominantColors } = await import('../api/tauri-bridge');
                                             
-                                            // 尝试从全局缩略图路径缓存中获取缩略图路径
+                                            // 尝试从全局缩略图路径缓存中获取缩略图路�?
                                             let thumbnailPath: string | null = null;
                                             const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
                                             if (pathCache && pathCache.get) {
                                                 thumbnailPath = pathCache.get(file.path!);
                                             }
                                             
-                                            // 如果缓存中没有，尝试生成缩略图
+                                            // 如果缓存中没有，尝试生成缩略�?
                                             if (!thumbnailPath && resourceRoot) {
                                                 try {
                                                     const { getThumbnail } = await import('../api/tauri-bridge');
@@ -1538,10 +1538,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 onContextMenu={(e) => {
                                     e.preventDefault();
                                     e.stopPropagation();
-                                    // 计算菜单宽度（根据菜单项内容估算）
+                                    // 计算菜单宽度（根据菜单项内容估算�?
                                     const menuWidth = 180;
                                     // 对于最右边的色块，将菜单显示在鼠标左边
-                                    const isRightmost = i === 7; // 最后一个色块
+                                    const isRightmost = i === 7; // 最后一个色�?
                                     const x = isRightmost ? e.clientX - menuWidth : e.clientX;
                                     setPaletteMenu({ visible: true, x, y: e.clientY, color });
                                 }}
@@ -1576,14 +1576,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 
                 {/* File Type Distribution */}
                 {folderDetails && (
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
                         <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                             <PieChart size={12} className="mr-1.5" /> {t('meta.fileDistribution')}
                         </div>
                         <DistributionChart data={chartData} totalFiles={folderDetails.totalFiles + folderDetails.subFolderCount} />
                         
                         {/* Total Files Summary */}
-                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-700">
+                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-800">
                             <span>{t('meta.totalFiles')}</span>
                             <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{folderDetails.totalFiles}</span>
                         </div>
@@ -1605,7 +1605,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         // Multi-selection AI analysis summary
                         <div className="space-y-3">
                             {/* Count of files with AI data */}
-                            <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                            <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                 <div className="text-gray-400 text-xs mb-1">{t('meta.aiFilesCount')}</div>
                                 <div className="font-medium text-gray-800 dark:text-gray-200">
                                     {selectedFileIds.filter(id => files[id]?.aiData).length} / {selectedFileIds.length}
@@ -1626,7 +1626,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 
                                 if (sceneCategories.size > 0) {
                                     return (
-                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                             <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                 <span className="mr-1.5">{t('meta.aiScene')}</span>
                                                 <span className="text-gray-500">({sceneCategories.size} {t('context.items')})</span>
@@ -1636,7 +1636,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                     .sort(([, a], [, b]) => b - a)
                                                     .slice(0, 8)
                                                     .map(([category, count]) => (
-                                                        <span key={category} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-600 flex items-center">
+                                                        <span key={category} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-700 flex items-center">
                                                             <span className="mr-1 font-medium">{category}</span>
                                                             <span className="text-gray-500">({count})</span>
                                                         </span>
@@ -1665,7 +1665,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 
                                 if (faceNames.size > 0) {
                                     return (
-                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                             <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                 <span className="mr-1.5">{t('meta.aiFaces')}</span>
                                                 <span className="text-gray-500">({faceNames.size} {t('context.items')})</span>
@@ -1708,7 +1708,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 
                                 if (objects.size > 0) {
                                     return (
-                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                        <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                             <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                 <span className="mr-1.5">{t('meta.aiObjects')}</span>
                                                 <span className="text-gray-500">({objects.size} {t('context.items')})</span>
@@ -1718,7 +1718,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                     .sort(([, a], [, b]) => b - a)
                                                     .slice(0, 12)
                                                     .map(([obj, count]) => (
-                                                        <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-700 flex items-center">
+                                                        <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800 flex items-center">
                                                             <span className="mr-1">{obj}</span>
                                                             <span className="text-gray-500 text-[9px]">({count})</span>
                                                         </span>
@@ -1752,11 +1752,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         file && file.aiData && (
                             <div className="space-y-3">
                                 <div className="grid grid-cols-2 gap-2 text-xs">
-                                    <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                    <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                         <div className="text-gray-400 mb-1">{t('meta.aiScene')}</div>
                                         <div className="font-medium text-gray-800 dark:text-gray-200">{file.aiData.sceneCategory}</div>
                                     </div>
-                                    <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                    <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                         <div className="text-gray-400 mb-1">{t('meta.aiConfidence')}</div>
                                         <div className="font-medium text-gray-800 dark:text-gray-200">{Math.round(file.aiData.confidence * 100)}%</div>
                                     </div>
@@ -1785,7 +1785,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Scan size={10} className="mr-1"/> {t('meta.aiObjects')}</div>
                                         <div className="flex flex-wrap gap-1">
                                             {file.aiData.objects.map(obj => (
-                                                <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-700">
+                                                <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800">
                                                     {obj}
                                                 </span>
                                             ))}
@@ -1794,7 +1794,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 )}
 
                                 {file.aiData.extractedText && (
-                                    <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                    <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                         <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center">
                                             <FileText size={10} className="mr-1"/> {t('meta.aiExtractedText')}
                                         </div>
@@ -1803,7 +1803,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 )}
 
                                 {file.aiData.translatedText && (
-                                    <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-700">
+                                    <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
                                         <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center">
                                             <Languages size={10} className="mr-1"/> {t('meta.aiTranslatedText')}
                                         </div>
@@ -1836,7 +1836,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         onNavigateToFolder(file.parentId, { targetId: file.id });
                     }
                 }}
-                className={`w-full flex items-center justify-center py-2.5 px-4 text-sm font-medium rounded-lg transition-colors border border-gray-200 dark:border-gray-700 group ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'}`}
+                className={`w-full flex items-center justify-center py-2.5 px-4 text-sm font-medium rounded-lg transition-colors border border-gray-200 dark:border-gray-800 group ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'}`}
                 disabled={activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId}
             >
                 <FolderOpen size={16} className={`mr-2 ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'text-gray-400 dark:text-gray-500' : 'text-blue-500 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`}/>
@@ -1949,12 +1949,12 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         onChange={(e) => setNewTagInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAddTag(newTagInput)}
                         placeholder={t('meta.addTagPlaceholder')}
-                        className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md py-2 px-3 text-sm text-gray-700 dark:text-gray-300 focus:ring-2 ring-blue-500/50 placeholder-gray-400 focus:border-blue-500 outline-none transition-all"
+                        className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-md py-2 px-3 text-sm text-gray-700 dark:text-gray-300 focus:ring-2 ring-blue-500/50 placeholder-gray-400 focus:border-blue-500 outline-none transition-all"
                     />
                     {newTagInput && (
                         <button 
                             onClick={() => handleAddTag(newTagInput)}
-                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 bg-blue-500 text-white rounded hover:bg-blue-600"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 bg-blue-500 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700"
                         >
                             <Check size={12}/>
                         </button>
@@ -1962,7 +1962,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     
                     {/* Tag Autocomplete Suggestions */}
                     {newTagInput && systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).length > 0 && (
-                         <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
+                         <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
                              {systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).map(tag => (
                                  <div 
                                     key={tag} 
@@ -2003,7 +2003,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             }
                         }}
                         placeholder={t('meta.addDesc')}
-                        className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-2 ring-blue-500/50 min-h-[80px] leading-relaxed outline-none transition-all focus:border-blue-500"
+                        className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-2 ring-blue-500/50 min-h-[80px] leading-relaxed outline-none transition-all focus:border-blue-500"
                     />
                 </div>
                 <div className="flex justify-between items-center mt-2 text-[10px] text-gray-400">
@@ -2029,7 +2029,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             {isMulti && isSourceMixed ? (
                 <div className="text-xs text-orange-500 italic mb-2 bg-orange-50 dark:bg-orange-900/20 px-2 py-1 rounded">{t('meta.mixedValues')}</div>
             ) : null}
-            <div className="flex items-center bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
+            <div className="flex items-center bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
                 <input
                     type="text"
                     value={isMulti ? batchSource : source}
@@ -2079,7 +2079,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       {/* Palette Context Menu */}
       {paletteMenu.visible && paletteMenu.color && createPortal(
           <div 
-             className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 z-[70] animate-zoom-in"
+             className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 z-[70] animate-zoom-in"
              style={{ 
                top: 'auto', 
                left: 'auto',
@@ -2113,14 +2113,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                    y = 0;
                  }
                  
-                 // 设置最终位置
+                 // 设置最终位�?
                  el.style.left = `${x}px`;
                  el.style.top = `${y}px`;
                }
              }}
           >
               <div 
-                 className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center"
+                 className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center"
                  onClick={() => {
                      copyToClipboard(paletteMenu.color!);
                      setPaletteMenu({ ...paletteMenu, visible: false });
@@ -2129,7 +2129,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   <Copy size={14} className="mr-2 opacity-70"/> {t('context.copyColor')}
               </div>
               <div 
-                 className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center"
+                 className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center"
                  onClick={() => {
                      onSearch(`color:${paletteMenu.color!.replace('#', '')}`);
                      setPaletteMenu({ ...paletteMenu, visible: false });

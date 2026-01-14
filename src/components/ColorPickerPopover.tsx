@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Pipette, Copy, Check } from 'lucide-react';
 
 interface RGB { r: number; g: number; b: number; }
@@ -178,7 +178,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
   const hueColor = `hsl(${hsv.h}, 100%, 50%)`;
 
   return (
-    <div className={`p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 w-64 select-none ${className}`}>
+    <div className={`p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-800 w-64 select-none ${className}`}>
       {/* Saturation/Value Area */}
       <div 
         ref={svRef}
@@ -225,7 +225,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
          </div>
          
          <div 
-            className="w-6 h-6 rounded border border-gray-200 dark:border-gray-600 flex-shrink-0" 
+            className="w-6 h-6 rounded border border-gray-200 dark:border-gray-700 flex-shrink-0" 
             style={{ backgroundColor: hex }}
          />
       </div>
@@ -238,7 +238,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                type="text" 
                value={hex.replace('#','')} 
                onChange={e => handleHexChange({ ...e, target: { ...e.target, value: '#' + e.target.value } })}
-               className="w-full pl-5 pr-1 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 uppercase focus:outline-none focus:ring-1 focus:ring-blue-500"
+               className="w-full pl-5 pr-1 py-1 text-xs border border-gray-200 dark:border-gray-800 rounded bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 uppercase focus:outline-none focus:ring-1 focus:ring-blue-500"
              />
           </div>
            <div className="flex space-x-1 w-36">
@@ -260,7 +260,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                    setHex(rgbToHex(newRgb));
                    onChange(rgbToHex(newRgb));
                 }}
-                className="w-12 px-1 py-1 text-xs border border-gray-200 dark:border-gray-700 rounded bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-12 px-1 py-1 text-xs border border-gray-200 dark:border-gray-800 rounded bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 text-center focus:outline-none focus:ring-1 focus:ring-blue-500"
                />
              ))}
            </div>
@@ -304,7 +304,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
          {presetColors.map(c => (
              <button
                key={c}
-               className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200 dark:border-gray-700"
+               className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200 dark:border-gray-800"
                style={{ backgroundColor: c }}
                onClick={() => {
                    console.log('[ColorPicker] Preset color selected:', c);

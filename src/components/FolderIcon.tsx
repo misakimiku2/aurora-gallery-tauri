@@ -1,8 +1,8 @@
-import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
+﻿import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
 import { Folder, Book, Film } from 'lucide-react';
 import { FileNode, LayoutMode, FileType } from '../types';
 
-// Intersection Observer 单例管理器
+// Intersection Observer 单例管理�?
 class IntersectionObserverManager {
   private static instance: IntersectionObserverManager;
   private observers: Map<string, { observer: IntersectionObserver; callbacks: WeakMap<Element, Set<(entry: IntersectionObserverEntry) => void>> }>;
@@ -136,7 +136,7 @@ const useInView = (options: IntersectionObserverInit = {}) => {
   return [ref, isInView, wasInView] as const;
 };
 
-// 简化的文件夹图标组件 - 优化DOM结构
+// 简化的文件夹图标组�?- 优化DOM结构
 export const SimpleFolderIcon = memo(({ 
   category = 'general', 
   className = "" 
@@ -154,16 +154,16 @@ export const SimpleFolderIcon = memo(({
 
   return (
     <div className={`relative w-full h-full flex items-center justify-center ${className}`}>
-      {/* 简化的文件夹图标 - 使用单个SVG */}
-      <div className={`relative w-full aspect-square ${style.bg} rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700`}>
-        {/* 背景层 */}
+      {/* 简化的文件夹图�?- 使用单个SVG */}
+      <div className={`relative w-full aspect-square ${style.bg} rounded-lg overflow-hidden border border-gray-200 dark:border-gray-800`}>
+        {/* 背景�?*/}
         <div className="absolute inset-0 opacity-20">
           <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
             <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" fill="currentColor" />
           </svg>
         </div>
         
-        {/* 图标层 */}
+        {/* 图标�?*/}
         <div className="absolute inset-0 flex items-center justify-center">
           <Icon size={24} className={style.color} strokeWidth={1.5} />
         </div>
@@ -180,7 +180,7 @@ export const FolderPreviewImages = memo(({
   previewSrcs?: string[],
   onImageError?: (index: number) => void
 }) => {
-  const images = (previewSrcs || []).filter(src => !!src).slice(0, 1); // 只取第一张
+  const images = (previewSrcs || []).filter(src => !!src).slice(0, 1); // 只取第一�?
   
   if (images.length === 0) return null;
 
@@ -202,7 +202,7 @@ export const FolderPreviewImages = memo(({
   );
 });
 
-// 完整的3D文件夹图标组件 - 保持原有设计但优化性能
+// 完整�?D文件夹图标组�?- 保持原有设计但优化性能
 export const Folder3DIcon = memo(({
   previewSrcs,
   count,
@@ -231,7 +231,7 @@ export const Folder3DIcon = memo(({
     <div className={`relative w-full h-full select-none flex items-center justify-center ${className}`}>
       {/* Square container to maintain aspect ratio */}
       <div className="relative w-full aspect-square">
-        {/* Back Plate - 优化为CSS类 */}
+        {/* Back Plate - 优化为CSS�?*/}
         <svg viewBox="0 0 100 100" className={`absolute w-full h-full drop-shadow-sm transition-colors ${style.back}`} preserveAspectRatio="none">
           <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" fill="currentColor" />
         </svg>
@@ -265,7 +265,7 @@ export const Folder3DIcon = memo(({
   );
 });
 
-// 性能优化的文件夹缩略图组件
+// 性能优化的文件夹缩略图组�?
 export const OptimizedFolderThumbnail = memo(({
   file,
   files,
@@ -294,7 +294,7 @@ export const OptimizedFolderThumbnail = memo(({
     const visited = new Set<string>();
     let traversalCount = 0;
     const MAX_TRAVERSAL = 100; // 降低上限
-    const MAX_IMAGES = 1; // 只取1张图片
+    const MAX_IMAGES = 1; // 只取1张图�?
 
     while (stack.length > 0 && traversalCount < MAX_TRAVERSAL && images.length < MAX_IMAGES) {
       const id = stack.pop()!;
@@ -321,7 +321,7 @@ export const OptimizedFolderThumbnail = memo(({
   const [previewSrcs, setPreviewSrcs] = React.useState<string[]>(() => {
     if (!enablePreview || !imageChildren || imageChildren.length === 0) return [];
     
-    // 尝试从全局缓存读取第一张图片
+    // 尝试从全局缓存读取第一张图�?
     const firstChild = imageChildren[0];
     if (firstChild && firstChild.path && window.__AURORA_THUMBNAIL_CACHE__) {
       const cached = window.__AURORA_THUMBNAIL_CACHE__.get(firstChild.path);
@@ -331,7 +331,7 @@ export const OptimizedFolderThumbnail = memo(({
   });
   
   const [loaded, setLoaded] = React.useState(() => {
-    // 如果初始化时就有缓存数据，标记为已加载
+    // 如果初始化时就有缓存数据，标记为已加�?
     if (!enablePreview || !imageChildren || imageChildren.length === 0) return true;
     
     const firstChild = imageChildren[0];
@@ -341,12 +341,12 @@ export const OptimizedFolderThumbnail = memo(({
     return false;
   });
 
-  // 延迟加载逻辑 - 只在组件进入视口时加载
+  // 延迟加载逻辑 - 只在组件进入视口时加�?
   React.useEffect(() => {
-    // 如果不在视口内或已经加载，直接返回
+    // 如果不在视口内或已经加载，直接返�?
     if (!isInView || !wasInView || !enablePreview || !resourceRoot || imageChildren.length === 0 || loaded) return;
     
-    // 如果已经有预览图片，不需要重新加载
+    // 如果已经有预览图片，不需要重新加�?
     if (previewSrcs.length > 0) return;
 
     const loadPreviews = async () => {
@@ -366,7 +366,7 @@ export const OptimizedFolderThumbnail = memo(({
           }
         }
         
-        // 缓存未命中，请求新图片
+        // 缓存未命中，请求新图�?
         const url = await getThumbnail(firstChild.path, firstChild.updatedAt, resourceRoot);
         
         if (url) {

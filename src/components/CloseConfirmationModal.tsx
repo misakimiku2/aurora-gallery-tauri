@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
 interface CloseConfirmationModalProps {
@@ -17,7 +17,7 @@ export const CloseConfirmationModal: React.FC<CloseConfirmationModalProps> = ({ 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
       <div 
-        className="bg-white dark:bg-gray-800 rounded-xl w-[400px] shadow-2xl border border-gray-200 dark:border-gray-600 animate-zoom-in"
+        className="bg-white dark:bg-gray-800 rounded-xl w-[400px] shadow-2xl border border-gray-200 dark:border-gray-700 animate-zoom-in"
         onClick={e => e.stopPropagation()}
       >
         <div className="p-6">
@@ -39,7 +39,7 @@ export const CloseConfirmationModal: React.FC<CloseConfirmationModalProps> = ({ 
               {t('window.closeConfirmation.exit')}
             </button>
             
-            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-200 dark:border-gray-800">
               <label className="flex items-center text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
                 <input
                   type="checkbox"

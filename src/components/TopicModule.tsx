@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -505,7 +505,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         onSelectPerson && onSelectPerson(personId, e);
 
         if (clickedOncePerson === personId) {
-            // Second click — navigate
+            // Second click �?navigate
             onNavigatePerson && onNavigatePerson(personId);
             setClickedOncePerson(null);
             if (clickTimerRef.current) {
@@ -1209,7 +1209,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 onContextMenu={(e) => handleContextMenu(e, topic.id)}
                             >
                                 <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
-                                    <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-700 shadow-lg">
+                                    <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-lg">
                                         {coverStyle ? (
                                             <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={coverStyle} />
                                         ) : (
@@ -1452,7 +1452,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                     onContextMenu={(e) => handleContextMenu(e, sub.id)}
                                                 >
                                                     <div className={`relative aspect-[3/4] w-full transform transition-all duration-300 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
-                                                        <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-700 bg-gray-200 dark:bg-gray-800">
+                                                        <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-800 bg-gray-200 dark:bg-gray-800">
                                                             {subCoverStyle ? (
                                                                 <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover:scale-110" style={subCoverStyle} />
                                                             ) : (
@@ -1611,7 +1611,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                   <button 
                                       className={`p-1.5 rounded-md transition-all ${(/* use internal state */ layoutMode) === 'masonry' ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400' : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700'}`}
                                       onClick={() => { setLayoutMode('masonry'); localStorage.setItem('aurora_topic_layout_mode', 'masonry'); }}
-                                      title={t('view.masonry') || "瀑布流视图"}
+                                      title={t('view.masonry') || '瀑布流视图'}
                                   >
                                       <Columns size={16}/>
                                   </button>
@@ -1656,7 +1656,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const menu = (
             <div
                 ref={contextMenuRef}
-                className="context-menu fixed bg-white dark:bg-gray-800 shadow-lg rounded-lg border border-gray-200 dark:border-gray-700 py-1 z-50 min-w-[200px]"
+                className="context-menu fixed bg-white dark:bg-gray-800 shadow-lg rounded-lg border border-gray-200 dark:border-gray-800 py-1 z-50 min-w-[200px]"
                 style={{
                     left: contextMenu.x,
                     top: contextMenu.y,
@@ -1697,7 +1697,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             <Edit2 size={16} className="mr-3" />
                             {t('context.rename') || '重命名'}
                         </button>
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-gray-200 dark:border-gray-800 my-1"></div>
                         <button
                             className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"
                             onClick={() => handleDelete([contextMenu.topicId!])}
@@ -1730,7 +1730,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
+                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
                             <FolderOpen size={14} className="mr-3 opacity-70" />
                             {t('context.openFolder')}
                         </div>
@@ -1743,7 +1743,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         }}>
                             <FileImage size={14} className="mr-3" /> {t('context.setAsBackground') || '设置为专题背景'}
                         </div>
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-gray-200 dark:border-gray-800 my-1"></div>
                         <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic([contextMenu.fileId!]); }}>
                             <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                         </div>
@@ -1849,7 +1849,7 @@ interface CreateTopicModalProps {
 
 const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, t }) => {
     const [name, setName] = useState('');
-    // 默认类型为 TOPIC
+    // 默认类型�?TOPIC
     const [type, setType] = useState('TOPIC');
     
     const handleSubmit = (e: React.FormEvent) => {
@@ -1872,19 +1872,19 @@ const CreateTopicModal: React.FC<CreateTopicModalProps> = ({ onClose, onCreate, 
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         autoFocus
                     />
 
                     <div className="mb-4">
-                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最多12字)'}</label>
+                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最�?2�?'}</label>
                         <input
                             type="text"
                             value={type}
                             maxLength={12}
                             onChange={(e) => setType(e.target.value.slice(0, 12))}
-                            placeholder={t('context.typePlaceholder') || '请输入类型（最多12字）'}
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                            placeholder={t('context.typePlaceholder') || '请输入类型（最�?2字）'}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                         />
                         <div className="text-xs text-gray-400 mt-1">{type.length}/12</div>
                     </div>
@@ -1944,20 +1944,20 @@ const RenameTopicModal: React.FC<RenameTopicModalProps> = ({ topic, onClose, onR
                         value={name}
                         onChange={(e) => setName(e.target.value)}
                         placeholder={t('context.topicNamePlaceholder') || '请输入专题名称'}
-                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg mb-3 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none"
                         autoFocus
                     />
 
-                    {/* 新增：类型字段（最多12字） */}
+                    {/* 新增：类型字段（最�?2字） */}
                     <div className="mb-4">
-                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最多12字)'}</label>
+                        <label className="text-sm text-gray-600 dark:text-gray-300 mb-1 block">{t('context.type') || '类型 (最�?2�?'}</label>
                         <input
                             type="text"
                             value={type}
                             maxLength={12}
                             onChange={(e) => setType(e.target.value.slice(0, 12))}
-                            placeholder={t('context.typePlaceholder') || '请输入类型（最多12字）'}
-                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                            placeholder={t('context.typePlaceholder') || '请输入类型（最�?2字）'}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                         />
                         <div className="text-xs text-gray-400 mt-1">{type.length}/12</div>
                     </div>
@@ -2126,7 +2126,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         setPosition(initialPosition);
     };
     
-    // 处理鼠标按下开始拖拽
+    // 处理鼠标按下开始拖�?
     const handleMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault();
         setIsDragging(true);
@@ -2179,7 +2179,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
             newScale = scale / (1 + ZOOM_SPEED);
         }
         
-        // 计算最小缩放
+        // 计算最小缩�?
         const minScaleX = CROP_WIDTH / imgRef.current.naturalWidth;
         const minScaleY = CROP_HEIGHT / imgRef.current.naturalHeight;
         const minScale = Math.max(minScaleX, minScaleY);
@@ -2191,7 +2191,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         let newX = position.x;
         let newY = position.y;
         
-        // 以裁剪框中心为缩放中心
+        // 以裁剪框中心为缩放中�?
         const cx = (OFFSET_X + CROP_WIDTH/2 - position.x) / scale;
         const cy = (OFFSET_Y + CROP_HEIGHT/2 - position.y) / scale;
         
@@ -2225,7 +2225,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
     // 处理文件选择
     const handleImageSelect = useCallback((fileId: string) => {
         setSelectedFileId(fileId);
-        // 重置缩放和位置
+        // 重置缩放和位�?
         setScale(1);
         setPosition({ x: 0, y: 0 });
     }, []);
@@ -2264,7 +2264,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={onClose} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
             <div className="bg-white dark:bg-gray-800 rounded-lg w-full max-w-6xl h-[85vh] shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 rounded-t-lg">
+                <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 rounded-t-lg">
                     <h3 className="font-bold text-lg text-gray-900 dark:text-white">
                         {t('context.setCover') || '设置专题封面'}
                     </h3>
@@ -2273,7 +2273,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                 {/* Main Content Area */}
                 <div className="flex-1 flex flex-row overflow-hidden">
                     {/* Left: Crop Preview - Fixed Width */}
-                    <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-700">
+                    <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-800">
                         <div 
                             ref={containerRef}
                             className="relative bg-gray-200 dark:bg-black overflow-hidden cursor-move select-none shadow-lg rounded-lg mb-4"
@@ -2332,20 +2332,20 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                             )}
                         </div>
                         
-                        <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-700">
-                             {t('context.cropHint') || '拖拽图片调整位置 • 滚轮缩放'}
+                        <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-800">
+                             {t('context.cropHint') || '拖拽图片调整位置 �?滚轮缩放'}
                         </div>
                     </div>
                     
                     {/* Right: File Selection - Flex 1 */}
                     <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-gray-800">
-                        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+                        <div className="p-4 border-b border-gray-200 dark:border-gray-800">
                             <input
                                 type="text"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
-                                placeholder={t('context.searchFiles') || '搜索文件名...'}
-                                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                                placeholder={t('context.searchFiles') || '搜索文件�?..'}
+                                className="w-full px-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                             />
                         </div>
                         
@@ -2416,11 +2416,11 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                 </div>
                 
                 {/* Footer */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 rounded-b-lg flex items-center justify-between">
+                <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 rounded-b-lg flex items-center justify-between">
                     {/* Zoom Control - Moved to footer */}
                     <div className="flex-1 max-w-xs mr-4">
                         {selectedFile && (
-                            <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700">
+                            <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-800">
                                 <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{t('context.zoom') || '缩放'}</span>
                                 <span className="text-xs text-gray-400 select-none">-</span>
                                 <input 
@@ -2450,7 +2450,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
                     <div className="flex space-x-3">
                         <button
                             onClick={onClose}
-                            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
+                            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
                         >
                             {t('context.cancel') || '取消'}
                         </button>

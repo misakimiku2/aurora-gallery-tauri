@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { Copy, UploadCloud, FileText, ImageIcon, FileCode } from 'lucide-react';
 
 export type DropAction = 'copy' | null;
@@ -63,16 +63,16 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
             onHoverAction(null);
           }}
         >
-          {/* 背景装饰：右侧加入超大水印图标填充空白 */}
+          {/* 背景装饰：右侧加入超大水印图标填充空�?*/}
           <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
             <div className={`absolute -top-32 -left-32 w-96 h-96 bg-blue-500/10 rounded-full blur-3xl transition-opacity duration-700 ${hoveredAction === 'copy' ? 'opacity-100' : 'opacity-30'}`}></div>
-            {/* 右侧水印图标：解决“太亮/太空”的问题 */}
+            {/* 右侧水印图标：解决“太�?太空”的问题 */}
             <Copy size={400} className={`absolute -right-20 -bottom-20 text-blue-500/[0.03] dark:text-blue-400/[0.03] transition-transform duration-1000 ${hoveredAction === 'copy' ? 'scale-110 rotate-12' : 'scale-100 rotate-0'}`} />
           </div>
 
           <div className="flex items-center justify-between w-full z-10 pointer-events-none">
             
-            {/* 左侧：核心图标 */}
+            {/* 左侧：核心图�?*/}
             <div className="relative flex-shrink-0">
               {hoveredAction === 'copy' && (
                 <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-ping opacity-75" />
@@ -87,7 +87,7 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
               </div>
             </div>
 
-            {/* 右侧：文案 + 动态修饰 */}
+            {/* 右侧：文�?+ 动态修�?*/}
             <div className="flex-1 ml-20 flex justify-between items-center">
               <div className="text-left">
                 <h3 className={`text-6xl font-black mb-6 bg-clip-text text-transparent transition-all duration-500 ${
@@ -113,13 +113,13 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
 
               {/* 新增：右侧装饰性文件堆叠感，填补极右侧空白 */}
               <div className={`hidden lg:flex flex-col gap-4 transition-all duration-700 ${hoveredAction === 'copy' ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-10'}`}>
-                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-center -rotate-6 shadow-sm">
+                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-800 flex items-center justify-center -rotate-6 shadow-sm">
                   <ImageIcon size={28} className="text-blue-400" />
                 </div>
-                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-center rotate-12 shadow-md -translate-x-4">
+                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-800 flex items-center justify-center rotate-12 shadow-md -translate-x-4">
                   <FileText size={28} className="text-cyan-400" />
                 </div>
-                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 flex items-center justify-center -rotate-3 shadow-sm">
+                <div className="w-16 h-20 bg-gray-100 dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-800 flex items-center justify-center -rotate-3 shadow-sm">
                   <FileCode size={28} className="text-indigo-400" />
                 </div>
               </div>

@@ -11,51 +11,21 @@
   - `className?: string` - 用于定位/样式的自定义类名。
   - `t?: (key: string) => string` - 可选国际化函数，用于本地化按钮/提示文本。
 
-### ColorPicker 使用示例（集成到 UI 并触发颜色搜索）
-```tsx
-import React, { useState } from 'react'
-import { ColorPickerPopover } from '../components/ColorPickerPopover'
-import { searchByColor } from '../api/tauri-bridge'
+### `PersonGrid` (src/components/PersonGrid.tsx) - 新增组件
+- **功能**: 专门的人物网格视图组件，提供人物头像显示、选择、管理功能。从 FileGrid 中分离出来以提高代码组织性。
+- **主要 Props**:
+  - `people: Record<string, Person>` - 人物数据映射
+  - `files: Record<string, FileNode>` - 文件数据映射（用于获取头像）
+  - `selectedPersonIds: string[]` - 选中的人物 ID 列表
+  - `onPersonClick: (id: string, e: React.MouseEvent) => void` - 人物点击回调
+  - `onPersonDoubleClick: (id: string) => void` - 人物双击回调
+  - `onPersonContextMenu: (e: React.MouseEvent, id: string) => void` - 右键菜单回调
+  - `t: (key: string) => string` - 国际化函数
 
-function normalizePath(p: string) {
-  if (!p) return ''
-  let clean = p.startsWith('\\\\?\\') ? p.slice(4) : p
-  clean = clean.replace(/\\\\/g, '/')
-  return clean.toLowerCase()
-}
-
-export const ColorSearchExample: React.FC = () => {
-  const [open, setOpen] = useState(false)
-  const [color, setColor] = useState('#ff0000')
-
-  const handleSearch = async (hex?: string) => {
-    const target = (hex || color).startsWith('#') ? (hex || color) : `#${hex || color}`
-    const results = await searchByColor(target)
-    // 前端对后端路径做归一化并尝试在本地索引中匹配
-    const normalized = results.map(r => normalizePath(r))
-    // 将 normalized 传入视图过滤器（例如 aiFilter.filePaths）以展示结果
-    console.log('匹配路径（已规范化）:', normalized)
-  }
-
-  return (
-    <div>
-      <button onClick={() => setOpen(true)}>打开颜色选择器</button>
-      {open && (
-        <ColorPickerPopover
-          initialColor={color}
-          onChange={(c) => setColor(c)}
-          onClose={() => setOpen(false)}
-        />
-      )}
-      <button onClick={() => handleSearch()}>按颜色搜索</button>
-    </div>
-  )
-}
-```
-
-说明:
-- `ColorPickerPopover` 的 `onChange` 返回 `#RRGGBB` 格式的字符串, 可直接作为 `searchByColor` 的参数。
-- 前端应对后端返回的绝对路径进行归一化（移除 `\\?\` 前缀、反斜杠转斜杠、转小写）以提高与 `state.files[*].path` 的匹配成功率。
+**使用场景**:
+- 在人物标签页显示人物集合
+- 支持人物头像的裁剪显示和人脸定位
+- 提供流式布局和响应式设计
 
 ### TopicModule (src/components/TopicModule.tsx)
 - **功能**: 专题（Topic）画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物（Person）的关联、封面设置与裁剪、以及主题内文件的浏览与选择。
@@ -78,7 +48,6 @@ export const ColorSearchExample: React.FC = () => {
 - 右键菜单支持批量操作、重命名与删除
 
 ---
-
 
 ## 前端 API (TypeScript)
 
@@ -121,7 +90,481 @@ try {
 }
 ```
 
+#### `scanFile`
+```typescript
+async function scanFile(
+  filePath: string, 
+  parentId?: string
+): Promise<FileNode>
+```
+
+**描述**: 扫描单个文件，返回文件节点
+
+**参数**:
+- `filePath`: string - 文件完整路径
+- `parentId`: string - 父目录 ID (可选)
+
+**返回**: `Promise<FileNode>`
+
+**示例**:
+```typescript
+const file = await scanFile('/home/user/Pictures/photo.jpg', 'folder1')
+console.log(file.name) // 'photo.jpg'
+console.log(file.type) // 'image'
+```
+
+#### `renameFile`
+```typescript
+async function renameFile(
+  oldPath: string, 
+  newPath: string
+): Promise<void>
+```
+
+**描述**: 重命名或移动文件
+
+**参数**:
+- `oldPath`: string - 旧路径
+- `newPath`: string - 新路径
+
+**示例**:
+```typescript
+await renameFile(
+  '/home/user/Pictures/old.jpg',
+  '/home/user/Pictures/new.jpg'
+)
+```
+
+#### `deleteFile`
+```typescript
+async function deleteFile(path: string): Promise<void>
+```
+
+**描述**: 删除文件或目录
+
+**参数**:
+- `path`: string - 要删除的路径
+
+**示例**:
+```typescript
+await deleteFile('/home/user/Pictures/unwanted.jpg')
+```
+
+#### `copyFile`
+```typescript
+async function copyFile(
+  source: string, 
+  destination: string
+): Promise<void>
+```
+
+**描述**: 复制文件
+
+**参数**:
+- `source`: string - 源文件路径
+- `destination`: string - 目标文件路径
+
+**示例**:
+```typescript
+await copyFile(
+  '/home/user/Pictures/source.jpg',
+  '/home/user/Pictures/destination.jpg'
+)
+```
+
+#### `moveFile`
+```typescript
+async function moveFile(
+  source: string, 
+  destination: string
+): Promise<void>
+```
+
+**描述**: 移动文件
+
+**参数**:
+- `source`: string - 源文件路径
+- `destination`: string - 目标文件路径
+
+**示例**:
+```typescript
+await moveFile(
+  '/home/user/Pictures/source.jpg',
+  '/home/user/Pictures/destination.jpg'
+)
+```
+
+#### `writeFileFromBytes`
+```typescript
+async function writeFileFromBytes(
+  filePath: string, 
+  bytes: Uint8Array
+): Promise<void>
+```
+
+**描述**: 从字节数组写入文件
+
+**参数**:
+- `filePath`: string - 文件路径
+- `bytes`: Uint8Array - 文件内容字节数组
+
+**示例**:
+```typescript
+const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
+await writeFileFromBytes('/home/user/test.txt', bytes)
+```
+
+#### `getThumbnail`
+```typescript
+async function getThumbnail(
+  filePath: string, 
+  modified?: string, 
+  rootPath?: string, 
+  signal?: AbortSignal, 
+  onColors?: (colors: DominantColor[] | null) => void
+): Promise<string | null>
+```
+
+**描述**: 获取文件缩略图，支持颜色提取回调
+
+**参数**:
+- `filePath`: string - 文件路径
+- `modified?`: string - 文件修改时间（用于缓存）
+- `rootPath?`: string - 根路径（用于计算缓存路径）
+- `signal?`: AbortSignal - 取消信号
+- `onColors?`: (colors: DominantColor[] | null) => void - 颜色提取回调
+
+**返回**: `Promise<string | null>` - 缩略图 URL 或 null
+
+**示例**:
+```typescript
+const thumbnailUrl = await getThumbnail(
+  '/home/user/Pictures/photo.jpg',
+  '2024-01-01T00:00:00Z',
+  '/home/user/Pictures',
+  abortController.signal,
+  (colors) => console.log('Dominant colors:', colors)
+)
+```
+
+#### `getAssetUrl`
+```typescript
+function getAssetUrl(filePath: string): string
+```
+
+**描述**: 获取文件的资源 URL（用于在 img 标签中直接显示本地文件）
+
+**参数**:
+- `filePath`: string - 文件路径
+
+**返回**: string - 资源 URL
+
+**示例**:
+```typescript
+const url = getAssetUrl('/home/user/Pictures/photo.jpg')
+// 返回: "asset://localhost/home/user/Pictures/photo.jpg"
+```
+
+#### `readFileAsBase64`
+```typescript
+async function readFileAsBase64(path: string): Promise<string | null>
+```
+
+**描述**: 以 Base64 格式读取文件内容
+
+**参数**:
+- `path`: string - 文件路径
+
+**返回**: `Promise<string | null>` - Base64 编码的文件内容
+
+**示例**:
+```typescript
+const base64 = await readFileAsBase64('/home/user/Pictures/photo.jpg')
+console.log(base64) // "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ..."
+```
+
+#### `getDominantColors`
+```typescript
+async function getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
+```
+
+**描述**: 从图片文件中提取主色调
+
+**参数**:
+- `filePath`: string - 图片文件路径
+- `count?`: number - 要提取的颜色数量（默认 8）
+- `thumbnailPath?`: string - 可选的缩略图路径
+
+**返回**: `Promise<DominantColor[]>` - 主色调数组
+
+**示例**:
+```typescript
+const colors = await getDominantColors('/home/user/Pictures/photo.jpg', 5)
+console.log(colors)
+// [{ hex: '#FF0000', rgb: [255, 0, 0], isDark: false }, ...]
+```
+
+#### `searchByColor`
+```typescript
+async function searchByColor(targetHex: string): Promise<string[]>
+```
+
+**描述**: 按颜色搜索图片
+
+**参数**:
+- `targetHex`: string - 目标颜色（十六进制格式）
+
+**返回**: `Promise<string[]>` - 匹配的图片文件路径列表（按相似度排序）
+
+**示例**:
+```typescript
+const results = await searchByColor('#FF0000')
+console.log(results) // ['/path/to/red1.jpg', '/path/to/red2.jpg', ...]
+```
+
+#### `searchByPalette`
+```typescript
+async function searchByPalette(palette: string[]): Promise<string[]>
+```
+
+**描述**: 按颜色调色板搜索图片
+
+**参数**:
+- `palette`: string[] - 颜色十六进制字符串数组
+
+**返回**: `Promise<string[]>` - 匹配的图片文件路径列表
+
+**示例**:
+```typescript
+const results = await searchByPalette(['#FF0000', '#00FF00', '#0000FF'])
+console.log(results) // ['/path/to/image.jpg', ...]
+```
+
+#### `generateDragPreview`
+```typescript
+async function generateDragPreview(
+  thumbnailPaths: string[], 
+  totalCount: number, 
+  cacheRoot: string
+): Promise<string | null>
+```
+
+**描述**: 生成拖拽预览图
+
+**参数**:
+- `thumbnailPaths`: string[] - 缩略图路径数组
+- `totalCount`: number - 总文件数
+- `cacheRoot`: string - 缓存目录
+
+**返回**: `Promise<string | null>` - 预览图路径
+
+#### `startDragToExternal`
+```typescript
+async function startDragToExternal(
+  filePaths: string[], 
+  thumbnailPaths?: string[], 
+  cacheRoot?: string, 
+  onDragEnd?: () => void
+): Promise<void>
+```
+
+**描述**: 启动文件拖拽到外部应用的操作
+
+**参数**:
+- `filePaths`: string[] - 要拖拽的文件路径数组
+- `thumbnailPaths?`: string[] - 缩略图路径数组
+- `cacheRoot?`: string - 缓存目录
+- `onDragEnd?`: () => void - 拖拽结束回调
+
+**示例**:
+```typescript
+await startDragToExternal(
+  ['/path/to/file1.jpg', '/path/to/file2.jpg'],
+  ['/cache/thumb1.jpg', '/cache/thumb2.jpg'],
+  '/cache',
+  () => console.log('Drag completed')
+)
+```
+
+#### `pauseColorExtraction`
+```typescript
+async function pauseColorExtraction(): Promise<boolean>
+```
+
+**描述**: 暂停颜色提取后台任务
+
+**返回**: `Promise<boolean>` - 是否成功暂停
+
+#### `resumeColorExtraction`
+```typescript
+async function resumeColorExtraction(): Promise<boolean>
+```
+
+**描述**: 恢复颜色提取后台任务
+
+**返回**: `Promise<boolean>` - 是否成功恢复
+
+#### `saveUserData`
+```typescript
+async function saveUserData(data: any): Promise<boolean>
+```
+
+**描述**: 保存用户数据
+
+**参数**:
+- `data`: any - 要保存的数据
+
+**返回**: `Promise<boolean>` - 保存是否成功
+
+#### `loadUserData`
+```typescript
+async function loadUserData(): Promise<any | null>
+```
+
+**描述**: 加载用户数据
+
+**返回**: `Promise<any | null>` - 加载的数据或 null
+
+#### `getDefaultPaths`
+```typescript
+async function getDefaultPaths(): Promise<Record<string, string>>
+```
+
+**描述**: 获取默认路径
+
+**返回**: `Promise<Record<string, string>>` - 路径映射
+
+#### `openPath`
+```typescript
+async function openPath(path: string, isFile?: boolean): Promise<void>
+```
+
+**描述**: 在系统文件管理器中打开路径
+
+**参数**:
+- `path`: string - 要打开的路径
+- `isFile?`: boolean - 是否为文件（默认为 false）
+
+#### `createFolder`
+```typescript
+async function createFolder(path: string): Promise<void>
+```
+
+**描述**: 创建文件夹
+
+**参数**:
+- `path`: string - 文件夹路径
+
+#### `openDirectory`
+```typescript
+async function openDirectory(): Promise<string | null>
+```
+
+**描述**: 打开目录选择对话框
+
+**返回**: `Promise<string | null>` - 选择的目录路径
+
+#### `ensureDirectory`
+```typescript
+async function ensureDirectory(path: string): Promise<void>
+```
+
+**描述**: 确保目录存在，如果不存在则创建
+
+**参数**:
+- `path`: string - 目录路径
+
 ---
+
+## 数据库 API
+
+### `dbGetAllPeople`
+```typescript
+async function dbGetAllPeople(): Promise<any[]>
+```
+
+**描述**: 获取所有人物数据
+
+**返回**: `Promise<any[]>` - 人物数据数组
+
+### `dbUpsertPerson`
+```typescript
+async function dbUpsertPerson(person: any): Promise<void>
+```
+
+**描述**: 插入或更新人物数据
+
+**参数**:
+- `person`: any - 人物数据
+
+### `dbDeletePerson`
+```typescript
+async function dbDeletePerson(id: string): Promise<void>
+```
+
+**描述**: 删除人物
+
+**参数**:
+- `id`: string - 人物 ID
+
+### `dbUpdatePersonAvatar`
+```typescript
+async function dbUpdatePersonAvatar(
+  personId: string, 
+  coverFileId: string, 
+  faceBox: any
+): Promise<void>
+```
+
+**描述**: 更新人物头像
+
+**参数**:
+- `personId`: string - 人物 ID
+- `coverFileId`: string - 封面文件 ID
+- `faceBox`: any - 人脸位置信息
+
+### `dbUpsertFileMetadata`
+```typescript
+async function dbUpsertFileMetadata(metadata: {
+  fileId: string;
+  path: string;
+  tags?: string[];
+  description?: string;
+  sourceUrl?: string;
+  aiData?: any;
+  updatedAt?: number;
+}): Promise<void>
+```
+
+**描述**: 插入或更新文件的元数据（标签、描述、来源 URL、AI 分析数据等）到数据库。
+
+**参数**:
+- `metadata`: Object - 包含文件的 ID、路径、标签数组、描述文本、来源 URL、AI 数据对象以及更新时间戳。
+
+---
+
+## 窗口管理 API
+
+### `hideWindow`
+```typescript
+async function hideWindow(): Promise<void>
+```
+
+**描述**: 隐藏主窗口
+
+### `showWindow`
+```typescript
+async function showWindow(): Promise<void>
+```
+
+**描述**: 显示主窗口
+
+### `exitApp`
+```typescript
+async function exitApp(): Promise<void>
+```
+
+**描述**: 退出应用程序
 
 #### `scanFile`
 ```typescript

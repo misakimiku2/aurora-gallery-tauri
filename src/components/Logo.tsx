@@ -1,4 +1,4 @@
-
+﻿
 import React from 'react';
 
 export const AuroraLogo = ({ size = 32, className = "", style = {} }: { size?: number, className?: string, style?: React.CSSProperties }) => (

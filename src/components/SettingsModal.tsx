@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2 } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings } from '../types';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
@@ -109,11 +109,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       }
   }, [state.settingsCategory, state.settings.ai.provider, state.settings.ai.openai.endpoint, state.settings.ai.ollama.endpoint, state.settings.ai.lmstudio.endpoint, state.settings.ai.openai.apiKey]);
 
-  // 性能监控刷新状态
+  // 性能监控刷新状�?
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // 获取当前的刷新间隔（毫秒）
+  // 获取当前的刷新间隔（毫秒�?
   const refreshInterval = state.settings.performance?.refreshInterval || 5000;
 
   // 手动刷新性能数据
@@ -121,16 +121,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     setRefreshKey(prev => prev + 1);
   };
 
-  // 设置自动刷新定时器
+  // 设置自动刷新定时�?
   useEffect(() => {
-    // 只有在性能监控页面才启用自动刷新
+    // 只有在性能监控页面才启用自动刷�?
     if (state.settingsCategory === 'performance') {
       // 清除之前的定时器
       if (refreshTimerRef.current) {
         clearInterval(refreshTimerRef.current);
       }
       
-      // 创建新的定时器
+      // 创建新的定时�?
       refreshTimerRef.current = setInterval(() => {
         setRefreshKey(prev => prev + 1);
       }, refreshInterval);
@@ -194,9 +194,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
   return (
     <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl border border-gray-100 dark:border-gray-600 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
+      <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl border border-gray-100 dark:border-gray-700 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
           
-          <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col">
+          <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col">
               {/* ... (Sidebar buttons, same as before) ... */}
               <div className="p-6">
                  <h2 className="text-xl font-bold text-gray-800 dark:text-white flex items-center">
@@ -238,7 +238,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                  /* ... General Settings Content ... */
                  <div className="space-y-8 animate-fade-in">
                      <section>
-                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-700 pb-2">{t('settings.catGeneral')}</h3>
+                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2">{t('settings.catGeneral')}</h3>
                          <div className="space-y-6">
                              <div>
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label>
@@ -247,7 +247,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                         <button
                                             key={lang}
                                             onClick={() => onUpdateSettingsData({ language: lang as any })}
-                                            className={`px-4 py-2 rounded border text-sm flex items-center ${state.settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700'}`}
+                                            className={`px-4 py-2 rounded border text-sm flex items-center ${state.settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-800'}`}
                                         >
                                             <Globe size={14} className="mr-2"/>
                                             {lang === 'zh' ? '中文' : 'English'}
@@ -256,7 +256,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 </div>
                              </div>
                              
-                             <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
+                             <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
                                  <div className="flex items-center justify-between mb-3">
                                      <div>
                                         <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoStart')}</div>
@@ -273,7 +273,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </button>
                                  </div>
                                  
-                                 <div className="flex items-center justify-between mb-3 pt-3 border-t border-gray-200 dark:border-gray-600">
+                                 <div className="flex items-center justify-between mb-3 pt-3 border-t border-gray-200 dark:border-gray-700">
                                      <div>
                                         <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.animateOnHover')}</div>
                                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.animateOnHoverDesc')}</div>
@@ -289,13 +289,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </button>
                                  </div>
                                  
-                                 <div className="pt-3 border-t border-gray-200 dark:border-gray-600">
+                                 <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
                                      <div className="flex items-center justify-between">
                                          <span className="font-bold text-gray-800 dark:text-gray-200">{t('settings.exitAction')}</span>
                                          <select 
                                             value={state.settings.exitAction || 'ask'} 
                                             onChange={(e) => onUpdateSettingsData({ exitAction: e.target.value as any })}
-                                            className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                            className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
                                          >
                                              <option value="ask">{t('settings.exitActionAsk')}</option>
                                              <option value="minimize">{t('settings.exitActionMinimize')}</option>
@@ -307,7 +307,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                          </div>
                      </section>
 
-                     <section className="mt-8 border-t border-gray-100 dark:border-gray-700 pt-6">
+                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
                          <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Palette size={20} className="mr-2 text-blue-500"/> {t('settings.catAppearance')}</h3>
                          <div>
                             <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-4">{t('settings.theme')}</label>
@@ -337,13 +337,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                          </div>
                      </section>
 
-                     <section className="mt-8 border-t border-gray-100 dark:border-gray-700 pt-6">
+                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Database size={20} className="mr-2 text-blue-500"/> {t('settings.catStorage')}</h3>
                         <div className="space-y-4">
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.resourceRoot')}</label>
                                 <div className="flex items-center">
-                                    <div className="flex-1 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
                                         {state.settings.paths.resourceRoot}
                                     </div>
                                     <button 
@@ -357,7 +357,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
                                 <div className="flex items-center">
-                                    <div className="flex-1 bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-600 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
                                         {state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet')}
                                     </div>
                                     <button 
@@ -379,12 +379,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         </div>
                      </section>
 
-                     <section className="mt-8 border-t border-gray-100 dark:border-gray-700 pt-6">
+                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Database size={20} className="mr-2 text-blue-500"/> {t('settings.dataBackup')}</h3>
                         <div className="flex space-x-4">
                             <button 
                                 onClick={handleExportData}
-                                className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-700"
+                                className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800"
                             >
                                 <Download size={16} className="mr-2"/>
                                 {t('settings.exportTags')}
@@ -399,7 +399,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                                 />
                                 <button 
-                                    className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-700 pointer-events-none"
+                                    className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 pointer-events-none"
                                 >
                                     <Upload size={16} className="mr-2"/>
                                     {t('settings.importTags')}
@@ -414,7 +414,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   <div className="space-y-8 animate-fade-in">
                       <section>
                           {/* ... Provider selection ... */}
-                          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-700 pb-2 mb-4">
+                          <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 pb-2 mb-4">
                               <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
                                   <Brain size={20} className="mr-2 text-purple-500"/> {t('settings.catAi')}
                               </h3>
@@ -457,7 +457,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${
                                           state.settings.ai.provider === item.id 
                                           ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300' 
-                                          : 'border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-700 text-gray-600 dark:text-gray-400'
+                                          : 'border-gray-200 dark:border-gray-800 hover:border-purple-300 dark:hover:border-purple-700 text-gray-600 dark:text-gray-400'
                                       }`}
                                   >
                                       <item.icon size={24} className="mb-2"/>
@@ -515,7 +515,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               )}
                           </div>
 
-                          <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-5 border border-gray-200 dark:border-gray-700 space-y-4">
+                          <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-5 border border-gray-200 dark:border-gray-800 space-y-4">
                               {state.settings.ai.provider === 'openai' && (
                                   <>
                                       <div>
@@ -526,7 +526,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="openai-endpoint"
                                               value={state.settings.ai.openai.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, endpoint: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="https://api.openai.com/v1"
                                           />
                                       </div>
@@ -538,7 +538,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="openai-api-key"
                                               value={state.settings.ai.openai.apiKey}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, apiKey: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="sk-..."
                                           />
                                       </div>
@@ -550,7 +550,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="openai-model"
                                               value={state.settings.ai.openai.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, model: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="gpt-4o"
                                           />
                                       </div>
@@ -567,7 +567,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="ollama-endpoint"
                                               value={state.settings.ai.ollama.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, endpoint: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="http://localhost:11434"
                                           />
                                       </div>
@@ -579,7 +579,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="ollama-model"
                                               value={state.settings.ai.ollama.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, model: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="llava"
                                           />
                                       </div>
@@ -596,7 +596,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="lmstudio-endpoint"
                                               value={state.settings.ai.lmstudio.endpoint}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, endpoint: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="http://localhost:1234/v1"
                                           />
                                           <div className="text-[10px] text-gray-400 mt-1">{t('settings.lmStudioVersionHint')}</div>
@@ -609,7 +609,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               name="lmstudio-model"
                                               value={state.settings.ai.lmstudio.model}
                                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, model: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                                               placeholder="local-model"
                                           />
                                       </div>
@@ -620,17 +620,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
                           <div className="mt-6">
                               <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-2">{t('settings.systemPrompt')}</h4>
-                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
                                   <textarea
                                       id="ai-system-prompt"
                                       value={state.settings.ai.systemPrompt || ''}
                                       onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, systemPrompt: e.target.value } })}
-                                      className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[80px]"
+                                      className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[80px]"
                                       placeholder="..."
                                   />
                                   
-                                  {/* 预设工具栏 */}
-                                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600 flex flex-wrap items-center gap-2">
+                                  {/* 预设工具�?*/}
+                                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
                                       <select 
                                           id="ai-preset-select"
                                           value={state.settings.ai.currentPresetId || ''}
@@ -643,7 +643,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                                   onUpdateSettingsData({ ai: { ...state.settings.ai, currentPresetId: undefined } });
                                               }
                                           }}
-                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
                                       >
                                           <option value="">{t('settings.selectPreset')}</option>
                                           {state.settings.ai.promptPresets?.map(p => (
@@ -656,7 +656,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           value={editingPresetName}
                                           onChange={(e) => setEditingPresetName(e.target.value)}
                                           placeholder={t('settings.presetName')}
-                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                                          className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
                                       />
 
                                       <div className="flex items-center gap-1">
@@ -727,7 +727,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${state.settings.ai.autoDescription ? 'translate-x-5' : 'translate-x-1'}`} />
                                   </button>
                               </div>
-                              <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                              <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800">
                                   <span className={`text-sm font-medium ${state.settings.ai.autoDescription ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>{t('settings.aiEnhancePersonDesc')}</span>
                                   <button 
                                       onClick={() => {
@@ -750,7 +750,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                   </button>
                               </div>
                               
-                              <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-700">
+                              <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800">
                                   <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiAutoAddPeople')}</span>
                                   <button 
                                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, autoAddPeople: !state.settings.ai.autoAddPeople } })}
@@ -781,7 +781,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               </div>
 
                               {state.settings.ai.enableTranslation && (
-                                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-700 animate-fade-in">
+                                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800 animate-fade-in">
                                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiTargetLang')}</span>
                                       <div className="flex space-x-2">
                                           {[
@@ -796,7 +796,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                                   className={`text-xs px-2 py-1 rounded border transition-colors ${
                                                       state.settings.ai.targetLanguage === lang.code
                                                           ? 'bg-purple-500 text-white border-purple-500'
-                                                          : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-purple-400'
+                                                          : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-700 hover:border-purple-400'
                                                   }`}
                                               >
                                                   {lang.label}
@@ -830,7 +830,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               {state.settingsCategory === 'performance' && (
                   <div className="space-y-8 animate-fade-in">
                       <section>
-                          <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-6 border-b border-gray-100 dark:border-gray-700 pb-2 flex items-center justify-between">
+                          <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-6 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center justify-between">
                               <div className="flex items-center">
                                   <BarChart2 size={20} className="mr-2 text-blue-500"/>
                                   {t('settings.catPerformance')}
@@ -847,7 +847,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           {/* 性能指标概览 */}
                           <div className="grid grid-cols-2 gap-4 mb-8">
                               {/* 实时内存使用 */}
-                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
                                   <div className="flex items-center justify-between mb-3">
                                       <div>
                                           <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{t('settings.performance.memoryUsage')}</span>
@@ -856,7 +856,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           <MemoryStick size={14} className="mr-1 text-blue-500"/>
                                           <span className="font-bold text-gray-800 dark:text-white">
                                               {(() => {
-                                                  // 使用当前内存值而非平均值
+                                                  // 使用当前内存值而非平均�?
                                                   const currentMemory = performanceMonitor.getCurrentMemory();
                                                   return currentMemory ? `${Math.round(currentMemory)} MB` : 'N/A';
                                               })()}
@@ -864,10 +864,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </div>
                                   </div>
                                   
-                                  {/* 内存使用历史可视化 */}
+                                  {/* 内存使用历史可视�?*/}
                                   <div className="h-24 bg-gray-200 dark:bg-gray-600 rounded overflow-hidden relative">
                                       {(() => {
-                                          // 获取内存历史并确保包含当前内存数据
+                                          // 获取内存历史并确保包含当前内存数�?
                                           let memoryHistory = performanceMonitor.getMemoryHistory();
                                           const currentMemory = performanceMonitor.getCurrentMemory();
                                           
@@ -882,7 +882,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                               // 确保最新的数据点是当前内存数据
                                               const lastPoint = memoryHistory[memoryHistory.length - 1];
                                               const currentTime = Date.now();
-                                              // 如果最后一个数据点是旧的（超过1秒），添加当前内存数据
+                                              // 如果最后一个数据点是旧的（超过1秒），添加当前内存数�?
                                               if (currentTime - lastPoint.timestamp > 1000) {
                                                   memoryHistory = [...memoryHistory, { timestamp: currentTime, memory: currentMemory }];
                                               } else {
@@ -893,7 +893,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                                 
                                           // 获取最大值和最小值，添加一些余量以确保曲线不会贴边
                                           const allMemoryValues = memoryHistory.map(item => item.memory);
-                                          const maxMemory = Math.max(...allMemoryValues) * 1.1; // 增加10%的余量
+                                          const maxMemory = Math.max(...allMemoryValues) * 1.1; // 增加10%的余�?
                                           const minMemory = Math.max(0, Math.min(...allMemoryValues) * 0.9); // 减少10%的余量，最低为0
                                           const range = maxMemory - minMemory || 1;
                                           
@@ -913,7 +913,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           
                                           return (
                                               <svg className="w-full h-full" viewBox="0 0 200 100" preserveAspectRatio="none">
-                                                  {/* 背景网格线 */}
+                                                  {/* 背景网格�?*/}
                                                   <g opacity="0.2">
                                                       <line x1="0" y1="25" x2="200" y2="25" stroke="currentColor" strokeWidth="0.5" />
                                                       <line x1="0" y1="50" x2="200" y2="50" stroke="currentColor" strokeWidth="0.5" />
@@ -941,7 +941,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                                       />
                                                   )}
                                                   
-                                                  {/* 当前值标记 */}
+                                                  {/* 当前值标�?*/}
                                                   {memoryHistory.length > 0 && (
                                                       <circle 
                                                           cx={memoryHistory.length > 1 ? 200 : 100} 
@@ -961,7 +961,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               </div>
                               
                               {/* 缩略图缓存命中率 */}
-                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
                                   <div className="flex items-center justify-between mb-3">
                                       <div>
                                           <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{t('settings.performance.cacheHitRate')}</span>
@@ -1006,7 +1006,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           {/* 性能指标详细数据 */}
                           <div className="space-y-6">
                               {/* 缩略图加载性能 */}
-                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
                                   <h4 className="text-md font-semibold text-gray-800 dark:text-white mb-3 flex items-center">
                                       <FileText size={16} className="mr-2 text-blue-500"/>
                                       {t('settings.performance.thumbnailLoading')}
@@ -1039,7 +1039,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </div>
                                   </div>
                                   
-                                  {/* 缓存命中率 */}
+                                  {/* 缓存命中�?*/}
                                   <div className="mt-4">
                                       <div className="flex justify-between items-center text-sm mb-1">
                                           <span className="text-gray-600 dark:text-gray-400">{t('settings.performance.cacheHitRate')}</span>
@@ -1076,7 +1076,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               </div>
                               
                               {/* 文件扫描性能 */}
-                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+                              <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
                                   <h4 className="text-md font-semibold text-gray-800 dark:text-white mb-3 flex items-center">
                                       <Timer size={16} className="mr-2 text-blue-500"/>
                                       {t('settings.performance.fileScanning')}
@@ -1175,7 +1175,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                                   }
                                               });
                                           }}
-                                          className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                          className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
                                       >
                                           <option value="1">1秒</option>
                                           <option value="5">5秒</option>
@@ -1189,7 +1189,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                   <div className="flex space-x-3">
                                       <button 
                                           onClick={() => performanceMonitor.clearMetrics()}
-                                          className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-700 text-sm flex items-center justify-center"
+                                          className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 text-sm flex items-center justify-center"
                                       >
                                           <RefreshCw size={14} className="mr-2"/>
                                           {t('settings.performance.clearData')}

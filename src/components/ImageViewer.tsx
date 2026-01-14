@@ -1,4 +1,4 @@
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { FileNode, SlideshowConfig, SearchScope } from '../types';
 import { 
@@ -9,18 +9,18 @@ import {
 } from 'lucide-react';
 
 
-// 全局高分辨率图片 Blob 缓存 - 增大容量到 200 张
+// 全局高分辨率图片 Blob 缓存 - 增大容量�?200 �?
 const blobCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 200;
 
-// 正在加载中的 Promise 缓存，防止重复请求
+// 正在加载中的 Promise 缓存，防止重复请�?
 const loadingPromises = new Map<string, Promise<string>>();
 
-// 同步获取缓存（如果存在）- 用于无闪烁切换
+// 同步获取缓存（如果存在）- 用于无闪烁切�?
 export const getBlobCacheSync = (path: string): string | null => {
     if (blobCache.has(path)) {
         const url = blobCache.get(path)!;
-        // LRU: 移动到最后
+        // LRU: 移动到最�?
         blobCache.delete(path);
         blobCache.set(path, url);
         return url;
@@ -28,7 +28,7 @@ export const getBlobCacheSync = (path: string): string | null => {
     return null;
 };
 
-// 检查缓存是否存在
+// 检查缓存是否存�?
 export const hasBlobCache = (path: string): boolean => {
     return blobCache.has(path);
 };
@@ -37,34 +37,25 @@ const loadToCache = async (path: string): Promise<string> => {
     // 如果已在缓存中，直接返回
     const cached = getBlobCacheSync(path);
     if (cached) return cached;
-    
+
     // 如果已经在加载中，等待现有的 Promise
     if (loadingPromises.has(path)) {
         return loadingPromises.get(path)!;
     }
-    
+
     // 创建新的加载 Promise
     const loadPromise = (async () => {
         try {
-            const src = convertFileSrc(path);
-            const res = await fetch(src);
-            const blob = await res.blob();
-            const url = URL.createObjectURL(blob);
-            
-            // 缓存淘汰
-            if (blobCache.size >= MAX_CACHE_SIZE) {
-                const firstKey = blobCache.keys().next().value;
-                if (firstKey) {
-                    URL.revokeObjectURL(blobCache.get(firstKey)!);
-                    blobCache.delete(firstKey);
-                }
-            }
-            
+            // 直接使用 convertFileSrc 返回的 URL，不需要 fetch
+            const url = convertFileSrc(path);
+
+            // 缓存 URL（虽然不是 blob，但仍然可以重用）
             blobCache.set(path, url);
             return url;
         } catch (e) {
             console.error("Failed to load image to cache", path, e);
-            return convertFileSrc(path); 
+            // 出错时也返回 convertFileSrc URL
+            return convertFileSrc(path);
         } finally {
             loadingPromises.delete(path);
         }
@@ -160,7 +151,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   t,
   activeTab
 }) => {
-  // 如果 file 不存在，关闭查看器
+  // 如果 file 不存在，关闭查看�?
   if (!file) {
     onClose();
     return null;
@@ -190,8 +181,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [animationClass, setAnimationClass] = useState('animate-zoom-in');
   const lastFileIdRef = useRef(file.id);
   
-  // 真正的双缓冲机制：两个图层交替显示
-  // activeLayer: 0 或 1，表示当前显示的是哪个图层
+  // 真正的双缓冲机制：两个图层交替显�?
+  // activeLayer: 0 �?1，表示当前显示的是哪个图�?
   const [activeLayer, setActiveLayer] = useState<0 | 1>(0);
   // 增加 Layer ID 状态，用于记录图层当前加载的是哪个文件路径，防止旧内容闪烁
   const [layer0Id, setLayer0Id] = useState<string>(file.path || '');
@@ -208,11 +199,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [layer0Ready, setLayer0Ready] = useState(!!layer0Url);
   const [layer1Ready, setLayer1Ready] = useState(false);
   
-  // 用于追踪当前正在加载的文件路径
+  // 用于追踪当前正在加载的文件路�?
   const currentLoadingPath = useRef<string>('');
   // 追踪当前目标图层
   const targetLayerRef = useRef<0 | 1>(0);
-  // 追踪每个图层期望的 URL，用于验证 onLoad 是否是我们期望的图片
+  // 追踪每个图层期望�?URL，用于验�?onLoad 是否是我们期望的图片
   const expectedLayer0Url = useRef<string>(layer0Url);
   const expectedLayer1Url = useRef<string>('');
 
@@ -235,27 +226,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const cachedUrl = getBlobCacheSync(path);
     
     if (cachedUrl) {
-      // 缓存命中：设置到目标图层，并重置 ready 状态
+      // 缓存命中：设置到目标图层，并重置 ready 状�?
       if (targetLayer === 0) {
         expectedLayer0Url.current = cachedUrl;
-        setLayer0Ready(false); // 重置 ready，等待新图片的 onLoad
+        setLayer0Ready(false); // 重置 ready，等待新图片�?onLoad
         setLayer0Url(cachedUrl);
         setLayer0Id(path); // 标记此图层的内容归属
       } else {
         expectedLayer1Url.current = cachedUrl;
-        setLayer1Ready(false); // 重置 ready，等待新图片的 onLoad
+        setLayer1Ready(false); // 重置 ready，等待新图片�?onLoad
         setLayer1Url(cachedUrl);
         setLayer1Id(path); // 标记此图层的内容归属
       }
     } else {
-      // 缓存未命中：先重置目标图层的 ready 状态
+      // 缓存未命中：先重置目标图层的 ready 状�?
       if (targetLayer === 0) {
         setLayer0Ready(false);
       } else {
         setLayer1Ready(false);
       }
       
-      // 异步加载到目标图层
+      // 异步加载到目标图�?
       loadToCache(path).then(url => {
         if (currentLoadingPath.current === path) {
           if (targetLayerRef.current === 0) {
@@ -272,7 +263,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
   }, [file.path]);
   
-  // 处理图层 0 的 onLoad - 验证是期望的图片才设置 ready
+  // 处理图层 0 �?onLoad - 验证是期望的图片才设�?ready
   const handleLayer0Load = useCallback(() => {
     // 只有当加载的是我们期望的 URL 时才设置 ready
     if (layer0Url === expectedLayer0Url.current) {
@@ -280,7 +271,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
   }, [layer0Url]);
   
-  // 处理图层 1 的 onLoad
+  // 处理图层 1 �?onLoad
   const handleLayer1Load = useCallback(() => {
     if (layer1Url === expectedLayer1Url.current) {
       setLayer1Ready(true);
@@ -291,7 +282,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     const targetLayer = targetLayerRef.current;
     
-    // 只有当图层 URL、图层内容 ID 都匹配当前文件时，才允许切换
+    // 只有当图�?URL、图层内�?ID 都匹配当前文件时，才允许切换
     if (targetLayer === 0 && layer0Ready && layer0Url && layer0Id === file.path && currentLoadingPath.current === file.path) {
       setActiveLayer(0);
     } else if (targetLayer === 1 && layer1Ready && layer1Url && layer1Id === file.path && currentLoadingPath.current === file.path) {
@@ -325,9 +316,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       return nodes.filter(node => node && node.path && node.id !== file.id);
   }, [file.id, sortedFileIds, files]);
 
-  // Preload neighbors into Blob Cache - 使用优化后的静默预加载
+  // Preload neighbors into Blob Cache - 使用优化后的静默预加�?
   useEffect(() => {
-     // 优先预加载前后各3张（最可能被访问的）
+     // 优先预加载前后各3张（最可能被访问的�?
      const priorityCount = 3;
      const priorityNodes = preloadImages.slice(0, priorityCount * 2);
      const restNodes = preloadImages.slice(priorityCount * 2);
@@ -363,7 +354,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const handleClickOutside = (e: MouseEvent) => {
       if (contextMenu.visible) {
         // 检查点击目标是否在菜单内部，如果不是则关闭菜单
-        const menuElement = document.querySelector('.fixed.bg-white.dark\\:bg-\\[\\#2d3748\\].border.border-gray-200.dark\\:border-gray-700.rounded-md.shadow-xl.text-sm.py-1.text-gray-800.dark\\:text-gray-200.min-w-\\[220px\\].z-\\[60\\]');
+        const menuElement = document.querySelector('.fixed.bg-white[data-testid="viewer-context-menu"]');
         if (!menuElement || !menuElement.contains(e.target as Node)) {
           setContextMenu({ ...contextMenu, visible: false });
         }
@@ -376,7 +367,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
     };
 
-    // 使用冒泡阶段，避免影响菜单内部点击
+    // 使用冒泡阶段，避免影响菜单内部点�?
     document.addEventListener('mousedown', handleClickOutside);
     document.addEventListener('wheel', handleWheel, true);
 
@@ -658,7 +649,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                      ref={scopeBtnRef}
                      type="button"
                      onClick={toggleScopeMenu}
-                     className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-700 whitespace-nowrap"
+                     className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-800 whitespace-nowrap"
                    >
                      {getScopeIcon()}
                      <ChevronDown size={12} className="ml-1 opacity-70"/>
@@ -687,7 +678,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                       <X size={14} />
                     </button>
                   )}
-                  {/* AI 切换按钮已移除（保留 props 与逻辑） */}
+                  {/* AI 切换按钮已移除（保留 props 与逻辑）*/}
                 </div>
               </div>
             </div>
@@ -837,7 +828,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       {contextMenu.visible && (
         <div 
-          className="fixed bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
+          data-testid="viewer-context-menu"
+          className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
           style={{ 
             top: 'auto', 
             bottom: 'auto', 
@@ -872,23 +864,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 y = 0;
               }
               
-              // 设置最终位置
+              // 设置最终位�?
               el.style.left = `${x}px`;
               el.style.top = `${y}px`;
             }
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginalSize(); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginalSize(); setContextMenu({...contextMenu, visible: false}); }}>
              <Maximize size={14} className="mr-2 opacity-70"/> {t('viewer.original')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleFitWindow(); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleFitWindow(); setContextMenu({...contextMenu, visible: false}); }}>
              <Minimize size={14} className="mr-2 opacity-70"/> {t('viewer.fit')}
           </div>
           
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <ExternalLink size={14} className="mr-2 opacity-70"/> {t('context.viewInExplorer')}
           </div>
           {(() => {
@@ -896,7 +888,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
             return (
               <div 
-                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} 
+                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'}`} 
                 onClick={() => { 
                   if (!isUnavailable && parentId) { 
                     onNavigateToFolder(parentId, { targetId: file.id }); 
@@ -910,38 +902,38 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             );
           })()}
 
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({...contextMenu, visible: false}); }}>
              <Tag size={14} className="mr-2 opacity-70"/> {t('context.editTags')}
           </div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({...contextMenu, visible: false}); }}>
              <Tag size={14} className="mr-2 opacity-70"/> {t('context.copyTag')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onPasteTags(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onPasteTags(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <Tag size={14} className="mr-2 opacity-70"/> {t('context.pasteTag')}
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <Copy size={14} className="mr-2 opacity-70"/> {t('context.copyTo')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onMoveToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onMoveToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <Move size={14} className="mr-2 opacity-70"/> {t('context.moveTo')}
           </div>
 
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
           
-           <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+           <div className="px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <Sliders size={14} className="mr-2 opacity-70"/> {t('context.aiAnalyze')}
            </div>
           
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
           
           <div 
-            className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center justify-between"
+            className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
             onClick={() => { setShowSlideshowSettings(true); setContextMenu({...contextMenu, visible: false}); }}
           >
             <div className="flex items-center">
@@ -950,7 +942,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </div>
           </div>
           <div 
-            className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center justify-between"
+            className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
             onClick={toggleSlideshow}
           >
             <div className="flex items-center">
@@ -959,9 +951,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </div>
           </div>
           
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
           
-          <div className="px-4 py-2 hover:bg-red-600 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={() => { onDelete(file.id); setContextMenu({...contextMenu, visible: false}); }}>
+          <div className="px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={() => { onDelete(file.id); setContextMenu({...contextMenu, visible: false}); }}>
              <Trash2 size={14} className="mr-2 opacity-70"/> {t('context.delete')}
           </div>
         </div>
@@ -971,7 +963,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <>
            <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setScopeMenuOpen(false); }}></div>
            <div 
-              className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
+              className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
               style={{ top: scopeMenuPos.top, left: scopeMenuPos.left }}
            >
               {[
@@ -999,8 +991,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       {showSlideshowSettings && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg w-80 shadow-2xl p-4 animate-zoom-in" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4 border-b border-gray-200 dark:border-gray-700 pb-2">
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg w-80 shadow-2xl p-4 animate-zoom-in" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4 border-b border-gray-200 dark:border-gray-800 pb-2">
               <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center"><Sliders size={16} className="mr-2"/> {t('context.slideshowSettings')}</h3>
               <button onClick={() => setShowSlideshowSettings(false)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"><X size={18}/></button>
             </div>
@@ -1024,7 +1016,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 <select 
                   value={slideshowConfig.transition}
                   onChange={(e) => onUpdateSlideshowConfig({ ...slideshowConfig, transition: e.target.value as any })}
-                  className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                  className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                 >
                   <option value="none">{t('viewer.none')}</option>
                   <option value="fade">{t('viewer.fade')}</option>

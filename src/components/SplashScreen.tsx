@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import { AuroraLogo } from './Logo';
 
 interface SplashScreenProps {
@@ -19,19 +19,19 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
       {/* 顶部覆盖条，遮挡标题栏区域和窗口按钮 */}
       <div className="absolute top-0 left-0 right-0 h-40 bg-gradient-to-b from-blue-50 to-transparent dark:from-gray-900 to-transparent pointer-events-auto z-[1001]"></div>
 
-      {/* 主内容 */}
+      {/* 主内�?*/}
       <div className="relative z-10 flex flex-col items-center justify-center h-full">
-        {/* Logo 和名称 */}
+        {/* Logo 和名�?*/}
         <div className="flex flex-col items-center space-y-4 mb-8">
           {/* 去掉外框，放大图标，添加更明显的投影 */}
           <div className="flex items-center justify-center">
-            {/* 使用drop-shadow滤镜，确保阴影只应用到图标实际形状 */}
+            {/* 使用drop-shadow滤镜，确保阴影只应用到图标实际形�?*/}
             <div className="dark:hidden">
-              {/* 浅色模式投影 - 增强强度，向下偏移10像素 */}
+              {/* 浅色模式投影 - 增强强度，向下偏�?0像素 */}
               <AuroraLogo size={140} style={{ filter: 'drop-shadow(0 18px 16px rgba(59, 130, 246, 0.5)) drop-shadow(0 14px 8px rgba(59, 130, 246, 0.4))' }} />
             </div>
             <div className="hidden dark:block">
-              {/* 深色模式投影 - 增强强度，向下偏移10像素 */}
+              {/* 深色模式投影 - 增强强度，向下偏�?0像素 */}
               <AuroraLogo size={140} style={{ filter: 'drop-shadow(0 18px 16px rgba(96, 165, 250, 0.6)) drop-shadow(0 14px 8px rgba(96, 165, 250, 0.5))' }} />
             </div>
           </div>
@@ -40,7 +40,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
           </h1>
         </div>
 
-        {/* 加载指示器 */}
+        {/* 加载指示�?*/}
         <div className="flex flex-col items-center space-y-3 mb-8">
           <div className="w-16 h-16 relative">
             {/* 旋转动画 */}
@@ -48,7 +48,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
             <div className="absolute inset-2 border-4 border-purple-200 dark:border-purple-800 border-b-purple-600 dark:border-b-purple-400 rounded-full animate-spin-slow"></div>
           </div>
           <p className="text-gray-600 dark:text-gray-300 text-lg">
-            加载中...
+            加载�?..
           </p>
         </div>
 

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+﻿import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Person, FileNode, TabState } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { User } from 'lucide-react';
@@ -88,7 +88,7 @@ const PersonCard = React.memo(({
         </div>
         
         {/* Count Badge */}
-        <div className="absolute bottom-0 right-0 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs font-bold px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-600 shadow-sm z-10">
+        <div className="absolute bottom-0 right-0 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 text-xs font-bold px-2 py-0.5 rounded-full border border-gray-200 dark:border-gray-700 shadow-sm z-10">
           {person.count}
         </div>
       </div>

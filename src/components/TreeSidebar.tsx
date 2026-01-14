@@ -1,4 +1,4 @@
-
+﻿
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
@@ -68,13 +68,13 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
       const { type, ids } = JSON.parse(data);
       if (type !== 'file' || !ids || ids.length === 0) return;
 
-      // 不允许将文件夹拖拽到它自己或它的子文件夹中
+      // 不允许将文件夹拖拽到它自己或它的子文件夹�?
       if (ids.includes(nodeId)) {
         console.warn('Cannot move a folder into itself');
         return;
       }
 
-      // 检查是否所有文件都已经在目标文件夹中
+      // 检查是否所有文件都已经在目标文件夹�?
       const allFilesInTarget = ids.every((id: string) => {
         const file = files[id];
         return file && file.parentId === nodeId;
@@ -211,7 +211,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSe
                               }}
                               title={person.name}
                            >
-                              <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-700 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
+                              <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
                                  {coverFile ? (
                                      person.faceBox ? (
                                         <img 
@@ -402,7 +402,7 @@ const TagSection: React.FC<TagSectionProps> = ({
                  />
                  
                  {suggestions.length > 0 && (
-                     <ul className="absolute left-2 right-2 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50 overflow-hidden">
+                     <ul className="absolute left-2 right-2 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-md shadow-lg z-50 overflow-hidden">
                          {suggestions.map(tag => (
                              <li 
                                 key={tag}
@@ -443,16 +443,16 @@ const TagSection: React.FC<TagSectionProps> = ({
               
               {hoveredTag === tag && previewImages.length > 0 && hoveredTagPos && createPortal(
                 <div 
-                  className="fixed z-[100] bg-white dark:bg-[#2d3748] border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                  className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
                   style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
                 >
-                  <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-600 pb-1 font-bold flex items-center justify-between">
+                  <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
                      <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
                      <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
                     {previewImages.map(img => (
-                      <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-700 overflow-hidden">
+                      <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
                          {/* Note: In Tauri, file.url is a file path, not a usable URL. Use placeholder for now. */}
                          <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
                            <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
@@ -605,7 +605,7 @@ export const Sidebar: React.FC<{
                  {minimizedTasks.map(task => {
                     const percent = Math.round((task.current / task.total) * 100);
                     return (
-                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 text-xs shadow-sm cursor-pointer group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in">
+                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm cursor-pointer group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in">
                            <div className="flex justify-between items-center mb-1">
                                <span className="font-medium text-gray-700 dark:text-gray-200 truncate pr-2 flex-1">{task.title}</span>
                                <div className="flex items-center space-x-1">
@@ -641,7 +641,7 @@ export const Sidebar: React.FC<{
          </button>
       </div>
 
-      <div className="p-2 bg-gray-100 dark:bg-gray-850 border-t border-gray-200 dark:border-gray-700 text-xs text-gray-500 text-center">
+      <div className="p-2 bg-gray-100 dark:bg-gray-850 border-t border-gray-200 dark:border-gray-800 text-xs text-gray-500 text-center">
         <div>{t('sidebar.localSupport')}</div>
       </div>
     </div>

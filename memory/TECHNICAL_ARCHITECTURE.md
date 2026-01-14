@@ -7,11 +7,11 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    用户界面层 (React)                        │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │ App.tsx  │  │组件库    │  │服务层    │  │工具库    │   │
+│  │   │  │组件库    │  │服务层    │  │工具库    │   │
 │  │          │  │          │  │          │  │          │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
-│       │             │             │             │          │
-│       └─────────────┴─────────────┴─────────────┴──────────┘
+│  └────┬─────┘  └────┬─────┘  └────┬─────┴──────────┘   │
+│       │             │             │                      │
+│       └─────────────┴─────────────┴──────────────────────┘
 │                              │                              │
 │                    Tauri IPC Bridge                         │
 │                              │                              │
@@ -38,23 +38,23 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件)
+App (根组件 - 6970+ 行)
 ├── TabBar (标签页管理)
 ├── TopBar (工具栏)
 ├── Sidebar (侧边栏)
 │   ├── TreeSidebar (文件树)
 │   └── TaskProgressModal (任务进度)
 ├── MainContent (主内容区)
-│   ├── FileGrid (文件网格)
+│   ├── PersonGrid (人物网格) [新增 - 219 行]
+│   ├── FileGrid (文件网格) [更新 - 1200 行]
 │   ├── ImageViewer (图片查看器)
 │   ├── SequenceViewer (序列查看器)
-│   └── TopicModule (专题模块)  - 专题画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物的关联、封面设置与封面裁剪（见 `src/components/TopicModule.tsx`）
+│   └── TopicModule (专题模块)
 ├── MetadataPanel (元数据面板)
+├── SettingsModal (设置模态框) [增强 - 1208 行]
 ├── Modals (模态框)
-│   ├── SettingsModal (设置)
-│   ├── DragDropOverlay (拖拽)
 │   ├── CloseConfirmationModal (关闭确认)
-│   └── WelcomeModal (欢迎界面)
+│   └── [其他模态框...]
 └── Toasts (通知)
 ```
 
@@ -81,7 +81,12 @@ const [state, setState] = useState<AppState>({
   settings: {
     theme: 'system',
     language: 'zh',
-    ai: { provider: 'ollama', ... }
+    ai: { 
+      provider: 'ollama',
+      systemPrompt: '',
+      promptPresets: [], // 新增：系统提示预设
+      currentPresetId: undefined
+    }
   }
 })
 
@@ -98,729 +103,312 @@ const displayFileIds = useMemo(() => {
 ### 2. 业务逻辑层 (Business Logic Layer)
 
 #### 服务层架构
-```typescript
-// AI 服务架构
-class AIService {
-  private provider: AIProvider
-  private config: AIConfig
-  
-  async analyzeImage(imagePath: string, settings: AppSettings): Promise<AiData> {
-    // 1. 读取图片并转换为 Base64
-    // 2. 根据提供商调用对应 API
-    // 3. 解析响应
-    // 4. 返回结构化数据
-  }
-  
-  private async callOpenAI(base64: string): Promise<any> { ... }
-  private async callOllama(base64: string): Promise<any> { ... }
-  private async callLMStudio(base64: string): Promise<any> { ... }
-}
 
-// 人脸识别服务架构
-class FaceRecognitionService {
-  private modelsLoaded: boolean = false
-  
-  async loadModels(): Promise<void> {
-    // 加载 face-api.js 模型
-  }
-  
-  async detectFaces(imagePath: string): Promise<FaceDetection[]> {
-    // 1. 加载图片
-    // 2. 运行人脸检测模型
-    // 3. 返回人脸位置和特征
-  }
-  
-  async recognizeFaces(
-    imagePath: string, 
-    knownPeople: Record<string, Person>
-  ): Promise<AiFace[]> {
-    // 1. 提取人脸特征
-    // 2. 与已知人物匹配
-    // 3. 返回识别结果
-  }
-}
+##### AI 服务 (aiService.ts)
+**位置**: `src/services/aiService.ts`  
+**行数**: ~200 行  
+**功能**: OpenAI/Ollama/LM Studio 集成
+
+**2026-01-14 更新**: AI 分析优化
+```typescript
+// 优化前：AI 分析包含 dominantColors（消耗 tokens）
+const aiAnalysis = await analyzeImageWithAI(imagePath, {
+  includeColors: true, // 消耗 AI tokens
+  // ...
+});
+
+// 优化后：dominantColors 通过专用算法提取，不消耗 AI tokens
+const aiAnalysis = await analyzeImageWithAI(imagePath, {
+  includeColors: false, // 关闭 AI 颜色分析
+  // ...
+});
+
+// 颜色通过专用算法提取
+const dominantColors = await getDominantColors(imagePath, 8);
 ```
 
-#### 文件处理流程
-```typescript
-// 文件扫描流程
-async function scanDirectory(path: string, forceRefresh?: boolean): Promise<ScanResult> {
-  // 1. 读取目录内容
-  // 2. 过滤支持的文件类型
-  // 3. 递归处理子目录（如果需要）
-  // 4. 构建文件树结构
-  // 5. 返回结果
-}
+**支持的 AI 提供商**:
+- OpenAI (GPT-4, GPT-3.5)
+- Ollama (本地 LLM)
+- LM Studio (本地模型管理)
 
-// 缩略图批量获取说明
-// 前端对缩略图请求做了短时间聚合以减少与后端的调用（聚合窗口约为 50ms），
-// 并根据资源根路径计算缓存目录（`${rootPath}/.Aurora_Cache` 或 Windows 路径形式），
-// getThumbnail 会返回已使用 `convertFileSrc` 转换后的可直接用于 <img> 的 URL 或 null，并可通过 onColors 回调接收主色调信息。
-
-// 文件处理管道
-File Path → Type Detection → Metadata Extraction → AI Analysis → Color Extraction → Database Storage
-```
-
-### 颜色相似度搜索（Color Similarity Search）
-
-- **概述**: 后端的色彩提取模块（Color Extractor / Color Worker）会定期或按需分析图片并将色彩信息写入数据库（`file_colors` 表）。基于这些数据，提供按颜色相似度检索的能力。
-
-- **后端返回格式**: 当触发颜色搜索时，Rust 后端会返回一个字符串数组，内容为匹配图片的绝对路径（示例: `C:\Users\...\photo.jpg` 或 `/home/user/.../photo.jpg`）。这个结果通过 Tauri 命令或事件发送到前端。
-
-- **前端处理逻辑**:
-  1. 接收后端返回的路径数组。
-  2. 对每个路径进行标准化处理：
-     - 移除 Windows 长路径前缀 `\\?\`（若存在）。
-     - 将反斜杠 `\\` 替换为正斜杠 `/`。
-     - 将字符串转换为小写以减少大小写不一致造成的匹配失败。
-  3. 在当前前端索引 `state.files` 中查找匹配项（通过 `file.path` 字段，使用相同的标准化函数进行比较）。
-  4. 将匹配到的路径收集为 `validPaths`，并把它们放入 `AiSearchFilter.filePaths`（或等效内部过滤器）中以驱动视图显示。
-
-- **交互与 UX**:
-  - 颜色搜索不会把 `color:#xxxxxx` 文本留在搜索框中（目前实现将搜索文本清空，但把查询信息放入 `aiFilter.originalQuery`）。
-  - 如果后端返回的路径全部无法在前端索引中匹配，前端会弹出提示（Toast），提示后台找到 N 张但前端无法显示，提醒用户可能需要重新扫描或生成色彩数据。
-
-- **注意与限制**:
-  - 成功匹配依赖于前端索引中 `file.path` 的完整性与一致性（例如文件被移动或以不同方式导入后路径可能不一致）。
-  - 在 Windows 系统上，路径可能含有前缀或不同的大小写，故前端做了归一化；若仍无法匹配，可考虑在导入/扫描阶段统一规范路径或在后端返回相对/ID 映射（更稳妥）。
-
----
+##### 人脸识别服务 (faceRecognitionService.ts)
+**位置**: `src/services/faceRecognitionService.ts`  
+**行数**: ~150 行  
+**功能**: 基于 face-api.js 的人脸识别
 
 ### 3. 数据访问层 (Data Access Layer)
 
-#### Tauri Bridge 模式
-```typescript
-// 桥接层设计模式
-export class TauriBridge {
-  // 文件系统操作
-  static async scanDirectory(path: string): Promise<ScanResult> {
-    return await invoke('scan_directory', { path, recursive: false })
-  }
-  
-  // 数据库操作
-  static async getPendingFiles(limit: number): Promise<string[]> {
-    return await invoke('get_pending_files', { limit })
-  }
+#### Tauri Bridge API
+**位置**: `src/api/tauri-bridge.ts`  
+**行数**: ~890 行  
+**功能**: 前后端通信桥接
 
-  // 人物数据库 API
-  static async dbGetAllPeople(): Promise<Person[]> {
-    return await invoke('db_get_all_people')
-  }
-  static async dbUpsertPerson(person: Person): Promise<void> {
-    return await invoke('db_upsert_person', { person })
-  }
-  static async dbDeletePerson(id: string): Promise<void> {
-    return await invoke('db_delete_person', { id })
-  }
-  static async dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void> {
-    return await invoke('db_update_person_avatar', { personId, coverFileId, faceBox })
-  }
-  
-  // 进度监听
-  static async listenProgress(callback: (progress: any) => void): Promise<void> {
-    const unlisten = await listen('color-extraction-progress', (event) => {
-      callback(event.payload)
-    })
-    return unlisten
-  }
+**核心功能**:
+```typescript
+// 文件系统操作
+export const scanDirectory = async (path: string, forceRefresh?: boolean) => { ... }
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void) => { ... }
+
+// 数据库操作
+export const dbGetAllPeople = async () => { ... }
+export const dbUpsertPerson = async (person: any) => { ... }
+
+// 颜色搜索
+export const searchByColor = async (color: string) => { ... }
+export const searchByPalette = async (palette: string[]) => { ... }
+```
+
+### 4. 基础设施层 (Infrastructure Layer)
+
+#### Rust 后端架构
+**位置**: `src-tauri/src/`  
+**总行数**: ~4000+ 行
+
+##### 主程序 (main.rs)
+**行数**: ~2529 行  
+**功能**: Tauri 应用入口，命令处理器
+
+**架构特点**:
+- 基于 Tokio 的异步运行时
+- 多线程任务处理（使用 Rayon）
+- SQLite 数据库集成
+- 事件驱动的进度通知
+
+##### 颜色处理模块
+- **color_db.rs** (~300 行): 颜色数据存储和管理
+- **color_extractor.rs** (~200 行): 颜色提取算法
+- **color_worker.rs** (~760 行): 后台颜色处理工作器
+
+##### 数据库模块
+- **db/persons.rs**: 人物数据 CRUD 操作
+- **集成**: Rusqlite 0.30，带 JSON 支持
+
+## 技术实现细节
+
+### 并发模型
+
+#### 生产者-消费者模式
+```
+颜色提取任务处理:
+文件扫描线程 → 任务队列 → 颜色处理工作线程池 → 结果队列 → 主线程更新UI
+
+线程配置:
+- 生产者: 1个 (文件扫描)
+- 消费者: 4-8个 (颜色提取，由 CPU 核心数决定)
+- 队列: 无界通道 (crossbeam-channel)
+```
+
+#### 异步操作处理
+```rust
+// 使用 Tokio 运行时处理异步任务
+#[tokio::main]
+async fn main() {
+    // 异步文件 I/O
+    // 数据库操作
+    // HTTP 请求 (AI API)
 }
 
----
+// Rayon 并行处理 CPU 密集任务
+files.par_iter().for_each(|file| {
+    // 并行颜色提取
+    // 图像处理
+});
+```
 
--- Persons 表（示例） --
--- persons 表用于持久化已知人物信息并支持头像更新/计数维护
-CREATE TABLE IF NOT EXISTS persons (
+### 数据存储架构
+
+#### SQLite 数据库设计
+```sql
+-- 人物表
+CREATE TABLE persons (
     id TEXT PRIMARY KEY,
-    name TEXT,
+    name TEXT NOT NULL,
     cover_file_id TEXT,
     count INTEGER DEFAULT 0,
     description TEXT,
-    face_box_x REAL,
-    face_box_y REAL,
-    face_box_w REAL,
-    face_box_h REAL,
-    updated_at DATETIME
-);
-
-```
-
-#### Rust 后端架构
-```rust
-// 主程序入口
-#[tauri::command]
-async fn scan_directory(path: String, recursive: bool) -> Result<ScanResult, String> {
-    // 1. 验证路径
-    // 2. 读取目录
-    // 3. 构建文件树
-    // 4. 返回结果
-}
-
-// 数据库连接池
-pub struct ColorDbPool {
-    pool: SqlitePool,
-}
-
-impl ColorDbPool {
-    pub async fn new(db_path: &str) -> Result<Self> {
-        let options = SqliteConnectOptions::new()
-            .filename(db_path)
-            .journal_mode(SqliteJournalMode::Wal)  // WAL 模式
-            .create_if_missing(true);
-        
-        let pool = SqlitePool::connect_with(options).await?;
-        
-        // 初始化表
-        pool.execute(include_str!("schema.sql")).await?;
-        
-        Ok(Self { pool })
-    }
-}
-```
-
-### 4. 数据持久化层 (Data Persistence Layer)
-
-#### 数据库设计
-```sql
--- 主表：文件色彩信息
-CREATE TABLE file_colors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    file_path TEXT UNIQUE NOT NULL,
-    colors TEXT NOT NULL,  -- JSON 格式存储
-    status TEXT DEFAULT 'pending',
+    descriptor BLOB, -- 人脸特征向量
+    face_box TEXT,   -- 人脸位置 (JSON)
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 索引优化
-CREATE INDEX idx_status ON file_colors(status);
-CREATE INDEX idx_path ON file_colors(file_path);
+-- 文件元数据表 [新增]
+CREATE TABLE file_metadata (
+    file_id TEXT PRIMARY KEY,      -- 文件哈希 ID
+    path TEXT NOT NULL,            -- 文件路径 (用于反推和验证)
+    tags TEXT,                     -- 标签数组 (JSON)
+    description TEXT,              -- 详细描述
+    source_url TEXT,               -- 来源 URL
+    ai_data TEXT,                  -- AI 分析全量数据 (JSON)
+    updated_at INTEGER             -- 更新时间戳
+);
+CREATE INDEX idx_file_metadata_path ON file_metadata(path);
 
--- WAL 模式配置
-PRAGMA journal_mode = WAL;
-PRAGMA synchronous = NORMAL;
-PRAGMA wal_autocheckpoint = 1000;
+-- 颜色索引表
+CREATE TABLE color_index (
+    file_path TEXT PRIMARY KEY,
+    colors TEXT, -- JSON 数组存储主色调
+    histogram TEXT, -- 颜色直方图数据
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
-#### 数据访问模式
-```rust
-// Repository 模式
-pub struct ColorRepository {
-    pool: Arc<ColorDbPool>,
-}
-
-impl ColorRepository {
-    pub async fn save_colors(
-        &self,
-        file_path: &str,
-        colors: &[ColorResult]
-    ) -> Result<()> {
-        let json_colors = serde_json::to_string(colors)?;
-        // 执行插入或更新
-    }
-    
-    pub async fn batch_save_colors(
-        &self,
-        data: &[(&str, &[ColorResult])]
-    ) -> Result<usize> {
-        // 批量插入优化
-    }
-}
-```
-
-## 并发和异步模型
-
-### 1. 前端异步模式
+#### 缓存策略
 ```typescript
-// React + Tauri 异步模式
-const handleAsyncOperation = async () => {
-  try {
-    // 显示加载状态
-    setIsLoading(true)
-    
-    // 执行异步操作
-    const result = await someAsyncOperation()
-    
-    // 更新状态
-    setState(result)
-    
-  } catch (error) {
-    // 错误处理
-    showError(error)
-  } finally {
-    // 隐藏加载状态
-    setIsLoading(false)
-  }
-}
+// 缩略图缓存
+const thumbnailCache = new Map<string, string>();
+const THUMBNAIL_CACHE_DIR = `${rootPath}/.Aurora_Cache/thumbnails/`;
 
-// 防抖和节流
-const debouncedSearch = debounce((query: string) => {
-  performSearch(query)
-}, 300)
-
-const throttledScroll = throttle((scrollTop: number) => {
-  updateScrollPosition(scrollTop)
-}, 16)
+// 颜色数据缓存
+const colorCache = new Map<string, DominantColor[]>();
 ```
 
-### 2. 后端并发模型
-```rust
-// Tokio 多任务架构
-pub async fn color_extraction_worker(
-    pool: Arc<ColorDbPool>,
-    batch_size: usize,
-    app_handle: Option<Arc<AppHandle>>
-) {
-    // 1. 生产者任务（单个）
-    let producer_handle = task::spawn(producer_loop(...));
-    
-    // 2. 消费者任务（多个）
-    let mut consumer_handles = Vec::new();
-    for _ in 0..num_workers {
-        let handle = task::spawn_blocking(consumer_loop(...));
-        consumer_handles.push(handle);
-    }
-    
-    // 3. 结果处理任务（单个）
-    let result_handle = task::spawn(result_processor(...));
-    
-    // 等待所有任务完成
-    join_all([producer_handle, result_handle, ...consumer_handles]).await;
-}
+### 性能优化策略
 
-// 通道模式（生产者-消费者）
-let (task_sender, task_receiver) = unbounded();
-let (result_sender, result_receiver) = unbounded();
+#### 前端优化
+1. **虚拟滚动**: 处理大量文件显示
+2. **防抖**: 搜索和过滤操作
+3. **懒加载**: 图片和组件按需加载
+4. **内存管理**: 及时清理不用的资源
 
-// 生产者发送任务
-task_sender.send((batch_id, file_path)).unwrap();
+#### 后端优化
+1. **并行处理**: 使用 Rayon 进行 CPU 密集计算
+2. **批处理**: 聚合多个小任务减少开销
+3. **缓存**: 文件系统和内存双层缓存
+4. **异步 I/O**: 非阻塞文件操作
 
-// 消费者接收任务
-match task_receiver.recv_timeout(Duration::from_millis(50)) {
-    Ok(task) => process_task(task),
-    Err(_) => continue,
-}
-```
+#### 数据库优化
+1. **索引**: 为常用查询字段创建索引
+2. **连接池**: 复用数据库连接
+3. **批量操作**: 减少数据库往返
+4. **WAL 模式**: 提高并发性能
 
-## 性能优化策略
+### 错误处理策略
 
-### 1. 内存优化
+#### 分层错误处理
 ```typescript
-// 虚拟滚动（大列表）
-import { FixedSizeList } from 'react-window'
-
-const FileList = ({ files }) => (
-  <FixedSizeList
-    height={600}
-    itemCount={files.length}
-    itemSize={80}
-  >
-    {({ index, style }) => (
-      <div style={style}>
-        <FileItem file={files[index]} />
-      </div>
-    )}
-  </FixedSizeList>
-)
-
-// 懒加载图片
-const LazyImage = ({ src }) => {
-  const [isVisible, setIsVisible] = useState(false)
-  const ref = useRef()
-  
-  useEffect(() => {
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) {
-        setIsVisible(true)
-        observer.disconnect()
-      }
-    })
-    observer.observe(ref.current)
-    return () => observer.disconnect()
-  }, [])
-  
-  return <img ref={ref} src={isVisible ? src : ''} />
-}
-```
-
-### 2. 数据库优化
-```rust
-// 批量操作
-pub fn batch_save_colors(
-    conn: &mut SqliteConnection,
-    colors: &[(&str, &[ColorResult])]
-) -> Result<()> {
-    // 使用事务
-    let tx = conn.begin()?;
-    
-    for (path, color_list) in colors {
-        let json = serde_json::to_string(color_list)?;
-        sqlx::query(
-            "INSERT OR REPLACE INTO file_colors (file_path, colors, status, updated_at) 
-             VALUES (?, ?, 'completed', CURRENT_TIMESTAMP)"
-        )
-        .bind(path)
-        .bind(&json)
-        .execute(&mut *tx)
-        .await?;
-    }
-    
-    tx.commit().await?;
-    Ok(())
-}
-
-// WAL 优化
-pub fn force_wal_checkpoint(&self) -> Result<()> {
-    // 执行 WAL CHECKPOINT
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
-        .execute(&self.pool)
-        .await?;
-    Ok(())
-}
-```
-
-### 3. 网络优化
-```typescript
-// 并发控制
-const asyncPool = async <T>(
-  limit: number,
-  items: T[],
-  fn: (item: T) => Promise<void>
-) => {
-  const executing: Promise<void>[] = []
-  
-  for (const item of items) {
-    const p = fn(item).then(() => {
-      executing.splice(executing.indexOf(p), 1)
-    })
-    executing.push(p)
-    
-    if (executing.length >= limit) {
-      await Promise.race(executing)
-    }
-  }
-  
-  await Promise.all(executing)
-}
-
-// 请求重试
-const withRetry = async <T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  delay: number = 1000
-): Promise<T> => {
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await fn()
-    } catch (error) {
-      if (i === maxRetries - 1) throw error
-      await new Promise(resolve => setTimeout(resolve, delay * (i + 1)))
-    }
-  }
-  throw new Error('Unreachable')
-}
-```
-
-## 错误处理和容错
-
-### 1. 前端错误处理
-```typescript
-// 全局错误边界
+// 前端错误边界
 class ErrorBoundary extends React.Component {
-  state = { hasError: false, error: null }
-  
-  static getDerivedStateFromError(error: any) {
-    return { hasError: true, error }
-  }
-  
-  render() {
-    if (this.state.hasError) {
-      return <ErrorFallback error={this.state.error} />
-    }
-    return this.props.children
+  componentDidCatch(error, errorInfo) {
+    // 记录错误，显示友好界面
   }
 }
 
-// 异步错误包装
-const safeAsync = async <T>(promise: Promise<T>): Promise<[T | null, any]> => {
-  try {
-    const result = await promise
-    return [result, null]
-  } catch (error) {
-    return [null, error]
-  }
+// API 错误处理
+try {
+  const result = await invoke('some_command', params);
+} catch (error) {
+  // 处理 Tauri 错误
+  console.error('API 调用失败:', error);
 }
 
-// 使用示例
-const [data, error] = await safeAsync(fetchData())
-if (error) {
-  logger.error('操作失败', error)
-  showNotification('操作失败，请重试')
-}
-```
-
-### 2. 后端错误处理
-```rust
-// 自定义错误类型
-#[derive(Debug)]
-pub enum AppError {
-    DatabaseError(sqlx::Error),
-    IoError(std::io::Error),
-    ImageError(image::ImageError),
-    SerializeError(serde_json::Error),
-    NotFound(String),
-    InvalidInput(String),
-}
-
-impl From<sqlx::Error> for AppError {
-    fn from(err: sqlx::Error) -> Self {
-        AppError::DatabaseError(err)
-    }
-}
-
-// 错误处理模式
-pub async fn process_file(path: &str) -> Result<ColorResult, AppError> {
-    // 验证输入
-    if !std::path::Path::new(path).exists() {
-        return Err(AppError::NotFound(path.to_string()));
-    }
-    
-    // 处理文件
-    let colors = extract_colors(path)
-        .map_err(|e| AppError::ImageError(e))?;
-    
-    // 保存结果
-    save_to_db(path, &colors)
-        .map_err(|e| AppError::DatabaseError(e))?;
-    
-    Ok(colors)
-}
-
-// 错误传播和日志
-match process_file(file_path).await {
-    Ok(colors) => {
-        info!("成功处理文件: {}", file_path);
-        result_sender.send(Ok((batch_id, file_path, colors))).unwrap();
-    }
-    Err(e) => {
-        error!("处理文件失败 {}: {}", file_path, e);
-        result_sender.send(Err((batch_id, format!("{}", e)))).unwrap();
-    }
+// Rust 错误处理
+#[tauri::command]
+fn some_command() -> Result<ReturnType, String> {
+    // 使用 ? 操作符传播错误
+    let result = some_operation()?;
+    Ok(result)
 }
 ```
 
-## 安全架构
+### 安全性考虑
 
-### 1. 输入验证
-```typescript
-// 路径验证
-const isValidPath = (path: string): boolean => {
-  // 防止路径遍历攻击
-  const normalized = path.replace(/\\/g, '/')
-  return !normalized.includes('..') && 
-         normalized.startsWith('/') &&
-         !normalized.includes('//')
-}
+#### 数据验证
+- 前端: TypeScript 类型检查
+- 后端: Serde 序列化验证
+- 数据库: 参数化查询防止 SQL 注入
 
-// 文件类型验证
-const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-const isValidFileType = (filename: string): boolean => {
-  const ext = filename.toLowerCase().split('.').pop()
-  return ALLOWED_EXTENSIONS.includes(`.${ext}`)
-}
+#### 权限管理
+- Tauri 权限配置 (`capabilities/default.json`)
+- 文件系统访问控制
+- 网络请求限制
+
+#### 数据隐私
+- 本地数据存储 (SQLite)
+- 可选的 AI 服务集成
+- 用户数据导出功能
+
+## 部署和分发
+
+### 构建流程
+```bash
+# 前端构建
+npm run build
+
+# Rust 构建和打包
+cargo tauri build
+
+# 输出: 平台特定的安装包
+# - Windows: .msi
+# - macOS: .dmg
+# - Linux: .AppImage
 ```
 
-### 2. 权限控制
-```rust
-// Tauri 权限配置
-// tauri.conf.json
-{
-  "tauri": {
-    "allowlist": {
-      "fs": {
-        "scope": ["$RESOURCE/**", "$APPDATA/**"],
-        "all": false
-      },
-      "dialog": {
-        "open": true,
-        "save": true
-      },
-      "window": {
-        "close": true,
-        "hide": true,
-        "show": true
-      }
-    }
-  }
-}
-```
-
-### 3. 数据安全
-```typescript
-// 敏感数据处理
-const sanitizePath = (path: string): string => {
-  return path.replace(/[<>:"|?*]/g, '')
-}
-
-// API 密钥管理
-const secureStorage = {
-  async set(key: string, value: string): Promise<void> {
-    // 使用 Tauri 的安全存储
-    await invoke('secure_store', { key, value })
-  },
-  
-  async get(key: string): Promise<string | null> {
-    return await invoke('secure_retrieve', { key })
-  }
-}
-```
+### CI/CD 考虑
+- GitHub Actions 多平台构建
+- 自动化测试和代码质量检查
+- 版本管理和发布流程
+- 更新机制 (Tauri Updater)
 
 ## 监控和调试
 
-### 1. 性能监控
+### 性能监控
 ```typescript
 // 前端性能监控
 const performanceMonitor = {
-  metrics: new Map<string, number[]>(),
-  
-  start(label: string): string {
-    const id = Math.random().toString(36)
-    this.metrics.set(id, [performance.now()])
-    return id
-  },
-  
-  end(id: string, label: string): void {
-    const start = this.metrics.get(id)?.[0]
-    if (start) {
-      const duration = performance.now() - start
-      console.log(`[PERF] ${label}: ${duration.toFixed(2)}ms`)
-      this.metrics.delete(id)
-    }
-  }
-}
+  startTiming: (label: string) => { ... },
+  endTiming: (label: string) => { ... },
+  logMetrics: () => { ... }
+};
 
-// 使用示例
-const timerId = performanceMonitor.start('file_scan')
-await scanDirectory(path)
-performanceMonitor.end(timerId, 'file_scan')
+// 内存使用跟踪
+const memoryUsage = performance.memory;
+console.log(`内存使用: ${memoryUsage.usedJSHeapSize / 1024 / 1024} MB`);
 ```
 
-### 2. 日志系统
-```rust
-// Rust 日志配置
-use tracing::{info, warn, error, debug};
-use tracing_subscriber::{layer::SubscriberExt, Registry, fmt, EnvFilter};
-
-fn init_logging() {
-    let fmt_layer = fmt::layer().with_thread_ids(true).with_target(true);
-    let filter_layer = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    
-    let subscriber = Registry::default()
-        .with(filter_layer)
-        .with(fmt_layer);
-    
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("Failed to set subscriber");
-}
-
-// 使用日志
-info!("Processing batch {}", batch_id);
-debug!("File: {}, Colors: {:?}", file_path, colors);
-warn!("Failed to process {}: {}", file_path, error);
-error!("Database error: {}", e);
-```
-
-### 3. 错误报告
+### 日志系统
 ```typescript
-// 错误上报
-const reportError = (error: Error, context: any = {}) => {
-  const errorReport = {
-    timestamp: new Date().toISOString(),
-    message: error.message,
-    stack: error.stack,
-    context: {
-      ...context,
-      userAgent: navigator.userAgent,
-      platform: getPlatform(),
-      version: APP_VERSION
-    }
-  }
-  
-  // 发送到日志服务（可选）
-  if (isProduction) {
-    fetch('/api/errors', {
-      method: 'POST',
-      body: JSON.stringify(errorReport)
-    })
-  }
-  
-  console.error('Error Report:', errorReport)
-}
+// 结构化日志
+const logger = {
+  debug: (message: string, meta?: any) => console.log('[DEBUG]', message, meta),
+  info: (message: string, meta?: any) => console.info('[INFO]', message, meta),
+  warn: (message: string, meta?: any) => console.warn('[WARN]', message, meta),
+  error: (message: string, meta?: any) => console.error('[ERROR]', message, meta)
+};
 ```
 
 ## 扩展性设计
 
-### 1. 插件系统
-```typescript
-// 插件接口
-interface Plugin {
-  name: string
-  version: string
-  initialize(app: App): void
-  onFileAdded?(file: FileNode): void
-  onFileAnalyzed?(file: FileNode, aiData: AiData): void
-  onColorExtracted?(file: FileNode, colors: string[]): void
-}
+### 插件架构
+- Tauri 插件系统支持
+- 自定义 AI 提供商
+- 第三方图像处理库
 
-// 插件注册
-class PluginManager {
-  private plugins: Plugin[] = []
-  
-  register(plugin: Plugin): void {
-    plugin.initialize(this.app)
-    this.plugins.push(plugin)
-  }
-  
-  async onFileAdded(file: FileNode): Promise<void> {
-    for (const plugin of this.plugins) {
-      if (plugin.onFileAdded) {
-        await plugin.onFileAdded(file)
-      }
-    }
-  }
-}
-```
+### API 设计
+- RESTful 风格的命令命名
+- 版本化 API 支持
+- 向后兼容性保证
 
-### 2. 服务提供者模式
-```typescript
-// 可扩展的服务提供者
-class ServiceProvider {
-  private services: Map<string, any> = new Map()
-  
-  register<T>(name: string, service: T): void {
-    this.services.set(name, service)
-  }
-  
-  get<T>(name: string): T {
-    const service = this.services.get(name)
-    if (!service) {
-      throw new Error(`Service ${name} not found`)
-    }
-    return service as T
-  }
-}
+### 配置管理
+- 环境变量支持
+- 用户偏好存储
+- 运行时配置热重载
 
-// 使用
-const provider = new ServiceProvider()
-provider.register('ai', new AIService())
-provider.register('face', new FaceRecognitionService())
+## 总结
 
-const aiService = provider.get<AIService>('ai')
-```
+Aurora Gallery Tauri 采用现代化的分层架构，结合 React 前端和 Rust 后端的优势，提供高性能、跨平台的图片管理体验。通过精心设计的并发模型、缓存策略和错误处理机制，实现了流畅的用户体验和可靠的系统稳定性。
 
----
+**关键技术决策**:
+- React + TypeScript 提供类型安全和组件化开发
+- Tauri 实现跨平台原生应用开发
+- Rust 保证后端性能和内存安全
+- SQLite 提供轻量级本地数据存储
+- CIEDE2000 算法确保颜色搜索准确性
 
-**架构版本**: 1.0  
-**设计模式**: 分层架构 + 事件驱动 + 生产者-消费者  
-**并发模型**: 异步 + 多线程  
-**性能目标**: 10,000+ 文件管理，秒级响应
+**架构优势**:
+- 性能优异: Rust 后端 + 并行处理
+- 用户体验佳: 响应式设计 + 流畅交互
+- 开发效率高: 现代化工具链 + 热重载
+- 维护性好: 分层架构 + 类型安全
+- 扩展性强: 插件化设计 + 模块化组件

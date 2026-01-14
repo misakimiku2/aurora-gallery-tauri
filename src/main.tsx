@@ -1,4 +1,4 @@
-import React from 'react';
+﻿import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import '../index.css';
@@ -23,7 +23,7 @@ const configureTauriLogs = async () => {
       console.error('Failed to configure Tauri log plugin:', error);
     }
   } else {
-    // 即使不是Tauri环境，也调用setupGlobalLogger，确保console.log能正常工作
+    // 即使不是Tauri环境，也调用setupGlobalLogger，确保console.log能正常工�?
     setupGlobalLogger();
   }
 };
