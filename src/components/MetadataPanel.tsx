@@ -281,6 +281,29 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
   const [originalPersonName, setOriginalPersonName] = useState('');
   const [originalPersonDesc, setOriginalPersonDesc] = useState('');
   const [showSavedPerson, setShowSavedPerson] = useState(false);
+
+  // Dynamic name width helpers to avoid overlapping edit icon
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const nameMeasureRef = useRef<HTMLSpanElement | null>(null);
+  const [nameWidth, setNameWidth] = useState<number>(120);
+  const [wrapperWidth, setWrapperWidth] = useState<number>(160);
+  const MAX_NAME_WIDTH = 260; // allow larger names in side panel
+  const ICON_PADDING = 32; // space for icon and little gap
+
+  useEffect(() => {
+    const compute = () => {
+      const measureEl = nameMeasureRef.current;
+      if (!measureEl) return;
+      const measured = Math.ceil(measureEl.offsetWidth);
+      // Compute name width based on measured text but cap to available max minus icon padding
+      const computedNameW = Math.max(40, Math.min(measured + 8, MAX_NAME_WIDTH - ICON_PADDING));
+      setNameWidth(computedNameW);
+      setWrapperWidth(Math.min(MAX_NAME_WIDTH, computedNameW + ICON_PADDING));
+    };
+    compute();
+    window.addEventListener('resize', compute);
+    return () => window.removeEventListener('resize', compute);
+  }, [personName, nameMeasureRef]);
   
   const [batchDesc, setBatchDesc] = useState('');
   const [batchSource, setBatchSource] = useState('');
@@ -768,7 +791,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
   const handleUpdatePersonMeta = () => {
       if (person && onUpdatePerson) {
-          onUpdatePerson(person.id, { name: personName, description: personDesc });
+          const newName = (personName || '').trim();
+          const newDesc = (personDesc || '').trim();
+          // Only persist if something actually changed
+          if (newName !== person.name || newDesc !== (person.description || '')) {
+              onUpdatePerson(person.id, { name: newName, description: newDesc });
+          }
+          // Reflect trimmed value in UI
+          setPersonName(newName);
           setShowSavedPerson(true);
           setTimeout(() => setShowSavedPerson(false), 2000);
       }
@@ -1515,16 +1545,32 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     )}
                 </div>
 
-                {/* Name Input */}
-                <div className="w-full max-w-[200px] relative group mb-4">
-                    <input 
-                      value={personName}
-                      onChange={(e) => setPersonName(e.target.value)}
-                      onBlur={handleUpdatePersonMeta}
-                      className="text-2xl font-bold text-center text-gray-800 dark:text-white bg-transparent border-b border-transparent hover:border-gray-300 dark:hover:border-gray-600 focus:border-blue-500 focus:outline-none w-full py-1 transition-all"
-                      placeholder={t('context.enterNewPersonName')}
-                    />
-                    <Edit3 size={14} className="absolute right-0 top-1/2 -translate-y-1/2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+                {/* Name Input (dynamic width to avoid overlapping edit icon) */}
+                <div className="w-full relative group mb-4 flex justify-center">
+                    {/* Hidden measurement span to calculate text width */}
+                    <span ref={nameMeasureRef} className="invisible absolute -left-[9999px] text-2xl font-bold whitespace-pre" aria-hidden="true">{personName || t('context.enterNewPersonName')}</span>
+
+                    <div className="relative" style={{ width: wrapperWidth }}>
+                        <input
+                          ref={nameInputRef}
+                          value={personName}
+                          onChange={(e) => setPersonName(e.target.value)}
+                          onBlur={handleUpdatePersonMeta}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              handleUpdatePersonMeta();
+                              (e.target as HTMLInputElement).blur();
+                            } else if (e.key === 'Escape') {
+                              setPersonName(originalPersonName);
+                              (e.target as HTMLInputElement).blur();
+                            }
+                          }}
+                          className="text-2xl font-bold text-center text-gray-800 dark:text-white bg-transparent border-b border-transparent hover:border-gray-300 dark:hover:border-gray-600 focus:border-blue-500 focus:outline-none block mx-auto py-1 transition-all"
+                          placeholder={t('context.enterNewPersonName')}
+                          style={{ width: nameWidth }}
+                        />
+                        <Edit3 size={14} onClick={() => nameInputRef.current?.focus()} className="absolute right-1 top-1/2 -translate-y-1/2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer" />
+                    </div>
                 </div>
 
                 {/* Stats */}
