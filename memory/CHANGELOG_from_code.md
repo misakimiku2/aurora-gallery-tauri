@@ -1,6 +1,27 @@
 # Changelog: Updates from Code (generated from current code)
 
-**生成时间**: 2026-01-14
+**生成时间**: 2026-01-15
+---
+### 2026-01-15 更新 (本次系统性修复)
+**修复与优化**:
+- **Tauri 2.0 启动稳定性**: 解决了在 Windows 环境下由于 Vite 冷启动缓慢导致的 `AssetNotFound("index.html")` 和 `500` 错误。
+- **端口迁移**: 将开发服务器端口从 `1422` 迁移至 `14422`，以避开常见的本地端口冲突。
+- **智能重定向 (Failsafe Redirect)**: 在 `dist` 目录引入自动跳转机制，即使 Webview 错误加载本地文件也能自动恢复到 dev 服务器。
+- **权限与能力补丁**: 同步更新 `src-tauri/capabilities/default.json`，解决了切换端口后出现的 `is_maximized` 和 `event.listen` 权限被拒问题。
+- **自愈清理脚本**: 增强 `npm run clean`，使其能够自动释放被残留进程占用的网络端口。
+
+### 2026-01-15 晚间更新 (重构与修复)
+**代码重构**:
+- **App.tsx 瘦身**: 将大量内联模态框组件提取到 `src/components/modals/` 目录中（包括 `RenameTagModal`, `AddToTopicModal`, `BatchRenameModal` 等 13 个组件）。
+- **逻辑抽离**: 将任务管理逻辑（startTask, updateTask 等）提取到自定义 Hook `src/hooks/useTasks.ts` 中，减轻 App.tsx 负担。
+
+**Bug 修复**:
+- **任务管理修复**: 修复了最小化任务无法恢复、任务进度到达 100% 不自动关闭、侧边栏暂停/继续按钮失效的问题。
+- **重命名功能修复**: 重新实现了 `handleBatchRename` 逻辑，修复了批量重命名无法确认和进度条残留的问题。
+- **拖拽进度修复**: 修正了外部拖拽文件时进度条显示溢出（如 1200%）的问题。
+- **UI 交互修复**: 修复了人物界面 Shift 范围多选时遗漏中间项的问题。
+- **测试支持**: 为 `WelcomeModal` 添加了 `window.showWelcomeModal()` 测试接口。
+---
 
 ## 概要
 对 `memory/` 中文档做了一次代码驱动的同步更新，以保证文档以当前代码为准。
@@ -15,7 +36,7 @@
 ## 主要变更点（按代码引用）
 
 ### 1. 前端组件重构 (src/components/)
-- **新增 PersonGrid 组件**: 将人物界面从 FileGrid 中分离出来形成独立的 `PersonGrid.tsx` 组件 (~219 行)，提供专门的人物网格视图和管理功能。
+- **新增 PersonGrid 组件**: 将人物界面从 FileGrid 中分离出来形成独立的 `PersonGrid.tsx` 组件 (225 行)，提供专门的人物网格视图和管理功能。
 - **SettingsModal 增强**: 新增系统提示预设功能，支持创建、编辑、删除和管理 AI 提示模板。
 - **ContextMenu 样式优化**: 针对不同类型的上下文菜单（文件、文件夹）应用不同的深色主题样式。
 

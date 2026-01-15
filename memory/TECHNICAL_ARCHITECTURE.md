@@ -38,23 +38,27 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件 - 6970+ 行)
+App (根组件 - 6070 行)
 ├── TabBar (标签页管理)
 ├── TopBar (工具栏)
 ├── Sidebar (侧边栏)
 │   ├── TreeSidebar (文件树)
 │   └── TaskProgressModal (任务进度)
 ├── MainContent (主内容区)
-│   ├── PersonGrid (人物网格) [新增 - 219 行]
-│   ├── FileGrid (文件网格) [更新 - 1200 行]
+│   ├── PersonGrid (人物网格) [新增 - 225 行]
+│   ├── FileGrid (文件网格) [更新 - 2563 行]
 │   ├── ImageViewer (图片查看器)
 │   ├── SequenceViewer (序列查看器)
 │   └── TopicModule (专题模块)
 ├── MetadataPanel (元数据面板)
 ├── SettingsModal (设置模态框) [增强 - 1208 行]
-├── Modals (模态框)
-│   ├── CloseConfirmationModal (关闭确认)
-│   └── [其他模态框...]
+├── MetadataPanel (元数据面板)
+├── SettingsModal (设置模态框)
+├── Modals (模态框集合 - src/components/modals/) [重构]
+│   ├── FolderPickerModal
+│   ├── BatchRenameModal
+│   ├── WelcomeModal
+│   └── [其他 10+ 模态框...]
 └── Toasts (通知)
 ```
 
@@ -62,6 +66,13 @@ App (根组件 - 6970+ 行)
 ```typescript
 // 使用 React Hooks 进行状态管理
 const [state, setState] = useState<AppState>({
+  // ... (基础状态)
+})
+
+// 任务状态管理 (extracted to useTasks.ts)
+const { tasks, startTask, updateTask } = useTasks(t);
+// tasks: 包含所有后台任务 (复制/移动/AI/色彩提取)
+// updateTask: 负责处理进度更新、防抖和自动完成清理
   // 文件系统状态
   roots: [],
   files: {},
@@ -134,14 +145,14 @@ const dominantColors = await getDominantColors(imagePath, 8);
 
 ##### 人脸识别服务 (faceRecognitionService.ts)
 **位置**: `src/services/faceRecognitionService.ts`  
-**行数**: ~150 行  
+**行数**: 87 行  
 **功能**: 基于 face-api.js 的人脸识别
 
 ### 3. 数据访问层 (Data Access Layer)
 
 #### Tauri Bridge API
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: ~890 行  
+**行数**: 920 行  
 **功能**: 前后端通信桥接
 
 **核心功能**:
@@ -163,10 +174,10 @@ export const searchByPalette = async (palette: string[]) => { ... }
 
 #### Rust 后端架构
 **位置**: `src-tauri/src/`  
-**总行数**: ~4000+ 行
+**总行数**: 4667 行
 
 ##### 主程序 (main.rs)
-**行数**: ~2529 行  
+**行数**: 2602 行  
 **功能**: Tauri 应用入口，命令处理器
 
 **架构特点**:
@@ -176,9 +187,9 @@ export const searchByPalette = async (palette: string[]) => { ... }
 - 事件驱动的进度通知
 
 ##### 颜色处理模块
-- **color_db.rs** (~300 行): 颜色数据存储和管理
-- **color_extractor.rs** (~200 行): 颜色提取算法
-- **color_worker.rs** (~760 行): 后台颜色处理工作器
+- **color_db.rs** (811 行): 颜色数据存储和管理
+- **color_extractor.rs** (258 行): 颜色提取算法
+- **color_worker.rs** (789 行): 后台颜色处理工作器
 
 ##### 数据库模块
 - **db/persons.rs**: 人物数据 CRUD 操作

@@ -25,8 +25,8 @@ npm install
 npm run tauri:dev
 
 # 或分别运行
-npm run dev              # 前端开发服务器 (http://127.0.0.1:1422)
-wait-on http://127.0.0.1:1422 && cargo tauri dev  # 等待前端启动后运行 Tauri
+npm run dev              # 前端开发服务器 (http://localhost:14422)
+wait-on http://localhost:14422 && cargo tauri dev  # 等待前端启动后运行 Tauri
 ```
 
 ### 生产构建
@@ -242,11 +242,12 @@ if (preset) {
 
 ### 常见问题
 
-#### 前端热更新不工作
+#### 开发模式白屏或 500 错误
 ```bash
-# 清理缓存后重新启动
+# 核心解决：使用自愈清理脚本强制重置环境
 npm run clean:dev
 ```
+- **原理**: 该命令会释放端口占用、清理错误缓存并注入跳转补丁。
 
 #### Rust 编译错误
 ```bash

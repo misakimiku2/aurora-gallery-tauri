@@ -24,813 +24,31 @@ import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder
 import { aiService } from './services/aiService';
 
 // ... (helper components remain unchanged)
-const TaskProgressModal = ({ tasks, onMinimize, onClose, t, onPauseResume }: any) => {
-  const [isMinimizing, setIsMinimizing] = useState(false);
-  const activeTasks = tasks.filter((task: any) => !task.minimized);
-  if (activeTasks.length === 0) return null;
-  const handleMinimize = () => { setIsMinimizing(true); setTimeout(() => { activeTasks.forEach((task: any) => onMinimize(task.id)); setIsMinimizing(false); }, 300); };
+import { useTasks } from './hooks/useTasks';
 
-  const handlePauseResume = (taskId: string, taskType: string) => {
-    if (taskType !== 'color') return;
-    onPauseResume(taskId, taskType);
-  };
+import { TaskProgressModal } from './components/TaskProgressModal';
+import { AlertModal } from './components/modals/AlertModal';
+import { ConfirmModal } from './components/modals/ConfirmModal';
+import { RenameTagModal } from './components/modals/RenameTagModal';
+import { RenamePersonModal } from './components/modals/RenamePersonModal';
+import { BatchRenameModal } from './components/modals/BatchRenameModal';
+import { AddToPersonModal } from './components/modals/AddToPersonModal';
+import { ClearPersonModal } from './components/modals/ClearPersonModal';
+import { AddToTopicModal } from './components/modals/AddToTopicModal';
+import { TagEditor } from './components/modals/TagEditor';
+import { FolderPickerModal } from './components/modals/FolderPickerModal';
+import { ExitConfirmModal } from './components/modals/ExitConfirmModal';
+import { CropAvatarModal } from './components/modals/CropAvatarModal';
+import { WelcomeModal } from './components/modals/WelcomeModal';
+import { ToastItem } from './components/ToastItem';
 
-  // 格式化预估时间（毫秒）为 HH:MM:SS
-  const formatEstimatedTime = (ms: number | undefined): string => {
-    if (!ms || ms < 0) return '';
 
-    const totalSeconds = Math.floor(ms / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
 
-    if (hours > 0) {
-      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    } else {
-      return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-  };
 
-  return (
-    <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] transition-all duration-300 ease-in-out origin-bottom ${isMinimizing ? 'scale-75 opacity-0 translate-y-full' : 'scale-100 opacity-100'}`}>
-      <div className="w-96 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-slide-up">
-        <div className="bg-gray-100 dark:bg-gray-900 px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"><span className="font-bold text-sm text-gray-700 dark:text-gray-200">{t('sidebar.tasks')} ({activeTasks.length})</span><div className="flex space-x-1"><button onClick={handleMinimize} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"><Minus size={14} /></button></div></div>
-        <div className="max-h-64 overflow-y-auto p-4 space-y-4">{activeTasks.map((task: any) => (
-          <div key={task.id} className="space-y-1">
-            <div className="flex justify-between items-center">
-              <span className="truncate pr-2 text-xs text-gray-600 dark:text-gray-400 flex-1">{task.title}</span>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-gray-600 dark:text-gray-400">{Math.round((task.current / Math.max(task.total, 1)) * 100)}%</span>
-                {task.type === 'color' && (
-                  <button
-                    onClick={() => handlePauseResume(task.id, task.type)}
-                    className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"
-                    title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
-                  >
-                    {task.status === 'paused' ? <Loader2 size={12} className="animate-spin" /> : <Pause size={12} />}
-                  </button>
-                )}
-              </div>
-            </div>
-            {task.currentStep && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentStep}</div>}
-            {task.currentFile && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentFile}</div>}
-            {task.estimatedTime && task.estimatedTime > 0 && (
-              <div className="text-xs text-gray-500 dark:text-gray-500 truncate">
-                剩余时间: {formatEstimatedTime(task.estimatedTime)}
-              </div>
-            )}
-            <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
-              <div
-                className={`h-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`}
-                style={{ width: `${(task.current / Math.max(task.total, 1)) * 100}%` }}
-              ></div>
-            </div>
-          </div>
-        ))}</div>
-      </div>
-    </div>
-  );
-};
 
-const AlertModal = ({ message, onClose, t }: any) => (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl max-w-sm w-full animate-zoom-in"><div className="flex items-center mb-4 text-orange-500"><AlertTriangle className="mr-2" /><h3 className="font-bold text-lg">{t('settings.title')}</h3></div><p className="mb-6 text-gray-700 dark:text-gray-300">{message}</p><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm font-medium">{t('settings.confirm')}</button></div></div>);
-const ConfirmModal = ({ title, message, subMessage, confirmText, confirmIcon: Icon, onClose, onConfirm, t }: any) => (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl max-w-sm w-full animate-zoom-in"><h3 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">{title}</h3><p className="text-gray-700 dark:text-gray-300 mb-2 text-sm">{message}</p>{subMessage && <p className="text-sm text-gray-500 mb-6 bg-gray-50 dark:bg-gray-900/50 p-2 rounded border border-gray-100 dark:border-gray-700">{subMessage}</p>}<div className="flex justify-end space-x-3"><button onClick={onClose} className="px-4 py-2 rounded text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm">{t('settings.cancel')}</button><button onClick={onConfirm} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 flex items-center text-sm font-medium">{Icon && <Icon size={16} className="mr-2" />}{confirmText || t('settings.confirm')}</button></div></div>);
-const RenameTagModal = ({ initialTag, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialTag); return (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renameTag')}</h3><input id="rename-tag-input" name="rename-tag-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(initialTag, val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div>); };
-const RenamePersonModal = ({ initialName, onConfirm, onClose, t }: any) => { const [val, setVal] = useState(initialName); return (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3><input id="rename-person-input" name="rename-person-input" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={val} onChange={e => setVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { onConfirm(val); } }} autoFocus /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(val)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div>); };
-const BatchRenameModal = ({ count, onConfirm, onClose, t }: any) => { const [pattern, setPattern] = useState('Image_###'); const [startNum, setStartNum] = useState(1); return (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-1 text-gray-900 dark:text-white">{t('context.batchRename')}</h3><p className="text-xs text-gray-500 mb-4">{t('meta.selected')} {count} {t('context.files')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-pattern">{t('settings.namePattern')}</label><input id="batch-rename-pattern" name="batch-rename-pattern" className="w-full border dark:border-gray-600 rounded p-2 mb-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 font-mono text-sm" value={pattern} onChange={e => setPattern(e.target.value)} placeholder="Name_###" /><p className="text-xs text-gray-400 mb-4">{t('settings.patternHelp')}</p><label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1" htmlFor="batch-rename-start">{t('settings.startNumber')}</label><input type="number" id="batch-rename-start" name="batch-rename-start" className="w-full border dark:border-gray-600 rounded p-2 mb-4 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500" value={startNum} onChange={e => setStartNum(parseInt(e.target.value))} /><div className="flex justify-end space-x-2"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button><button onClick={() => onConfirm(pattern, startNum)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button></div></div>); };
-const AddToPersonModal = ({ people, files, onConfirm, onClose, t }: any) => { const [search, setSearch] = useState(''); const filteredPeople = Object.values(people as Record<string, Person>).filter((p: Person) => p.name.toLowerCase().includes(search.toLowerCase())); return (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3><div className="relative mb-3"><Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" /><input id="add-to-person-search" name="add-to-person-search" className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm" placeholder={t('search.placeholder')} value={search} onChange={e => setSearch(e.target.value)} autoFocus /></div><div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">{filteredPeople.map((p: Person) => { const coverFile = files[p.coverFileId]; const hasCover = !!coverFile; return (<div key={p.id} onClick={() => onConfirm(p.id)} className="flex items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded cursor-pointer group"> <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative"> {hasCover ? (p.faceBox ? (<img src={convertFileSrc(coverFile.path)} alt={p.name} className="absolute max-w-none" decoding="async" style={{ width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`, height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`, left: 0, top: 0, transformOrigin: 'top left', transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`, willChange: 'transform, width, height', backfaceVisibility: 'hidden' }} />) : (<img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" />)) : (<User size={14} className="text-gray-400 dark:text-gray-500" />)} </div> <span className="text-sm text-gray-800 dark:text-gray-200">{p.name}</span> </div>); })} </div><div className="flex justify-end"><button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button></div></div>); };
+import { getPinyinGroup } from './utils/textUtils';
+import { DUMMY_TAB } from './constants';
 
-const ClearPersonModal = ({ files, fileIds, people, onConfirm, onClose, t }: any) => {
-  // Get all unique people from selected files 
-  const allPeople = new Set<string>();
-  fileIds.forEach((fileId: string) => {
-    const file = files[fileId];
-    if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
-      file.aiData.faces.forEach((face: AiFace) => allPeople.add(face.personId));
-    }
-  });
-
-  const peopleList = Array.from(allPeople).map(personId => people[personId]).filter(Boolean);
-  const [selectedPeople, setSelectedPeople] = useState<string[]>(peopleList.map(p => p.id));
-
-  const handleTogglePerson = (personId: string) => {
-    setSelectedPeople(prev =>
-      prev.includes(personId)
-        ? prev.filter(id => id !== personId)
-        : [...prev, personId]
-    );
-  };
-
-  const handleSelectAll = () => {
-    setSelectedPeople(peopleList.map(p => p.id));
-  };
-
-  const handleSelectNone = () => {
-    setSelectedPeople([]);
-  };
-
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in">
-      <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPeopleToClear')}</h3>
-      <div className="flex justify-between items-center mb-3 text-sm">
-        <span className="text-gray-600 dark:text-gray-400">{t('context.selected')} {selectedPeople.length} / {peopleList.length}</span>
-        <div className="space-x-2">
-          <button onClick={handleSelectAll} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200">{t('context.selectAll')}</button>
-          <button onClick={handleSelectNone} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200">{t('context.selectNone')}</button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto min-h-[200px] space-y-1 mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">
-        {peopleList.map((p: Person) => {
-          const coverFile = files[p.coverFileId];
-          const hasCover = !!coverFile;
-          const isSelected = selectedPeople.includes(p.id);
-          return (
-            <div key={p.id} onClick={() => handleTogglePerson(p.id)} className={`flex items-center p-2 rounded cursor-pointer group border border-transparent ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}>
-              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative">
-                {hasCover ? (
-                  p.faceBox ? (
-                    <img
-                      src={convertFileSrc(coverFile.path)}
-                      alt={p.name}
-                      className="absolute max-w-none"
-                      decoding="async"
-                      style={{
-                        width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
-                        height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                        left: 0,
-                        top: 0,
-                        transformOrigin: 'top left',
-                        transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
-                        willChange: 'transform, width, height',
-                        backfaceVisibility: 'hidden'
-                      }}
-                    />
-                  ) : (
-                    <img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" />
-                  )
-                ) : (
-                  <User size={14} className="text-gray-400 dark:text-gray-500" />
-                )}
-              </div>
-              <span className={`text-sm flex-1 ${isSelected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800 dark:text-gray-200'}`}>{p.name}</span>
-              <div className={`w-5 h-5 rounded border-2 flex items-center justify-center ${isSelected ? 'border-blue-600 bg-blue-600 ring-2 ring-blue-300/50 dark:ring-blue-700/50 shadow-sm' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'}`}>
-                {isSelected && <Check size={14} className="text-white" strokeWidth={3} />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex justify-end space-x-2">
-        <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button>
-        <button onClick={() => onConfirm(selectedPeople)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button>
-      </div>
-    </div>
-  );
-};
-
-const AddToTopicModal = ({ topics, onConfirm, onClose, t }: any) => {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
-  const mainTopics = Object.values(topics).filter((t: any) => !t.parentId);
-  const getSubTopics = (parentId: string) => Object.values(topics).filter((t: any) => t.parentId === parentId);
-
-  const toggleExpand = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setExpanded(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 max-h-[500px] flex flex-col animate-zoom-in">
-      <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('sidebar.topics')}</h3>
-      <div className="flex-1 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded p-2 mb-4 max-h-[300px]">
-        {mainTopics.length === 0 && <div className="text-gray-500 text-center py-4 text-sm">{t('context.noFiles')}</div>}
-        {mainTopics.map((topic: any) => {
-          const subTopics = getSubTopics(topic.id);
-          const hasSubs = subTopics.length > 0;
-          const isExpanded = expanded[topic.id];
-          const isSelected = selectedId === topic.id;
-
-          return (
-            <div key={topic.id} className="mb-1">
-              <div
-                className={`flex items-center p-2 rounded cursor-pointer ${isSelected ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
-                onClick={() => setSelectedId(topic.id)}
-              >
-                <div
-                  className={`p-1 mr-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 ${hasSubs ? 'visible' : 'invisible'}`}
-                  onClick={(e) => toggleExpand(topic.id, e)}
-                >
-                  {isExpanded ? <ChevronsDown size={14} /> : <ChevronRight size={14} />}
-                </div>
-                <Layout size={16} className="mr-2" />
-                <span className="truncate text-sm">{topic.name}</span>
-              </div>
-
-              {hasSubs && isExpanded && (
-                <div className="ml-6 border-l border-gray-200 dark:border-gray-700 pl-2 mt-1 space-y-1">
-                  {subTopics.map((sub: any) => (
-                    <div
-                      key={sub.id}
-                      className={`flex items-center p-2 rounded cursor-pointer ${selectedId === sub.id ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-800 dark:text-gray-200'}`}
-                      onClick={() => setSelectedId(sub.id)}
-                    >
-                      <Layout size={14} className="mr-2 opacity-70" />
-                      <span className="truncate text-sm">{sub.name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex justify-end space-x-2">
-        <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button>
-        <button
-          onClick={() => selectedId && onConfirm(selectedId)}
-          disabled={!selectedId}
-          className={`px-3 py-1.5 rounded text-sm text-white transition-colors ${selectedId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}`}
-        >
-          {t('settings.confirm')}
-        </button>
-      </div>
-    </div>
-  );
-};
-const TagEditor = ({ file, files, onUpdate, onClose, t }: any) => { const [input, setInput] = useState(''); const allTags = new Set<string>(); Object.values(files as Record<string, FileNode>).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t))); const allTagsList = Array.from(allTags); const addTag = (tag: string) => { if (!file.tags.includes(tag)) { onUpdate(file.id, { tags: [...file.tags, tag] }); } setInput(''); }; return (<div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in"><h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.editTags')}</h3><div className="flex flex-wrap gap-2 mb-4 p-2 bg-gray-50 dark:bg-gray-900 rounded border border-gray-100 dark:border-gray-700 min-h-[40px]">{file.tags.map((tag: string) => (<span key={tag} className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs flex items-center">{tag}<button onClick={() => onUpdate(file.id, { tags: file.tags.filter((t: string) => t !== tag) })} className="ml-1 hover:text-red-500"><X size={10} /></button></span>))}</div><div className="relative mb-4"><input id="add-tag-input" name="add-tag-input" className="w-full border dark:border-gray-600 rounded p-2 bg-transparent text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 ring-blue-500" placeholder={t('meta.addTagPlaceholder')} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addTag(input); }} autoFocus />{input && (<div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 shadow-lg z-50 max-h-32 overflow-y-auto">{allTagsList.filter(t => t.toLowerCase().includes(input.toLowerCase())).map(t => (<div key={t} className="px-3 py-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 text-xs cursor-pointer" onClick={() => addTag(t)}>{t}</div>))}</div>)}</div><div className="flex justify-end"><button onClick={onClose} className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 text-sm">{t('viewer.done')}</button></div></div>); };
-const FolderPickerModal = ({ type, files, roots, selectedFileIds, onClose, onConfirm, t }: any) => {
-  const [currentId, setCurrentId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState(''); // 搜索状态
-  // 初始化时将所有根目录 ID 添加到 expandedIds 中，让根目录默认展开
-  const [expandedIds, setExpandedIds] = useState<string[]>(roots); // 跟踪展开的文件夹
-
-  // 展开/折叠文件夹
-  const handleToggle = (e: React.MouseEvent, nodeId: string) => {
-    e.stopPropagation();
-    setExpandedIds(prev => {
-      if (prev.includes(nodeId)) {
-        return prev.filter(id => id !== nodeId);
-      } else {
-        return [...prev, nodeId];
-      }
-    });
-  };
-
-  // 查找所有匹配的文件夹及其祖先文件夹
-  const findMatchingFolders = (): Set<string> | null => {
-    // 如果搜索框为空，返回 null，表示不需要过滤
-    if (!searchQuery.trim()) {
-      return null;
-    }
-
-    const matchingFolders = new Set<string>();
-    const query = searchQuery.toLowerCase();
-
-    // 递归遍历文件夹树，查找匹配的文件夹
-    const traverse = (nodeId: string) => {
-      const node = files[nodeId];
-      if (!node || node.type !== FileType.FOLDER) return;
-
-      // 检查当前文件夹是否匹配搜索条件
-      const matches = node.name.toLowerCase().includes(query);
-
-      // 获取子文件夹
-      const folderChildren = node.children?.filter((childId: string) => files[childId]?.type === FileType.FOLDER) || [];
-
-      // 检查是否有子文件夹匹配
-      let hasMatchingChild = false;
-      for (const childId of folderChildren) {
-        traverse(childId);
-        if (matchingFolders.has(childId)) {
-          hasMatchingChild = true;
-        }
-      }
-
-      // 如果当前文件夹匹配或有匹配的子文件夹，添加到结果中
-      if (matches || hasMatchingChild) {
-        matchingFolders.add(nodeId);
-      }
-    };
-
-    // 从所有根目录开始遍历
-    roots.forEach((rootId: string) => traverse(rootId));
-
-    return matchingFolders;
-  };
-
-  // 递归渲染文件夹树，支持搜索过滤
-  const renderTree = (nodeId: string, depth = 0, matchingFolders?: Set<string> | null) => {
-    const node = files[nodeId];
-    if (!node || node.type !== FileType.FOLDER) return null;
-    if (selectedFileIds.includes(nodeId)) return null;
-
-    // 如果有搜索条件，检查当前文件夹是否应该显示
-    const shouldShow = !matchingFolders || matchingFolders.has(nodeId);
-    if (!shouldShow) return null;
-
-    const expanded = expandedIds.includes(nodeId);
-    const folderChildren = node.children?.filter((childId: string) => files[childId]?.type === FileType.FOLDER) || [];
-
-    return (
-      <div key={nodeId}>
-        <div
-          className={`flex items-center py-1 px-2 cursor-pointer text-sm border border-transparent ${currentId === nodeId ? 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'}`}
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
-          onClick={() => setCurrentId(nodeId)}
-        >
-          {/* 展开/折叠按钮 */}
-          <div
-            className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded"
-            onClick={(e) => handleToggle(e, nodeId)}
-          >
-            {folderChildren.length > 0 ? (
-              expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
-            ) : <div className="w-[14px]" />}
-          </div>
-          <Folder size={14} className="mr-2 text-blue-500" />
-          <span className="truncate">{node.name}</span>
-        </div>
-        {/* 只渲染展开的文件夹 */}
-        {expanded && folderChildren.map((childId: string) => renderTree(childId, depth + 1, matchingFolders))}
-      </div>
-    );
-  };
-
-  const matchingFolders = findMatchingFolders();
-
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 h-[500px] flex flex-col animate-zoom-in">
-      <h3 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">
-        {type === 'copy-to-folder' ? t('context.copyTo') : t('context.moveTo')}
-      </h3>
-
-      {/* 搜索框 */}
-      <div className="relative mb-4">
-        <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
-        <input
-          type="text"
-          id="folder-picker-search"
-          name="folder-picker-search"
-          className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm"
-          placeholder={t('search.placeholder')}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          autoFocus
-        />
-        {searchQuery && (
-          <button
-            className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-            onClick={() => setSearchQuery('')}
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
-
-      <div className="flex-1 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded mb-4 p-2 bg-gray-50 dark:bg-gray-900/50">
-        {roots.map((rootId: string) => renderTree(rootId, 0, matchingFolders))}
-      </div>
-      <div className="flex justify-end space-x-2">
-        <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">
-          {t('settings.cancel')}
-        </button>
-        <button
-          onClick={() => currentId && onConfirm(currentId)}
-          disabled={!currentId}
-          className="bg-blue-600 disabled:opacity-50 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm"
-        >
-          {t('settings.confirm')}
-        </button>
-      </div>
-    </div>
-  );
-};
-const getPinyinGroup = (char: string) => { if (!char) return '#'; const c = char.charAt(0); if (/^[a-zA-Z]/.test(c)) return c.toUpperCase(); if (/^[0-9]/.test(c)) return c; if (/[\u4e00-\u9fa5]/.test(c)) { try { const collator = new Intl.Collator('zh-Hans-CN', { sensitivity: 'accent' }); const boundaries = [{ char: '阿', group: 'A' }, { char: '芭', group: 'B' }, { char: '擦', group: 'C' }, { char: '搭', group: 'D' }, { char: '蛾', group: 'E' }, { char: '发', group: 'F' }, { char: '噶', group: 'G' }, { char: '哈', group: 'H' }, { char: '击', group: 'J' }, { char: '喀', group: 'K' }, { char: '垃', group: 'L' }, { char: '妈', group: 'M' }, { char: '拿', group: 'N' }, { char: '哦', group: 'O' }, { char: '啪', group: 'P' }, { char: '期', group: 'Q' }, { char: '然', group: 'R' }, { char: '撒', group: 'S' }, { char: '塌', group: 'T' }, { char: '挖', group: 'W' }, { char: '昔', group: 'X' }, { char: '压', group: 'Y' }, { char: '匝', group: 'Z' }]; for (let i = boundaries.length - 1; i >= 0; i--) { if (collator.compare(c, boundaries[i].char) >= 0) return boundaries[i].group; } } catch (e) { console.warn('Native pinyin grouping failed', e); } } return '#'; };
-const DUMMY_TAB: TabState = { id: 'dummy', folderId: '', viewingFileId: null, viewMode: 'browser' as const, layoutMode: 'grid', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null, activeTopicId: null, selectedFileIds: [], selectedTopicIds: [], lastSelectedId: null, selectedTagIds: [], selectedPersonIds: [], dateFilter: { start: null, end: null, mode: 'created' }, history: { stack: [], currentIndex: -1 }, scrollTop: 0 };
-
-const ExitConfirmModal = ({ remember, onConfirm, onCancel, onRememberChange, t }: any) => {
-  return (
-    <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl max-w-sm w-full animate-zoom-in">
-      <h3 className="font-bold text-lg mb-2 text-gray-900 dark:text-white">{t('exitModal.title')}</h3>
-      <p className="text-gray-700 dark:text-gray-300 mb-6 text-sm">{t('exitModal.message')}</p>
-
-      <div className="flex items-center mb-6">
-        <input
-          type="checkbox"
-          id="rememberChoice"
-          checked={remember}
-          onChange={(e) => onRememberChange(e.target.checked)}
-          className="mr-2"
-        />
-        <label htmlFor="rememberChoice" className="text-sm text-gray-600 dark:text-gray-400 select-none cursor-pointer">{t('exitModal.remember')}</label>
-      </div>
-
-      <div className="flex justify-end space-x-3">
-        <button onClick={() => onConfirm('minimize')} className="px-4 py-2 rounded text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 text-sm border border-gray-300 dark:border-gray-600">
-          {t('exitModal.minimize')}
-        </button>
-        <button onClick={() => onConfirm('exit')} className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 flex items-center text-sm font-medium">
-          <LogOut size={16} className="mr-2" />
-          {t('exitModal.exit')}
-        </button>
-      </div>
-    </div>
-  );
-};
-
-interface ToastItemProps {
-  task: DeletionTask;
-  onUndo: () => void;
-  onDismiss: () => void;
-  t: (key: string) => string;
-}
-
-const ToastItem: React.FC<ToastItemProps> = ({ task, onUndo, onDismiss: onDismissProp, t }) => { useEffect(() => { const timer = setTimeout(() => { onDismissProp(); }, 5000); return () => clearTimeout(timer); }, []); return (<div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl animate-toast-up overflow-hidden pointer-events-auto border border-gray-200 dark:border-gray-700 flex flex-col min-w-[300px]"><div className="px-4 py-3 flex items-center gap-3 relative z-10 justify-between"><div className="flex items-center"><span className="text-sm text-gray-700 dark:text-gray-200 whitespace-nowrap">{t('context.deletedItems').replace('{count}', task.files.length.toString())}</span><button onClick={onUndo} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 font-bold text-sm flex items-center whitespace-nowrap ml-2"><Undo2 size={16} className="mr-1" /> {t('context.undo')}</button></div><button onClick={onDismissProp} className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"><X size={16} /></button></div><div className="h-1 bg-gray-100 dark:bg-gray-700 w-full"><div className="h-full bg-blue-500 animate-countdown origin-left"></div></div></div>); };
-const WelcomeModal = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t }: any) => { const [step, setStep] = useState(1); if (!show) return null; return (<div className="fixed inset-0 z-[200] bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-8 animate-fade-in"><div className="max-w-2xl w-full bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col md:flex-row h-[500px]"><div className="w-full md:w-1/2 bg-blue-600 p-8 flex flex-col justify-between text-white relative overflow-hidden"><div className="z-10"><div className="flex items-center space-x-2 mb-4"><AuroraLogo size={40} className="shadow-lg" /><span className="font-bold text-xl tracking-wider">AURORA</span></div><h1 className="text-3xl font-bold leading-tight mb-4">{step === 1 ? t('welcome.step1Title') : t('welcome.step2Title')}</h1><p className="text-blue-100 opacity-90">{step === 1 ? t('welcome.step1Desc') : t('welcome.step2Desc')}</p></div><div className="absolute -bottom-20 -right-20 w-64 h-64 bg-blue-500 rounded-full opacity-50 blur-3xl"></div><div className="absolute top-20 -left-20 w-48 h-48 bg-purple-500 rounded-full opacity-30 blur-3xl"></div><div className="flex space-x-2 z-10"><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 1 ? 'bg-white' : 'bg-white/30'}`}></div><div className={`h-1.5 w-8 rounded-full transition-colors ${step === 2 ? 'bg-white' : 'bg-white/30'}`}></div></div></div><div className="w-full md:w-1/2 p-8 flex flex-col relative bg-gray-50 dark:bg-gray-900">{step === 1 && (<div className="flex-1 flex flex-col justify-center space-y-6"><div className="text-center"><div className="w-16 h-16 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-600 dark:text-blue-400"><HardDrive size={32} /></div><button onClick={onSelectFolder} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30 transition-all active:scale-95 flex items-center justify-center w-full">{t('welcome.selectFolder')}</button></div>{currentPath && (<div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center"><div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div><div className="text-sm font-mono truncate px-2">{currentPath}</div></div>)}</div>)}{step === 2 && (<div className="flex-1 space-y-6 flex flex-col justify-center"><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label><div className="grid grid-cols-2 gap-3">{['zh', 'en'].map(lang => (<button key={lang} onClick={() => onUpdateSettings({ language: lang })} className={`px-3 py-2 rounded-lg border text-sm font-medium transition-all ${settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{lang === 'zh' ? '中文' : 'English'}</button>))}</div></div><div><label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.theme')}</label><div className="grid grid-cols-3 gap-2">{['light', 'dark', 'system'].map(theme => (<button key={theme} onClick={() => onUpdateSettings({ theme })} className={`px-2 py-2 rounded-lg border text-xs font-medium transition-all flex flex-col items-center justify-center ${settings.theme === theme ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-800'}`}>{theme === 'light' && <Sun size={16} className="mb-1" />}{theme === 'dark' && <Moon size={16} className="mb-1" />}{theme === 'system' && <Monitor size={16} className="mb-1" />}{t(`settings.theme${theme.charAt(0).toUpperCase() + theme.slice(1)}`)}</button>))}</div></div></div>)}<div className="mt-6 flex justify-between items-center pt-6 border-t border-gray-100 dark:border-gray-800">{step === 2 ? (<button onClick={onFinish} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-sm font-medium px-4">{t('welcome.skip')}</button>) : (<div></div>)}<button onClick={() => { if (step === 1) { if (currentPath) setStep(2); } else { onFinish(); } }} disabled={step === 1 && !currentPath} className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && !currentPath ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}>{step === 1 ? t('welcome.next') : t('welcome.finish')}<ChevronRight size={16} className="ml-2" /></button></div></div></div></div>); };
-
-// ... (CropAvatarModal and other helpers remain unchanged)
-const CropAvatarModal = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t, resourceRoot, cachePath }: any) => {
-  // 基础状态
-  const [scale, setScale] = useState(1);
-  const [position, setPosition] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // 文件列表状态
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [currentImageId, setCurrentImageId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
-
-  // 初始化时设置当前图片ID
-  useEffect(() => {
-    // 找到与fileUrl对应的文件
-    const initialFile: any = Object.values(allFiles).find((file: any) => {
-      return file.url === fileUrl || convertFileSrc(file.path) === fileUrl;
-    });
-
-    if (initialFile) {
-      setSelectedFile(initialFile.id);
-      setCurrentImageId(initialFile.id);
-    }
-  }, [fileUrl, allFiles]);
-
-  // 获取该人物下的所有图片
-  const getPersonImages = () => {
-    const images: any[] = [];
-
-    Object.values(allFiles).forEach((file: any) => {
-      if (file.type === 'image' && file.aiData?.faces) {
-        const hasPerson = file.aiData.faces.some((face: any) => face.personId === personId);
-        if (hasPerson) {
-          images.push(file);
-        }
-      }
-    });
-
-    return images;
-  };
-
-  const personImages = getPersonImages();
-
-  // 过滤图片
-  const filteredImages = personImages.filter(img =>
-    img.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // 处理图片选择
-  const handleImageSelect = (file: any) => {
-    setSelectedFile(file.id);
-    setCurrentImageId(file.id);
-    // 重置缩放和位置
-    setScale(1);
-    setPosition({ x: 0, y: 0 });
-    // 更新当前显示的图片URL
-    const newFileUrl = convertFileSrc(file.path);
-    // 触发重新渲染
-    if (imgRef.current) {
-      imgRef.current.src = newFileUrl;
-    }
-  };
-
-  const VIEWPORT_SIZE = 400;
-  const CROP_SIZE = 250;
-  const OFFSET = (VIEWPORT_SIZE - CROP_SIZE) / 2;
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging && imgRef.current) {
-      let newX = e.clientX - dragStart.x;
-      let newY = e.clientY - dragStart.y;
-
-      const w = imgRef.current.naturalWidth * scale;
-      const h = imgRef.current.naturalHeight * scale;
-
-      const minX = OFFSET + CROP_SIZE - w;
-      const maxX = OFFSET;
-      const minY = OFFSET + CROP_SIZE - h;
-      const maxY = OFFSET;
-
-      if (newX > maxX) newX = maxX;
-      if (newX < minX) newX = minX;
-      if (newY > maxY) newY = maxY;
-      if (newY < minY) newY = minY;
-
-      setPosition({ x: newX, y: newY });
-    }
-  };
-
-  const handleMouseUp = () => setIsDragging(false);
-
-  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    let initialScale;
-    let initialPosition = { x: 0, y: 0 };
-
-    if (initialBox) {
-      // 如果有初始人脸框，根据人脸框计算缩放和位置
-      const boxWidth = img.naturalWidth * (initialBox.w / 100);
-      const boxHeight = img.naturalHeight * (initialBox.h / 100);
-      const boxAspect = boxWidth / boxHeight;
-
-      // 计算适合裁剪区域的缩放比例
-      const scaleX = CROP_SIZE * 1.5 / boxWidth;
-      const scaleY = CROP_SIZE * 1.5 / boxHeight;
-      initialScale = Math.max(scaleX, scaleY);
-
-      // 计算位置，使人脸框中心对准裁剪区域中心
-      const boxCenterX = img.naturalWidth * (initialBox.x / 100) + boxWidth / 2;
-      const boxCenterY = img.naturalHeight * (initialBox.y / 100) + boxHeight / 2;
-
-      initialPosition = {
-        x: VIEWPORT_SIZE / 2 - boxCenterX * initialScale,
-        y: VIEWPORT_SIZE / 2 - boxCenterY * initialScale
-      };
-    } else {
-      // 默认行为：居中显示
-      const minScale = CROP_SIZE / Math.min(img.naturalWidth, img.naturalHeight);
-      initialScale = Math.max(minScale, 0.5);
-
-      initialPosition = {
-        x: (VIEWPORT_SIZE - img.naturalWidth * initialScale) / 2,
-        y: (VIEWPORT_SIZE - img.naturalHeight * initialScale) / 2
-      };
-    }
-
-    setScale(initialScale);
-    setPosition(initialPosition);
-  };
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!imgRef.current) return;
-
-    const ZOOM_SPEED = 0.1;
-    const direction = Math.sign(e.deltaY);
-    let newScale = scale;
-
-    if (direction < 0) {
-      newScale = scale * (1 + ZOOM_SPEED);
-    } else {
-      newScale = scale / (1 + ZOOM_SPEED);
-    }
-
-    const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
-    newScale = Math.max(minScale, Math.min(newScale, 5));
-
-    const w = imgRef.current.naturalWidth * newScale;
-    const h = imgRef.current.naturalHeight * newScale;
-
-    let newX = position.x;
-    let newY = position.y;
-
-    const cx = (OFFSET + CROP_SIZE / 2 - position.x) / scale;
-    const cy = (OFFSET + CROP_SIZE / 2 - position.y) / scale;
-
-    newX = OFFSET + CROP_SIZE / 2 - cx * newScale;
-    newY = OFFSET + CROP_SIZE / 2 - cy * newScale;
-
-    const minX = OFFSET + CROP_SIZE - w;
-    const maxX = OFFSET;
-    const minY = OFFSET + CROP_SIZE - h;
-    const maxY = OFFSET;
-
-    if (newX > maxX) newX = maxX;
-    if (newX < minX) newX = minX;
-    if (newY > maxY) newY = maxY;
-    if (newY < minY) newY = minY;
-
-    setScale(newScale);
-    setPosition({ x: newX, y: newY });
-  };
-
-  const handleSave = () => {
-    if (!imgRef.current) return;
-    const natW = imgRef.current.naturalWidth;
-    const natH = imgRef.current.naturalHeight;
-
-    const x = (OFFSET - position.x) / scale;
-    const y = (OFFSET - position.y) / scale;
-    const w = CROP_SIZE / scale;
-    const h = CROP_SIZE / scale;
-
-    onConfirm({
-      x: (x / natW) * 100,
-      y: (y / natH) * 100,
-      w: (w / natW) * 100,
-      h: (h / natH) * 100,
-      imageId: currentImageId
-    });
-  };
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (el) {
-      const wheelListener = (e: WheelEvent) => handleWheel(e as any);
-      el.addEventListener('wheel', wheelListener, { passive: false });
-      return () => el.removeEventListener('wheel', wheelListener);
-    }
-  }, [scale, position]);
-
-  return (
-    <div className="fixed inset-0 z-[150] bg-black/70 flex items-center justify-center p-4 animate-fade-in" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
-      <div className="bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col w-full max-w-5xl h-[85vh]" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/20">
-          <h3 className="font-bold text-lg text-gray-800 dark:text-white">
-            {t('context.setAvatar') || '设置头像'}
-          </h3>
-        </div>
-
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-row overflow-hidden">
-          {/* Left: Crop Preview */}
-          <div className="flex-none p-6 flex flex-col items-center justify-center bg-gray-100 dark:bg-black/20 border-r border-gray-200 dark:border-gray-800">
-            <div
-              ref={containerRef}
-              className="relative bg-gray-200 dark:bg-black overflow-hidden cursor-move select-none shadow-lg rounded-full mb-6"
-              style={{ width: VIEWPORT_SIZE, height: VIEWPORT_SIZE }}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-            >
-              <img
-                ref={imgRef}
-                src={fileUrl}
-                draggable={false}
-                onLoad={handleImageLoad}
-                className="max-w-none absolute origin-top-left pointer-events-none"
-                style={{
-                  transform: `translate(${position.x}px, ${position.y}px) scale(${scale})`
-                }}
-                alt="Avatar preview"
-              />
-              <div className="absolute inset-0 pointer-events-none">
-                <svg width="100%" height="100%">
-                  <defs>
-                    <mask id="cropMask">
-                      <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                      <circle cx={VIEWPORT_SIZE / 2} cy={VIEWPORT_SIZE / 2} r={CROP_SIZE / 2} fill="black" />
-                    </mask>
-                  </defs>
-                  <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.6)" mask="url(#cropMask)" />
-
-                  <circle
-                    cx={VIEWPORT_SIZE / 2}
-                    cy={VIEWPORT_SIZE / 2}
-                    r={CROP_SIZE / 2}
-                    fill="none"
-                    stroke="white"
-                    strokeWidth="2"
-                    style={{ filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))' }}
-                  />
-                </svg>
-              </div>
-            </div>
-
-            <div className="text-xs text-gray-500 text-center bg-white dark:bg-gray-800 px-3 py-1.5 rounded-full shadow-sm border border-gray-200 dark:border-gray-800">
-              {t('context.cropHint') || '拖拽图片调整位置 • 滚轮缩放'}
-            </div>
-          </div>
-
-          {/* Right: File Selection */}
-          <div className="flex-1 overflow-hidden flex flex-col bg-white dark:bg-gray-900">
-            <div className="p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50/50 dark:bg-black/10">
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder={t('search.placeholder') || '搜索...'}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm shadow-sm"
-                />
-                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-4">
-              {filteredImages.length === 0 ? (
-                <div className="text-center text-gray-500 dark:text-gray-400 py-12 flex flex-col items-center">
-                  <ImageIcon size={48} className="mb-4 opacity-10" />
-                  <p>{t('context.noImagesFound')}</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                  {filteredImages.map((file) => {
-                    const isSelected = selectedFile === file.id;
-                    return (
-                      <div
-                        key={file.id}
-                        onClick={() => handleImageSelect(file)}
-                        className={`cursor-pointer rounded-lg overflow-hidden border-2 transition-all duration-200 shadow-sm ${isSelected ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md' : 'border-transparent hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
-                          }`}
-                      >
-                        <div className="relative aspect-square">
-                          <ImageThumbnail
-                            src={''}
-                            alt={file.name}
-                            isSelected={isSelected}
-                            filePath={file.path}
-                            modified={file.updatedAt}
-                            isHovering={false}
-                            fileMeta={file.meta}
-                            resourceRoot={resourceRoot}
-                            cachePath={cachePath}
-                          />
-                          {isSelected && (
-                            <div className="absolute inset-0 bg-blue-500/30 flex items-center justify-center pointer-events-none">
-                              <div className="bg-blue-500 rounded-full p-1 shadow-lg">
-                                <Check size={20} className="text-white" />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                        <div className="p-2 bg-gray-50 dark:bg-black/20 border-t border-gray-100 dark:border-gray-800">
-                          <p className="text-xs text-gray-600 dark:text-gray-300 truncate font-medium">
-                            {file.name}
-                          </p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/30 rounded-b-xl flex items-center justify-between">
-          {/* Zoom Control */}
-          <div className="flex-1 max-w-xs">
-            <div className="flex items-center space-x-3 bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 shadow-sm">
-              <span className="text-xs font-medium text-gray-500 whitespace-nowrap">{t('context.zoom') || '缩放'}</span>
-              <input
-                type="range"
-                min="0.1"
-                max="5"
-                step="0.01"
-                value={scale}
-                onChange={(e) => {
-                  const newScale = parseFloat(e.target.value);
-                  if (imgRef.current) {
-                    const minScale = CROP_SIZE / Math.min(imgRef.current.naturalWidth, imgRef.current.naturalHeight);
-                    if (newScale >= minScale) setScale(newScale);
-                  } else {
-                    setScale(newScale);
-                  }
-                }}
-                className="flex-1 h-1 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
-              />
-            </div>
-          </div>
-
-          <div className="flex space-x-3">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
-            >
-              {t('settings.cancel') || '取消'}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={!selectedFile}
-              className="px-8 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg transform active:scale-95"
-            >
-              {t('settings.confirm') || '确认'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
 
 import SplashScreen from './components/SplashScreen';
 import { DragDropOverlay, DropAction } from './components/DragDropOverlay';
@@ -903,15 +121,16 @@ export const App: React.FC = () => {
   useEffect(() => {
     return () => {
       // 清理所有定时器
-      timerRefs.current.forEach((timer) => {
-        clearInterval(timer);
-      });
-      timerRefs.current.clear();
+      // timerRefs.current.forEach((timer) => {
+      //   clearInterval(timer);
+      // });
+      // timerRefs.current.clear();
 
       // 取消防抖任务更新
-      debouncedTaskUpdate.cancel();
+      // debouncedTaskUpdate.cancel();
 
       // 应用所有暂存的任务更新，确保最终一致性
+      /*
       if (taskUpdatesRef.current.size > 0) {
         setState(prev => {
           const updatedTasks = prev.tasks.map(t => {
@@ -927,6 +146,7 @@ export const App: React.FC = () => {
           return { ...prev, tasks: updatedTasks };
         });
       }
+      */
     };
   }, []);
 
@@ -948,6 +168,12 @@ export const App: React.FC = () => {
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
+
+  // Translation helper
+  const t = (key: string): string => { const keys = key.split('.'); let val: any = translations[state.settings.language]; for (const k of keys) { val = val?.[k]; } return typeof val === 'string' ? val : key; };
+
+  // Task management hook
+  const { tasks, startTask, updateTask } = useTasks(t);
 
   // External drag and drop state
   const [isExternalDragging, setIsExternalDragging] = useState(false);
@@ -1005,179 +231,7 @@ export const App: React.FC = () => {
     };
   }, [state.files]); // 依赖 files，确保能正确找到文件
 
-  // 监听主色调提取进度事件
-  const colorTaskIdRef = useRef<string | null>(null);
-  const colorBatchIdRef = useRef<number>(-1); // 初始化为 -1，以免与批次ID 0 冲突
-  useEffect(() => {
-    let isMounted = true;
-
-    const listenProgress = async () => {
-      try {
-        const unlisten = await listen('color-extraction-progress', (event: any) => {
-          if (!isMounted) return;
-
-          const progress = event.payload as {
-            batchId: number;
-            current: number;
-            total: number;
-            pending: number;
-            currentFile: string;
-            batchCompleted: boolean;
-          };
-
-          // 忽略 total 为 0 的无效进度
-          if (progress.total === 0) {
-            return;
-          }
-
-          // 检查是否是新批次
-          const isNewBatch = progress.batchId !== colorBatchIdRef.current;
-
-          if (isNewBatch) {
-            // 防止旧批次干扰：如果收到的批次ID比当前的小且不为-1，忽略
-            if (colorBatchIdRef.current !== -1 && progress.batchId < colorBatchIdRef.current) {
-              return;
-            }
-
-            // 新批次：关闭旧任务，创建新任务
-            const oldTaskId = colorTaskIdRef.current;
-            if (oldTaskId) {
-              setState(prev => ({
-                ...prev,
-                tasks: prev.tasks.filter(t => t.id !== oldTaskId)
-              }));
-            }
-
-            // 创建新任务
-            const taskId = startTask('color', [], t('tasks.processingColors'), false);
-            colorTaskIdRef.current = taskId;
-            colorBatchIdRef.current = progress.batchId;
-
-            eprintln(`=== New color extraction batch ${progress.batchId} started, total: ${progress.total} ===`);
-          }
-
-          // 更新任务进度
-          if (colorTaskIdRef.current) {
-            const now = Date.now();
-
-            // 获取当前任务状态
-            let lastProgress = 0;
-            let lastProgressUpdate = now;
-            let taskStatus = 'running';
-            let totalProcessedTime = 0;
-            let existingEstimatedTime: number | undefined = undefined;
-            let lastEstimatedTimeUpdate = now;
-
-            setState(prev => {
-              const task = prev.tasks.find(t => t.id === colorTaskIdRef.current);
-              if (task) {
-                lastProgress = task.lastProgress || 0;
-                lastProgressUpdate = task.lastProgressUpdate || now;
-                existingEstimatedTime = task.estimatedTime;
-                lastEstimatedTimeUpdate = task.lastEstimatedTimeUpdate || now;
-                taskStatus = task.status;
-                totalProcessedTime = task.totalProcessedTime || 0;
-              }
-              return prev;
-            });
-
-            // 计算预估时间
-            let calculatedEstimatedTime: number | undefined = existingEstimatedTime;
-            let shouldUpdateEstimatedTime = false;
-
-            if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
-              const elapsedTime = now - lastProgressUpdate;
-              const currentSpeed = (totalProcessedTime + elapsedTime) > 0
-                ? progress.current / (totalProcessedTime + elapsedTime)
-                : 0;
-
-              const remainingTasks = Math.max(0, progress.total - progress.current);
-
-              if (currentSpeed > 0 && remainingTasks > 0) {
-                const newEstimatedTime = remainingTasks / currentSpeed;
-                const timeSinceLastEstimatedUpdate = now - lastEstimatedTimeUpdate;
-
-                if (timeSinceLastEstimatedUpdate >= 3000 || !existingEstimatedTime) {
-                  calculatedEstimatedTime = newEstimatedTime;
-                  lastEstimatedTimeUpdate = now;
-                  shouldUpdateEstimatedTime = true;
-                }
-              } else if (remainingTasks <= 0) {
-                calculatedEstimatedTime = 0;
-                shouldUpdateEstimatedTime = true;
-              }
-            }
-
-            // 只有处理了至少10个文件后才显示预估时间
-            let estimatedTime = progress.current >= 10 ? calculatedEstimatedTime : undefined;
-            if (taskStatus === 'paused') {
-              estimatedTime = undefined;
-            }
-
-            // 计算新的处理时间
-            let newTotalProcessedTime = totalProcessedTime;
-            if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
-              newTotalProcessedTime += now - lastProgressUpdate;
-            }
-
-            const taskUpdates: any = {
-              current: progress.current,
-              total: progress.total,
-              currentFile: progress.currentFile,
-              currentStep: `${progress.current} / ${progress.total}`,
-              estimatedTime,
-              lastProgressUpdate: now,
-              lastProgress: progress.current,
-              totalProcessedTime: newTotalProcessedTime
-            };
-
-            if (shouldUpdateEstimatedTime) {
-              taskUpdates.lastEstimatedTimeUpdate = lastEstimatedTimeUpdate;
-            }
-
-            updateTask(colorTaskIdRef.current, taskUpdates);
-
-            // 检测批次完成
-            if (progress.batchCompleted) {
-              updateTask(colorTaskIdRef.current, { status: 'completed' });
-
-              // 延迟1秒后关闭任务窗口
-              const currentTaskId = colorTaskIdRef.current;
-              setTimeout(() => {
-                if (isMounted && currentTaskId) {
-                  setState(prev => ({
-                    ...prev,
-                    tasks: prev.tasks.filter(t => t.id !== currentTaskId)
-                  }));
-                  // 只有当当前任务ID未变化时才清除引用
-                  if (colorTaskIdRef.current === currentTaskId) {
-                    colorTaskIdRef.current = null;
-                  }
-                }
-              }, 1000);
-            }
-          }
-        });
-
-        return unlisten;
-      } catch (error) {
-        console.error('Failed to listen for color extraction progress:', error);
-        return () => { };
-      }
-    };
-
-    // Helper function for logging
-    const eprintln = (msg: string) => {
-      console.log(`[ColorExtraction] ${msg}`);
-    };
-
-    const unlistenPromise = listenProgress();
-
-    return () => {
-      isMounted = false;
-      unlistenPromise.then(unlistenFn => unlistenFn()).catch(console.error);
-    };
-  }, []);
+  // 监听主色调提取进度事件 (moved to useTasks hook)
 
 
   // Throttle function to limit how often a function can be called
@@ -1199,6 +253,12 @@ export const App: React.FC = () => {
   const selectionBoundsRef = useRef({ left: 0, top: 0, right: 0, bottom: 0 });
 
   const [showWelcome, setShowWelcome] = useState(false);
+
+  // Expose showWelcomeModal for testing/dev
+  useEffect(() => {
+    (window as any).showWelcomeModal = () => setShowWelcome(true);
+  }, []);
+
 
   // ... (keep persistence logic, init effect, exit logic, etc.)
   const saveUserData = async (data: any) => {
@@ -1687,103 +747,34 @@ export const App: React.FC = () => {
 
   useEffect(() => { setToolbarQuery(activeTab.searchQuery); }, [activeTab.id, activeTab.searchQuery]);
 
-  const t = (key: string): string => { const keys = key.split('.'); let val: any = translations[state.settings.language]; for (const k of keys) { val = val?.[k]; } return typeof val === 'string' ? val : key; };
+  // const t = (key: string): string => { const keys = key.split('.'); let val: any = translations[state.settings.language]; for (const k of keys) { val = val?.[k]; } return typeof val === 'string' ? val : key; };
   const showToast = (msg: string) => { setToast({ msg, visible: true }); setTimeout(() => setToast({ msg: '', visible: false }), 2000); };
 
   // 监听多文件选择，显示持久拖拽提示
   const selectedCount = activeTab.selectedFileIds.length;
   // 不在专题视图中显示该提示（专题视图没有拖拽到外部的逻辑）
   // 另：当存在未最小化的后台任务弹窗时不显示（以免遮挡任务弹窗）
-  const activeTaskCount = state.tasks.filter(t => !t.minimized).length;
+  const activeTaskCount = tasks.filter(t => !t.minimized).length;
   const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0;
 
-  // ... (keep startTask and updateTask)
-  // 存储所有定时器引用，用于组件卸载时清理
-  const timerRefs = useRef<Map<string, number>>(new Map());
+  // ... (keep startTask and updateTask) - Removed as moved to useTasks
+  // 存储所有定时器引用，用于组件卸载时清理 (Removed)
+  // const timerRefs = useRef<Map<string, number>>(new Map());
 
+  /*
   const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
-    const id = Math.random().toString(36).substr(2, 9);
-    const now = Date.now();
-    const newTask: TaskProgress = {
-      id,
-      type: type as any,
-      title,
-      total: fileIds.length,
-      current: 0,
-      startTime: now,
-      status: 'running',
-      minimized: false,
-      lastProgressUpdate: now,
-      lastProgress: 0,
-      estimatedTime: undefined,
-      lastEstimatedTimeUpdate: now
-    };
-
-    // 立即添加任务，不使用防抖，确保用户立即看到任务开始
-    setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
-
-    if (autoProgress) {
-      let current = 0;
-      // 降低定时器频率，从 500ms 改为 1000ms
-      const interval = setInterval(() => {
-        current += 1;
-        // 使用优化后的 updateTask 函数，利用防抖机制
-        updateTask(id, { current });
-        if (current >= newTask.total) {
-          clearInterval(interval);
-          // 移除定时器引用
-          timerRefs.current.delete(id);
-          // 使用 setTimeout 延迟移除任务，让用户看到完成状态
-          setTimeout(() => {
-            setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== id) }));
-          }, 1000);
-        }
-      }, 1000);
-
-      // 存储定时器引用，便于后续清理
-      timerRefs.current.set(id, interval);
-    }
-    return id;
+    // ... moved to useTasks ...
+    return '';
   };
+  */
 
-  // 使用 ref 暂存任务更新，确保防抖时的最终一致性
-  const taskUpdatesRef = useRef<Map<string, Partial<TaskProgress>>>(new Map());
+  // const taskUpdatesRef = useRef<Map<string, Partial<TaskProgress>>>(new Map());
 
   // 创建防抖的状态更新函数
-  const debouncedTaskUpdate = useRef(
-    debounce(() => {
-      setState(prev => {
-        // 如果没有更新，直接返回
-        if (taskUpdatesRef.current.size === 0) {
-          return prev;
-        }
-
-        // 应用所有暂存的任务更新
-        const updatedTasks = prev.tasks.map(t => {
-          const updates = taskUpdatesRef.current.get(t.id);
-          if (updates) {
-            return { ...t, ...updates };
-          }
-          return t;
-        });
-
-        // 清空暂存的更新
-        taskUpdatesRef.current.clear();
-
-        return { ...prev, tasks: updatedTasks };
-      });
-    }, 100) // 100ms 防抖延迟
-  ).current;
+  // const debouncedTaskUpdate = ...
 
   // 优化的 updateTask 函数，使用防抖处理
-  const updateTask = (id: string, updates: Partial<TaskProgress>) => {
-    // 将更新暂存到 ref 中
-    const existingUpdates = taskUpdatesRef.current.get(id) || {};
-    taskUpdatesRef.current.set(id, { ...existingUpdates, ...updates });
-
-    // 调用防抖函数
-    debouncedTaskUpdate();
-  };
+  // const updateTask = ...
 
   // ... (keep navigation/file handling functions: updateActiveTab, sortFiles, getFilteredChildren, displayFileIds)
   const updateActiveTab = (updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
@@ -3106,8 +2097,10 @@ export const App: React.FC = () => {
     if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
 
     // Start background task
-    const taskId = startTask('copy', [], t('tasks.copying'), false);
-    updateTask(taskId, { total: files.length, current: 0 });
+    // Start background task - provide a dummy array of correct length to ensure total is initialized correctly
+    const dummyItems = new Array(files.length).fill('external-file');
+    const taskId = startTask('copy', dummyItems, t('tasks.copying'), false);
+    updateTask(taskId, { current: 0 });
 
     try {
 
@@ -3344,7 +2337,59 @@ export const App: React.FC = () => {
     await handleMoveFiles(filesToMove, targetFolderId);
   };
 
-  const handleBatchRename = (pattern: string, startNum: number) => { /* ... */ };
+  const handleBatchRename = async (pattern: string, startNum: number) => {
+    const selectedIds = activeTab.selectedFileIds;
+    if (selectedIds.length === 0) return;
+
+    // Sort selected IDs to match display order
+    const sortedIds = [...selectedIds].sort((a, b) => {
+      const indexA = displayFileIds.indexOf(a);
+      const indexB = displayFileIds.indexOf(b);
+      return (indexA === -1 ? 999999 : indexA) - (indexB === -1 ? 999999 : indexB);
+    });
+
+    const taskId = startTask('move', sortedIds, t('tasks.renaming'), false);
+    let current = 0;
+
+    // Use asyncPool to limit concurrency if needed, or loop sequentially
+    // Renaming is fast, sequential is safer for order
+    for (let i = 0; i < sortedIds.length; i++) {
+      const id = sortedIds[i];
+      const file = state.files[id];
+      if (!file) continue;
+
+      const ext = file.name.includes('.') ? file.name.split('.').pop() : '';
+      const num = startNum + i;
+
+      // Replace # with numbers
+      let newNameBase = pattern.replace(/#+/g, (match) => {
+        return num.toString().padStart(match.length, '0');
+      });
+
+      const newName = ext ? `${newNameBase}.${ext}` : newNameBase;
+
+      if (newName !== file.name) {
+        try {
+          const sep = file.path.includes('\\') ? '\\' : '/';
+          const parentDir = file.path.substring(0, file.path.lastIndexOf(sep));
+          const newPath = `${parentDir}${sep}${newName}`;
+
+          await renameFile(file.path, newPath);
+          handleUpdateFile(id, { name: newName, path: newPath });
+        } catch (e) {
+          console.error(`Failed to rename ${file.name}`, e);
+          showToast(`${t('error.renameFailed')}: ${file.name}`);
+        }
+      }
+      current++;
+      updateTask(taskId, { current });
+    }
+
+    updateTask(taskId, { status: 'completed', current: sortedIds.length });
+
+    // Close modal
+    setState(s => ({ ...s, activeModal: { type: null } }));
+  };
 
   const handleCopyImageToClipboard = async (fileId: string) => {
     const file = state.files[fileId];
@@ -3490,9 +2535,8 @@ export const App: React.FC = () => {
     let newSelectedPersonIds: string[];
     let newLastSelectedId: string = personId;
 
-    // Get all people in the current view, in the same order as displayed in the grid
-    // Match the order used in FileGrid's useLayout function for people-overview
-    let allPeople = Object.values(state.people);
+    // Use derived peopleWithDisplayCounts to match UI sorting
+    let allPeople = Object.values(peopleWithDisplayCounts);
 
     // Apply search filter if present, same as in FileGrid
     if (activeTab.searchQuery && activeTab.searchQuery.trim()) {
@@ -4832,13 +3876,13 @@ export const App: React.FC = () => {
       }
     }
   };
-  const minimizeTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: true } : t) })); };
-  const onRestoreTask = (id: string) => { setState(prev => ({ ...prev, tasks: prev.tasks.map(t => t.id === id ? { ...t, minimized: false } : t) })); };
+  const minimizeTask = (id: string) => updateTask(id, { minimized: true });
+  const onRestoreTask = (id: string) => updateTask(id, { minimized: false });
 
   const onPauseResume = async (id: string, taskType: string) => {
     if (taskType !== 'color') return;
 
-    const task = state.tasks.find(t => t.id === id);
+    const task = tasks.find(t => t.id === id);
     if (!task) return;
 
     if (task.status === 'paused') {
@@ -6268,7 +5312,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={state.tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
@@ -6663,7 +5707,23 @@ export const App: React.FC = () => {
             cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
           />
         </div>
-        <TaskProgressModal tasks={state.tasks} onMinimize={minimizeTask} onClose={(id: string) => setState(s => ({ ...s, tasks: s.tasks.filter(t => t.id !== id) }))} t={t} onPauseResume={onPauseResume} />
+        <TaskProgressModal
+          tasks={tasks}
+          onMinimize={(id: string) => updateTask(id, { minimized: true })}
+          onClose={(id?: string) => id && updateTask(id, { status: 'completed' })}
+          t={t}
+          onPauseResume={async (taskId: string, type: string) => {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+            if (task.status === 'running') {
+              if (type === 'color') await pauseColorExtraction();
+              updateTask(taskId, { status: 'paused' });
+            } else {
+              if (type === 'color') await resumeColorExtraction();
+              updateTask(taskId, { status: 'running' });
+            }
+          }}
+        />
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">
           {deletionTasks.map(task => (<ToastItem key={task.id} task={task} onUndo={() => undoDelete(task.id)} onDismiss={() => dismissDelete(task.id)} t={t} />))}
           {toast.visible && (<div className="bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg backdrop-blur-sm animate-toast-up">{toast.msg}</div>)}
@@ -6694,6 +5754,7 @@ export const App: React.FC = () => {
             remember={rememberExitChoice}
             onRememberChange={setRememberExitChoice}
             onConfirm={handleExitConfirm}
+            onCancel={() => setState(s => ({ ...s, activeModal: { type: null } }))}
             t={t}
           />
         )}
