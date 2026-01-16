@@ -271,6 +271,67 @@ impl ColorDbPool {
         Ok(f(&cache))
     }
 
+    pub fn copy_colors(&self, src_path: &str, dest_path: &str) -> Result<bool> {
+        let conn = self.conn.lock().map_err(|e| e.to_string())?;
+        
+        let mut stmt = conn.prepare(
+            "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = 'extracted'"
+        ).map_err(|e| e.to_string())?;
+        
+        let source_colors = match stmt.query_row(params![src_path], |row| {
+            let colors: String = row.get(0)?;
+            Ok(colors)
+        }) {
+            Ok(c) => Some(c),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(e.to_string()),
+        };
+        
+        drop(stmt);
+
+        if let Some(colors) = source_colors {
+            let current_ts = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_err(|e| e.to_string())?
+                .as_secs() as i64;
+            
+            let count = conn.execute(
+                "INSERT OR REPLACE INTO dominant_colors 
+                 (file_path, colors, created_at, updated_at, status) 
+                 VALUES (?, ?, ?, ?, ?)",
+                params![
+                    dest_path,
+                    colors,
+                    current_ts,
+                    current_ts,
+                    "extracted"
+                ],
+            ).map_err(|e| e.to_string())?;
+            
+            if count > 0 {
+                eprintln!("[ColorDB] Copied colors from {} to {}", src_path, dest_path);
+                
+                if let Ok(color_results) = serde_json::from_str::<Vec<ColorResult>>(&colors) {
+                     let hex_colors: Vec<String> = color_results.iter().map(|c| c.hex.clone()).collect();
+                     let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+                     
+                     let new_cached_item = CachedImage {
+                         file_path: dest_path.to_string(),
+                         colors: hex_colors,
+                         labs,
+                     };
+                     
+                     if let Ok(mut cache) = self.cache.write() {
+                         cache.push(new_cached_item);
+                     }
+                }
+                return Ok(true);
+            }
+        }
+        
+        Ok(false)
+    }
+
     fn load_from_db_internal(&self) -> Result<Vec<ImageColors>> {
         eprintln!("[ColorDB] load_from_db_internal called");
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;

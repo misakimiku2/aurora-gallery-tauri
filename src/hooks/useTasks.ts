@@ -1,61 +1,77 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
-import { debounce } from '../utils/debounce';
-import { TaskProgress, FileNode } from '../types';
+import { TaskProgress, FileNode, AppState } from '../types';
 
-export const useTasks = (t: (key: string) => string) => {
-    const [tasks, setTasks] = useState<TaskProgress[]>([]);
+export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStateAction<AppState>>, t: (key: string) => string) => {
+    const tasksRef = useRef(state.tasks);
+    useEffect(() => { tasksRef.current = state.tasks; }, [state.tasks]);
 
     // 存储所有定时器引用，用于组件卸载时清理
     const timerRefs = useRef<Map<string, ReturnType<typeof setInterval>>>(new Map());
 
-    // 使用 ref 暂存任务更新，确保防抖时的最终一致性
+    // 使用 ref 暂存任务更新，确保在定时刷新时的最终一致性
     const taskUpdatesRef = useRef<Map<string, Partial<TaskProgress>>>(new Map());
+    
+    // 使用定时器替代防抖，解决高频更新导致的“无限延迟”问题
+    useEffect(() => {
+        const flushUpdates = () => {
+            if (taskUpdatesRef.current.size === 0) return;
 
-    // 创建防抖的状态更新函数
-    const debouncedTaskUpdate = useRef(
-        debounce(() => {
-            setTasks(prev => {
-                // 如果没有更新，直接返回
-                if (taskUpdatesRef.current.size === 0) {
-                    return prev;
+            // 1. 识别哪些更新可以被应用（任务存在于当前状态引用中）
+            // 我们必须在 setState 之外处理 Ref 清理，因为 setState 更新函数必须是纯函数（不能有副作用）
+            // 否则在 React Strict Mode 下会导致 Ref 被错误清空，导致 UI 状态更新丢失（如暂停按钮需要点击两次的问题）
+            const currentTaskIds = new Set(tasksRef.current.map(t => t.id));
+            const updatesToApply = new Map<string, Partial<TaskProgress>>();
+            const remainingUpdates = new Map<string, Partial<TaskProgress>>();
+
+            for (const [id, update] of taskUpdatesRef.current.entries()) {
+                if (currentTaskIds.has(id)) {
+                    updatesToApply.set(id, update);
+                } else {
+                    remainingUpdates.set(id, update);
                 }
+            }
 
-                // 应用所有暂存的任务更新
-                const updatedTasks = prev.map(task => {
-                    const updates = taskUpdatesRef.current.get(task.id);
+            if (updatesToApply.size === 0) return;
+
+            // 2. 更新 ref 只保留未处理的更新
+            taskUpdatesRef.current = remainingUpdates;
+
+            setState(prev => {
+                const updatedTasks = prev.tasks.map(t => {
+                    const updates = updatesToApply.get(t.id);
                     if (updates) {
-                        return { ...task, ...updates };
+                        return { ...t, ...updates };
                     }
-                    return task;
+                    return t;
                 });
 
-                // 清空暂存的更新
-                taskUpdatesRef.current.clear();
-
-                return updatedTasks;
+                return { ...prev, tasks: updatedTasks };
             });
-        }, 100) // 100ms 防抖延迟
-    ).current;
+        };
 
-    // 优化的 updateTask 函数，使用防抖处理
+        const intervalId = setInterval(flushUpdates, 100); // 每 100ms 刷新一次 UI
+        
+        return () => clearInterval(intervalId);
+    }, [setState]);
+
+    /**
+     * 更新任务状态（写入缓冲）
+     */
     const updateTask = useCallback((id: string, updates: Partial<TaskProgress>) => {
         // 将更新暂存到 ref 中
-        const existingUpdates = taskUpdatesRef.current.get(id) || {};
-        taskUpdatesRef.current.set(id, { ...existingUpdates, ...updates });
+        const currentUpdates = taskUpdatesRef.current.get(id) || {};
+        taskUpdatesRef.current.set(id, { ...currentUpdates, ...updates, lastProgressUpdate: Date.now() });
+    }, []);
 
-        // 调用防抖函数
-        debouncedTaskUpdate();
-    }, [debouncedTaskUpdate]);
-
-    const startTask = useCallback((type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
+    const startTask = useCallback((type: string, fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
         const id = Math.random().toString(36).substr(2, 9);
         const now = Date.now();
         const newTask: TaskProgress = {
             id,
             type: type as any,
             title,
-            total: fileIds.length,
+            total: Array.isArray(fileIds) ? fileIds.length : (fileIds ? 1 : 0),
             current: 0,
             startTime: now,
             status: 'running',
@@ -67,22 +83,23 @@ export const useTasks = (t: (key: string) => string) => {
         };
 
         // 立即添加任务，不使用防抖，确保用户立即看到任务开始
-        setTasks(prev => [...prev, newTask]);
+        setState(prev => ({ ...prev, tasks: [...prev.tasks, newTask] }));
 
-        if (autoProgress) {
+        if (autoProgress && newTask.total > 0) {
             let current = 0;
+            const total = newTask.total;
             // 降低定时器频率，从 500ms 改为 1000ms
             const interval = setInterval(() => {
                 current += 1;
                 // 使用优化后的 updateTask 函数，利用防抖机制
                 updateTask(id, { current });
-                if (current >= newTask.total) {
+                if (current >= total) {
                     clearInterval(interval);
                     // 移除定时器引用
                     timerRefs.current.delete(id);
                     // 使用 setTimeout 延迟移除任务，让用户看到完成状态
                     setTimeout(() => {
-                        setTasks(prev => prev.filter(t => t.id !== id));
+                        setState(prev => ({ ...prev, tasks: prev.tasks.filter(task => task.id !== id) }));
                     }, 1000);
                 }
             }, 1000);
@@ -91,7 +108,7 @@ export const useTasks = (t: (key: string) => string) => {
             timerRefs.current.set(id, interval);
         }
         return id;
-    }, [updateTask]);
+    }, [updateTask, setState]);
 
     // 组件卸载时清理逻辑
     useEffect(() => {
@@ -102,13 +119,10 @@ export const useTasks = (t: (key: string) => string) => {
             });
             timerRefs.current.clear();
 
-            // 取消防抖任务更新
-            debouncedTaskUpdate.cancel();
-
             // 应用所有暂存的任务更新，确保最终一致性
             if (taskUpdatesRef.current.size > 0) {
-                setTasks(prev => {
-                    const updatedTasks = prev.map(t => {
+                setState(prev => {
+                    const updatedTasks = prev.tasks.map(t => {
                         const updates = taskUpdatesRef.current.get(t.id);
                         if (updates) {
                             return { ...t, ...updates };
@@ -116,11 +130,11 @@ export const useTasks = (t: (key: string) => string) => {
                         return t;
                     });
                     taskUpdatesRef.current.clear();
-                    return updatedTasks;
+                    return { ...prev, tasks: updatedTasks };
                 });
             }
         };
-    }, [debouncedTaskUpdate]);
+    }, [setState]);
 
     // 监听主色调提取进度事件
     const colorTaskIdRef = useRef<string | null>(null);
@@ -165,7 +179,7 @@ export const useTasks = (t: (key: string) => string) => {
                         // 新批次：关闭旧任务，创建新任务
                         const oldTaskId = colorTaskIdRef.current;
                         if (oldTaskId) {
-                            setTasks(prev => prev.filter(t => t.id !== oldTaskId));
+                            setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== oldTaskId) }));
                         }
 
                         // 创建新任务
@@ -179,6 +193,7 @@ export const useTasks = (t: (key: string) => string) => {
                     // 更新任务进度
                     if (colorTaskIdRef.current) {
                         const now = Date.now();
+                        const taskId = colorTaskIdRef.current;
 
                         // 获取当前任务状态
                         let lastProgress = 0;
@@ -188,25 +203,30 @@ export const useTasks = (t: (key: string) => string) => {
                         let existingEstimatedTime: number | undefined = undefined;
                         let lastEstimatedTimeUpdate = now;
 
-                        setTasks(prev => {
-                            const task = prev.find(t => t.id === colorTaskIdRef.current);
-                            if (task) {
-                                lastProgress = task.lastProgress || 0;
-                                lastProgressUpdate = task.lastProgressUpdate || now;
-                                existingEstimatedTime = task.estimatedTime;
-                                lastEstimatedTimeUpdate = task.lastEstimatedTimeUpdate || now;
-                                taskStatus = task.status;
-                                totalProcessedTime = task.totalProcessedTime || 0;
-                            }
-                            return prev;
-                        });
+                        const currentTasks = tasksRef.current;
+                        const task = currentTasks.find(t => t.id === taskId);
+                        
+                        if (task) {
+                            lastProgress = task.lastProgress || 0;
+                            lastProgressUpdate = task.lastProgressUpdate || now;
+                            existingEstimatedTime = task.estimatedTime;
+                            lastEstimatedTimeUpdate = task.lastEstimatedTimeUpdate || now;
+                            taskStatus = task.status;
+                            totalProcessedTime = task.totalProcessedTime || 0;
+                        }
+
+                        // 如果任务处于暂停状态，不更新进度（或者只更新UI不更新内部计数器），防止UI跳变
+                        // 但如果是 paused 状态，通常后端也应该暂停。如果后端还在发消息，说明还在跑
+                        // 此时我们应该信任后端的消息更新 current，但不累计时间
 
                         // 计算预估时间
                         let calculatedEstimatedTime: number | undefined = existingEstimatedTime;
                         let shouldUpdateEstimatedTime = false;
 
-                        if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
+                        // 只有找到任务且正在运行才计算时间
+                        if (task && taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
                             const elapsedTime = now - lastProgressUpdate;
+                            // 简单的滑动窗口或累积平均速度
                             const currentSpeed = (totalProcessedTime + elapsedTime) > 0
                                 ? progress.current / (totalProcessedTime + elapsedTime)
                                 : 0;
@@ -217,7 +237,7 @@ export const useTasks = (t: (key: string) => string) => {
                                 const newEstimatedTime = remainingTasks / currentSpeed;
                                 const timeSinceLastEstimatedUpdate = now - lastEstimatedTimeUpdate;
 
-                                if (timeSinceLastEstimatedUpdate >= 3000 || !existingEstimatedTime) {
+                                if (timeSinceLastEstimatedUpdate >= 1000 || !existingEstimatedTime) { // 提高刷新频率到 1秒
                                     calculatedEstimatedTime = newEstimatedTime;
                                     lastEstimatedTimeUpdate = now;
                                     shouldUpdateEstimatedTime = true;
@@ -236,7 +256,7 @@ export const useTasks = (t: (key: string) => string) => {
 
                         // 计算新的处理时间
                         let newTotalProcessedTime = totalProcessedTime;
-                        if (taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
+                        if (task && taskStatus === 'running' && progress.current > lastProgress && now > lastProgressUpdate) {
                             newTotalProcessedTime += now - lastProgressUpdate;
                         }
 
@@ -255,17 +275,19 @@ export const useTasks = (t: (key: string) => string) => {
                             taskUpdates.lastEstimatedTimeUpdate = lastEstimatedTimeUpdate;
                         }
 
-                        updateTask(colorTaskIdRef.current, taskUpdates);
+                        // 无条件触发更新，即使 tasksRef 中没找到任务（可能React状态还没同步）
+                        // 这将确保任务至少能显示进度
+                        updateTask(taskId, taskUpdates);
 
                         // 检测批次完成
                         if (progress.batchCompleted) {
-                            updateTask(colorTaskIdRef.current, { status: 'completed' });
+                            updateTask(taskId, { status: 'completed' });
 
                             // 延迟1秒后关闭任务窗口
                             const currentTaskId = colorTaskIdRef.current;
                             setTimeout(() => {
                                 if (isMounted && currentTaskId) {
-                                    setTasks(prev => prev.filter(t => t.id !== currentTaskId));
+                                    setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== currentTaskId) }));
                                     // 只有当当前任务ID未变化时才清除引用
                                     if (colorTaskIdRef.current === currentTaskId) {
                                         colorTaskIdRef.current = null;
@@ -291,5 +313,5 @@ export const useTasks = (t: (key: string) => string) => {
         };
     }, [startTask, updateTask, t]); // Add startTask, updateTask, and t to dependencies
 
-    return { tasks, setTasks, startTask, updateTask };
+    return { startTask, updateTask };
 };

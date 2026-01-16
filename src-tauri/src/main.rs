@@ -1267,6 +1267,17 @@ async fn delete_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+
+#[tauri::command]
+async fn copy_image_colors(
+    app: tauri::AppHandle,
+    src_path: String,
+    dest_path: String
+) -> Result<bool, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner();
+    pool.copy_colors(&src_path, &dest_path)
+}
+
 #[tauri::command]
 async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
     let src = Path::new(&src_path);
@@ -2428,6 +2439,7 @@ fn main() {
             rename_file,
             delete_file,
             copy_file,
+            copy_image_colors,
             move_file,
             write_file_from_bytes,
             scan_file,

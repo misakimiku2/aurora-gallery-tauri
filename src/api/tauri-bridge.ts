@@ -585,6 +585,20 @@ export const copyFile = async (srcPath: string, destPath: string): Promise<void>
 };
 
 /**
+ * 复制图片颜色信息
+ * @param srcPath 源文件路径
+ * @param destPath 目标文件路径
+ */
+export const copyImageColors = async (srcPath: string, destPath: string): Promise<boolean> => {
+  try {
+    return await invoke<boolean>('copy_image_colors', { srcPath, destPath });
+  } catch (error) {
+    console.error('Failed to copy image colors:', error);
+    return false;
+  }
+};
+
+/**
  * 移动文件
  * @param srcPath 源文件路径
  * @param destPath 目标文件路径

@@ -447,9 +447,11 @@ async fn result_processor(
     
     // 结果缓冲区，用于批量保存
     let mut result_buffer: Vec<(String, Vec<color_extractor::ColorResult>)> = Vec::new();
-    let batch_save_threshold = 50;
+    // 降低保存阈值，减少单次数据库事务锁定时间，从而减少对生产者线程的阻塞
+    // 这解决了任务暂停前进度更新停滞/卡顿的问题
+    let batch_save_threshold = 20; 
     let mut last_save_time = tokio::time::Instant::now();
-    let auto_save_interval = Duration::from_secs(5);
+    let auto_save_interval = Duration::from_secs(2); // 缩短自动保存间隔
     
     // 统计计数
     let mut total_success_count = 0usize;
@@ -580,7 +582,12 @@ async fn result_processor(
                 // 通道暂时为空
                 let elapsed_time = last_save_time.elapsed();
                 if (!result_buffer.is_empty() && elapsed_time >= auto_save_interval) || is_paused() || is_shutting_down() {
-                    save_batch_results(pool.clone(), &mut result_buffer).await;
+                    let batch_data: Vec<_> = result_buffer.drain(0..).collect();
+                    if is_shutting_down() || is_paused() {
+                        save_batch_results(pool.clone(), batch_data).await;
+                    } else {
+                        tokio::task::spawn(save_batch_results(pool.clone(), batch_data));
+                    }
                     last_save_time = tokio::time::Instant::now();
                     
                     if (is_paused() || is_shutting_down()) && !pause_checkpoint_executed {
@@ -607,7 +614,8 @@ async fn result_processor(
         
         // 2. 批量保存逻辑
         if result_buffer.len() >= batch_save_threshold {
-            save_batch_results(pool.clone(), &mut result_buffer).await;
+            let batch_data: Vec<_> = result_buffer.drain(0..).collect();
+            tokio::task::spawn(save_batch_results(pool.clone(), batch_data));
             last_save_time = tokio::time::Instant::now();
         }
 
@@ -640,12 +648,14 @@ async fn result_processor(
                     }
                 }
                 if result_buffer.len() >= batch_save_threshold {
-                    save_batch_results(pool.clone(), &mut result_buffer).await;
+                    let batch_data: Vec<_> = result_buffer.drain(0..).collect();
+                    save_batch_results(pool.clone(), batch_data).await;
                 }
             }
             
             if !result_buffer.is_empty() {
-                save_batch_results(pool.clone(), &mut result_buffer).await;
+                let batch_data: Vec<_> = result_buffer.drain(0..).collect();
+                save_batch_results(pool.clone(), batch_data).await;
             }
             
             // 执行最终WAL检查点
@@ -667,21 +677,19 @@ async fn result_processor(
     
     // 保存剩余的结果
     if !result_buffer.is_empty() {
-        save_batch_results(pool.clone(), &mut result_buffer).await;
+        let batch_data: Vec<_> = result_buffer.drain(0..).collect();
+        save_batch_results(pool.clone(), batch_data).await;
     }
 }
 
 // 批量保存结果到数据库
 async fn save_batch_results(
     pool: Arc<ColorDbPool>,
-    result_buffer: &mut Vec<(String, Vec<color_extractor::ColorResult>)>
+    batch_data: Vec<(String, Vec<color_extractor::ColorResult>)>
 ) {
-    if result_buffer.is_empty() {
+    if batch_data.is_empty() {
         return;
     }
-    
-    // 创建一个临时缓冲区，避免移动原始缓冲区
-    let batch_data: Vec<(String, Vec<color_extractor::ColorResult>)> = result_buffer.drain(0..).collect();
     
     eprintln!("Saving batch of {} files to database", batch_data.len());
     

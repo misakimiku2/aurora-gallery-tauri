@@ -25,26 +25,15 @@ import { aiService } from './services/aiService';
 
 // ... (helper components remain unchanged)
 import { useTasks } from './hooks/useTasks';
+import { useFileSearch } from './hooks/useFileSearch';
+import { useFileOperations } from './hooks/useFileOperations';
+import { useMarqueeSelection } from './hooks/useMarqueeSelection';
+import { useAIAnalysis } from './hooks/useAIAnalysis';
+import { useContextMenu } from './hooks/useContextMenu';
+import { asyncPool } from './utils/async';
 
-import { TaskProgressModal } from './components/TaskProgressModal';
-import { AlertModal } from './components/modals/AlertModal';
-import { ConfirmModal } from './components/modals/ConfirmModal';
-import { RenameTagModal } from './components/modals/RenameTagModal';
-import { RenamePersonModal } from './components/modals/RenamePersonModal';
-import { BatchRenameModal } from './components/modals/BatchRenameModal';
-import { AddToPersonModal } from './components/modals/AddToPersonModal';
-import { ClearPersonModal } from './components/modals/ClearPersonModal';
-import { AddToTopicModal } from './components/modals/AddToTopicModal';
-import { TagEditor } from './components/modals/TagEditor';
-import { FolderPickerModal } from './components/modals/FolderPickerModal';
-import { ExitConfirmModal } from './components/modals/ExitConfirmModal';
-import { CropAvatarModal } from './components/modals/CropAvatarModal';
-import { WelcomeModal } from './components/modals/WelcomeModal';
 import { ToastItem } from './components/ToastItem';
-
-
-
-
+import { TaskProgressModal } from './components/TaskProgressModal';
 
 import { getPinyinGroup } from './utils/textUtils';
 import { DUMMY_TAB } from './constants';
@@ -52,11 +41,13 @@ import { DUMMY_TAB } from './constants';
 
 import SplashScreen from './components/SplashScreen';
 import { DragDropOverlay, DropAction } from './components/DragDropOverlay';
+import { ContextMenu } from './components/ContextMenu';
+import { AppModals } from './components/AppModals';
 
-// 导入统一的环境检测工具
+// 锟斤拷锟斤拷统一锟侥伙拷锟斤拷锟斤拷夤わ拷锟?
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
 
-// 扩展 Window 接口以包含我们的全局函数
+// 锟斤拷展 Window 锟接匡拷锟皆帮拷锟斤拷锟斤拷锟角碉拷全锟街猴拷锟斤拷
 declare global {
   interface Window {
     __UPDATE_FILE_COLORS__?: (filePath: string, colors: string[]) => void;
@@ -76,7 +67,7 @@ export const App: React.FC = () => {
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
-        refreshInterval: 5000 // 默认5秒刷新一次
+        refreshInterval: 5000 // 默锟斤拷5锟斤拷刷锟斤拷一锟斤拷
       },
       ai: {
         provider: 'ollama',
@@ -96,7 +87,7 @@ export const App: React.FC = () => {
     },
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
     aiConnectionStatus: 'checking',
-    // 拖拽状态
+    // 锟斤拷拽状态
     dragState: {
       isDragging: false,
       draggedFileIds: [],
@@ -112,24 +103,20 @@ export const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const [hasShownWelcome, setHasShownWelcome] = useState(false);
   const [loadingInfo, setLoadingInfo] = useState<string[]>([]);
-  // Selection box state
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number } | null>(null);
-  const selectionRef = useRef<HTMLDivElement>(null);
 
-  // 组件卸载时清理逻辑
+  // 锟斤拷锟叫讹拷锟绞憋拷锟斤拷锟斤拷呒锟?
   useEffect(() => {
     return () => {
-      // 清理所有定时器
+      // 锟斤拷锟斤拷锟斤拷锟叫讹拷时锟斤拷
       // timerRefs.current.forEach((timer) => {
       //   clearInterval(timer);
       // });
       // timerRefs.current.clear();
 
-      // 取消防抖任务更新
+      // 取锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
       // debouncedTaskUpdate.cancel();
 
-      // 应用所有暂存的任务更新，确保最终一致性
+      // 应锟斤拷锟斤拷锟斤拷锟捷达拷锟斤拷锟斤拷锟斤拷锟铰ｏ拷确锟斤拷锟斤拷锟斤拷一锟斤拷锟斤拷
       /*
       if (taskUpdatesRef.current.size > 0) {
         setState(prev => {
@@ -154,15 +141,12 @@ export const App: React.FC = () => {
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState('');
   const lastSelectedTagRef = useRef<string | null>(null);
-  const [deletionTasks, setDeletionTasks] = useState<DeletionTask[]>([]);
-  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; type: 'file-single' | 'file-multi' | 'folder-single' | 'folder-multi' | 'tag-single' | 'tag-multi' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person' | null; targetId?: string; }>({ visible: false, x: 0, y: 0, type: null });
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
   const [toolbarQuery, setToolbarQuery] = useState('');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
   // Topic layout mode: controlled by TopBar when viewing topics overview
   const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
   const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) { } };
-  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [rememberExitChoice, setRememberExitChoice] = useState(false);
   // Ref to store the latest exit action preference (to avoid closure issues)
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
@@ -170,10 +154,37 @@ export const App: React.FC = () => {
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
 
   // Translation helper
-  const t = (key: string): string => { const keys = key.split('.'); let val: any = translations[state.settings.language]; for (const k of keys) { val = val?.[k]; } return typeof val === 'string' ? val : key; };
+  const t = useCallback((key: string): string => {
+    const keys = key.split('.');
+    let val: any = translations[state.settings.language];
+    for (const k of keys) { val = val?.[k]; }
+    return typeof val === 'string' ? val : key;
+  }, [state.settings.language]);
 
-  // Task management hook
-  const { tasks, startTask, updateTask } = useTasks(t);
+  // Toast helper
+  const showToast = useCallback((msg: string) => {
+    setToast({ msg, visible: true });
+    if (msg) {
+      setTimeout(() => setToast({ msg: '', visible: false }), 2000);
+    }
+  }, []);
+
+  const updateActiveTab = useCallback((updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
+    setState(prev => ({
+      ...prev,
+      tabs: prev.tabs.map(t => {
+        if (t.id === prev.activeTabId) {
+          const actualUpdates = typeof updates === 'function' ? updates(t) : updates;
+          return { ...t, ...actualUpdates };
+        }
+        return t;
+      })
+    }));
+  }, []);
+
+  const { tasks } = state;
+
+  const { startTask, updateTask } = useTasks(state, setState, t);
 
   // External drag and drop state
   const [isExternalDragging, setIsExternalDragging] = useState(false);
@@ -185,18 +196,18 @@ export const App: React.FC = () => {
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
   const [draggedFilePaths, setDraggedFilePaths] = useState<string[]>([]);
 
-  // 自定义事件监听器，用于更新文件颜色
+  // 锟皆讹拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟节革拷锟斤拷锟侥硷拷锟斤拷色
   useEffect(() => {
-    // 定义事件处理函数
+    // 锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷
     const handleColorUpdate = (event: CustomEvent) => {
       const { filePath, colors } = event.detail;
       if (!filePath || !colors) return;
 
-      // 找到对应的文件ID
+      // 锟揭碉拷锟斤拷应锟斤拷锟侥硷拷ID
       const fileEntry = Object.entries(state.files).find(([id, file]) => file.path === filePath);
       if (fileEntry) {
         const [fileId, file] = fileEntry;
-        // 更新文件的 meta.palette，保持其他 meta 字段不变
+        // 锟斤拷锟斤拷锟侥硷拷锟斤拷 meta.palette锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷 meta 锟街段诧拷锟斤拷
         const currentMeta = file.meta;
         if (currentMeta) {
           handleUpdateFile(fileId, {
@@ -206,7 +217,7 @@ export const App: React.FC = () => {
             }
           });
         } else {
-          // 如果没有 meta，创建一个基本的 meta 对象
+          // 锟斤拷锟矫伙拷锟?meta锟斤拷锟斤拷锟斤拷一锟斤拷锟斤拷锟斤拷锟斤拷 meta 锟斤拷锟斤拷
           handleUpdateFile(fileId, {
             meta: {
               width: 0,
@@ -222,35 +233,16 @@ export const App: React.FC = () => {
       }
     };
 
-    // 添加事件监听器
+    // 锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷
     window.addEventListener('color-update', handleColorUpdate as EventListener);
 
-    // 清理函数
+    // 锟斤拷锟斤拷锟斤拷锟斤拷
     return () => {
       window.removeEventListener('color-update', handleColorUpdate as EventListener);
     };
-  }, [state.files]); // 依赖 files，确保能正确找到文件
+  }, [state.files]); // 锟斤拷锟斤拷 files锟斤拷确锟斤拷锟斤拷锟斤拷确锟揭碉拷锟侥硷拷
 
-  // 监听主色调提取进度事件 (moved to useTasks hook)
-
-
-  // Throttle function to limit how often a function can be called
-  const throttle = useCallback((func: Function, limit: number) => {
-    let inThrottle: boolean;
-    return function (this: any, ...args: any[]) {
-      if (!inThrottle) {
-        func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => inThrottle = false, limit);
-      }
-    };
-  }, []);
-
-  // Selection box ref for direct DOM manipulation
-  const selectionBoxRef = useRef<HTMLDivElement | null>(null);
-
-  // Memoized selection box bounds for efficiency
-  const selectionBoundsRef = useRef({ left: 0, top: 0, right: 0, bottom: 0 });
+  // 锟斤拷锟斤拷锟斤拷色锟斤拷锟斤拷取锟斤拷锟斤拷锟铰硷拷 (moved to useTasks hook)
 
   const [showWelcome, setShowWelcome] = useState(false);
 
@@ -262,11 +254,11 @@ export const App: React.FC = () => {
 
   // ... (keep persistence logic, init effect, exit logic, etc.)
   const saveUserData = async (data: any) => {
-    // 优先检测 Tauri 环境（异步检测，通过实际调用 API）
+    // 锟斤拷锟饺硷拷锟?Tauri 锟斤拷锟斤拷锟斤拷锟届步锟斤拷猓拷锟绞碉拷实锟斤拷锟?API锟斤拷
     const isTauriEnv = await detectTauriEnvironmentAsync();
 
     if (isTauriEnv) {
-      // Tauri 环境 - 使用 Tauri API
+      // Tauri 锟斤拷锟斤拷 - 使锟斤拷 Tauri API
       try {
         return await tauriSaveUserData(data);
       } catch (error) {
@@ -279,9 +271,9 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    // 只在 Tauri 环境下保存数据
-    // 注意：这里使用同步检测，因为 useEffect 不能是 async
-    // 但 saveUserData 内部会进行异步检测
+    // 只锟斤拷 Tauri 锟斤拷锟斤拷锟铰憋拷锟斤拷锟斤拷锟斤拷
+    // 注锟解：锟斤拷锟斤拷使锟斤拷同锟斤拷锟斤拷猓拷锟轿?useEffect 锟斤拷锟斤拷锟斤拷 async
+    // 锟斤拷 saveUserData 锟节诧拷锟斤拷锟斤拷锟斤拷觳斤拷锟斤拷
     const isTauriEnv = isTauriEnvironment();
 
     if (!isTauriEnv) {
@@ -338,22 +330,22 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      // 优先检测 Tauri 环境（异步检测，通过实际调用 API）
+      // 锟斤拷锟饺硷拷锟?Tauri 锟斤拷锟斤拷锟斤拷锟届步锟斤拷猓拷锟绞碉拷实锟斤拷锟?API锟斤拷
       const isTauriEnv = await detectTauriEnvironmentAsync();
       if (isTauriEnv) {
-        // Tauri 环境或浏览器环境
+        // Tauri 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
         const isTauriSyncEnv = isTauriEnvironment();
         let isSavedDataLoaded = false;
 
         if (isTauriSyncEnv) {
-          // Tauri 环境：尝试加载保存的数据
+          // Tauri 锟斤拷锟斤拷锟斤拷锟斤拷锟皆硷拷锟截憋拷锟斤拷锟斤拷锟斤拷锟?
           try {
-            // 先获取默认路径
+            // 锟饺伙拷取默锟斤拷路锟斤拷
             const defaults = await tauriGetDefaultPaths();
-            // 然后获取保存的数据
+            // 然锟斤拷锟饺★拷锟斤拷锟斤拷锟斤拷锟斤拷
             const savedData = await tauriLoadUserData();
 
-            // 合并设置：保存的数据优先于默认数据
+            // 锟较诧拷锟斤拷锟矫ｏ拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥拷锟斤拷锟斤拷锟?
             let finalSettings = {
               ...state.settings,
               paths: {
@@ -365,7 +357,7 @@ export const App: React.FC = () => {
             if (savedData) {
               isSavedDataLoaded = true;
 
-              // 如果有保存的数据，合并保存的数据，保存的数据优先
+              // 锟斤拷锟斤拷斜锟斤拷锟斤拷锟斤拷锟捷ｏ拷锟较诧拷锟斤拷锟斤拷锟斤拷锟斤拷荩锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
               finalSettings = {
                 ...finalSettings,
                 ...savedData.settings,
@@ -390,7 +382,7 @@ export const App: React.FC = () => {
                 }
               } catch (e) { console.error("Failed to load people from DB", e); }
 
-              // 更新 state 中的 customTags 和 people
+              // 锟斤拷锟斤拷 state 锟叫碉拷 customTags 锟斤拷 people
               setState(prev => ({
                 ...prev,
                 customTags: savedData.customTags || [],
@@ -399,34 +391,34 @@ export const App: React.FC = () => {
                 folderSettings: savedData.folderSettings || {},
                 settings: finalSettings
               }));
-              // 立即更新 ref 以确保事件监听器使用正确的值
+              // 锟斤拷锟斤拷锟斤拷锟斤拷 ref 锟斤拷确锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷使锟斤拷锟斤拷确锟斤拷值
               exitActionRef.current = finalSettings.exitAction || 'ask';
             } else {
-              // 只有默认路径，更新 state
+              // 只锟斤拷默锟斤拷路锟斤拷锟斤拷锟斤拷锟斤拷 state
               setState(prev => ({
                 ...prev,
                 settings: finalSettings
               }));
-              // 立即更新 ref
+              // 锟斤拷锟斤拷锟斤拷锟斤拷 ref
               exitActionRef.current = finalSettings.exitAction || 'ask';
             }
 
-            // 确定要扫描的路径列表
+            // 确锟斤拷要扫锟斤拷锟铰凤拷锟斤拷斜锟?
             let pathsToScan: string[] = [];
             let validRootPaths: string[] = [];
 
             if (savedData?.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
-              // 先过滤掉明显的非目录路径（如包含文件扩展名的路径）
+              // 锟饺癸拷锟剿碉拷锟斤拷锟皆的凤拷目录路锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷募锟斤拷锟秸癸拷锟斤拷锟铰凤拷锟斤拷锟?
               validRootPaths = savedData.rootPaths.filter((path: string) => {
-                // 检查路径是否包含文件扩展名
+                // 锟斤拷锟铰凤拷锟斤拷欠锟斤拷锟斤拷锟侥硷拷锟斤拷展锟斤拷
                 const lastDotIndex = path.lastIndexOf('.');
                 const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
-                // 如果没有点，或者点在最后一个斜杠之前，那么它是一个目录
+                // 锟斤拷锟矫伙拷械悖拷锟斤拷叩锟斤拷锟斤拷锟斤拷一锟斤拷斜锟斤拷之前锟斤拷锟斤拷么锟斤拷锟斤拷一锟斤拷目录
                 return lastDotIndex === -1 || lastDotIndex < lastSlashIndex;
               });
             }
 
-            // 如果经过筛选后没有有效路径，或者没有保存的路径，使用默认资源根目录
+            // 锟斤拷锟斤拷锟斤拷锟缴秆★拷锟矫伙拷锟斤拷锟叫凤拷锟斤拷锟斤拷锟斤拷锟矫伙拷斜锟斤拷锟斤拷路锟斤拷锟斤拷使锟斤拷默锟斤拷锟斤拷源锟斤拷目录
             if (validRootPaths.length === 0) {
               if (finalSettings.paths.resourceRoot) {
                 pathsToScan = [finalSettings.paths.resourceRoot];
@@ -441,19 +433,19 @@ export const App: React.FC = () => {
               const savedMetadata = savedData?.fileMetadata || {};
               for (const p of pathsToScan) {
                 try {
-                  // 开始记录文件扫描性能，绕过采样率
+                  // 锟斤拷始锟斤拷录锟侥硷拷扫锟斤拷锟斤拷锟杰ｏ拷锟狡癸拷锟斤拷锟斤拷锟斤拷
                   const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
 
                   const result = await scanDirectory(p);
 
-                  // 结束计时并记录性能指标
+                  // 锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷录锟斤拷锟斤拷指锟斤拷
                   performanceMonitor.end(scanTimer, 'scanDirectory', {
                     path: p,
                     fileCount: Object.keys(result.files).length,
                     rootCount: result.roots.length
                   });
 
-                  // 记录扫描文件数量
+                  // 锟斤拷录扫锟斤拷锟侥硷拷锟斤拷锟斤拷
                   performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
 
                   Object.values(result.files).forEach((f: any) => {
@@ -494,25 +486,25 @@ export const App: React.FC = () => {
                   };
                 });
                 setIsLoading(false);
-                // 根目录加载完毕，隐藏启动界面
+                // 锟斤拷目录锟斤拷锟斤拷锟斤拷希锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
                 setTimeout(() => {
                   setShowSplash(false);
                 }, 500);
                 return;
               } else {
-                // 虽然有保存的数据，但是没有有效的根目录，需要使用默认初始化
+                // 锟斤拷然锟叫憋拷锟斤拷锟斤拷锟斤拷荩锟斤拷锟斤拷锟矫伙拷锟斤拷锟叫э拷母锟侥柯硷拷锟斤拷锟揭癸拷锟侥拷铣锟绞硷拷锟?
                 isSavedDataLoaded = false;
               }
             }
           } catch (e) {
             console.error("Tauri initialization failed", e);
-            // 初始化失败，使用默认初始化
+            // 锟斤拷始锟斤拷失锟杰ｏ拷使锟斤拷默锟较筹拷始锟斤拷
             isSavedDataLoaded = false;
           }
         }
 
         if (!isSavedDataLoaded) {
-          // 如果没有加载到保存的数据，使用默认初始化
+          // 锟斤拷锟矫伙拷屑锟斤拷氐锟斤拷锟斤拷锟斤拷锟斤拷锟捷ｏ拷使锟斤拷默锟较筹拷始锟斤拷
           const { roots, files } = initializeFileSystem();
           const initialFolder = roots[0];
           const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder, history: { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 } };
@@ -520,7 +512,7 @@ export const App: React.FC = () => {
         }
 
         setIsLoading(false);
-        // 初始化完成，隐藏启动界面
+        // 锟斤拷始锟斤拷锟斤拷桑锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
         setTimeout(() => {
           setShowSplash(false);
         }, 500);
@@ -547,7 +539,7 @@ export const App: React.FC = () => {
     } else {
       setState(s => ({ ...s, activeModal: { type: null } }));
     }
-    // Tauri环境下的窗口关闭逻辑由Tauri框架处理
+    // Tauri锟斤拷锟斤拷锟铰的达拷锟节关憋拷锟竭硷拷锟斤拷Tauri锟斤拷艽锟斤拷锟?
   };
 
   const activeTab = useMemo(() => {
@@ -669,7 +661,7 @@ export const App: React.FC = () => {
   // ... (keep welcome modal logic)
   useEffect(() => {
     if (!isLoading) {
-      // 无论什么情况，初始化完成后都要隐藏启动界面
+      // 锟斤拷锟斤拷什么锟斤拷锟斤拷锟斤拷锟绞硷拷锟斤拷锟缴猴拷要锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
       setTimeout(() => {
         setShowSplash(false);
       }, 500);
@@ -677,7 +669,7 @@ export const App: React.FC = () => {
       if (state.roots.length === 0) {
         const hasOnboarded = localStorage.getItem('aurora_onboarded');
         if (!hasOnboarded) {
-          // 显示欢迎界面
+          // 锟斤拷示锟斤拷迎锟斤拷锟斤拷
           setShowWelcome(true);
         }
       }
@@ -689,9 +681,9 @@ export const App: React.FC = () => {
     setShowWelcome(false);
   };
 
-  // 更新CSS变量以控制字母索引栏位置
+  // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟皆匡拷锟斤拷锟斤拷母锟斤拷锟斤拷锟斤拷位锟斤拷
   useEffect(() => {
-    // 设置CSS变量，根据详情面板的可见性调整索引栏位置
+    // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥可硷拷锟皆碉拷锟斤拷锟斤拷锟斤拷锟斤拷位锟斤拷
     document.documentElement.style.setProperty(
       '--metadata-panel-width',
       state.layout.isMetadataVisible ? '20rem' : '0rem'
@@ -703,7 +695,7 @@ export const App: React.FC = () => {
 
   // Lazy load dimensions when file is selected
   useEffect(() => {
-    // 目前仅在Tauri环境下支持延迟加载图片尺寸
+    // 目前锟斤拷锟斤拷Tauri锟斤拷锟斤拷锟斤拷支锟斤拷锟接迟硷拷锟斤拷图片锟竭达拷
   }, [activeTab.selectedFileIds, activeTab.viewingFileId]);
 
   useEffect(() => {
@@ -747,308 +739,65 @@ export const App: React.FC = () => {
 
   useEffect(() => { setToolbarQuery(activeTab.searchQuery); }, [activeTab.id, activeTab.searchQuery]);
 
-  // const t = (key: string): string => { const keys = key.split('.'); let val: any = translations[state.settings.language]; for (const k of keys) { val = val?.[k]; } return typeof val === 'string' ? val : key; };
-  const showToast = (msg: string) => { setToast({ msg, visible: true }); setTimeout(() => setToast({ msg: '', visible: false }), 2000); };
+  const {
+    contextMenu,
+    setContextMenu,
+    closeContextMenu,
+    handleContextMenu
+  } = useContextMenu({ state, activeTab, updateActiveTab });
 
-  // 监听多文件选择，显示持久拖拽提示
+  // 锟斤拷锟斤拷锟斤拷锟侥硷拷选锟斤拷锟斤拷示锟街撅拷锟斤拷拽锟斤拷示
   const selectedCount = activeTab.selectedFileIds.length;
-  // 不在专题视图中显示该提示（专题视图没有拖拽到外部的逻辑）
-  // 另：当存在未最小化的后台任务弹窗时不显示（以免遮挡任务弹窗）
-  const activeTaskCount = tasks.filter(t => !t.minimized).length;
+  // 锟斤拷锟斤拷专锟斤拷锟斤拷图锟斤拷锟斤拷示锟斤拷锟斤拷示锟斤拷专锟斤拷锟斤拷图没锟斤拷锟斤拷拽锟斤拷锟解部锟斤拷锟竭硷拷锟斤拷
+  // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷未锟斤拷小锟斤拷锟侥猴拷台锟斤拷锟今弹达拷时锟斤拷锟斤拷示锟斤拷锟斤拷锟斤拷锟节碉拷锟斤拷锟今弹达拷锟斤拷
+  const activeTaskCount = state.tasks.filter(t => !t.minimized).length;
   const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0;
 
-  // ... (keep startTask and updateTask) - Removed as moved to useTasks
-  // 存储所有定时器引用，用于组件卸载时清理 (Removed)
-  // const timerRefs = useRef<Map<string, number>>(new Map());
+  const {
+    isSelecting,
+    selectionBox,
+    selectionRef,
+    handleMouseDown,
+    handleMouseMove,
+    handleMouseUp
+  } = useMarqueeSelection({
+    activeTab,
+    state,
+    updateActiveTab,
+    closeContextMenu
+  });
 
-  /*
-  const startTask = (type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color', fileIds: string[] | FileNode[], title: string, autoProgress: boolean = true) => {
-    // ... moved to useTasks ...
-    return '';
-  };
-  */
+  const {
+    displayFileIds,
+    groupedFiles,
+    collapsedGroups,
+    toggleGroup,
+    allFiles
+  } = useFileSearch({ state, activeTab, groupBy, t });
 
-  // const taskUpdatesRef = useRef<Map<string, Partial<TaskProgress>>>(new Map());
-
-  // 创建防抖的状态更新函数
-  // const debouncedTaskUpdate = ...
-
-  // 优化的 updateTask 函数，使用防抖处理
-  // const updateTask = ...
-
-  // ... (keep navigation/file handling functions: updateActiveTab, sortFiles, getFilteredChildren, displayFileIds)
-  const updateActiveTab = (updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
-    setState(prev => { const current = prev.tabs.find(t => t.id === prev.activeTabId); if (!current) return prev; const newValues = typeof updates === 'function' ? updates(current) : updates; const newTab = { ...current, ...newValues }; return { ...prev, tabs: prev.tabs.map(t => t.id === prev.activeTabId ? newTab : t) }; });
-  };
-
-  // Cache all files array to avoid repeated Object.values() calls
-  const allFiles = useMemo(() => Object.values(state.files) as FileNode[], [state.files]);
-
-  // Memoized sort function with stable dependencies
-  const sortFiles = useMemo(() => {
-    return (files: FileNode[]) => {
-      return files.sort((a, b) => {
-        if (a.type !== b.type) return a.type === FileType.FOLDER ? -1 : 1;
-        let res: number = 0;
-        if (state.sortBy === 'date') { const valA = a.createdAt || ''; const valB = b.createdAt || ''; res = valA.localeCompare(valB); }
-        else if (state.sortBy === 'size') { const sizeA: number = a.meta?.sizeKb || 0; const sizeB: number = b.meta?.sizeKb || 0; res = sizeA - sizeB; }
-        else { const valA = (a.name || '').toLowerCase(); const valB = (b.name || '').toLowerCase(); res = valA.localeCompare(valB); }
-        if (res === 0) return 0; const modifier = state.sortDirection === 'asc' ? 1 : -1; return res * modifier;
-      });
-    };
-  }, [state.sortBy, state.sortDirection]);
-
-  // Optimized filtered children calculation
-  const displayFileIds = useMemo(() => {
-    let candidates: FileNode[] = [];
-
-    // AI Search Filter Logic - Optimized with early exits and Set lookups
-    if (activeTab.aiFilter && (state.settings.search.isAISearchEnabled || activeTab.aiFilter.filePaths)) {
-      const { keywords, colors, people, description, filePaths } = activeTab.aiFilter;
-
-      candidates = allFiles.filter(f => {
-        if (f.type !== FileType.IMAGE) return false;
-
-        // Exact file path match (e.g. from color search)
-        if (filePaths && filePaths.length > 0) {
-          return filePaths.includes(f.path);
-        }
-
-        // Early return if no criteria match
-        if (!keywords.length && !colors.length && !people.length && !description) {
-          return false;
-        }
-
-        // Check Keywords (Tags, Objects, Description) - Optimized with early exits
-        if (keywords.length > 0) {
-          const lowerKeywords = keywords.map(k => k.toLowerCase());
-          const hasKeywordMatch = lowerKeywords.some(lowerK => {
-            if (f.tags?.some(t => t.toLowerCase().includes(lowerK))) return true;
-            if (f.aiData?.objects?.some(o => o.toLowerCase().includes(lowerK))) return true;
-            if (f.aiData?.tags?.some(t => t.toLowerCase().includes(lowerK))) return true;
-            if (f.description?.toLowerCase().includes(lowerK)) return true;
-            if (f.aiData?.description?.toLowerCase().includes(lowerK)) return true;
-            return false;
-          });
-          if (!hasKeywordMatch) return false;
-        }
-
-        // Check Colors - Optimized with Set for O(1) lookups
-        if (colors.length > 0) {
-          const colorSet = new Set(colors.map(c => c.toLowerCase()));
-          const hasColorMatch =
-            (f.meta?.palette?.some(p => colorSet.has(p.toLowerCase()))) ||
-            (f.aiData?.dominantColors?.some(p => colorSet.has(p.toLowerCase())));
-          if (!hasColorMatch) return false;
-        }
-
-        // Check People - Optimized with Set for O(1) lookups
-        if (people.length > 0) {
-          const peopleSet = new Set(people.map(p => p.toLowerCase()));
-          const hasPeopleMatch = f.aiData?.faces?.some(face =>
-            face.name && peopleSet.has(face.name.toLowerCase())
-          );
-          if (!hasPeopleMatch) return false;
-        }
-
-        // Check specific description intent - Early exit if no match
-        if (description) {
-          const lowerDesc = description.toLowerCase();
-          const descMatch =
-            (f.description?.toLowerCase().includes(lowerDesc)) ||
-            (f.aiData?.description?.toLowerCase().includes(lowerDesc));
-          if (!descMatch) return false;
-        }
-
-        return true;
-      });
-
-    } else if (activeTab.activePersonId) {
-      // Optimized active person filter - use direct lookup
-      const personId = activeTab.activePersonId;
-      candidates = allFiles.filter(f =>
-        f.type === FileType.IMAGE &&
-        f.aiData?.faces &&
-        f.aiData.faces.some(face => face.personId === personId)
-      );
-    }
-    else if (activeTab.activeTags.length > 0) {
-      // Optimized tag filter - use Set for faster lookups
-      const activeTagsSet = new Set(activeTab.activeTags);
-      candidates = allFiles.filter(f =>
-        f.type !== FileType.FOLDER &&
-        f.tags?.some(tag => activeTagsSet.has(tag))
-      );
-    }
-    else if (activeTab.searchScope === 'tag' && activeTab.searchQuery.startsWith('tag:')) {
-      const tagName = activeTab.searchQuery.replace('tag:', '');
-      candidates = allFiles.filter((f) => f.tags?.includes(tagName));
-    }
-    else if (activeTab.activeTopicId) {
-      // Topic View Filter
-      const topicId = activeTab.activeTopicId;
-      const topic = state.topics[topicId];
-
-      if (topic) {
-        // Get all images from this topic (only current topic, preserve order)
-        // Use map on topic.fileIds to ensure the order matches the TopicModule view
-        candidates = (topic.fileIds || [])
-          .map(id => state.files[id])
-          .filter(f => f && f.type === FileType.IMAGE);
-      } else {
-        candidates = [];
-      }
-    }
-    else {
-      if (!state.files[activeTab.folderId]) {
-        if (activeTab.searchQuery && activeTab.searchScope !== 'all') { /* continue */ } else { return []; }
-      }
-
-      if (activeTab.searchQuery) {
-        candidates = allFiles;
-      } else {
-        const folder = state.files[activeTab.folderId];
-        candidates = folder?.children?.map(id => state.files[id]).filter(Boolean) as FileNode[] || [];
-      }
-    }
-
-    // Standard Search Logic (if AI Search is NOT active or falls back) - Optimized with early exits
-    if (activeTab.searchQuery && !activeTab.searchQuery.startsWith('tag:') && !activeTab.aiFilter) {
-      const query = activeTab.searchQuery.toLowerCase();
-      const queryParts = query.split(' or ').map(p => p.trim()).filter(p => p);
-
-      // Optimized search with early exits
-      candidates = candidates.filter(f => {
-        // Check if file matches any search part
-        return queryParts.some(part => {
-          // Early exit for exact matches
-          const lowerPart = part.toLowerCase();
-
-          // Check name first (most common case)
-          if (f.name.toLowerCase().includes(lowerPart)) {
-            return true;
-          }
-
-          // Check tags
-          if (f.tags?.some(t => t.toLowerCase().includes(lowerPart))) {
-            return true;
-          }
-
-          // Check description if available
-          if (f.description?.toLowerCase().includes(lowerPart)) {
-            return true;
-          }
-
-          // Check source URL if available
-          if (f.sourceUrl?.toLowerCase().includes(lowerPart)) {
-            return true;
-          }
-
-          // Check AI data if available
-          if (f.aiData) {
-            if (f.aiData.sceneCategory?.toLowerCase().includes(lowerPart)) {
-              return true;
-            }
-            if (f.aiData.objects?.some(obj => obj.toLowerCase().includes(lowerPart))) {
-              return true;
-            }
-            if (f.aiData.extractedText?.toLowerCase().includes(lowerPart)) {
-              return true;
-            }
-            if (f.aiData.translatedText?.toLowerCase().includes(lowerPart)) {
-              return true;
-            }
-          }
-
-          // Check search scope
-          if (activeTab.searchScope === 'file') {
-            return f.type !== FileType.FOLDER;
-          }
-          if (activeTab.searchScope === 'folder') {
-            return f.type === FileType.FOLDER;
-          }
-
-          return false;
-        });
-      });
-    }
-
-    // Date filter optimization
-    if (activeTab.dateFilter.start && activeTab.dateFilter.end) {
-      const start = new Date(activeTab.dateFilter.start).getTime();
-      const end = new Date(activeTab.dateFilter.end).getTime();
-      const minTime = Math.min(start, end);
-      const maxTime = Math.max(start, end) + 86400000;
-      const mode = activeTab.dateFilter.mode;
-
-      candidates = candidates.filter(f => {
-        const dateStr = mode === 'created' ? f.createdAt : f.updatedAt;
-        if (!dateStr) return false;
-        const time = new Date(dateStr).getTime();
-        return time >= minTime && time < maxTime;
-      });
-    }
-
-    // Sort and return IDs
-    if (activeTab.activeTopicId) {
-      return candidates.map(f => f.id);
-    }
-    return sortFiles(candidates).map(f => f.id);
-  }, [allFiles, activeTab, state.sortBy, state.sortDirection, state.settings.search.isAISearchEnabled]);
-
-  // ... (keep grouping logic)
-  const toggleGroup = (groupId: string) => { setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] })); };
-  const groupedFiles = useMemo<FileGroup[]>(() => {
-    if (groupBy === 'none') return [];
-    const groups: Record<string, string[]> = {};
-    displayFileIds.forEach(id => {
-      const file = state.files[id]; if (!file) return; let key = 'Other';
-      if (groupBy === 'type') {
-        key = file.type === FileType.FOLDER ? t('groupBy.folder') : (file.meta?.format?.toUpperCase() || 'Unknown');
-      }
-      else if (groupBy === 'date') {
-        if (file.createdAt) {
-          const date = new Date(file.createdAt);
-          key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        } else {
-          key = 'Unknown';
-        }
-      }
-      else if (groupBy === 'size') {
-        const sizeKb = file.meta?.sizeKb || 0;
-        if (sizeKb < 1024) key = t('groupBy.small');
-        else if (sizeKb < 10240) key = t('groupBy.medium');
-        else key = t('groupBy.large');
-      }
-      if (!groups[key]) groups[key] = []; groups[key].push(id);
-    });
-    return Object.entries(groups).map(([title, ids]) => ({ id: title, title, fileIds: ids })).sort((a, b) => a.title.localeCompare(b.title));
-  }, [displayFileIds, groupBy, state.files, t]);
-
-  // ... (keep handleOpenFolder and handleRefresh)
   const handleOpenFolder = async () => {
     try {
       const path = await openDirectory();
       if (path) {
-        // 确保缓存目录存在（在资源根目录下创建 .Aurora_Cache 文件夹）
+        // 确锟斤拷锟斤拷锟斤拷目录锟斤拷锟节ｏ拷锟斤拷锟斤拷源锟斤拷目录锟铰达拷锟斤拷 .Aurora_Cache 锟侥硷拷锟叫ｏ拷
         if (isTauriEnvironment()) {
           const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
           await ensureDirectory(cachePath);
         }
 
-        // 开始记录文件扫描性能，绕过采样率
+        // 锟斤拷始锟斤拷录锟侥硷拷扫锟斤拷锟斤拷锟杰ｏ拷锟狡癸拷锟斤拷锟斤拷锟斤拷
         const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
 
         const result = await scanDirectory(path, true);
 
-        // 结束计时并记录性能指标
+        // 锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷录锟斤拷锟斤拷指锟斤拷
         performanceMonitor.end(scanTimer, 'scanDirectory', {
           path,
           fileCount: Object.keys(result.files).length,
           rootCount: result.roots.length
         });
 
-        // 记录扫描文件数量
+        // 锟斤拷录扫锟斤拷锟侥硷拷锟斤拷锟斤拷
         performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
         setState(prev => {
           const newRoots = Array.from(new Set([...prev.roots, ...result.roots]));
@@ -1155,7 +904,7 @@ export const App: React.FC = () => {
   const handleFileClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
 
-    // 关闭右键菜单
+    // 锟截憋拷锟揭硷拷锟剿碉拷
     closeContextMenu();
 
     // If we just finished a selection box operation, don't process the click
@@ -1210,231 +959,10 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    // 关闭右键菜单
-    closeContextMenu();
-
-    if ((e.target as HTMLElement).closest('.file-item') || (e.target as HTMLElement).closest('.tag-item') || (e.target as HTMLElement).closest('[style*="left:"]')) {
-      return;
-    }
-
-    // Start selection box
-    if (e.button === 0) { // Left mouse button
-      const container = selectionRef.current;
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const startX = e.clientX - rect.left + container.scrollLeft;
-        const startY = e.clientY - rect.top + container.scrollTop;
-        setIsSelecting(true);
-        setSelectionBox({
-          startX: startX,
-          startY: startY,
-          currentX: startX,
-          currentY: startY
-        });
-
-        // Clear selection on background click
-        if (activeTab.viewMode === 'browser') {
-          updateActiveTab({ selectedFileIds: [] });
-        } else if (activeTab.viewMode === 'tags-overview') {
-          updateActiveTab({ selectedTagIds: [] });
-        } else if (activeTab.viewMode === 'people-overview') {
-          updateActiveTab({ selectedPersonIds: [] });
-        }
-      }
-    }
-  };
-
-  // Optimized mouse move handler with throttling and direct DOM manipulation
-  const handleMouseMove = useCallback(throttle((e: React.MouseEvent) => {
-    if (!isSelecting || !selectionBox) return;
-
-    const container = selectionRef.current;
-    if (container) {
-      const rect = container.getBoundingClientRect();
-      const currentX = e.clientX - rect.left + container.scrollLeft;
-      const currentY = e.clientY - rect.top + container.scrollTop;
-
-      // Update selection box coordinates
-      setSelectionBox(prev => prev ? {
-        ...prev,
-        currentX,
-        currentY
-      } : null);
-
-      // Calculate bounds for selection checking
-      const left = Math.min(selectionBox.startX, currentX);
-      const top = Math.min(selectionBox.startY, currentY);
-      const right = Math.max(selectionBox.startX, currentX);
-      const bottom = Math.max(selectionBox.startY, currentY);
-
-      selectionBoundsRef.current = { left, top, right, bottom };
-    }
-  }, 16), [isSelecting, selectionBox, throttle]);
-
-  const handleMouseUp = useCallback((e: React.MouseEvent) => {
-    if (!isSelecting || !selectionBox) return;
-
-    // Get the container element to calculate item positions
-    const container = selectionRef.current;
-    if (!container) {
-      setIsSelecting(false);
-      setSelectionBox(null);
-      return;
-    }
-
-    // Calculate selection box boundaries in viewport coordinates
-    const containerRect = container.getBoundingClientRect();
-    const selectionLeft = containerRect.left + (Math.min(selectionBox.startX, selectionBox.currentX) - container.scrollLeft);
-    const selectionTop = containerRect.top + (Math.min(selectionBox.startY, selectionBox.currentY) - container.scrollTop);
-    const selectionRight = containerRect.left + (Math.max(selectionBox.startX, selectionBox.currentX) - container.scrollLeft);
-    const selectionBottom = containerRect.top + (Math.max(selectionBox.startY, selectionBox.currentY) - container.scrollTop);
-
-    // Check if selection box is too small to select anything
-    if (selectionRight - selectionLeft < 5 && selectionBottom - selectionTop < 5) {
-      setIsSelecting(false);
-      setSelectionBox(null);
-      return;
-    }
-
-    // Update selection based on view mode
-    if (activeTab.viewMode === 'browser') {
-      // File selection - simple and reliable approach using viewport coordinates directly
-      const selectedIds: string[] = [];
-
-      // Get all file elements in the current FileGrid container
-      const allFileElements = container.querySelectorAll('.file-item');
-
-      // Loop through all file elements and check if they are in the selection box
-      allFileElements.forEach(element => {
-        const id = element.getAttribute('data-id');
-        if (id) {
-          // Get the element's bounding rect in viewport coordinates
-          const rect = element.getBoundingClientRect();
-
-          // Check if element overlaps with selection box in viewport coordinates
-          if (rect.left < selectionRight &&
-            rect.right > selectionLeft &&
-            rect.top < selectionBottom &&
-            rect.bottom > selectionTop) {
-            selectedIds.push(id);
-          }
-        }
-      });
-
-      // Always update selection, regardless of whether any files were selected
-      updateActiveTab({
-        selectedFileIds: selectedIds,
-        lastSelectedId: selectedIds[selectedIds.length - 1] || null
-      });
-    } else if (activeTab.viewMode === 'tags-overview') {
-      // Tag selection - optimized with efficient checking
-      const selectedTagIds: string[] = [];
-      const tagElements = document.querySelectorAll('.tag-item');
-
-      // Loop through all tag elements and check if they are in the selection box
-      tagElements.forEach(element => {
-        const tag = element.getAttribute('data-tag');
-        if (tag) {
-          // Get the element's bounding rect in viewport coordinates
-          const rect = element.getBoundingClientRect();
-
-          // Check if element overlaps with selection box in viewport coordinates
-          if (rect.left < selectionRight &&
-            rect.right > selectionLeft &&
-            rect.top < selectionBottom &&
-            rect.bottom > selectionTop) {
-            selectedTagIds.push(tag);
-          }
-        }
-      });
-
-      if (selectedTagIds.length > 0) {
-        updateActiveTab({ selectedTagIds });
-      }
-    } else if (activeTab.viewMode === 'people-overview') {
-      // Person selection - use the same logic as FileGrid for consistent positioning
-      const selectedPersonIds: string[] = [];
-
-      // Get all people and filter by search query (same as FileGrid)
-      let itemsList = Object.values(state.people);
-      if (activeTab.searchQuery && activeTab.searchQuery.trim()) {
-        const query = activeTab.searchQuery.toLowerCase().trim();
-        itemsList = itemsList.filter(person =>
-          person.name.toLowerCase().includes(query)
-        );
-      }
-
-      // Sort people alphabetically by name, same as in handlePersonClick and useLayout
-      // FIXED: Use DOM based selection for accuracy
-      const personElements = container.querySelectorAll('.person-item');
-      personElements.forEach(element => {
-        const id = element.getAttribute('data-id');
-        if (id) {
-          const rect = element.getBoundingClientRect();
-          if (rect.left < selectionRight &&
-            rect.right > selectionLeft &&
-            rect.top < selectionBottom &&
-            rect.bottom > selectionTop) {
-            selectedPersonIds.push(id);
-          }
-        }
-      });
-
-      updateActiveTab({
-        selectedPersonIds: selectedPersonIds,
-        lastSelectedId: selectedPersonIds[selectedPersonIds.length - 1] || null
-      });
-
-      /* 
-      // Manual layout calculation removed
-      itemsList.sort((a, b) => a.name.localeCompare(b.name));
-      
-      // Calculate layout parameters (same as FileGrid)
-      const containerWidth = container.clientWidth;
-      const thumbnailSize = state.thumbnailSize;
-      const GAP = 16;
-      const PADDING = 16;
-      const availableWidth = Math.max(100, containerWidth - (PADDING * 2));
-      const minColWidth = thumbnailSize;
-      const cols = Math.max(1, Math.floor((availableWidth + GAP) / (minColWidth + GAP)));
-      const itemWidth = (availableWidth - (cols - 1) * GAP) / cols;
-      const itemHeight = itemWidth + 60;
-      
-      // Check each person's position against selection box
-      itemsList.forEach((person, index) => {
-        const row = Math.floor(index / cols);
-        const col = index % cols;
-        
-        // Calculate person position in container coordinates (not viewport)
-        // This accounts for scrolling correctly
-        const personContainerLeft = PADDING + col * (itemWidth + GAP);
-        const personContainerTop = PADDING + row * (itemHeight + GAP);
-        const personContainerRight = personContainerLeft + itemWidth;
-        const personContainerBottom = personContainerTop + itemHeight;
-        
-        // Calculate selection box in container coordinates (not viewport)
-        const selContainerLeft = Math.min(selectionBox.startX, selectionBox.currentX);
-        const selContainerTop = Math.min(selectionBox.startY, selectionBox.currentY);
-        const selContainerRight = Math.max(selectionBox.startX, selectionBox.currentX);
-        const selContainerBottom = Math.max(selectionBox.startY, selectionBox.currentY);
-        
-      */
-
-      // Always update selection, even if no people were selected (consistent with file selection)
-      // updateActiveTab({ selectedPersonIds });
-    }
-
-    // End selection box
-    setIsSelecting(false);
-    setSelectionBox(null);
-  }, [isSelecting, selectionBox, activeTab.viewMode, state.people, state.thumbnailSize, updateActiveTab]);
-
-
   const groupedTags: Record<string, string[]> = useMemo(() => { const allTags = new Set<string>(state.customTags); (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); const groups: Record<string, string[]> = {}; filteredTags.forEach(tag => { const key = getPinyinGroup(tag); if (!groups[key]) groups[key] = []; groups[key].push(tag); }); const sortedKeys = Object.keys(groups).sort(); return sortedKeys.reduce((obj, key) => { obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); return obj; }, {} as Record<string, string[]>); }, [state.files, state.settings.language, state.customTags, tagSearchQuery]);
   // Memoized person counts to avoid recalculating every time
   const personCounts = useMemo(() => {
-    // 开始记录人员计数性能
+    // 锟斤拷始锟斤拷录锟斤拷员锟斤拷锟斤拷锟斤拷锟斤拷
     const timer = performance.now();
     const counts = new Map<string, number>();
 
@@ -1453,7 +981,7 @@ export const App: React.FC = () => {
       }
     });
 
-    // 记录性能指标
+    // 锟斤拷录锟斤拷锟斤拷指锟斤拷
     const duration = performance.now() - timer;
     performanceMonitor.timing('personCounts', duration, {
       personCount: Object.keys(state.people).length,
@@ -1533,7 +1061,7 @@ export const App: React.FC = () => {
         });
       }
 
-      // 持久化到数据库
+      // 锟街久伙拷锟斤拷锟斤拷锟捷匡拷
       if (updates.tags || updates.description || updates.sourceUrl || updates.aiData) {
         const file = prev.files[id];
         if (file) {
@@ -1554,842 +1082,65 @@ export const App: React.FC = () => {
     });
   };
 
-  // Helper function to limit concurrency
-  const asyncPool = async function <T>(limit: number, items: T[], fn: (item: T, index: number) => Promise<any>) {
-    const results = [];
-    const executing: Promise<any>[] = [];
+  const {
+    handleCopyFiles, handleMoveFiles, handleExternalCopyFiles, handleExternalMoveFiles,
+    handleDropOnFolder, handleBatchRename, handleRenameSubmit, requestDelete,
+    undoDelete, dismissDelete, handleCreateFolder, deletionTasks
+  } = useFileOperations({
+    state, setState, activeTab, t, showToast, startTask, updateTask,
+    handleRefresh, handleUpdateFile, displayFileIds
+  });
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const p = Promise.resolve().then(() => fn(item, i));
-      results.push(p);
-
-      if (limit <= items.length) {
-        const e = p.then(() => {
-          executing.splice(executing.indexOf(e), 1);
-        });
-        executing.push(e);
-        if (executing.length >= limit) {
-          await Promise.race(executing);
-        }
-      }
-    }
-
-    return Promise.all(results);
-  };
-
-  const handleCopyFiles = async (fileIds: string[], targetFolderId: string) => {
-    // 开始记录复制操作性能
-    const copyTimer = performanceMonitor.start('handleCopyFiles');
-    logInfo('[CopyFiles] Starting copy operation', { fileIds, targetFolderId });
-    const targetFolder = state.files[targetFolderId];
-    logDebug('[CopyFiles] targetFolder', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
-
-    if (!targetFolder || !targetFolder.path) {
-      console.error('[CopyFiles] Invalid target folder or path');
-      // 记录性能指标
-      performanceMonitor.end(copyTimer, 'handleCopyFiles', { success: false, fileCount: fileIds.length });
-      return;
-    }
-
-    const taskId = startTask('copy', fileIds, t('tasks.copying'), false); // 禁用自动进度
-    logInfo('[CopyFiles] Task started', { taskId });
-
-    const separator = targetFolder.path.includes('/') ? '/' : '\\';
-    let copiedCount = 0;
-    const scannedFilesMap = new Map<string, any>();
-    const filePathsMap = new Map<string, { sourcePath: string; newPath: string; filename: string; originalFile: FileNode }>();
-
-    try {
-
-      // Precompute all target paths and file info
-      for (const id of fileIds) {
-        const file = state.files[id];
-        if (file && file.path) {
-          const filename = file.name;
-          const newPath = `${targetFolder.path}${separator}${filename}`;
-          filePathsMap.set(id, { sourcePath: file.path, newPath, filename, originalFile: file });
-        }
-      }
-
-      // Parallel copy with limited concurrency (10 files at a time)
-      await asyncPool(10, fileIds, async (id, index) => {
-        const fileInfo = filePathsMap.get(id);
-        if (!fileInfo) return;
-
-        try {
-          logDebug('[CopyFiles] copyingFile', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
-
-          // Use Tauri API directly
-          await copyFile(fileInfo.sourcePath, fileInfo.newPath);
-
-          // Scan only the newly copied file instead of entire directory
-          logDebug('[CopyFiles] scanningCopiedFile', { newPath: fileInfo.newPath });
-          const scannedFile = await scanFile(fileInfo.newPath, targetFolderId);
-
-          // Store scanned file info for batch update
-          scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
-
-          // Update progress
-          copiedCount++;
-          logDebug('[CopyFiles] copyCount', { copiedCount });
-          // 手动更新任务进度
-          updateTask(taskId, { current: copiedCount });
-        } catch (error) {
-          console.error('[CopyFiles] Error processing file ID', id, error);
-          // Continue with other files
-        }
-      });
-
-      // Batch update state with all newly copied files
-      if (scannedFilesMap.size > 0) {
-        setState(prev => {
-          const newFiles = { ...prev.files };
-          const updatedTargetFolder = { ...newFiles[targetFolderId] };
-          updatedTargetFolder.children = [...(updatedTargetFolder.children || [])];
-
-          // Process all scanned files
-          scannedFilesMap.forEach(({ scannedFile, originalFile }) => {
-            const existingFile = prev.files[scannedFile.id];
-
-            if (existingFile) {
-              // Merge preserving user data
-              newFiles[scannedFile.id] = {
-                ...scannedFile,
-                tags: existingFile.tags,
-                description: existingFile.description,
-                url: existingFile.url,
-                aiData: existingFile.aiData,
-                sourceUrl: existingFile.sourceUrl,
-                author: existingFile.author,
-                category: existingFile.category
-              };
-            } else {
-              // New file, add it
-              newFiles[scannedFile.id] = scannedFile;
-            }
-
-            // Add to target folder's children if not already present
-            if (!updatedTargetFolder.children?.includes(scannedFile.id)) {
-              updatedTargetFolder.children?.push(scannedFile.id);
-            }
-          });
-
-          // Update target folder
-          newFiles[targetFolderId] = updatedTargetFolder;
-
-          return { ...prev, files: newFiles };
-        });
-      }
-
-      showToast(t('context.copied'));
-      logInfo('[CopyFiles] completed');
-      // 完成任务
-      updateTask(taskId, { current: fileIds.length, status: 'completed' });
-      // 1秒后移除任务
-      setTimeout(() => {
-        setState(prev => ({
-          ...prev,
-          tasks: prev.tasks.filter(t => t.id !== taskId)
-        }));
-      }, 1000);
-
-      // 记录成功的性能指标
-      performanceMonitor.end(copyTimer, 'handleCopyFiles', {
-        success: true,
-        fileCount: fileIds.length,
-        copiedCount: copiedCount
-      });
-    } catch (e) {
-      console.error('[CopyFiles] Error during copy operation:', e);
-      showToast("Copy failed");
-      // 任务失败，直接移除
-      setTimeout(() => {
-        setState(prev => ({
-          ...prev,
-          tasks: prev.tasks.filter(t => t.id !== taskId)
-        }));
-      }, 1000);
-
-      // 记录失败的性能指标
-      performanceMonitor.end(copyTimer, 'handleCopyFiles', {
-        success: false,
-        fileCount: fileIds.length,
-        copiedCount: copiedCount
-      });
-    }
-  };
-
-  const handleMoveFiles = async (fileIds: string[], targetFolderId: string) => {
-    // 开始记录移动操作性能
-    const moveTimer = performanceMonitor.start('handleMoveFiles');
-    logInfo('[MoveFiles] Starting move operation', { fileIds, targetFolderId });
-
-    if (fileIds.includes(targetFolderId)) {
-      console.error('[MoveFiles] Cannot move a folder into itself');
-      // 记录性能指标
-      performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: false, fileCount: fileIds.length });
-      return;
-    }
-
-    const targetFolder = state.files[targetFolderId];
-    logDebug('[MoveFiles] targetFolder', { targetFolder: targetFolder?.name, targetPath: targetFolder?.path });
-
-    if (!targetFolder || !targetFolder.path) {
-      console.error('[MoveFiles] Invalid target folder or path');
-      // 记录性能指标
-      performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: false, fileCount: fileIds.length });
-      return;
-    }
-
-    const taskId = startTask('move', fileIds, t('tasks.moving'), false); // 禁用自动进度
-    logInfo('[MoveFiles] Task started', { taskId });
-
-    const separator = targetFolder.path.includes('/') ? '/' : '\\';
-    // Collect all unique source parent IDs
-    const sourceParentIds = new Set<string>();
-    let movedCount = 0;
-
-    // Precompute all target paths and file info
-    const filePathsMap = new Map<string, {
-      sourcePath: string;
-      newPath: string;
-      filename: string;
-      originalFile: FileNode;
-      parentId: string | undefined;
-    }>();
-
-    try {
-
-      for (const id of fileIds) {
-        const file = state.files[id];
-        if (file && file.path) {
-          const filename = file.name;
-          const newPath = `${targetFolder.path}${separator}${filename}`;
-          filePathsMap.set(id, {
-            sourcePath: file.path,
-            newPath,
-            filename,
-            originalFile: file,
-            parentId: file.parentId || undefined
-          });
-        }
-      }
-
-      // Check for existing files before performing file system operations - Parallel check
-      logDebug('[MoveFiles] checkingForExistingFiles');
-      let existingFiles: string[] = [];
-
-      // Parallel file existence check
-      await asyncPool(20, fileIds, async (id) => {
-        const fileInfo = filePathsMap.get(id);
-        if (!fileInfo) return;
-
-        try {
-          // Use Tauri API to check if file exists
-          const exists = await invoke<boolean>('file_exists', { filePath: fileInfo.newPath });
-          if (exists) {
-            existingFiles.push(fileInfo.filename);
-          }
-        } catch (error) {
-          console.error('[MoveFiles] Error checking file existence for', fileInfo.filename, error);
-        }
-      });
-
-      // If any files exist at destination, show confirmation modal
-      if (existingFiles.length > 0) {
-        logInfo('[MoveFiles] foundExistingFiles');
-        // Create a promise that resolves when user confirms or rejects
-        await new Promise<void>((resolve, reject) => {
-          setState(prev => ({
-            ...prev,
-            activeModal: {
-              type: 'confirm-overwrite-file',
-              data: {
-                files: existingFiles,
-                onConfirm: () => {
-                  setState(s => ({ ...s, activeModal: { type: null } }));
-                  resolve();
-                },
-                onCancel: () => {
-                  setState(s => ({ ...s, activeModal: { type: null } }));
-                  reject(new Error('User cancelled move operation'));
-                }
-              }
-            }
-          }));
-        });
-      }
-
-      // Perform actual file system operations - Parallel move with limited concurrency
-      logInfo('[MoveFiles] performingOperations');
-
-      await asyncPool(10, fileIds, async (id) => {
-        const fileInfo = filePathsMap.get(id);
-        if (!fileInfo) return;
-
-        try {
-          logDebug('[MoveFiles] movingFile', { sourcePath: fileInfo.sourcePath, destPath: fileInfo.newPath });
-
-          // Use Tauri API directly
-          await moveFile(fileInfo.sourcePath, fileInfo.newPath);
-          logInfo('[MoveFiles] fileMoved');
-
-          movedCount++;
-          logDebug('[MoveFiles] moveCount', { movedCount });
-          // 手动更新任务进度
-          updateTask(taskId, { current: movedCount });
-        } catch (error) {
-          console.error('[MoveFiles] Error processing file ID', id, error);
-          // Continue with other files
-        }
-      });
-
-      // Update local state after file system operations are complete
-      logDebug('[MoveFiles] updatingStateAfterOps');
-      setState(prev => {
-        logDebug('[MoveFiles] stateUpdateCallbackCalled');
-        const newFiles = { ...prev.files };
-        const updatedTargetFolder = { ...newFiles[targetFolderId] };
-        updatedTargetFolder.children = [...(updatedTargetFolder.children || [])];
-
-        // Track source parents that need their children updated
-        const sourceParentsToUpdate = new Map<string, any>();
-
-        // Process all files in batch
-        for (const id of fileIds) {
-          const fileInfo = filePathsMap.get(id);
-          const file = newFiles[id];
-          if (!fileInfo || !file || !file.path) continue;
-
-          logDebug('[MoveFiles] processingFileInStateUpdate', { fileId: id });
-
-          // Get source parent
-          if (fileInfo.parentId) {
-            sourceParentIds.add(fileInfo.parentId);
-            if (!sourceParentsToUpdate.has(fileInfo.parentId)) {
-              const sourceParent = newFiles[fileInfo.parentId];
-              if (sourceParent) {
-                sourceParentsToUpdate.set(fileInfo.parentId, {
-                  ...sourceParent,
-                  children: [...(sourceParent.children || [])]
-                });
-              }
-            }
-          }
-
-          // Update file's parent and path
-          const newPath = `${updatedTargetFolder.path}${separator}${fileInfo.filename}`;
-          logDebug('[MoveFiles] updatingFileState', { fileId: id, oldParent: fileInfo.parentId, newParent: targetFolderId, oldPath: file.path, newPath });
-
-          // Check if target folder already has a file with the same name
-          const existingFileId: string | undefined = updatedTargetFolder.children.find(childId => {
-            const childFile = newFiles[childId];
-            return childFile && childFile.name === fileInfo.filename;
-          });
-
-          // If existing file found, remove it from target folder's children and files map
-          if (existingFileId) {
-            logInfo('[MoveFiles] removingExistingFile', { existingFileId, filename: fileInfo.filename });
-            // Remove from target folder's children array
-            updatedTargetFolder.children = updatedTargetFolder.children.filter((childId: string) => childId !== existingFileId);
-            // Remove from files map
-            delete newFiles[existingFileId];
-          }
-
-          newFiles[id] = {
-            ...file,
-            parentId: targetFolderId,
-            path: newPath
-          };
-
-          // Add to target folder's children
-          updatedTargetFolder.children.push(id);
-          logDebug('[MoveFiles] addedFileToTargetChildren');
-
-          // Remove from source parent's children
-          if (fileInfo.parentId && sourceParentsToUpdate.has(fileInfo.parentId)) {
-            const sourceParent = sourceParentsToUpdate.get(fileInfo.parentId);
-            sourceParent.children = sourceParent.children.filter((childId: string) => childId !== id);
-            logDebug('[MoveFiles] removedFileFromSourceParent');
-          }
-        }
-
-        // Apply source parent updates
-        sourceParentsToUpdate.forEach((updatedParent, parentId) => {
-          newFiles[parentId] = updatedParent;
-          logDebug('[MoveFiles] updatedSourceParent', { parentId });
-        });
-
-        // Apply target folder update
-        newFiles[targetFolderId] = updatedTargetFolder;
-        logDebug('[MoveFiles] updatedTarget', { targetFolderId });
-
-        return {
-          ...prev,
-          files: newFiles
-        };
-      });
-
-      showToast(t('context.moved'));
-      logInfo('[MoveFiles] completed');
-      // 完成任务
-      updateTask(taskId, { current: fileIds.length, status: 'completed' });
-      // 1秒后移除任务
-      setTimeout(() => {
-        setState(prev => ({
-          ...prev,
-          tasks: prev.tasks.filter(t => t.id !== taskId)
-        }));
-      }, 1000);
-
-      // 记录成功的性能指标
-      performanceMonitor.end(moveTimer, 'handleMoveFiles', {
-        success: true,
-        fileCount: fileIds.length,
-        movedCount: movedCount
-      });
-    } catch (e) {
-      console.error('[MoveFiles] Error during move operation:', e);
-      showToast("Move failed");
-      // 任务失败，直接移除
-      setTimeout(() => {
-        setState(prev => ({
-          ...prev,
-          tasks: prev.tasks.filter(t => t.id !== taskId)
-        }));
-      }, 1000);
-
-      // 记录失败的性能指标
-      performanceMonitor.end(moveTimer, 'handleMoveFiles', {
-        success: false,
-        fileCount: fileIds.length,
-        movedCount: movedCount
-      });
-    }
-  };
-
-  // 处理拖拽放置到文件夹的回调（来自FileGrid和TreeSidebar）
-  // External drag and drop handlers
-  // State to track the number of drag enter events (to handle nested elements)
-  const [dragEnterCounter, setDragEnterCounter] = useState(0);
-
-  // 检测拖拽到外部的处理函数
-  const handleWindowDragLeave = async () => {
-    // 检查是否处于内部拖拽状态
-    if (isDraggingInternal && draggedFilePaths.length > 0) {
-      try {
-        // 导入Tauri的API
-        const { copyFile } = await import('./api/tauri-bridge');
-
-        // 使用Windows原生API复制文件
-        for (const filePath of draggedFilePaths) {
-          // 这里需要获取目标路径，我们可以使用save dialog让用户选择，或者默认复制到桌面
-          // 为了简化，我们暂时不实现文件选择，而是通过拖拽到外部时自动处理
-          // 在实际应用中，我们需要使用系统级的拖拽API来获取目标路径
-          logDebug('[ExternalCopy] wouldCopyFile', { filePath });
-        }
-
-        // 显示控制台通知
-        logInfo('[ExternalCopy] copiedCount', { count: draggedFilePaths.length });
-      } catch (error) {
-        console.error('Error copying files:', error);
-      } finally {
-        // 清除拖拽状态
-        setIsDraggingInternal(false);
-        setDraggedFilePaths([]);
-      }
-    }
-  };
+  const { handleAIAnalysis, handleFolderAIAnalysis } = useAIAnalysis({
+    files: state.files,
+    people: state.people,
+    settings: state.settings,
+    startTask,
+    updateTask,
+    setState,
+    t,
+    showToast
+  });
 
   const handleExternalDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    // Check if this is an internal drag (from within the app)
-    // Internal drags set 'application/json' type with internalDrag flag
-    // Also check isDraggingInternal state for Alt+drag operations using tauri-plugin-drag
-    const isInternalDrag = e.dataTransfer.types.includes('application/json') || isDraggingInternal;
-
-    // Only show overlay for external drags (files from outside the app)
-    if (e.dataTransfer.types.includes('Files') && !isInternalDrag && !isExternalDragging) {
-      // Only set the state if we're not already dragging
-      setIsExternalDragging(true);
-      // Update file count from dataTransfer.items
-      const fileCount = e.dataTransfer.items.length;
-      // Create placeholder array to show file count
-      setExternalDragItems(Array(fileCount).fill('placeholder'));
-      setExternalDragPosition({ x: e.clientX, y: e.clientY });
-    }
+    setIsExternalDragging(true);
   };
 
   const handleExternalDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setExternalDragPosition({ x: e.clientX, y: e.clientY });
+  };
 
-    if (isExternalDragging) {
-      setExternalDragPosition({ x: e.clientX, y: e.clientY });
+  const handleExternalDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target) {
+      setIsExternalDragging(false);
+      setExternalDragPosition(null);
     }
   };
 
   const handleExternalDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-
-    if (!isExternalDragging) return;
-
-    // 保存当前选择的操作
-    const action = hoveredDropAction;
-
-    // 立即隐藏拖拽覆盖界面
     setIsExternalDragging(false);
-    setExternalDragItems([]);
     setExternalDragPosition(null);
-    setHoveredDropAction(null);
 
-    // 如果没有悬停在复制区域，不执行任何操作
-    if (!action) {
-      logDebug('[ExternalDrag] notHoveringOnCopyZone');
-      return;
-    }
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
 
-    try {
-      // In Tauri, we cannot get full file paths from external drag events
-      // Instead, we need to read the file contents and write them to the destination
-      const files = Array.from(e.dataTransfer.files);
-
-      if (files.length === 0) {
-        console.warn('[ExternalDrag] No files found in drag event');
-        return;
-      }
-
-      // 执行复制操作
+    if (hoveredDropAction === 'copy') {
       await handleExternalCopyFiles(files);
-    } catch (error) {
-      console.error('Error handling external drop:', error);
-      showToast(t('errors.dropFailed'));
+    } else {
+      await handleExternalMoveFiles(files);
     }
   };
 
-  const handleExternalDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Check if the mouse is actually leaving the window
-    // by checking if the relatedTarget is null or outside the document
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setIsExternalDragging(false);
-      setExternalDragItems([]);
-      setExternalDragPosition(null);
-      setHoveredDropAction(null);
-
-      // 检查是否拖拽到了外部
-      handleWindowDragLeave();
-    }
-  };
-
-  // External file operations - using File objects instead of paths
-  const handleExternalCopyFiles = async (files: File[]) => {
-    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
-    if (!activeTab || !activeTab.folderId) return;
-
-    const targetFolder = state.files[activeTab.folderId];
-    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
-
-    // Start background task
-    // Start background task - provide a dummy array of correct length to ensure total is initialized correctly
-    const dummyItems = new Array(files.length).fill('external-file');
-    const taskId = startTask('copy', dummyItems, t('tasks.copying'), false);
-    updateTask(taskId, { current: 0 });
-
-    try {
-
-      logInfo('[ExternalCopy] Starting copy operation', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
-
-      // Save folder ID to local variable for use in async operations
-      const targetFolderId = activeTab.folderId;
-
-      // Process each file individually - copy, scan, and update UI immediately after each file
-      let current = 0;
-      for (const file of files) {
-        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
-
-        try {
-          // Read file content as ArrayBuffer
-          const arrayBuffer = await file.arrayBuffer();
-          const bytes = new Uint8Array(arrayBuffer);
-
-          // Write file to destination
-          logDebug('[ExternalCopy] copyingFile', { fileName: file.name, destPath });
-          await writeFileFromBytes(destPath, bytes);
-          logInfo('[ExternalCopy] fileCopied');
-
-          // Scan the new file immediately
-          logDebug('[ExternalCopy] scanningNewFile', { fileName: file.name });
-          const scannedFile = await scanFile(destPath, targetFolderId);
-
-          // Update state with the new file immediately after copying and scanning
-          setState(prev => {
-            const newFiles = { ...prev.files };
-            const existingFile = prev.files[scannedFile.id];
-
-            if (existingFile) {
-              // Merge preserving user data
-              newFiles[scannedFile.id] = {
-                ...scannedFile,
-                tags: existingFile.tags,
-                description: existingFile.description,
-                url: existingFile.url,
-                aiData: existingFile.aiData,
-                sourceUrl: existingFile.sourceUrl,
-                author: existingFile.author,
-                category: existingFile.category
-              };
-            } else {
-              // New file, add it
-              newFiles[scannedFile.id] = scannedFile;
-            }
-
-            // Update target folder's children list
-            const currentFolder = newFiles[targetFolderId];
-            if (currentFolder) {
-              const existingChildren = currentFolder.children || [];
-              if (!existingChildren.includes(scannedFile.id)) {
-                newFiles[targetFolderId] = {
-                  ...currentFolder,
-                  children: [...existingChildren, scannedFile.id]
-                };
-              }
-            }
-
-            return { ...prev, files: newFiles };
-          });
-        } catch (error) {
-          console.error(`[ExternalCopy] Failed to copy or scan file ${file.name}:`, error);
-          // Continue with other files even if one fails
-        } finally {
-          // Update task progress after each file is processed (whether successful or not)
-          current++;
-          updateTask(taskId, { current });
-        }
-      }
-
-      // Complete task
-      updateTask(taskId, { status: 'completed', current: files.length });
-
-      // Show success toast
-      showToast(t('context.copied'));
-
-      // Auto-remove task after 1 second
-      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-      logInfo('[ExternalCopy] completed');
-    } catch (error) {
-      console.error('[ExternalCopy] Failed to copy external items:', error);
-      updateTask(taskId, { status: 'completed' });
-      showToast(t('errors.copyFailed'));
-
-      // Auto-remove task after 1 second
-      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-    }
-  };
-
-  const handleExternalMoveFiles = async (files: File[], dataTransfer?: DataTransfer) => {
-    const activeTab = state.tabs.find(tab => tab.id === state.activeTabId);
-    if (!activeTab || !activeTab.folderId) return;
-
-    const targetFolder = state.files[activeTab.folderId];
-    if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
-
-    // Start background task
-    const taskId = startTask('move', [], t('tasks.moving'), false);
-    updateTask(taskId, { total: files.length, current: 0 });
-
-    try {
-
-      logInfo('[ExternalMove] Starting move operation', { fileCount: files.length, targetFolder: targetFolder.name, targetPath: targetFolder.path });
-
-      // First copy files to destination
-      let current = 0;
-      for (const file of files) {
-        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
-
-        // Read file content as ArrayBuffer
-        const arrayBuffer = await file.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuffer);
-
-        // Write file to destination
-        logDebug('[ExternalMove] movingFile', { fileName: file.name, destPath });
-        await writeFileFromBytes(destPath, bytes);
-        logInfo('[ExternalMove] fileMoved');
-
-        // Update task progress
-        current++;
-        updateTask(taskId, { current });
-      }
-
-      logDebug('[ExternalMove] scanningNewFilesIndividually');
-      // Scan only the new files individually instead of scanning entire directory
-      // This is much faster for large directories
-
-      // Save folder ID to local variable for use in async operations
-      const targetFolderId = activeTab.folderId;
-
-      // Scan each new file individually
-      for (const file of files) {
-        const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
-        try {
-          const scannedFile = await scanFile(destPath, targetFolderId);
-
-          // Update state with the new file
-          setState(prev => {
-            const newFiles = { ...prev.files };
-            const existingFile = prev.files[scannedFile.id];
-
-            if (existingFile) {
-              // Merge preserving user data
-              newFiles[scannedFile.id] = {
-                ...scannedFile,
-                tags: existingFile.tags,
-                description: existingFile.description,
-                url: existingFile.url,
-                aiData: existingFile.aiData,
-                sourceUrl: existingFile.sourceUrl,
-                author: existingFile.author,
-                category: existingFile.category
-              };
-            } else {
-              // New file, add it
-              newFiles[scannedFile.id] = scannedFile;
-            }
-
-            // Update target folder's children list
-            const currentFolder = newFiles[targetFolderId];
-            if (currentFolder) {
-              const existingChildren = currentFolder.children || [];
-              if (!existingChildren.includes(scannedFile.id)) {
-                newFiles[targetFolderId] = {
-                  ...currentFolder,
-                  children: [...existingChildren, scannedFile.id]
-                };
-              }
-            }
-
-            return { ...prev, files: newFiles };
-          });
-        } catch (error) {
-          console.error(`[ExternalMove] Failed to scan file ${file.name}:`, error);
-          // Continue with other files even if one fails
-        }
-      }
-
-      // Show success toast
-      // Show success toast
-      showToast(t('context.moved'));
-      logInfo('[ExternalMove] completed');
-    } catch (error) {
-      console.error('[ExternalMove] Failed to move external items:', error);
-      // Complete task
-      updateTask(taskId, { status: 'completed' });
-
-      // Show error toast
-      showToast(t('errors.moveFailed'));
-
-      // Auto-remove task after 1 second
-      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-    }
-  };
-
-  const handleDropOnFolder = async (targetFolderId: string, sourceIds: string[]) => {
-    // 过滤掉目标文件夹本身和无效的ID
-    const validIds = sourceIds.filter(id => id !== targetFolderId && state.files[id]);
-
-    if (validIds.length === 0) {
-      return;
-    }
-
-    // 检查目标是否是文件夹
-    const targetFolder = state.files[targetFolderId];
-    if (!targetFolder || targetFolder.type !== FileType.FOLDER) {
-      return;
-    }
-
-    // 检查是否所有文件都已经在目标文件夹中
-    const allFilesInTarget = validIds.every(id => {
-      const file = state.files[id];
-      return file && file.parentId === targetFolderId;
-    });
-
-    if (allFilesInTarget) {
-      return;
-    }
-
-    // 过滤掉已经在目标文件夹中的文件
-    const filesToMove = validIds.filter(id => {
-      const file = state.files[id];
-      return file && file.parentId !== targetFolderId;
-    });
-
-    if (filesToMove.length === 0) {
-      return;
-    }
-
-    // 调用已有的handleMoveFiles函数
-    await handleMoveFiles(filesToMove, targetFolderId);
-  };
-
-  const handleBatchRename = async (pattern: string, startNum: number) => {
-    const selectedIds = activeTab.selectedFileIds;
-    if (selectedIds.length === 0) return;
-
-    // Sort selected IDs to match display order
-    const sortedIds = [...selectedIds].sort((a, b) => {
-      const indexA = displayFileIds.indexOf(a);
-      const indexB = displayFileIds.indexOf(b);
-      return (indexA === -1 ? 999999 : indexA) - (indexB === -1 ? 999999 : indexB);
-    });
-
-    const taskId = startTask('move', sortedIds, t('tasks.renaming'), false);
-    let current = 0;
-
-    // Use asyncPool to limit concurrency if needed, or loop sequentially
-    // Renaming is fast, sequential is safer for order
-    for (let i = 0; i < sortedIds.length; i++) {
-      const id = sortedIds[i];
-      const file = state.files[id];
-      if (!file) continue;
-
-      const ext = file.name.includes('.') ? file.name.split('.').pop() : '';
-      const num = startNum + i;
-
-      // Replace # with numbers
-      let newNameBase = pattern.replace(/#+/g, (match) => {
-        return num.toString().padStart(match.length, '0');
-      });
-
-      const newName = ext ? `${newNameBase}.${ext}` : newNameBase;
-
-      if (newName !== file.name) {
-        try {
-          const sep = file.path.includes('\\') ? '\\' : '/';
-          const parentDir = file.path.substring(0, file.path.lastIndexOf(sep));
-          const newPath = `${parentDir}${sep}${newName}`;
-
-          await renameFile(file.path, newPath);
-          handleUpdateFile(id, { name: newName, path: newPath });
-        } catch (e) {
-          console.error(`Failed to rename ${file.name}`, e);
-          showToast(`${t('error.renameFailed')}: ${file.name}`);
-        }
-      }
-      current++;
-      updateTask(taskId, { current });
-    }
-
-    updateTask(taskId, { status: 'completed', current: sortedIds.length });
-
-    // Close modal
-    setState(s => ({ ...s, activeModal: { type: null } }));
-  };
+  // Helper function to limit concurrency
+  // Moved to src/utils/async.ts
 
   const handleCopyImageToClipboard = async (fileId: string) => {
     const file = state.files[fileId];
@@ -2762,7 +1513,7 @@ export const App: React.FC = () => {
       });
 
       if (updated) {
-        // 一次性更新人物的count
+        // 一锟斤拷锟皆革拷锟斤拷锟斤拷锟斤拷锟絚ount
         newPeople[personId] = {
           ...person,
           count: person.count + countIncrease,
@@ -2891,26 +1642,26 @@ export const App: React.FC = () => {
       const newPeople = { ...prev.people };
       let updated = false;
 
-      // 首先收集所有要清除的人脸所属的人物ID
+      // 锟斤拷锟斤拷锟秸硷拷锟斤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟絀D
       const personIdsToUpdate = new Set<string>();
 
-      // 清除文件的人脸信息
+      // 锟斤拷锟斤拷募锟斤拷锟斤拷锟斤拷锟斤拷锟较?
       fileIds.forEach(fid => {
         const file = newFiles[fid];
         if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
           let updatedFaces: AiFace[];
 
           if (personIdsToClear && personIdsToClear.length > 0) {
-            // 选择性清除指定人物的人脸信息
+            // 选锟斤拷锟斤拷锟斤拷锟街革拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷息
             updatedFaces = file.aiData.faces.filter(face => !personIdsToClear.includes(face.personId));
           } else {
-            // 清除所有人脸信息
+            // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟较?
             updatedFaces = [];
           }
 
-          // 检查是否有变化
+          // 锟斤拷锟斤拷欠锟斤拷斜浠?
           if (updatedFaces.length !== file.aiData.faces.length) {
-            // 保存要更新的人物ID
+            // 锟斤拷锟斤拷要锟斤拷锟铰碉拷锟斤拷锟斤拷ID
             file.aiData.faces.forEach(face => {
               personIdsToUpdate.add(face.personId);
             });
@@ -2918,7 +1669,7 @@ export const App: React.FC = () => {
               personIdsToUpdate.add(face.personId);
             });
 
-            // 更新人脸信息
+            // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷息
             const newAiData = { ...file.aiData, faces: updatedFaces };
             newFiles[fid] = { ...file, aiData: newAiData };
             updated = true;
@@ -2926,12 +1677,12 @@ export const App: React.FC = () => {
         }
       });
 
-      // 更新受影响人物的count
+      // 锟斤拷锟斤拷锟斤拷影锟斤拷锟斤拷锟斤拷锟絚ount
       if (updated) {
-        // 重新计算所有受影响人物的count
+        // 锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷影锟斤拷锟斤拷锟斤拷锟絚ount
         personIdsToUpdate.forEach(personId => {
           let newCount = 0;
-          // 遍历所有文件，计算包含该人物的文件数量
+          // 锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷锟斤拷锟斤拷
           Object.values(newFiles).forEach(file => {
             if (file.type === FileType.IMAGE && file.aiData?.faces) {
               if (file.aiData.faces.some(face => face.personId === personId)) {
@@ -2939,7 +1690,7 @@ export const App: React.FC = () => {
               }
             }
           });
-          // 更新人物count
+          // 锟斤拷锟斤拷锟斤拷锟斤拷count
           if (newPeople[personId]) {
             newPeople[personId] = { ...newPeople[personId], count: newCount };
           }
@@ -2978,7 +1729,7 @@ export const App: React.FC = () => {
   const handleSaveAvatarCrop = (personId: string, box: { x: number, y: number, w: number, h: number, imageId?: string | null }) => {
     const updates: Partial<Person> = { faceBox: box };
 
-    // 如果选择了新的图片，更新coverFileId
+    // 锟斤拷锟窖★拷锟斤拷锟斤拷碌锟酵计拷锟斤拷锟斤拷锟絚overFileId
     if (box.imageId) {
       updates.coverFileId = box.imageId;
     }
@@ -2990,16 +1741,16 @@ export const App: React.FC = () => {
 
   const toggleSettings = () => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }));
 
-  const handleChangePath = async (type: 'resource') => {
+  const handleChangePath = async (type: 'resource' | 'cache') => {
     try {
       const selectedPath = await openDirectory();
       if (!selectedPath) {
         return;
       }
 
-      // 确保缓存目录存在（在资源根目录下创建 .Aurora_Cache 文件夹）
+      // 确锟斤拷锟斤拷锟斤拷目录锟斤拷锟节ｏ拷锟斤拷锟斤拷源锟斤拷目录锟铰达拷锟斤拷 .Aurora_Cache 锟侥硷拷锟叫ｏ拷
       if (isTauriEnvironment()) {
-        // 计算缓存路径
+        // 锟斤拷锟姐缓锟斤拷路锟斤拷
         const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
         await ensureDirectory(cachePath);
       }
@@ -3009,7 +1760,7 @@ export const App: React.FC = () => {
         paths: {
           ...state.settings.paths,
           resourceRoot: selectedPath,
-          // 清除 cacheRoot，因为现在它总是从 resourceRoot 计算
+          // 锟斤拷锟?cacheRoot锟斤拷锟斤拷为锟斤拷锟斤拷锟斤拷锟斤拷锟角达拷 resourceRoot 锟斤拷锟斤拷
           cacheRoot: ''
         }
       };
@@ -3055,10 +1806,10 @@ export const App: React.FC = () => {
         };
       });
 
-      // 重要：在扫描目录并更新 state 后，再保存数据
-      // 使用扫描结果中的路径，确保包含新设置的目录
+      // 锟斤拷要锟斤拷锟斤拷扫锟斤拷目录锟斤拷锟斤拷锟斤拷 state 锟斤拷锟劫憋拷锟斤拷锟斤拷锟斤拷
+      // 使锟斤拷扫锟斤拷锟斤拷锟叫碉拷路锟斤拷锟斤拷确锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟矫碉拷目录
       const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
-      // 如果扫描结果中没有路径，使用 selectedPath
+      // 锟斤拷锟缴拷锟斤拷锟斤拷锟矫伙拷锟铰凤拷锟斤拷锟绞癸拷锟?selectedPath
       const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
 
       const dataToSave = {
@@ -3122,10 +1873,10 @@ export const App: React.FC = () => {
     setState(prev => {
       const newFolderSettings = { ...prev.folderSettings };
       if (isCurrentlySaved) {
-        // 如果已存在，删除（切换关闭）
+        // 锟斤拷锟斤拷汛锟斤拷冢锟缴撅拷锟斤拷锟斤拷谢锟斤拷乇眨锟?
         delete newFolderSettings[folderId];
       } else {
-        // 如果不存在，添加（切换开启）
+        // 锟斤拷锟斤拷锟斤拷锟斤拷冢锟斤拷锟斤拷樱锟斤拷谢锟斤拷锟斤拷锟斤拷锟?
         newFolderSettings[folderId] = settings;
       }
       return { ...prev, folderSettings: newFolderSettings };
@@ -3134,8 +1885,8 @@ export const App: React.FC = () => {
     showToast(isCurrentlySaved ? t('folderSettings.remember') : t('folderSettings.saved'));
   };
 
-  // 监听文件夹变化，自动应用保存的设置
-  // 使用 ref 来避免将 folderSettings 加入依赖导致死循环
+  // 锟斤拷锟斤拷锟侥硷拷锟叫变化锟斤拷锟皆讹拷应锟矫憋拷锟斤拷锟斤拷锟斤拷锟?
+  // 使锟斤拷 ref 锟斤拷锟斤拷锟解将 folderSettings 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷循锟斤拷
   const folderSettingsRef = useRef(state.folderSettings);
   useEffect(() => {
     folderSettingsRef.current = state.folderSettings;
@@ -3147,7 +1898,7 @@ export const App: React.FC = () => {
     const savedSettings = folderSettingsRef.current[folderId];
 
     if (savedSettings) {
-      // 检查是否需要更新，避免无限循环
+      // 锟斤拷锟斤拷欠锟斤拷锟揭拷锟斤拷拢锟斤拷锟斤拷锟斤拷锟斤拷锟窖拷锟?
       let hasChanges = false;
       if (activeTab.layoutMode !== savedSettings.layoutMode) hasChanges = true;
       if (state.sortBy !== savedSettings.sortBy) hasChanges = true;
@@ -3166,7 +1917,7 @@ export const App: React.FC = () => {
     }
   }, [activeTab.folderId, activeTab.id, activeTab.viewMode]);
 
-  // 监听设置变化，同步更新已保存的文件夹设置
+  // 锟斤拷锟斤拷锟斤拷锟矫变化锟斤拷同锟斤拷锟斤拷锟斤拷锟窖憋拷锟斤拷锟斤拷募锟斤拷锟斤拷锟斤拷锟?
   useEffect(() => {
     if (activeTab.viewMode !== 'browser') return;
     const folderId = activeTab.folderId;
@@ -3224,7 +1975,7 @@ export const App: React.FC = () => {
       id,
       parentId,
       name: name || t('context.newTopicDefault') || 'New Topic',
-      // 默认类型为 TOPIC（若传入 type 则截断到 12 字）
+      // 默锟斤拷锟斤拷锟斤拷为 TOPIC锟斤拷锟斤拷锟斤拷锟斤拷 type 锟斤拷囟系锟?12 锟街ｏ拷
       type: type ? type.slice(0, 12) : 'TOPIC',
       peopleIds: [],
       fileIds: [],
@@ -3259,7 +2010,7 @@ export const App: React.FC = () => {
         ? prev.expandedFolderIds.filter(fid => fid !== id)
         : [...prev.expandedFolderIds, id];
 
-      // 检查数组是否真的发生了变化 - 比较长度和内容
+      // 锟斤拷锟斤拷锟斤拷锟斤拷欠锟斤拷锟侥凤拷锟斤拷锟剿变化 - 锟饺较筹拷锟饺猴拷锟斤拷锟斤拷
       if (newExpandedIds.length === prev.expandedFolderIds.length &&
         newExpandedIds.every(id => prev.expandedFolderIds.includes(id))) {
         return prev;
@@ -3524,10 +2275,10 @@ export const App: React.FC = () => {
     }
   };
 
-  // 替换 App.tsx 中的 onPerformSearch
+  // 锟芥换 App.tsx 锟叫碉拷 onPerformSearch
   const onPerformSearch = async (query: string) => {
 
-    // 1. 颜色搜索逻辑
+    // 1. 锟斤拷色锟斤拷锟斤拷锟竭硷拷
     if (query.startsWith('color:')) {
       let hex = query.replace('color:', '').trim();
       if (hex.startsWith('#')) hex = hex.substring(1);
@@ -3563,7 +2314,7 @@ export const App: React.FC = () => {
           }
         });
 
-        // 加载缺失文件
+        // 锟斤拷锟斤拷缺失锟侥硷拷
         if (missingPaths.length > 0) {
           await asyncPool(10, missingPaths, async (path) => {
             try {
@@ -3576,7 +2327,7 @@ export const App: React.FC = () => {
           });
         }
 
-        // 更新 State
+        // 锟斤拷锟斤拷 State
         if (Object.keys(newFilesMap).length > 0) {
           setState(prev => ({
             ...prev,
@@ -3608,7 +2359,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 1.5 氛围/色板搜索逻辑 (Palette)
+    // 1.5 锟斤拷围/色锟斤拷锟斤拷锟斤拷锟竭硷拷 (Palette)
     if (query.startsWith('palette:')) {
       const rawPalette = query.replace('palette:', '').trim();
       if (!rawPalette) return;
@@ -3636,7 +2387,7 @@ export const App: React.FC = () => {
           return clean.toLowerCase();
         };
 
-        // 1. 先在内存中查找
+        // 1. 锟斤拷锟斤拷锟节达拷锟叫诧拷锟斤拷
         results.forEach(rustPath => {
           const normRust = normalize(rustPath);
           const match = allFiles.find(f => {
@@ -3651,10 +2402,10 @@ export const App: React.FC = () => {
           }
         });
 
-        // 2. 对于内存中没有的文件，尝试按需扫描
+        // 2. 锟斤拷锟斤拷锟节达拷锟斤拷没锟叫碉拷锟侥硷拷锟斤拷锟斤拷锟皆帮拷锟斤拷扫锟斤拷
         if (missingPaths.length > 0) {
-          // showToast(`正在加载额外的 ${missingPaths.length} 个文件...`);
-          // 并发扫描，限制并发数
+          // showToast(`锟斤拷锟节硷拷锟截讹拷锟斤拷锟?${missingPaths.length} 锟斤拷锟侥硷拷...`);
+          // 锟斤拷锟斤拷扫锟借，锟斤拷锟狡诧拷锟斤拷锟斤拷
           await asyncPool(10, missingPaths, async (path) => {
             try {
               const node = await scanFile(path);
@@ -3663,13 +2414,13 @@ export const App: React.FC = () => {
                 validPaths.push(node.path);
               }
             } catch (e) {
-              // 忽略扫描失败的文件
+              // 锟斤拷锟斤拷扫锟斤拷失锟杰碉拷锟侥硷拷
               console.warn('Failed to load search result file:', path);
             }
           });
         }
 
-        // 3. 如果有新加载的文件，更新到全局 state
+        // 3. 锟斤拷锟斤拷锟斤拷录锟斤拷氐锟斤拷募锟斤拷锟斤拷锟斤拷碌锟饺拷锟?state
         if (Object.keys(newFilesMap).length > 0) {
           setState(prev => ({
             ...prev,
@@ -3678,7 +2429,7 @@ export const App: React.FC = () => {
         }
 
         if (validPaths.length === 0 && results.length > 0) {
-          // 此时真的是找不到或者读不到了
+          // 锟斤拷时锟斤拷锟斤拷锟斤拷也锟斤拷锟斤拷锟斤拷叨锟斤拷锟斤拷锟斤拷锟?
           showToast(t('errors.fileNotFound'));
         }
 
@@ -3708,7 +2459,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 2. 原有的普通搜索逻辑
+    // 2. 原锟叫碉拷锟斤拷通锟斤拷锟斤拷锟竭硷拷
     if (state.settings.search.isAISearchEnabled) {
       await performAiSearch(query);
     } else {
@@ -3727,144 +2478,10 @@ export const App: React.FC = () => {
   const handleClearAllTags = () => updateActiveTab({ activeTags: [] });
   const handleClearPersonFilter = () => updateActiveTab({ activePersonId: null });
 
-  const handleRenameSubmit = async (value: string, id: string) => {
-    value = value.trim();
-    const file = state.files[id];
-    if (!value || value === file.name) { setState(s => ({ ...s, renamingId: null })); return; }
-    if (file.path) {
-      try {
-        const separator = file.path.includes('/') ? '/' : '\\';
-        const parentPath = file.path.substring(0, file.path.lastIndexOf(separator));
-        const newPath = `${parentPath}${separator}${value}`;
-
-        // Use appropriate renameFile function based on environment
-        const isTauriEnv = isTauriEnvironment();
-        if (isTauriEnv) {
-          await renameFile(file.path, newPath);
-        } else {
-          throw new Error("No file system access available");
-        }
-
-        await handleRefresh();
-        setState(s => ({ ...s, renamingId: null }));
-      } catch (e) {
-        console.error("Rename failed", e);
-        showToast("Rename failed");
-      }
-    } else {
-      handleUpdateFile(id, { name: value });
-      setState(s => ({ ...s, renamingId: null }));
-    }
-  };
-
-  const requestDelete = (ids: string[]) => {
-    const filesToDelete = ids.map(id => state.files[id]).filter(Boolean);
-    if (filesToDelete.length === 0) return;
-    const taskId = Math.random().toString(36).substr(2, 9);
-    const newTask: DeletionTask = { id: taskId, files: filesToDelete };
-    setState(prev => {
-      const newFiles = { ...prev.files };
-      ids.forEach(id => {
-        const file = newFiles[id];
-        if (file && file.parentId && newFiles[file.parentId]) {
-          const parent = newFiles[file.parentId];
-          newFiles[file.parentId] = { ...parent, children: parent.children?.filter(cid => cid !== id) };
-        }
-        delete newFiles[id];
-      });
-
-      const updatedTabs = prev.tabs.map(t => {
-        // 如果当前标签页正在查看被删除的文件，清除 viewingFileId
-        const isViewingDeletedFile = t.viewingFileId && ids.includes(t.viewingFileId);
-        return {
-          ...t,
-          selectedFileIds: t.selectedFileIds.filter(fid => !ids.includes(fid)),
-          viewingFileId: isViewingDeletedFile ? null : t.viewingFileId
-        };
-      });
-
-      return { ...prev, files: newFiles, tabs: updatedTabs };
-    });
-    setDeletionTasks(prev => [...prev, newTask]);
-  };
-
-  const undoDelete = (taskId: string) => {
-    const task = deletionTasks.find(t => t.id === taskId);
-    if (!task) return;
-    setState(prev => {
-      const newFiles = { ...prev.files };
-      task.files.forEach(file => {
-        newFiles[file.id] = file;
-        if (file.parentId && newFiles[file.parentId]) {
-          const parent = newFiles[file.parentId];
-          if (!parent.children?.includes(file.id)) {
-            newFiles[file.parentId] = { ...parent, children: [...(parent.children || []), file.id] };
-          }
-        }
-      });
-      return { ...prev, files: newFiles };
-    });
-    setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
-  };
-
-  const dismissDelete = async (taskId: string) => {
-    const task = deletionTasks.find(t => t.id === taskId);
-    if (task) {
-      for (const file of task.files) {
-        if (file.path) {
-          // Use appropriate deleteFile function based on environment
-          const isTauriEnv = isTauriEnvironment();
-          if (isTauriEnv) {
-            await deleteFile(file.path);
-          } else {
-            throw new Error("No file system access available");
-          }
-        }
-      }
-    }
-    setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
-  };
-
-  const handleContextMenu = (e: React.MouseEvent, type: 'file' | 'tag' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person', id: string) => {
-    e.preventDefault(); e.stopPropagation();
-    let menuType: any = null;
-    if (type === 'file') {
-      if (!activeTab.selectedFileIds.includes(id)) {
-        updateActiveTab({ selectedFileIds: [id], lastSelectedId: id });
-        menuType = state.files[id].type === FileType.FOLDER ? 'folder-single' : 'file-single';
-      } else {
-        if (activeTab.selectedFileIds.length > 1) {
-          // 检查所有选中的项目类型
-          const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
-          const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
-          const allAreFiles = selectedItems.every(item => item && item.type !== FileType.FOLDER);
-
-          if (allAreFolders) {
-            menuType = 'folder-multi';
-          } else if (allAreFiles) {
-            menuType = 'file-multi';
-          } else {
-            // 混合类型，使用 file-multi 作为默认值
-            menuType = 'file-multi';
-          }
-        } else {
-          menuType = state.files[id].type === FileType.FOLDER ? 'folder-single' : 'file-single';
-        }
-      }
-    }
-    else if (type === 'tag') { if (!activeTab.selectedTagIds.includes(id)) { updateActiveTab({ selectedTagIds: [id] }); menuType = 'tag-single'; } else { menuType = activeTab.selectedTagIds.length > 1 ? 'tag-multi' : 'tag-single'; } }
-    else if (type === 'tag-background') { menuType = 'tag-background'; }
-    else if (type === 'root-folder') { menuType = 'root-folder'; }
-    else if (type === 'tab') { menuType = 'tab'; }
-    else if (type === 'person') { menuType = 'person'; }
-    else { if (activeTab.viewMode === 'tags-overview') { menuType = 'tag-background'; } else { menuType = 'background'; } }
-    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, type: menuType, targetId: id });
-  };
-  const closeContextMenu = () => setContextMenu({ ...contextMenu, visible: false });
   const handleNavigateUp = () => {
     if (activeTab.activeTopicId) {
       const currentTopic = state.topics[activeTab.activeTopicId];
-      handleNavigateTopic(currentTopic?.parentId || null);
+      if (currentTopic) handleNavigateTopic(currentTopic.parentId || null);
     } else if (activeTab.activePersonId) {
       enterPeopleOverview();
     } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
@@ -3898,107 +2515,6 @@ export const App: React.FC = () => {
     } else {
       await pauseColorExtraction();
       updateTask(id, { status: 'paused' });
-    }
-  };
-
-  const handleCreateFolder = async (targetId?: string) => {
-    const parentId = targetId || activeTab.folderId;
-    // Check if we're in the root directory (no parent folder)
-    if (!parentId) {
-      // Create folder in root directory
-      const baseName = t('context.newFolder');
-      let name = baseName;
-      let counter = 1;
-
-      // Find all root files to check for name conflicts
-      const rootFiles = state.roots.map(rootId => state.files[rootId]);
-      while (rootFiles.some(file => file?.name === name)) {
-        name = `${baseName} (${counter++})`;
-      }
-
-      // Create new folder in root
-      const newId = Math.random().toString(36).substr(2, 9);
-      const newFolder: FileNode = {
-        id: newId,
-        parentId: null,
-        name,
-        type: FileType.FOLDER,
-        path: '',
-        children: [],
-        tags: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      setState(prev => ({
-        ...prev,
-        files: { ...prev.files, [newId]: newFolder },
-        roots: [...prev.roots, newId],
-        renamingId: newId
-      }));
-      return;
-    }
-
-    const parent = state.files[parentId];
-    if (!parent) return;
-    const baseName = t('context.newFolder');
-    let name = baseName;
-    if (parent.path) {
-      try {
-        let counter = 1;
-        const children = parent.children?.map(id => state.files[id]) || [];
-        while (children.some(c => c.name === name)) { name = `${baseName} (${counter++})`; }
-        const separator = parent.path.includes('/') ? '/' : '\\';
-        const newPath = `${parent.path}${separator}${name}`;
-
-        // Use appropriate createFolder function based on environment
-        const isTauriEnv = isTauriEnvironment();
-        if (isTauriEnv) {
-          await createFolder(newPath);
-        } else {
-          throw new Error("No file system access available");
-        }
-
-        await handleRefresh();
-
-        // Find the newly created folder and set it to renaming state
-        setState(prev => {
-          const parentFolder = prev.files[parentId];
-          if (parentFolder?.children) {
-            // Get all children files
-            const childFiles = parentFolder.children.map(id => prev.files[id]);
-            // Find the folder with the matching name we just created
-            const newFolder = childFiles.find(file => file?.name === name && file?.type === FileType.FOLDER);
-            if (newFolder) {
-              return { ...prev, renamingId: newFolder.id };
-            }
-          }
-          return prev;
-        });
-      } catch (error) { console.error(error); showToast("Error creating folder"); }
-    } else {
-      let counter = 1;
-      const children = parent.children?.map(id => state.files[id]) || [];
-      while (children.some(c => c.name === name)) { name = `${baseName} (${counter++})`; }
-      const newId = Math.random().toString(36).substr(2, 9);
-      const newFolder: FileNode = {
-        id: newId,
-        parentId: parentId,
-        name,
-        type: FileType.FOLDER,
-        path: '',
-        children: [],
-        tags: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setState(prev => {
-        const newFiles = { ...prev.files, [newId]: newFolder };
-        if (newFiles[parentId]) {
-          newFiles[parentId] = { ...newFiles[parentId], children: [...(newFiles[parentId].children || []), newId] };
-        }
-        return { ...prev, files: newFiles, renamingId: newId };
-      });
     }
   };
 
@@ -4181,15 +2697,15 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 确保路径是绝对路径
+    // 确锟斤拷路锟斤拷锟角撅拷锟斤拷路锟斤拷
     const targetPath = file.path;
     logDebug('[App] handleViewInExplorer', { id, path: targetPath, type: file.type, name: file.name });
 
     try {
       if (isTauriEnvironment()) {
-        // Tauri 环境：使用 openPath API
+        // Tauri 锟斤拷锟斤拷锟斤拷使锟斤拷 openPath API
         const { openPath } = await import('./api/tauri-bridge');
-        // 传入 isFile 参数：非文件夹都是文件，需要选中；文件夹直接打开
+        // 锟斤拷锟斤拷 isFile 锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷锟叫讹拷锟斤拷锟侥硷拷锟斤拷锟斤拷要选锟叫ｏ拷锟侥硷拷锟斤拷直锟接达拷
         const isFile = file.type !== FileType.FOLDER;
         logDebug('[App] callingOpenPath', { path: targetPath, isFile });
         await openPath(targetPath, isFile);
@@ -4243,39 +2759,10 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.tabs, state.activeTabId, handleSwitchTab, handleCloseTab, handleNewTab, handleRefresh, activeTab.selectedFileIds, requestDelete]);
 
-  // Context menu close handlers
-  useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (contextMenu.visible) {
-        // 获取菜单元素
-        const menuElement = document.querySelector('.fixed.bg-white[data-testid="context-menu"]');
-        // 使用data-testid选择器代替复杂的CSS类选择器，避免语法错误
-        // 检查点击是否在菜单内部
-        if (!menuElement || !menuElement.contains(e.target as Node)) {
-          closeContextMenu();
-        }
-      }
-    };
-
-    const handleWheel = () => {
-      if (contextMenu.visible) {
-        closeContextMenu();
-      }
-    };
-
-    // 使用冒泡阶段，确保菜单内部点击能正常处理
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('wheel', handleWheel, true);
-
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('wheel', handleWheel, true);
-    };
-  }, [contextMenu.visible, closeContextMenu]);
   const handleCloseAllTabs = () => { /* ... */ };
   const handleCloseOtherTabs = (id: string) => { /* ... */ };
 
-  // 递归获取所有子文件夹ID
+  // 锟捷癸拷锟饺★拷锟斤拷锟斤拷锟斤拷募锟斤拷锟絀D
   const getAllSubFolderIds = (folderId: string): string[] => {
     const folder = state.files[folderId];
     if (!folder || folder.type !== FileType.FOLDER || !folder.children) {
@@ -4311,967 +2798,6 @@ export const App: React.FC = () => {
     }));
   };
 
-  const handleAIAnalysis = async (fileIds: string | string[], folderId?: string) => {
-    // Convert single fileId to array
-    const idsToProcess = typeof fileIds === 'string' ? [fileIds] : fileIds;
-
-    // Filter out non-image files
-    const imageFileIds = idsToProcess.filter(id => {
-      const file = state.files[id];
-      return file && file.type === FileType.IMAGE;
-    });
-
-    const aiConfig = state.settings.ai;
-    const targetLanguage = state.settings.language === 'zh' ? 'Simplified Chinese' : 'English';
-
-    // If no image files to analyze but folderId is provided, generate summary directly
-    if (imageFileIds.length === 0 && folderId) {
-      // Create a task for folder AI analysis
-      const taskId = startTask('ai', [], t('tasks.aiAnalysis'), false);
-      updateTask(taskId, { total: 5, current: 0 }); // 5 steps for folder analysis
-
-      // Step 1: Get all image files in the folder
-      const getAllImageFilesInFolder = (folderId: string): string[] => {
-        const folder = state.files[folderId];
-        if (!folder) return [];
-
-        let fileIds: string[] = [];
-
-        if (folder.children) {
-          for (const childId of folder.children) {
-            const child = state.files[childId];
-            if (child) {
-              if (child.type === FileType.FOLDER) {
-                // Recursively get files from subfolders
-                fileIds = [...fileIds, ...getAllImageFilesInFolder(childId)];
-              } else if (child.type === FileType.IMAGE) {
-                // Add image file to list
-                fileIds.push(childId);
-              }
-            }
-          }
-        }
-
-        return fileIds;
-      };
-
-      const allFolderImageIds = getAllImageFilesInFolder(folderId);
-      if (allFolderImageIds.length === 0) {
-        setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-        return;
-      }
-
-      // Step 2: Prepare all descriptions and extracted text from already analyzed images
-      updateTask(taskId, { current: 2, currentStep: t('tasks.preparingData') });
-      const allResults: { description: string; translatedText?: string; extractedText: string }[] = [];
-
-      for (const fileId of allFolderImageIds) {
-        const file = state.files[fileId];
-        if (file && file.aiData?.analyzed) {
-          allResults.push({
-            description: file.aiData.description || '',
-            translatedText: file.aiData.translatedText,
-            extractedText: file.aiData.extractedText || ''
-          });
-        }
-      }
-
-      if (allResults.length === 0) {
-        setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-        return;
-      }
-
-      // Step 3: Generate summary directly
-      updateTask(taskId, { current: 3, currentStep: t('tasks.generatingSummary') });
-      const folder = state.files[folderId];
-      if (folder) {
-        // Prepare all descriptions, translated text, and extracted text for AI story generation
-        const allDescriptions = allResults
-          .filter(r => r.description)
-          .map(r => r.description)
-          .filter(Boolean)
-          .join('\n\n');
-
-        const allTranslatedText = allResults
-          .filter(r => r.translatedText)
-          .map(r => r.translatedText)
-          .filter(Boolean)
-          .join('\n\n');
-
-        const allExtractedText = allResults
-          .filter(r => r.extractedText)
-          .map(r => r.extractedText)
-          .filter(Boolean)
-          .join('\n\n');
-
-        if (allDescriptions || allTranslatedText || allExtractedText) {
-          let summary = '';
-
-          // Create prompt for AI analysis generation
-          const analysisPrompt = `Based on the following image descriptions, translated text, and extracted text, provide a detailed analysis and summary of the content. Your output must be in ${targetLanguage}.\n\nPlease include the following elements:\n1. Overall story or narrative connecting the images\n2. Key characters and their actions\n3. Important plot points or events\n4. If there is any extracted text or dialogue, mention the key quotes and provide a brief analysis of their significance\n5. If there are translated texts, analyze their content and significance\n6. The overall theme or message conveyed by the images\n\nImage Descriptions:\n${allDescriptions || 'No descriptions available'}\n\nTranslated Text (if any):\n${allTranslatedText || 'No translated text available'}\n\nExtracted Text (if any):\n${allExtractedText || 'No text extracted from images'}\n\nComprehensive Analysis:`;
-
-          try {
-            // Step 4: Call AI API for summary generation
-            updateTask(taskId, { current: 4, currentStep: t('tasks.aiAnalyzing') });
-            let result: any = null;
-
-            if (aiConfig.provider === 'openai') {
-              const body = {
-                model: aiConfig.openai.model,
-                messages: [{ role: "user", content: analysisPrompt }],
-                max_tokens: 1500,
-                temperature: 0.7
-              };
-              try {
-                const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
-                  body: JSON.stringify(body)
-                });
-                const resData = await res.json();
-                if (resData?.choices?.[0]?.message?.content) {
-                  summary = resData.choices[0].message.content;
-                }
-              } catch (e) {
-                console.error('AI analysis failed:', e);
-              }
-            } else if (aiConfig.provider === 'ollama') {
-              const body = {
-                model: aiConfig.ollama.model,
-                prompt: analysisPrompt,
-                stream: false,
-                temperature: 0.7
-              };
-              try {
-                const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body)
-                });
-                const resData = await res.json();
-                if (resData?.response) {
-                  summary = resData.response;
-                }
-              } catch (e) {
-                console.error('AI analysis failed:', e);
-              }
-            } else if (aiConfig.provider === 'lmstudio') {
-              let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
-              // LM Studio API may use different endpoints depending on the model
-              const body = {
-                model: aiConfig.lmstudio.model,
-                prompt: analysisPrompt,
-                max_tokens: 1500,
-                temperature: 0.7,
-                stream: false
-              };
-
-              // Try multiple endpoints that LM Studio might support
-              const endpointsToTry = ['/chat/completions', '/v1/chat/completions', '/generate', '/v1/generate'];
-              let success = false;
-
-              for (const apiEndpoint of endpointsToTry) {
-                try {
-                  const res = await fetch(`${endpoint}${apiEndpoint}`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(apiEndpoint.includes('chat') ? {
-                      model: aiConfig.lmstudio.model,
-                      messages: [{ role: "user", content: analysisPrompt }],
-                      max_tokens: 1500,
-                      temperature: 0.7,
-                      stream: false
-                    } : body)
-                  });
-                  const resData = await res.json();
-
-                  if (resData && !resData.error) {
-                    if (resData.choices?.[0]?.message?.content) {
-                      summary = resData.choices[0].message.content;
-                      success = true;
-                      break;
-                    } else if (resData.response) {
-                      // Some LM Studio models might return response directly
-                      summary = resData.response;
-                      success = true;
-                      break;
-                    }
-                  }
-                } catch (error) {
-                  console.error(`LM Studio API Error with ${apiEndpoint}:`, error);
-                }
-              }
-
-              if (!success) {
-                console.error('All LM Studio API endpoints failed');
-              }
-            }
-
-            // If AI failed to generate analysis, create a concise summary instead of just listing
-            if (!summary) {
-              const isChinese = state.settings.language === 'zh';
-
-              // Create a concise summary by combining all descriptions, translated text, and extracted text
-              const combinedContent = [
-                ...allResults.filter(r => r.description).map(r => r.description),
-                ...allResults.filter(r => r.translatedText).map(r => r.translatedText),
-                ...(allExtractedText ? [allExtractedText] : [])
-              ].join(' ');
-
-              // Simple summarization approach: extract key points
-              const sentences = combinedContent.split(/[.!?。！？]+/).filter(s => s.trim().length > 10);
-              const keySentences = sentences.slice(0, 5); // Take first 5 meaningful sentences
-
-              summary = isChinese ? `## 图片分析汇总\n\n` : `## Image Analysis Summary\n\n`;
-              summary += isChinese ? `基于对文件夹内图片的分析，以下是主要内容：\n\n` : `Based on the analysis of images in this folder, here's the main content: \n\n`;
-
-              keySentences.forEach((sentence, index) => {
-                summary += `${index + 1}. ${sentence.trim()}\n\n`;
-              });
-
-              // Add translated text summary if available
-              if (allTranslatedText) {
-                summary += isChinese ? `## 翻译内容分析\n\n` : `## Translated Content Analysis\n\n`;
-                const translatedSentences = allTranslatedText.split(/[.!?。！？]+/).filter(s => s.trim().length > 10);
-                const keyTranslatedSentences = translatedSentences.slice(0, 3);
-
-                if (keyTranslatedSentences.length > 0) {
-                  keyTranslatedSentences.forEach((sentence, index) => {
-                    summary += `${index + 1}. ${sentence.trim()}\n\n`;
-                  });
-                } else {
-                  summary += isChinese ? `提取到了翻译内容，主要涉及：` : `Translated content was extracted, covering: `;
-                  const translatedKeywords = allTranslatedText.split(/\s+/).filter(word => word.length > 2);
-                  const uniqueTranslatedKeywords = Array.from(new Set(translatedKeywords)).slice(0, 8);
-                  summary += uniqueTranslatedKeywords.join(', ');
-                  summary += `\n\n`;
-                }
-              }
-
-              if (keySentences.length === 0) {
-                // Fallback to brief overview if no meaningful sentences found
-                summary += isChinese ? `文件夹包含 ${allResults.length} 张图片，主要内容包括：\n\n` : `This folder contains ${allResults.length} images, with content including: \n\n`;
-
-                // Extract unique keywords from all content including translated text
-                const allContentForKeywords = [
-                  ...allResults.map(r => r.description),
-                  ...allResults.map(r => r.translatedText),
-                  ...(allExtractedText ? [allExtractedText] : [])
-                ].join(' ');
-
-                const allKeywords = allContentForKeywords
-                  .split(/\s+/)
-                  .filter(word => word.length > 2)
-                  .reduce((acc, word) => {
-                    acc[word] = (acc[word] || 0) + 1;
-                    return acc;
-                  }, {} as Record<string, number>);
-
-                // Get top 10 keywords
-                const topKeywords = Object.entries(allKeywords)
-                  .sort(([, a], [, b]) => b - a)
-                  .slice(0, 10)
-                  .map(([word]) => word);
-
-                summary += topKeywords.join(', ');
-              }
-            }
-
-            // Step 5: Update folder description with AI-generated analysis
-            updateTask(taskId, { current: 5, currentStep: t('tasks.updatingFolder') });
-            setState(prev => ({
-              ...prev,
-              files: {
-                ...prev.files,
-                [folderId]: {
-                  ...prev.files[folderId],
-                  description: summary
-                }
-              }
-            }));
-          } catch (err) {
-            console.error('Failed to generate AI analysis', err);
-            // Fallback to intelligent summary if AI generation fails
-            const isChinese = state.settings.language === 'zh';
-            let summary = isChinese ? `## 图片分析汇总\n\n` : `## Image Analysis Summary\n\n`;
-
-            // Create a comprehensive summary by combining all descriptions, translated text, and extracted text
-            const combinedContent = [
-              ...allResults.filter(r => r.description).map(r => r.description),
-              ...allResults.filter(r => r.translatedText).map(r => r.translatedText),
-              ...(allExtractedText ? [allExtractedText] : [])
-            ].join(' ');
-
-            // Extract key sentences and keywords
-            const sentences = combinedContent.split(/[.!?。！？]+/).filter(s => s.trim().length > 10);
-            const keySentences = sentences.slice(0, 5); // Take first 5 meaningful sentences
-
-            summary += isChinese ? `基于对文件夹内图片的分析，以下是主要内容：\n\n` : `Based on the analysis of images in this folder, here's the main content: \n\n`;
-
-            if (keySentences.length > 0) {
-              keySentences.forEach((sentence, index) => {
-                summary += `${index + 1}. ${sentence.trim()}\n\n`;
-              });
-            }
-
-            // Add translated text summary if available
-            if (allTranslatedText) {
-              summary += isChinese ? `## 翻译内容分析\n\n` : `## Translated Content Analysis\n\n`;
-              const translatedSentences = allTranslatedText.split(/[.!?。！？]+/).filter(s => s.trim().length > 10);
-              const keyTranslatedSentences = translatedSentences.slice(0, 3);
-
-              if (keyTranslatedSentences.length > 0) {
-                keyTranslatedSentences.forEach((sentence, index) => {
-                  summary += `${index + 1}. ${sentence.trim()}\n\n`;
-                });
-              } else {
-                summary += isChinese ? `提取到了翻译内容，主要涉及：` : `Translated content was extracted, covering: `;
-                const translatedKeywords = allTranslatedText.split(/\s+/).filter(word => word.length > 2);
-                const uniqueTranslatedKeywords = Array.from(new Set(translatedKeywords)).slice(0, 8);
-                summary += uniqueTranslatedKeywords.join(', ');
-                summary += `\n\n`;
-              }
-            }
-
-            if (keySentences.length === 0) {
-              // Extract unique keywords from all content including translated text
-              const allContentForKeywords = [
-                ...allResults.map(r => r.description),
-                ...allResults.map(r => r.translatedText),
-                ...(allExtractedText ? [allExtractedText] : [])
-              ].join(' ');
-
-              const allKeywords = allContentForKeywords
-                .split(/\s+/)
-                .filter(word => word.length > 2)
-                .reduce((acc, word) => {
-                  acc[word] = (acc[word] || 0) + 1;
-                  return acc;
-                }, {} as Record<string, number>);
-
-              // Get top 10 keywords
-              const topKeywords = Object.entries(allKeywords)
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 10)
-                .map(([word]) => word);
-
-              summary += isChinese ? `文件夹包含 ${allResults.length} 张图片，主要内容包括：\n\n` : `This folder contains ${allResults.length} images, with content including: \n\n`;
-              summary += topKeywords.join(', ');
-            }
-
-            // Update folder description with intelligent fallback summary
-            setState(prev => ({
-              ...prev,
-              files: {
-                ...prev.files,
-                [folderId]: {
-                  ...prev.files[folderId],
-                  description: summary
-                }
-              }
-            }));
-          }
-        }
-      }
-
-      // Finish the task
-      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-      showToast(t('settings.aiAnalyzeSuccess'));
-      return;
-    }
-
-    if (imageFileIds.length === 0) return;
-
-    // Use software language setting for all AI outputs, including translations
-    const transTarget = targetLanguage;
-
-    // Create prompt in the same language as software settings
-    const isChinese = state.settings.language === 'zh';
-
-    let promptFields: string[] = [];
-
-    // Only include description if autoDescription is enabled
-    if (aiConfig.autoDescription) {
-      promptFields.push(isChinese ? `- description: string (请简单描述这张图里的内容。${aiConfig.enhancePersonDescription ? '着重描述图片里的人物行为。并且对人物体型进行说明。' : ''})` : `- description: string (Please briefly describe the content of this image.${aiConfig.enhancePersonDescription ? ' Emphasize describing people\'s actions. Also provide a description of people\'s body types.' : ''})`);
-    }
-
-    // Only include OCR if enableOCR is enabled
-    if (aiConfig.enableOCR) {
-      promptFields.push(isChinese ? `- extractedText: string (提取图片中的文字。)` : `- extractedText: string (Extract text from the image.)`);
-    }
-
-    // Only include translation if enableTranslation is enabled
-    if (aiConfig.enableTranslation) {
-      promptFields.push(isChinese ? `- translatedText: string (把图片中的文字翻译成${transTarget}。)` : `- translatedText: string (Translate text from the image to ${transTarget}.)`);
-    }
-
-    // Only include tags if autoTag is enabled
-    if (aiConfig.autoTag) {
-      promptFields.push(`- tags: string[] (relevant keywords in ${targetLanguage})`);
-    }
-
-    // Only include people if enableFaceRecognition is enabled
-    if (aiConfig.enableFaceRecognition) {
-      promptFields.push(`- people: string[] (list of distinct people identified, if any, in ${targetLanguage})`);
-    }
-
-    // Always include sceneCategory and objects for internal use
-    promptFields.push(`- sceneCategory: string (e.g. landscape, portrait, indoor, etc in ${targetLanguage})`);
-    promptFields.push(`- objects: string[] (list of visible objects in ${targetLanguage})`);
-
-    // Only include dominantColors if needed for color analysis
-    // Note: This can be expensive for AI models, so we make it optional
-    // promptFields.push(`- dominantColors: string[] (hex codes if detected, optional)`);
-
-    const prompt = isChinese ? `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-      ${promptFields.join('\n      ')}
-      
-      Respond STRICTLY in JSON.
-      ` : `Analyze this image. Return a VALID JSON object (no markdown, no extra text) with these fields:
-      ${promptFields.join('\n      ')}
-      
-      Respond STRICTLY in JSON.
-      `;
-
-    // Each file has several steps, so total is image count * steps per file
-    const stepsPerFile = 6; // Steps: 1. Read file, 2. AI call, 3. Process result, 4. Update description, 5. Add tags, 6. Process other AI data
-    const totalSteps = imageFileIds.length * stepsPerFile;
-    const taskId = startTask('ai', [], t('tasks.aiAnalysis'), false);
-
-    // Update task with correct total steps
-    updateTask(taskId, { total: totalSteps, current: 0 });
-
-    // Store all AI results for folder summary
-    const allResults: { description: string; translatedText?: string; extractedText?: string; }[] = [];
-
-    // Initialize currentPeople outside the loop to share across all files
-    let currentPeople = { ...state.people };
-
-    try {
-      // Process files one by one with real progress updates
-      for (let fileIndex = 0; fileIndex < imageFileIds.length; fileIndex++) {
-        const fileId = imageFileIds[fileIndex];
-        const file = state.files[fileId];
-        if (!file || file.type !== FileType.IMAGE) continue;
-
-        let currentStep = fileIndex * stepsPerFile;
-
-        // Step 1: Read file and convert to Base64
-        updateTask(taskId, { current: currentStep + 1, currentStep: t('tasks.readingFile') });
-        let base64Data = '';
-        if (file.path) {
-          // In Tauri, use readFileAsBase64 instead of file.url
-          try {
-            const { readFileAsBase64 } = await import('./api/tauri-bridge');
-            const dataUrl = await readFileAsBase64(file.path);
-            if (dataUrl) {
-              base64Data = dataUrl.split(',')[1]; // Extract base64 part
-            }
-          } catch (e) {
-            console.warn("Failed to read file as base64 for AI", e);
-          }
-        }
-
-        if (!base64Data) continue;
-
-        // Step 2: Call AI API for analysis
-        updateTask(taskId, { current: currentStep + 2, currentStep: t('tasks.aiAnalyzing') });
-        let result: any = null;
-        let provider = aiConfig.provider;
-
-        const parseJSON = (text: string) => {
-          try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) return JSON.parse(jsonMatch[0]);
-            return JSON.parse(text);
-          } catch (e) {
-            console.error("JSON Parse Error", e, text);
-            return null;
-          }
-        };
-
-        if (provider === 'openai') {
-          // ... (keep openai logic)
-          const messages: any[] = [];
-          if (aiConfig.systemPrompt) {
-            messages.push({ role: "system", content: aiConfig.systemPrompt });
-          }
-          messages.push({ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] });
-
-          const body = {
-            model: aiConfig.openai.model,
-            messages: messages,
-            max_tokens: 1000
-          };
-          try {
-            const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
-              body: JSON.stringify(body)
-            });
-            const resData = await res.json();
-            if (resData?.choices?.[0]?.message?.content) { result = parseJSON(resData.choices[0].message.content); }
-          } catch (e) {
-            console.error('AI analysis failed:', e);
-          }
-        } else if (provider === 'ollama') {
-          // ... (keep ollama logic)
-          const body: any = { model: aiConfig.ollama.model, prompt: prompt, images: [base64Data], stream: false, format: "json" };
-          if (aiConfig.systemPrompt) {
-            body.system = aiConfig.systemPrompt;
-          }
-          try {
-            const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
-            const resData = await res.json();
-            if (resData?.response) { result = parseJSON(resData.response); }
-          } catch (e) {
-            console.error('AI analysis failed:', e);
-          }
-        } else if (provider === 'lmstudio') {
-          // ... (keep lmstudio logic)
-          const messages: any[] = [];
-          if (aiConfig.systemPrompt) {
-            messages.push({ role: "system", content: aiConfig.systemPrompt });
-          }
-          messages.push({ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] });
-
-          const body = { model: aiConfig.lmstudio.model, messages: messages, max_tokens: 1000, stream: false };
-          let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
-          if (!endpoint.endsWith('/v1')) endpoint += '/v1';
-          try {
-            const res = await fetch(`${endpoint}/chat/completions`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(body)
-            });
-            const resData = await res.json();
-            if (resData?.choices?.[0]?.message?.content) { result = parseJSON(resData.choices[0].message.content); }
-          } catch (e) {
-            console.error('AI analysis failed:', e);
-          }
-        }
-
-        if (!result) continue;
-
-        // Store result for folder summary
-        allResults.push({
-          description: result.description || '',
-          translatedText: result.translatedText,
-          extractedText: result.extractedText || ''
-        });
-
-        // Step 3: Process AI response
-        updateTask(taskId, { current: currentStep + 3, currentStep: t('tasks.processingResult') });
-        let peopleUpdated = false;
-
-        // Create aiData object with filtered fields based on settings
-        const baseAiData: Partial<AiData> = {
-          analyzed: true,
-          analyzedAt: new Date().toISOString(),
-          description: aiConfig.autoDescription ? (result.description || '') : '',
-          tags: aiConfig.autoTag && Array.isArray(result.tags) ? result.tags : [],
-          sceneCategory: result.sceneCategory || 'General',
-          confidence: 0.95,
-          dominantColors: [], // No longer analyzed by AI, kept for compatibility
-          objects: Array.isArray(result.objects) ? result.objects : [],
-          extractedText: aiConfig.enableOCR ? result.extractedText : undefined,
-          translatedText: aiConfig.enableTranslation ? result.translatedText : undefined
-        };
-
-        // Step 3.1: Use face recognition service to get real face data if enabled
-        // Initialize aiData with default values
-        let aiData: AiData = {
-          ...baseAiData,
-          faces: [],
-        } as AiData;
-
-        if (aiConfig.enableFaceRecognition) {
-          // Use the actual file path for face recognition
-          const imagePath = file.path || '';
-          // Add current people database to settings for face recognition
-          const settingsWithPeople = {
-            ...state.settings,
-            people: currentPeople
-          };
-          const { aiData: aiResultData, faceDescriptors } = await aiService.analyzeImage(imagePath, settingsWithPeople, currentPeople);
-
-          aiData = {
-            ...baseAiData,
-            faces: aiResultData.faces || [],
-          } as AiData;
-
-          // Update people database with recognized faces
-          aiData.faces.forEach((face, index) => {
-            if (face.personId && face.name) {
-              // Get corresponding face descriptor
-              const faceDescriptor = faceDescriptors.find(fd => fd.faceId === face.id);
-
-              // Calculate face box percentages if we have image dimensions
-              let faceBox: { x: number; y: number; w: number; h: number } | undefined;
-              if (file.meta?.width && file.meta?.height && face.box) {
-                const { x, y, w, h } = face.box;
-                faceBox = {
-                  x: Math.round((x / file.meta.width) * 100),
-                  y: Math.round((y / file.meta.height) * 100),
-                  w: Math.round((w / file.meta.width) * 100),
-                  h: Math.round((h / file.meta.height) * 100)
-                };
-              }
-
-              // Check if person already exists
-              let person = currentPeople[face.personId];
-
-              if (!person) {
-                if (state.settings.ai.autoAddPeople) {
-                  // Create new person
-                  currentPeople[face.personId] = {
-                    id: face.personId,
-                    name: face.name,
-                    coverFileId: fileId,
-                    count: 1,
-                    description: 'Detected by AI face recognition',
-                    descriptor: faceDescriptor?.descriptor,
-                    faceBox: faceBox
-                  };
-                  peopleUpdated = true;
-                }
-              } else {
-                // Update existing person count, and add descriptor if not already present
-                currentPeople[face.personId] = {
-                  ...person,
-                  count: person.count + 1,
-                  descriptor: person.descriptor || faceDescriptor?.descriptor,
-                  faceBox: person.faceBox || faceBox
-                };
-                peopleUpdated = true;
-              }
-            }
-          });
-        }
-
-        // Always process people from AI API response regardless of face recognition setting
-        if (result.people && Array.isArray(result.people)) {
-          const aiFaces: AiFace[] = [];
-
-          result.people.forEach((name: string) => {
-            // For AI API detected people, be cautious with generic names
-            // Don't automatically merge by name for generic terms like "女性"
-            const isGenericName = name.toLowerCase() === '女性' || name.toLowerCase() === 'female' ||
-              name.toLowerCase() === '男性' || name.toLowerCase() === 'male' ||
-              name.toLowerCase() === 'person' || name.toLowerCase() === 'people';
-
-            if (!isGenericName) {
-              // Check if person already exists by name
-              let personId = Object.keys(currentPeople).find(pid => currentPeople[pid].name.toLowerCase() === name.toLowerCase());
-
-              if (!personId) {
-                if (state.settings.ai.autoAddPeople) {
-                  // Create new person
-                  personId = Math.random().toString(36).substr(2, 9);
-                  currentPeople[personId] = {
-                    id: personId,
-                    name: name,
-                    coverFileId: fileId,
-                    count: 1,
-                    description: 'Detected by AI'
-                  };
-                  peopleUpdated = true;
-                }
-              } else {
-                // Update existing person count
-                currentPeople[personId] = {
-                  ...currentPeople[personId],
-                  count: currentPeople[personId].count + 1
-                };
-                peopleUpdated = true;
-              }
-
-              if (personId) {
-                // Add face to AI data
-                aiFaces.push({
-                  id: Math.random().toString(36).substr(2, 9),
-                  personId: personId,
-                  name: name,
-                  confidence: 0.95,
-                  box: { x: 0, y: 0, w: 0, h: 0 }
-                });
-              }
-            }
-          });
-
-          // Merge AI detected faces with existing faces, avoiding duplicates
-          const existingPersonIds = new Set(aiData.faces.map(face => face.personId));
-          const newAIFaces = aiFaces.filter(face => !existingPersonIds.has(face.personId));
-          aiData.faces = [...aiData.faces, ...newAIFaces];
-        }
-
-        // Step 4: Update description only if autoDescription is enabled
-        updateTask(taskId, { current: currentStep + 4, currentStep: t('tasks.updatingDescription') });
-
-        // Step 5: Add tags only if autoTag is enabled
-        updateTask(taskId, { current: currentStep + 5, currentStep: t('tasks.addingTags') });
-        const currentTags = file.tags || [];
-        const newTags = aiConfig.autoTag ? Array.from(new Set([...currentTags, ...aiData.tags])) : currentTags;
-
-        // Step 6: Save all AI data
-        updateTask(taskId, { current: currentStep + 6, currentStep: t('tasks.savingData') });
-        const updatedFile = {
-          ...file,
-          aiData,
-          tags: newTags,
-          description: file.description ? file.description : (aiConfig.autoDescription ? aiData.description : '')
-        };
-
-        setState(prev => ({
-          ...prev,
-          people: currentPeople, // Always use the latest shared currentPeople
-          files: {
-            ...prev.files,
-            [fileId]: updatedFile
-          }
-        }));
-
-        // 持久化到数据库
-        dbUpsertFileMetadata({
-          fileId: fileId,
-          path: updatedFile.path,
-          tags: updatedFile.tags,
-          description: updatedFile.description,
-          sourceUrl: updatedFile.sourceUrl,
-          aiData: updatedFile.aiData,
-          updatedAt: Date.now()
-        }).catch(err => console.error('Failed to persist AI metadata:', err));
-      }
-
-      // If folderId is provided, summarize all results and update folder description
-      if (folderId) {
-        updateTask(taskId, { current: totalSteps, currentStep: t('tasks.summarizing') });
-        const folder = state.files[folderId];
-        if (folder) {
-          // Prepare all content (descriptions, extracted text, translated text) into a single text block
-          const allContent = allResults
-            .map((result, index) => {
-              let content = `Image ${index + 1}: ${result.description || 'No description'}`;
-              if (result.extractedText) {
-                content += `\nExtracted Text: ${result.extractedText}`;
-              }
-              if (result.translatedText) {
-                content += `\nTranslated Text: ${result.translatedText}`;
-              }
-              return content;
-            })
-            .join('\n\n');
-
-          if (allContent) {
-            const aiConfig = state.settings.ai;
-            let summary = '';
-
-            // Determine output language based on software settings
-            const isChinese = state.settings.language === 'zh';
-            const outputLanguage = isChinese ? '中文' : 'English';
-
-            // Create prompt for AI to understand and provide detailed summary of the folder content
-            const analysisPrompt = isChinese ?
-              `请根据以下所有图片的描述、提取到的文字和翻译后的文字，详细分析这个文件夹内的图片内容以及这些文字说了个什么事情？\n\n${allContent}\n\n请严格遵守以下要求：\n1. ❌绝对禁止直接罗列单张图片的描述信息，例如"图片1：...图片2：..."这样的格式\n2. ✅必须将所有图片的描述信息结合成一个整体进行分析，形成连贯的整体描述\n3. ✅详细说明这些图片和文字所描述的整体事件、主题或故事\n4. ✅如果你发现有提取到的文字，请优先使用翻译后的文字（如果有），否则使用提取到的文字，提炼重要内容并对此进行讲解\n5. ✅请用清晰、有条理的语言进行分析和总结，不要过于简洁\n6. ✅你的回答应该像是对整个文件夹内容的总体概括，而不是对每张图片的单独描述` :
-              `Based on all the image descriptions, extracted text, and translated text below, please analyze in detail what these images are about and what story or information the text conveys.\n\n${allContent}\n\nPlease strictly follow these requirements:\n1. ❌ ABSOLUTELY DO NOT directly list individual image descriptions, such as "Image 1: ... Image 2: ..." format\n2. ✅ Must combine all image descriptions into a single coherent analysis, forming a continuous overall description\n3. ✅ Provide a detailed explanation of the overall events, themes, or stories described in these images and text\n4. ✅ If you find any extracted text, please prioritize using translated text (if available), otherwise use the extracted text, extract important content and explain it\n5. ✅ Use clear, structured language for analysis and summary, avoid being too concise\n6. ✅ Your answer should be an overall summary of the entire folder content, not a separate description of each image`;
-
-            try {
-              let result: any = null;
-
-              if (aiConfig.provider === 'openai') {
-                const body = {
-                  model: aiConfig.openai.model,
-                  messages: [{ role: "user", content: analysisPrompt }],
-                  max_tokens: 1500,
-                  temperature: 0.7
-                };
-                const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
-                  body: JSON.stringify(body)
-                });
-                const resData = await res.json();
-                if (resData?.choices?.[0]?.message?.content) {
-                  summary = resData.choices[0].message.content;
-                }
-              } else if (aiConfig.provider === 'ollama') {
-                const body = {
-                  model: aiConfig.ollama.model,
-                  prompt: analysisPrompt,
-                  stream: false,
-                  temperature: 0.7
-                };
-                const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body)
-                });
-                const resData = await res.json();
-                if (resData?.response) {
-                  summary = resData.response;
-                }
-              } else if (aiConfig.provider === 'lmstudio') {
-                let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
-                if (!endpoint.endsWith('/v1')) endpoint += '/v1';
-                const body = {
-                  model: aiConfig.lmstudio.model,
-                  messages: [{ role: "user", content: analysisPrompt }],
-                  max_tokens: 1500,
-                  temperature: 0.7,
-                  stream: false
-                };
-                const res = await fetch(`${endpoint}/chat/completions`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(body)
-                });
-                const resData = await res.json();
-                if (resData?.choices?.[0]?.message?.content) {
-                  summary = resData.choices[0].message.content;
-                }
-              }
-
-              // If AI failed to generate analysis, fall back to a better summary that doesn't list individual images
-              if (!summary) {
-                const isChinese = state.settings.language === 'zh';
-                summary = isChinese ? `## 图片分析汇总\n\n` : `## Image Analysis Summary\n\n`;
-
-                // Extract all descriptions without numbering
-                const allDescriptions = allResults
-                  .map(r => r.description || '')
-                  .filter(Boolean)
-                  .join(' ');
-
-                // Extract all texts
-                const allTexts: string[] = [];
-                allResults.forEach(r => {
-                  if (r.translatedText) allTexts.push(r.translatedText);
-                  else if (r.extractedText) allTexts.push(r.extractedText);
-                });
-
-                // Create a coherent fallback summary
-                if (allDescriptions) {
-                  summary += isChinese ?
-                    `本文件夹包含多张图片，主要内容是：${allDescriptions.substring(0, 500)}${allDescriptions.length > 500 ? '...' : ''}` :
-                    `This folder contains multiple images, with main content: ${allDescriptions.substring(0, 500)}${allDescriptions.length > 500 ? '...' : ''}`;
-                }
-
-                if (allTexts.length > 0) {
-                  summary += isChinese ? `\n\n提取到的文字内容：${allTexts.join('; ').substring(0, 300)}${allTexts.join('; ').length > 300 ? '...' : ''}` :
-                    `\n\nExtracted text content: ${allTexts.join('; ').substring(0, 300)}${allTexts.join('; ').length > 300 ? '...' : ''}`;
-                }
-              }
-            } catch (err) {
-              console.error('Failed to generate AI analysis', err);
-              // Fallback to a better summary that doesn't list individual images
-              const isChinese = state.settings.language === 'zh';
-              summary = isChinese ? `## 图片分析汇总\n\n` : `## Image Analysis Summary\n\n`;
-
-              // Extract all descriptions without numbering
-              const allDescriptions = allResults
-                .map(r => r.description || '')
-                .filter(Boolean)
-                .join(' ');
-
-              // Extract all texts
-              const allTexts: string[] = [];
-              allResults.forEach(r => {
-                if (r.translatedText) allTexts.push(r.translatedText);
-                else if (r.extractedText) allTexts.push(r.extractedText);
-              });
-
-              // Create a coherent fallback summary
-              if (allDescriptions) {
-                summary += isChinese ?
-                  `本文件夹包含多张图片，主要内容是：${allDescriptions.substring(0, 500)}${allDescriptions.length > 500 ? '...' : ''}` :
-                  `This folder contains multiple images, with main content: ${allDescriptions.substring(0, 500)}${allDescriptions.length > 500 ? '...' : ''}`;
-              }
-
-              if (allTexts.length > 0) {
-                summary += isChinese ? `\n\n提取到的文字内容：${allTexts.join('; ').substring(0, 300)}${allTexts.join('; ').length > 300 ? '...' : ''}` :
-                  `\n\nExtracted text content: ${allTexts.join('; ').substring(0, 300)}${allTexts.join('; ').length > 300 ? '...' : ''}`;
-              }
-            }
-
-            // Update folder description with AI-generated story
-            setState(prev => ({
-              ...prev,
-              files: {
-                ...prev.files,
-                [folderId]: {
-                  ...prev.files[folderId],
-                  description: summary
-                }
-              }
-            }));
-          }
-        }
-      }
-
-      showToast(t('settings.aiAnalyzeSuccess'));
-
-    } catch (err) {
-      console.error(err);
-      showToast("AI Analysis Failed");
-    } finally {
-      updateTask(taskId, { status: 'completed', currentStep: t('tasks.completed') });
-      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-    }
-  };
-
-  // Function to analyze all files in a folder
-  const handleFolderAIAnalysis = async (folderId: string) => {
-    // Get all image files in the folder and check their AI analysis status
-    const getAllImageFilesInFolder = (folderId: string): { id: string; analyzed: boolean }[] => {
-      const folder = state.files[folderId];
-      if (!folder) return [];
-
-      let imageFiles: { id: string; analyzed: boolean }[] = [];
-
-      if (folder.children) {
-        for (const childId of folder.children) {
-          const child = state.files[childId];
-          if (child) {
-            if (child.type === FileType.FOLDER) {
-              // Recursively get files from subfolders
-              imageFiles = [...imageFiles, ...getAllImageFilesInFolder(childId)];
-            } else if (child.type === FileType.IMAGE) {
-              // Check if image has been analyzed
-              const analyzed = !!child.aiData?.analyzed;
-              imageFiles.push({ id: childId, analyzed });
-            }
-          }
-        }
-      }
-
-      return imageFiles;
-    };
-
-    // Get all image files with their analysis status
-    const allImageFiles = getAllImageFilesInFolder(folderId);
-
-    // Filter out non-image files and get all image IDs
-    const allImageIds = allImageFiles.map(file => file.id);
-
-    if (allImageIds.length === 0) return;
-
-    // Get IDs of images that haven't been analyzed yet
-    const unanalyzedImageIds = allImageFiles.filter(file => !file.analyzed).map(file => file.id);
-
-    if (unanalyzedImageIds.length > 0) {
-      // If there are unanalyzed images, analyze them first
-      await handleAIAnalysis(unanalyzedImageIds, folderId);
-    } else {
-      // If all images are already analyzed, just generate the summary
-      // We'll call handleAIAnalysis with empty array and folderId to trigger summary generation
-      await handleAIAnalysis([], folderId);
-    }
-  };
-
   return (
     <div
       className="w-full h-full flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300"
@@ -5281,10 +2807,10 @@ export const App: React.FC = () => {
       onDrop={handleExternalDrop}
       onDragLeave={handleExternalDragLeave}
     >
-      {/* 启动界面 */}
+      {/* 锟斤拷锟斤拷锟斤拷锟斤拷 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
 
-      {/* 外部拖拽覆盖层 */}
+      {/* 锟解部锟斤拷拽锟斤拷锟角诧拷 */}
       <DragDropOverlay
         isVisible={isExternalDragging}
         fileCount={externalDragItems.length}
@@ -5507,7 +3033,7 @@ export const App: React.FC = () => {
                               </button>
                             )}
                           </div>
-                          {/* 智能联想下拉列表 */}
+                          {/* 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟叫憋拷 */}
                           {(() => {
                             const allTags = new Set<string>();
                             Object.values(state.files).forEach((f: any) => {
@@ -5522,7 +3048,7 @@ export const App: React.FC = () => {
                               tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
                             );
 
-                            // 只有当有多个匹配标签或者当前搜索词与匹配标签不完全相同时才显示下拉列表
+                            // 只锟叫碉拷锟叫讹拷锟狡ワ拷锟斤拷签锟斤拷锟竭碉拷前锟斤拷锟斤拷锟斤拷锟斤拷匹锟斤拷锟角╋拷锟斤拷锟饺拷锟酵憋拷锟斤拷锟绞撅拷锟斤拷锟斤拷斜锟?
                             const shouldShow = tagSearchQuery &&
                               filteredTags.length > 0 &&
                               !(filteredTags.length === 1 && filteredTags[0] === tagSearchQuery);
@@ -5716,11 +3242,11 @@ export const App: React.FC = () => {
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
             if (task.status === 'running') {
-              if (type === 'color') await pauseColorExtraction();
               updateTask(taskId, { status: 'paused' });
+              if (type === 'color') await pauseColorExtraction();
             } else {
-              if (type === 'color') await resumeColorExtraction();
               updateTask(taskId, { status: 'running' });
+              if (type === 'color') await resumeColorExtraction();
             }
           }}
         />
@@ -5733,335 +3259,76 @@ export const App: React.FC = () => {
         </div>
       </div>
 
-      {/* ... (Modals Logic) ... */}
-      {state.activeModal.type && (<div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">{state.activeModal.type === 'alert' && state.activeModal.data && (<AlertModal message={state.activeModal.data.message} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-person' && (<AddToPersonModal people={peopleWithDisplayCounts} files={state.files} onConfirm={handleManualAddPerson} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'add-to-topic' && (<AddToTopicModal topics={state.topics} onConfirm={handleManualAddToTopic} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-tag' && state.activeModal.data && (<RenameTagModal initialTag={state.activeModal.data.tag} onConfirm={handleRenameTag} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'batch-rename' && (<BatchRenameModal count={activeTab.selectedFileIds.length} onConfirm={handleBatchRename} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'rename-person' && state.activeModal.data && (<RenamePersonModal initialName={peopleWithDisplayCounts[state.activeModal.data.personId]?.name || ''} onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && (<ConfirmModal title={t('context.deleteTagConfirmTitle')} message={t('context.deleteTagConfirmMsg')} confirmText={t('context.deleteTagConfirmBtn')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleConfirmDeleteTags(state.activeModal.data.tags); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && (<ConfirmModal title={t('context.deletePersonConfirmTitle')} message={t('context.deletePersonConfirmMsg')} subMessage={typeof state.activeModal.data.personId === 'string' ? peopleWithDisplayCounts[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} confirmText={t('settings.confirm')} confirmIcon={Trash2} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleDeletePerson(state.activeModal.data.personId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'edit-tags' && state.activeModal.data && (<TagEditor file={state.files[state.activeModal.data.fileId]} files={state.files} onUpdate={handleUpdateFile} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} t={t} />)}{(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && (<FolderPickerModal type={state.activeModal.type} files={state.files} roots={state.roots} selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={(targetId: string) => { const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); else handleMoveFiles(fileIds, targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.fileCollisionMsg')} subMessage={`"${state.activeModal.data.desiredName}"`} confirmText={t('settings.renameAuto')} confirmIcon={FilePlus} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={t('settings.folderCollisionMsg')} subMessage={t('settings.mergeDesc')} confirmText={t('settings.mergeFolder')} confirmIcon={Merge} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && (<ConfirmModal title={t('settings.extensionChangeTitle')} message={t('settings.extensionChangeMsg')} subMessage={t('settings.extensionChangeConfirm')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))} onConfirm={() => { handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}{state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && (<ConfirmModal title={t('settings.collisionTitle')} message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} subMessage={state.activeModal.data.files.slice(0, 5).join(', ') + (state.activeModal.data.files.length > 5 ? `...` : '')} confirmText={t('settings.confirm')} confirmIcon={AlertTriangle} onClose={() => { state.activeModal.data.onCancel?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} onConfirm={() => { state.activeModal.data.onConfirm?.(); setState(s => ({ ...s, activeModal: { type: null } })); }} t={t} />)}
-        {state.activeModal.type === 'crop-avatar' && state.activeModal.data && (
-          <CropAvatarModal
-            fileUrl={state.activeModal.data.fileUrl}
-            initialBox={state.activeModal.data.initialBox}
-            personId={state.activeModal.data.personId}
-            allFiles={state.files}
-            people={peopleWithDisplayCounts}
-            onConfirm={(box: any) => handleSaveAvatarCrop(state.activeModal.data.personId, box)}
-            onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))}
-            t={t}
-            resourceRoot={state.settings.paths.resourceRoot}
-            cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-          />
-        )}
-        {state.activeModal.type === 'exit-confirm' && (
-          <ExitConfirmModal
-            remember={rememberExitChoice}
-            onRememberChange={setRememberExitChoice}
-            onConfirm={handleExitConfirm}
-            onCancel={() => setState(s => ({ ...s, activeModal: { type: null } }))}
-            t={t}
-          />
-        )}
-        {state.activeModal.type === 'clear-person' && state.activeModal.data && (
-          <ClearPersonModal
-            files={state.files}
-            fileIds={state.activeModal.data.fileIds}
-            people={peopleWithDisplayCounts}
-            onConfirm={(personIds: string[]) => {
-              handleClearPersonInfo(state.activeModal.data.fileIds, personIds);
-              setState(s => ({ ...s, activeModal: { type: null } }));
-              showToast(t('context.saved'));
-            }}
-            onClose={() => setState(s => ({ ...s, activeModal: { type: null } }))}
-            t={t}
-          />
-        )}
-      </div>)}
-
-      {state.isSettingsOpen && (<SettingsModal state={state} onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))} onUpdateSettings={(updates) => {
-        setState(s => ({ ...s, ...updates }));
-      }} onUpdateSettingsData={(updates) => {
-        setState(s => {
-          const newSettings = { ...s.settings, ...updates };
-          return { ...s, settings: newSettings };
-        });
-      }} onUpdatePath={handleChangePath} onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} t={t} />)}
-
-      {showCloseConfirmation && (
-        <CloseConfirmationModal
-          onClose={() => setShowCloseConfirmation(false)}
-          onAction={handleCloseConfirmation}
-          t={t}
-        />
-      )}
-
-      <WelcomeModal
-        show={showWelcome}
-        onFinish={handleWelcomeFinish}
-        onSelectFolder={handleOpenFolder}
-        currentPath={state.roots.length > 0 ? state.files[state.roots[0]]?.path : ''}
-        settings={state.settings}
-        onUpdateSettings={(updates: Partial<AppSettings>) => setState(s => ({ ...s, settings: { ...s.settings, ...updates } }))}
+      <AppModals
+        state={state}
+        setState={setState}
         t={t}
+        activeTab={activeTab}
+        peopleWithDisplayCounts={peopleWithDisplayCounts}
+        handleManualAddPerson={handleManualAddPerson}
+        handleManualAddToTopic={handleManualAddToTopic}
+        handleRenameTag={handleRenameTag}
+        handleBatchRename={handleBatchRename}
+        handleRenamePerson={handleRenamePerson}
+        handleConfirmDeleteTags={handleConfirmDeleteTags}
+        handleDeletePerson={handleDeletePerson}
+        handleUpdateFile={handleUpdateFile}
+        handleCopyFiles={handleCopyFiles}
+        handleMoveFiles={handleMoveFiles}
+        handleResolveFileCollision={handleResolveFileCollision}
+        handleResolveFolderMerge={handleResolveFolderMerge}
+        handleResolveExtensionChange={handleResolveExtensionChange}
+        handleSaveAvatarCrop={handleSaveAvatarCrop}
+        handleExitConfirm={handleExitConfirm}
+        handleClearPersonInfo={handleClearPersonInfo}
+        showToast={showToast}
+        rememberExitChoice={rememberExitChoice}
+        setRememberExitChoice={setRememberExitChoice}
+        handleChangePath={handleChangePath}
+        showWelcome={showWelcome}
+        handleWelcomeFinish={handleWelcomeFinish}
+        handleOpenFolder={handleOpenFolder}
+        showCloseConfirmation={showCloseConfirmation}
+        setShowCloseConfirmation={setShowCloseConfirmation}
+        handleCloseConfirmation={handleCloseConfirmation}
       />
 
-      {contextMenu.visible && (
-        <div data-testid="context-menu" className={`fixed bg-white ${['file-single', 'file-multi', 'folder-single', 'folder-multi', 'person'].includes(contextMenu.type || '')
-          ? 'dark:bg-gray-800'
-          : 'dark:bg-[#2d3748]'
-          } border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[60] max-h-[80vh] overflow-y-auto`} style={{
-            top: 'auto',
-            bottom: 'auto',
-            left: 'auto',
-            right: 'auto',
-            position: 'fixed',
-            zIndex: 60
-          }} ref={(el) => {
-            if (el) {
-              // 动态计算菜单位置，确保完全显示在屏幕内
-              const rect = el.getBoundingClientRect();
-              const menuWidth = rect.width;
-              const menuHeight = rect.height;
-              const screenWidth = window.innerWidth;
-              const screenHeight = window.innerHeight;
-
-              // 计算X位置，确保菜单不超出左右边界
-              let x = contextMenu.x;
-              if (x + menuWidth > screenWidth) {
-                x = screenWidth - menuWidth;
-              }
-              if (x < 0) {
-                x = 0;
-              }
-
-              // 计算Y位置，确保菜单不超出上下边界
-              let y = contextMenu.y;
-              if (y + menuHeight > screenHeight) {
-                y = screenHeight - menuHeight;
-              }
-              if (y < 0) {
-                y = 0;
-              }
-
-              // 设置最终位置
-              el.style.left = `${x}px`;
-              el.style.top = `${y}px`;
-            }
-          }}>
-          {/* ... (Context Menu items, omitted for brevity but should be same as before) ... */}
-          {/* 文件和文件夹的右键菜单（单个或多个） */}
-          {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi' || contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi') && (<>
-            {/* ... Menu items ... */}
-            {contextMenu.type !== 'file-multi' && (
-              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOpenInNewTab(contextMenu.targetId!); closeContextMenu(); }}>
-                <Layout size={14} className="mr-2 opacity-70" />
-                {contextMenu.type === 'folder-single' ? t('context.openFolderInNewTab') : t('context.openInNewTab')}
-              </div>
-            )}
-
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={14} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}</div>
-            {contextMenu.type === 'file-single' && state.files[contextMenu.targetId!] && ((() => {
-              const file = state.files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return (<div className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
-                <FolderOpen size={14} className="mr-2 opacity-70" />
-                {t('context.openFolder')}
-              </div>);
-            })())}
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>
-              <Copy size={14} className="mr-2 opacity-70" />
-              {t('context.copyTo')}
-            </div>
-            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] } } })); closeContextMenu(); }}>
-              <MoveHorizontal size={14} className="mr-2 opacity-70" />
-              {t('context.moveTo')}
-            </div>
-            {contextMenu.type === 'folder-single' && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { navigator.clipboard.writeText(state.files[contextMenu.targetId!]?.path || ''); showToast(t('context.copied')); closeContextMenu(); }}>
-              <Link size={14} className="mr-2 opacity-70" />
-              {t('context.copyFolderPath')}
-            </div>)}
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-            {(contextMenu.type === 'file-single' || contextMenu.type === 'folder-single') && contextMenu.targetId && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { startRename(contextMenu.targetId!); closeContextMenu(); }}>
-              <Type size={14} className="mr-2 opacity-70" />
-              {t('context.rename')}
-            </div>)}
-            {contextMenu.type === 'folder-single' && contextMenu.targetId && state.aiConnectionStatus === 'connected' && (
-              <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                handleFolderAIAnalysis(contextMenu.targetId!);
-                closeContextMenu();
-              }}>
-                <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
-              </div>
-            )}
-            {contextMenu.type === 'file-single' && contextMenu.targetId && state.aiConnectionStatus === 'connected' && (
-              <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                handleAIAnalysis([contextMenu.targetId!]);
-                closeContextMenu();
-              }}>
-                <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
-              </div>
-            )}
-            {contextMenu.type === 'file-multi' && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'batch-rename', data: null } })); closeContextMenu(); }}>
-              <Type size={14} className="mr-2 opacity-70" />
-              {t('context.batchRename')}
-            </div>)}
-            {(contextMenu.type === 'file-multi') && state.aiConnectionStatus === 'connected' && (
-              <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                handleAIAnalysis(activeTab.selectedFileIds);
-                closeContextMenu();
-              }}>
-                <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
-              </div>
-            )}
-            {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && Object.keys(peopleWithDisplayCounts).length > 0 && (<> <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-person', data: null } })); closeContextMenu(); }}><User size={14} className="mr-2 opacity-70" /> {t('context.addToPerson')}</div><div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
-              // Check how many unique people are in selected files
-              const fileIds = activeTab.selectedFileIds;
-              const allPeople = new Set<string>();
-              let totalFaces = 0;
-
-              fileIds.forEach(fid => {
-                const file = state.files[fid];
-                if (file && file.type === FileType.IMAGE && file.aiData?.faces) {
-                  file.aiData.faces.forEach(face => {
-                    allPeople.add(face.personId);
-                  });
-                  totalFaces += file.aiData.faces.length;
-                }
-              });
-
-              if (totalFaces === 0) {
-                // No faces to clear, just return
-                closeContextMenu();
-                return;
-              }
-
-              if (allPeople.size <= 1) {
-                // Only one person or no person, just clear all
-                handleClearPersonInfo(fileIds);
-                closeContextMenu();
-                showToast(t('context.saved'));
-              } else {
-                // Multiple people, show modal to select which ones to clear
-                setState(s => ({ ...s, activeModal: { type: 'clear-person', data: { fileIds } } }));
-                closeContextMenu();
-              }
-            }}><XCircle size={14} className="mr-2 opacity-70" /> {t('context.clearPersonInfo')}</div></>)}
-            {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && (<div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { const targetIds = activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : (contextMenu.targetId ? [contextMenu.targetId] : []); setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { fileIds: targetIds } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>)}
-            {contextMenu.type === 'file-single' && contextMenu.targetId && (<>
-              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: contextMenu.targetId! } } })); closeContextMenu(); }}>
-                <Tag size={14} className="mr-2 opacity-70" />
-                {t('context.editTags')}
-              </div>
-              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyTags([contextMenu.targetId!]); closeContextMenu(); }}>
-                <Copy size={14} className="mr-2 opacity-70" />
-                {t('context.copyTag')}
-              </div>
-            </>)}
-            {/* 只有当所有选中的项目都是文件时才显示粘贴标签选项 */}
-            {(() => {
-              // 检查所有选中的项目是否都是文件
-              const allAreFiles = activeTab.selectedFileIds.every(id => {
-                const file = state.files[id];
-                return file && file.type !== FileType.FOLDER;
-              });
-              return allAreFiles && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handlePasteTags(activeTab.selectedFileIds); closeContextMenu(); }}>
-                <Clipboard size={14} className="mr-2 opacity-70" />
-                {t('context.pasteTag')}
-              </div>);
-            })()}
-
-            {/* 只有文件夹类型才显示生成缩略图选项 */}
-            {(contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi') && (
-              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                const folderIds = contextMenu.type === 'folder-single' ? [contextMenu.targetId!] : activeTab.selectedFileIds;
-                handleGenerateThumbnails(folderIds);
-                closeContextMenu();
-              }}>
-                <ImageIcon size={14} className="mr-2 opacity-70" /> {t('context.generateThumbnails')}
-              </div>
-            )}
-
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-            <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={14} className="mr-2" /> {t('context.delete')}</div>
-          </>)}
-          {contextMenu.type === 'root-folder' && contextMenu.targetId && (<> <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCreateFolder(contextMenu.targetId); closeContextMenu(); }}><FolderPlus size={14} className="mr-2 opacity-70" /> {t('context.createSubfolder')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleExpandAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsDown size={14} className="mr-2 opacity-70" /> {t('context.expandAll')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCollapseAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsUp size={14} className="mr-2 opacity-70" /> {t('context.collapseAll')}</div> </>)}
-          {(contextMenu.type === 'tag-single' || contextMenu.type === 'tag-multi') && contextMenu.targetId && (<>
-            {contextMenu.type === 'tag-multi' ? (
-              // Multiple tags selected: only show delete option
-              <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                requestDeleteTags(activeTab.selectedTagIds);
-                closeContextMenu();
-              }}>
-                <Trash2 size={14} className="mr-2 opacity-70" /> {t('context.deleteTag')}
-              </div>
-            ) : (
-              // Single tag selected: show full menu
-              <>
-                <div className="px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1">{contextMenu.targetId}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { enterTagView(contextMenu.targetId!); closeContextMenu(); }}>{t('context.viewTagged')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { navigator.clipboard.writeText(contextMenu.targetId!); closeContextMenu(); }}>{t('context.copyName')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'rename-tag', data: { tag: contextMenu.targetId! } } })); closeContextMenu(); }}><Edit3 size={14} className="mr-2 opacity-70" /> {t('context.renameTag')}</div>
-                <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-                <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer" onClick={() => { requestDeleteTags(activeTab.selectedTagIds.length > 0 ? activeTab.selectedTagIds : [contextMenu.targetId!]); closeContextMenu(); }}>{t('context.deleteTag')}</div>
-              </>
-            )}
-          </>)}
-          {contextMenu.type === 'person' && (<>
-            {activeTab.selectedPersonIds.length > 1 ? (
-              <>
-                <div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { personIds: activeTab.selectedPersonIds } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>
-                <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                  setState(s => ({ ...s, activeModal: { type: 'confirm-delete-person', data: { personId: activeTab.selectedPersonIds } } }));
-                  closeContextMenu();
-                }}>
-                  <Trash2 size={14} className="mr-2 opacity-70" /> {t('context.delete')}
-                </div>
-              </>
-            ) : contextMenu.targetId ? (
-              // Single person selected: show full menu
-              <>
-                <div className="px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1">{peopleWithDisplayCounts[contextMenu.targetId]?.name}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { enterPersonView(contextMenu.targetId!); closeContextMenu(); }}>{t('context.viewTagged')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleSetAvatar(contextMenu.targetId!); closeContextMenu(); }}><Crop size={14} className="mr-2 opacity-70" /> {t('context.setAvatar')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId: contextMenu.targetId! } } })); closeContextMenu(); }}><Edit3 size={14} className="mr-2 opacity-70" /> {t('context.renamePerson')}</div><div className="px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setState(s => ({ ...s, activeModal: { type: 'add-to-topic', data: { personIds: [contextMenu.targetId!] } } })); closeContextMenu(); }}><Layout size={14} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>
-                <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-                <div className="px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center" onClick={() => {
-                  setState(s => ({ ...s, activeModal: { type: 'confirm-delete-person', data: { personId: contextMenu.targetId! } } }));
-                  closeContextMenu();
-                }}>
-                  <Trash2 size={14} className="mr-2 opacity-70" /> {t('context.deletePerson')}
-                </div>
-              </>
-            ) : null}
-          </>)}
-          {contextMenu.type === 'tab' && contextMenu.targetId && (<> <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={(e) => { handleCloseTab(e, contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeTab')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCloseOtherTabs(contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeOtherTabs')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCloseAllTabs(); closeContextMenu(); }}>{t('context.closeAllTabs')}</div> </>)}
-          {contextMenu.type === 'background' && (<>
-            {/* 根据当前视图模式显示不同的菜单选项 */}
-            {activeTab.viewMode === 'people-overview' ? (
-              // 人物主界面：显示新建人物选项
-              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreatePerson(); closeContextMenu(); }}>{t('context.newPerson')}</div>
-            ) : (
-              // 其他界面：显示原有选项
-              <>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleRefresh(); closeContextMenu(); }}>{t('context.refresh')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => {
-                  // 全选当前目录下的所有内容
-                  updateActiveTab({ selectedFileIds: displayFileIds });
-                  closeContextMenu();
-                }}>{t('context.selectAll')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => {
-                  if (selectionRef.current) selectionRef.current.scrollTop = 0;
-                  closeContextMenu();
-                }}>{t('context.scrollToTop')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => {
-                  if (selectionRef.current) selectionRef.current.scrollTop = selectionRef.current.scrollHeight;
-                  closeContextMenu();
-                }}>{t('context.scrollToBottom')}</div>
-                <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateFolder(); closeContextMenu(); }}>{t('context.newFolder')}</div>
-                <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateNewTag(); closeContextMenu(); }}>{t('context.newTag')}</div>
-              </>
-            )}
-          </>)}
-          {contextMenu.type === 'tag-background' && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateNewTag(); closeContextMenu(); }}>{t('context.newTag')}</div>)}
-        </div>
-      )}
+      <ContextMenu
+        contextMenu={contextMenu}
+        files={state.files}
+        activeTab={activeTab}
+        peopleWithDisplayCounts={peopleWithDisplayCounts}
+        aiConnectionStatus={state.aiConnectionStatus}
+        displayFileIds={displayFileIds}
+        t={t}
+        closeContextMenu={closeContextMenu}
+        handleOpenInNewTab={handleOpenInNewTab}
+        handleViewInExplorer={handleViewInExplorer}
+        enterFolder={enterFolder}
+        setModal={(type, data) => setState(s => ({ ...s, activeModal: { type: type as any, data } }))}
+        startRename={startRename}
+        handleFolderAIAnalysis={handleFolderAIAnalysis}
+        handleAIAnalysis={handleAIAnalysis}
+        handleClearPersonInfo={handleClearPersonInfo}
+        handleGenerateThumbnails={handleGenerateThumbnails}
+        requestDelete={requestDelete}
+        handleCreateFolder={handleCreateFolder}
+        handleExpandAll={handleExpandAll}
+        handleCollapseAll={handleCollapseAll}
+        enterTagView={enterTagView}
+        requestDeleteTags={requestDeleteTags}
+        handleSetAvatar={handleSetAvatar}
+        handleCreatePerson={handleCreatePerson}
+        handleCloseTab={handleCloseTab}
+        handleCloseOtherTabs={handleCloseOtherTabs}
+        handleCloseAllTabs={handleCloseAllTabs}
+        handleRefresh={handleRefresh}
+        handleCreateNewTag={handleCreateNewTag}
+        handleCopyTags={handleCopyTags}
+        handlePasteTags={handlePasteTags}
+        showToast={showToast}
+        updateActiveTab={updateActiveTab}
+      />
     </div>
   );
 };

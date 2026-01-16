@@ -605,7 +605,7 @@ export const Sidebar: React.FC<{
                  {minimizedTasks.map(task => {
                     const percent = Math.round((task.current / task.total) * 100);
                     return (
-                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm cursor-pointer group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in">
+                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in" onClick={() => onRestoreTask(task.id)}>
                            <div className="flex justify-between items-center mb-1">
                                <span className="font-medium text-gray-700 dark:text-gray-200 truncate pr-2 flex-1">{task.title}</span>
                                <div className="flex items-center space-x-1">
@@ -618,7 +618,12 @@ export const Sidebar: React.FC<{
                                        {task.status === 'paused' ? <Loader2 size={10} className="animate-spin" /> : <Pause size={10} />}
                                      </button>
                                    )}
-                                   <Maximize2 size={10} className="text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => { e.stopPropagation(); onRestoreTask(task.id); }}/>
+                                   <button 
+                                     onClick={(e) => { e.stopPropagation(); onRestoreTask(task.id); }}
+                                     className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                   >
+                                     <Maximize2 size={10} />
+                                   </button>
                                </div>
                            </div>
                            <div className="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
