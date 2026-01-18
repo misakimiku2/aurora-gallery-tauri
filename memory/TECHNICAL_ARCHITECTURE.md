@@ -38,20 +38,20 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件 - 6070 行)
+App (根组件 - 3336 行) （以源码为准 · 已同步）
 ├── TabBar (标签页管理)
 ├── TopBar (工具栏)
 ├── Sidebar (侧边栏)
 │   ├── TreeSidebar (文件树)
 │   └── TaskProgressModal (任务进度)
 ├── MainContent (主内容区)
-│   ├── PersonGrid (人物网格) [新增 - 225 行]
-│   ├── FileGrid (文件网格) [更新 - 2563 行]
+│   ├── PersonGrid (人物网格) [新增 - 224 行] （以源码为准 · 已同步）
+│   ├── FileGrid (文件网格) [更新 - 2562 行] （以源码为准 · 已同步）
 │   ├── ImageViewer (图片查看器)
 │   ├── SequenceViewer (序列查看器)
 │   └── TopicModule (专题模块)
 ├── MetadataPanel (元数据面板)
-├── SettingsModal (设置模态框) [增强 - 1208 行]
+├── SettingsModal (设置模态框) [增强 - 1207 行] （以源码为准 · 已同步）
 ├── MetadataPanel (元数据面板)
 ├── SettingsModal (设置模态框)
 ├── Modals (模态框集合 - src/components/modals/) [重构]
@@ -73,6 +73,12 @@ const [state, setState] = useState<AppState>({
 const { tasks, startTask, updateTask } = useTasks(t);
 // tasks: 包含所有后台任务 (复制/移动/AI/色彩提取)
 // updateTask: 负责处理进度更新、防抖和自动完成清理
+// 其他重要自定义 Hooks:
+// - useAIAnalysis: 封装文件/文件夹级别 AI 分析流程并与 aiService 协作
+// - useFileOperations: 统一封装复制/移动/重命名/删除等文件操作
+// - useContextMenu: 管理右键菜单的位置/项与交互
+// - useFileSearch: 搜索逻辑（处理 color:/palette: 前缀）
+// - useMarqueeSelection: 框选与范围选择逻辑
   // 文件系统状态
   roots: [],
   files: {},
@@ -117,7 +123,7 @@ const displayFileIds = useMemo(() => {
 
 ##### AI 服务 (aiService.ts)
 **位置**: `src/services/aiService.ts`  
-**行数**: ~200 行  
+**行数**: 99 行（以源码为准 · 已同步）  
 **功能**: OpenAI/Ollama/LM Studio 集成
 
 **2026-01-14 更新**: AI 分析优化
@@ -187,9 +193,9 @@ export const searchByPalette = async (palette: string[]) => { ... }
 - 事件驱动的进度通知
 
 ##### 颜色处理模块
-- **color_db.rs** (811 行): 颜色数据存储和管理
+- **color_db.rs** (871 行): 颜色数据存储和管理 （以源码为准 · 已同步）
 - **color_extractor.rs** (258 行): 颜色提取算法
-- **color_worker.rs** (789 行): 后台颜色处理工作器
+- **color_worker.rs** (796 行): 后台颜色处理工作器 （以源码为准 · 已同步）
 
 ##### 数据库模块
 - **db/persons.rs**: 人物数据 CRUD 操作

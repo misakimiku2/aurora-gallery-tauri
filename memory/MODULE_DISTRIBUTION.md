@@ -6,7 +6,7 @@
 
 #### `tauri-bridge.ts` - 核心桥接模块
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 920 行  
+**行数**: 933 行  
 **功能分类**:
 
 **文件系统操作**:
@@ -72,7 +72,7 @@ export async function resumeColorExtraction(): Promise<boolean>
 
 #### `App.tsx` - 主应用组件 ✅
 **位置**: `src/App.tsx`  
-**行数**: 6070 行  
+**行数**: 3336 行  
 
 **概览**:
 - `App.tsx` 仍为大型单体组件，负责绝大多数 UI 状态、视图路由与操作协调。近期改动强调可维护性与性能：把任务管理抽出到 `src/hooks/useTasks.ts`，并精细化拖拽、选择与 AI/色彩搜索逻辑。
@@ -139,18 +139,58 @@ export async function resumeColorExtraction(): Promise<boolean>
 - `WelcomeModal.tsx`: 首次使用欢迎向导
 - ... 其他 8 个模态框
 
+#### `src/components/AppModals.tsx` - 模态框集中渲染组件
+**位置**: `src/components/AppModals.tsx`
+**行数**: 368 行
+**功能**: `AppModals.tsx` 作为应用内所有模态框的集中渲染入口，负责：
+- 根据 `state.activeModal.type` 切换渲染不同的业务模态框（alert、add-to-person、add-to-topic、rename-tag、batch-rename、crop-avatar、exit-confirm、clear-person、copy/move 到文件夹的 FolderPicker 等）。
+- 从 `src/components/modals/*` 和顶级 `SettingsModal` / `CloseConfirmationModal` / `WelcomeModal` 等导入具体模态组件并注入回调与数据。
+- 提供统一的遮罩层和居中布局（overlay），并在关闭时通过 `setState` 清理 `activeModal`。
+
+**关键 Props 概览**:
+- `state: AppState`, `setState: Dispatch` - 访问与控制全局 modal 状态
+- `t: (key: string) => string` - 国际化函数
+- 各类处理函数（`handleCopyFiles`、`handleMoveFiles`、`handleRenamePerson`、`handleDeletePerson`、`handleSaveAvatarCrop` 等）用于将业务逻辑与模态交互连接
+- `showWelcome`, `showCloseConfirmation`, `rememberExitChoice` 等 UI 控制参数
+
+**实现要点**:
+- 通过集中渲染减少 `App.tsx` 内部条件分支，使模态逻辑可独立维护与测试；
+- 将确认/提示类模态（`ConfirmModal` / `AlertModal`）与功能性模态（`FolderPicker` / `CropAvatar`）统一在同一入口管理，便于统一样式与行为约束。
+
 #### `src/hooks/useTasks.ts` - 任务管理 Hook (新增)
 **位置**: `src/hooks/useTasks.ts`
-**行数**: 296 行
+**行数**: 317 行
 **功能**: 集中管理后台任务状态
 - `startTask`: 启动新任务 (copy/move/ai/color)
 - `updateTask`: 更新任务进度 (带防抖)
 - `useTasks`: 为了组件提供任务状态和操作方法
 - 监听 `color-extraction-progress` 事件并自动更新状态
 
+#### 其他自定义 Hooks
+
+`src/hooks/useAIAnalysis.ts` - AI 分析 Hook
+**位置**: `src/hooks/useAIAnalysis.ts`
+**功能**: 提供文件或文件夹级别的 AI 分析封装（描述、标签、场景识别），与 `aiService` 协作并将任务注册到 `useTasks`。
+
+`src/hooks/useContextMenu.ts` - 上下文菜单 Hook
+**位置**: `src/hooks/useContextMenu.ts`
+**功能**: 管理右键菜单显示位置、菜单项与交互回调，支持文件/人物/专题等不同上下文类型。
+
+`src/hooks/useFileOperations.ts` - 文件操作 Hook
+**位置**: `src/hooks/useFileOperations.ts`
+**功能**: 封装复制/移动/重命名/删除等文件系统操作，并将这些操作以任务形式注册到 `useTasks`。
+
+`src/hooks/useFileSearch.ts` - 搜索 Hook
+**位置**: `src/hooks/useFileSearch.ts`
+**功能**: 实现搜索逻辑，处理 color:/palette: 前缀并与色彩数据库或后端搜索接口协作。
+
+`src/hooks/useMarqueeSelection.ts` - 框选 Hook
+**位置**: `src/hooks/useMarqueeSelection.ts`
+**功能**: 管理框选状态、碰撞检测与多选逻辑。
+
 #### `PersonGrid.tsx` - 人物网格组件 (新增)
 **位置**: `src/components/PersonGrid.tsx`  
-**行数**: 225 行  
+**行数**: 224 行（以源码为准 · 已同步）  
 **功能**: 专门的人物展示和管理组件，从 FileGrid 中分离出来
 
 **主要功能**:
@@ -175,7 +215,7 @@ interface PersonGridProps {
 
 #### `FileGrid.tsx` - 文件网格组件
 **位置**: `src/components/FileGrid.tsx`  
-**行数**: 2563 行  
+**行数**: 2562 行  
 **功能**: 文件和文件夹的网格显示组件
 
 **主要更新**:
@@ -184,7 +224,7 @@ interface PersonGridProps {
 
 #### `SettingsModal.tsx` - 设置模态框组件
 **位置**: `src/components/SettingsModal.tsx`  
-**行数**: ~1208 行  
+**行数**: 1207 行  
 **新增功能**: 系统提示预设管理
 
 **AI 设置增强**:
@@ -212,27 +252,27 @@ interface PromptPreset {
 
 ##### `ImageViewer.tsx` - 图片查看器
 **位置**: `src/components/ImageViewer.tsx`  
-**行数**: 1068 行  
+**行数**: 1067 行  
 **功能**: 全屏图片查看，支持缩放、旋转、元数据显示
 
 ##### `MetadataPanel.tsx` - 元数据面板
 **位置**: `src/components/MetadataPanel.tsx`  
-**行数**: 2450 行  
+**行数**: 2449 行  
 **功能**: 显示文件元数据、AI 分析结果、标签管理
 
 ##### `TreeSidebar.tsx` - 树形侧边栏
 **位置**: `src/components/TreeSidebar.tsx`  
-**行数**: 650 行  
+**行数**: 654 行  
 **功能**: 文件夹树导航，支持展开/折叠
 
 ##### `TopBar.tsx` - 顶部工具栏
 **位置**: `src/components/TopBar.tsx`  
-**行数**: 922 行  
+**行数**: 921 行  
 **功能**: 搜索栏、视图切换、操作按钮
 
 ##### `TabBar.tsx` - 标签页管理
 **位置**: `src/components/TabBar.tsx`  
-**行数**: 250 行  
+**行数**: 249 行  
 **功能**: 多标签页管理，支持关闭、拖拽排序
 
 ##### `TopicModule.tsx` - 专题模块
@@ -247,6 +287,8 @@ interface PromptPreset {
 - `SplashScreen.tsx` - 启动画面
 - `Logo.tsx` - Logo 组件
 - `FolderIcon.tsx` - 文件夹图标
+ - `ContextMenu.tsx` - 右键上下文菜单组件
+ - `ToastItem.tsx` - 通知/吐司项组件
 
 ### 3. 服务层 (`src/services/`)
 
@@ -261,38 +303,38 @@ interface PromptPreset {
 
 #### `faceRecognitionService.ts` - 人脸识别服务
 **位置**: `src/services/faceRecognitionService.ts`  
-**行数**: 87 行  
+**行数**: 86 行  
 **功能**: 基于 face-api.js 的人脸识别
 
 ### 4. 工具函数库 (`src/utils/`)
 
 #### `debounce.ts` - 防抖函数
 **位置**: `src/utils/debounce.ts`  
-**行数**: 73 行  
+**行数**: 72 行（以源码为准 · 已同步）  
 
 #### `environment.ts` - 环境检测
 **位置**: `src/utils/environment.ts`  
-**行数**: 63 行  
+**行数**: 62 行  
 
 #### `logger.ts` - 日志记录
 **位置**: `src/utils/logger.ts`  
-**行数**: 229 行  
+**行数**: 228 行  
 
 #### `mockFileSystem.ts` - 模拟文件系统
 **位置**: `src/utils/mockFileSystem.ts`  
-**行数**: 342 行  
+**行数**: 341 行  
 
 #### `performanceMonitor.ts` - 性能监控
 **位置**: `src/utils/performanceMonitor.ts`  
-**行数**: 453 行  
+**行数**: 452 行（以源码为准 · 已同步）  
 
 #### `translations.ts` - 多语言支持
 **位置**: `src/utils/translations.ts`  
-**行数**: 1115 行  
+**行数**: 1114 行  
 
 ### 5. 类型定义 (`src/types.ts`)
 **位置**: `src/types.ts`  
-**行数**: 332 行  
+**行数**: 331 行  
 
 **主要类型**:
 ```typescript
@@ -306,7 +348,7 @@ export interface DominantColor { ... }
 
 ### 6. 应用入口 (`src/main.tsx`)
 **位置**: `src/main.tsx`  
-**行数**: 40 行  
+**行数**: 39 行（以源码为准 · 已同步）  
 **功能**: React 应用挂载点
 
 ---
@@ -315,24 +357,24 @@ export interface DominantColor { ... }
 
 ### 1. 主程序 (`src-tauri/src/main.rs`)
 **位置**: `src-tauri/src/main.rs`  
-**行数**: 2514 行  
+**行数**: 2614 行  
 **功能**: Tauri 应用入口，命令处理器
 
 ### 2. 颜色相关模块
 
 #### `color_db.rs` - 颜色数据库
 **位置**: `src-tauri/src/color_db.rs`  
-**行数**: 775 行  
+**行数**: 871 行  
 **功能**: 颜色数据存储和管理
 
 #### `color_extractor.rs` - 颜色提取算法
 **位置**: `src-tauri/src/color_extractor.rs`  
-**行数**: 245 行  
+**行数**: 258 行  
 **功能**: 图像颜色分析算法
 
 #### `color_worker.rs` - 颜色处理工作器
 **位置**: `src-tauri/src/color_worker.rs`  
-**行数**: 758 行  
+**行数**: 796 行  
 **功能**: 后台颜色提取任务处理
 
 ### 3. 数据库模块 (`src-tauri/src/db/`)
@@ -342,12 +384,12 @@ export interface DominantColor { ... }
 
 #### `persons.rs` - 人物数据库操作
 **位置**: `src-tauri/src/db/persons.rs`
-**行数**: 108 行
+**行数**: 118 行
 - 人物数据的 CRUD 操作。
 
 #### `file_metadata.rs` - 文件元数据存储 (新增)
 **位置**: `src-tauri/src/db/file_metadata.rs`
-**行数**: 81 行
+**行数**: 87 行
 - 负责图片标签、描述、来源 URL 和 AI 数据（JSON）的持久化。
 - 实现 `upsert_file_metadata`、`get_metadata_by_id` 等核心 Rust 函数。
 
@@ -356,31 +398,49 @@ export interface DominantColor { ... }
 ## 依赖关系图
 
 ```
-App.tsx (6070 行)
+App.tsx (3336 行)
 ├── components/
 │   ├── modals/ (13 个模态框) [新增]
-│   │   ├── FolderPickerModal.tsx
-│   │   ├── BatchRenameModal.tsx
-│   │   └── ...
-│   ├── PersonGrid.tsx (225 行) [新增]
-│   ├── FileGrid.tsx (2563 行) [更新]
-│   ├── SettingsModal.tsx (1208 行) [增强]
-│   ├── ImageViewer.tsx (1068 行)
-│   ├── MetadataPanel.tsx (2450 行)
-│   ├── TreeSidebar.tsx (650 行)
-│   ├── TopBar.tsx (922 行)
-│   ├── TabBar.tsx (250 行)
+│   │   ├── AddToPersonModal.tsx (74 行)
+│   │   ├── AddToTopicModal.tsx (81 行)
+│   │   ├── AlertModal.tsx (23 行)
+│   │   ├── BatchRenameModal.tsx (42 行)
+│   │   ├── ClearPersonModal.tsx (101 行)
+│   │   ├── ConfirmModal.tsx (28 行)
+│   │   ├── CropAvatarModal.tsx (401 行)
+│   │   ├── ExitConfirmModal.tsx (41 行)
+│   │   ├── FolderPickerModal.tsx (161 行)
+│   │   ├── RenamePersonModal.tsx (30 行)
+│   │   ├── RenameTagModal.tsx (29 行)
+│   │   ├── TagEditor.tsx (56 行)
+│   │   └── WelcomeModal.tsx (140 行)
+│   ├── PersonGrid.tsx (224 行) [新增] （以源码为准 · 已同步）
+│   ├── FileGrid.tsx (2562 行) [更新]
+│   ├── SettingsModal.tsx (1207 行) [增强]
+│   ├── ImageViewer.tsx (1067 行)
+│   ├── MetadataPanel.tsx (2449 行)
+│   ├── TreeSidebar.tsx (654 行)
+│   ├── TopBar.tsx (921 行)
+│   ├── TabBar.tsx (249 行)
 │   ├── TopicModule.tsx (2608 行)
 │   └── TaskProgressModal.tsx
 ├── hooks/
-│   └── useTasks.ts (296 行) [新增]
+│   └── useTasks.ts (317 行) [新增]
 ├── services/
 │   ├── aiService.ts (99 行) [优化]
-│   └── faceRecognitionService.ts (87 行)
+│   └── faceRecognitionService.ts (86 行)
 ├── api/
-│   └── tauri-bridge.ts (920 行) [稳定]
+│   └── tauri-bridge.ts (933 行) [稳定]
 ├── utils/ (多个工具模块)
-└── types.ts (332 行)
+│   ├── async.ts (19 行) — 异步工具与文件 I/O 包装
+│   ├── debounce.ts (72 行) — 防抖函数（搜索/输入节流）
+│   ├── environment.ts (62 行) — 环境检测与 Feature flags
+│   ├── logger.ts (228 行) — 结构化前端日志封装
+│   ├── mockFileSystem.ts (341 行) — 开发/测试用模拟 FS
+│   ├── performanceMonitor.ts (452 行) — 性能计时与采样工具
+│   ├── textUtils.ts (42 行) — 文本处理与规范化函数
+│   └── translations.ts (1114 行) — 国际化文案（多语言）
+└── types.ts (331 行) （以源码为准 · 已同步）
 
 
 ├── Tauri Core API
@@ -389,13 +449,13 @@ App.tsx (6070 行)
 └── Window Management APIs
 
 Rust Backend
-├── main.rs (2602 行)
-├── color_db.rs (811 行)
+├── main.rs (2614 行)
+├── color_db.rs (871 行)
 ├── color_extractor.rs (258 行)
-├── color_worker.rs (789 行)
+├── color_worker.rs (796 行)
 └── db/
-    ├── persons.rs (119 行)
-    └── file_metadata.rs (88 行)
+    ├── persons.rs (118 行)
+    └── file_metadata.rs (87 行)
 ```
 
 ---
@@ -403,17 +463,17 @@ Rust Backend
 ## 模块复杂度分析
 
 ### 高复杂度模块 (需要关注)
-1. **App.tsx** (6070 行) - 主应用组件，状态管理复杂
-2. **main.rs** (2602 行) - Rust 主程序，命令处理集中
-3. **color_worker.rs** (789 行) - 后台处理逻辑复杂
+1. **App.tsx** (3336 行) - 主应用组件，状态管理复杂
+2. **main.rs** (2614 行) - Rust 主程序，命令处理集中
+3. **color_worker.rs** (796 行) - 后台处理逻辑复杂
 
 ### 中等复杂度模块
-1. **SettingsModal.tsx** (1208 行) - 设置界面功能丰富
-2. **FileGrid.tsx** (2563 行) - 文件显示逻辑复杂
-3. **tauri-bridge.ts** (920 行) - API 桥接层
+1. **SettingsModal.tsx** (1207 行) - 设置界面功能丰富
+2. **FileGrid.tsx** (2562 行) - 文件显示逻辑复杂
+3. **tauri-bridge.ts** (933 行) - API 桥接层
 
 ### 低复杂度模块
-1. **PersonGrid.tsx** (225 行) - 新增专用组件，职责单一
+1. **PersonGrid.tsx** (224 行) - 新增专用组件，职责单一（以源码为准 · 已同步）
 2. **工具函数** - 各司其职，逻辑简单
 
 ---

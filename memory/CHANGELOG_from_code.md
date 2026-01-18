@@ -26,6 +26,8 @@
 ## 概要
 对 `memory/` 中文档做了一次代码驱动的同步更新，以保证文档以当前代码为准。
 
+已补充若干在源码中新出现但未完整列出的项：包括自定义 Hooks（`useAIAnalysis`、`useFileOperations`、`useContextMenu` 等）以及组件 `ContextMenu.tsx`、`ToastItem.tsx` 等。文档已与当前 `src/` 目录对齐。
+
 **修改文件**:
 - `API_REFERENCE.md` ✅ (minor updates)
 - `MODULE_DISTRIBUTION.md` ✅ (added PersonGrid component)
@@ -36,7 +38,7 @@
 ## 主要变更点（按代码引用）
 
 ### 1. 前端组件重构 (src/components/)
-- **新增 PersonGrid 组件**: 将人物界面从 FileGrid 中分离出来形成独立的 `PersonGrid.tsx` 组件 (225 行)，提供专门的人物网格视图和管理功能。
+- **新增 PersonGrid 组件**: 将人物界面从 FileGrid 中分离出来形成独立的 `PersonGrid.tsx` 组件 (224 行)（以源码为准 · 已同步），提供专门的人物网格视图和管理功能。
 - **SettingsModal 增强**: 新增系统提示预设功能，支持创建、编辑、删除和管理 AI 提示模板。
 - **ContextMenu 样式优化**: 针对不同类型的上下文菜单（文件、文件夹）应用不同的深色主题样式。
 

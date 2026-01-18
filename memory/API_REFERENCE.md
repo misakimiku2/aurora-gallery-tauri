@@ -27,6 +27,29 @@
 - 支持人物头像的裁剪显示和人脸定位
 - 提供流式布局和响应式设计
 
+### `ContextMenu` (src/components/ContextMenu.tsx)
+- **功能**: 通用的右键上下文菜单组件，基于上下文类型（文件/文件夹/人物/专题）渲染不同菜单项，支持键盘操作与可配置的快捷项。
+- **Props 简要**:
+  - `items: MenuItem[]` - 菜单项数组
+  - `position: { x: number; y: number }` - 菜单显示位置
+  - `onSelect: (id: string) => void` - 菜单项选择回调
+  - `onClose: () => void` - 关闭回调
+
+### `ToastItem` (src/components/ToastItem.tsx)
+- **功能**: 单个通知项组件，用于在屏幕角落显示短消息、操作按钮和进度指示（与 `TaskProgressModal` 配合）。
+- **Props 简要**:
+  - `id: string` - 通知 ID
+  - `type?: 'info' | 'success' | 'error'` - 通知类型
+  - `message: string` - 显示文本
+  - `onDismiss?: (id: string) => void` - 关闭回调
+
+### `useAIAnalysis` Hook (src/hooks/useAIAnalysis.ts)
+- **功能**: 封装对单个文件或文件夹的 AI 分析流程（描述、标签、场景、对象识别），调用 `aiService` 并将分析任务注册到 `useTasks`，返回分析状态与结果缓存接口。
+- **主要接口**:
+  - `analyzeFile(fileId: string): Promise<AiResult>`
+  - `analyzeFolder(folderId: string): Promise<Record<string, AiResult>>`
+  - `getResult(fileId: string): AiResult | undefined`
+
 ### TopicModule (src/components/TopicModule.tsx)
 - **功能**: 专题（Topic）画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物（Person）的关联、封面设置与裁剪、以及主题内文件的浏览与选择。
 - **主要 Props**:
