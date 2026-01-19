@@ -146,9 +146,15 @@ Please output only the summary text without any prefixes.`;
 
           let provider = aiConfig.provider;
           if (provider === 'openai' && aiConfig.openai.apiKey) {
+            const messages: any[] = [];
+            if (aiConfig.systemPrompt) {
+              messages.push({ role: "system", content: aiConfig.systemPrompt });
+            }
+            messages.push({ role: "user", content: storyPrompt });
+
             const body = {
               model: aiConfig.openai.model,
-              messages: [{ role: "user", content: storyPrompt }],
+              messages,
               max_tokens: 500
             };
             const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
@@ -161,7 +167,10 @@ Please output only the summary text without any prefixes.`;
               summary = resData.choices[0].message.content.trim();
             }
           } else if (provider === 'ollama') {
-            const body = { model: aiConfig.ollama.model, prompt: storyPrompt, stream: false };
+            const body: any = { model: aiConfig.ollama.model, prompt: storyPrompt, stream: false };
+            if (aiConfig.systemPrompt) {
+              body.system = aiConfig.systemPrompt;
+            }
             const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -185,9 +194,15 @@ Please output only the summary text without any prefixes.`;
                 let url = apiEndpoint.replace(/\/+$/, '');
                 if (!url.endsWith('/v1')) url += '/v1';
                 
+                const messages: any[] = [];
+                if (aiConfig.systemPrompt) {
+                  messages.push({ role: "system", content: aiConfig.systemPrompt });
+                }
+                messages.push({ role: "user", content: storyPrompt });
+
                 const body = {
                   model: aiConfig.lmstudio.model,
-                  messages: [{ role: "user", content: storyPrompt }],
+                  messages,
                   max_tokens: 500,
                   stream: false
                 };
@@ -325,9 +340,21 @@ Please output only the summary text without any prefixes.`;
         };
 
         if (provider === 'openai') {
+          const messages: any[] = [];
+          if (aiConfig.systemPrompt) {
+            messages.push({ role: "system", content: aiConfig.systemPrompt });
+          }
+          messages.push({ 
+            role: "user", 
+            content: [
+              { type: "text", text: prompt }, 
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+            ] 
+          });
+
           const body = {
             model: aiConfig.openai.model,
-            messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] }],
+            messages,
             max_tokens: 1000
           };
           try {
@@ -340,7 +367,16 @@ Please output only the summary text without any prefixes.`;
             if (resData?.choices?.[0]?.message?.content) result = parseJSON(resData.choices[0].message.content);
           } catch (e) { console.error('AI analysis failed:', e); }
         } else if (provider === 'ollama') {
-          const body = { model: aiConfig.ollama.model, prompt: prompt, images: [base64Data], stream: false, format: "json" };
+          const body: any = { 
+            model: aiConfig.ollama.model, 
+            prompt: prompt, 
+            images: [base64Data], 
+            stream: false, 
+            format: "json" 
+          };
+          if (aiConfig.systemPrompt) {
+            body.system = aiConfig.systemPrompt;
+          }
           try {
             const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
               method: 'POST',
@@ -351,7 +387,24 @@ Please output only the summary text without any prefixes.`;
             if (resData?.response) result = parseJSON(resData.response);
           } catch (e) { console.error('AI analysis failed:', e); }
         } else if (provider === 'lmstudio') {
-          const body = { model: aiConfig.lmstudio.model, messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }] }], max_tokens: 1000, stream: false };
+          const messages: any[] = [];
+          if (aiConfig.systemPrompt) {
+            messages.push({ role: "system", content: aiConfig.systemPrompt });
+          }
+          messages.push({ 
+            role: "user", 
+            content: [
+              { type: "text", text: prompt }, 
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+            ] 
+          });
+
+          const body = { 
+            model: aiConfig.lmstudio.model, 
+            messages, 
+            max_tokens: 1000, 
+            stream: false 
+          };
           let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
           if (!endpoint.endsWith('/v1')) endpoint += '/v1';
           try {

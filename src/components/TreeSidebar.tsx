@@ -18,7 +18,7 @@ interface TreeProps {
   depth?: number;
 }
 
-const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, onDropOnFolder, depth = 0 }) => {
+const TreeNode: React.FC<TreeProps> = React.memo(({ files, nodeId, currentFolderId, expandedIds, onToggle, onNavigate, onContextMenu, onDropOnFolder, depth = 0 }) => {
   const node = files[nodeId];
   const [isDragOverNode, setIsDragOverNode] = useState(false);
 
@@ -144,7 +144,7 @@ const TreeNode: React.FC<TreeProps> = ({ files, nodeId, currentFolderId, expande
       ))}
     </div>
   );
-};
+});
 
 interface PeopleSectionProps {
   people: Record<string, Person>;
@@ -157,7 +157,7 @@ interface PeopleSectionProps {
   t: (key: string) => string;
 }
 
-const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t }) => {
+const PeopleSection: React.FC<PeopleSectionProps> = React.memo(({ people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t }) => {
   const [expanded, setExpanded] = useState(true);
   const peopleList = useMemo(() => Object.values(people), [people]);
 
@@ -252,7 +252,7 @@ const PeopleSection: React.FC<PeopleSectionProps> = ({ people, files, onPersonSe
         )}
       </div>
   );
-};
+});
 
 interface TagSectionProps {
   files: Record<string, FileNode>;
@@ -267,7 +267,7 @@ interface TagSectionProps {
   t: (key: string) => string;
 }
 
-const TagSection: React.FC<TagSectionProps> = ({ 
+const TagSection: React.FC<TagSectionProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
   isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t 
 }) => {
@@ -299,12 +299,28 @@ const TagSection: React.FC<TagSectionProps> = ({
     };
   }, []);
 
-  const sortedTags = useMemo(() => {
+  const { sortedTags, tagCounts } = useMemo(() => {
     const allTags = new Set<string>(customTags);
-    Object.values(files).forEach((file: FileNode) => {
-      file.tags.forEach(tag => allTags.add(tag));
+    const counts: Record<string, number> = {};
+    
+    // Initialize counts for custom tags
+    customTags.forEach(tag => {
+      counts[tag] = 0;
     });
-    return Array.from(allTags).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+
+    Object.values(files).forEach((file: FileNode) => {
+      if (file.tags) {
+        file.tags.forEach(tag => {
+          allTags.add(tag);
+          counts[tag] = (counts[tag] || 0) + 1;
+        });
+      }
+    });
+
+    return {
+      sortedTags: Array.from(allTags).sort((a, b) => a.localeCompare(b, "zh-CN")),
+      tagCounts: counts
+    };
   }, [files, customTags]);
 
   const suggestions = useMemo(() => {
@@ -437,7 +453,7 @@ const TagSection: React.FC<TagSectionProps> = ({
               >
                  <span className="pointer-events-none">{tag}</span>
                  <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none">
-                   {Object.values(files).filter((f: FileNode) => f.tags.includes(tag)).length}
+                   {tagCounts[tag] || 0}
                  </span>
               </div>
               
@@ -472,7 +488,7 @@ const TagSection: React.FC<TagSectionProps> = ({
       )}
     </div>
   );
-}
+});
 
 interface TopicSectionProps {
   onNavigateTopics: () => void;
@@ -480,7 +496,7 @@ interface TopicSectionProps {
   t: (key: string) => string;
 }
 
-const TopicSection: React.FC<TopicSectionProps> = ({ onNavigateTopics, onCreateTopic, t }) => {
+const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics, onCreateTopic, t }) => {
   return (
       <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
         <div 
@@ -502,7 +518,7 @@ const TopicSection: React.FC<TopicSectionProps> = ({ onNavigateTopics, onCreateT
         </div>
       </div>
   );
-};
+});
 
 export const Sidebar: React.FC<{
   roots: string[];
@@ -532,7 +548,7 @@ export const Sidebar: React.FC<{
   onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
-}> = ({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -651,4 +667,4 @@ export const Sidebar: React.FC<{
       </div>
     </div>
   );
-};
+});

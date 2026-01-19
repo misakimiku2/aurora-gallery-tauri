@@ -546,6 +546,10 @@ export const App: React.FC = () => {
     return state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB;
   }, [state.tabs, state.activeTabId]);
 
+  // Use a ref for activeTab to provide stable callbacks
+  const activeTabRef = useRef(activeTab);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
   // Handle Special Search Queries (palette:, color:)
   useEffect(() => {
     const query = activeTab.searchQuery?.trim() || '';
@@ -1739,7 +1743,7 @@ export const App: React.FC = () => {
     showToast(t('context.saved'));
   };
 
-  const toggleSettings = () => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen }));
+  const toggleSettings = useCallback(() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen })), []);
 
   const handleChangePath = async (type: 'resource' | 'cache') => {
     try {
@@ -1948,14 +1952,18 @@ export const App: React.FC = () => {
     }
   }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings]);
 
-  const enterFolder = (folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
+  const enterFolder = useCallback((folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
     const scroll = selectionRef.current?.scrollTop || 0;
     logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll, ...options });
     // If resetScroll is explicitly true, or implicitly we want to reset (default behavior for entering folder)
     const nextScroll = options?.resetScroll ? 0 : 0;
     pushHistory(folderId, null, 'browser', '', 'all', [], null, nextScroll, null, null, [], [], options?.scrollToItemId);
-  };
-  const handleNavigateFolder = (id: string, options?: { targetId?: string, resetScroll?: boolean }) => { closeContextMenu(); enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll }); };
+  }, [pushHistory]);
+
+  const handleNavigateFolder = useCallback((id: string, options?: { targetId?: string, resetScroll?: boolean }) => { 
+    closeContextMenu(); 
+    enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll }); 
+  }, [closeContextMenu, enterFolder]);
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
     pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -2003,7 +2011,9 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const handleToggleFolder = (id: string) => {
+  const handleCreateRootTopic = useCallback(() => handleCreateTopic(null), [handleCreateTopic]);
+
+  const handleToggleFolder = useCallback((id: string) => {
     setState(prev => {
       const isCurrentlyExpanded = prev.expandedFolderIds.includes(id);
       const newExpandedIds = isCurrentlyExpanded
@@ -2021,7 +2031,7 @@ export const App: React.FC = () => {
         expandedFolderIds: newExpandedIds
       };
     });
-  };
+  }, []);
 
   // Global navigation timestamp for scroll event filtering across component boundaries
   const setNavigationTimestamp = () => {
@@ -2195,9 +2205,15 @@ export const App: React.FC = () => {
 
       // Same logic as handleAIAnalysis but for search
       if (aiConfig.provider === 'openai') {
+        const messages: any[] = [];
+        if (aiConfig.systemPrompt) {
+          messages.push({ role: "system", content: aiConfig.systemPrompt });
+        }
+        messages.push({ role: "user", content: prompt });
+
         const body = {
           model: aiConfig.openai.model,
-          messages: [{ role: "user", content: prompt }],
+          messages,
           max_tokens: 500
         };
         try {
@@ -2208,13 +2224,20 @@ export const App: React.FC = () => {
           });
           const resData = await res.json();
           if (resData?.choices?.[0]?.message?.content) {
-            try { result = JSON.parse(resData.choices[0].message.content); } catch (e) { }
+            try { 
+              const text = resData.choices[0].message.content;
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              result = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+            } catch (e) { }
           }
         } catch (e) {
           console.error('AI search failed:', e);
         }
       } else if (aiConfig.provider === 'ollama') {
-        const body = { model: aiConfig.ollama.model, prompt: prompt, stream: false, format: "json" };
+        const body: any = { model: aiConfig.ollama.model, prompt: prompt, stream: false, format: "json" };
+        if (aiConfig.systemPrompt) {
+          body.system = aiConfig.systemPrompt;
+        }
         try {
           const res = await fetch(`${aiConfig.ollama.endpoint}/api/generate`, {
             method: 'POST',
@@ -2223,13 +2246,28 @@ export const App: React.FC = () => {
           });
           const resData = await res.json();
           if (resData?.response) {
-            try { result = JSON.parse(resData.response); } catch (e) { }
+            try { 
+              const text = resData.response;
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              result = JSON.parse(jsonMatch ? jsonMatch[0] : text);
+            } catch (e) { }
           }
         } catch (e) {
           console.error('AI search failed:', e);
         }
       } else if (aiConfig.provider === 'lmstudio') {
-        const body = { model: aiConfig.lmstudio.model, messages: [{ role: "user", content: prompt }], max_tokens: 500, stream: false };
+        const messages: any[] = [];
+        if (aiConfig.systemPrompt) {
+          messages.push({ role: "system", content: aiConfig.systemPrompt });
+        }
+        messages.push({ role: "user", content: prompt });
+
+        const body = { 
+          model: aiConfig.lmstudio.model, 
+          messages, 
+          max_tokens: 500, 
+          stream: false 
+        };
         let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
         if (!endpoint.endsWith('/v1')) endpoint += '/v1';
         try {
@@ -2470,10 +2508,10 @@ export const App: React.FC = () => {
   const handlePerformSearch = onPerformSearch;
 
   const handleViewerSearch = (query: string) => pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0);
-  const enterTagView = (tagName: string) => pushHistory(activeTab.folderId, null, 'browser', '', 'tag', [tagName], null, 0);
-  const enterTagsOverview = () => pushHistory(activeTab.folderId, null, 'tags-overview', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, null, 0);
-  const enterPeopleOverview = () => pushHistory(activeTab.folderId, null, 'people-overview', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, null, 0);
-  const enterPersonView = (personId: string) => pushHistory(activeTab.folderId, null, 'browser', '', 'all', [], personId, 0);
+  const enterTagView = useCallback((tagName: string) => pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'tag', [tagName], null, 0), [pushHistory]);
+  const enterTagsOverview = useCallback(() => pushHistory(activeTabRef.current.folderId, null, 'tags-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0), [pushHistory]);
+  const enterPeopleOverview = useCallback(() => pushHistory(activeTabRef.current.folderId, null, 'people-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0), [pushHistory]);
+  const enterPersonView = useCallback((personId: string) => pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'all', [], personId, 0), [pushHistory]);
   const handleClearTagFilter = (tagToRemove: string) => updateActiveTab(prev => ({ activeTags: prev.activeTags.filter(t => t !== tagToRemove) }));
   const handleClearAllTags = () => updateActiveTab({ activeTags: [] });
   const handleClearPersonFilter = () => updateActiveTab({ activePersonId: null });
@@ -2838,7 +2876,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={() => handleCreateTopic(null)} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} t={t} />
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
