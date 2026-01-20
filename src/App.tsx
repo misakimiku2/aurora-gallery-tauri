@@ -140,6 +140,7 @@ export const App: React.FC = () => {
   const [hoverPlayingId, setHoverPlayingId] = useState<string | null>(null);
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState('');
+  const [personSearchQuery, setPersonSearchQuery] = useState('');
   const lastSelectedTagRef = useRef<string | null>(null);
   const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
   const [toolbarQuery, setToolbarQuery] = useState('');
@@ -1007,6 +1008,15 @@ export const App: React.FC = () => {
     return updatedPeople;
   }, [state.people, personCounts]);
 
+  // When in people-overview, allow filtering the people list by `personSearchQuery`.
+  const peopleForOverview = useMemo(() => {
+    if (activeTab.viewMode === 'people-overview' && personSearchQuery) {
+      const q = personSearchQuery.toLowerCase();
+      return Object.fromEntries(Object.entries(peopleWithDisplayCounts).filter(([, p]) => p.name.toLowerCase().includes(q)));
+    }
+    return peopleWithDisplayCounts;
+  }, [peopleWithDisplayCounts, activeTab.viewMode, personSearchQuery]);
+
   const handleUpdateFile = (id: string, updates: Partial<FileNode>) => {
     setState(prev => {
       const updatedFiles = { ...prev.files, [id]: { ...prev.files[id], ...updates } };
@@ -1107,37 +1117,94 @@ export const App: React.FC = () => {
   });
 
   const handleExternalDragEnter = (e: React.DragEvent) => {
+    // 如果当前正在进行由应用内部发起的“拖拽到外部”操作（通过 Alt 启动），忽略进入事件避免显示覆盖层
+    if (isDraggingInternal) return;
+
     e.preventDefault();
     e.stopPropagation();
-    setIsExternalDragging(true);
+
+    // 检查是否为外部文件拖拽(而不是内部拖拽)
+    // 内部拖拽会设置 'application/json' 类型
+    const hasFiles = e.dataTransfer.types.includes('Files');
+    const hasInternalData = e.dataTransfer.types.includes('application/json');
+
+    // 只有当是外部文件拖拽时才显示覆盖层
+    if (hasFiles && !hasInternalData) {
+      setIsExternalDragging(true);
+
+      // 获取文件数量
+      const itemCount = e.dataTransfer.items?.length || 0;
+      if (itemCount > 0) {
+        // 创建文件路径占位符数组(实际路径在 drop 时才能获取)
+        setExternalDragItems(Array(itemCount).fill(''));
+      }
+    }
   };
 
   const handleExternalDragOver = (e: React.DragEvent) => {
+    // 忽略应用内部发起的向外拖拽（Alt + 拖拽）以防止显示覆盖层
+    if (isDraggingInternal) return;
+
     e.preventDefault();
     e.stopPropagation();
-    setExternalDragPosition({ x: e.clientX, y: e.clientY });
+
+    // 检查是否为外部文件拖拽
+    const hasFiles = e.dataTransfer.types.includes('Files');
+    const hasInternalData = e.dataTransfer.types.includes('application/json');
+
+    if (hasFiles && !hasInternalData) {
+      setExternalDragPosition({ x: e.clientX, y: e.clientY });
+
+      // 更新文件数量(如果还没有设置)
+      if (externalDragItems.length === 0) {
+        const itemCount = e.dataTransfer.items?.length || 0;
+        if (itemCount > 0) {
+          setExternalDragItems(Array(itemCount).fill(''));
+        }
+      }
+    }
   };
 
   const handleExternalDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (e.currentTarget === e.target) {
+
+    // 使用 relatedTarget 判断鼠标是否真正离开了应用窗口
+    // 如果 relatedTarget 为 null,说明鼠标离开了窗口边界
+    const dragEvent = e as React.DragEvent & { relatedTarget: EventTarget | null };
+    if (!dragEvent.relatedTarget || dragEvent.currentTarget === dragEvent.target) {
       setIsExternalDragging(false);
       setExternalDragPosition(null);
+      setExternalDragItems([]);
     }
   };
 
   const handleExternalDrop = async (e: React.DragEvent) => {
+    // 如果是内部发起的向外拖拽，则忽略 drop 事件
+    if (isDraggingInternal) return;
+
     e.preventDefault();
     e.stopPropagation();
     setIsExternalDragging(false);
     setExternalDragPosition(null);
+    setExternalDragItems([]);
 
     const files = Array.from(e.dataTransfer.files);
+    const items = e.dataTransfer.items;
+
+    // 如果没有文件但有 items,可能是文件夹拖拽
+    if (files.length === 0 && items && items.length > 0) {
+      // 尝试处理文件夹
+      if (hoveredDropAction === 'copy') {
+        await handleExternalCopyFiles(files, items);
+      }
+      return;
+    }
+
     if (files.length === 0) return;
 
     if (hoveredDropAction === 'copy') {
-      await handleExternalCopyFiles(files);
+      await handleExternalCopyFiles(files, items);
     } else {
       await handleExternalMoveFiles(files);
     }
@@ -1960,9 +2027,9 @@ export const App: React.FC = () => {
     pushHistory(folderId, null, 'browser', '', 'all', [], null, nextScroll, null, null, [], [], options?.scrollToItemId);
   }, [pushHistory]);
 
-  const handleNavigateFolder = useCallback((id: string, options?: { targetId?: string, resetScroll?: boolean }) => { 
-    closeContextMenu(); 
-    enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll }); 
+  const handleNavigateFolder = useCallback((id: string, options?: { targetId?: string, resetScroll?: boolean }) => {
+    closeContextMenu();
+    enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll });
   }, [closeContextMenu, enterFolder]);
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
@@ -2224,7 +2291,7 @@ export const App: React.FC = () => {
           });
           const resData = await res.json();
           if (resData?.choices?.[0]?.message?.content) {
-            try { 
+            try {
               const text = resData.choices[0].message.content;
               const jsonMatch = text.match(/\{[\s\S]*\}/);
               result = JSON.parse(jsonMatch ? jsonMatch[0] : text);
@@ -2246,7 +2313,7 @@ export const App: React.FC = () => {
           });
           const resData = await res.json();
           if (resData?.response) {
-            try { 
+            try {
               const text = resData.response;
               const jsonMatch = text.match(/\{[\s\S]*\}/);
               result = JSON.parse(jsonMatch ? jsonMatch[0] : text);
@@ -2262,11 +2329,11 @@ export const App: React.FC = () => {
         }
         messages.push({ role: "user", content: prompt });
 
-        const body = { 
-          model: aiConfig.lmstudio.model, 
-          messages, 
-          max_tokens: 500, 
-          stream: false 
+        const body = {
+          model: aiConfig.lmstudio.model,
+          messages,
+          max_tokens: 500,
+          stream: false
         };
         let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
         if (!endpoint.endsWith('/v1')) endpoint += '/v1';
@@ -2957,6 +3024,8 @@ export const App: React.FC = () => {
               onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
               onPerformSearch={handlePerformSearch}
               onSetToolbarQuery={setToolbarQuery}
+              onSetPersonSearchQuery={setPersonSearchQuery}
+              personSearchQuery={personSearchQuery}
               onLayoutModeChange={(mode) => updateActiveTab({ layoutMode: mode })}
               onSortOptionChange={(opt) => setState(s => ({ ...s, sortBy: opt }))}
               onSortDirectionChange={() => setState(s => ({ ...s, sortDirection: s.sortDirection === 'asc' ? 'desc' : 'asc' }))}
@@ -3051,64 +3120,7 @@ export const App: React.FC = () => {
                         <Tag size={12} className="mr-1" />
                         <span className="font-medium">{t('context.allTagsOverview')}</span>
                       </div>
-                      <div className="flex-1 flex justify-end">
-                        <div className="relative" style={{ width: '250px' }}>
-                          <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${tagSearchQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
-                            <Search size={14} className="mr-2 text-gray-400" />
-                            <input
-                              type="text"
-                              placeholder={t('search.placeholder')}
-                              value={tagSearchQuery}
-                              onChange={(e) => setTagSearchQuery(e.target.value)}
-                              className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500"
-                            />
-                            {tagSearchQuery && (
-                              <button
-                                onClick={() => setTagSearchQuery('')}
-                                className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400"
-                              >
-                                <X size={12} />
-                              </button>
-                            )}
-                          </div>
-                          {/* 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟叫憋拷 */}
-                          {(() => {
-                            const allTags = new Set<string>();
-                            Object.values(state.files).forEach((f: any) => {
-                              if (f.tags) {
-                                f.tags.forEach((t: string) => allTags.add(t));
-                              }
-                            });
-                            state.customTags.forEach(t => allTags.add(t));
-
-                            const allTagsList = Array.from(allTags);
-                            const filteredTags = allTagsList.filter(tag =>
-                              tag.toLowerCase().includes(tagSearchQuery.toLowerCase())
-                            );
-
-                            // 只锟叫碉拷锟叫讹拷锟狡ワ拷锟斤拷签锟斤拷锟竭碉拷前锟斤拷锟斤拷锟斤拷锟斤拷匹锟斤拷锟角╋拷锟斤拷锟饺拷锟酵憋拷锟斤拷锟绞撅拷锟斤拷锟斤拷斜锟?
-                            const shouldShow = tagSearchQuery &&
-                              filteredTags.length > 0 &&
-                              !(filteredTags.length === 1 && filteredTags[0] === tagSearchQuery);
-
-                            if (!shouldShow) return null;
-
-                            return (
-                              <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
-                                {filteredTags.map(tag => (
-                                  <div
-                                    key={tag}
-                                    className="px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-sm cursor-pointer text-gray-800 dark:text-gray-200"
-                                    onClick={() => setTagSearchQuery(tag)}
-                                  >
-                                    {tag}
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
+                      <div className="flex-1 flex justify-end"></div>
                     </div>
                   ) : activeTab.viewMode === 'people-overview' ? (
                     <div className="flex items-center w-full justify-between">
@@ -3140,7 +3152,7 @@ export const App: React.FC = () => {
                   <TopicModule
                     topics={state.topics}
                     files={state.files}
-                    people={peopleWithDisplayCounts}
+                    people={peopleForOverview}
                     currentTopicId={activeTab.activeTopicId || null}
                     selectedTopicIds={activeTab.selectedTopicIds || []} // Pass selectedTopicIds
                     onNavigateTopic={handleNavigateTopic}
@@ -3214,7 +3226,7 @@ export const App: React.FC = () => {
                     onMouseMove={handleMouseMove}
                     onMouseUp={handleMouseUp}
                     onBackgroundContextMenu={(e) => handleContextMenu(e, 'background', '')}
-                    people={peopleWithDisplayCounts}
+                    people={peopleForOverview}
                     groupedTags={groupedTags}
                     onPersonClick={(pid, e) => handlePersonClick(pid, e)}
                     onPersonContextMenu={(e, pid) => handleContextMenu(e, 'person', pid)}

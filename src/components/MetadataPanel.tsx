@@ -316,15 +316,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
   const [newTagInput, setNewTagInput] = useState('');
   const [toast, setToast] = useState<{msg: string, visible: boolean}>({ msg: '', visible: false });
   const [paletteMenu, setPaletteMenu] = useState<{ visible: boolean, x: number, y: number, color: string | null }>({ visible: false, x: 0, y: 0, color: null });
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    const [toastPos, setToastPos] = useState<{ left?: number; bottom?: number } | null>(null);
+    const toastRef = useRef<HTMLDivElement | null>(null);
   const [expandedTopicIds, setExpandedTopicIds] = useState<Set<string>>(new Set());
   
   // Palette menu close handler for scroll events
   useEffect(() => {
-    const handleWheel = (e: WheelEvent) => {
-      if (paletteMenu.visible) {
-        setPaletteMenu({ ...paletteMenu, visible: false });
-      }
-    };
+        const handleWheel = (e: WheelEvent) => {
+            if (paletteMenu.visible) {
+                setPaletteMenu({ ...paletteMenu, visible: false });
+            }
+        };
 
     document.addEventListener('wheel', handleWheel, true);
 
@@ -332,6 +335,40 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       document.removeEventListener('wheel', handleWheel, true);
     };
   }, [paletteMenu]);
+
+    // Update toast position so it's fixed at bottom-center of this panel
+    useEffect(() => {
+        const update = () => {
+            const el = panelRef.current;
+            if (!el) return setToastPos(null);
+            const rect = el.getBoundingClientRect();
+            const bottom = Math.max(12, window.innerHeight - rect.bottom + 12); // gap from panel bottom
+
+            // If toast element exists, measure its width and center precisely
+            const toastEl = toastRef.current;
+            if (toastEl) {
+                const tw = toastEl.offsetWidth;
+                const left = rect.left + (rect.width - tw) / 2;
+                setToastPos({ left, bottom });
+            } else {
+                // Fallback: center by panel center; will be corrected after toast mounts
+                const left = rect.left + rect.width / 2;
+                setToastPos({ left, bottom });
+            }
+        };
+
+        if (toast.visible) {
+            // update immediately and again on next frame to account for DOM
+            update();
+            requestAnimationFrame(update);
+        }
+        window.addEventListener('resize', update);
+        window.addEventListener('scroll', update, true);
+        return () => {
+            window.removeEventListener('resize', update);
+            window.removeEventListener('scroll', update, true);
+        };
+    }, [toast.visible]);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const personDescRef = useRef<HTMLTextAreaElement>(null);
@@ -1649,8 +1686,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       );
   }
 
-  return (
-    <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+    return (
+        <div ref={panelRef} className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
       <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
         <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
             {isMulti ? `${selectedFileIds.length} ${t('meta.items')}` : file?.name}
@@ -1889,8 +1926,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             // Check if any selected file has AI data
             selectedFileIds.some(id => files[id]?.aiData) && (
                 <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/10 dark:to-blue-900/10 rounded-xl p-4 border border-purple-100 dark:border-purple-900/30">
-                    <div className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-3 flex items-center">
-                        <Sparkles size={12} className="mr-1.5"/> {t('meta.aiSection')}
+                    <div className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-3 flex items-center justify-between">
+                        <div className="flex items-center"><Sparkles size={12} className="mr-1.5"/> {t('meta.aiSection')}</div>
+                        {!isMulti && file && file.aiData && (
+                            <button 
+                                onClick={() => onUpdate(file.id, { aiData: undefined })}
+                                className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
+                                title={t('meta.clearAiData')}
+                                aria-label={t('meta.clearAiData')}
+                            >
+                                <Trash2 size={16} />
+                            </button>
+                        )}
                     </div>
                     
                     {isMulti ? (
@@ -2087,8 +2134,16 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                 {file.aiData.extractedText && (
                                     <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
-                                        <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center">
-                                            <FileText size={10} className="mr-1"/> {t('meta.aiExtractedText')}
+                                        <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
+                                            <div className="flex items-center"><FileText size={10} className="mr-1"/> {t('meta.aiExtractedText')}</div>
+                                            <button
+                                                onClick={() => copyToClipboard(file.aiData?.extractedText || '')}
+                                                className="ml-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+                                                title={t('context.copy')}
+                                                aria-label={t('context.copy')}
+                                            >
+                                                <Copy size={12}/>
+                                            </button>
                                         </div>
                                         <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{file.aiData.extractedText}</p>
                                     </div>
@@ -2096,23 +2151,22 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                 {file.aiData.translatedText && (
                                     <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
-                                        <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center">
-                                            <Languages size={10} className="mr-1"/> {t('meta.aiTranslatedText')}
+                                        <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
+                                            <div className="flex items-center"><Languages size={10} className="mr-1"/> {t('meta.aiTranslatedText')}</div>
+                                            <button
+                                                onClick={() => copyToClipboard(file.aiData?.translatedText || '')}
+                                                className="ml-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+                                                title={t('context.copy')}
+                                                aria-label={t('context.copy')}
+                                            >
+                                                <Copy size={12}/>
+                                            </button>
                                         </div>
                                         <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{file.aiData.translatedText}</p>
                                     </div>
                                 )}
                                 
-                                {/* Clear AI Data Button */}
-                                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800 flex justify-end">
-                                    <button 
-                                        onClick={() => onUpdate(file.id, { aiData: undefined })} 
-                                        className="flex items-center px-3 py-1.5 bg-red-600 dark:bg-red-500 hover:bg-red-700 dark:hover:bg-red-400 text-white rounded-md font-medium transition-colors text-sm"
-                                        title={t('meta.clearAiData')}
-                                    >
-                                        <X size={12} className="mr-1.5"/> {t('meta.clear')}
-                                    </button>
-                                </div>
+
                             </div>
                         )
                     )}
@@ -2433,11 +2487,20 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           document.body
       )}
 
-      {/* Toast */}
-      {toast.visible && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg z-50 pointer-events-none animate-toast-up">
+      {/* Toast (rendered to body so it's fixed to panel bottom and doesn't scroll) */}
+      {toast.visible && typeof document !== 'undefined' && createPortal(
+          <div
+              ref={toastRef}
+              style={{
+                  position: 'fixed',
+                  left: toastPos && typeof toastPos.left === 'number' ? `${toastPos.left}px` : '50%',
+                  bottom: toastPos && typeof toastPos.bottom === 'number' ? `${toastPos.bottom}px` : '16px',
+              }}
+              className="bg-black/80 text-white text-xs px-3 py-1.5 rounded-full shadow-lg z-50 pointer-events-none animate-toast-up"
+          >
               {toast.msg}
-          </div>
+          </div>,
+          document.body
       )}
 
       {/* Backdrop for palette menu */}

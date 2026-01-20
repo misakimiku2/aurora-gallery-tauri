@@ -684,25 +684,54 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
     setHoveredTag(null);
     setHoveredTagPos(null);
   }, []);
+  
+  // 计算并维护字母索引栏相对于视口的 top（使其垂直居中于文件列表区域）
+  const [indexTop, setIndexTop] = useState<number | null>(null);
+
+  const computeIndexTop = useCallback(() => {
+    try {
+      const container = document.getElementById('file-grid-container');
+      if (container) {
+        const rect = container.getBoundingClientRect();
+        const top = rect.top + rect.height / 2; // 相对于视口的 y
+        setIndexTop(Math.round(top));
+        return;
+      }
+    } catch (e) {
+      // ignore
+    }
+    // fallback: 视口中心
+    setIndexTop(Math.round(window.innerHeight / 2));
+  }, []);
+
+  useEffect(() => {
+    computeIndexTop();
+    const onResize = () => computeIndexTop();
+    const onScroll = () => computeIndexTop();
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);
+    const ro = new MutationObserver(() => computeIndexTop());
+    ro.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, true);
+      ro.disconnect();
+    };
+  }, [computeIndexTop]);
 
   return (
     <div className="relative">
       {/* 字母索引�?*/}
-      {filteredKeys.length > 0 && (
-        <div className="fixed top-1/2 transform -translate-y-1/2 z-20 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
-             style={{ 
-               right: 'calc(20px + var(--metadata-panel-width, 0px))',
-               transform: 'translateY(-50%) translateY(10px)' // 向下调整10px，使其居�?
-             }}
+      {filteredKeys.length > 0 && createPortal(
+        <div className="fixed transform -translate-y-1/2 z-[110] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
+             style={{ right: 'calc(20px + var(--metadata-panel-width, 0px))', top: indexTop != null ? `${indexTop}px` : '50%' }}
              onMouseEnter={() => {
-              // 鼠标悬停时，确保索引栏显示在最前面
               const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
               if (metadataPanel) {
                 metadataPanel.style.zIndex = '10';
               }
             }}
             onMouseLeave={() => {
-              // 鼠标离开时，恢复详情面板的z-index
               const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
               if (metadataPanel) {
                 metadataPanel.style.zIndex = '40';
@@ -726,7 +755,9 @@ const TagsList = React.memo(({ groupedTags, keys, files, selectedTagIds, onTagCl
               </button>
             ))}
           </div>
-        </div>
+        </div>,
+        // 渲染到 body，确保 fixed 相对于视口
+        typeof document !== 'undefined' ? document.body : null
       )}
       
       {/* 标签列表内容 */}
@@ -1979,7 +2010,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // #region agent log
   // Removed debug logs
   // #endregion
-
 
   
   // Fallback to settings if direct props are missing

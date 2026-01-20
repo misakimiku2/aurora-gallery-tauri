@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { 
-  copyFile, moveFile, scanFile, writeFileFromBytes, 
+import {
+  copyFile, moveFile, scanFile, writeFileFromBytes,
   deleteFile, createFolder, renameFile, copyImageColors
 } from '../api/tauri-bridge';
 import { performanceMonitor } from '../utils/performanceMonitor';
@@ -72,7 +72,7 @@ export const useFileOperations = ({
           await copyFile(fileInfo.sourcePath, fileInfo.newPath);
           // 尝试复制颜色信息，避免重复提取
           await copyImageColors(fileInfo.sourcePath, fileInfo.newPath);
-          
+
           const scannedFile = await scanFile(fileInfo.newPath, targetFolderId);
           scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
           copiedCount++;
@@ -280,10 +280,27 @@ export const useFileOperations = ({
     }
   };
 
-  const handleExternalCopyFiles = async (files: File[]) => {
+  const handleExternalCopyFiles = async (files: File[], items?: DataTransferItemList) => {
     if (!activeTab.folderId) return;
     const targetFolder = state.files[activeTab.folderId];
     if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
+
+    // 如果有 items,尝试使用 webkitGetAsEntry 处理文件夹
+    if (items && items.length > 0) {
+      const entries: FileSystemEntry[] = [];
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) entries.push(entry);
+        }
+      }
+
+      if (entries.length > 0) {
+        await handleEntriesCopy(entries, targetFolder.path);
+        return;
+      }
+    }
 
     const dummyItems = new Array(files.length).fill('external-file');
     const taskId = startTask('copy', dummyItems, t('tasks.copying'), false);
@@ -303,7 +320,7 @@ export const useFileOperations = ({
             const newFiles = { ...prev.files };
             const existingFile = prev.files[scannedFile.id];
             newFiles[scannedFile.id] = existingFile ? { ...scannedFile, ...existingFile, path: scannedFile.path, name: scannedFile.name } : scannedFile;
-            
+
             const currentFolder = newFiles[targetFolderId];
             if (currentFolder && !currentFolder.children?.includes(scannedFile.id)) {
               newFiles[targetFolderId] = { ...currentFolder, children: [...(currentFolder.children || []), scannedFile.id] };
@@ -322,6 +339,139 @@ export const useFileOperations = ({
       updateTask(taskId, { status: 'completed' });
       showToast(t('errors.copyFailed'));
     }
+  };
+
+  // 处理 FileSystemEntry 数组(文件和文件夹)
+  const handleEntriesCopy = async (entries: FileSystemEntry[], targetPath: string) => {
+    const taskId = startTask('copy', [], t('tasks.copying'), false);
+    let totalFiles = 0;
+    let processedFiles = 0;
+
+    try {
+      // 递归处理所有 entries
+      for (const entry of entries) {
+        await processEntry(entry, targetPath, taskId, (delta) => {
+          totalFiles += delta;
+          updateTask(taskId, { total: totalFiles });
+        }, () => {
+          processedFiles++;
+          updateTask(taskId, { current: processedFiles });
+        });
+      }
+
+      updateTask(taskId, { status: 'completed', current: processedFiles });
+      showToast(t('context.copied'));
+
+      // 刷新目标文件夹
+      await handleRefresh(activeTab.folderId);
+
+      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
+    } catch (error) {
+      console.error('[handleEntriesCopy] Error:', error);
+      updateTask(taskId, { status: 'completed' });
+      showToast(t('errors.copyFailed'));
+      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
+    }
+  };
+
+  // 递归处理单个 entry
+  const processEntry = async (
+    entry: FileSystemEntry,
+    targetPath: string,
+    taskId: string,
+    onFileDiscovered: (delta: number) => void,
+    onFileProcessed: () => void
+  ): Promise<void> => {
+    if (entry.isFile) {
+      const fileEntry = entry as FileSystemFileEntry;
+      onFileDiscovered(1);
+      await processFileEntry(fileEntry, targetPath, onFileProcessed);
+    } else if (entry.isDirectory) {
+      const dirEntry = entry as FileSystemDirectoryEntry;
+      await processDirEntry(dirEntry, targetPath, taskId, onFileDiscovered, onFileProcessed);
+    }
+  };
+
+  // 处理文件 entry
+  const processFileEntry = async (
+    fileEntry: FileSystemFileEntry,
+    targetPath: string,
+    onFileProcessed: () => void
+  ): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      fileEntry.file(async (file) => {
+        try {
+          const separator = targetPath.includes('\\') ? '\\' : '/';
+          const destPath = `${targetPath}${separator}${file.name}`;
+          const arrayBuffer = await file.arrayBuffer();
+          await writeFileFromBytes(destPath, new Uint8Array(arrayBuffer));
+          onFileProcessed();
+          resolve();
+        } catch (error) {
+          console.error('[processFileEntry] Error:', error);
+          onFileProcessed();
+          reject(error);
+        }
+      }, (error) => {
+        console.error('[processFileEntry] File read error:', error);
+        onFileProcessed();
+        reject(error);
+      });
+    });
+  };
+
+  // 处理文件夹 entry
+  const processDirEntry = async (
+    dirEntry: FileSystemDirectoryEntry,
+    targetPath: string,
+    taskId: string,
+    onFileDiscovered: (delta: number) => void,
+    onFileProcessed: () => void
+  ): Promise<void> => {
+    const separator = targetPath.includes('\\') ? '\\' : '/';
+    const newDirPath = `${targetPath}${separator}${dirEntry.name}`;
+
+    try {
+      // 创建目标文件夹
+      await createFolder(newDirPath);
+
+      // 读取文件夹内容
+      const entries = await readAllDirectoryEntries(dirEntry);
+
+      // 递归处理文件夹内的所有项
+      for (const entry of entries) {
+        await processEntry(entry, newDirPath, taskId, onFileDiscovered, onFileProcessed);
+      }
+    } catch (error) {
+      console.error('[processDirEntry] Error:', error);
+      throw error;
+    }
+  };
+
+  // 读取文件夹的所有 entries
+  const readAllDirectoryEntries = async (dirEntry: FileSystemDirectoryEntry): Promise<FileSystemEntry[]> => {
+    return new Promise((resolve, reject) => {
+      const reader = dirEntry.createReader();
+      const entries: FileSystemEntry[] = [];
+
+      const readEntries = () => {
+        reader.readEntries((results) => {
+          if (results.length === 0) {
+            // 读取完成
+            resolve(entries);
+          } else {
+            // 还有更多 entries,继续读取
+            entries.push(...results);
+            readEntries();
+          }
+        }, (error) => {
+          console.error('[readAllDirectoryEntries] Error:', error);
+          reject(error);
+        });
+      };
+
+      readEntries();
+    });
   };
 
   const handleExternalMoveFiles = async (files: File[]) => {

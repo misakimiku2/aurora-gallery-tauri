@@ -94,7 +94,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       data-testid="context-menu" 
       className={`fixed bg-white ${['file-single', 'file-multi', 'folder-single', 'folder-multi', 'person'].includes(contextMenu.type || '')
         ? 'dark:bg-gray-800'
-        : 'dark:bg-[#2d3748]'
+        : 'dark:bg-gray-800'
         } border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[60] max-h-[80vh] overflow-y-auto`} 
       style={{
         left: 0,

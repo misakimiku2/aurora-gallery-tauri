@@ -16,11 +16,13 @@ interface TopBarProps {
   toolbarQuery: string;
   groupedTags: Record<string, string[]>;
   tagSearchQuery: string;
+  personSearchQuery?: string;
   onToggleSidebar: () => void;
   onGoBack: () => void;
   onGoForward: () => void;
   onNavigateUp: () => void;
   onSetTagSearchQuery: (query: string) => void;
+  onSetPersonSearchQuery?: (query: string) => void;
   onTagClick: (tag: string, e: React.MouseEvent) => void;
   onRefresh: () => void;
   onSearchScopeChange: (scope: SearchScope) => void;
@@ -457,6 +459,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onGoForward,
   onNavigateUp,
   onSetTagSearchQuery,
+  onSetPersonSearchQuery,
+  personSearchQuery,
   onTagClick,
   onRefresh,
   onSearchScopeChange,
@@ -543,6 +547,14 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
+      if (activeTab.viewMode === 'tags-overview') {
+        onSetTagSearchQuery(toolbarQuery);
+        return;
+      }
+      if (activeTab.viewMode === 'people-overview') {
+        onSetPersonSearchQuery && onSetPersonSearchQuery(toolbarQuery);
+        return;
+      }
       onPerformSearch(toolbarQuery);
     }
   };
@@ -668,18 +680,43 @@ export const TopBar: React.FC<TopBarProps> = ({
                     ? t('settings.aiSmartSearch') 
                     : t('search.placeholder')
             }
-            value={toolbarQuery}
-            onChange={(e) => onSetToolbarQuery(e.target.value)}
+            value={
+              activeTab.viewMode === 'people-overview' ? (personSearchQuery || '') :
+              activeTab.viewMode === 'tags-overview' ? tagSearchQuery : toolbarQuery
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              onSetToolbarQuery(v);
+              if (activeTab.viewMode === 'tags-overview') {
+                onSetTagSearchQuery(v);
+              } else if (activeTab.viewMode === 'people-overview') {
+                onSetPersonSearchQuery && onSetPersonSearchQuery(v);
+              }
+            }}
             onKeyDown={handleKeyDown}
           />
 
           <div className="flex items-center space-x-1 ml-2 flex-shrink-0">
              {toolbarQuery && (
-                <button onClick={() => { onSetToolbarQuery(''); onPerformSearch(''); }} className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0">
+                <button
+                  onClick={() => {
+                    if (activeTab.viewMode === 'tags-overview') {
+                      onSetToolbarQuery('');
+                      onSetTagSearchQuery('');
+                    } else if (activeTab.viewMode === 'people-overview') {
+                      onSetToolbarQuery('');
+                      onSetPersonSearchQuery && onSetPersonSearchQuery('');
+                    } else {
+                      onSetToolbarQuery('');
+                      onPerformSearch('');
+                    }
+                  }}
+                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0"
+                >
                   <X size={14} />
                 </button>
              )}
-              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑�?*/}
+              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑）*/}
           </div>
         </div>
       </div>
