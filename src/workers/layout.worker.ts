@@ -73,6 +73,34 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
             });
             const rows = Math.ceil(items.length / cols);
             totalHeight = PADDING + rows * (itemHeight + GAP);
+        } else if (layoutMode === 'masonry') {
+            // Masonry layout: place items into the shortest column
+            const minColWidth = thumbnailSize;
+            const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
+            const colWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
+            const colHeights = new Array(cols).fill(PADDING);
+
+            items.forEach((id) => {
+                const ratio = aspectRatios[id] || 1; // width/height
+                const imgHeight = ratio > 0 ? colWidth / ratio : colWidth; // height = width / (w/h) = h
+                const itemHeight = imgHeight + 40; // add space for metadata/padding
+
+                // find shortest column
+                let minCol = 0;
+                for (let i = 1; i < cols; i++) {
+                    if (colHeights[i] < colHeights[minCol]) minCol = i;
+                }
+
+                const x = PADDING + minCol * (colWidth + GAP);
+                const y = colHeights[minCol];
+
+                layout.push({ id, x, y, width: colWidth, height: itemHeight });
+
+                colHeights[minCol] += itemHeight + GAP;
+            });
+
+            totalHeight = Math.max(...colHeights);
+
         } else if (layoutMode === 'adaptive') {
             let currentRow: { id: string, w: number }[] = [];
             let currentWidth = 0;

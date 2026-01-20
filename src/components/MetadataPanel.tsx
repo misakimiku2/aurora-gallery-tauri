@@ -1928,15 +1928,35 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/10 dark:to-blue-900/10 rounded-xl p-4 border border-purple-100 dark:border-purple-900/30">
                     <div className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-3 flex items-center justify-between">
                         <div className="flex items-center"><Sparkles size={12} className="mr-1.5"/> {t('meta.aiSection')}</div>
-                        {!isMulti && file && file.aiData && (
-                            <button 
-                                onClick={() => onUpdate(file.id, { aiData: undefined })}
-                                className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
-                                title={t('meta.clearAiData')}
-                                aria-label={t('meta.clearAiData')}
-                            >
-                                <Trash2 size={16} />
-                            </button>
+                        {(
+                            (!isMulti && file && file.aiData) ||
+                            (isMulti && selectedFileIds.some(id => files[id]?.aiData))
+                        ) && (
+                            isMulti ? (
+                                <button
+                                    onClick={() => {
+                                        selectedFileIds.forEach(id => {
+                                            if (files[id]?.aiData) {
+                                                onUpdate(id, { aiData: undefined });
+                                            }
+                                        });
+                                    }}
+                                    className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
+                                    title={t('meta.clearAllAiData')}
+                                    aria-label={t('meta.clearAllAiData')}
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                            ) : (
+                                <button
+                                    onClick={() => onUpdate(file.id, { aiData: undefined })}
+                                    className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
+                                    title={t('meta.clearAiData')}
+                                    aria-label={t('meta.clearAiData')}
+                                >
+                                    <Trash2 size={16} />
+                                </button>
+                            )
                         )}
                     </div>
                     
@@ -2069,22 +2089,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 return null;
                             })()}
                             
-                            {/* Clear All AI Data Button */}
-                            <div className="mt-2 pt-3 border-t border-gray-200 dark:border-gray-800 flex justify-end">
-                                <button 
-                                    onClick={() => {
-                                        selectedFileIds.forEach(id => {
-                                            if (files[id]?.aiData) {
-                                                onUpdate(id, { aiData: undefined });
-                                            }
-                                        });
-                                    }} 
-                                    className="flex items-center px-3 py-1.5 bg-red-600 dark:bg-red-500 hover:bg-red-700 dark:hover:bg-red-400 text-white rounded-md font-medium transition-colors text-sm"
-                                    title={t('meta.clearAllAiData')}
-                                >
-                                    <X size={12} className="mr-1.5"/> {t('meta.clearAll')}
-                                </button>
-                            </div>
+                            
                         </div>
                     ) : (
                         // Single file AI analysis details
