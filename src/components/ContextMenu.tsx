@@ -181,6 +181,18 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
         )}
+        {contextMenu.type === 'file-multi' && (() => {
+          const imageIds = activeTab.selectedFileIds.filter(id => files[id]?.type === FileType.IMAGE);
+          if (imageIds.length >= 2 && imageIds.length <= 24) {
+            return (
+              <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { updateActiveTab({ isCompareMode: true }); closeContextMenu(); }}>
+                <ImageIcon size={14} className="mr-2 opacity-70" />
+                {t('context.compareImages')}
+              </div>
+            );
+          }
+          return null;
+        })()}
         {contextMenu.type === 'file-multi' && (<div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('batch-rename', null); closeContextMenu(); }}>
           <Type size={14} className="mr-2 opacity-70" />
           {t('context.batchRename')}

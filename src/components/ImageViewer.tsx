@@ -45,20 +45,20 @@ const loadToCache = async (path: string): Promise<string> => {
 
     // 创建新的加载 Promise
     const loadPromise = (async () => {
-        try {
-            // 直接使用 convertFileSrc 返回的 URL，不需要 fetch
-            const url = convertFileSrc(path);
+      try {
+        // 直接使用 convertFileSrc 返回的 URL，不需要 fetch
+        const url = convertFileSrc(path);
 
-            // 缓存 URL（虽然不是 blob，但仍然可以重用）
-            blobCache.set(path, url);
-            return url;
-        } catch (e) {
-            console.error("Failed to load image to cache", path, e);
-            // 出错时也返回 convertFileSrc URL
-            return convertFileSrc(path);
-        } finally {
-            loadingPromises.delete(path);
-        }
+        // 缓存 URL（虽然不是 blob，但仍然可以重用）
+        blobCache.set(path, url);
+        return url;
+      } catch (e) {
+        console.error("Failed to load image to cache", path, e);
+        // 出错时也返回 convertFileSrc URL
+        return convertFileSrc(path);
+      } finally {
+        loadingPromises.delete(path);
+      }
     })();
     
     loadingPromises.set(path, loadPromise);
@@ -170,6 +170,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false });
+  // 计算后的菜单位置（避免被窗口裁剪）
+  const [menuPos, setMenuPos] = useState<{ top: string; left: string }>({ top: '0px', left: '0px' });
   const [slideshowActive, setSlideshowActive] = useState(false);
   const [showSlideshowSettings, setShowSlideshowSettings] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -547,7 +549,46 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, visible: true });
+    // 先设置为点击位置，后续 useEffect 会测量并修正（防止闪烁）
+    setMenuPos({ top: `${e.clientY}px`, left: `${e.clientX}px` });
   };
+
+  // 当 context menu 可见时，测量其尺寸并把位置夹到视口内，避免被窗口裁剪
+  useEffect(() => {
+    if (!contextMenu.visible) return;
+
+    let rafId: number | null = null;
+    const adjust = () => {
+      const el = document.querySelector('[data-testid="viewer-context-menu"]') as HTMLElement | null;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const margin = 8; // 保留一点间距
+
+      let left = contextMenu.x;
+      let top = contextMenu.y;
+
+      if (left + rect.width > window.innerWidth) {
+        left = Math.max(margin, window.innerWidth - rect.width - margin);
+      }
+      if (top + rect.height > window.innerHeight) {
+        top = Math.max(margin, window.innerHeight - rect.height - margin);
+      }
+      left = Math.max(margin, left);
+      top = Math.max(margin, top);
+
+      setMenuPos({ top: `${top}px`, left: `${left}px` });
+    };
+
+    rafId = requestAnimationFrame(adjust);
+
+    // 也在短延迟时再做一次，以防样式变动导致测量不准确
+    const timeoutId = setTimeout(adjust, 50);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      clearTimeout(timeoutId);
+    };
+  }, [contextMenu.visible, contextMenu.x, contextMenu.y]);
 
   const toggleSlideshow = () => {
     if (!slideshowActive) {
@@ -827,47 +868,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       </div>
 
       {contextMenu.visible && (
-        <div 
+        <div
           data-testid="viewer-context-menu"
           className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
-          style={{ 
-            top: 'auto', 
-            bottom: 'auto', 
-            left: 'auto',
+          style={{
+            top: menuPos.top,
+            left: menuPos.left,
             position: 'fixed',
             zIndex: 60
-          }}
-          ref={(el) => {
-            if (el) {
-              // 动态计算菜单位置，确保完全显示在屏幕内
-              const rect = el.getBoundingClientRect();
-              const menuWidth = rect.width;
-              const menuHeight = rect.height;
-              const screenWidth = window.innerWidth;
-              const screenHeight = window.innerHeight;
-              
-              // 计算X位置，确保菜单不超出左右边界
-              let x = contextMenu.x;
-              if (x + menuWidth > screenWidth) {
-                x = screenWidth - menuWidth;
-              }
-              if (x < 0) {
-                x = 0;
-              }
-              
-              // 计算Y位置，确保菜单不超出上下边界
-              let y = contextMenu.y;
-              if (y + menuHeight > screenHeight) {
-                y = screenHeight - menuHeight;
-              }
-              if (y < 0) {
-                y = 0;
-              }
-              
-              // 设置最终位�?
-              el.style.left = `${x}px`;
-              el.style.top = `${y}px`;
-            }
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >

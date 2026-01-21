@@ -267,6 +267,7 @@ export interface TabState {
   lastSelectedId: string | null;
   selectedTagIds: string[];
   selectedPersonIds: string[];
+  isCompareMode: boolean;
   scrollToItemId?: string;
   history: {
     stack: HistoryItem[];

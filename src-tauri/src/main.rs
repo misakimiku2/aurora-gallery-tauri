@@ -570,7 +570,7 @@ fn is_supported_image(extension: &str) -> bool {
 #[tauri::command]
 async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
-    use std::io::Read;
+    use std::io::{Read, BufReader};
     use rayon::prelude::*;
     
     let root_path = Path::new(&path);
@@ -757,22 +757,61 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                     let file_size = metadata.len();
                     
                     // Use imageinfo to quickly get image dimensions
-                    let (width, height) = {
-                        // Read just the first few bytes needed for imageinfo
-                        if let Ok(mut file) = fs::File::open(entry_path) {
-                            let mut buffer = vec![0u8; 4096]; // Read first 4KB, enough for most formats
-                            if let Ok(bytes_read) = file.read(&mut buffer) {
-                                buffer.truncate(bytes_read);
-                                if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
-                                    (info.size.width as u32, info.size.height as u32)
+                    // Try to read image dimensions using the `image` crate first
+                    // This is more robust for various JPEG variants (progressive, large APP segments, etc.)
+                    let (width, height) = match image::image_dimensions(&entry_path) {
+                        Ok((w, h)) => (w as u32, h as u32),
+                        Err(_) => {
+                            // Fallback strategy: incremental header read + imageinfo, then jpeg-decoder
+                            const MAX_HEADER_BYTES: usize = 256 * 1024; // 256KB
+                            const CHUNK: usize = 16 * 1024; // read in 16KB chunks
+
+                            // Try incremental read and imageinfo parsing
+                            if let Ok(mut file) = fs::File::open(&entry_path) {
+                                let mut buffer: Vec<u8> = Vec::new();
+                                let mut found: Option<(u32, u32)> = None;
+
+                                loop {
+                                    let mut tmp = vec![0u8; CHUNK];
+                                    match file.read(&mut tmp) {
+                                        Ok(0) => break, // EOF
+                                        Ok(n) => buffer.extend_from_slice(&tmp[..n]),
+                                        Err(_) => break,
+                                    }
+
+                                    if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
+                                        found = Some((info.size.width as u32, info.size.height as u32));
+                                        break;
+                                    }
+
+                                    if buffer.len() >= MAX_HEADER_BYTES {
+                                        break;
+                                    }
+                                }
+
+                                if let Some(v) = found {
+                                    v
                                 } else {
-                                    (0, 0)
+                                    // Final fallback: try jpeg-decoder to parse JPEG SOF markers robustly
+                                    if let Ok(f2) = fs::File::open(&entry_path) {
+                                        let reader = BufReader::new(f2);
+                                        let mut dec = jpeg_decoder::Decoder::new(reader);
+                                        // Some versions of jpeg-decoder have read_info() return () and expose
+                                        // the parsed info via `dec.info()`. Call read_info() first,
+                                        // then retrieve `dec.info()`.
+                                        let _ = dec.read_info();
+                                        if let Some(info) = dec.info() {
+                                            (info.width as u32, info.height as u32)
+                                        } else {
+                                            (0, 0)
+                                        }
+                                    } else {
+                                        (0, 0)
+                                    }
                                 }
                             } else {
                                 (0, 0)
                             }
-                        } else {
-                            (0, 0)
                         }
                     };
                     
