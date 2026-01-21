@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { X, Maximize, RefreshCcw } from 'lucide-react';
+import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft } from 'lucide-react';
 import { FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
@@ -7,6 +7,12 @@ interface ImageComparerProps {
   selectedFileIds: string[];
   files: Record<string, FileNode>;
   onClose: () => void;
+  onReady?: () => void;
+  // Optional layout/navigation handlers to mirror ImageViewer
+  onLayoutToggle?: (part: 'sidebar' | 'metadata') => void;
+  onNavigateBack?: () => void;
+  layoutProp?: { isSidebarVisible?: boolean; isMetadataVisible?: boolean };
+  canGoBack?: boolean;
   t: (key: string) => string;
 }
 
@@ -23,7 +29,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   selectedFileIds,
   files,
   onClose,
-  t
+  onReady,
+  t,
+  onLayoutToggle,
+  onNavigateBack,
+  layoutProp,
+  canGoBack
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -31,6 +42,30 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  // Keep an internal snapshot of selected IDs so comparer remains visible
+  // even if parent clears selection after images load.
+  const initializedRef = useRef(false);
+  const onReadyCalledRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  const autoZoomAppliedRef = useRef(false);
+  const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>(() => selectedFileIds.slice());
+
+  // Track dark mode changes so canvas can redraw immediately when theme toggles
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => document.documentElement.classList.contains('dark'));
+  useEffect(() => {
+    const target = document.documentElement;
+    const observer = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === 'attributes' && (m as any).attributeName === 'class') {
+          const dark = target.classList.contains('dark');
+          setIsDarkMode(dark);
+          break;
+        }
+      }
+    });
+    observer.observe(target, { attributes: true });
+    return () => observer.disconnect();
+  }, []);
   
   // 缓存已加载的 HTMLImageElement 及其缩小版 (Mipmap) 以减少缩小时的锯齿
   const imagesCache = useRef<Map<string, { original: HTMLImageElement, small?: HTMLCanvasElement }>>(new Map());
@@ -47,13 +82,49 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       }
     };
     updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
+    // Also observe element resize (e.g. sidebars toggling) to catch layout changes
+    let ro: ResizeObserver | null = null;
+    if ((window as any).ResizeObserver && containerRef.current) {
+      ro = new ResizeObserver(() => updateSize());
+      ro.observe(containerRef.current);
+    } else {
+      window.addEventListener('resize', updateSize);
+    }
+
+    return () => {
+      if (ro && containerRef.current) ro.unobserve(containerRef.current);
+      if (!ro) window.removeEventListener('resize', updateSize);
+    };
   }, []);
+
+  // Keep previous container width so we can adjust transform.x when panels toggle
+  const prevContainerWidthRef = useRef<number>(0);
+  const prevMetadataVisibleRef = useRef<boolean | undefined>(layoutProp?.isMetadataVisible);
+
+  // General width change handling: keep a prev width and update it
+  useEffect(() => {
+    const prev = prevContainerWidthRef.current;
+    const curr = containerSize.width;
+    if (prev && curr && prev !== curr && !isDragging) {
+      // If metadata visibility changed, shift by the full delta so content moves left/right
+      const prevMeta = prevMetadataVisibleRef.current;
+      const currMeta = layoutProp?.isMetadataVisible;
+      if (typeof prevMeta !== 'undefined' && prevMeta !== currMeta) {
+        const delta = curr - prev;
+        setTransform(prevT => ({ ...prevT, x: prevT.x + delta }));
+      } else {
+        // Otherwise keep visual center stable by shifting half the change
+        const delta = curr - prev;
+        setTransform(prevT => ({ ...prevT, x: prevT.x + delta / 2 }));
+      }
+    }
+    prevContainerWidthRef.current = curr;
+    prevMetadataVisibleRef.current = layoutProp?.isMetadataVisible;
+  }, [containerSize.width, isDragging, layoutProp?.isMetadataVisible]);
 
   // Filter selected files to get only valid images, sorted by size (largest first)
   const imageFiles = useMemo(() => {
-    return selectedFileIds
+    return internalSelectedIds
       .map(id => files[id])
       .filter(file => file && file.path)
       .sort((a, b) => {
@@ -61,7 +132,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
         return sizeB - sizeA;
       });
-  }, [selectedFileIds, files]);
+  }, [internalSelectedIds, files]);
 
   // Load images & create small versions for anti-aliasing
   useEffect(() => {
@@ -94,6 +165,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       }
     });
   }, [imageFiles]);
+
+  // Initialize internal selection once when component mounts
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      setInternalSelectedIds(selectedFileIds.slice());
+      imagesCache.current.clear();
+      setLoadedCount(0);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Notify parent when all images are loaded
+  useEffect(() => {
+    if (imageFiles.length > 0 && loadedCount >= imageFiles.length) {
+      // Ensure onReady only fired once to avoid parent repeatedly clearing selection
+      if (!onReadyCalledRef.current) {
+        onReadyCalledRef.current = true;
+        onReady?.();
+      }
+    }
+  }, [loadedCount, imageFiles.length, onReady]);
 
   // Layout calculation (紧凑型环绕填充)
   const layout = useMemo(() => {
@@ -203,8 +296,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     canvas.height = containerSize.height * dpr;
     ctx.scale(dpr, dpr);
 
-    // 检测主题颜色
-    const isDark = document.documentElement.classList.contains('dark');
+    // Use tracked dark mode state so canvas redraws immediately when theme changes
+    const isDark = isDarkMode;
     const bgColor = isDark ? '#0a0a0a' : '#f9fafb'; 
     const dotColor = isDark ? 'rgba(156, 163, 175, 0.25)' : 'rgba(107, 114, 128, 0.2)'; // 调高了点阵的可见度
 
@@ -272,11 +365,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
 
     ctx.restore();
-  }, [transform, layout, containerSize, loadedCount]);
+  }, [transform, layout, containerSize, loadedCount, isDarkMode]);
 
   // Initial auto-zoom and center
   useEffect(() => {
-    if (layout.totalWidth > 0 && containerSize.width > 0) {
+    // Only auto-fit if we haven't applied auto-zoom yet and user hasn't interacted
+    if (layout.totalWidth > 0 && containerSize.width > 0 && !userInteractedRef.current && !autoZoomAppliedRef.current) {
       const padding = 60;
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
       const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
@@ -287,12 +381,21 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
         scale: initialScale
       });
+      autoZoomAppliedRef.current = true;
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
   // Mouse wheel zoom
   const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
+    // Only call preventDefault if the native event is cancelable.
+    // In some browsers the wheel event may be passive; calling preventDefault
+    // on a passive listener throws: "Unable to preventDefault inside passive event listener invocation.".
+    const native = e.nativeEvent as WheelEvent | any;
+    if (native && native.cancelable) {
+      e.preventDefault();
+    }
+    // mark manual interaction
+    userInteractedRef.current = true;
     const zoomSpeed = 0.0015;
     const factor = Math.exp(-e.deltaY * zoomSpeed);
     
@@ -315,6 +418,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     if (e.button === 0) {
       setIsDragging(true);
       setDragStart({ x: e.clientX, y: e.clientY });
+      userInteractedRef.current = true;
     }
   };
 
@@ -341,6 +445,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
         scale: initialScale
       });
+      // Consider this a manual interaction to avoid future auto-fit on layout toggles
+      userInteractedRef.current = true;
+      autoZoomAppliedRef.current = true;
     }
   };
 
@@ -356,7 +463,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   return (
     <div 
       ref={containerRef}
-      className="fixed inset-0 z-[100] bg-gray-50 dark:bg-gray-950 flex flex-col overflow-hidden select-none animate-fade-in"
+      className="w-full h-full flex-1 flex flex-col overflow-hidden select-none"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -364,8 +471,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       onMouseLeave={handleMouseUp}
     >
       {/* Header */}
-      <div className="h-14 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-6 justify-between z-10 shrink-0">
-        <div className="flex items-center space-x-4">
+      <div className="h-14 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-10 shrink-0">
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={() => onLayoutToggle?.('sidebar')}
+            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+            title={t('viewer.toggleSidebar')}
+          >
+            <Sidebar size={18} />
+          </button>
+
+          <div className="flex space-x-1">
+            <button
+              onClick={() => onClose()}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title={t('viewer.close')}
+            >
+              <ChevronLeft size={18} />
+            </button>
+          </div>
+        </div>
+
+        <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           <div className="text-gray-900 dark:text-gray-100 font-semibold flex items-center text-lg">
             <Maximize size={20} className="mr-3 text-blue-500" />
             {t('context.compareImages')}
@@ -374,27 +501,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             </span>
           </div>
         </div>
-        
+
         <div className="flex items-center space-x-3">
-          <button 
+          <button
             onClick={handleReset}
-            className="p-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 transition-colors"
+            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-colors"
             title={t('viewer.fit')}
           >
-            <RefreshCcw size={20} />
+            <RefreshCcw size={18} />
           </button>
-          <div className="h-6 w-px bg-gray-200 dark:bg-gray-800 mx-2"></div>
-          <button 
-            onClick={onClose}
-            className="p-2.5 rounded-lg hover:bg-red-500 text-gray-500 dark:text-gray-400 hover:text-white transition-all active:scale-95"
+
+          <button
+            onClick={() => onLayoutToggle?.('metadata')}
+            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isMetadataVisible ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+            title={t('viewer.toggleMeta')}
           >
-            <X size={24} />
+            <PanelRight size={18} />
           </button>
         </div>
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 relative cursor-grab active:cursor-grabbing overflow-hidden">
+      <div className="flex-1 relative cursor-grab active:cursor-grabbing overflow-hidden animate-fade-in">
         <canvas 
           ref={canvasRef}
           className="w-full h-full block"

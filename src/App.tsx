@@ -3013,6 +3013,11 @@ export const App: React.FC = () => {
               selectedFileIds={activeTab.selectedFileIds}
               files={state.files}
               onClose={() => updateActiveTab({ isCompareMode: false })}
+              onReady={() => updateActiveTab({ selectedFileIds: [] })}
+              onLayoutToggle={onLayoutToggle}
+              onNavigateBack={goBack}
+              layoutProp={state.layout}
+              canGoBack={activeTab.history.currentIndex > 0}
               t={t}
             />
           )}
