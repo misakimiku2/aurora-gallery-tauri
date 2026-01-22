@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft } from 'lucide-react';
+import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Mouse, Move, X } from 'lucide-react';
 import { FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
+import { EditOverlay } from './comparer/EditOverlay';
+import { ComparerContextMenu } from './comparer/ComparerContextMenu';
+import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { save, open } from '@tauri-apps/plugin-dialog';
+import { Plus, Save, FolderOpen, Trash2 } from 'lucide-react';
 
 interface ImageComparerProps {
   selectedFileIds: string[];
@@ -14,6 +20,7 @@ interface ImageComparerProps {
   layoutProp?: { isSidebarVisible?: boolean; isMetadataVisible?: boolean };
   canGoBack?: boolean;
   t: (key: string) => string;
+  onSelect?: (id: string) => void;
 }
 
 interface ImageLayoutInfo {
@@ -34,7 +41,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   onLayoutToggle,
   onNavigateBack,
   layoutProp,
-  canGoBack
+  canGoBack,
+  onSelect
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -42,6 +50,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [activeImageId, setActiveImageId] = useState<string | null>(null);
+  const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [pendingAnnotation, setPendingAnnotation] = useState<{ imageId: string, x: number, y: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
   // Keep an internal snapshot of selected IDs so comparer remains visible
   // even if parent clears selection after images load.
   const initializedRef = useRef(false);
@@ -66,7 +79,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     observer.observe(target, { attributes: true });
     return () => observer.disconnect();
   }, []);
-  
+
   // 缓存已加载的 HTMLImageElement 及其缩小版 (Mipmap) 以减少缩小时的锯齿
   const imagesCache = useRef<Map<string, { original: HTMLImageElement, small?: HTMLCanvasElement }>>(new Map());
   const [loadedCount, setLoadedCount] = useState(0);
@@ -155,10 +168,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             sctx.imageSmoothingQuality = 'high';
             sctx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
           }
-          
-          imagesCache.current.set(file.id, { 
-            original: img, 
-            small: smallCanvas 
+
+          imagesCache.current.set(file.id, {
+            original: img,
+            small: smallCanvas
           });
           setLoadedCount(prev => prev + 1);
         };
@@ -174,7 +187,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       imagesCache.current.clear();
       setLoadedCount(0);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Notify parent when all images are loaded
@@ -190,10 +203,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   // Layout calculation (紧凑型环绕填充)
   const layout = useMemo(() => {
-    if (imageFiles.length === 0) 
+    if (imageFiles.length === 0)
       return { items: [], totalWidth: 0, totalHeight: 0 };
 
-    const spacing = 40; 
+    const spacing = 40;
     const items: ImageLayoutInfo[] = [];
 
     const checkOverlap = (rect: { x: number; y: number; w: number; h: number }, existing: ImageLayoutInfo[]) => {
@@ -215,7 +228,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const first = imageFiles[0];
     const firstW = first.meta?.width || 1000;
     const firstH = first.meta?.height || 750;
-    
+
     items.push({
       id: first.id,
       x: -firstW / 2,
@@ -240,7 +253,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         candidates.push({ x: item.x - w - spacing, y: item.y }); // 左
         candidates.push({ x: item.x, y: item.y + item.height + spacing }); // 下
         candidates.push({ x: item.x, y: item.y - h - spacing }); // 上
-        
+
         // 补角
         candidates.push({ x: item.x + item.width + spacing, y: item.y + item.height - h });
         candidates.push({ x: item.x - w - spacing, y: item.y + item.height - h });
@@ -276,12 +289,22 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       maxY = Math.max(maxY, item.y + item.height);
     });
 
-    return { 
-      items: items.map(it => ({ ...it, x: it.x - minX, y: it.y - minY })), 
-      totalWidth: maxX - minX, 
-      totalHeight: maxY - minY 
+    return {
+      items: items.map(it => {
+        const manual = manualLayouts[it.id];
+        return {
+          ...it,
+          x: manual ? manual.x : it.x - minX,
+          y: manual ? manual.y : it.y - minY,
+          width: manual ? manual.width : it.width,
+          height: manual ? manual.height : it.height,
+          rotation: manual ? manual.rotation : 0
+        };
+      }) as ComparisonItem[],
+      totalWidth: maxX - minX,
+      totalHeight: maxY - minY
     };
-  }, [imageFiles]);
+  }, [imageFiles, manualLayouts]);
 
   // Canvas drawing
   useEffect(() => {
@@ -298,7 +321,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     // Use tracked dark mode state so canvas redraws immediately when theme changes
     const isDark = isDarkMode;
-    const bgColor = isDark ? '#0a0a0a' : '#f9fafb'; 
+    const bgColor = isDark ? '#0a0a0a' : '#f9fafb';
     const dotColor = isDark ? 'rgba(156, 163, 175, 0.25)' : 'rgba(107, 114, 128, 0.2)'; // 调高了点阵的可见度
 
     // 开启高质量平滑
@@ -306,24 +329,24 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     ctx.imageSmoothingQuality = 'high';
 
     // 背景
-    ctx.fillStyle = bgColor; 
+    ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, containerSize.width, containerSize.height);
 
     // 智能点阵背景 (在任何缩放级别下保持可见且不卡顿)
     const baseSpacing = 40;
     let gridSize = baseSpacing * transform.scale;
-    
+
     // 性能与视觉保护：如果点阵过密（间距小于 15px），则跨步显示（如每隔 2 个点显示一个）
     let step = 1;
     if (gridSize < 15) {
-      step = Math.max(1, Math.floor(30 / gridSize)); 
+      step = Math.max(1, Math.floor(30 / gridSize));
       gridSize *= step;
     }
 
     ctx.fillStyle = dotColor;
     const offsetX = transform.x % gridSize;
     const offsetY = transform.y % gridSize;
-    
+
     // 点的大小：缩小比例很大时，稍微增大点的大小以便看见
     const radius = transform.scale < 0.2 ? 1.5 : 1.2;
 
@@ -342,30 +365,41 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     layout.items.forEach(item => {
       const cache = imagesCache.current.get(item.id);
-      
+
+      ctx.save();
+      // 应用旋转和位移
+      ctx.translate(item.x + item.width / 2, item.y + item.height / 2);
+      ctx.rotate((item.rotation * Math.PI) / 180);
+      ctx.translate(-item.width / 2, -item.height / 2);
+
       // 绘制占位背景
       ctx.fillStyle = '#111827';
-      ctx.fillRect(item.x, item.y, item.width, item.height);
+      ctx.fillRect(0, 0, item.width, item.height);
 
       if (cache) {
-        // Mipmap 策略：如果当前真实显示比例很小，则从 0.25 倍的预裁切 Canvas 绘图
-        // 这样能有效避免从巨大原图直接下采样导致的像素丢失（锯齿）
         const currentEffectiveScale = transform.scale;
-        if (currentEffectiveScale < 0.2 && cache.small) {
-          ctx.drawImage(cache.small, item.x, item.y, item.width, item.height);
+        if (currentEffectiveScale < 0.2 * (item.width / 1000) && cache.small) {
+          ctx.drawImage(cache.small, 0, 0, item.width, item.height);
         } else {
-          ctx.drawImage(cache.original, item.x, item.y, item.width, item.height);
+          ctx.drawImage(cache.original, 0, 0, item.width, item.height);
         }
-        
+
         // 绘制边框
-        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-        ctx.lineWidth = 1 / transform.scale;
-        ctx.strokeRect(item.x, item.y, item.width, item.height);
+        if (item.id === activeImageId) {
+          ctx.strokeStyle = '#3b82f6';
+          ctx.lineWidth = 4 / transform.scale;
+          ctx.strokeRect(0, 0, item.width, item.height);
+        } else {
+          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+          ctx.lineWidth = 1 / transform.scale;
+          ctx.strokeRect(0, 0, item.width, item.height);
+        }
       }
+      ctx.restore();
     });
 
     ctx.restore();
-  }, [transform, layout, containerSize, loadedCount, isDarkMode]);
+  }, [transform, layout, containerSize, loadedCount, isDarkMode, activeImageId]);
 
   // Initial auto-zoom and center
   useEffect(() => {
@@ -375,7 +409,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
       const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
       const initialScale = Math.min(scaleX, scaleY, 1.2);
-      
+
       setTransform({
         x: (containerSize.width - layout.totalWidth * initialScale) / 2,
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
@@ -398,27 +432,56 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     userInteractedRef.current = true;
     const zoomSpeed = 0.0015;
     const factor = Math.exp(-e.deltaY * zoomSpeed);
-    
+
     const newScale = Math.min(Math.max(transform.scale * factor, 0.04), 20);
-    
+
     const rect = containerRef.current?.getBoundingClientRect();
     if (rect) {
       const mouseX = e.clientX - rect.left;
       const mouseY = e.clientY - rect.top;
-      
+
       const newX = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
       const newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
-      
+
       setTransform({ x: newX, y: newY, scale: newScale });
     }
   };
 
   // Dragging
   const handleMouseDown = (e: React.MouseEvent) => {
+    userInteractedRef.current = true;
+
+    // 左键点击：选择图片
     if (e.button === 0) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
+
+        // 转换画布坐标到世界坐标
+        const worldX = (mouseX - transform.x) / transform.scale;
+        const worldY = (mouseY - transform.y) / transform.scale;
+
+        // 查找点击到了哪张图
+        const clickedItem = layout.items.find(item =>
+          worldX >= item.x && worldX <= item.x + item.width &&
+          worldY >= item.y && worldY <= item.y + item.height
+        );
+
+        if (clickedItem) {
+          setActiveImageId(clickedItem.id);
+          onSelect?.(clickedItem.id);
+        } else {
+          setActiveImageId(null);
+          onSelect?.(''); // Clear selection in parent
+        }
+      }
+    }
+    // 中键点击：执行拖拽
+    else if (e.button === 1) {
+      e.preventDefault(); // 防止中键自动滚动
       setIsDragging(true);
       setDragStart({ x: e.clientX, y: e.clientY });
-      userInteractedRef.current = true;
     }
   };
 
@@ -433,13 +496,113 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   const handleMouseUp = () => setIsDragging(false);
 
+  // 右键菜单逻辑
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleSaveSession = async () => {
+    try {
+      const path = await save({
+        filters: [{ name: 'Aurora Comparison', extensions: ['aurora'] }],
+        defaultPath: 'comparison_session.aurora'
+      });
+      if (path) {
+        const session: ComparisonSession = {
+          version: '1.0',
+          items: layout.items.map(it => ({
+            id: it.id,
+            path: files[it.id]?.path || '',
+            x: it.x,
+            y: it.y,
+            width: it.width,
+            height: it.height,
+            rotation: it.rotation
+          })),
+          annotations: annotations
+        };
+        await writeTextFile(path, JSON.stringify(session));
+      }
+    } catch (err) {
+      console.error('Save failed', err);
+    }
+  };
+
+  const handleLoadSession = async () => {
+    try {
+      const path = await open({
+        filters: [{ name: 'Aurora Comparison', extensions: ['aurora'] }]
+      });
+      if (path && typeof path === 'string') {
+        const content = await readTextFile(path);
+        const session: ComparisonSession = JSON.parse(content);
+        const newManuals: Record<string, any> = {};
+        const newIds: string[] = [];
+
+        session.items.forEach(it => {
+          newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
+          newIds.push(it.id);
+        });
+
+        // 这里的 logic 可能需要根据实际项目情况调整：是否合并当前选择还是替换
+        setInternalSelectedIds(newIds);
+        setManualLayouts(newManuals);
+        setAnnotations(session.annotations);
+      }
+    } catch (err) {
+      console.error('Load failed', err);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    if (activeImageId) {
+      setInternalSelectedIds(prev => prev.filter(id => id !== activeImageId));
+      setActiveImageId(null);
+    }
+  };
+
+
+  const handleStartAddAnnotation = () => {
+    if (!contextMenu) return;
+    const rect = containerRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = contextMenu.x - rect.left;
+    const mouseY = contextMenu.y - rect.top;
+    const worldX = (mouseX - transform.x) / transform.scale;
+    const worldY = (mouseY - transform.y) / transform.scale;
+
+    const target = layout.items.find(item =>
+      worldX >= item.x && worldX <= item.x + item.width &&
+      worldY >= item.y && worldY <= item.y + item.height
+    );
+
+    if (target) {
+      setPendingAnnotation({
+        imageId: target.id,
+        x: ((worldX - target.x) / target.width) * 100,
+        y: ((worldY - target.y) / target.height) * 100
+      });
+    }
+  };
+
+  const menuOptions = [
+    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} /> },
+    { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '从对比中移除', onClick: handleRemoveImage, icon: <Trash2 size={14} />, style: 'text-red-500 hover:bg-red-50' }
+  ];
+
   const handleReset = () => {
     if (layout.totalWidth > 0) {
       const padding = 60;
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
       const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
       const initialScale = Math.min(scaleX, scaleY, 1.2);
-      
+
       setTransform({
         x: (containerSize.width - layout.totalWidth * initialScale) / 2,
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
@@ -461,14 +624,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   }, [onClose]);
 
   return (
-    <div 
-      ref={containerRef}
+    <div
       className="w-full h-full flex-1 flex flex-col overflow-hidden select-none"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
+      onContextMenu={handleContextMenu}
     >
       {/* Header */}
       <div className="h-14 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-10 shrink-0">
@@ -522,19 +685,123 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 relative cursor-grab active:cursor-grabbing overflow-hidden animate-fade-in">
-        <canvas 
+      <div
+        ref={containerRef}
+        className="flex-1 relative cursor-grab active:cursor-grabbing overflow-hidden animate-fade-in"
+      >
+        <canvas
           ref={canvasRef}
           className="w-full h-full block"
         />
+
+        {/* 编辑层 Overlay */}
+        <EditOverlay
+          activeItem={layout.items.find(it => it.id === activeImageId) || null}
+          allItems={layout.items}
+          transform={transform}
+          onUpdateItem={(id, updates) => {
+            setManualLayouts(prev => ({
+              ...prev,
+              [id]: { ...(prev[id] || layout.items.find(it => it.id === id) || { rotation: 0 }), ...updates }
+            }));
+          }}
+          onRemoveItem={handleRemoveImage}
+        />
+
+        {/* 右键菜单 */}
+        {contextMenu && (
+          <ComparerContextMenu
+            x={contextMenu.x}
+            y={contextMenu.y}
+            onClose={() => setContextMenu(null)}
+            options={menuOptions}
+          />
+        )}
+
+        {/* 注释层 - 渲染已存在的注释 */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {layout.items.map(item => {
+            const itemAnnos = annotations.filter(a => a.imageId === item.id);
+            return itemAnnos.map(anno => {
+              // 计算注释在屏幕上的绝对位置
+              const ax = (item.x + (anno.x / 100) * item.width) * transform.scale + transform.x;
+              const ay = (item.y + (anno.y / 100) * item.height) * transform.scale + transform.y;
+              return (
+                <div
+                  key={anno.id}
+                  className="absolute px-2 py-1 bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-400 dark:border-yellow-600 rounded shadow-md text-xs text-yellow-900 dark:text-yellow-100 whitespace-nowrap z-40 pointer-events-auto group"
+                  style={{ left: ax, top: ay, transform: 'translate(-50%, -100%)' }}
+                >
+                  {anno.text}
+                  <button
+                    onClick={() => setAnnotations(prev => prev.filter(a => a.id !== anno.id))}
+                    className="ml-2 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              );
+            });
+          })}
+        </div>
+
+        {/* 添加注释输入框 */}
+        {pendingAnnotation && (
+          <div
+            className="absolute z-[200] p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 pointer-events-auto"
+            style={{
+              left: (layout.items.find(i => i.id === pendingAnnotation.imageId)!.x + (pendingAnnotation.x / 100) * layout.items.find(i => i.id === pendingAnnotation.imageId)!.width) * transform.scale + transform.x,
+              top: (layout.items.find(i => i.id === pendingAnnotation.imageId)!.y + (pendingAnnotation.y / 100) * layout.items.find(i => i.id === pendingAnnotation.imageId)!.height) * transform.scale + transform.y,
+              transform: 'translate(-50%, -120%)'
+            }}
+          >
+            <input
+              autoFocus
+              className="px-2 py-1 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none min-w-[150px] dark:text-gray-100"
+              placeholder="输入注释并回车..."
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const val = (e.target as HTMLInputElement).value;
+                  if (val.trim()) {
+                    setAnnotations(prev => [...prev, {
+                      id: Math.random().toString(36).substr(2, 9),
+                      imageId: pendingAnnotation.imageId,
+                      x: pendingAnnotation.x,
+                      y: pendingAnnotation.y,
+                      text: val.trim(),
+                      createdAt: Date.now()
+                    }]);
+                  }
+                  setPendingAnnotation(null);
+                } else if (e.key === 'Escape') {
+                  setPendingAnnotation(null);
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Shortcuts Hint */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity">
-        <span className="mx-2 text-gray-900 dark:text-gray-100 font-medium">滚轮</span> 缩放 · 
-        <span className="mx-2 text-gray-900 dark:text-gray-100 font-medium">鼠标左键</span> 拖拽 · 
-        <span className="mx-2 text-gray-900 dark:text-gray-100 font-medium">{imageFiles.length > 0 && `加载中 ${loadedCount}/${imageFiles.length}`}</span> 
-        <span className="mx-2 text-gray-900 dark:text-gray-100 font-medium">Esc</span> 退出
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4">
+        <div className="flex items-center">
+          <Mouse size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">左键 选择 / 滚轮 缩放</span>
+        </div>
+
+        <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
+
+        <div className="flex items-center">
+          <Move size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">中键 拖拽</span>
+        </div>
+
+        <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
+
+        <div className="flex items-center">
+          <div className="flex items-center justify-center min-w-[32px] h-5 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-bold mr-1.5 text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 shadow-sm leading-none pt-0.5">ESC</div>
+          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
+        </div>
       </div>
     </div>
   );

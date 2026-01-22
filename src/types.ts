@@ -52,7 +52,7 @@ export interface FileNode {
   path: string;
   size?: number; // Size in bytes for cache key generation
   children?: string[];
-  
+
   category?: 'general' | 'book' | 'sequence';
   author?: string;
 
@@ -171,7 +171,7 @@ export interface AIConfig {
   autoDescription: boolean;
   enhancePersonDescription: boolean;
   enableFaceRecognition: boolean;
-  autoAddPeople: boolean; 
+  autoAddPeople: boolean;
   enableOCR: boolean;
   enableTranslation: boolean;
   targetLanguage: 'zh' | 'en' | 'ja' | 'ko';
@@ -253,7 +253,7 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview'; 
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;

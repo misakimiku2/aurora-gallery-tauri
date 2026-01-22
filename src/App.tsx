@@ -3016,6 +3016,7 @@ export const App: React.FC = () => {
               onReady={() => updateActiveTab({ selectedFileIds: [] })}
               onLayoutToggle={onLayoutToggle}
               onNavigateBack={goBack}
+              onSelect={(id) => updateActiveTab({ selectedFileIds: [id] })}
               layoutProp={state.layout}
               canGoBack={activeTab.history.currentIndex > 0}
               t={t}
