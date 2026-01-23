@@ -4,6 +4,7 @@ import { FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
+import { AnnotationLayer } from './comparer/AnnotationLayer';
 import { ComparerContextMenu } from './comparer/ComparerContextMenu';
 import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
 import { save, open } from '@tauri-apps/plugin-dialog';
@@ -531,6 +532,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
     // mark manual interaction
     userInteractedRef.current = true;
+
+    // 滚轮缩放时自动关闭右键菜单
+    if (contextMenu) {
+      setContextMenu(null);
+    }
+
     const zoomSpeed = 0.0015;
     const factor = Math.exp(-e.deltaY * zoomSpeed);
 
@@ -869,21 +876,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   };
 
-  const menuOptions = [
-    { label: '重置变换', onClick: handleResetItem, icon: <RefreshCcw size={14} /> },
-    { divider: true, label: '', onClick: () => { } },
-    { label: '放置到最顶层', onClick: () => handleReorder('top'), icon: <Maximize size={14} className="rotate-45" /> },
-    { label: '放置到上方', onClick: () => handleReorder('up'), icon: <Maximize size={14} className="rotate-45" /> }, // Use appropriate icons
-    { label: '放置到下方', onClick: () => handleReorder('down'), icon: <Maximize size={14} className="rotate-45" /> },
-    { label: '放置到最底层', onClick: () => handleReorder('bottom'), icon: <Maximize size={14} className="rotate-45" /> },
-    { divider: true, label: '', onClick: () => { } },
-    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
-    { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} /> },
-    { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
-    { divider: true, label: '', onClick: () => { } },
-    { label: '从对比中移除', onClick: handleRemoveImage, icon: <Trash2 size={14} />, style: 'text-red-500 hover:bg-red-50' }
-  ];
-
   const handleReset = () => {
     setManualLayouts({}); // Global reset clears manual transforms
     if (layout.totalWidth > 0) {
@@ -903,6 +895,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   };
 
+  const selectedMenuOptions = [
+    { label: '重置变换', onClick: handleResetItem, icon: <RefreshCcw size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '放置到最顶层', onClick: () => handleReorder('top'), icon: <Maximize size={14} className="rotate-45" /> },
+    { label: '放置到上方', onClick: () => handleReorder('up'), icon: <Maximize size={14} className="rotate-45" /> },
+    { label: '放置到下方', onClick: () => handleReorder('down'), icon: <Maximize size={14} className="rotate-45" /> },
+    { label: '放置到最底层', onClick: () => handleReorder('bottom'), icon: <Maximize size={14} className="rotate-45" /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '从对比中移除', onClick: handleRemoveImage, icon: <Trash2 size={14} />, style: 'text-red-500 hover:bg-red-50' }
+  ];
+
+  const nonSelectedMenuOptions = [
+    { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} /> },
+    { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '重置窗口', onClick: handleReset, icon: <RefreshCcw size={14} /> },
+  ];
+
+  const menuOptions = menuTargetId ? selectedMenuOptions : nonSelectedMenuOptions;
+
   // Keyboard support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -914,7 +928,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   return (
     <div
-      className="w-full h-full flex-1 flex flex-col overflow-hidden select-none"
+      className="w-full h-full flex-1 flex flex-col overflow-hidden select-none relative z-[100]"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -1007,92 +1021,39 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           />
         )}
 
-        {/* 注释层 - 渲染已存在的注释 */}
-        <div className="absolute inset-0 pointer-events-none overflow-hidden">
-          {layout.items.map(item => {
-            const itemAnnos = annotations.filter(a => a.imageId === item.id);
-            return itemAnnos.map(anno => {
-              // 计算注释在屏幕上的绝对位置
-              // Compute annotation world position then rotate around item's center
-              const localX = item.x + (anno.x / 100) * item.width;
-              const localY = item.y + (anno.y / 100) * item.height;
-              const centerX = item.x + item.width / 2;
-              const centerY = item.y + item.height / 2;
-              const rotated = rotatePointAround(localX, localY, centerX, centerY, item.rotation);
-              const screen = worldToScreen(rotated.x, rotated.y);
-              const ax = screen.x;
-              const ay = screen.y;
-              return (
-                <div
-                  key={anno.id}
-                  className="absolute px-2 py-1 bg-yellow-100 dark:bg-yellow-900/80 border border-yellow-400 dark:border-yellow-600 rounded shadow-md text-xs text-yellow-900 dark:text-yellow-100 whitespace-nowrap z-40 pointer-events-auto group"
-                  style={{ left: ax, top: ay, transform: 'translate(-50%, -100%)' }}
-                >
-                  {anno.text}
-                  <button
-                    onClick={() => setAnnotations(prev => prev.filter(a => a.id !== anno.id))}
-                    className="ml-2 opacity-0 group-hover:opacity-100 hover:text-red-500 transition-opacity"
-                  >
-                    <X size={10} />
-                  </button>
-                </div>
-              );
-            });
-          })}
-        </div>
+        {/* 注释层 */}
+        <AnnotationLayer
+          annotations={annotations}
+          layoutItems={layout.items}
+          zOrderIds={zOrderIds}
+          transform={transform}
+          onUpdateAnnotation={(id, text) => {
+            setAnnotations(prev => prev.map(a => a.id === id ? { ...a, text } : a));
+          }}
+          onRemoveAnnotation={(id) => {
+            setAnnotations(prev => prev.filter(a => a.id !== id));
+          }}
+          pendingAnnotation={pendingAnnotation}
+          onSavePending={(text) => {
+            if (pendingAnnotation) {
+              setAnnotations(prev => [...prev, {
+                id: Math.random().toString(36).substr(2, 9),
+                imageId: pendingAnnotation.imageId,
+                x: pendingAnnotation.x,
+                y: pendingAnnotation.y,
+                text: text.trim(),
+                createdAt: Date.now()
+              }]);
+              setPendingAnnotation(null);
+            }
+          }}
+          onCancelPending={() => setPendingAnnotation(null)}
+        />
 
-        {/* 添加注释输入框 */}
-        {pendingAnnotation && (
-          <div
-            className="absolute z-[200] p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 pointer-events-auto"
-            style={{
-              // rotation-aware position
-              left: (() => {
-                const it = layout.items.find(i => i.id === pendingAnnotation.imageId)!;
-                const localX = it.x + (pendingAnnotation.x / 100) * it.width;
-                const localY = it.y + (pendingAnnotation.y / 100) * it.height;
-                const rotated = rotatePointAround(localX, localY, it.x + it.width / 2, it.y + it.height / 2, it.rotation);
-                return worldToScreen(rotated.x, rotated.y).x;
-              })(),
-              top: (() => {
-                const it = layout.items.find(i => i.id === pendingAnnotation.imageId)!;
-                const localX = it.x + (pendingAnnotation.x / 100) * it.width;
-                const localY = it.y + (pendingAnnotation.y / 100) * it.height;
-                const rotated = rotatePointAround(localX, localY, it.x + it.width / 2, it.y + it.height / 2, it.rotation);
-                return worldToScreen(rotated.x, rotated.y).y;
-              })(),
-              transform: 'translate(-50%, -120%)'
-            }}
-          >
-            <input
-              autoFocus
-              className="px-2 py-1 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none min-w-[150px] dark:text-gray-100"
-              placeholder="输入注释并回车..."
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  const val = (e.target as HTMLInputElement).value;
-                  if (val.trim()) {
-                    setAnnotations(prev => [...prev, {
-                      id: Math.random().toString(36).substr(2, 9),
-                      imageId: pendingAnnotation.imageId,
-                      x: pendingAnnotation.x,
-                      y: pendingAnnotation.y,
-                      text: val.trim(),
-                      createdAt: Date.now()
-                    }]);
-                  }
-                  setPendingAnnotation(null);
-                } else if (e.key === 'Escape') {
-                  setPendingAnnotation(null);
-                }
-              }}
-            />
-          </div>
-        )}
       </div>
 
       {/* Shortcuts Hint */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4">
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
         <div className="flex items-center">
           <Mouse size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
           <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">左键 选择 / 滚轮 缩放</span>

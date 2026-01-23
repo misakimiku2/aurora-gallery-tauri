@@ -65,7 +65,9 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
                 ) : (
                     <button
                         key={index}
-                        onClick={() => {
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                            e.stopPropagation();
                             opt.onClick();
                             onClose();
                         }}
