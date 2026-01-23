@@ -54,6 +54,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [pendingAnnotation, setPendingAnnotation] = useState<{ imageId: string, x: number, y: number } | null>(null);
+  // zOrderIds controls drawing/interaction order (last = top)
+  const [zOrderIds, setZOrderIds] = useState<string[]>([]);
+  // menuTargetId stores the item id that the context menu was opened for
+  const [menuTargetId, setMenuTargetId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
   // Keep an internal snapshot of selected IDs so comparer remains visible
   // even if parent clears selection after images load.
@@ -135,16 +139,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     prevMetadataVisibleRef.current = layoutProp?.isMetadataVisible;
   }, [containerSize.width, isDragging, layoutProp?.isMetadataVisible]);
 
-  // Filter selected files to get only valid images, sorted by size (largest first)
+  // Filter selected files to get only valid images.
+  // We respect the order of internalSelectedIds naturally.
   const imageFiles = useMemo(() => {
     return internalSelectedIds
       .map(id => files[id])
-      .filter(file => file && file.path)
-      .sort((a, b) => {
-        const sizeA = (a.meta?.width || 0) * (a.meta?.height || 0);
-        const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
-        return sizeB - sizeA;
-      });
+      .filter(file => file && file.path);
   }, [internalSelectedIds, files]);
 
   // Load images & create small versions for anti-aliasing
@@ -180,10 +180,22 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   }, [imageFiles]);
 
   // Initialize internal selection once when component mounts
+  // Initialize internal selection once when component mounts, and sort by size initially for better packing
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
-      setInternalSelectedIds(selectedFileIds.slice());
+      // Initial sort by size
+      const sortedIds = selectedFileIds.slice().sort((idA, idB) => {
+        const a = files[idA];
+        const b = files[idB];
+        if (!a || !b) return 0;
+        const sizeA = (a.meta?.width || 0) * (a.meta?.height || 0);
+        const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
+        return sizeB - sizeA;
+      });
+      setInternalSelectedIds(sortedIds);
+      // Initialize z-order to the same deterministic order
+      setZOrderIds(sortedIds);
       imagesCache.current.clear();
       setLoadedCount(0);
     }
@@ -209,6 +221,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const spacing = 40;
     const items: ImageLayoutInfo[] = [];
 
+    // 按尺寸排序进行填充（与 z-order 无关）
+    const packOrder = imageFiles.slice().sort((a, b) => {
+      const sizeA = (a.meta?.width || 0) * (a.meta?.height || 0);
+      const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
+      return sizeB - sizeA;
+    });
+
     const checkOverlap = (rect: { x: number; y: number; w: number; h: number }, existing: ImageLayoutInfo[]) => {
       for (const item of existing) {
         // 增加一点容差避免数学计算误差
@@ -224,8 +243,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       return false;
     };
 
-    // 第一张图（最大图）居中
-    const first = imageFiles[0];
+    // 第一张图（最大）居中
+    const first = packOrder[0];
     const firstW = first.meta?.width || 1000;
     const firstH = first.meta?.height || 750;
 
@@ -238,8 +257,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       src: convertFileSrc(first.path)
     });
 
-    for (let i = 1; i < imageFiles.length; i++) {
-      const file = imageFiles[i];
+    for (let i = 1; i < packOrder.length; i++) {
+      const file = packOrder[i];
       const w = file.meta?.width || 1000;
       const h = file.meta?.height || 750;
 
@@ -306,6 +325,84 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
   }, [imageFiles, manualLayouts]);
 
+  // Persist computed layout positions for any items that do not yet have manual overrides
+  useEffect(() => {
+    if (layout.items.length === 0) return;
+    setManualLayouts(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const it of layout.items) {
+        if (!next[it.id]) {
+          next[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation || 0 };
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout.items]);
+
+  const layoutItemMap = useMemo(() => {
+    const m: Record<string, ComparisonItem> = {};
+    layout.items.forEach(it => (m[it.id] = it));
+    return m;
+  }, [layout.items]);
+
+  // Helper: rotate a point (x,y) around center (cx,cy) by angle degrees
+  const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
+    const rad = angleDeg * Math.PI / 180;
+    const dx = x - cx;
+    const dy = y - cy;
+    const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
+    const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
+    return { x: rx + cx, y: ry + cy };
+  };
+
+  // Helper: test whether world point is inside a rotated rect item
+  const pointInRotatedItem = (worldX: number, worldY: number, it: ComparisonItem) => {
+    const cx = it.x + it.width / 2;
+    const cy = it.y + it.height / 2;
+    // rotate world point by -rotation to bring into item's local (unrotated) space
+    const local = rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
+    return local.x >= it.x && local.x <= it.x + it.width && local.y >= it.y && local.y <= it.y + it.height;
+  };
+
+  // Helper: transform a world point to item's local (unrotated) coords
+  const worldToLocalPoint = (worldX: number, worldY: number, it: ComparisonItem) => {
+    const cx = it.x + it.width / 2;
+    const cy = it.y + it.height / 2;
+    return rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
+  };
+
+  // Helper: transform a world point to screen pixel coords based on transform
+  const worldToScreen = (wx: number, wy: number) => ({ x: wx * transform.scale + transform.x, y: wy * transform.scale + transform.y });
+
+  // Helper: compute axis-aligned bounding box of a rotated item in world coords
+  const computeAABB = (it: ComparisonItem) => {
+    const cx = it.x + it.width / 2;
+    const cy = it.y + it.height / 2;
+    const corners = [
+      { x: it.x, y: it.y },
+      { x: it.x + it.width, y: it.y },
+      { x: it.x + it.width, y: it.y + it.height },
+      { x: it.x, y: it.y + it.height }
+    ].map(c => rotatePointAround(c.x, c.y, cx, cy, it.rotation));
+    const xs = corners.map(c => c.x);
+    const ys = corners.map(c => c.y);
+    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+  };
+
+  const aabbOverlap = (a: { minX: number; minY: number; maxX: number; maxY: number }, b: { minX: number; minY: number; maxX: number; maxY: number }) => {
+    return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
+  };
+
+  const itemsOverlap = (idA: string, idB: string) => {
+    const a = layoutItemMap[idA];
+    const b = layoutItemMap[idB];
+    if (!a || !b) return false;
+    return aabbOverlap(computeAABB(a), computeAABB(b));
+  };
+
   // Canvas drawing
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -363,7 +460,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.scale, transform.scale);
 
-    layout.items.forEach(item => {
+    // Draw according to z-order (last = top). If zOrderIds empty, fallback to layout.items order.
+    const drawOrder = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+    for (const id of drawOrder) {
+      const item = layoutItemMap[id];
+      if (!item) continue;
       const cache = imagesCache.current.get(item.id);
 
       ctx.save();
@@ -396,10 +497,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         }
       }
       ctx.restore();
-    });
+    }
 
     ctx.restore();
-  }, [transform, layout, containerSize, loadedCount, isDarkMode, activeImageId]);
+  }, [transform, layout, containerSize, loadedCount, isDarkMode, activeImageId, zOrderIds, layoutItemMap]);
 
   // Initial auto-zoom and center
   useEffect(() => {
@@ -462,15 +563,22 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const worldX = (mouseX - transform.x) / transform.scale;
         const worldY = (mouseY - transform.y) / transform.scale;
 
-        // 查找点击到了哪张图
-        const clickedItem = layout.items.find(item =>
-          worldX >= item.x && worldX <= item.x + item.width &&
-          worldY >= item.y && worldY <= item.y + item.height
-        );
+        // 查找点击到了哪张图（根据 zOrder，从顶层向下查找）
+        const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+        let clickedId: string | null = null;
+        for (let i = visible.length - 1; i >= 0; i--) {
+          const id = visible[i];
+          const it = layoutItemMap[id];
+          if (!it) continue;
+          if (pointInRotatedItem(worldX, worldY, it)) {
+            clickedId = id;
+            break;
+          }
+        }
 
-        if (clickedItem) {
-          setActiveImageId(clickedItem.id);
-          onSelect?.(clickedItem.id);
+        if (clickedId) {
+          setActiveImageId(clickedId);
+          onSelect?.(clickedId);
         } else {
           setActiveImageId(null);
           onSelect?.(''); // Clear selection in parent
@@ -499,6 +607,33 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // 右键菜单逻辑
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
+
+    const rect = containerRef.current?.getBoundingClientRect();
+    let targetId: string | null = null;
+    if (rect) {
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const worldX = (mouseX - transform.x) / transform.scale;
+      const worldY = (mouseY - transform.y) / transform.scale;
+
+      const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+      for (let i = visible.length - 1; i >= 0; i--) {
+        const id = visible[i];
+        const it = layoutItemMap[id];
+        if (!it) continue;
+        if (pointInRotatedItem(worldX, worldY, it)) {
+          targetId = id;
+          break;
+        }
+      }
+
+      if (targetId) {
+        setActiveImageId(targetId);
+        onSelect?.(targetId);
+      }
+    }
+
+    setMenuTargetId(targetId);
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
@@ -520,7 +655,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             height: it.height,
             rotation: it.rotation
           })),
-          annotations: annotations
+          annotations: annotations,
+          zOrder: zOrderIds
         };
         await writeTextFile(path, JSON.stringify(session));
       }
@@ -541,14 +677,26 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const newIds: string[] = [];
 
         session.items.forEach(it => {
-          newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
-          newIds.push(it.id);
+          if (files[it.id]) {
+            newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
+            newIds.push(it.id);
+          } else {
+            console.warn('Loaded session references missing file', it.id);
+          }
         });
 
         // 这里的 logic 可能需要根据实际项目情况调整：是否合并当前选择还是替换
         setInternalSelectedIds(newIds);
         setManualLayouts(newManuals);
-        setAnnotations(session.annotations);
+        setAnnotations(session.annotations || []);
+
+        if (session.zOrder && Array.isArray(session.zOrder)) {
+          const filteredZ = session.zOrder.filter(id => newIds.includes(id));
+          const missing = newIds.filter(id => !filteredZ.includes(id));
+          setZOrderIds([...filteredZ, ...missing]);
+        } else {
+          setZOrderIds(newIds);
+        }
       }
     } catch (err) {
       console.error('Load failed', err);
@@ -556,10 +704,136 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const handleRemoveImage = () => {
-    if (activeImageId) {
-      setInternalSelectedIds(prev => prev.filter(id => id !== activeImageId));
-      setActiveImageId(null);
-    }
+    const id = menuTargetId || activeImageId;
+    if (!id) return;
+    setInternalSelectedIds(prev => prev.filter(i => i !== id));
+    setZOrderIds(prev => prev.filter(i => i !== id));
+    setManualLayouts(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setActiveImageId(null);
+    setMenuTargetId(null);
+    setContextMenu(null);
+  };
+
+  const handleResetItem = () => {
+    const id = menuTargetId || activeImageId;
+    if (!id) return;
+    setManualLayouts(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    setContextMenu(null);
+    setMenuTargetId(null);
+  };
+
+  const handleReorder = (type: 'top' | 'bottom' | 'up' | 'down') => {
+    const id = menuTargetId || activeImageId;
+    if (!id) return;
+
+    setZOrderIds(prev => {
+      const visible = prev.filter(i => layoutItemMap[i]);
+      const idx = visible.indexOf(id);
+      if (idx === -1) return prev;
+      const next = [...prev];
+
+      // Helper to move id to position pos (in next array)
+      const moveToPos = (pos: number) => {
+        const curIdx = next.indexOf(id);
+        if (curIdx === -1) return next;
+        next.splice(curIdx, 1);
+        // clamp pos
+        const p = Math.max(0, Math.min(pos, next.length));
+        next.splice(p, 0, id);
+        return next;
+      };
+
+      if (type === 'top') {
+        // find highest overlapping index in visible, move id above it
+        let highestOverlapIdx = -1;
+        for (let i = visible.length - 1; i >= 0; i--) {
+          const otherId = visible[i];
+          if (otherId === id) continue;
+          if (itemsOverlap(id, otherId)) {
+            highestOverlapIdx = i;
+            break;
+          }
+        }
+        if (highestOverlapIdx === -1) {
+          // no overlap found, move to global top
+          return moveToPos(next.length);
+        }
+        // compute position in next array relative to highestOverlapIdx
+        const refId = visible[highestOverlapIdx];
+        const refPos = next.indexOf(refId);
+        return moveToPos(refPos + 1);
+      } else if (type === 'bottom') {
+        // find lowest overlapping index and move id just below it
+        let lowestOverlapIdx = -1;
+        for (let i = 0; i < visible.length; i++) {
+          const otherId = visible[i];
+          if (otherId === id) continue;
+          if (itemsOverlap(id, otherId)) {
+            lowestOverlapIdx = i;
+            break;
+          }
+        }
+        if (lowestOverlapIdx === -1) {
+          // no overlap found, move to global bottom
+          return moveToPos(0);
+        }
+        const refId = visible[lowestOverlapIdx];
+        const refPos = next.indexOf(refId);
+        return moveToPos(refPos);
+      } else if (type === 'up') {
+        // move id up within overlapping stack first; otherwise move one step up
+        let found = false;
+        for (let i = visible.indexOf(id) + 1; i < visible.length; i++) {
+          const otherId = visible[i];
+          if (itemsOverlap(id, otherId)) {
+            const refPos = next.indexOf(otherId);
+            moveToPos(refPos + 1);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          // fallback: single-step up in global z-order
+          const curPos = next.indexOf(id);
+          if (curPos < next.length - 1) {
+            [next[curPos], next[curPos + 1]] = [next[curPos + 1], next[curPos]];
+          }
+        }
+        return next;
+      } else if (type === 'down') {
+        // move id down within overlapping stack first; otherwise move one step down
+        let found = false;
+        for (let i = visible.indexOf(id) - 1; i >= 0; i--) {
+          const otherId = visible[i];
+          if (itemsOverlap(id, otherId)) {
+            const refPos = next.indexOf(otherId);
+            moveToPos(refPos);
+            found = true;
+            break;
+          }
+        }
+        if (!found) {
+          const curPos = next.indexOf(id);
+          if (curPos > 0) {
+            [next[curPos], next[curPos - 1]] = [next[curPos - 1], next[curPos]];
+          }
+        }
+        return next;
+      }
+
+      return next;
+    });
+
+    setContextMenu(null);
+    setMenuTargetId(null);
   };
 
 
@@ -573,23 +847,37 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const worldX = (mouseX - transform.x) / transform.scale;
     const worldY = (mouseY - transform.y) / transform.scale;
 
-    const target = layout.items.find(item =>
-      worldX >= item.x && worldX <= item.x + item.width &&
-      worldY >= item.y && worldY <= item.y + item.height
-    );
+    const targetId = menuTargetId || (() => {
+      const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+      for (let i = visible.length - 1; i >= 0; i--) {
+        const id = visible[i];
+        const it = layoutItemMap[id];
+        if (!it) continue;
+        if (worldX >= it.x && worldX <= it.x + it.width && worldY >= it.y && worldY <= it.y + it.height) return id;
+      }
+      return null;
+    })();
 
-    if (target) {
+    if (targetId) {
+      const target = layoutItemMap[targetId];
+      const local = worldToLocalPoint(worldX, worldY, target);
       setPendingAnnotation({
-        imageId: target.id,
-        x: ((worldX - target.x) / target.width) * 100,
-        y: ((worldY - target.y) / target.height) * 100
+        imageId: targetId,
+        x: ((local.x - target.x) / target.width) * 100,
+        y: ((local.y - target.y) / target.height) * 100
       });
     }
   };
 
   const menuOptions = [
-    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
+    { label: '重置变换', onClick: handleResetItem, icon: <RefreshCcw size={14} /> },
     { divider: true, label: '', onClick: () => { } },
+    { label: '放置到最顶层', onClick: () => handleReorder('top'), icon: <Maximize size={14} className="rotate-45" /> },
+    { label: '放置到上方', onClick: () => handleReorder('up'), icon: <Maximize size={14} className="rotate-45" /> }, // Use appropriate icons
+    { label: '放置到下方', onClick: () => handleReorder('down'), icon: <Maximize size={14} className="rotate-45" /> },
+    { label: '放置到最底层', onClick: () => handleReorder('bottom'), icon: <Maximize size={14} className="rotate-45" /> },
+    { divider: true, label: '', onClick: () => { } },
+    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
     { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} /> },
     { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
     { divider: true, label: '', onClick: () => { } },
@@ -597,6 +885,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   ];
 
   const handleReset = () => {
+    setManualLayouts({}); // Global reset clears manual transforms
     if (layout.totalWidth > 0) {
       const padding = 60;
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
@@ -724,8 +1013,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             const itemAnnos = annotations.filter(a => a.imageId === item.id);
             return itemAnnos.map(anno => {
               // 计算注释在屏幕上的绝对位置
-              const ax = (item.x + (anno.x / 100) * item.width) * transform.scale + transform.x;
-              const ay = (item.y + (anno.y / 100) * item.height) * transform.scale + transform.y;
+              // Compute annotation world position then rotate around item's center
+              const localX = item.x + (anno.x / 100) * item.width;
+              const localY = item.y + (anno.y / 100) * item.height;
+              const centerX = item.x + item.width / 2;
+              const centerY = item.y + item.height / 2;
+              const rotated = rotatePointAround(localX, localY, centerX, centerY, item.rotation);
+              const screen = worldToScreen(rotated.x, rotated.y);
+              const ax = screen.x;
+              const ay = screen.y;
               return (
                 <div
                   key={anno.id}
@@ -750,8 +1046,21 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           <div
             className="absolute z-[200] p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 pointer-events-auto"
             style={{
-              left: (layout.items.find(i => i.id === pendingAnnotation.imageId)!.x + (pendingAnnotation.x / 100) * layout.items.find(i => i.id === pendingAnnotation.imageId)!.width) * transform.scale + transform.x,
-              top: (layout.items.find(i => i.id === pendingAnnotation.imageId)!.y + (pendingAnnotation.y / 100) * layout.items.find(i => i.id === pendingAnnotation.imageId)!.height) * transform.scale + transform.y,
+              // rotation-aware position
+              left: (() => {
+                const it = layout.items.find(i => i.id === pendingAnnotation.imageId)!;
+                const localX = it.x + (pendingAnnotation.x / 100) * it.width;
+                const localY = it.y + (pendingAnnotation.y / 100) * it.height;
+                const rotated = rotatePointAround(localX, localY, it.x + it.width / 2, it.y + it.height / 2, it.rotation);
+                return worldToScreen(rotated.x, rotated.y).x;
+              })(),
+              top: (() => {
+                const it = layout.items.find(i => i.id === pendingAnnotation.imageId)!;
+                const localX = it.x + (pendingAnnotation.x / 100) * it.width;
+                const localY = it.y + (pendingAnnotation.y / 100) * it.height;
+                const rotated = rotatePointAround(localX, localY, it.x + it.width / 2, it.y + it.height / 2, it.rotation);
+                return worldToScreen(rotated.x, rotated.y).y;
+              })(),
               transform: 'translate(-50%, -120%)'
             }}
           >

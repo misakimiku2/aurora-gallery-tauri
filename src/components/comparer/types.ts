@@ -35,4 +35,5 @@ export interface ComparisonSession {
         rotation: number;
     }[];
     annotations: Annotation[];
+    zOrder?: string[];
 }

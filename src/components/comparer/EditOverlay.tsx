@@ -177,6 +177,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     if (!activeItem) return null;
 
     const handleMouseDown = (e: React.MouseEvent, type: string) => {
+        if (e.button !== 0) return; // Only allow left mouse button
         e.stopPropagation();
         const mx = (e.clientX - transform.x) / transform.scale;
         const my = (e.clientY - transform.y) / transform.scale;
