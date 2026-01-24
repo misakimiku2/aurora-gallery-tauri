@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Mouse, Move, X } from 'lucide-react';
+import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan } from 'lucide-react';
 import { FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
@@ -22,6 +22,8 @@ interface ImageComparerProps {
   canGoBack?: boolean;
   t: (key: string) => string;
   onSelect?: (id: string) => void;
+  sessionName?: string;
+  onSessionNameChange?: (name: string) => void;
 }
 
 interface ImageLayoutInfo {
@@ -43,7 +45,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   onNavigateBack,
   layoutProp,
   canGoBack,
-  onSelect
+  onSelect,
+  sessionName: sessionNameProp,
+  onSessionNameChange
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -67,8 +71,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const autoZoomAppliedRef = useRef(false);
   const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>(() => selectedFileIds.slice());
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(true);
-  const [sessionName, setSessionName] = useState("画布01");
+  const [sessionName, setSessionName] = useState(sessionNameProp || "画布01");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+
+  useEffect(() => {
+    if (sessionNameProp && sessionNameProp !== sessionName) {
+      setSessionName(sessionNameProp);
+    }
+  }, [sessionNameProp]);
 
   // Track dark mode changes so canvas can redraw immediately when theme toggles
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => document.documentElement.classList.contains('dark'));
@@ -1069,6 +1079,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'a' || e.key === 'A') {
+        setIsSnappingEnabled(prev => !prev);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -1111,7 +1124,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 autoFocus
                 className="bg-transparent border-b-2 border-blue-500 outline-none text-center px-2 py-1 min-w-[200px]"
                 value={sessionName}
-                onChange={(e) => setSessionName(e.target.value)}
+                onChange={(e) => {
+                  if (isEditingTitle) {
+                    setSessionName(e.currentTarget.value);
+                    onSessionNameChange?.(e.currentTarget.value);
+                  }
+                }}
                 onBlur={() => setIsEditingTitle(false)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') setIsEditingTitle(false);
@@ -1122,7 +1140,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 px-4 py-1 rounded transition-colors flex items-center"
                 onClick={() => setIsEditingTitle(true)}
               >
-                <Maximize size={20} className="mr-3 text-blue-500" />
+                <Scan size={20} className="mr-3 text-blue-500" />
                 {sessionName}
               </div>
             )}
@@ -1138,7 +1156,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'}`}
             title={`吸附功能 (A): ${isSnappingEnabled ? 'ON' : 'OFF'}`}
           >
-            <Mouse size={18} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} />
+            <Magnet size={18} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} />
           </button>
 
           <button
@@ -1412,7 +1430,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       {/* Shortcuts Hint */}
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
         <div className="flex items-center">
-          <Mouse size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+          <Magnet size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
           <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">左键 选择 / 滚轮 缩放</span>
         </div>
 

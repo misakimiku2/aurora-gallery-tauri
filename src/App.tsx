@@ -184,6 +184,19 @@ export const App: React.FC = () => {
     }));
   }, []);
 
+  const updateTabById = useCallback((tabId: string, updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
+    setState(prev => ({
+      ...prev,
+      tabs: prev.tabs.map(t => {
+        if (t.id === tabId) {
+          const actualUpdates = typeof updates === 'function' ? updates(t) : updates;
+          return { ...t, ...actualUpdates };
+        }
+        return t;
+      })
+    }));
+  }, []);
+
   const { tasks } = state;
 
   const { startTask, updateTask } = useTasks(state, setState, t);
@@ -1906,6 +1919,53 @@ export const App: React.FC = () => {
   };
 
   // Navigation helpers
+  const handleOpenInNewTab = useCallback((fileId: string) => {
+    const file = state.files[fileId];
+    if (!file) return;
+    const isFolder = file.type === FileType.FOLDER;
+    const targetFolderId = isFolder ? fileId : (file.parentId || fileId);
+    const targetViewingId = isFolder ? null : fileId;
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: targetFolderId,
+      viewingFileId: targetViewingId,
+      selectedFileIds: [fileId],
+      lastSelectedId: fileId,
+      isCompareMode: false,
+      history: { stack: [{ folderId: targetFolderId, viewingId: targetViewingId, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
+    };
+    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [state.files, setState]);
+
+  const handleOpenTopicInNewTab = useCallback((topicId: string) => {
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: state.roots[0] || '',
+      viewMode: 'topics-overview',
+      activeTopicId: topicId,
+      selectedTopicIds: [topicId],
+      isCompareMode: false,
+      history: { stack: [{ folderId: state.roots[0] || '', viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
+    };
+    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [state.roots, setState]);
+
+  const handleOpenPersonInNewTab = useCallback((personId: string) => {
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: state.roots[0] || '',
+      viewMode: 'people-overview',
+      activePersonId: personId,
+      selectedPersonIds: [personId],
+      isCompareMode: false,
+      history: { stack: [{ folderId: state.roots[0] || '', viewingId: null, viewMode: 'people-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: personId }], currentIndex: 0 }
+    };
+    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [state.roots, setState]);
+
   const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
     // Set global navigation timestamp BEFORE state update
     (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
@@ -2030,8 +2090,35 @@ export const App: React.FC = () => {
 
   const handleNavigateFolder = useCallback((id: string, options?: { targetId?: string, resetScroll?: boolean }) => {
     closeContextMenu();
-    enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll });
-  }, [closeContextMenu, enterFolder]);
+    if (activeTabRef.current.isCompareMode) {
+      handleOpenInNewTab(id);
+    } else {
+      enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll });
+    }
+  }, [closeContextMenu, enterFolder, handleOpenInNewTab]);
+
+  const handleOpenCompareInNewTab = useCallback((imageIds: string[]) => {
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: activeTabRef.current.folderId,
+      selectedFileIds: imageIds,
+      isCompareMode: true,
+      history: {
+        stack: [{
+          folderId: activeTabRef.current.folderId,
+          viewingId: null,
+          viewMode: 'browser',
+          searchQuery: '',
+          searchScope: 'all',
+          activeTags: [],
+          activePersonId: null
+        }],
+        currentIndex: 0
+      }
+    };
+    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+  }, [setState]);
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
     pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -2042,8 +2129,19 @@ export const App: React.FC = () => {
   }, [activeTab.folderId, pushHistory]);
 
   const handleNavigateTopics = useCallback(() => {
-    handleNavigateTopic(null);
-  }, [handleNavigateTopic]);
+    if (activeTabRef.current.isCompareMode) {
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).substr(2, 9),
+        folderId: activeTabRef.current.folderId,
+        viewMode: 'topics-overview',
+        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
+      };
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+    } else {
+      handleNavigateTopic(null);
+    }
+  }, [handleNavigateTopic, setState]);
 
   const handleCreateTopic = useCallback((parentId: string | null, name?: string, type?: string) => {
     const id = Math.random().toString(36).substr(2, 9);
@@ -2576,10 +2674,60 @@ export const App: React.FC = () => {
   const handlePerformSearch = onPerformSearch;
 
   const handleViewerSearch = (query: string) => pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0);
-  const enterTagView = useCallback((tagName: string) => pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'tag', [tagName], null, 0), [pushHistory]);
-  const enterTagsOverview = useCallback(() => pushHistory(activeTabRef.current.folderId, null, 'tags-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0), [pushHistory]);
-  const enterPeopleOverview = useCallback(() => pushHistory(activeTabRef.current.folderId, null, 'people-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0), [pushHistory]);
-  const enterPersonView = useCallback((personId: string) => pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'all', [], personId, 0), [pushHistory]);
+  const enterTagView = useCallback((tagName: string) => {
+    if (activeTabRef.current.isCompareMode) {
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).substr(2, 9),
+        folderId: activeTabRef.current.folderId,
+        viewMode: 'browser',
+        searchScope: 'tag',
+        activeTags: [tagName],
+        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'tag', activeTags: [tagName], activePersonId: null }], currentIndex: 0 }
+      };
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+    } else {
+      pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'tag', [tagName], null, 0);
+    }
+  }, [pushHistory, setState]);
+
+  const enterTagsOverview = useCallback(() => {
+    if (activeTabRef.current.isCompareMode) {
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).substr(2, 9),
+        folderId: activeTabRef.current.folderId,
+        viewMode: 'tags-overview',
+        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'tags-overview', searchQuery: activeTabRef.current.searchQuery, searchScope: activeTabRef.current.searchScope, activeTags: activeTabRef.current.activeTags, activePersonId: null }], currentIndex: 0 }
+      };
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+    } else {
+      pushHistory(activeTabRef.current.folderId, null, 'tags-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0);
+    }
+  }, [pushHistory, setState]);
+
+  const enterPeopleOverview = useCallback(() => {
+    if (activeTabRef.current.isCompareMode) {
+      const newTab: TabState = {
+        ...DUMMY_TAB,
+        id: Math.random().toString(36).substr(2, 9),
+        folderId: activeTabRef.current.folderId,
+        viewMode: 'people-overview',
+        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'people-overview', searchQuery: activeTabRef.current.searchQuery, searchScope: activeTabRef.current.searchScope, activeTags: activeTabRef.current.activeTags, activePersonId: null }], currentIndex: 0 }
+      };
+      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+    } else {
+      pushHistory(activeTabRef.current.folderId, null, 'people-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0);
+    }
+  }, [pushHistory, setState]);
+
+  const enterPersonView = useCallback((personId: string) => {
+    if (activeTabRef.current.isCompareMode) {
+      handleOpenPersonInNewTab(personId);
+    } else {
+      pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'all', [], personId, 0);
+    }
+  }, [pushHistory, handleOpenPersonInNewTab]);
   const handleClearTagFilter = (tagToRemove: string) => updateActiveTab(prev => ({ activeTags: prev.activeTags.filter(t => t !== tagToRemove) }));
   const handleClearAllTags = () => updateActiveTab({ activeTags: [] });
   const handleClearPersonFilter = () => updateActiveTab({ activePersonId: null });
@@ -2624,85 +2772,6 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleOpenInNewTab = (fileId: string) => {
-    const file = state.files[fileId];
-    if (!file) return;
-    const isFolder = file.type === FileType.FOLDER;
-    const targetFolderId = isFolder ? fileId : (file.parentId || fileId);
-    const targetViewingId = isFolder ? null : fileId;
-    const newTab: TabState = {
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: targetFolderId,
-      viewingFileId: targetViewingId,
-      viewMode: 'browser',
-      layoutMode: 'grid',
-      searchQuery: '',
-      searchScope: 'all',
-      activeTags: [],
-      activePersonId: null,
-      activeTopicId: null,
-      selectedTopicIds: [],
-      selectedFileIds: [fileId],
-      lastSelectedId: fileId,
-      selectedTagIds: [],
-      selectedPersonIds: [],
-      dateFilter: { start: null, end: null, mode: 'created' },
-      history: { stack: [], currentIndex: 0 },
-      scrollTop: 0
-    };
-    newTab.history.stack = [{ folderId: newTab.folderId, viewingId: newTab.viewingFileId, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }];
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  };
-
-  const handleOpenTopicInNewTab = (topicId: string) => {
-    const newTab: TabState = {
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: state.roots[0] || '',
-      viewingFileId: null,
-      viewMode: 'topics-overview',
-      layoutMode: 'grid',
-      searchQuery: '',
-      searchScope: 'all',
-      activeTags: [],
-      activePersonId: null,
-      activeTopicId: topicId,
-      selectedTopicIds: [topicId],
-      selectedFileIds: [],
-      lastSelectedId: null,
-      selectedTagIds: [],
-      selectedPersonIds: [],
-      dateFilter: { start: null, end: null, mode: 'created' },
-      history: { stack: [], currentIndex: 0 },
-      scrollTop: 0
-    };
-    newTab.history.stack = [{ folderId: newTab.folderId, viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }];
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  };
-
-  const handleOpenPersonInNewTab = (personId: string) => {
-    const newTab: TabState = {
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: state.roots[0] || '',
-      viewingFileId: null,
-      viewMode: 'people-overview',
-      layoutMode: 'grid',
-      searchQuery: '',
-      searchScope: 'all',
-      activeTags: [],
-      activePersonId: personId,
-      activeTopicId: null,
-      selectedTopicIds: [],
-      selectedFileIds: [],
-      lastSelectedId: null,
-      selectedTagIds: [],
-      selectedPersonIds: [personId],
-      dateFilter: { start: null, end: null, mode: 'created' },
-      history: { stack: [], currentIndex: 0 },
-      scrollTop: 0
-    };
-    newTab.history.stack = [{ folderId: newTab.folderId, viewingId: null, viewMode: 'people-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: personId }];
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  };
 
   const handleGenerateThumbnails = async (folderIds: string[]) => {
     const getAllImageFilesInFolder = (folderId: string): string[] => {
@@ -3008,20 +3077,24 @@ export const App: React.FC = () => {
               );
             })()
           )}
-          {activeTab.isCompareMode && (
-            <ImageComparer
-              selectedFileIds={activeTab.selectedFileIds}
-              files={state.files}
-              onClose={() => updateActiveTab({ isCompareMode: false })}
-              onReady={() => updateActiveTab({ selectedFileIds: [] })}
-              onLayoutToggle={onLayoutToggle}
-              onNavigateBack={goBack}
-              onSelect={(id) => updateActiveTab({ selectedFileIds: [id] })}
-              layoutProp={state.layout}
-              canGoBack={activeTab.history.currentIndex > 0}
-              t={t}
-            />
-          )}
+          {state.tabs.map(tab => tab.isCompareMode && (
+            <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
+              <ImageComparer
+                selectedFileIds={tab.selectedFileIds}
+                files={state.files}
+                onClose={() => updateTabById(tab.id, { isCompareMode: false })}
+                onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}
+                onLayoutToggle={onLayoutToggle}
+                onNavigateBack={goBack}
+                onSelect={(id) => updateTabById(tab.id, { selectedFileIds: [id] })}
+                sessionName={tab.sessionName}
+                onSessionNameChange={(name) => updateTabById(tab.id, { sessionName: name })}
+                layoutProp={state.layout}
+                canGoBack={tab.history.currentIndex > 0}
+                t={t}
+              />
+            </div>
+          ))}
           <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
             <TopBar
               activeTab={activeTab}
@@ -3393,6 +3466,7 @@ export const App: React.FC = () => {
         handlePasteTags={handlePasteTags}
         showToast={showToast}
         updateActiveTab={updateActiveTab}
+        handleOpenCompareInNewTab={handleOpenCompareInNewTab}
       />
     </div>
   );

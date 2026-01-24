@@ -1,10 +1,10 @@
 
 import React from 'react';
-import { 
-  Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link, 
-  Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon, 
-  Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop, 
-  RefreshCw, MousePointer2 
+import {
+  Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
+  Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
+  Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
+  RefreshCw, MousePointer2, Scan
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState } from '../types';
 
@@ -49,6 +49,7 @@ interface ContextMenuProps {
   handlePasteTags: (ids: string[]) => void;
   showToast: (msg: string) => void;
   updateActiveTab: (updates: Partial<TabState>) => void;
+  handleOpenCompareInNewTab: (ids: string[]) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -85,23 +86,24 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handleCopyTags,
   handlePasteTags,
   showToast,
-  updateActiveTab
+  updateActiveTab,
+  handleOpenCompareInNewTab
 }) => {
   if (!contextMenu.visible) return null;
 
   return (
-    <div 
-      data-testid="context-menu" 
+    <div
+      data-testid="context-menu"
       className={`fixed bg-white ${['file-single', 'file-multi', 'folder-single', 'folder-multi', 'person'].includes(contextMenu.type || '')
         ? 'dark:bg-gray-800'
         : 'dark:bg-gray-800'
-        } border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[60] max-h-[80vh] overflow-y-auto`} 
+        } border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[1000] max-h-[80vh] overflow-y-auto`}
       style={{
         left: 0,
         top: 0,
         position: 'fixed',
-        zIndex: 60
-      }} 
+        zIndex: 1000
+      }}
       ref={(el) => {
         if (el) {
           const rect = el.getBoundingClientRect();
@@ -189,9 +191,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           return (
             <div
               className={itemClass}
-              onClick={canCompare ? () => { updateActiveTab({ isCompareMode: true }); closeContextMenu(); } : undefined}
+              onClick={canCompare ? () => { handleOpenCompareInNewTab(imageIds); closeContextMenu(); } : undefined}
             >
-              <ImageIcon size={14} className="mr-2 opacity-70" />
+              <Scan size={14} className="mr-2 opacity-70" />
               <div className="flex-1">{t('context.compareImages')}</div>
               <div className="text-xs text-gray-500 ml-3">{`${imageIds.length}/24`}</div>
             </div>
