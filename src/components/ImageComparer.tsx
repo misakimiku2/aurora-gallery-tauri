@@ -18,6 +18,8 @@ interface ImageComparerProps {
   // Optional layout/navigation handlers to mirror ImageViewer
   onLayoutToggle?: (part: 'sidebar' | 'metadata') => void;
   onNavigateBack?: () => void;
+  // Called when comparer requests closing the entire tab (e.g., back/ESC should close tab)
+  onCloseTab?: () => void;
   layoutProp?: { isSidebarVisible?: boolean; isMetadataVisible?: boolean };
   canGoBack?: boolean;
   t: (key: string) => string;
@@ -43,6 +45,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   t,
   onLayoutToggle,
   onNavigateBack,
+  onCloseTab,
   layoutProp,
   canGoBack,
   onSelect,
@@ -73,6 +76,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(true);
   const [sessionName, setSessionName] = useState(sessionNameProp || "画布01");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Marquee selection (screen coordinates)
+  const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
+  const potentialClearSelectionRef = useRef(false);
 
   useEffect(() => {
     if (sessionNameProp && sessionNameProp !== sessionName) {
@@ -729,10 +735,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           if (!isCtrl && !isSelected) {
             onSelect?.(clickedId);
           }
+
+          // Clicking an item cancels any pending marquee start
+          potentialClearSelectionRef.current = false;
+          setMarquee(null);
         } else {
-          // Clicked empty space
-          setActiveImageIds([]);
-          onSelect?.(''); // Clear selection in parent
+          // Clicked empty space -> start marquee selection (don't clear immediately)
+          const rect = containerRef.current?.getBoundingClientRect();
+          if (rect) {
+            setMarquee({ active: true, startX: mouseX, startY: mouseY, x: mouseX, y: mouseY });
+            potentialClearSelectionRef.current = true;
+          } else {
+            setActiveImageIds([]);
+            onSelect?.('');
+          }
         }
       }
     }
@@ -751,9 +767,70 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
       setDragStart({ x: e.clientX, y: e.clientY });
     }
+
+    // Update marquee selection box (screen coords)
+    if (marquee && marquee.active) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        setMarquee(prev => prev ? { ...prev, x: mx, y: my } : prev);
+      }
+    }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
+  const handleMouseUp = (e?: React.MouseEvent) => {
+    setIsDragging(false);
+
+    if (marquee && marquee.active) {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const x1 = Math.min(marquee.startX, marquee.x);
+        const y1 = Math.min(marquee.startY, marquee.y);
+        const x2 = Math.max(marquee.startX, marquee.x);
+        const y2 = Math.max(marquee.startY, marquee.y);
+
+        const worldRect = {
+          minX: (x1 - transform.x) / transform.scale,
+          minY: (y1 - transform.y) / transform.scale,
+          maxX: (x2 - transform.x) / transform.scale,
+          maxY: (y2 - transform.y) / transform.scale
+        };
+
+        const ids = layout.items.filter(it => {
+          const a = computeAABB(it);
+          return !(a.maxX < worldRect.minX || a.minX > worldRect.maxX || a.maxY < worldRect.minY || a.minY > worldRect.maxY);
+        }).map(it => it.id);
+
+        if (ids.length > 0) {
+          if (e && (e.ctrlKey || e.metaKey)) {
+            setActiveImageIds(prev => {
+              const set = new Set(prev);
+              ids.forEach(id => set.add(id));
+              return Array.from(set);
+            });
+          } else {
+            setActiveImageIds(ids);
+          }
+          onSelect?.(ids[ids.length - 1] || '');
+        } else {
+          // If it was a click (tiny box) and we set a potential clear, clear selection
+          const dx = marquee.x - marquee.startX;
+          const dy = marquee.y - marquee.startY;
+          const distSq = dx * dx + dy * dy;
+          if (distSq < 9 && potentialClearSelectionRef.current) {
+            setActiveImageIds([]);
+            onSelect?.('');
+          }
+        }
+      }
+
+      setMarquee(null);
+      potentialClearSelectionRef.current = false;
+    } else {
+      potentialClearSelectionRef.current = false;
+    }
+  };
 
   // 右键菜单逻辑
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -1078,14 +1155,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // Keyboard support
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (onCloseTab) onCloseTab();
+        else onClose();
+      }
       if (e.key === 'a' || e.key === 'A') {
         setIsSnappingEnabled(prev => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, onCloseTab]);
 
   return (
     <div
@@ -1109,7 +1189,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           </button>
 
           <button
-            onClick={() => onClose()}
+            onClick={() => { onCloseTab ? onCloseTab() : onClose(); }}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
             title={t('viewer.close')}
           >
@@ -1204,6 +1284,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           ref={canvasRef}
           className="w-full h-full block"
         />
+
+        {/* Marquee selection overlay (screen-space) */}
+        {marquee && marquee.active && (
+          <div className="absolute pointer-events-none" style={{
+            left: Math.min(marquee.startX, marquee.x),
+            top: Math.min(marquee.startY, marquee.y),
+            width: Math.abs(marquee.x - marquee.startX),
+            height: Math.abs(marquee.y - marquee.startY),
+            border: '1px dashed rgba(59,130,246,0.9)',
+            backgroundColor: 'rgba(59,130,246,0.06)',
+            zIndex: 130
+          }} />
+        )} 
 
         {/* 编辑层 Overlay */}
         {/* 编辑层 Overlay */}
@@ -1384,6 +1477,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             }
           }}
           onRemoveItem={handleRemoveImage}
+          isDarkMode={isDarkMode}
         />
 
         {/* 右键菜单 */}

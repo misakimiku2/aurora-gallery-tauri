@@ -406,6 +406,10 @@ export const App: React.FC = () => {
                 folderSettings: savedData.folderSettings || {},
                 settings: finalSettings
               }));
+              // 标记已加载保存的数据，防止后续 effect 在初始化阶段覆盖它
+              savedDataLoadedRef.current = true;
+              setSavedDataLoaded(true);
+              console.debug('[Init] Loaded saved user data, folderSettings keys:', Object.keys(savedData.folderSettings || {}));
               // 锟斤拷锟斤拷锟斤拷锟斤拷 ref 锟斤拷确锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷使锟斤拷锟斤拷确锟斤拷值
               exitActionRef.current = finalSettings.exitAction || 'ask';
             } else {
@@ -491,15 +495,36 @@ export const App: React.FC = () => {
                   const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder };
                   defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
+                  // If we have saved folder settings for this initial folder, apply them immediately to the default tab
+                  const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
+                  if (savedForRoot) {
+                    console.debug('[Init] Applying saved folder settings to default tab', initialFolder, savedForRoot);
+                    if (savedForRoot.layoutMode) defaultTab.layoutMode = savedForRoot.layoutMode as any;
+                  }
+
                   return {
                     ...prev,
                     roots: allRoots,
                     files: allFiles,
                     expandedFolderIds: allRoots,
                     tabs: [defaultTab],
-                    activeTabId: defaultTab.id
+                    activeTabId: defaultTab.id,
+                    // initialize sort settings from saved folder settings if present
+                    sortBy: savedForRoot?.sortBy || prev.sortBy,
+                    sortDirection: savedForRoot?.sortDirection || prev.sortDirection
                   };
                 });
+
+                // If savedForRoot exists, also apply groupBy (it's held in component state)
+                const savedForRootOutside = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[allRoots[0]] : undefined;
+                if (savedForRootOutside && savedForRootOutside.groupBy) {
+                  setGroupBy(savedForRootOutside.groupBy as any);
+                }
+
+                // Mark initialization complete (saved-data loading finished/handled)
+                savedDataLoadedRef.current = true;
+                setSavedDataLoaded(true);
+                console.debug('[Init] Initialization complete (roots loaded)');
                 setIsLoading(false);
                 // 锟斤拷目录锟斤拷锟斤拷锟斤拷希锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
                 setTimeout(() => {
@@ -525,6 +550,11 @@ export const App: React.FC = () => {
           const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder, history: { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 } };
           setState(prev => ({ ...prev, roots, files, people: {}, expandedFolderIds: roots, tabs: [defaultTab], activeTabId: defaultTab.id }));
         }
+
+        // Mark initialization complete (saved-data loading finished/handled)
+        savedDataLoadedRef.current = true;
+        setSavedDataLoaded(true);
+        console.debug('[Init] Initialization complete (no saved data)');
 
         setIsLoading(false);
         // 锟斤拷始锟斤拷锟斤拷桑锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
@@ -1132,7 +1162,8 @@ export const App: React.FC = () => {
 
   const handleExternalDragEnter = (e: React.DragEvent) => {
     // 如果当前正在进行由应用内部发起的“拖拽到外部”操作（通过 Alt 启动），忽略进入事件避免显示覆盖层
-    if (isDraggingInternal) return;
+    // 有时候内部发起的拖拽会比 React state 更新更早触发 dragenter（race），因此也检查 Alt 修饰键作为备用判断
+    if (isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -1157,7 +1188,8 @@ export const App: React.FC = () => {
 
   const handleExternalDragOver = (e: React.DragEvent) => {
     // 忽略应用内部发起的向外拖拽（Alt + 拖拽）以防止显示覆盖层
-    if (isDraggingInternal) return;
+    // 考虑到 React state 更新可能滞后，额外使用 Alt 修饰键作为快速判定以避免 race condition
+    if (isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -1195,7 +1227,8 @@ export const App: React.FC = () => {
 
   const handleExternalDrop = async (e: React.DragEvent) => {
     // 如果是内部发起的向外拖拽，则忽略 drop 事件
-    if (isDraggingInternal) return;
+    // 同样防御 race：检查 Alt 修饰键
+    if (isDraggingInternal || e.altKey) return;
 
     e.preventDefault();
     e.stopPropagation();
@@ -2020,17 +2053,23 @@ export const App: React.FC = () => {
   // 锟斤拷锟斤拷锟侥硷拷锟叫变化锟斤拷锟皆讹拷应锟矫憋拷锟斤拷锟斤拷锟斤拷锟?
   // 使锟斤拷 ref 锟斤拷锟斤拷锟解将 folderSettings 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷循锟斤拷
   const folderSettingsRef = useRef(state.folderSettings);
+  // Guard to prevent overwriting saved folder settings during initial load
+  const savedDataLoadedRef = useRef(false);
+  const [savedDataLoaded, setSavedDataLoaded] = useState(false);
+
   useEffect(() => {
     folderSettingsRef.current = state.folderSettings;
   }, [state.folderSettings]);
 
   useEffect(() => {
+    // Wait until saved data is loaded before applying saved folder settings
+    if (!savedDataLoaded) return;
     if (activeTab.viewMode !== 'browser') return;
     const folderId = activeTab.folderId;
     const savedSettings = folderSettingsRef.current[folderId];
 
     if (savedSettings) {
-      // 锟斤拷锟斤拷欠锟斤拷锟揭拷锟斤拷拢锟斤拷锟斤拷锟斤拷锟斤拷锟窖拷锟?
+      // Only apply if current tab differs from saved settings
       let hasChanges = false;
       if (activeTab.layoutMode !== savedSettings.layoutMode) hasChanges = true;
       if (state.sortBy !== savedSettings.sortBy) hasChanges = true;
@@ -2038,6 +2077,7 @@ export const App: React.FC = () => {
       if (groupBy !== savedSettings.groupBy) hasChanges = true;
 
       if (hasChanges) {
+        console.debug('[FolderSettings] Applying saved settings for folder', folderId, savedSettings);
         setState(prev => ({
           ...prev,
           sortBy: savedSettings.sortBy,
@@ -2047,10 +2087,13 @@ export const App: React.FC = () => {
         updateActiveTab({ layoutMode: savedSettings.layoutMode });
       }
     }
-  }, [activeTab.folderId, activeTab.id, activeTab.viewMode]);
+  }, [activeTab.folderId, activeTab.id, activeTab.viewMode, savedDataLoaded]);
 
   // 锟斤拷锟斤拷锟斤拷锟矫变化锟斤拷同锟斤拷锟斤拷锟斤拷锟窖憋拷锟斤拷锟斤拷募锟斤拷锟斤拷锟斤拷锟?
   useEffect(() => {
+    // Prevent overwriting saved folder settings during initial data load
+    if (!savedDataLoaded) return;
+
     if (activeTab.viewMode !== 'browser') return;
     const folderId = activeTab.folderId;
     const saved = state.folderSettings[folderId];
@@ -2078,7 +2121,7 @@ export const App: React.FC = () => {
         }));
       }
     }
-  }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings]);
+  }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings, savedDataLoaded]);
 
   const enterFolder = useCallback((folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
     const scroll = selectionRef.current?.scrollTop || 0;
@@ -3083,6 +3126,7 @@ export const App: React.FC = () => {
                 selectedFileIds={tab.selectedFileIds}
                 files={state.files}
                 onClose={() => updateTabById(tab.id, { isCompareMode: false })}
+                onCloseTab={() => handleCloseTab({ stopPropagation: () => {} } as any, tab.id)}
                 onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}
                 onLayoutToggle={onLayoutToggle}
                 onNavigateBack={goBack}

@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ComparisonItem } from './types';
 
-// Photoshop 风格的旋转光标
-const rotateCursor = `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M16 4v4l-4-4 4-4v4c4.42 0 8 3.58 8 8 0 1.57-.46 3.03-1.24 4.26L21.31 15a5.95 5.95 0 0 0 .69-2.74c0-3.31-2.69-6-6-6z' fill='%23000'/%3E%3Cpath d='M16 28v-4l4 4-4 4v-4c-4.42 0-8-3.58-8-8 0-1.57.46-3.03 1.24-4.26L10.69 17a5.95 5.95 0 0 0-.69 2.74c0 3.31 2.69 6 6 6z' fill='%23000'/%3E%3C/svg%3E") 16 16, alias`;
+// 生成可根据主题切换颜色的旋转光标（深色模式用白色，浅色模式用黑色）
+const makeRotateCursor = (isDark: boolean) => {
+    const fill = isDark ? '%23ffffff' : '%23000000';
+    return `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M16 4v4l-4-4 4-4v4c4.42 0 8 3.58 8 8 0 1.57-.46 3.03-1.24 4.26L21.31 15a5.95 5.95 0 0 0 .69-2.74c0-3.31-2.69-6-6-6z' fill='${fill}'/%3E%3Cpath d='M16 28v-4l4 4-4 4v-4c-4.42 0-8-3.58-8-8 0-1.57.46-3.03 1.24-4.26L10.69 17a5.95 5.95 0 0 0-.69 2.74c0 3.31 2.69 6 6 6z' fill='${fill}'/%3E%3C/svg%3E") 16 16, alias`;
+};
 
 interface EditOverlayProps {
     activeItem: ComparisonItem | null;
@@ -16,6 +19,8 @@ interface EditOverlayProps {
     onInteractionEnd?: () => void;
     containerRef?: React.RefObject<HTMLDivElement>;
     isSnappingEnabled?: boolean;
+    // Whether the application is currently in dark mode (used to adjust cursor color)
+    isDarkMode?: boolean;
 }
 
 type HandleType = 'tl' | 'tc' | 'tr' | 'ml' | 'mr' | 'bl' | 'bc' | 'br';
@@ -70,7 +75,8 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     onInteractionStart,
     onInteractionEnd,
     containerRef,
-    isSnappingEnabled = true
+    isSnappingEnabled = true,
+    isDarkMode = false
 }) => {
     const [dragType, setDragType] = useState<string | null>(null);
     const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -557,7 +563,7 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                 {/* 旋转感应区 (Outward) */}
                 {['tl', 'tr', 'bl', 'br'].map(c => (
                     <div key={`r-${c}`} className="absolute pointer-events-auto" style={{
-                        width: 30, height: 30, cursor: rotateCursor, zIndex: 110,
+                        width: 30, height: 30, cursor: makeRotateCursor(!!isDarkMode), zIndex: 110,
                         top: c.includes('t') ? -35 : 'auto', bottom: c.includes('b') ? -35 : 'auto',
                         left: c.includes('l') ? -35 : 'auto', right: c.includes('r') ? -35 : 'auto'
                     }} onMouseDown={(e) => handleMouseDown(e, 'rotate')} />

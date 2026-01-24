@@ -1803,10 +1803,10 @@ const GroupContent = React.memo(({
   const visibleItems = layout;
 
   return (
-    <div className="p-6">
+    <div>
       {activeTab.layoutMode === 'list' ? (
-        // List layout
-        <div className="overflow-hidden">
+        // List layout: keep padding for visual spacing
+        <div className="p-6 overflow-hidden">
           {group.fileIds.map((id: string) => {
             const file = files[id];
             if (!file) return null;
@@ -1836,6 +1836,7 @@ const GroupContent = React.memo(({
         </div>
       ) : (
         // Grid, adaptive, or masonry layout - 使用虚拟滚动
+        // No outer padding here because the layout worker already includes internal padding
         <div 
           className="relative" 
           style={{ 
@@ -1883,7 +1884,7 @@ const GroupContent = React.memo(({
 const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGroup, collapsed: boolean, onToggle: (id: string) => void }) => {
   return (
     <div 
-      className="flex items-center p-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors sticky top-0 z-20"
+      className="flex items-center py-1 px-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors sticky top-0 z-20"
       onClick={() => onToggle(group.id)}
     >
       <div className={`mr-2 p-1 rounded-full transition-transform duration-200 ${collapsed ? '-rotate-90' : 'rotate-0'}`}>
@@ -2471,13 +2472,13 @@ export const FileGrid: React.FC<FileGridProps> = ({
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
               <div className="w-full min-w-0">
                   {groupedFiles.map((group) => (
-                      <div key={group.id} className="mb-8">
+                      <div key={group.id} className={collapsedGroups[group.id] ? 'mb-2' : 'mb-8'}>
                           <GroupHeader
                               group={group}
-                              collapsed={collapsedGroups[group.id] || false}
+                              collapsed={!!collapsedGroups[group.id]}
                               onToggle={handleToggleGroup}
                           />
-                          {!(collapsedGroups[group.id] || false) && (
+                          {!collapsedGroups[group.id] && (
                               <GroupContent
                                   group={group}
                                   files={files}
