@@ -6,21 +6,74 @@ const rotateCursor = `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http:/
 
 interface EditOverlayProps {
     activeItem: ComparisonItem | null;
+    selectedItems?: ComparisonItem[];
     allItems: ComparisonItem[];
     transform: { x: number; y: number; scale: number };
     onUpdateItem: (id: string, updates: Partial<ComparisonItem>) => void;
     onRemoveItem: (id: string) => void;
+    // Notifies the parent that a drag interaction started/ended (for groups we need to update transient state)
+    onInteractionStart?: () => void;
+    onInteractionEnd?: () => void;
+    containerRef?: React.RefObject<HTMLDivElement>;
+    isSnappingEnabled?: boolean;
 }
 
 type HandleType = 'tl' | 'tc' | 'tr' | 'ml' | 'mr' | 'bl' | 'bc' | 'br';
 
+interface SnapGuide {
+    type: 'x' | 'y';
+    pos: number;
+    start: number;
+    end: number;
+    targetId: string;
+}
+
+const getRotatedAABB = (item: ComparisonItem) => {
+    const cx = item.x + item.width / 2;
+    const cy = item.y + item.height / 2;
+    const rad = (item.rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+
+    const corners = [
+        { x: -item.width / 2, y: -item.height / 2 },
+        { x: item.width / 2, y: -item.height / 2 },
+        { x: item.width / 2, y: item.height / 2 },
+        { x: -item.width / 2, y: item.height / 2 }
+    ].map(p => ({
+        x: cx + (p.x * cos - p.y * sin),
+        y: cy + (p.x * sin + p.y * cos)
+    }));
+
+    const xs = corners.map(c => c.x);
+    const ys = corners.map(c => c.y);
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+
+    return {
+        l: minX, r: maxX, cx,
+        t: minY, b: maxY, cy,
+        width: maxX - minX,
+        height: maxY - minY
+    };
+};
+
 export const EditOverlay: React.FC<EditOverlayProps> = ({
     activeItem,
+    selectedItems = [],
     allItems,
     transform,
-    onUpdateItem
+    onUpdateItem,
+    onInteractionStart,
+    onInteractionEnd,
+    containerRef,
+    isSnappingEnabled = true
 }) => {
     const [dragType, setDragType] = useState<string | null>(null);
+    const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
     const startState = useRef({
         pivotWorld: { x: 0, y: 0 },
         itemR: 0,
@@ -37,9 +90,13 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
         if (!activeItem || !dragType) return;
 
         const handleMouseMove = (e: MouseEvent) => {
+            const rect = containerRef?.current?.getBoundingClientRect();
+            const mouseX = rect ? e.clientX - rect.left : e.clientX;
+            const mouseY = rect ? e.clientY - rect.top : e.clientY;
+
             // 当前鼠标的世界坐标
-            const mx = (e.clientX - transform.x) / transform.scale;
-            const my = (e.clientY - transform.y) / transform.scale;
+            const mx = (mouseX - transform.x) / transform.scale;
+            const my = (mouseY - transform.y) / transform.scale;
 
             if (dragType === 'move') {
                 const dx = mx - startState.current.startMouseWorld.x;
@@ -52,23 +109,101 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
                 const screenThreshold = 15;
                 const threshold = screenThreshold / transform.scale;
 
-                allItems.forEach(item => {
-                    if (item.id === activeItem.id) return;
-                    const o = { l: item.x, r: item.x + item.width, cx: item.x + item.width / 2, t: item.y, b: item.y + item.height, cy: item.y + item.height / 2 };
-                    const m = { l: newX, r: newX + activeItem.width, cx: newX + activeItem.width / 2, t: newY, b: newY + activeItem.height, cy: newY + activeItem.height / 2 };
+                let bestSnapX = newX;
+                let bestSnapY = newY;
+                let minDx = threshold;
+                let minDy = threshold;
+                let currentSnaps: SnapGuide[] = [];
 
-                    if (Math.abs(m.l - o.l) < threshold) newX = o.l;
-                    else if (Math.abs(m.l - o.r) < threshold) newX = o.r;
-                    else if (Math.abs(m.r - o.l) < threshold) newX = o.l - activeItem.width;
-                    else if (Math.abs(m.r - o.r) < threshold) newX = o.r - activeItem.width;
-                    if (Math.abs(m.cx - o.cx) < threshold) newX = o.cx - activeItem.width / 2;
+                if (isSnappingEnabled) {
+                    const selectedIds = selectedItems.map(si => si.id);
 
-                    if (Math.abs(m.t - o.t) < threshold) newY = o.t;
-                    else if (Math.abs(m.t - o.b) < threshold) newY = o.b;
-                    else if (Math.abs(m.b - o.t) < threshold) newY = o.t - activeItem.height;
-                    else if (Math.abs(m.b - o.b) < threshold) newY = o.b - activeItem.height;
-                    if (Math.abs(m.cy - o.cy) < threshold) newY = o.cy - activeItem.height / 2;
-                });
+                    allItems.forEach(item => {
+                        // 1. 排除自身及所有选中项（防止多选移动时自吸附导致抽搐）
+                        if (item.id === activeItem.id || selectedIds.includes(item.id)) return;
+
+                        // 计算吸附目标 item 的旋转后 AABB
+                        const o = getRotatedAABB(item);
+
+                        // 计算移动项 activeItem 在当前假设位置 (newX, newY) 下的临时 AABB
+                        // 注意：activeItem.rotation 是固定的，只有位置在变
+                        const m = getRotatedAABB({ ...activeItem, x: newX, y: newY });
+
+                        // 2. 邻近判定 (Proximity Check): 只有在另一个轴向上相对接近时才触发吸附
+                        // 改用基于屏幕像素的固定阈值（如 200px），确保在任何缩放级别下，
+                        // 只有“视觉上看起来靠近”的图才会吸附。
+                        const proximityThreshold = 200 / transform.scale;
+
+                        const isNearHorizontally = (m.l < o.r + proximityThreshold) && (m.r > o.l - proximityThreshold);
+                        const isNearVertically = (m.t < o.b + proximityThreshold) && (m.b > o.t - proximityThreshold);
+
+                        // 水平吸附 (对齐 X 坐标) - 仅在垂直方向靠近时
+                        if (isNearVertically) {
+                            const snapsX = [
+                                { val: o.l, dist: Math.abs(m.l - o.l), type: 'l' },
+                                { val: o.r, dist: Math.abs(m.l - o.r), type: 'l' },
+                                { val: o.l, dist: Math.abs(m.r - o.l), type: 'r' },
+                                { val: o.r, dist: Math.abs(m.r - o.r), type: 'r' },
+                                { val: o.cx, dist: Math.abs(m.cx - o.cx), type: 'cx' }
+                            ];
+                            snapsX.forEach(s => {
+                                if (s.dist < minDx) {
+                                    minDx = s.dist;
+                                    // 计算为了让 m 的相应边缘达到 s.val 所需的 newX 偏移
+                                    const offset = s.val - (s.type === 'l' ? m.l : (s.type === 'r' ? m.r : m.cx));
+                                    bestSnapX = newX + offset;
+
+                                    // 记录辅助线范围
+                                    const yMin = Math.min(m.t, o.t);
+                                    const yMax = Math.max(m.b, o.b);
+                                    currentSnaps = currentSnaps.filter(g => g.type !== 'x');
+                                    currentSnaps.push({
+                                        type: 'x',
+                                        pos: s.val,
+                                        start: yMin,
+                                        end: yMax,
+                                        targetId: item.id
+                                    });
+                                }
+                            });
+                        }
+
+                        // 垂直吸附 (对齐 Y 坐标) - 仅在水平方向靠近时
+                        if (isNearHorizontally) {
+                            const snapsY = [
+                                { val: o.t, dist: Math.abs(m.t - o.t), type: 't' },
+                                { val: o.b, dist: Math.abs(m.t - o.b), type: 't' },
+                                { val: o.t, dist: Math.abs(m.b - o.t), type: 'b' },
+                                { val: o.b, dist: Math.abs(m.b - o.b), type: 'b' },
+                                { val: o.cy, dist: Math.abs(m.cy - o.cy), type: 'cy' }
+                            ];
+                            snapsY.forEach(s => {
+                                if (s.dist < minDy) {
+                                    minDy = s.dist;
+                                    // 对于 Y 轴吸附，逻辑相同
+                                    const offset = s.val - (s.type === 't' ? m.t : (s.type === 'b' ? m.b : m.cy));
+                                    bestSnapY = newY + offset;
+
+                                    // 记录辅助线范围
+                                    const xMin = Math.min(m.l, o.l);
+                                    const xMax = Math.max(m.r, o.r);
+                                    currentSnaps = currentSnaps.filter(g => g.type !== 'y');
+                                    currentSnaps.push({
+                                        type: 'y',
+                                        pos: s.val,
+                                        start: xMin,
+                                        end: xMax,
+                                        targetId: item.id
+                                    });
+                                }
+                            });
+                        }
+                    });
+                }
+
+                newX = bestSnapX;
+                newY = bestSnapY;
+                setSnapGuides(currentSnaps);
 
                 onUpdateItem(activeItem.id, { x: newX, y: newY });
             }
@@ -165,7 +300,11 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
             }
         };
 
-        const handleMouseUp = () => setDragType(null);
+        const handleMouseUp = () => {
+            setDragType(null);
+            setSnapGuides([]);
+            onInteractionEnd?.();
+        };
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
         return () => {
@@ -178,9 +317,89 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
 
     const handleMouseDown = (e: React.MouseEvent, type: string) => {
         if (e.button !== 0) return; // Only allow left mouse button
+
+        const rect = containerRef?.current?.getBoundingClientRect();
+        const mouseViewportX = rect ? e.clientX - rect.left : e.clientX;
+        const mouseViewportY = rect ? e.clientY - rect.top : e.clientY;
+
+        const mx = (mouseViewportX - transform.x) / transform.scale;
+        const my = (mouseViewportY - transform.y) / transform.scale;
+
+        // Helper: test point inside rotated item with optional world-space tolerance
+        const pointInRotated = (wx: number, wy: number, it: ComparisonItem, tolWorld = 0) => {
+            const cx = it.x + it.width / 2;
+            const cy = it.y + it.height / 2;
+            const rad = -it.rotation * Math.PI / 180; // rotate point back by -rotation
+            const dx = wx - cx;
+            const dy = wy - cy;
+            const lx = dx * Math.cos(rad) - dy * Math.sin(rad) + cx;
+            const ly = dx * Math.sin(rad) + dy * Math.cos(rad) + cy;
+            return lx >= it.x - tolWorld && lx <= it.x + it.width + tolWorld && ly >= it.y - tolWorld && ly <= it.y + it.height + tolWorld;
+        };
+
+        // Decide whether to capture this mousedown. For handle/rotate always capture.
+        let shouldCapture = true;
+        if (type === 'move') {
+            const tolPx = 6; // screen-space tolerance in pixels
+            const tolWorld = Math.max(0, tolPx / Math.max(1e-6, transform.scale));
+
+            // Helper to get axis-aligned screen-space AABB for a rotated item
+            const itemScreenAABB = (it: ComparisonItem) => {
+                const cx = (it.x + it.width / 2) * transform.scale + transform.x;
+                const cy = (it.y + it.height / 2) * transform.scale + transform.y;
+                const rad = it.rotation * Math.PI / 180;
+                const corners = [
+                    { x: it.x, y: it.y },
+                    { x: it.x + it.width, y: it.y },
+                    { x: it.x + it.width, y: it.y + it.height },
+                    { x: it.x, y: it.y + it.height }
+                ].map(p => {
+                    const dx = (p.x - (it.x + it.width / 2));
+                    const dy = (p.y - (it.y + it.height / 2));
+                    const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
+                    const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
+                    return {
+                        x: (cx + rx * transform.scale),
+                        y: (cy + ry * transform.scale)
+                    };
+                });
+                const xs = corners.map(c => c.x);
+                const ys = corners.map(c => c.y);
+                return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
+            };
+
+            const ptX = mouseViewportX;
+            const ptY = mouseViewportY;
+
+            // If this is group-mode (activeItem is a bounding box for many items), only capture if the click lands on any selected item's visible screen AABB (with tolerance)
+            // AND also pass the precise rotated hit-test (world-space) so corners/rotated areas work.
+            if (selectedItems.length > 1) {
+                let hit = false;
+                for (const it of selectedItems) {
+                    const r = itemScreenAABB(it);
+                    if (ptX >= r.minX - tolPx && ptX <= r.maxX + tolPx && ptY >= r.minY - tolPx && ptY <= r.maxY + tolPx) {
+                        if (pointInRotated(mx, my, it, tolWorld)) { hit = true; break; }
+                    }
+                }
+                shouldCapture = hit;
+            } else {
+                // single item: do fast rotated-screen-AABB test first (with tol), then precise rotated test in world space
+                const r = itemScreenAABB(activeItem);
+                if (ptX >= r.minX - tolPx && ptX <= r.maxX + tolPx && ptY >= r.minY - tolPx && ptY <= r.maxY + tolPx) {
+                    shouldCapture = pointInRotated(mx, my, activeItem, tolWorld);
+                } else {
+                    shouldCapture = false;
+                }
+            }
+        }
+
+        if (!shouldCapture) {
+            // Let the event bubble to parent so underlying items can be selected
+            return;
+        }
+
+        // Otherwise capture and proceed
         e.stopPropagation();
-        const mx = (e.clientX - transform.x) / transform.scale;
-        const my = (e.clientY - transform.y) / transform.scale;
 
         const cx = activeItem.x + activeItem.width / 2;
         const cy = activeItem.y + activeItem.height / 2;
@@ -247,6 +466,8 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
             clickOffset
         };
         setDragType(type);
+        // Notify parent that interaction started
+        onInteractionStart?.();
     };
 
     // 屏幕空间显示
@@ -255,33 +476,93 @@ export const EditOverlay: React.FC<EditOverlayProps> = ({
     const screenW = activeItem.width * transform.scale;
     const screenH = activeItem.height * transform.scale;
 
+    const snapTargetIds = isSnappingEnabled ? snapGuides.map(g => g.targetId) : [];
+
     return (
-        <div className="absolute pointer-events-none"
-            style={{ left: screenX, top: screenY, width: screenW, height: screenH, transform: `rotate(${activeItem.rotation}deg)`, border: '1px solid #3b82f6', zIndex: 100 }}>
-            {/* 移动区域 (Internal) */}
-            <div onMouseDown={(e) => handleMouseDown(e, 'move')} className="absolute inset-0 cursor-move pointer-events-auto" />
+        <>
+            {/* 渲染吸附辅助线 */}
+            {isSnappingEnabled && snapGuides.map((guide, i) => {
+                const isX = guide.type === 'x';
+                const sPos = guide.pos * transform.scale + (isX ? transform.x : transform.y);
+                const sStart = guide.start * transform.scale + (isX ? transform.y : transform.x);
+                const sEnd = guide.end * transform.scale + (isX ? transform.y : transform.x);
 
-            {/* 8 个控制点 */}
-            {(['tl', 'tc', 'tr', 'ml', 'mr', 'bl', 'bc', 'br'] as HandleType[]).map(pos => {
-                const s = 10;
-                const style: React.CSSProperties = { position: 'absolute', width: s, height: s, backgroundColor: 'white', border: '1.5px solid #3b82f6', zIndex: 120, pointerEvents: 'auto', transition: 'transform 0.1s' };
-                if (pos.includes('t')) style.top = -s / 2; else if (pos.includes('b')) style.bottom = -s / 2;
-                if (pos.includes('l')) style.left = -s / 2; else if (pos.includes('r')) style.right = -s / 2;
-                if (pos === 'tc' || pos === 'bc') { style.left = '50%'; style.transform = 'translateX(-50%)'; }
-                if (pos === 'ml' || pos === 'mr') { style.top = '50%'; style.transform = 'translateY(-50%)'; }
-
-                const cursors: Record<string, string> = { tl: 'nwse-resize', tr: 'nesw-resize', bl: 'nesw-resize', br: 'nwse-resize', tc: 'ns-resize', bc: 'ns-resize', ml: 'ew-resize', mr: 'ew-resize' };
-                return <div key={pos} style={style} className={`${cursors[pos]} hover:scale-125 shadow-sm`} onMouseDown={(e) => handleMouseDown(e, pos)} />;
+                return (
+                    <div
+                        key={`snap-${i}`}
+                        className="absolute pointer-events-none"
+                        style={{
+                            left: isX ? sPos : sStart,
+                            top: isX ? sStart : sPos,
+                            width: isX ? 1 : sEnd - sStart,
+                            height: isX ? sEnd - sStart : 1,
+                            borderLeft: isX ? '1px dashed #34d399' : 'none',
+                            borderTop: isX ? 'none' : '1px dashed #34d399',
+                            zIndex: 150,
+                            boxShadow: '0 0 4px rgba(52, 211, 153, 0.5)'
+                        }}
+                    />
+                );
             })}
 
-            {/* 旋转感应区 (Outward) */}
-            {['tl', 'tr', 'bl', 'br'].map(c => (
-                <div key={`r-${c}`} className="absolute pointer-events-auto" style={{
-                    width: 30, height: 30, cursor: rotateCursor, zIndex: 110,
-                    top: c.includes('t') ? -35 : 'auto', bottom: c.includes('b') ? -35 : 'auto',
-                    left: c.includes('l') ? -35 : 'auto', right: c.includes('r') ? -35 : 'auto'
-                }} onMouseDown={(e) => handleMouseDown(e, 'rotate')} />
-            ))}
-        </div>
+            {/* 渲染其他选中项的辅助边框 */}
+            {allItems.map(item => {
+                const isSelected = selectedItems.some(si => si.id === item.id);
+                const isSnapTarget = snapTargetIds.includes(item.id);
+
+                // 只有当是选中项且不是活跃项，或者是吸附目标时才渲染
+                if (!isSelected && !isSnapTarget) return null;
+                if (item.id === activeItem.id && !isSnapTarget) return null;
+
+                const sx = item.x * transform.scale + transform.x;
+                const sy = item.y * transform.scale + transform.y;
+                const sw = item.width * transform.scale;
+                const sh = item.height * transform.scale;
+
+                return (
+                    <div
+                        key={item.id}
+                        className="absolute pointer-events-none"
+                        style={{
+                            left: sx, top: sy, width: sw, height: sh,
+                            transform: `rotate(${item.rotation}deg)`,
+                            transformOrigin: 'center',
+                            border: isSnapTarget ? '2px solid #34d399' : '1px solid #3b82f6',
+                            opacity: isSnapTarget ? 1 : 0.6,
+                            zIndex: isSnapTarget ? 140 : 99,
+                            boxShadow: isSnapTarget ? '0 0 10px rgba(52, 211, 153, 0.3)' : 'none'
+                        }}
+                    />
+                );
+            })}
+
+            <div className="absolute pointer-events-none"
+                style={{ left: screenX, top: screenY, width: screenW, height: screenH, transform: `rotate(${activeItem.rotation}deg)`, transformOrigin: 'center', border: '1px solid #3b82f6', zIndex: 100 }}>
+                {/* 移动区域 (Internal) */}
+                <div onMouseDown={(e) => handleMouseDown(e, 'move')} className="absolute inset-0 cursor-move pointer-events-auto" />
+
+                {/* 8 个控制点 */}
+                {(['tl', 'tc', 'tr', 'ml', 'mr', 'bl', 'bc', 'br'] as HandleType[]).map(pos => {
+                    const s = 10;
+                    const style: React.CSSProperties = { position: 'absolute', width: s, height: s, backgroundColor: 'white', border: '1.5px solid #3b82f6', zIndex: 120, pointerEvents: 'auto', transition: 'transform 0.1s' };
+                    if (pos.includes('t')) style.top = -s / 2; else if (pos.includes('b')) style.bottom = -s / 2;
+                    if (pos.includes('l')) style.left = -s / 2; else if (pos.includes('r')) style.right = -s / 2;
+                    if (pos === 'tc' || pos === 'bc') { style.left = '50%'; style.transform = 'translateX(-50%)'; }
+                    if (pos === 'ml' || pos === 'mr') { style.top = '50%'; style.transform = 'translateY(-50%)'; }
+
+                    const cursors: Record<string, string> = { tl: 'nwse-resize', tr: 'nesw-resize', bl: 'nesw-resize', br: 'nwse-resize', tc: 'ns-resize', bc: 'ns-resize', ml: 'ew-resize', mr: 'ew-resize' };
+                    return <div key={pos} style={style} className={`${cursors[pos]} hover:scale-125 shadow-sm`} onMouseDown={(e) => handleMouseDown(e, pos)} />;
+                })}
+
+                {/* 旋转感应区 (Outward) */}
+                {['tl', 'tr', 'bl', 'br'].map(c => (
+                    <div key={`r-${c}`} className="absolute pointer-events-auto" style={{
+                        width: 30, height: 30, cursor: rotateCursor, zIndex: 110,
+                        top: c.includes('t') ? -35 : 'auto', bottom: c.includes('b') ? -35 : 'auto',
+                        left: c.includes('l') ? -35 : 'auto', right: c.includes('r') ? -35 : 'auto'
+                    }} onMouseDown={(e) => handleMouseDown(e, 'rotate')} />
+                ))}
+            </div>
+        </>
     );
 };
