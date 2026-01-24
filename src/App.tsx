@@ -206,6 +206,7 @@ export const App: React.FC = () => {
   const [externalDragItems, setExternalDragItems] = useState<string[]>([]);
   const [externalDragPosition, setExternalDragPosition] = useState<{ x: number; y: number } | null>(null);
   const [hoveredDropAction, setHoveredDropAction] = useState<DropAction>(null);
+  const externalDragCounter = useRef(0);
 
   // Internal drag state for tracking external drag operations
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
@@ -1175,7 +1176,10 @@ export const App: React.FC = () => {
 
     // 只有当是外部文件拖拽时才显示覆盖层
     if (hasFiles && !hasInternalData) {
-      setIsExternalDragging(true);
+      externalDragCounter.current++;
+      if (externalDragCounter.current === 1) {
+        setIsExternalDragging(true);
+      }
 
       // 获取文件数量
       const itemCount = e.dataTransfer.items?.length || 0;
@@ -1200,14 +1204,6 @@ export const App: React.FC = () => {
 
     if (hasFiles && !hasInternalData) {
       setExternalDragPosition({ x: e.clientX, y: e.clientY });
-
-      // 更新文件数量(如果还没有设置)
-      if (externalDragItems.length === 0) {
-        const itemCount = e.dataTransfer.items?.length || 0;
-        if (itemCount > 0) {
-          setExternalDragItems(Array(itemCount).fill(''));
-        }
-      }
     }
   };
 
@@ -1215,10 +1211,9 @@ export const App: React.FC = () => {
     e.preventDefault();
     e.stopPropagation();
 
-    // 使用 relatedTarget 判断鼠标是否真正离开了应用窗口
-    // 如果 relatedTarget 为 null,说明鼠标离开了窗口边界
-    const dragEvent = e as React.DragEvent & { relatedTarget: EventTarget | null };
-    if (!dragEvent.relatedTarget || dragEvent.currentTarget === dragEvent.target) {
+    externalDragCounter.current--;
+    if (externalDragCounter.current <= 0) {
+      externalDragCounter.current = 0;
       setIsExternalDragging(false);
       setExternalDragPosition(null);
       setExternalDragItems([]);
@@ -1232,6 +1227,8 @@ export const App: React.FC = () => {
 
     e.preventDefault();
     e.stopPropagation();
+
+    externalDragCounter.current = 0;
     setIsExternalDragging(false);
     setExternalDragPosition(null);
     setExternalDragItems([]);
@@ -3126,7 +3123,7 @@ export const App: React.FC = () => {
                 selectedFileIds={tab.selectedFileIds}
                 files={state.files}
                 onClose={() => updateTabById(tab.id, { isCompareMode: false })}
-                onCloseTab={() => handleCloseTab({ stopPropagation: () => {} } as any, tab.id)}
+                onCloseTab={() => handleCloseTab({ stopPropagation: () => { } } as any, tab.id)}
                 onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}
                 onLayoutToggle={onLayoutToggle}
                 onNavigateBack={goBack}
