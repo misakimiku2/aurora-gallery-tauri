@@ -36,6 +36,8 @@ export const useAIAnalysis = ({
 
     const aiConfig = settings.ai;
     const targetLanguage = settings.language === 'zh' ? 'Simplified Chinese' : 'English';
+    // Track whether we've auto-updated LM Studio model during this analysis run to avoid repeated toasts
+    let lmModelUpdated = false;
 
     // If no image files to analyze but folderId is provided, generate summary directly
     if (imageFileIds.length === 0 && folderId) {
@@ -122,9 +124,9 @@ export const useAIAnalysis = ({
 
         try {
           updateTask(taskId, { current: 4, currentStep: t('tasks.callingAI') });
-          
+
           const isChinese = settings.language === 'zh';
-          const storyPrompt = isChinese 
+          const storyPrompt = isChinese
             ? `基于以下对文件夹 "${folderName}" 中图片的分析结果，请生成一个简短、吸引人的文件夹摘要（大约200-300字）。摘要应概括整体氛围、关键内容和任何有趣的模式。
 
 内容描述：
@@ -165,6 +167,8 @@ Please output only the summary text without any prefixes.`;
             const resData = await res.json();
             if (resData?.choices?.[0]?.message?.content) {
               summary = resData.choices[0].message.content.trim();
+              // Strip reasoning/thought blocks
+              summary = summary.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
             }
           } else if (provider === 'ollama') {
             const body: any = { model: aiConfig.ollama.model, prompt: storyPrompt, stream: false };
@@ -179,6 +183,8 @@ Please output only the summary text without any prefixes.`;
             const resData = await res.json();
             if (resData?.response) {
               summary = resData.response.trim();
+              // Strip reasoning/thought blocks (Ollama often uses tags or specific prefixes)
+              summary = summary.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
             }
           } else if (provider === 'lmstudio') {
             const endpoints = [
@@ -187,13 +193,30 @@ Please output only the summary text without any prefixes.`;
               'http://127.0.0.1:1234/v1'
             ];
 
+            // Resolve LM Studio model before sending requests: proactively pick the first running model
+            let modelToUse = aiConfig.lmstudio.model;
+            try {
+              const check = await aiService.checkConnection(settings.ai);
+              if (check.status === 'connected' && check.result && Array.isArray(check.result.data) && check.result.data.length > 0) {
+                const detectedModel = check.result.data[0].id;
+                // Proactively switch to the first detected model if it differs from settings
+                if (detectedModel !== modelToUse) {
+                  modelToUse = detectedModel;
+                  setState(prev => ({ ...prev, settings: { ...prev.settings, ai: { ...prev.settings.ai, lmstudio: { ...prev.settings.ai.lmstudio, model: detectedModel } } } }));
+                  showToast(`${t('settings.lmStudioModelSwitched')} ${detectedModel}`);
+                }
+              }
+            } catch (e) {
+              console.warn('Failed to resolve LM Studio model before request', e);
+            }
+
             let success = false;
             for (const apiEndpoint of endpoints) {
               if (success) break;
               try {
                 let url = apiEndpoint.replace(/\/+$/, '');
                 if (!url.endsWith('/v1')) url += '/v1';
-                
+
                 const messages: any[] = [];
                 if (aiConfig.systemPrompt) {
                   messages.push({ role: "system", content: aiConfig.systemPrompt });
@@ -201,22 +224,24 @@ Please output only the summary text without any prefixes.`;
                 messages.push({ role: "user", content: storyPrompt });
 
                 const body = {
-                  model: aiConfig.lmstudio.model,
+                  model: modelToUse,
                   messages,
                   max_tokens: 500,
                   stream: false
                 };
-                
+
                 const res = await fetch(`${url}/chat/completions`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(body)
                 });
-                
+
                 if (res.ok) {
                   const resData = await res.json();
                   if (resData?.choices?.[0]?.message?.content) {
                     summary = resData.choices[0].message.content.trim();
+                    // Strip reasoning/thought blocks
+                    summary = summary.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
                     success = true;
                   }
                 }
@@ -311,7 +336,7 @@ Please output only the summary text without any prefixes.`;
 
         let currentStep = fileIndex * stepsPerFile;
         updateTask(taskId, { current: currentStep + 1, currentStep: t('tasks.readingFile') });
-        
+
         let base64Data = '';
         if (file.path) {
           try {
@@ -330,9 +355,26 @@ Please output only the summary text without any prefixes.`;
 
         const parseJSON = (text: string) => {
           try {
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) return JSON.parse(jsonMatch[0]);
-            return JSON.parse(text);
+            // First, try to extract from markdown code blocks
+            const codeBlockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+            const targetText = codeBlockMatch ? codeBlockMatch[1] : text;
+
+            // Then find the JSON object. We look for the last pair of braces that looks like a JSON object
+            // to avoid catching braces in thought processes/preambles
+            const jsonMatches = [...targetText.matchAll(/\{[\s\S]*?\}/g)];
+            if (jsonMatches.length > 0) {
+              // Try items from last to first (models often output reasoning first, then result)
+              for (let i = jsonMatches.length - 1; i >= 0; i--) {
+                try {
+                  return JSON.parse(jsonMatches[i][0]);
+                } catch (e) {
+                  // Keep trying
+                }
+              }
+            }
+
+            // Fallback to literal parse
+            return JSON.parse(targetText);
           } catch (e) {
             console.error("JSON Parse Error", e, text);
             return null;
@@ -344,12 +386,12 @@ Please output only the summary text without any prefixes.`;
           if (aiConfig.systemPrompt) {
             messages.push({ role: "system", content: aiConfig.systemPrompt });
           }
-          messages.push({ 
-            role: "user", 
+          messages.push({
+            role: "user",
             content: [
-              { type: "text", text: prompt }, 
+              { type: "text", text: prompt },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
-            ] 
+            ]
           });
 
           const body = {
@@ -367,12 +409,12 @@ Please output only the summary text without any prefixes.`;
             if (resData?.choices?.[0]?.message?.content) result = parseJSON(resData.choices[0].message.content);
           } catch (e) { console.error('AI analysis failed:', e); }
         } else if (provider === 'ollama') {
-          const body: any = { 
-            model: aiConfig.ollama.model, 
-            prompt: prompt, 
-            images: [base64Data], 
-            stream: false, 
-            format: "json" 
+          const body: any = {
+            model: aiConfig.ollama.model,
+            prompt: prompt,
+            images: [base64Data],
+            stream: false,
+            format: "json"
           };
           if (aiConfig.systemPrompt) {
             body.system = aiConfig.systemPrompt;
@@ -391,19 +433,48 @@ Please output only the summary text without any prefixes.`;
           if (aiConfig.systemPrompt) {
             messages.push({ role: "system", content: aiConfig.systemPrompt });
           }
-          messages.push({ 
-            role: "user", 
+          messages.push({
+            role: "user",
             content: [
-              { type: "text", text: prompt }, 
+              { type: "text", text: prompt },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
-            ] 
+            ]
           });
 
-          const body = { 
-            model: aiConfig.lmstudio.model, 
-            messages, 
-            max_tokens: 1000, 
-            stream: false 
+          // Resolve LM Studio model before sending request to avoid forcing-starting an old model
+          let modelToUse = aiConfig.lmstudio.model;
+          try {
+            const check = await aiService.checkConnection(settings.ai);
+            if (check.status === 'connected' && check.result && Array.isArray(check.result.data) && check.result.data.length > 0) {
+              const detectedModel = check.result.data[0].id;
+              // Proactively switch to the first detected model if it differs from settings
+              if (detectedModel !== modelToUse) {
+                modelToUse = detectedModel;
+                if (!lmModelUpdated) {
+                  setState(prev => ({
+                    ...prev,
+                    settings: {
+                      ...prev.settings,
+                      ai: {
+                        ...prev.settings.ai,
+                        lmstudio: { ...prev.settings.ai.lmstudio, model: detectedModel }
+                      }
+                    }
+                  }));
+                  showToast(`${t('settings.lmStudioModelSwitched')} ${detectedModel}`);
+                  lmModelUpdated = true;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to resolve LM Studio model before request', e);
+          }
+
+          const body = {
+            model: modelToUse,
+            messages,
+            max_tokens: 1000,
+            stream: false
           };
           let endpoint = aiConfig.lmstudio.endpoint.replace(/\/+$/, '');
           if (!endpoint.endsWith('/v1')) endpoint += '/v1';
@@ -483,12 +554,12 @@ Please output only the summary text without any prefixes.`;
         });
 
         const { dbUpsertFileMetadata } = await import('../api/tauri-bridge');
-        await dbUpsertFileMetadata({ 
-          fileId, 
-          path: file.path, 
-          description: aiData.description, 
-          tags: aiData.tags, 
-          aiData 
+        await dbUpsertFileMetadata({
+          fileId,
+          path: file.path,
+          description: aiData.description,
+          tags: aiData.tags,
+          aiData
         });
       }
 

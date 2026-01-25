@@ -2,6 +2,7 @@
 import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2 } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings } from '../types';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
+import { aiService } from '../services/aiService';
 
 interface SettingsModalProps {
   state: AppState;
@@ -32,7 +33,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   }, [state.settings.ai.currentPresetId, state.settings.ai.promptPresets?.length]);
 
   const checkConnection = async (manual: boolean = false) => {
-      // ... (keep existing implementation)
       if (manual) {
           setIsTesting(true);
           setTestStatus('testing');
@@ -41,59 +41,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       }
 
       try {
-          const { provider, openai, ollama, lmstudio } = state.settings.ai;
-          let url = '';
-          let headers: Record<string, string> = {};
+          const res = await aiService.checkConnection(state.settings.ai);
 
-          const cleanUrl = (u: string) => u.replace(/\/+$/, '');
-
-          if (provider === 'openai') {
-              url = `${cleanUrl(openai.endpoint)}/models`;
-              headers = { 'Authorization': `Bearer ${openai.apiKey}` };
-          } else if (provider === 'ollama') {
-              url = `${cleanUrl(ollama.endpoint)}/api/tags`;
-          } else if (provider === 'lmstudio') {
-              let ep = cleanUrl(lmstudio.endpoint);
-              if (!ep.endsWith('/v1')) {
-                  ep = `${ep}/v1`;
-              }
-              url = `${ep}/models`;
-          }
-
-          let result: any = null;
-          let isError = false;
-          
-          const res = await fetch(url, { method: 'GET', headers });
-          if (!res.ok) {
-              isError = true;
-          } else {
-              result = await res.json();
-          }
-          
-          if (isError) {
-              if (manual) {
-                  setTestStatus('failed');
-              }
-              onUpdateAIConnectionStatus('disconnected');
-          } else {
-              if (manual) {
-                  setTestStatus('success');
-              }
+          if (res.status === 'connected') {
+              if (manual) setTestStatus('success');
               onUpdateAIConnectionStatus('connected');
+          } else {
+              if (manual) setTestStatus('failed');
+              onUpdateAIConnectionStatus('disconnected');
           }
 
-          if (provider === 'lmstudio' && result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-              const detectedModel = result.data[0].id;
+          if (state.settings.ai.provider === 'lmstudio' && res.result && res.result.data && Array.isArray(res.result.data) && res.result.data.length > 0) {
+              const detectedModel = res.result.data[0].id;
               if (detectedModel !== state.settings.ai.lmstudio.model) {
                   onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, model: detectedModel } } });
               }
           }
-
       } catch (e) {
           console.error(e);
-          if (manual) {
-              setTestStatus('failed');
-          }
+          if (manual) setTestStatus('failed');
           onUpdateAIConnectionStatus('disconnected');
       } finally {
           if (manual) setIsTesting(false);

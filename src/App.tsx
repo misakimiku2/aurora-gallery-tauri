@@ -411,6 +411,31 @@ export const App: React.FC = () => {
               savedDataLoadedRef.current = true;
               setSavedDataLoaded(true);
               console.debug('[Init] Loaded saved user data, folderSettings keys:', Object.keys(savedData.folderSettings || {}));
+
+              // 自动检测并连接 AI 提供者（例如 LM Studio），在每次启动时尝试连接
+              (async () => {
+                try {
+                  setState(prev => ({ ...prev, aiConnectionStatus: 'checking' }));
+                  const res = await aiService.checkConnection(finalSettings.ai);
+                  if (res.status === 'connected') {
+                    setState(prev => ({ ...prev, aiConnectionStatus: 'connected' }));
+
+                    // 如果是 LM Studio，尝试检测模型并自动选择（如有变化）
+                    if (finalSettings.ai.provider === 'lmstudio' && res.result && res.result.data && Array.isArray(res.result.data) && res.result.data.length > 0) {
+                      const detectedModel = res.result.data[0].id;
+                      if (detectedModel && detectedModel !== finalSettings.ai.lmstudio.model) {
+                        setState(prev => ({ ...prev, settings: { ...prev.settings, ai: { ...prev.settings.ai, lmstudio: { ...prev.settings.ai.lmstudio, model: detectedModel } } } }));
+                      }
+                    }
+                  } else {
+                    setState(prev => ({ ...prev, aiConnectionStatus: 'disconnected' }));
+                  }
+                } catch (e) {
+                  console.error('Auto AI connection check failed:', e);
+                  setState(prev => ({ ...prev, aiConnectionStatus: 'disconnected' }));
+                }
+              })();
+
               // 锟斤拷锟斤拷锟斤拷锟斤拷 ref 锟斤拷确锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷使锟斤拷锟斤拷确锟斤拷值
               exitActionRef.current = finalSettings.exitAction || 'ask';
             } else {
@@ -3053,7 +3078,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} aiConnectionStatus={state.aiConnectionStatus} t={t} />
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">

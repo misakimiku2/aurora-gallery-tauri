@@ -548,7 +548,7 @@ export const Sidebar: React.FC<{
   onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t, aiConnectionStatus = 'disconnected' }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -657,8 +657,19 @@ export const Sidebar: React.FC<{
            onClick={onOpenSettings}
            className="w-full flex items-center px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
          >
-           <Settings size={18} className="mr-3" />
-           <span className="text-sm font-medium">{t('sidebar.settings')}</span>
+           <div className="flex items-center justify-between w-full">
+             <div className="flex items-center">
+               <Settings size={18} className="mr-3" />
+               <span className="text-sm font-medium">{t('sidebar.settings')}</span>
+             </div>
+             <div className="ml-3 flex items-center">
+               {aiConnectionStatus === 'checking' ? (
+                 <Loader2 size={12} className="text-yellow-400 animate-spin" />
+               ) : (
+                 <span className={`w-2 h-2 rounded-full ${aiConnectionStatus === 'connected' ? 'bg-green-500' : 'bg-red-500'}`} />
+               )}
+             </div>
+           </div>
          </button>
       </div>
 

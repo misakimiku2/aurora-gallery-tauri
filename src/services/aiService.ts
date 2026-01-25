@@ -94,6 +94,34 @@ class AIService {
     const aiData = await this.analyzeImage(imageUrl, settings, people);
     return aiData;
   }
-}
+  // Check connectivity for configured AI provider (openai / ollama / lmstudio)
+  async checkConnection(aiConfig: AppSettings['ai']): Promise<{ status: 'connected' | 'disconnected'; result?: any }> {
+    const cleanUrl = (u: string) => u.replace(/\/+$|\s+/g, '');
+
+    try {
+      const provider = aiConfig.provider;
+      let url = '';
+      let headers: Record<string, string> = {};
+
+      if (provider === 'openai') {
+        url = `${cleanUrl(aiConfig.openai.endpoint)}/models`;
+        headers = { 'Authorization': `Bearer ${aiConfig.openai.apiKey}` };
+      } else if (provider === 'ollama') {
+        url = `${cleanUrl(aiConfig.ollama.endpoint)}/api/tags`;
+      } else if (provider === 'lmstudio') {
+        let ep = cleanUrl(aiConfig.lmstudio.endpoint);
+        if (!ep.endsWith('/v1')) ep = `${ep}/v1`;
+        url = `${ep}/models`;
+      }
+
+      const res = await fetch(url, { method: 'GET', headers });
+      if (!res.ok) return { status: 'disconnected' };
+      const result = await res.json();
+      return { status: 'connected', result };
+    } catch (e) {
+      console.error('AI connection check failed:', e);
+      return { status: 'disconnected' };
+    }
+  }}
 
 export const aiService = new AIService();
