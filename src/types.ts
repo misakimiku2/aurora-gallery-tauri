@@ -320,6 +320,8 @@ export interface AppState {
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
   dragState: DragState;
+  // Optional scan progress info (used during onboarding)
+  scanProgress?: { processed: number; total: number } | null;
 }
 
 declare global {

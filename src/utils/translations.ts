@@ -17,6 +17,8 @@ export const translations = {
       step2Desc: '根据您的喜好定制体验。',
       selectFolder: '选择文件夹',
       currentPath: '当前选择',
+      scanOnStart: '扫描将立即开始；主色提取将在您点击“开始使用”后启动',
+      step2ColorExtractDesc: '点击“开始使用”后，将执行主色调提取任务',
       next: '下一步',
       skip: '跳过',
       finish: '开始使用',
@@ -41,6 +43,7 @@ export const translations = {
       nasConnected: '已连接',
       tasks: '后台任务',
       topics: '专题',
+      files: '个文件',
       noDescription: '暂无描述'
     },
     context: {
@@ -139,7 +142,6 @@ export const translations = {
       readBookmark: '读取书签',
       saved: '已保存',
       loaded: '已读取',
-      copy: '复制',
       move: '移动',
       successfully: '成功',
       selectedPeople: '位已选人物',
@@ -578,6 +580,8 @@ export const translations = {
       step2Desc: 'Customize your experience.',
       selectFolder: 'Select Folder',
       currentPath: 'Selected Path',
+      scanOnStart: 'Scanning will start immediately; color processing will begin after you click "Start Using"',
+      step2ColorExtractDesc: 'Click "Start Using" to begin color extraction tasks.',
       next: 'Next',
       skip: 'Skip',
       finish: 'Start Using',
@@ -602,6 +606,7 @@ export const translations = {
       nasConnected: 'Connected',
       tasks: 'Background Tasks',
       topics: 'TOPICS',
+      files: 'files',
       noDescription: 'No description'
     },
     context: {
@@ -701,7 +706,6 @@ export const translations = {
       readBookmark: 'Read Bookmark',
       saved: 'Saved',
       loaded: 'Loaded',
-      copy: 'Copy',
       move: 'Move',
       successfully: 'Successfully',
       selectedPeople: 'selected people',

@@ -23,6 +23,13 @@ import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserDa
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
+import md5 from 'md5';
+
+// Helper: normalize path to use forward slashes consistently
+const normalizePath = (path: string) => path.replace(/\\/g, '/');
+
+// Helper: generate a stable ID from a path (compat with Rust backend)
+const generateId = (path: string) => md5(normalizePath(path)).substring(0, 9);
 
 // ... (helper components remain unchanged)
 import { useTasks } from './hooks/useTasks';
@@ -86,6 +93,8 @@ export const App: React.FC = () => {
         confidenceThreshold: 0.6
       }
     },
+    // Scan progress (onboarding)
+    scanProgress: null,
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
     aiConnectionStatus: 'checking',
     // 锟斤拷拽状态
@@ -463,6 +472,17 @@ export const App: React.FC = () => {
               });
             }
 
+            // 如果没有保存的数据（首次运行），视为首次安装：显示欢迎向导并跳过默认目录扫描
+            if (!savedData) {
+              // 保留合并后的默认设置但不要自动扫描默认目录，从而让欢迎流程先进行
+              setState(prev => ({ ...prev, settings: finalSettings }));
+              setIsLoading(false);
+              setShowWelcome(true);
+              // 迅速隐藏启动画面
+              setTimeout(() => setShowSplash(false), 200);
+              return;
+            }
+
             // 锟斤拷锟斤拷锟斤拷锟缴秆★拷锟矫伙拷锟斤拷锟叫凤拷锟斤拷锟斤拷锟斤拷锟矫伙拷斜锟斤拷锟斤拷路锟斤拷锟斤拷使锟斤拷默锟斤拷锟斤拷源锟斤拷目录
             if (validRootPaths.length === 0) {
               if (finalSettings.paths.resourceRoot) {
@@ -754,6 +774,26 @@ export const App: React.FC = () => {
   const handleWelcomeFinish = () => {
     localStorage.setItem('aurora_onboarded', 'true');
     setShowWelcome(false);
+
+    // 如果用户已经在欢迎页选了目录但我们尚未完成扫描，点击完成后才开始后台扫描和处理
+    const resource = state.settings.paths.resourceRoot;
+    if (resource) {
+      const rootId = generateId(resource);
+      const fileEntry = state.files[rootId];
+      if (!fileEntry || (fileEntry.children && fileEntry.children.length === 0)) {
+        // 异步启动扫描（不阻塞 UI）
+        scanAndMerge(resource);
+      }
+    }
+
+    // 恢复后台颜色提取，让主色处理开始
+    (async () => {
+      try {
+        await resumeColorExtraction();
+      } catch (err) {
+        console.warn('Failed to resume color extraction:', err);
+      }
+    })();
   };
 
   // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟皆匡拷锟斤拷锟斤拷母锟斤拷锟斤拷锟斤拷位锟斤拷
@@ -772,6 +812,25 @@ export const App: React.FC = () => {
   useEffect(() => {
     // 目前锟斤拷锟斤拷Tauri锟斤拷锟斤拷锟斤拷支锟斤拷锟接迟硷拷锟斤拷图片锟竭达拷
   }, [activeTab.selectedFileIds, activeTab.viewingFileId]);
+
+  // Listen for scan progress events emitted by backend during onboarding scan
+  useEffect(() => {
+    let unlisten: any;
+    let isMounted = true;
+    const listenProgress = async () => {
+      try {
+        unlisten = await listen('scan-progress', (event: any) => {
+          if (!isMounted) return;
+          const payload = event.payload as { processed: number; total: number };
+          setState(prev => ({ ...prev, scanProgress: { processed: payload.processed, total: payload.total } }));
+        });
+      } catch (e) {
+        console.warn('Failed to listen for scan-progress', e);
+      }
+    };
+    listenProgress();
+    return () => { isMounted = false; if (unlisten) unlisten(); };
+  }, []);
 
   useEffect(() => {
     const currentFolderId = activeTab.folderId;
@@ -860,42 +919,98 @@ export const App: React.FC = () => {
           await ensureDirectory(cachePath);
         }
 
-        // 锟斤拷始锟斤拷录锟侥硷拷扫锟斤拷锟斤拷锟杰ｏ拷锟狡癸拷锟斤拷锟斤拷锟斤拷
-        const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
+        // --- UX: 立刻创建并显示占位根（skeleton），避免等待后端扫描完成才能看到路径或文件列表 ---
+        const skeletonId = generateId(path);
+        const skeletonRoot: FileNode = {
+          id: skeletonId,
+          parentId: null,
+          name: path.split(/[\\\/]/).pop() || path,
+          type: FileType.FOLDER,
+          path: normalizePath(path),
+          children: [],
+          tags: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
 
-        const result = await scanDirectory(path, true);
-
-        // 锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷录锟斤拷锟斤拷指锟斤拷
-        performanceMonitor.end(scanTimer, 'scanDirectory', {
-          path,
-          fileCount: Object.keys(result.files).length,
-          rootCount: result.roots.length
-        });
-
-        // 锟斤拷录扫锟斤拷锟侥硷拷锟斤拷锟斤拷
-        performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
         setState(prev => {
-          const newRoots = Array.from(new Set([...prev.roots, ...result.roots]));
-          const newFiles = { ...prev.files, ...result.files };
-          const updatedTabs = prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, folderId: result.roots[0], history: { stack: [{ folderId: result.roots[0], viewingId: null, viewMode: 'browser' as const, searchQuery: '', searchScope: 'all' as SearchScope, activeTags: [], activePersonId: null }], currentIndex: 0 } } : t);
+          // 如果没有任何 tab，则创建默认 tab；否则把当前激活 tab 指向 skeleton
+          let updatedTabs = prev.tabs;
+          if (prev.tabs.length === 0) {
+            const defaultTab: TabState = {
+              ...DUMMY_TAB,
+              id: 'tab-default',
+              folderId: skeletonId,
+              history: { stack: [{ folderId: skeletonId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
+            };
+            updatedTabs = [defaultTab];
+          } else {
+            updatedTabs = prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, folderId: skeletonId, history: { stack: [{ folderId: skeletonId, viewingId: null, viewMode: 'browser' as const, searchQuery: '', searchScope: 'all' as SearchScope, activeTags: [], activePersonId: null }], currentIndex: 0 } } : t);
+          }
 
           return {
             ...prev,
-            roots: newRoots,
-            files: newFiles,
-            expandedFolderIds: [...prev.expandedFolderIds, ...result.roots],
+            roots: [skeletonId, ...prev.roots.filter(r => r !== skeletonId)],
+            files: { ...prev.files, [skeletonId]: skeletonRoot },
+            expandedFolderIds: Array.from(new Set([...prev.expandedFolderIds, skeletonId])),
             tabs: updatedTabs,
-            settings: {
-              ...prev.settings,
-              paths: {
-                ...prev.settings.paths,
-                resourceRoot: path
-              }
-            }
+            activeTabId: updatedTabs[0].id,
+            settings: { ...prev.settings, paths: { ...prev.settings.paths, resourceRoot: path } }
           };
         });
+
+        // Pause backend color extraction while initial scan runs (we'll resume when user finishes onboarding)
+        (async () => {
+          try {
+            await pauseColorExtraction();
+          } catch (err) {
+            console.warn('Failed to pause color extraction:', err);
+          }
+          // Start scanning immediately but colors remain paused until resume
+          scanAndMerge(path);
+        })();
+
+
       }
     } catch (e) { console.error("Failed to open directory", e); }
+  };
+
+  const scanAndMerge = async (path: string) => {
+    const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
+    try {
+      const result = await scanDirectory(path, true);
+
+      performanceMonitor.end(scanTimer, 'scanDirectory', {
+        path,
+        fileCount: Object.keys(result.files).length,
+        rootCount: result.roots.length
+      });
+
+      performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
+
+      setState(prev => {
+        const newRoots = Array.from(new Set([...prev.roots, ...result.roots]));
+        const newFiles = { ...prev.files, ...result.files };
+        const updatedTabs = prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, folderId: result.roots[0], history: { stack: [{ folderId: result.roots[0], viewingId: null, viewMode: 'browser' as const, searchQuery: '', searchScope: 'all' as SearchScope, activeTags: [], activePersonId: null }], currentIndex: 0 } } : t);
+
+        return {
+          ...prev,
+          roots: newRoots,
+          files: newFiles,
+          expandedFolderIds: Array.from(new Set([...prev.expandedFolderIds, ...result.roots])),
+          tabs: updatedTabs,
+          settings: {
+            ...prev.settings,
+            paths: {
+              ...prev.settings.paths,
+              resourceRoot: path
+            }
+          }
+        };
+      });
+    } catch (err) {
+      console.error("Failed to reload root: ", path, err);
+    }
   };
 
   const handleRefresh = async (folderId?: string) => {
@@ -3492,6 +3607,7 @@ export const App: React.FC = () => {
         showWelcome={showWelcome}
         handleWelcomeFinish={handleWelcomeFinish}
         handleOpenFolder={handleOpenFolder}
+        scanProgress={state.scanProgress}
         showCloseConfirmation={showCloseConfirmation}
         setShowCloseConfirmation={setShowCloseConfirmation}
         handleCloseConfirmation={handleCloseConfirmation}

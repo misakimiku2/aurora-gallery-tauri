@@ -8,6 +8,7 @@ use std::fs;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use tauri::Manager;
+use tauri::Emitter;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
 use serde_json;
@@ -887,6 +888,15 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     }
     
     // Second pass: add all nodes to the map and resolve parent_id
+    let total_images = file_nodes.iter().filter(|(_, node, _)| matches!(node.r#type, FileType::Image)).count();
+    let mut processed_images = 0usize;
+
+    #[derive(Serialize, Clone)]
+    struct ScanProgress {
+        processed: usize,
+        total: usize,
+    }
+
     for (id, mut node, parent_path) in file_nodes {
         // Resolve parent_id from parent_path
         if !parent_path.is_empty() {
@@ -899,7 +909,7 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                 }
             }
         }
-        
+
         // Merge metadata if available
         if let Some(meta) = metadata_map.get(&id) {
             if let Some(tags_val) = &meta.tags {
@@ -910,6 +920,14 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
             node.description = meta.description.clone();
             node.source_url = meta.source_url.clone();
             node.ai_data = meta.ai_data.clone();
+        }
+
+        // Track image processing progress and emit events periodically
+        if matches!(node.r#type, FileType::Image) {
+            processed_images += 1;
+            if processed_images % 20 == 0 || processed_images == total_images {
+                let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+            }
         }
 
         all_files.insert(id.clone(), node);
@@ -982,7 +1000,7 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     // Add all image paths to color database in batches
     if !image_paths.is_empty() {
         let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
-        let batch_size = 100;
+        let batch_size = 500;
         
         // Process in batches to avoid database overload
         for chunk in image_paths.chunks(batch_size) {

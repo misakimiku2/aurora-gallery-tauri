@@ -11,9 +11,10 @@ interface WelcomeModalProps {
     settings: AppSettings;
     onUpdateSettings: (updates: Partial<AppSettings>) => void;
     t: (key: string) => string;
+    scanProgress?: { processed: number; total: number } | null;
 }
 
-export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t }) => {
+export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t, scanProgress }) => {
     const [step, setStep] = useState(1);
 
     if (!show) return null;
@@ -42,8 +43,18 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
 
                     {/* Step Indicators */}
                     <div className="flex space-x-2 z-10">
-                        <div className={`h-1.5 w-8 rounded-full transition-colors ${step === 1 ? 'bg-white' : 'bg-white/30'}`}></div>
-                        <div className={`h-1.5 w-8 rounded-full transition-colors ${step === 2 ? 'bg-white' : 'bg-white/30'}`}></div>
+                        <div
+                            role="button"
+                            aria-label="Go to step 1"
+                            onClick={() => setStep(1)}
+                            className={`h-1.5 w-8 rounded-full transition-colors ${step === 1 ? 'bg-white cursor-default' : 'bg-white/30 cursor-pointer hover:bg-white/70'}`}
+                        />
+                        <div
+                            role="button"
+                            aria-label="Back to step 1"
+                            onClick={() => setStep(1)}
+                            className={`h-1.5 w-8 rounded-full transition-colors ${step === 2 ? 'bg-white cursor-pointer' : 'bg-white/30 cursor-pointer hover:bg-white/70'}`}
+                        />
                     </div>
                 </div>
 
@@ -66,13 +77,22 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                 <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center">
                                     <div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div>
                                     <div className="text-sm font-mono truncate px-2">{currentPath}</div>
+                                    {/* Scan progress indicator (if available) - keep only the progress bar here */}
+                                    {scanProgress && scanProgress.total > 0 && (
+                                        <div className="mt-2">
+                                            <div className="text-xs text-gray-500 mb-1">{`${scanProgress.processed} / ${scanProgress.total} ${t('sidebar.files')}`}</div>
+                                            <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                                                <div className="h-2 bg-blue-600" style={{ width: `${Math.round((scanProgress.processed / scanProgress.total) * 100)}%` }}></div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </div>
                     )}
 
                     {step === 2 && (
-                        <div className="flex-1 space-y-6 flex flex-col justify-center">
+                        <div className="flex-1 space-y-6 flex flex-col justify-center relative">
                             <div>
                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label>
                                 <div className="grid grid-cols-2 gap-3">
@@ -104,6 +124,9 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                     ))}
                                 </div>
                             </div>
+
+                            {/* Right-bottom hint */}
+                            <div className="absolute right-4 bottom-4 text-xs text-gray-500">{t('welcome.step2ColorExtractDesc')}</div>
                         </div>
                     )}
 
