@@ -322,6 +322,8 @@ export interface AppState {
   dragState: DragState;
   // Optional scan progress info (used during onboarding)
   scanProgress?: { processed: number; total: number } | null;
+  // Flag to track if directory scan is in progress (used to disable "Next" button in welcome modal)
+  isScanning: boolean;
 }
 
 declare global {

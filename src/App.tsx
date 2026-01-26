@@ -19,7 +19,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -95,6 +95,7 @@ export const App: React.FC = () => {
     },
     // Scan progress (onboarding)
     scanProgress: null,
+    isScanning: false,
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
     aiConnectionStatus: 'checking',
     // 锟斤拷拽状态
@@ -955,7 +956,8 @@ export const App: React.FC = () => {
             expandedFolderIds: Array.from(new Set([...prev.expandedFolderIds, skeletonId])),
             tabs: updatedTabs,
             activeTabId: updatedTabs[0].id,
-            settings: { ...prev.settings, paths: { ...prev.settings.paths, resourceRoot: path } }
+            settings: { ...prev.settings, paths: { ...prev.settings.paths, resourceRoot: path } },
+            isScanning: true
           };
         });
 
@@ -988,11 +990,25 @@ export const App: React.FC = () => {
 
       performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
 
+      // Collect all image paths and add to pending database
+      const imagePaths: string[] = [];
+      Object.values(result.files).forEach(file => {
+        if (file.type === FileType.IMAGE) {
+          imagePaths.push(file.path);
+        }
+      });
+
+      // Add image paths to pending database in background
+      if (imagePaths.length > 0) {
+        addPendingFilesToDb(imagePaths).catch(err => {
+          console.error('Failed to add pending files to database:', err);
+        });
+      }
+
       setState(prev => {
         const newRoots = Array.from(new Set([...prev.roots, ...result.roots]));
         const newFiles = { ...prev.files, ...result.files };
         const updatedTabs = prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, folderId: result.roots[0], history: { stack: [{ folderId: result.roots[0], viewingId: null, viewMode: 'browser' as const, searchQuery: '', searchScope: 'all' as SearchScope, activeTags: [], activePersonId: null }], currentIndex: 0 } } : t);
-
         return {
           ...prev,
           roots: newRoots,
@@ -1005,11 +1021,13 @@ export const App: React.FC = () => {
               ...prev.settings.paths,
               resourceRoot: path
             }
-          }
+          },
+          isScanning: false
         };
       });
     } catch (err) {
       console.error("Failed to reload root: ", path, err);
+      setState(prev => ({ ...prev, isScanning: false }));
     }
   };
 

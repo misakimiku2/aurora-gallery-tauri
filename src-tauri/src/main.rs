@@ -653,8 +653,15 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     let mut path_to_id: HashMap<String, String> = HashMap::new();
     path_to_id.insert(normalized_root_path.clone(), root_id.clone());
     
-    // Process entries in parallel using jwalk
-    let file_nodes: Vec<(String, FileNode, String)> = jwalk::WalkDir::new(&path)
+    // Process entries in parallel using jwalk (streaming)
+    // First run a fast counting pass (parallel but synchronous) to compute an accurate total before streaming detailed nodes.
+    let (tx, rx) = crossbeam_channel::unbounded::<(String, FileNode, String)>();
+    let producer_path = path.clone();
+
+    // Fast synchronous counting pass (parallel iterator) to get accurate total quickly
+    let normalized_root = normalize_path(&path);
+    let root_path_local = Path::new(&path);
+    let fast_total: usize = jwalk::WalkDir::new(&path)
         .into_iter()
         .par_bridge()
         .filter_map(|entry_result| {
@@ -662,168 +669,121 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                 Ok(e) => e,
                 Err(_) => return None,
             };
-            
+
             let entry_path = entry.path();
-            
-            // Skip root directory itself
-            if entry_path == root_path {
+            if entry_path == root_path_local {
                 return None;
             }
-            
-            // Skip hidden files (except .pixcall)
+
+            // Skip hidden and cache files
             let file_name = entry_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
-            
-            // Skip .Aurora_Cache folder and its contents
+
             if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") {
                 return None;
             }
-            
+
             if file_name.starts_with('.') && file_name != ".pixcall" {
                 return None;
             }
-            
-            let full_path = normalize_path(entry_path.to_str().unwrap_or(""));
-            
-            // Get metadata
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(_) => return None,
-            };
-            
-            // Get parent path directly from entry_path (thread-safe)
-            let parent_path = if let Some(parent) = entry_path.parent() {
-                normalize_path(parent.to_str().unwrap_or(""))
+
+            let extension = entry_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.to_lowercase())
+                .unwrap_or_default();
+
+            if is_supported_image(&extension) {
+                Some(1usize)
             } else {
-                normalized_root_path.clone()
-            };
-            
-            let file_id = generate_id(&full_path);
-            let file_name = entry_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
-            
-            // Check if it's a directory
-            let is_directory = metadata.is_dir();
-            
-            if is_directory {
-                // Create folder node (parent_id will be set later)
-                let folder_node = FileNode {
-                    id: file_id.clone(),
-                    parent_id: None, // Will be set later
-                    name: file_name,
-                    r#type: FileType::Folder,
-                    path: full_path.clone(),
-                    size: None,
-                    children: Some(Vec::new()),
-                    tags: Vec::new(),
-                    created_at: metadata
-                        .created()
-                        .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
-                    updated_at: metadata
-                        .modified()
-                        .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
-                    url: None,
-                    meta: None,
-                    description: None,
-                    source_url: None,
-                    ai_data: None,
+                None
+            }
+        })
+        .count();
+
+    // Emit initial total immediately so the UI can show determinate progress
+    let mut total_images = fast_total;
+    let mut processed_images = 0usize;
+    #[derive(Serialize, Clone)]
+    struct ScanProgress {
+        processed: usize,
+        total: usize,
+    }
+    let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+
+    // Producer: full node producer (heavy work: read image dimensions, metadata)
+    std::thread::spawn(move || {
+        let normalized_root = normalize_path(&producer_path);
+        let root_path_local = Path::new(&producer_path);
+
+        jwalk::WalkDir::new(&producer_path)
+            .into_iter()
+            .par_bridge()
+            .filter_map(|entry_result| {
+                let entry = match entry_result {
+                    Ok(e) => e,
+                    Err(_) => return None,
                 };
-                
-                Some((file_id, folder_node, parent_path))
-            } else {
-                // Check if it's a supported image
-                let extension = entry_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|e| e.to_lowercase())
-                    .unwrap_or_default();
-                
-                if is_supported_image(&extension) {
-                    // Create image file node (parent_id will be set later)
-                    let file_size = metadata.len();
-                    
-                    // Use imageinfo to quickly get image dimensions
-                    // Try to read image dimensions using the `image` crate first
-                    // This is more robust for various JPEG variants (progressive, large APP segments, etc.)
-                    let (width, height) = match image::image_dimensions(&entry_path) {
-                        Ok((w, h)) => (w as u32, h as u32),
-                        Err(_) => {
-                            // Fallback strategy: incremental header read + imageinfo, then jpeg-decoder
-                            const MAX_HEADER_BYTES: usize = 256 * 1024; // 256KB
-                            const CHUNK: usize = 16 * 1024; // read in 16KB chunks
 
-                            // Try incremental read and imageinfo parsing
-                            if let Ok(mut file) = fs::File::open(&entry_path) {
-                                let mut buffer: Vec<u8> = Vec::new();
-                                let mut found: Option<(u32, u32)> = None;
+                let entry_path = entry.path();
 
-                                loop {
-                                    let mut tmp = vec![0u8; CHUNK];
-                                    match file.read(&mut tmp) {
-                                        Ok(0) => break, // EOF
-                                        Ok(n) => buffer.extend_from_slice(&tmp[..n]),
-                                        Err(_) => break,
-                                    }
+                // Skip root directory itself
+                if entry_path == root_path_local {
+                    return None;
+                }
 
-                                    if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
-                                        found = Some((info.size.width as u32, info.size.height as u32));
-                                        break;
-                                    }
+                // Skip hidden files (except .pixcall)
+                let file_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
 
-                                    if buffer.len() >= MAX_HEADER_BYTES {
-                                        break;
-                                    }
-                                }
+                // Skip .Aurora_Cache folder and its contents
+                if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") {
+                    return None;
+                }
 
-                                if let Some(v) = found {
-                                    v
-                                } else {
-                                    // Final fallback: try jpeg-decoder to parse JPEG SOF markers robustly
-                                    if let Ok(f2) = fs::File::open(&entry_path) {
-                                        let reader = BufReader::new(f2);
-                                        let mut dec = jpeg_decoder::Decoder::new(reader);
-                                        // Some versions of jpeg-decoder have read_info() return () and expose
-                                        // the parsed info via `dec.info()`. Call read_info() first,
-                                        // then retrieve `dec.info()`.
-                                        let _ = dec.read_info();
-                                        if let Some(info) = dec.info() {
-                                            (info.width as u32, info.height as u32)
-                                        } else {
-                                            (0, 0)
-                                        }
-                                    } else {
-                                        (0, 0)
-                                    }
-                                }
-                            } else {
-                                (0, 0)
-                            }
-                        }
-                    };
-                    
-                    let image_node = FileNode {
+                if file_name.starts_with('.') && file_name != ".pixcall" {
+                    return None;
+                }
+
+                let full_path = normalize_path(entry_path.to_str().unwrap_or(""));
+
+                // Get metadata
+                let metadata = match entry.metadata() {
+                    Ok(m) => m,
+                    Err(_) => return None,
+                };
+
+                // Get parent path directly from entry_path (thread-safe)
+                let parent_path = if let Some(parent) = entry_path.parent() {
+                    normalize_path(parent.to_str().unwrap_or(""))
+                } else {
+                    normalized_root.clone()
+                };
+
+                let file_id = generate_id(&full_path);
+                let file_name = entry_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                // Check if it's a directory
+                let is_directory = metadata.is_dir();
+
+                if is_directory {
+                    // Create folder node (parent_id will be set later)
+                    let folder_node = FileNode {
                         id: file_id.clone(),
                         parent_id: None, // Will be set later
                         name: file_name,
-                        r#type: FileType::Image,
+                        r#type: FileType::Folder,
                         path: full_path.clone(),
-                        size: Some(file_size),
-                        children: None,
+                        size: None,
+                        children: Some(Vec::new()),
                         tags: Vec::new(),
                         created_at: metadata
                             .created()
@@ -841,73 +801,158 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
                                 chrono::DateTime::from_timestamp(secs as i64, 0)
                                     .map(|dt| dt.to_rfc3339())
                             }),
-                        url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
-                        meta: Some(ImageMeta {
-                            width,
-                            height,
-                            size_kb: (file_size / 1024) as u32,
-                            created: metadata
+                        url: None,
+                        meta: None,
+                        description: None,
+                        source_url: None,
+                        ai_data: None,
+                    };
+
+                    Some((file_id, folder_node, parent_path))
+                } else {
+                    // Check if it's a supported image
+                    let extension = entry_path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e.to_lowercase())
+                        .unwrap_or_default();
+
+                    if is_supported_image(&extension) {
+                        // Create image file node (parent_id will be set later)
+                        let file_size = metadata.len();
+
+                        // Use imageinfo to quickly get image dimensions
+                        let (width, height) = match image::image_dimensions(&entry_path) {
+                            Ok((w, h)) => (w as u32, h as u32),
+                            Err(_) => {
+                                const MAX_HEADER_BYTES: usize = 256 * 1024; // 256KB
+                                const CHUNK: usize = 16 * 1024; // read in 16KB chunks
+
+                                if let Ok(mut file) = fs::File::open(&entry_path) {
+                                    let mut buffer: Vec<u8> = Vec::new();
+                                    let mut found: Option<(u32, u32)> = None;
+
+                                    loop {
+                                        let mut tmp = vec![0u8; CHUNK];
+                                        match file.read(&mut tmp) {
+                                            Ok(0) => break, // EOF
+                                            Ok(n) => buffer.extend_from_slice(&tmp[..n]),
+                                            Err(_) => break,
+                                        }
+
+                                        if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
+                                            found = Some((info.size.width as u32, info.size.height as u32));
+                                            break;
+                                        }
+
+                                        if buffer.len() >= MAX_HEADER_BYTES {
+                                            break;
+                                        }
+                                    }
+
+                                    if let Some(v) = found {
+                                        v
+                                    } else {
+                                        if let Ok(f2) = fs::File::open(&entry_path) {
+                                            let reader = BufReader::new(f2);
+                                            let mut dec = jpeg_decoder::Decoder::new(reader);
+                                            let _ = dec.read_info();
+                                            if let Some(info) = dec.info() {
+                                                (info.width as u32, info.height as u32)
+                                            } else {
+                                                (0, 0)
+                                            }
+                                        } else {
+                                            (0, 0)
+                                        }
+                                    }
+                                } else {
+                                    (0, 0)
+                                }
+                            }
+                        };
+
+                        let image_node = FileNode {
+                            id: file_id.clone(),
+                            parent_id: None, // Will be set later
+                            name: file_name,
+                            r#type: FileType::Image,
+                            path: full_path.clone(),
+                            size: Some(file_size),
+                            children: None,
+                            tags: Vec::new(),
+                            created_at: metadata
                                 .created()
                                 .ok()
                                 .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
                                 .and_then(|secs| {
                                     chrono::DateTime::from_timestamp(secs as i64, 0)
                                         .map(|dt| dt.to_rfc3339())
-                                })
-                                .unwrap_or_default(),
-                            modified: metadata
+                                }),
+                            updated_at: metadata
                                 .modified()
                                 .ok()
                                 .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
                                 .and_then(|secs| {
                                     chrono::DateTime::from_timestamp(secs as i64, 0)
                                         .map(|dt| dt.to_rfc3339())
-                                })
-                                .unwrap_or_default(),
-                            format: extension,
-                        }),
-                        description: None,
-                        source_url: None,
-                        ai_data: None,
-                    };
-                    
-                    Some((file_id, image_node, parent_path))
-                } else {
-                    None
+                                }),
+                            url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
+                            meta: Some(ImageMeta {
+                                width,
+                                height,
+                                size_kb: (file_size / 1024) as u32,
+                                created: metadata
+                                    .created()
+                                    .ok()
+                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                                    .and_then(|secs| {
+                                        chrono::DateTime::from_timestamp(secs as i64, 0)
+                                            .map(|dt| dt.to_rfc3339())
+                                    })
+                                    .unwrap_or_default(),
+                                modified: metadata
+                                    .modified()
+                                    .ok()
+                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                                    .and_then(|secs| {
+                                        chrono::DateTime::from_timestamp(secs as i64, 0)
+                                            .map(|dt| dt.to_rfc3339())
+                                    })
+                                    .unwrap_or_default(),
+                                format: extension,
+                            }),
+                            description: None,
+                            source_url: None,
+                            ai_data: None,
+                        };
+
+                        Some((file_id, image_node, parent_path))
+                    } else {
+                        None
+                    }
                 }
-            }
-        })
-        .collect();
-    
-    // Now process nodes sequentially to build relationships
-    // First pass: add all folders to path_to_id mapping
-    for (id, node, _) in &file_nodes {
-        if matches!(node.r#type, FileType::Folder) {
-            path_to_id.insert(node.path.clone(), id.clone());
-        }
-    }
-    
-    // Second pass: add all nodes to the map and resolve parent_id
-    let total_images = file_nodes.iter().filter(|(_, node, _)| matches!(node.r#type, FileType::Image)).count();
+            })
+            .for_each(|item| {
+                let _ = tx.send(item);
+            });
+    });
+
+    // Receive nodes from producer and update processed counts
     let mut processed_images = 0usize;
-
-    #[derive(Serialize, Clone)]
-    struct ScanProgress {
-        processed: usize,
-        total: usize,
-    }
-
-    for (id, mut node, parent_path) in file_nodes {
-        // Resolve parent_id from parent_path
+    while let Ok((id, mut node, parent_path)) = rx.recv() {
+        // Resolve parent_id from parent_path if possible
         if !parent_path.is_empty() {
             if let Some(parent_id) = path_to_id.get(&parent_path).cloned() {
                 node.parent_id = Some(parent_id);
-            } else {
-                // If parent not found in path_to_id, it might be the root
-                if parent_path == normalize_path(&path) {
-                    node.parent_id = Some(root_id.clone());
-                }
+            } else if parent_path == normalize_path(&path) {
+                node.parent_id = Some(root_id.clone());
             }
+        }
+
+        // If folder, add to path map immediately
+        if matches!(node.r#type, FileType::Folder) {
+            path_to_id.insert(node.path.clone(), id.clone());
         }
 
         // Merge metadata if available
@@ -922,17 +967,25 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
             node.ai_data = meta.ai_data.clone();
         }
 
-        // Track image processing progress and emit events periodically
+        // For images, increment processed count and emit progress
         if matches!(node.r#type, FileType::Image) {
             processed_images += 1;
-            if processed_images % 20 == 0 || processed_images == total_images {
-                let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
-            }
+            let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
         }
 
         all_files.insert(id.clone(), node);
     }
-    
+
+    // After both channels closed, ensure final progress reflects actual scanned images.
+    // Because the lightweight counter may undercount in some edge cases, reconcile with the actual map.
+    let actual_total: usize = all_files.iter().filter(|(_, n)| matches!(n.r#type, FileType::Image)).count();
+    if actual_total > total_images {
+        total_images = actual_total;
+    }
+
+    // Emit final progress event (use reconciled total)
+    let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+
     // Build parent-child relationships
     let mut children_to_add: Vec<(String, String)> = Vec::new(); // (parent_id, child_id)
     for (id, node) in all_files.iter() {
@@ -990,36 +1043,12 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
         }
     }
     
-    // Collect all image paths from the scan results
-    let image_paths: Vec<String> = all_files
+    // Collect all image paths from the scan results (for later use)
+    let _image_paths: Vec<String> = all_files
         .iter()
         .filter(|(_, node)| matches!(node.r#type, FileType::Image))
         .map(|(_, node)| node.path.clone())
         .collect();
-    
-    // Add all image paths to color database in batches
-    if !image_paths.is_empty() {
-        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
-        let batch_size = 500;
-        
-        // Process in batches to avoid database overload
-        for chunk in image_paths.chunks(batch_size) {
-            let chunk_vec: Vec<String> = chunk.iter().cloned().collect();
-            let pool_clone = pool.clone();
-            
-            // Add to database in a blocking thread
-            let result = tokio::task::spawn_blocking(move || {
-                let mut conn = pool_clone.get_connection();
-                color_db::add_pending_files(&mut conn, &chunk_vec)
-            }).await;
-            
-            if let Err(e) = result {
-                eprintln!("Failed to add batch to color database: {}", e);
-            } else if let Err(e) = result.unwrap() {
-                eprintln!("Database error when adding batch: {}", e);
-            }
-        }
-    }
     
     // DO NOT update root node in map - it's already there with children!
     // all_files.insert(root_id, root_node); // This line was overwriting the root node!
@@ -1272,6 +1301,36 @@ async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Valu
         .map_err(|e| format!("Failed to parse data file: {}", e))?;
     
     Ok(Some(data))
+}
+
+#[tauri::command]
+async fn add_pending_files_to_db(
+    app: tauri::AppHandle,
+    file_paths: Vec<String>
+) -> Result<usize, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let batch_size = 500;
+    
+    let task_result = tokio::task::spawn_blocking(move || {
+        let mut total = 0usize;
+        let mut conn = pool.get_connection();
+        
+        for chunk in file_paths.chunks(batch_size) {
+            let chunk_vec: Vec<String> = chunk.iter().cloned().collect();
+            
+            match color_db::add_pending_files(&mut conn, &chunk_vec) {
+                Ok(count) => total += count,
+                Err(e) => eprintln!("Database error when adding batch: {}", e),
+            }
+        }
+        
+        Ok::<usize, String>(total)
+    }).await;
+    
+    match task_result {
+        Ok(inner_result) => inner_result,
+        Err(e) => Err(format!("Task join error: {}", e)),
+    }
 }
 
 // Command to ensure a directory exists
@@ -2484,6 +2543,7 @@ fn main() {
             scan_directory,
             save_user_data,
             load_user_data,
+            add_pending_files_to_db,
             get_default_paths,
             get_thumbnail,
             get_thumbnails_batch,

@@ -756,6 +756,21 @@ export const resumeColorExtraction = async (): Promise<boolean> => {
 };
 
 /**
+ * 批量添加文件到 pending 表（用于首次扫描）
+ * @param filePaths 文件路径列表
+ * @returns 实际添加的文件数量
+ */
+export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => {
+  try {
+    const result = await invoke<number>('add_pending_files_to_db', { filePaths });
+    return result;
+  } catch (error) {
+    console.error('Failed to add pending files to database:', error);
+    return 0;
+  }
+};
+
+/**
  * 生成拖拽预览图（用于外部拖拽时显示）
  * @param thumbnailPaths 缩略图路径数组（最多3个）
  * @param totalCount 总文件数
