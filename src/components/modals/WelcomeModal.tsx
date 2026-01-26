@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { HardDrive, Sun, Moon, Monitor, ChevronRight } from 'lucide-react';
+import { HardDrive, Sun, Moon, Monitor, ChevronRight, Loader2 } from 'lucide-react';
 import { AuroraLogo } from '../Logo';
 import { AppSettings } from '../../types';
 
@@ -12,9 +12,10 @@ interface WelcomeModalProps {
     onUpdateSettings: (updates: Partial<AppSettings>) => void;
     t: (key: string) => string;
     scanProgress?: { processed: number; total: number } | null;
+    isScanning: boolean;
 }
 
-export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t, scanProgress }) => {
+export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSelectFolder, currentPath, settings, onUpdateSettings, t, scanProgress, isScanning }) => {
     const [step, setStep] = useState(1);
 
     if (!show) return null;
@@ -77,13 +78,34 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                 <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-lg border border-gray-200 dark:border-gray-700 text-center">
                                     <div className="text-xs text-gray-500 uppercase font-bold mb-1">{t('welcome.currentPath')}</div>
                                     <div className="text-sm font-mono truncate px-2">{currentPath}</div>
-                                    {/* Scan progress indicator (if available) - keep only the progress bar here */}
-                                    {scanProgress && scanProgress.total > 0 && (
+                                    {/* Scan progress indicator (if available) - keep only progress bar here */}
+                                    {/* Show progress while scanning, and keep total visible after scanning completes. */}
+                                    {(isScanning || (scanProgress && scanProgress.total > 0)) && (
                                         <div className="mt-2">
-                                            <div className="text-xs text-gray-500 mb-1">{`${scanProgress.processed} / ${scanProgress.total} ${t('sidebar.files')}`}</div>
-                                            <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
-                                                <div className="h-2 bg-blue-600" style={{ width: `${Math.round((scanProgress.processed / scanProgress.total) * 100)}%` }}></div>
-                                            </div>
+                                            {scanProgress && scanProgress.total > 0 ? (
+                                                <div>
+                                                    <div className="text-xs text-gray-500 mb-1">{`${scanProgress.processed} / ${scanProgress.total} ${t('sidebar.files')}`}</div>
+                                                    <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                                                        <div className={`h-2 ${isScanning ? 'bg-blue-600 transition-all' : 'bg-green-600'}`} style={{ width: `${Math.round((scanProgress.processed / scanProgress.total) * 100)}%` }}></div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="w-full bg-gray-200 dark:bg-gray-800 rounded-full h-2 overflow-hidden">
+                                                    <div className="h-2 bg-blue-600 animate-pulse w-1/3"></div>
+                                                </div>
+                                            )}
+
+                                            {isScanning ? (
+                                                <div className="mt-2 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                                    <Loader2 size={16} className="animate-spin mr-2" />
+                                                    <span className="text-xs font-medium">{t('welcome.scanning')}</span>
+                                                </div>
+                                            ) : (
+                                                <div className="mt-2 flex items-center justify-center text-green-600 dark:text-green-400">
+                                                    <svg className="w-4 h-4 mr-2" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L8 11.172 4.707 7.879a1 1 0 10-1.414 1.414l4 4a1 1 0 001.414 0l8-8z" clipRule="evenodd"/></svg>
+                                                    <span className="text-xs font-medium">{t('welcome.scanComplete')}</span>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -149,8 +171,8 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
                                     onFinish();
                                 }
                             }}
-                            disabled={step === 1 && !currentPath}
-                            className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && !currentPath ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
+                            disabled={step === 1 && (!currentPath || isScanning)}
+                            className={`px-6 py-2 rounded-full font-bold text-sm transition-all flex items-center ${step === 1 && (!currentPath || isScanning) ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 shadow-lg'}`}
                         >
                             {step === 1 ? t('welcome.next') : t('welcome.finish')}
                             <ChevronRight size={16} className="ml-2" />
