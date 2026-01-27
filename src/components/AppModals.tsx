@@ -59,7 +59,7 @@ interface AppModalsProps {
   handleOpenFolder: () => void | Promise<void>;
   // Scan progress passed to Welcome modal
   scanProgress?: { processed: number; total: number } | null;
-  isScanning: boolean;
+  isScanning?: boolean;
   // Close confirmation
   showCloseConfirmation: boolean;
   setShowCloseConfirmation: (val: boolean) => void;
@@ -98,6 +98,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   showCloseConfirmation,
   setShowCloseConfirmation,
   handleCloseConfirmation,
+  isScanning = false,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 

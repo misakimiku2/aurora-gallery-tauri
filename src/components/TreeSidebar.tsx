@@ -548,6 +548,7 @@ export const Sidebar: React.FC<{
   onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   t: (key: string) => string;
+  aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
 }> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, t, aiConnectionStatus = 'disconnected' }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
@@ -637,6 +638,7 @@ export const Sidebar: React.FC<{
                                    <button 
                                      onClick={(e) => { e.stopPropagation(); onRestoreTask(task.id); }}
                                      className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                     title={t('tasks.restore')}
                                    >
                                      <Maximize2 size={10} />
                                    </button>

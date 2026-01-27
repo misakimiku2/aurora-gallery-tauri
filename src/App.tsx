@@ -62,6 +62,9 @@ declare global {
   }
 }
 
+// Global initialization guard to prevent double execution in React Strict Mode
+let isAppInitialized = false;
+
 export const App: React.FC = () => {
   const [state, setState] = useState<AppState>({
     roots: [], files: {}, people: {}, topics: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
@@ -355,6 +358,10 @@ export const App: React.FC = () => {
   }, [state.roots, state.files, state.customTags, state.people, state.topics, state.settings, state.folderSettings]);
 
   useEffect(() => {
+    // Prevent double initialization
+    if (isAppInitialized) return;
+    isAppInitialized = true;
+
     const init = async () => {
       // 锟斤拷锟饺硷拷锟?Tauri 锟斤拷锟斤拷锟斤拷锟届步锟斤拷猓拷锟绞碉拷实锟斤拷锟?API锟斤拷
       const isTauriEnv = await detectTauriEnvironmentAsync();

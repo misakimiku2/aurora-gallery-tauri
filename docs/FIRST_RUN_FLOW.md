@@ -37,13 +37,13 @@
 3. 后端扫描与入库（`scan_directory`）
    - 后端遍历文件系统，统计图片文件并构建 FileNode 列表。
    - 定期通过事件 `scan-progress` 向前端发射进度更新（例如每 N 个文件发一次）， payload 包含 `processed` 与 `total`。
-   - 扫描完成后，将发现的图片路径按批量写入 colors pending 表（当前批量大小为 500，以减少事务开销）。逻辑位于 `color_db.rs` 的 `add_pending_files`。
+   - 扫描完成后，前端/后端会按批（当前 chunk = 500）调用写入函数，把路径写入 colors pending 表；**chunk 大小在** `src-tauri/src/main.rs` 的 `add_pending_files_to_db` 中定义，实际写入操作由 `color_db::add_pending_files` 完成（使用 `INSERT OR IGNORE` 做幂等去重）。
 
 4. 第2页与点击“开始使用”→ 进入主界面
    - 用户确认并点击“开始使用”时，前端会：
-     - 调用 `save_user_data()` 保存用户配置（资源根目录等）。
-     - 调用 `resume_color_extraction()`，允许 color worker 开始从 pending 表消费并处理色提取任务。
-     - 将后端扫描结果合并到前端 state（函数例如 `scanAndMerge`），用真实文件/文件夹替换骨架根，确保主界面立即显示真实内容，无需用户另行新建标签页。
+     - 把资源根写入前端 state（立即可见）。注意：用户配置的持久化并不依赖于 `handleWelcomeFinish` 中显式调用 `save_user_data()` —— 应用通过一个自动保存的 effect（state 变化触发）异步将数据写入后端。
+     - 调用 `resume_color_extraction()`（`handleWelcomeFinish` 中调用），允许 color worker 从 pending 表开始消费并处理色提取任务。
+     - 将后端扫描结果合并到前端 state（当前实现：`scanAndMerge` **一次性**合并完整结果以替换骨架根，从而立即显示真实内容）。如果需要更平滑的首次渲染，可改为“分片/流式合并”（见“可选优化建议”）。
 
 5. 后台色提取与进度回传
    - color worker 消费 pending 表并处理图片主色提取任务。
