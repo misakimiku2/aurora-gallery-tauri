@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 
 pub mod persons;
 pub mod file_metadata;
+pub mod file_index;
 
 #[derive(Clone)]
 pub struct AppDbPool {
@@ -72,6 +73,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_file_metadata_path ON file_metadata(path)",
         [],
     )?;
+
+    // Create file_index table
+    file_index::create_table(conn)?;
 
     Ok(())
 }

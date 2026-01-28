@@ -322,6 +322,8 @@ export interface AppState {
   dragState: DragState;
   // Optional scan progress info (used during onboarding)
   scanProgress?: { processed: number; total: number } | null;
+  // Scan mode: 'cache' when loading from cache, 'full' for a full scan, 'incremental' for partial updates
+  scanMode?: 'cache' | 'full' | 'incremental' | null;
   // Flag to track if directory scan is in progress (used to disable "Next" button in welcome modal)
   isScanning: boolean;
 }

@@ -17,9 +17,17 @@
   - `useTasks` / `useFileSearch` 钩子 — 接收并展示后台任务进度。
 
 - 后端（Tauri / Rust）
-  - [src-tauri/src/main.rs](src-tauri/src/main.rs) — `scan_directory` 实现、事件发射、批量写入 pending 队列。
-  - [src-tauri/src/color_db.rs](src-tauri/src/color_db.rs) — 将扫描到的路径写入 pending 表的函数（批处理逻辑）。
-  - [src-tauri/src/color_worker.rs](src-tauri/src/color_worker.rs) — color extraction worker，负责消费 pending 表并发出进度事件。
+  - [src-tauri/src/main.rs](src-tauri/src/main.rs) — `scan_directory` 实现、事件发射、批量写入 pending 队列（注意：`add_pending_files_to_db` 的默认 batch_size = 500）。
+  - [src-tauri/src/color_db.rs](src-tauri/src/color_db.rs) — 将扫描到的路径写入 pending 表的函数（批处理逻辑，使用幂等的 INSERT/IGNORE）。
+  - [src-tauri/src/color_worker.rs](src-tauri/src/color_worker.rs) — color extraction worker，负责消费 pending 表并发出进度事件（`color-extraction-progress`）。
+  - 其他相关后端实现：窗口状态、缩略图流与色彩索引逻辑均在 `src-tauri/src/main.rs` 及子模块中实现（见 `color_worker.rs`、`color_db.rs`、`color_extractor.rs`）。
+
+### 已核实的补充实现细节（代码位置） ✅
+- 启动画面 / 可见时机：`src/components/SplashScreen.tsx`（UI）与 `src/App.tsx`（控制）。前端在首次运行路径上会快速隐藏 Splash（`setTimeout(() => setShowSplash(false), 200)`），在成功加载已保存数据或关键初始化完成后也会调用 `setShowSplash(false)`（`src/App.tsx` 中有多个分支）。
+- 环境检测与日志：Tauri 环境由 `src/utils/environment.ts` 的 `detectTauriEnvironmentAsync()` / `isTauriEnvironment()` 判定；`src/main.tsx` 中的 `configureTauriLogs()` 会在 Tauri 环境下 attach console，确保 Rust 日志转发到前端控制台。
+- 首次运行分支（重要调用点）：在 `src/App.tsx` 的 `handleOpenFolder()` 会立刻创建“skeleton root” 并调用 `pauseColorExtraction()`（后端暂停 worker），随后调用 `scanDirectory()` 并在 `scanAndMerge()` 中一次性合并扫描结果；用户在 Welcome 完成后由 `handleWelcomeFinish()` 调用 `resumeColorExtraction()` 恢复色彩处理。
+- 扫描与事件：后端在扫描过程中会发出 `scan-progress` 事件（payload: { processed, total }），前端在 `src/App.tsx` 中通过 `listen('scan-progress', ...)` 接收并把进度传给 `WelcomeModal`（`src/components/modals/WelcomeModal.tsx`）。
+- 自动持久化：用户设置并非只靠 onboarding 的显式保存；`src/App.tsx` 中有自动保存的 effect，会在 state 变化后异步调用后端的 `save_user_data()` 来持久化（因此设置在不同代码路径也能被保存）。
 
 ## 时序步骤（详细）
 

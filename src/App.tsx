@@ -821,13 +821,14 @@ export const App: React.FC = () => {
     // 目前锟斤拷锟斤拷Tauri锟斤拷锟斤拷锟斤拷支锟斤拷锟接迟硷拷锟斤拷图片锟竭达拷
   }, [activeTab.selectedFileIds, activeTab.viewingFileId]);
 
-  // Listen for scan progress events emitted by backend during onboarding scan
+  // Listen for scan progress and scan mode events emitted by backend
   useEffect(() => {
-    let unlisten: any;
+    let unlistenProgress: any;
+    let unlistenMode: any;
     let isMounted = true;
-    const listenProgress = async () => {
+    const setupListeners = async () => {
       try {
-        unlisten = await listen('scan-progress', (event: any) => {
+        unlistenProgress = await listen('scan-progress', (event: any) => {
           if (!isMounted) return;
           const payload = event.payload as { processed: number; total: number };
           setState(prev => ({ ...prev, scanProgress: { processed: payload.processed, total: payload.total } }));
@@ -835,9 +836,26 @@ export const App: React.FC = () => {
       } catch (e) {
         console.warn('Failed to listen for scan-progress', e);
       }
+
+      try {
+        unlistenMode = await listen('scan-mode', (event: any) => {
+          if (!isMounted) return;
+          const payload = event.payload as { mode: string; count?: number };
+          const mode = payload.mode as 'cache' | 'full' | 'incremental';
+          setState(prev => ({ ...prev, scanMode: mode, isScanning: mode !== 'cache' }));
+
+          // If cache load, hide any progress UI
+          if (mode === 'cache') {
+            setState(prev => ({ ...prev, scanProgress: null }));
+          }
+        });
+      } catch (e) {
+        console.warn('Failed to listen for scan-mode', e);
+      }
     };
-    listenProgress();
-    return () => { isMounted = false; if (unlisten) unlisten(); };
+
+    setupListeners();
+    return () => { isMounted = false; if (unlistenProgress) unlistenProgress(); if (unlistenMode) unlistenMode(); };
   }, []);
 
   useEffect(() => {

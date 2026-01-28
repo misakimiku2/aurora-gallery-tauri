@@ -569,11 +569,12 @@ fn is_supported_image(extension: &str) -> bool {
 
 
 #[tauri::command]
-async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
+async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
     use std::io::{Read, BufReader};
     use rayon::prelude::*;
     
+    let force = force_rescan.unwrap_or(false);
     let root_path = Path::new(&path);
     
     // Check if path exists and is a directory
@@ -595,6 +596,150 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
         .into_iter()
         .map(|m| (m.file_id.clone(), m))
         .collect();
+
+    // Normalized path for DB queries
+    let normalized_root_path = normalize_path(&path);
+
+    // Check file_index cache
+    {
+        let pool = app.state::<AppDbPool>();
+        let conn = pool.get_connection();
+        let index_entries = db::file_index::get_entries_under_path(&conn, &normalized_root_path).map_err(|e| e.to_string())?;
+
+        if !force && !index_entries.is_empty() {
+            // Inform frontend we are returning cached result
+            #[derive(Clone, Serialize)]
+            struct ScanMode {
+                mode: String,
+                count: usize,
+            }
+            let _ = app.emit("scan-mode", ScanMode { mode: "cache".to_string(), count: index_entries.len() });
+
+            // Build FileNode map from index entries and merge metadata
+            let mut all_files: HashMap<String, FileNode> = HashMap::new();
+
+            for entry in index_entries.iter() {
+                let file_type = match entry.file_type.as_str() {
+                    "Image" => FileType::Image,
+                    "Folder" => FileType::Folder,
+                    _ => FileType::Unknown,
+                };
+
+                let meta = if matches!(file_type, FileType::Image) {
+                    entry.width.map(|w| ImageMeta {
+                        width: w,
+                        height: entry.height.unwrap_or(0),
+                        size_kb: (entry.size / 1024) as u32,
+                        created: chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.created_at, 0), chrono::Utc).to_rfc3339(),
+                        modified: chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.modified_at, 0), chrono::Utc).to_rfc3339(),
+                        format: entry.format.clone().unwrap_or_default(),
+                    })
+                } else {
+                    None
+                };
+
+                let node = FileNode {
+                    id: entry.file_id.clone(),
+                    parent_id: entry.parent_id.clone(),
+                    name: entry.name.clone(),
+                    r#type: file_type.clone(),
+                    path: entry.path.clone(),
+                    size: Some(entry.size),
+                    children: if matches!(file_type, FileType::Folder) { Some(Vec::new()) } else { None },
+                    tags: Vec::new(),
+                    created_at: Some(chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.created_at, 0), chrono::Utc).to_rfc3339()),
+                    updated_at: Some(chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.modified_at, 0), chrono::Utc).to_rfc3339()),
+                    url: None,
+                    meta,
+                    description: None,
+                    source_url: None,
+                    ai_data: None,
+                };
+
+                all_files.insert(node.id.clone(), node);
+            }
+
+            // Build parent-child relationships
+            let mut children_to_add: Vec<(String, String)> = Vec::new();
+            for (id, node) in all_files.iter() {
+                if let Some(parent_id) = &node.parent_id {
+                    children_to_add.push((parent_id.clone(), id.clone()));
+                }
+            }
+            for (parent_id, child_id) in children_to_add {
+                if let Some(parent_node) = all_files.get_mut(&parent_id) {
+                    if let Some(children) = &mut parent_node.children {
+                        children.push(child_id);
+                    }
+                }
+            }
+
+            // Merge file metadata table (tags, description, etc.)
+            for (file_id, meta) in metadata_map.iter() {
+                if let Some(node) = all_files.get_mut(file_id) {
+                    if let Some(tags_val) = &meta.tags {
+                        if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
+                            node.tags = tags_vec;
+                        }
+                    }
+                    node.description = meta.description.clone();
+                    node.source_url = meta.source_url.clone();
+                    node.ai_data = meta.ai_data.clone();
+                }
+            }
+
+            // Ensure root node exists
+            let root_id = generate_id(&path);
+            if !all_files.contains_key(&root_id) {
+                let root_metadata = fs::metadata(root_path).map_err(|e| format!("Failed to read root directory: {}", e))?;
+                let root_name = root_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Root")
+                    .to_string();
+                let root_node = FileNode {
+                    id: root_id.clone(),
+                    parent_id: None,
+                    name: root_name,
+                    r#type: FileType::Folder,
+                    path: normalize_path(&path),
+                    size: None,
+                    children: Some(Vec::new()),
+                    tags: Vec::new(),
+                    created_at: root_metadata
+                        .created()
+                        .ok()
+                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                        .and_then(|secs| {
+                            chrono::DateTime::from_timestamp(secs as i64, 0)
+                                .map(|dt| dt.to_rfc3339())
+                        }),
+                    updated_at: root_metadata
+                        .modified()
+                        .ok()
+                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                        .and_then(|secs| {
+                            chrono::DateTime::from_timestamp(secs as i64, 0)
+                                .map(|dt| dt.to_rfc3339())
+                        }),
+                    url: None,
+                    meta: None,
+                    description: None,
+                    source_url: None,
+                    ai_data: None,
+                };
+
+                all_files.insert(root_id.clone(), root_node);
+            }
+
+            return Ok(all_files);
+        } else {
+            // Emit full scan mode
+            #[derive(Clone, Serialize)]
+            struct ScanModeSimple { mode: String }
+            let _ = app.emit("scan-mode", ScanModeSimple { mode: "full".to_string() });
+        }
+    }
     
     let mut all_files: HashMap<String, FileNode> = HashMap::new();
     
@@ -992,16 +1137,24 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
         if let Some(parent_id) = &node.parent_id {
             children_to_add.push((parent_id.clone(), id.clone()));
         } else if node.id != root_id {
-            // Root-level item (shouldn't happen if parent_id resolution worked correctly)
+            // Root-level item (parent resolution failed earlier) - attach to root and set parent_id
             children_to_add.push((root_id.clone(), id.clone()));
         }
     }
     
-    // Add children to their parents
+    // Add children to their parents and ensure child's parent_id is set
     for (parent_id, child_id) in children_to_add {
+        // Attach child id to parent's children list if possible
         if let Some(parent_node) = all_files.get_mut(&parent_id) {
             if let Some(children) = &mut parent_node.children {
-                children.push(child_id);
+                children.push(child_id.clone());
+            }
+        }
+
+        // If child's parent_id was missing (was None), update it to reflect attachment
+        if let Some(child_node) = all_files.get_mut(&child_id) {
+            if child_node.parent_id.is_none() && child_node.id != root_id {
+                child_node.parent_id = Some(parent_id.clone());
             }
         }
     }
@@ -1052,8 +1205,69 @@ async fn scan_directory(path: String, app: tauri::AppHandle) -> Result<HashMap<S
     
     // DO NOT update root node in map - it's already there with children!
     // all_files.insert(root_id, root_node); // This line was overwriting the root node!
-    
+
+    // Persist file index to database (best-effort, non-blocking from UI perspective)
+    {
+        let files_clone = all_files.clone();
+        // Spawn blocking DB upsert so we don't block async runtime for long disk IO
+        let pool_clone = app.state::<AppDbPool>().inner().clone();
+        let upsert_result = tokio::task::spawn_blocking(move || {
+            let mut conn = pool_clone.get_connection();
+            let mut entries_vec: Vec<db::file_index::FileIndexEntry> = Vec::new();
+            for (_, node) in files_clone.iter() {
+                // Read timestamps from FS when possible
+                let (created_ts, modified_ts) = match std::fs::metadata(&node.path) {
+                    Ok(m) => {
+                        let created = m.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
+                        let modified = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
+                        (created, modified)
+                    }
+                    Err(_) => (0, 0),
+                };
+
+                let (w, h, fmt) = if let Some(meta) = &node.meta {
+                    (Some(meta.width as u32), Some(meta.height as u32), Some(meta.format.clone()))
+                } else {
+                    (None, None, None)
+                };
+
+                let entry = db::file_index::FileIndexEntry {
+                    file_id: node.id.clone(),
+                    parent_id: node.parent_id.clone(),
+                    path: node.path.clone(),
+                    name: node.name.clone(),
+                    file_type: match node.r#type {
+                        FileType::Image => "Image".to_string(),
+                        FileType::Folder => "Folder".to_string(),
+                        _ => "Unknown".to_string(),
+                    },
+                    size: node.size.unwrap_or(0),
+                    created_at: created_ts,
+                    modified_at: modified_ts,
+                    width: w,
+                    height: h,
+                    format: fmt,
+                };
+
+                entries_vec.push(entry);
+            }
+            db::file_index::batch_upsert(&mut conn, &entries_vec)
+        }).await;
+
+        match upsert_result {
+            Err(e) => eprintln!("Failed to persist file index (task join error): {}", e),
+            Ok(Err(e)) => eprintln!("Failed to persist file index (db error): {}", e),
+            Ok(Ok(_)) => { /* persisted successfully */ }
+        }
+    }
+
     Ok(all_files)
+}
+
+#[tauri::command]
+async fn force_rescan(path: String, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
+    // Wrapper that forces a full rescan by forwarding to scan_directory with force_rescan = true
+    scan_directory(path, Some(true), app).await
 }
 
 #[tauri::command]
@@ -2541,6 +2755,7 @@ fn main() {
             search_by_palette,
             search_by_color,
             scan_directory,
+            force_rescan,
             save_user_data,
             load_user_data,
             add_pending_files_to_db,

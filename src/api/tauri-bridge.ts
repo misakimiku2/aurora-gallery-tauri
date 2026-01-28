@@ -93,7 +93,7 @@ export const searchByColor = async (color: string): Promise<string[]> => {
 /**
  * 扫描目录并返回文件列表
  * @param path 目录路径
- * @param forceRefresh 是否强制刷新（暂时未使用，保留以兼容现有代码）
+ * @param forceRefresh 是否强制刷新
  * @returns 包含 roots 和 files 的对象
  */
 export const scanDirectory = async (
@@ -102,7 +102,7 @@ export const scanDirectory = async (
 ): Promise<{ roots: string[]; files: Record<string, FileNode> }> => {
   try {
     // 调用 Rust 的 scan_directory 命令
-    const rustFiles = await invoke<Record<string, RustFileNode>>('scan_directory', { path });
+    const rustFiles = await invoke<Record<string, RustFileNode>>('scan_directory', { path, forceRescan: forceRefresh });
 
     // 找到根目录节点（parentId 为 null 且类型为目录的节点）
     const rootIds: string[] = [];
@@ -162,6 +162,58 @@ export const scanDirectory = async (
     };
   } catch (error) {
     console.error('Failed to scan directory:', error);
+    throw error;
+  }
+};
+
+/**
+ * 强制完整扫描（只做了 thin wrapper，以后可以单独实现更细粒度的逻辑）
+ * @param path 目录路径
+ */
+export const forceRescan = async (path: string): Promise<{ roots: string[]; files: Record<string, FileNode> }> => {
+  try {
+    const rustFiles = await invoke<Record<string, RustFileNode>>('force_rescan', { path });
+
+    const rootIds: string[] = [];
+    const fileMap: Record<string, FileNode> = {};
+
+    Object.entries(rustFiles).forEach(([id, node]) => {
+      let fileType: FileType = FileType.UNKNOWN;
+      if (node.type === 'image') fileType = FileType.IMAGE;
+      else if (node.type === 'folder') fileType = FileType.FOLDER;
+
+      const fileNode: FileNode = {
+        id: node.id,
+        parentId: node.parentId || null,
+        name: node.name,
+        type: fileType,
+        path: node.path,
+        size: node.size,
+        children: node.children && node.children.length > 0 ? node.children : undefined,
+        tags: node.tags || [],
+        createdAt: node.createdAt || undefined,
+        updatedAt: node.updatedAt || undefined,
+        url: undefined,
+        meta: node.meta ? {
+          width: node.meta.width || 0,
+          height: node.meta.height || 0,
+          sizeKb: node.meta.sizeKb || 0,
+          created: node.meta.created,
+          modified: node.meta.modified,
+          format: node.meta.format,
+        } : undefined,
+        description: node.description || undefined,
+        sourceUrl: node.sourceUrl || undefined,
+        aiData: node.aiData || undefined,
+      };
+
+      fileMap[id] = fileNode;
+      if (!fileNode.parentId && fileNode.type === FileType.FOLDER) rootIds.push(id);
+    });
+
+    return { roots: rootIds, files: fileMap };
+  } catch (error) {
+    console.error('Failed to force rescan:', error);
     throw error;
   }
 };
@@ -945,4 +997,3 @@ export const dbUpdatePersonAvatar = async (personId: string, coverFileId: string
     throw e;
   }
 };
-
