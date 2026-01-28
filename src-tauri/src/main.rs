@@ -1644,15 +1644,25 @@ async fn create_folder(path: String) -> Result<(), String> {
 
 // Command to rename a file or folder
 #[tauri::command]
-async fn rename_file(old_path: String, new_path: String) -> Result<(), String> {
+async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) -> Result<(), String> {
     fs::rename(&old_path, &new_path)
         .map_err(|e| format!("Failed to rename: {}", e))?;
+    
+    // 清理数据库中的旧路径记录
+    let app_db = app.state::<AppDbPool>();
+    let conn = app_db.get_connection();
+    let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
+    let _ = db::file_metadata::delete_metadata_by_path(&conn, &old_path);
+    
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+    let _ = color_db.delete_colors_by_path(&old_path);
+
     Ok(())
 }
 
 // Command to delete a file or folder
 #[tauri::command]
-async fn delete_file(path: String) -> Result<(), String> {
+async fn delete_file(path: String, app: tauri::AppHandle) -> Result<(), String> {
     let file_path = Path::new(&path);
     if file_path.is_dir() {
         // Delete directory recursively
@@ -1663,6 +1673,16 @@ async fn delete_file(path: String) -> Result<(), String> {
         fs::remove_file(file_path)
             .map_err(|e| format!("Failed to delete file: {}", e))?;
     }
+
+    // 同步清理数据库记录
+    let app_db = app.state::<AppDbPool>();
+    let conn = app_db.get_connection();
+    let _ = db::file_index::delete_entries_by_path(&conn, &path);
+    let _ = db::file_metadata::delete_metadata_by_path(&conn, &path);
+    
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+    let _ = color_db.delete_colors_by_path(&path);
+
     Ok(())
 }
 
@@ -1849,7 +1869,7 @@ async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn move_file(src_path: String, dest_path: String) -> Result<(), String> {
+async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
     let src = Path::new(&src_path);
     let dest = Path::new(&dest_path);
     
@@ -1896,7 +1916,18 @@ async fn move_file(src_path: String, dest_path: String) -> Result<(), String> {
                 Ok(_) => {
                     // Copy succeeded, now delete the original
                     match fs::remove_file(src) {
-                        Ok(_) => return Ok(()),
+                        Ok(_) => {
+                            // 同步清理旧路径数据库记录
+                            let app_db = app.state::<AppDbPool>();
+                            let conn = app_db.get_connection();
+                            let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
+                            let _ = db::file_metadata::delete_metadata_by_path(&conn, &src_path);
+                            
+                            let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+                            let _ = color_db.delete_colors_by_path(&src_path);
+
+                            return Ok(());
+                        },
                         Err(delete_err) => {
                             // If delete fails, try to clean up the copy
                             let _ = fs::remove_file(dest);
@@ -1913,8 +1944,16 @@ async fn move_file(src_path: String, dest_path: String) -> Result<(), String> {
         }
     }
     
-    // This should never happen, but just in case
-    Err("Unknown error occurred while moving file".to_string())
+    // 成功移动（通过 fs::rename）后也要清理旧路径
+    let app_db = app.state::<AppDbPool>();
+    let conn = app_db.get_connection();
+    let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
+    let _ = db::file_metadata::delete_metadata_by_path(&conn, &src_path);
+    
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+    let _ = color_db.delete_colors_by_path(&src_path);
+
+    Ok(())
 }
 
 #[tauri::command]

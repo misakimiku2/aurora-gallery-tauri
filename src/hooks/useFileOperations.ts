@@ -647,14 +647,23 @@ export const useFileOperations = ({
 
   const dismissDelete = async (taskId: string) => {
     const task = deletionTasks.find(t => t.id === taskId);
-    if (task) {
+    if (!task) return;
+
+    // Optimistically remove the toast so the UI doesn't get stuck if FS op fails.
+    setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
+
+    try {
       for (const file of task.files) {
         if (file.path && isTauriEnvironment()) {
           await deleteFile(file.path);
         }
       }
+    } catch (err) {
+      console.error('dismissDelete: failed to delete files', err);
+      try { showToast(t('errors.deleteFailed') || 'Delete failed'); } catch (_) { showToast('Delete failed'); }
+      // Re-add the task so the user can retry or undo.
+      setDeletionTasks(prev => [...prev, task]);
     }
-    setDeletionTasks(prev => prev.filter(t => t.id !== taskId));
   };
 
   const handleCreateFolder = async (targetId?: string) => {

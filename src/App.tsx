@@ -38,6 +38,10 @@ import { useFileOperations } from './hooks/useFileOperations';
 import { useMarqueeSelection } from './hooks/useMarqueeSelection';
 import { useAIAnalysis } from './hooks/useAIAnalysis';
 import { useContextMenu } from './hooks/useContextMenu';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useToasts } from './hooks/useToasts';
+import { useNavigation } from './hooks/useNavigation';
+import { GlobalToasts } from './components/GlobalToasts';
 import { asyncPool } from './utils/async';
 
 import { ToastItem } from './components/ToastItem';
@@ -156,7 +160,7 @@ export const App: React.FC = () => {
   const [tagSearchQuery, setTagSearchQuery] = useState('');
   const [personSearchQuery, setPersonSearchQuery] = useState('');
   const lastSelectedTagRef = useRef<string | null>(null);
-  const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
+  const { toast, showToast } = useToasts();
   const [toolbarQuery, setToolbarQuery] = useState('');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
   // Topic layout mode: controlled by TopBar when viewing topics overview
@@ -175,14 +179,6 @@ export const App: React.FC = () => {
     for (const k of keys) { val = val?.[k]; }
     return typeof val === 'string' ? val : key;
   }, [state.settings.language]);
-
-  // Toast helper
-  const showToast = useCallback((msg: string) => {
-    setToast({ msg, visible: true });
-    if (msg) {
-      setTimeout(() => setToast({ msg: '', visible: false }), 2000);
-    }
-  }, []);
 
   const updateActiveTab = useCallback((updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
     setState(prev => ({
@@ -904,6 +900,20 @@ export const App: React.FC = () => {
     updateActiveTab,
     closeContextMenu
   });
+
+  // Navigation handlers (moved to hook). Keep hook invocation here so required refs exist.
+  const {
+    pushHistory,
+    enterFolder,
+    enterViewer,
+    goBack,
+    goForward,
+    handleSwitchTab,
+    handleCloseTab,
+    handleNewTab,
+    handleOpenCompareInNewTab,
+    setNavigationTimestamp
+  } = useNavigation(state, setState, { selectionRef, activeTabRef });
 
   const {
     displayFileIds,
@@ -2157,24 +2167,7 @@ export const App: React.FC = () => {
     setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
   }, [state.roots, setState]);
 
-  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
-    // Set global navigation timestamp BEFORE state update
-    (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
-    updateActiveTab(prevTab => {
-      const currentScrollTop = selectionRef.current?.scrollTop ?? prevTab.scrollTop;
-      const stackCopy = [...prevTab.history.stack];
-      if (prevTab.history.currentIndex >= 0 && prevTab.history.currentIndex < stackCopy.length) {
-        stackCopy[prevTab.history.currentIndex] = {
-          ...stackCopy[prevTab.history.currentIndex],
-          scrollTop: currentScrollTop,
-          selectedTopicIds: prevTab.selectedTopicIds,
-          selectedPersonIds: prevTab.selectedPersonIds
-        };
-      }
-      const newStack = [...stackCopy.slice(0, prevTab.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds }];
-      return { folderId, viewingFileId: viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds, selectedFileIds: scrollToItemId ? [scrollToItemId] : (viewingId ? [viewingId] : []), scrollToItemId, selectedTagIds: [], history: { stack: newStack, currentIndex: newStack.length - 1 } };
-    });
-  }, []);
+  /* pushHistory: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
 
 
 
@@ -2281,13 +2274,7 @@ export const App: React.FC = () => {
     }
   }, [activeTab.layoutMode, state.sortBy, state.sortDirection, groupBy, activeTab.folderId, activeTab.viewMode, state.folderSettings, savedDataLoaded]);
 
-  const enterFolder = useCallback((folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
-    const scroll = selectionRef.current?.scrollTop || 0;
-    logInfo('[App] enterFolder', { action: 'enterFolder', folderId, container: 'main', containerScroll: scroll, ...options });
-    // If resetScroll is explicitly true, or implicitly we want to reset (default behavior for entering folder)
-    const nextScroll = options?.resetScroll ? 0 : 0;
-    pushHistory(folderId, null, 'browser', '', 'all', [], null, nextScroll, null, null, [], [], options?.scrollToItemId);
-  }, [pushHistory]);
+  /* enterFolder: delegated to `useNavigation` */
 
   const handleNavigateFolder = useCallback((id: string, options?: { targetId?: string, resetScroll?: boolean }) => {
     closeContextMenu();
@@ -2298,28 +2285,7 @@ export const App: React.FC = () => {
     }
   }, [closeContextMenu, enterFolder, handleOpenInNewTab]);
 
-  const handleOpenCompareInNewTab = useCallback((imageIds: string[]) => {
-    const newTab: TabState = {
-      ...DUMMY_TAB,
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: activeTabRef.current.folderId,
-      selectedFileIds: imageIds,
-      isCompareMode: true,
-      history: {
-        stack: [{
-          folderId: activeTabRef.current.folderId,
-          viewingId: null,
-          viewMode: 'browser',
-          searchQuery: '',
-          searchScope: 'all',
-          activeTags: [],
-          activePersonId: null
-        }],
-        currentIndex: 0
-      }
-    };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [setState]);
+  /* handleOpenCompareInNewTab: delegated to `useNavigation` */
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
     pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -2400,41 +2366,7 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Global navigation timestamp for scroll event filtering across component boundaries
-  const setNavigationTimestamp = () => {
-    (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
-  };
-
-  const goBack = () => {
-    setNavigationTimestamp(); // Set timestamp BEFORE state update
-    const currentScroll = selectionRef.current?.scrollTop || 0;
-    logDebug('[App] goBack.invoked', { action: 'goBack', currentIndex: activeTab.history.currentIndex, container: 'main', containerScroll: currentScroll });
-    updateActiveTab(prevTab => {
-      if (prevTab.history.currentIndex > 0) {
-        const newIndex = prevTab.history.currentIndex - 1;
-        const step = prevTab.history.stack[newIndex];
-        logDebug('[App] goBack.target', { action: 'goBack.target', newIndex, restoreScroll: step.scrollTop || 0, viewingId: step.viewingId, folderId: step.folderId });
-        return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } };
-      }
-      console.log('[App] goBack -> at history beginning, nothing to do');
-      return {};
-    });
-  };
-  const goForward = () => {
-    setNavigationTimestamp(); // Set timestamp BEFORE state update
-    const currentScroll = selectionRef.current?.scrollTop || 0;
-    console.log(`[App] goForward invoked. currentIndex=${activeTab.history.currentIndex}, currentScrollTop=${currentScroll}`);
-    updateActiveTab(prevTab => {
-      if (prevTab.history.currentIndex < prevTab.history.stack.length - 1) {
-        const newIndex = prevTab.history.currentIndex + 1;
-        const step = prevTab.history.stack[newIndex];
-        console.log(`[App] goForward -> newIndex=${newIndex}, restoreScroll=${step.scrollTop || 0}, viewingId=${step.viewingId}`);
-        return { folderId: step.folderId, viewingFileId: step.viewingId, viewMode: step.viewMode, searchQuery: step.searchQuery, searchScope: step.searchScope, activeTags: step.activeTags || [], activePersonId: step.activePersonId, activeTopicId: step.activeTopicId || null, selectedTopicIds: step.selectedTopicIds || [], selectedPersonIds: step.selectedPersonIds || [], aiFilter: step.aiFilter, scrollTop: step.scrollTop || 0, selectedFileIds: step.viewingId ? [step.viewingId] : [], selectedTagIds: [], history: { ...prevTab.history, currentIndex: newIndex } };
-      }
-      console.log('[App] goForward -> at history end, nothing to do');
-      return {};
-    });
-  };
+  /* goBack / goForward / setNavigationTimestamp: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
 
   const closeViewer = () => {
     const currentScroll = selectionRef.current?.scrollTop || 0;
@@ -2447,11 +2379,7 @@ export const App: React.FC = () => {
     }
   };
 
-  const enterViewer = (fileId: string) => {
-    const scrollTop = selectionRef.current?.scrollTop || 0;
-    logInfo('[App] enterViewer', { action: 'enterViewer', fileId, container: 'main', containerScroll: scrollTop });
-    pushHistory(activeTab.folderId, fileId, 'browser', activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, scrollTop, activeTab.aiFilter, activeTab.activeTopicId);
-  };
+  /* enterViewer: delegated to `useNavigation` */
 
   // Toggle helpers for sidebars
   const toggleSidebar = () => {
@@ -3090,50 +3018,18 @@ export const App: React.FC = () => {
       console.error('Failed to open in explorer:', error);
     }
   };
-  const handleSwitchTab = (id: string) => setState(s => ({ ...s, activeTabId: id }));
-  const handleCloseTab = (e: React.MouseEvent, id: string) => { e.stopPropagation(); setState(prev => { const newTabs = prev.tabs.filter(t => t.id !== id); if (newTabs.length === 0) return prev; let newActiveId = prev.activeTabId; if (id === prev.activeTabId) { const index = prev.tabs.findIndex(t => t.id === id); newActiveId = newTabs[Math.max(0, index - 1)].id; } return { ...prev, tabs: newTabs, activeTabId: newActiveId }; }); };
-  const handleNewTab = () => { const newTab: TabState = { ...DUMMY_TAB, id: Math.random().toString(36).substr(2, 9), folderId: state.roots[0] || '' }; newTab.history = { stack: [{ folderId: newTab.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }; setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id })); };
+  /* handleSwitchTab / handleCloseTab / handleNewTab: delegated to `useNavigation` */
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ctrl+Tab: Switch to next tab
-      if (e.ctrlKey && e.key === 'Tab') {
-        e.preventDefault();
-        const currentIndex = state.tabs.findIndex(tab => tab.id === state.activeTabId);
-        const nextIndex = (currentIndex + 1) % state.tabs.length;
-        const nextTabId = state.tabs[nextIndex].id;
-        handleSwitchTab(nextTabId);
-      }
-      // Ctrl+W: Close current tab
-      else if (e.ctrlKey && e.key === 'w') {
-        e.preventDefault();
-        if (state.tabs.length > 1) {
-          handleCloseTab(e as any, state.activeTabId);
-        }
-      }
-      // Ctrl+T: New tab
-      else if (e.ctrlKey && e.key === 't') {
-        e.preventDefault();
-        handleNewTab();
-      }
-      // Ctrl+R: Refresh
-      else if (e.ctrlKey && e.key === 'r') {
-        e.preventDefault();
-        handleRefresh();
-      }
-      // Delete: Delete selected files/folders
-      else if (e.key === 'Delete') {
-        if (activeTab.selectedFileIds.length > 0) {
-          e.preventDefault();
-          requestDelete(activeTab.selectedFileIds);
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [state.tabs, state.activeTabId, handleSwitchTab, handleCloseTab, handleNewTab, handleRefresh, activeTab.selectedFileIds, requestDelete]);
+  useKeyboardShortcuts({
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    onSwitchTab: handleSwitchTab,
+    onCloseTab: handleCloseTab,
+    onNewTab: handleNewTab,
+    onRefresh: handleRefresh,
+    onRequestDelete: requestDelete,
+    selectedFileIds: activeTab.selectedFileIds
+  });
 
   const handleCloseAllTabs = () => { /* ... */ };
   const handleCloseOtherTabs = (id: string) => { /* ... */ };
@@ -3590,13 +3486,15 @@ export const App: React.FC = () => {
             }
           }}
         />
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-[110] flex flex-col-reverse items-center gap-2 pointer-events-none">
-          {deletionTasks.map(task => (<ToastItem key={task.id} task={task} onUndo={() => undoDelete(task.id)} onDismiss={() => dismissDelete(task.id)} t={t} />))}
-          {toast.visible && (<div className="bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg backdrop-blur-sm animate-toast-up">{toast.msg}</div>)}
-          {showDragHint && !activeTab.isCompareMode && (<div className="bg-blue-600 dark:bg-blue-700 text-white text-sm px-4 py-2.5 rounded-full shadow-lg backdrop-blur-sm animate-toast-up flex items-center gap-2 pointer-events-auto">
-            <span>{t('drag.multiSelectHint')}</span>
-          </div>)}
-        </div>
+        <GlobalToasts
+          deletionTasks={deletionTasks}
+          undoDelete={undoDelete}
+          dismissDelete={dismissDelete}
+          showDragHint={showDragHint}
+          isCompareMode={activeTab.isCompareMode}
+          toast={toast}
+          t={t}
+        />
       </div>
 
       <AppModals

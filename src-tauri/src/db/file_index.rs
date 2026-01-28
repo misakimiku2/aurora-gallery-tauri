@@ -159,3 +159,23 @@ pub fn delete_entries_by_ids(conn: &mut Connection, ids: &[String]) -> Result<()
     tx.commit()?;
     Ok(())
 }
+
+pub fn delete_entries_by_path(conn: &Connection, path: &str) -> Result<()> {
+    // 规范化路径，确保以正斜杠处理以便匹配子项
+    let normalized_path = path.replace("\\", "/");
+    
+    // 删除完全匹配的文件记录
+    conn.execute(
+        "DELETE FROM file_index WHERE path = ?",
+        params![normalized_path],
+    )?;
+    
+    // 如果是目录，删除其下所有内容 (LIKE 'path/%')
+    let dir_pattern = format!("{}/%", normalized_path.trim_end_matches('/'));
+    conn.execute(
+        "DELETE FROM file_index WHERE path LIKE ?",
+        params![dir_pattern],
+    )?;
+    
+    Ok(())
+}

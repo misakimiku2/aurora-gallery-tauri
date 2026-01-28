@@ -660,6 +660,47 @@ impl ColorDbPool {
         
         Ok((db_size, wal_size))
     }
+
+    pub fn delete_colors_by_path(&self, path: &str) -> Result<()> {
+        let normalized_path = path.replace("\\", "/");
+        let mut conn = self.get_connection();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        // 1. 删除 dominant_colors 记录
+        tx.execute(
+            "DELETE FROM dominant_colors WHERE file_path = ?",
+            params![normalized_path],
+        ).map_err(|e| e.to_string())?;
+
+        let dir_pattern = format!("{}/%", normalized_path.trim_end_matches('/'));
+        tx.execute(
+            "DELETE FROM dominant_colors WHERE file_path LIKE ?",
+            params![dir_pattern],
+        ).map_err(|e| e.to_string())?;
+
+        // 2. 删除 image_color_indices 记录
+        tx.execute(
+            "DELETE FROM image_color_indices WHERE file_path = ?",
+            params![normalized_path],
+        ).map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "DELETE FROM image_color_indices WHERE file_path LIKE ?",
+            params![dir_pattern],
+        ).map_err(|e| e.to_string())?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+
+        // 3. 更新内存缓存
+        if let Ok(mut cache) = self.cache.write() {
+            cache.retain(|item| {
+                let item_path = item.file_path.replace("\\", "/");
+                item_path != normalized_path && !item_path.starts_with(&(normalized_path.trim_end_matches('/').to_string() + "/"))
+            });
+        }
+
+        Ok(())
+    }
 }
 
 // 初始化数据库

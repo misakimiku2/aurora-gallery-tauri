@@ -85,3 +85,22 @@ pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
     }
     Ok(results)
 }
+
+pub fn delete_metadata_by_path(conn: &Connection, path: &str) -> Result<()> {
+    let normalized_path = path.replace("\\", "/");
+    
+    // 删除单个文件元数据
+    conn.execute(
+        "DELETE FROM file_metadata WHERE path = ?",
+        params![normalized_path],
+    )?;
+    
+    // 如果是目录，递归删除
+    let dir_pattern = format!("{}/%", normalized_path.trim_end_matches('/'));
+    conn.execute(
+        "DELETE FROM file_metadata WHERE path LIKE ?",
+        params![dir_pattern],
+    )?;
+    
+    Ok(())
+}
