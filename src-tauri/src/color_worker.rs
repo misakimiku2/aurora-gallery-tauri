@@ -1,8 +1,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 use image::{ImageFormat, GenericImageView};
-use std::fs::File;
-use std::io::BufReader;
+use image::codecs::jpeg::JpegDecoder;
+use fast_image_resize as fr;
+use std::num::NonZeroU32;
+use std::fs::{self, File};
+use std::io::{BufReader, Read};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
@@ -97,7 +100,8 @@ type Task = (u64, String);
 pub async fn color_extraction_worker(
     pool: Arc<ColorDbPool>,
     batch_size: usize,
-    app_handle: Option<Arc<AppHandle>>
+    app_handle: Option<Arc<AppHandle>>,
+    cache_root: Option<std::path::PathBuf>
 ) {
     // 创建任务通道（无界）
     let (task_sender, task_receiver): (Sender<Task>, Receiver<Task>) = unbounded();
@@ -127,13 +131,15 @@ pub async fn color_extraction_worker(
         let task_receiver_clone = task_receiver.clone();
         let result_sender_clone = result_sender.clone();
         let current_file_clone = current_file.clone();
+        let cache_root_clone = cache_root.clone();
         
         let handle = task::spawn_blocking(move || {
             consumer_loop(
                 pool_consumer,
                 task_receiver_clone,
                 result_sender_clone,
-                current_file_clone
+                current_file_clone,
+                cache_root_clone
             );
         });
         
@@ -344,7 +350,8 @@ fn consumer_loop(
     pool: Arc<ColorDbPool>,
     task_receiver: Receiver<Task>,
     result_sender: Sender<ProcessingResult>,
-    current_file: Arc<Mutex<String>>
+    current_file: Arc<Mutex<String>>,
+    cache_root: Option<std::path::PathBuf>
 ) {
     // 持续从任务队列获取任务
     loop {
@@ -365,39 +372,16 @@ fn consumer_loop(
                 let _ = *current_file.lock().unwrap() = file_path.clone();
                 
                 // 处理图片
-                let processing_result: ProcessingResult = match File::open(&file_path) {
-                    Ok(file) => {
-                        let reader = BufReader::new(file);
-                        match image::load(reader, ImageFormat::from_path(&file_path).unwrap_or(ImageFormat::Jpeg)) {
-                            Ok(mut img) => {
-                                // 等比例缩小图片到256px
-                                let (width, height) = img.dimensions();
-                                let max_dim = 256;
-                                
-                                if width > max_dim || height > max_dim {
-                                    let (new_width, new_height) = if width < height {
-                                        let scale = max_dim as f32 / width as f32;
-                                        (max_dim, (height as f32 * scale) as u32)
-                                    } else {
-                                        let scale = max_dim as f32 / height as f32;
-                                        ((width as f32 * scale) as u32, max_dim)
-                                    };
-                                    
-                                    img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Triangle);
-                                }
-                                
-                                let colors = color_extractor::get_dominant_colors(&img, 8);
-                                
-                                if colors.is_empty() {
-                                    Err((batch_id, format!("No colors extracted from file: {}", file_path)))
-                                } else {
-                                    Ok((batch_id, file_path.clone(), colors))
-                                }
-                            },
-                            Err(e) => Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
+                let processing_result: ProcessingResult = match load_and_resize_image_optimized(&file_path, cache_root.as_deref()) {
+                    Ok(img) => {
+                        let colors = color_extractor::get_dominant_colors(&img, 8);
+                        if colors.is_empty() {
+                            Err((batch_id, format!("No colors extracted from file: {}", file_path)))
+                        } else {
+                            Ok((batch_id, file_path.clone(), colors))
                         }
                     },
-                    Err(e) => Err((batch_id, format!("Failed to open file {}: {}", file_path, e)))
+                    Err(e) => Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
                 };
                 
                 // 克隆结果用于后续错误处理
@@ -721,6 +705,117 @@ async fn save_batch_results(
     }
 }
 
+// 优化后的图像加载和缩放逻辑
+pub fn load_and_resize_image_optimized(file_path: &str, cache_root: Option<&std::path::Path>) -> Result<image::DynamicImage, String> {
+    let image_path = std::path::Path::new(file_path);
+    
+    // 1. 尝试使用缩略图缓存 (如果存在)
+    if let Some(root) = cache_root {
+        if let Ok(metadata) = fs::metadata(image_path) {
+            let size = metadata.len();
+            let modified = metadata.modified()
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+                .unwrap_or(0);
+            
+            if let Ok(mut file) = File::open(image_path) {
+                let mut buffer = [0u8; 4096];
+                let bytes_read = file.read(&mut buffer).unwrap_or(0);
+                
+                let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+                let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+                
+                let jpg_cache = root.join(format!("{}.jpg", cache_filename));
+                let webp_cache = root.join(format!("{}.webp", cache_filename));
+                
+                let thumb_path = if jpg_cache.exists() {
+                    Some(jpg_cache)
+                } else if webp_cache.exists() {
+                    Some(webp_cache)
+                } else {
+                    None
+                };
+                
+                if let Some(tp) = thumb_path {
+                    if let Ok(img) = image::open(tp) {
+                        return Ok(img);
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 缓存未命中，从原图加载
+    let mut file = File::open(image_path).map_err(|e| e.to_string())?;
+    let mut header = [0u8; 1024];
+    let n = file.read(&mut header).unwrap_or(0);
+    let format = image::guess_format(&header[..n]).map_err(|e| e.to_string())?;
+    
+    use std::io::Seek;
+    file.seek(std::io::SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+    let reader = BufReader::new(file);
+
+    if format == ImageFormat::Jpeg {
+        // JPEG 优化加载：解码时降采样
+        let mut decoder = JpegDecoder::new(reader).map_err(|e| e.to_string())?;
+        // 目标是 256px，利用 JpegDecoder 的 scale 功能
+        let _ = decoder.scale(256, 256);
+        image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())
+    } else {
+        // 其他格式：正常加载后使用 fast_image_resize
+        let mut img_reader = image::io::Reader::new(reader);
+        img_reader.set_format(format);
+        let img = img_reader.decode().map_err(|e| e.to_string())?;
+        
+        let (width, height) = img.dimensions();
+        let target_size = 256;
+        if width <= target_size && height <= target_size {
+            return Ok(img);
+        }
+
+        let (dst_width, dst_height) = if width < height {
+            let ratio = height as f32 / width as f32;
+            (target_size, (target_size as f32 * ratio) as u32)
+        } else {
+            let ratio = width as f32 / height as f32;
+            ((target_size as f32 * ratio) as u32, target_size)
+        };
+
+        let src_width = NonZeroU32::new(width).ok_or("Invalid width")?;
+        let src_height = NonZeroU32::new(height).ok_or("Invalid height")?;
+        let dst_width_nz = NonZeroU32::new(dst_width).ok_or("Invalid dst width")?;
+        let dst_height_nz = NonZeroU32::new(dst_height).ok_or("Invalid dst height")?;
+
+        let pixel_type = if img.color().has_alpha() {
+            fr::PixelType::U8x4
+        } else {
+            fr::PixelType::U8x3
+        };
+
+        let src_image = fr::Image::from_vec_u8(
+            src_width,
+            src_height,
+            if pixel_type == fr::PixelType::U8x4 { img.to_rgba8().into_raw() } else { img.to_rgb8().into_raw() },
+            pixel_type,
+        ).map_err(|e| e.to_string())?;
+
+        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
+        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).map_err(|e| e.to_string())?;
+
+        if pixel_type == fr::PixelType::U8x4 {
+            Ok(image::DynamicImage::ImageRgba8(
+                image::RgbaImage::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())
+                    .ok_or("Failed to create RgbaImage")?
+            ))
+        } else {
+            Ok(image::DynamicImage::ImageRgb8(
+                image::RgbImage::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())
+                    .ok_or("Failed to create RgbImage")?
+            ))
+        }
+    }
+}
+
 // 处理单个文件，提取主色调并保存到数据库
 async fn process_single_file(pool: Arc<ColorDbPool>, file_path: String) -> Result<(), String> {
     // 1. 检查文件是否存在
@@ -737,35 +832,8 @@ async fn process_single_file(pool: Arc<ColorDbPool>, file_path: String) -> Resul
         return Err(format!("File does not exist: {}", file_path));
     }
     
-    // 2. 加载图片
-    let file_path_clone = file_path.clone();
-    // 直接在当前线程处理图片，避免异步任务的复杂类型推断
-    let img = {
-        let file = File::open(&file_path_clone)
-            .map_err(|e| format!("Failed to open file: {}", e))?;
-        
-        let reader = BufReader::new(file);
-        let mut img = image::load(reader, ImageFormat::from_path(&file_path_clone).unwrap_or(ImageFormat::Jpeg))
-            .map_err(|e| format!("Failed to load image: {}", e))?;
-        
-        // 等比例缩小图片到256px，以较小边为准
-        let (width, height) = img.dimensions();
-        let max_dim = 256;
-        
-        if width > max_dim || height > max_dim {
-            let (new_width, new_height) = if width < height {
-                let scale = max_dim as f32 / width as f32;
-                (max_dim, (height as f32 * scale) as u32)
-            } else {
-                let scale = max_dim as f32 / height as f32;
-                ((width as f32 * scale) as u32, max_dim)
-            };
-            
-            img = img.resize_exact(new_width, new_height, image::imageops::FilterType::Triangle);
-        }
-        
-        img
-    };
+    // 2. 加载图片 (此处暂时不传递 cache_root，因为 process_single_file 通常在已知路径时调用)
+    let img = load_and_resize_image_optimized(&file_path, None)?;
     
     // 3. 提取主色调
     let colors = color_extractor::get_dominant_colors(&img, 8);

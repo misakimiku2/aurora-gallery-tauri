@@ -128,7 +128,7 @@ async fn search_by_palette(
         eprintln!("[search_by_palette] cache cold — running DB-index fast-path and starting background preheat");
         let _ = pool.ensure_cache_initialized_async();
 
-        let mut conn = pool.get_connection();
+        let conn = pool.get_connection();
         let mut candidate_set = std::collections::HashSet::new();
 
         for target in &target_labs {
@@ -507,8 +507,6 @@ async fn search_by_palette(
 
     // Destructure results
     let (results, _, _) = results; // is_single_color etc are from inside, but we have them outside too.
-    
-    let threshold_used = if is_single_color { 60.0 } else if is_atmosphere_search { 85.0 } else { 88.0 };
     let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
     eprintln!("[search_by_palette] Returning {} results", final_results.len());
     
@@ -687,8 +685,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                         width: w,
                         height: entry.height.unwrap_or(0),
                         size_kb: (entry.size / 1024) as u32,
-                        created: chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.created_at, 0), chrono::Utc).to_rfc3339(),
-                        modified: chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.modified_at, 0), chrono::Utc).to_rfc3339(),
+                        created: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                        modified: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                         format: entry.format.clone().unwrap_or_default(),
                     })
                 } else {
@@ -704,8 +702,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     size: Some(entry.size),
                     children: if matches!(file_type, FileType::Folder) { Some(Vec::new()) } else { None },
                     tags: Vec::new(),
-                    created_at: Some(chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.created_at, 0), chrono::Utc).to_rfc3339()),
-                    updated_at: Some(chrono::DateTime::<chrono::Utc>::from_utc(chrono::NaiveDateTime::from_timestamp(entry.modified_at, 0), chrono::Utc).to_rfc3339()),
+                    created_at: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()),
+                    updated_at: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()),
                     url: None,
                     meta,
                     description: None,
@@ -766,19 +764,15 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     created_at: root_metadata
                         .created()
                         .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+                        .map(|dt| dt.to_rfc3339()),
                     updated_at: root_metadata
                         .modified()
                         .ok()
-                        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                        .and_then(|secs| {
-                            chrono::DateTime::from_timestamp(secs as i64, 0)
-                                .map(|dt| dt.to_rfc3339())
-                        }),
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+                        .map(|dt| dt.to_rfc3339()),
                     url: None,
                     meta: None,
                     description: None,
@@ -826,19 +820,15 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
         created_at: root_metadata
             .created()
             .ok()
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-            .and_then(|secs| {
-                chrono::DateTime::from_timestamp(secs as i64, 0)
-                    .map(|dt| dt.to_rfc3339())
-            }),
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+            .map(|dt| dt.to_rfc3339()),
         updated_at: root_metadata
             .modified()
             .ok()
-            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-            .and_then(|secs| {
-                chrono::DateTime::from_timestamp(secs as i64, 0)
-                    .map(|dt| dt.to_rfc3339())
-            }),
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+            .map(|dt| dt.to_rfc3339()),
         url: None,
         meta: None,
         description: None,
@@ -861,7 +851,6 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     let producer_path = path.clone();
 
     // Fast synchronous counting pass (parallel iterator) to get accurate total quickly
-    let normalized_root = normalize_path(&path);
     let root_path_local = Path::new(&path);
     let fast_total: usize = jwalk::WalkDir::new(&path)
         .into_iter()
@@ -907,7 +896,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
     // Emit initial total immediately so the UI can show determinate progress
     let mut total_images = fast_total;
-    let mut processed_images = 0usize;
+    let processed_images = 0usize;
     #[derive(Serialize, Clone)]
     struct ScanProgress {
         processed: usize,
@@ -1141,7 +1130,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     });
 
     // Receive nodes from producer and update processed counts
-    let mut processed_images = 0usize;
+    let mut current_processed_images = processed_images;
     while let Ok((id, mut node, parent_path)) = rx.recv() {
         // Resolve parent_id from parent_path if possible
         if !parent_path.is_empty() {
@@ -1171,8 +1160,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
         // For images, increment processed count and emit progress
         if matches!(node.r#type, FileType::Image) {
-            processed_images += 1;
-            let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+            current_processed_images += 1;
+            let _ = app.emit("scan-progress", ScanProgress { processed: current_processed_images, total: total_images });
         }
 
         all_files.insert(id.clone(), node);
@@ -1186,7 +1175,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     }
 
     // Emit final progress event (use reconciled total)
-    let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+    let _ = app.emit("scan-progress", ScanProgress { processed: current_processed_images, total: total_images });
 
     // Build parent-child relationships
     let mut children_to_add: Vec<(String, String)> = Vec::new(); // (parent_id, child_id)
@@ -1525,77 +1514,76 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
 }
 
 #[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
-async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<bool, String> {
-    use std::io::Write;
-
-    let app_data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-
-    // Create directory if it doesn't exist
-    fs::create_dir_all(&app_data_dir)
-        .map_err(|e| format!("Failed to create app data directory: {}", e))?;
-
-    let data_file = app_data_dir.join("user_data.json");
-
-    // Sanitize payload: remove large/duplicated keys that are stored in DB.
-    let mut sanitized = match data {
-        serde_json::Value::Object(mut map) => {
-            if map.remove("fileMetadata").is_some() {
-                eprintln!("save_user_data: stripped 'fileMetadata' from payload before persisting");
-            }
-            if map.remove("files").is_some() {
-                eprintln!("save_user_data: stripped 'files' from payload before persisting");
-            }
-            serde_json::Value::Object(map)
-        }
-        other => other,
-    };
-
-    let json_string = serde_json::to_string_pretty(&sanitized)
-        .map_err(|e| format!("Failed to serialize data: {}", e))?;
-
-    let mut file = fs::File::create(&data_file)
-        .map_err(|e| format!("Failed to create data file: {}", e))?;
-
-    file.write_all(json_string.as_bytes())
-        .map_err(|e| format!("Failed to write data file: {}", e))?;
-
-    Ok(true)
-}
-
-#[tauri::command]
-async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
-    let app_data_dir = app.path().app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-
-    let data_file = app_data_dir.join("user_data.json");
-
-    if !data_file.exists() {
-        return Ok(None);
-    }
-
-    let contents = fs::read_to_string(&data_file)
-        .map_err(|e| format!("Failed to read data file: {}", e))?;
-
-    let mut data: serde_json::Value = serde_json::from_str(&contents)
-        .map_err(|e| format!("Failed to parse data file: {}", e))?;
-
-    // Defensive migration: remove any file-level data that should live in the DB
-    if let serde_json::Value::Object(map) = &mut data {
-        if map.remove("fileMetadata").is_some() {
-            eprintln!("load_user_data: removed 'fileMetadata' from loaded user_data.json (now stored in metadata.db)");
-        }
-        if map.remove("files").is_some() {
-            eprintln!("load_user_data: removed 'files' from loaded user_data.json");
+async fn get_dominant_colors(
+    file_path: String, 
+    count: usize, 
+    thumbnail_path: Option<String>,
+    app: tauri::AppHandle
+) -> Result<Vec<color_extractor::ColorResult>, String> {
+    use std::sync::Arc;
+    
+    // 1. 尝试从数据库获取颜色数据
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    let file_path_for_db = file_path.clone();
+    
+    // 在单独线程中执行数据库操作
+    let db_result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        color_db::get_colors_by_file_path(&mut conn, &file_path_for_db)
+    }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
+    
+    if let Ok(Some(colors)) = db_result {
+        if !colors.is_empty() {
+            return Ok(colors);
         }
     }
+    
+    // 2. 数据库中没有数据，提取颜色
+    let file_path_for_load = file_path.clone();
+    let thumbnail_path_for_load = thumbnail_path.clone();
 
-    Ok(Some(data))
+    // 异步执行优化后的加载和提取
+    let results = tokio::task::spawn_blocking(move || {
+        // 使用 color_worker 中优化后的加载逻辑
+        // 如果 thumbnail_path 有效，优先尝试直接打开缩略图
+        let img = if let Some(tp) = thumbnail_path_for_load {
+             image::open(tp).map_err(|e| e.to_string()).or_else(|_| color_worker::load_and_resize_image_optimized(&file_path_for_load, None))
+        } else {
+             color_worker::load_and_resize_image_optimized(&file_path_for_load, None)
+        }.map_err(|e| format!("Failed to load image: {}", e))?;
+        
+        let colors = color_extractor::get_dominant_colors(&img, count);
+        Ok::<Vec<color_extractor::ColorResult>, String>(colors)
+    }).await.map_err(|e| e.to_string())??;
+
+    let colors = results;
+    
+    // 3. 将提取的颜色保存到数据库
+    if !colors.is_empty() {
+        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+        let file_path_for_save = file_path.clone();
+        let colors_clone = colors.clone();
+        
+        // 在单独线程中执行数据库操作
+        let _ = tokio::task::spawn_blocking(move || {
+            {
+                let mut conn = pool.get_connection();
+                // 先检查是否存在记录
+                match color_db::get_colors_by_file_path(&mut conn, &file_path_for_save) {
+                    Ok(None) => {
+                        // 不存在记录，插入待处理状态
+                        let _ = color_db::add_pending_files(&mut conn, &[file_path_for_save.clone()]);
+                    },
+                    _ => {}
+                }
+            } // Drop lock
+            
+            // 保存颜色数据
+            pool.save_colors(&file_path_for_save, &colors_clone)
+        }).await;
+    }
+    
+    Ok(colors)
 }
 
 #[tauri::command]
@@ -2699,89 +2687,33 @@ async fn get_wal_info(app: tauri::AppHandle) -> Result<(i64, i64), String> {
     result
 }
 
-
+#[tauri::command]
+async fn save_user_data(app_handle: tauri::AppHandle, data: serde_json::Value) -> Result<bool, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    if !app_data_dir.exists() {
+        fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+    }
+    
+    let config_path = app_data_dir.join("user_data.json");
+    let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    fs::write(config_path, json).map_err(|e| e.to_string())?;
+    
+    Ok(true)
+}
 
 #[tauri::command]
-async fn get_dominant_colors(
-    file_path: String, 
-    count: usize, 
-    thumbnail_path: Option<String>,
-    app: tauri::AppHandle
-) -> Result<Vec<color_extractor::ColorResult>, String> {
-    use std::fs::File;
-    use std::io::BufReader;
-    use std::sync::Arc;
+async fn load_user_data(app_handle: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
+    let config_path = app_data_dir.join("user_data.json");
     
-    // 1. 尝试从数据库获取颜色数据
-    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
-    let file_path_clone = file_path.clone();
-    
-    // 在单独线程中执行数据库操作
-    let db_result = tokio::task::spawn_blocking(move || {
-        let mut conn = pool.get_connection();
-        color_db::get_colors_by_file_path(&mut conn, &file_path_clone)
-    }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
-    
-    if let Ok(Some(colors)) = db_result {
-        if !colors.is_empty() {
-            return Ok(colors);
-        }
+    if !config_path.exists() {
+        return Ok(None);
     }
     
-    // 2. 数据库中没有数据，提取颜色
-    // 优先使用缩略图路径，如果提供了的话
-    let image_path = if let Some(thumb_path) = &thumbnail_path {
-        if Path::new(thumb_path).exists() {
-            thumb_path.clone()
-        } else {
-            file_path.clone()
-        }
-    } else {
-        file_path.clone()
-    };
+    let json_str = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
+    let data = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
     
-    // Check if file exists
-    if !Path::new(&image_path).exists() {
-        return Err(format!("File does not exist: {}", image_path));
-    }
-    
-    // Load image (from thumbnail if available, otherwise from original)
-    let file = File::open(&image_path)
-        .map_err(|e| format!("Failed to open file: {}", e))?;
-    
-    let reader = BufReader::new(file);
-    let img = image::load(reader, image::ImageFormat::from_path(&image_path).unwrap_or(image::ImageFormat::Jpeg))
-        .map_err(|e| format!("Failed to load image: {}", e))?;
-    
-    // Extract dominant colors
-    let colors = color_extractor::get_dominant_colors(&img, count);
-    
-    // 3. 将提取的颜色保存到数据库
-    if !colors.is_empty() {
-        let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
-        let file_path_clone = file_path.clone();
-        let colors_clone = colors.clone();
-        
-        // 在单独线程中执行数据库操作
-        let _ = tokio::task::spawn_blocking(move || {
-            {
-                let mut conn = pool.get_connection();
-                // 先检查是否存在记录
-                match color_db::get_colors_by_file_path(&mut conn, &file_path_clone) {
-                    Ok(None) => {
-                        // 不存在记录，插入待处理状态
-                        let _ = color_db::add_pending_files(&mut conn, &[file_path_clone.clone()]);
-                    },
-                    _ => {}
-                }
-            } // Drop lock
-            
-            // 保存颜色数据
-            pool.save_colors(&file_path_clone, &colors_clone)
-        }).await;
-    }
-    
-    Ok(colors)
+    Ok(Some(data))
 }
 
 #[tauri::command]
@@ -2832,13 +2764,12 @@ fn main() {
         .plugin(tauri_plugin_log::Builder::default().build())
         .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
+            save_user_data,
+            load_user_data,
             search_by_palette,
             search_by_color,
             scan_directory,
             force_rescan,
-            save_user_data,
-            load_user_data,
             add_pending_files_to_db,
             get_default_paths,
             get_thumbnail,
@@ -2860,8 +2791,6 @@ fn main() {
             show_window,
             exit_app,
             get_dominant_colors,
-            search_by_color,
-            search_by_palette,
             color_worker::pause_color_extraction,
             color_worker::resume_color_extraction,
             force_wal_checkpoint,
@@ -2989,12 +2918,30 @@ fn main() {
             // 正确克隆AppHandle后再包装到Arc中
             let app_handle_new = app.handle().clone();
             let app_handle_arc = Arc::new(app_handle_new);
+
+            // 获取缓存目录路径
+            let cache_root = {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .ok();
+                
+                home.map(|h| {
+                    if cfg!(windows) {
+                        Path::new(&h).join("AppData").join("Local").join("Aurora").join("Cache")
+                    } else if cfg!(target_os = "macos") {
+                        Path::new(&h).join("Library").join("Application Support").join("Aurora").join("Cache")
+                    } else {
+                        Path::new(&h).join(".local").join("share").join("aurora").join("cache")
+                    }
+                })
+            };
             
             tauri::async_runtime::spawn(async move {
                 color_worker::color_extraction_worker(
                     pool_arc,
                     batch_size,
-                    Some(app_handle_arc)
+                    Some(app_handle_arc),
+                    cache_root
                 ).await;
             });
             

@@ -283,18 +283,16 @@ export const App: React.FC = () => {
 
   // ... (keep persistence logic, init effect, exit logic, etc.)
   const saveUserData = async (data: any) => {
-    // 锟斤拷锟饺硷拷锟?Tauri 锟斤拷锟斤拷锟斤拷锟届步锟斤拷猓拷锟绞碉拷实锟斤拷锟?API锟斤拷
-    const isTauriEnv = await detectTauriEnvironmentAsync();
+    // 调用 Tauri 后端的异步保存 API
+    if (!isTauriEnvironment()) {
+      return false;
+    }
 
-    if (isTauriEnv) {
-      // Tauri 锟斤拷锟斤拷 - 使锟斤拷 Tauri API
-      try {
-        return await tauriSaveUserData(data);
-      } catch (error) {
-        console.error('Failed to save user data in Tauri:', error);
-        return false;
-      }
-    } else {
+    try {
+      const result = await tauriSaveUserData(data);
+      return result;
+    } catch (error) {
+      console.error('Failed to save user data via Tauri:', error);
       return false;
     }
   };

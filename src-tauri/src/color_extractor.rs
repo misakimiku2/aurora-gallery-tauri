@@ -17,16 +17,10 @@ pub struct ColorResult {
 
 /// 从 DynamicImage 中提取多个主色调
 pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult> {
-    // 1. 限制图片最大尺寸为512x512，减少像素数量
-    let max_dimension = 512;
-    let resized_img = if img.width() > max_dimension || img.height() > max_dimension {
-        img.resize(max_dimension, max_dimension, image::imageops::FilterType::Triangle)
-    } else {
-        img.clone()
-    };
+    // 1. 假定输入图片已经被缩放到了合理的尺寸 (如 256px)，不再进行冗余缩放
     
     // 2. 将图片转为 RGBA8 以获取透明度信息
-    let rgba_img = resized_img.to_rgba8();
+    let rgba_img = img.to_rgba8();
     
     // 3. 执行像素预过滤，优化版本：减少中间数据结构
     let mut filtered_pixels = Vec::with_capacity(rgba_img.width() as usize * rgba_img.height() as usize * 3);
@@ -53,13 +47,9 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
         return Vec::new();
     }
 
-    // 4. 动态调整采样步长，根据图片尺寸优化性能
-    let image_area = (rgba_img.width() * rgba_img.height()) as usize;
-    let quality = match image_area {
-        0..=65536 => 1,       // 小图片 (<=256x256): 步长1
-        65537..=262144 => 2,   // 中图片 (257x257-512x512): 步长2
-        _ => 4,                // 大图片 (>512x512): 步长4
-    };
+    // 4. 动态调整采样步长，优化性能
+    // 对于主色调提取，quality=10 (即每10个像素采样一个) 已经足够准确，且速度提升极大
+    let quality = 10;
 
     // 5. 调用 ColorThief 算法提取颜色
     // 提取稍多一些颜色(16个)以确保有足够的候选，包括鲜艳的小面积颜色
@@ -208,10 +198,10 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
     // 通过重新扫描缩放后的图片像素，统计每种颜色的像素数量
     let mut pixel_counts: Vec<usize> = vec![0; temp_result.len()];
     
-    // 采样步长，256x256以上图片也不需要遍历所有像素，采样1/4足以得到准确比例
-    let step = 2;
+    // 采样步长增大，进一步提升速度
+    let step = 10;
     
-    // 使用Lab空间距离来计算归属，虽然比RGB慢，但已经缩放过图片，应该可以接受
+    // 使用Lab空间距离来计算归属
     // 预计算Srgb->Lab的转换
     let palette_labs: Vec<Lab> = temp_result.iter().map(|(c, _)| {
         let srgb = Srgb::new(c.rgb[0] as f32 / 255.0, c.rgb[1] as f32 / 255.0, c.rgb[2] as f32 / 255.0);
@@ -226,6 +216,8 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
         let g = filtered_pixels[i+1];
         let b = filtered_pixels[i+2];
         
+        // 快速过滤：如果三个分量非常接近，通常是中性色
+        
         let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
         let pixel_lab: Lab = Lab::from_color(srgb);
         
@@ -233,9 +225,11 @@ pub fn get_dominant_colors(img: &DynamicImage, count: usize) -> Vec<ColorResult>
         let mut best_idx = 0;
         
         for (pl_idx, pl) in palette_labs.iter().enumerate() {
-            let dist_sq = (pl.l - pixel_lab.l).powi(2) + 
-                          (pl.a - pixel_lab.a).powi(2) + 
-                          (pl.b - pixel_lab.b).powi(2);
+            // CIE76 距离平方
+            let dl = pl.l - pixel_lab.l;
+            let da = pl.a - pixel_lab.a;
+            let db = pl.b - pixel_lab.b;
+            let dist_sq = dl * dl + da * da + db * db;
             
             if dist_sq < min_dist_sq {
                 min_dist_sq = dist_sq;
