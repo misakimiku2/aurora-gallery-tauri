@@ -531,7 +531,19 @@ export const ensureCacheDirectory = async (rootPath: string): Promise<void> => {
  */
 export const saveUserData = async (data: any): Promise<boolean> => {
   try {
-    const result = await invoke<boolean>('save_user_data', { data });
+    // Defensive: strip large file-level payloads before sending to backend.
+    const payload = { ...data };
+    if (payload.fileMetadata) {
+      // never send whole-file metadata via IPC — it's stored in metadata.db
+      delete payload.fileMetadata;
+      console.warn('saveUserData: removed fileMetadata from payload before IPC (use metadata DB)');
+    }
+    if (payload.files) {
+      delete payload.files;
+      console.warn('saveUserData: removed files map from payload before IPC');
+    }
+
+    const result = await invoke<boolean>('save_user_data', { data: payload });
     return result;
   } catch (error) {
     console.error('Failed to save user data:', error);

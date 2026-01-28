@@ -1,23 +1,17 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
+use std::sync::atomic::{AtomicBool, Ordering};
 use rusqlite::{Connection, params};
 use std::fs;
-use std::time::SystemTime;
+use std::time::{SystemTime, Duration};
 use serde_json;
 use palette::{FromColor, Srgb, Lab};
 
 use crate::color_extractor::ColorResult;
 
-#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
-pub struct ImageColors {
-    pub file_path: String,
-    pub colors: Vec<String>,
-}
-
 #[derive(Clone, Debug)]
 pub struct CachedImage {
     pub file_path: String,
-    pub colors: Vec<String>,
     pub labs: Vec<Lab>,
 }
 
@@ -42,7 +36,8 @@ pub struct ColorDbPool {
     conn: Arc<Mutex<Connection>>,
     db_path: String,
     cache: Arc<RwLock<Vec<CachedImage>>>,
-}
+    cache_inited: Arc<AtomicBool>, // 一次性初始化标志（防止并发重复预热）
+} 
 
 impl Clone for ColorDbPool {
     fn clone(&self) -> Self {
@@ -50,6 +45,7 @@ impl Clone for ColorDbPool {
             conn: Arc::clone(&self.conn),
             db_path: self.db_path.clone(),
             cache: Arc::clone(&self.cache),
+            cache_inited: Arc::clone(&self.cache_inited),
         }
     }
 }
@@ -102,6 +98,7 @@ impl ColorDbPool {
             conn: Arc::new(Mutex::new(conn)),
             db_path: db_path_str,
             cache: Arc::new(RwLock::new(Vec::new())),
+            cache_inited: Arc::new(AtomicBool::new(false)),
         })
     }
     
@@ -232,22 +229,12 @@ impl ColorDbPool {
     }
     
     pub fn refresh_cache(&self) -> Result<()> {
-        let colors = self.load_from_db_internal()?;
-        
-        // Convert to cache format with precomputed Labs
-        let cached_images: Vec<CachedImage> = colors.into_iter().map(|item| {
-            let labs = item.colors.iter()
-                .filter_map(|h| hex_to_lab(h))
-                .collect();
-            CachedImage {
-                file_path: item.file_path,
-                colors: item.colors,
-                labs,
-            }
-        }).collect();
+        let cached_images = self.load_from_db_internal()?;
         
         let mut cache = self.cache.write().map_err(|e| e.to_string())?;
         *cache = cached_images;
+        // 标记已完成一次初始化（使后续 ensure_cache_initialized 能快速返回）
+        let _ = self.cache_inited.store(true, Ordering::SeqCst);
         eprintln!("[ColorDB] Cache refreshed with {} items (precomputed Labs)", cache.len());
         Ok(())
     }
@@ -257,18 +244,127 @@ impl ColorDbPool {
     pub fn access_cache<F, R>(&self, f: F) -> Result<R>
     where F: FnOnce(&[CachedImage]) -> R 
     {
-        // Try to verify cache content
+        // If cache already has entries, run the closure synchronously
         {
              let cache = self.cache.read().map_err(|e| e.to_string())?;
              if !cache.is_empty() {
                  return Ok(f(&cache));
              }
         }
-        
-        // Refresh and retry
-        self.refresh_cache()?;
-        let cache = self.cache.read().map_err(|e| e.to_string())?;
-        Ok(f(&cache))
+
+        // Cache not ready — do NOT synchronously perform a full refresh here (avoid blocking callers).
+        // Caller should either trigger a background preheat via `ensure_cache_initialized(true)`
+        // or fall back to a DB-indexed fast-path.
+        Err("cache_not_ready".to_string())
+    }
+
+    // Ensure the cache is initialized. If `background` is true this returns immediately and
+    // performs a batched preload in a background thread; otherwise it blocks until the
+    // initial refresh completes.
+    pub fn ensure_cache_initialized(&self, background: bool) -> Result<()> {
+        // Fast-path: if cache already initialized, return
+        if self.cache_inited.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
+        // Avoid concurrent initializers
+        let already = self.cache_inited.swap(true, Ordering::SeqCst);
+        if already {
+            return Ok(());
+        }
+
+        if background {
+            let pool = self.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = pool.refresh_cache_in_batches(500) {
+                    eprintln!("[ColorDB] background preheat failed: {}", e);
+                    // allow retry on next ensure call
+                    let _ = pool.cache_inited.store(false, Ordering::SeqCst);
+                } else {
+                    eprintln!("[ColorDB] background preheat completed");
+                }
+            });
+            Ok(())
+        } else {
+            // blocking initialization
+            let res = self.refresh_cache();
+            if res.is_err() {
+                // clear flag so future attempts can retry
+                let _ = self.cache_inited.store(false, Ordering::SeqCst);
+            }
+            res
+        }
+    }
+
+    // Convenience async starter
+    pub fn ensure_cache_initialized_async(&self) -> Result<()> {
+        self.ensure_cache_initialized(true)
+    }
+
+    /// Return whether a successful initialization has been started/completed.
+    pub fn is_cache_initialized(&self) -> bool {
+        self.cache_inited.load(Ordering::SeqCst)
+    }
+
+    // Load DB rows in batches and append to cache to avoid big IO/CPU spike
+    pub fn refresh_cache_in_batches(&self, batch_size: usize) -> Result<()> {
+        eprintln!("[ColorDB] refresh_cache_in_batches start (batch_size={})", batch_size);
+        let mut offset: i64 = 0;
+        loop {
+            let batch = self.load_from_db_internal_batch(offset, batch_size as i64)?;
+            if batch.is_empty() {
+                break;
+            }
+
+            {
+                let mut cache = self.cache.write().map_err(|e| e.to_string())?;
+                cache.extend(batch.into_iter());
+                eprintln!("[ColorDB] preheated cache size={} (offset={})", cache.len(), offset);
+            }
+
+            // Small pause to reduce IO burst on startup
+            std::thread::sleep(Duration::from_millis(20));
+
+            offset += batch_size as i64;
+        }
+
+        // Final sanity log
+        let cache_len = { self.cache.read().map_err(|e| e.to_string())?.len() };
+        eprintln!("[ColorDB] refresh_cache_in_batches completed, total_cached={}", cache_len);
+        Ok(())
+    }
+
+    fn load_from_db_internal_batch(&self, offset: i64, limit: i64) -> Result<Vec<CachedImage>> {
+        eprintln!("[ColorDB] load_from_db_internal_batch called offset={} limit={}", offset, limit);
+        let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
+
+        let mut stmt = conn.prepare(
+            "SELECT file_path, colors FROM dominant_colors WHERE status = 'extracted' LIMIT ? OFFSET ?"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map(params![limit, offset], |row| {
+             let file_path: String = row.get(0)?;
+             let colors_json: String = row.get(1)?;
+             Ok((file_path, colors_json))
+         }).map_err(|e| e.to_string())?;
+ 
+         let mut results = Vec::new();
+         for row in rows {
+             if let Ok((file_path, colors_json)) = row {
+                 if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
+                     let labs = colors.into_iter()
+                         .filter_map(|c| hex_to_lab(&c.hex))
+                         .collect();
+
+                     results.push(CachedImage {
+                         file_path,
+                         labs,
+                     });
+                 }
+             }
+         }
+         eprintln!("[ColorDB] Loaded {} images from DB (batch)", results.len());
+         Ok(results)
     }
 
     pub fn copy_colors(&self, src_path: &str, dest_path: &str) -> Result<bool> {
@@ -312,12 +408,12 @@ impl ColorDbPool {
                 eprintln!("[ColorDB] Copied colors from {} to {}", src_path, dest_path);
                 
                 if let Ok(color_results) = serde_json::from_str::<Vec<ColorResult>>(&colors) {
-                     let hex_colors: Vec<String> = color_results.iter().map(|c| c.hex.clone()).collect();
-                     let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+                     let labs: Vec<Lab> = color_results.iter()
+                         .filter_map(|c| hex_to_lab(&c.hex))
+                         .collect();
                      
                      let new_cached_item = CachedImage {
                          file_path: dest_path.to_string(),
-                         colors: hex_colors,
                          labs,
                      };
                      
@@ -332,7 +428,7 @@ impl ColorDbPool {
         Ok(false)
     }
 
-    fn load_from_db_internal(&self) -> Result<Vec<ImageColors>> {
+    fn load_from_db_internal(&self) -> Result<Vec<CachedImage>> {
         eprintln!("[ColorDB] load_from_db_internal called");
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
         
@@ -350,28 +446,19 @@ impl ColorDbPool {
          for row in rows {
              if let Ok((file_path, colors_json)) = row {
                  if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
-                     // 只提取 Hex 字符串
-                     let hex_colors = colors.into_iter().map(|c| c.hex).collect();
-                     results.push(ImageColors {
+                     let labs = colors.into_iter()
+                         .filter_map(|c| hex_to_lab(&c.hex))
+                         .collect();
+
+                     results.push(CachedImage {
                          file_path,
-                         colors: hex_colors,
+                         labs,
                      });
                  }
              }
          }
          eprintln!("[ColorDB] Loaded {} images from DB", results.len());
          Ok(results)
-    }
-
-    // 获取所有状态为 completed 的图片及其颜色数据 (Read from Cache)
-    pub fn get_all_completed_colors(&self) -> Result<Vec<ImageColors>> {
-        // Use access_cache to safely read and clone (if needed for compatibility)
-        self.access_cache(|cache| {
-            cache.iter().map(|c| ImageColors {
-                file_path: c.file_path.clone(),
-                colors: c.colors.clone(),
-            }).collect()
-        })
     }
 
     // 保存主色调数据 (Method)
@@ -418,19 +505,17 @@ impl ColorDbPool {
         tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
         
         // Update Cache
-        let hex_colors: Vec<String> = colors.iter().map(|c| c.hex.clone()).collect();
-        // Compute Labs for cache
-        let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+        let labs: Vec<Lab> = colors.iter()
+            .filter_map(|c| hex_to_lab(&c.hex))
+            .collect();
         
         let mut cache = self.cache.write().map_err(|e| e.to_string())?;
         
         if let Some(pos) = cache.iter().position(|x| x.file_path == file_path) {
-            cache[pos].colors = hex_colors;
             cache[pos].labs = labs;
         } else {
             cache.push(CachedImage {
                 file_path: file_path.to_string(),
-                colors: hex_colors,
                 labs,
             });
         }
@@ -514,16 +599,15 @@ impl ColorDbPool {
                 // To be safe, let's only strictly update cache if transaction committed.
                 let mut cache = self.cache.write().map_err(|e| e.to_string())?;
                 for (file_path, colors) in color_data {
-                     let hex_colors: Vec<String> = colors.iter().map(|c| c.hex.clone()).collect();
-                     let labs: Vec<Lab> = hex_colors.iter().filter_map(|h| hex_to_lab(h)).collect();
+                     let labs: Vec<Lab> = colors.iter()
+                         .filter_map(|c| hex_to_lab(&c.hex))
+                         .collect();
                      
                      if let Some(pos) = cache.iter().position(|x| x.file_path == *file_path) {
-                         cache[pos].colors = hex_colors;
                          cache[pos].labs = labs;
                      } else {
                          cache.push(CachedImage {
                              file_path: file_path.to_string(),
-                             colors: hex_colors,
                              labs,
                          });
                      }
@@ -749,18 +833,6 @@ pub fn update_status(
     Ok(())
 }
 
-// 删除颜色数据
-pub fn delete_colors_by_file_path(
-    conn: &mut Connection, 
-    file_path: &str
-) -> Result<()> {
-    conn.execute(
-        "DELETE FROM dominant_colors WHERE file_path = ?",
-        params![file_path],
-    ).map_err(|e| e.to_string())?;
-    
-    Ok(())
-}
 
 // 批量删除颜色数据
 pub fn batch_delete_colors(

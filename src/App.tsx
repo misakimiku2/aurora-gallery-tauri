@@ -311,51 +311,29 @@ export const App: React.FC = () => {
 
     const rootPaths = state.roots.map(id => state.files[id]?.path).filter(Boolean);
 
-    const fileMetadata: Record<string, any> = {};
-    Object.values(state.files).forEach((file) => {
-      const hasUserTags = file.tags && file.tags.length > 0;
-      const hasDesc = !!file.description;
-      const hasSource = !!file.sourceUrl;
-      const hasAiData = !!file.aiData;
-      const hasCategory = file.category && file.category !== 'general';
-      const hasHeavyMeta = file.meta && (file.meta.width > 0 || file.meta.palette);
-
-      if (hasUserTags || hasDesc || hasSource || hasAiData || hasCategory || hasHeavyMeta) {
-        fileMetadata[file.path] = {
-          tags: file.tags,
-          description: file.description,
-          sourceUrl: file.sourceUrl,
-          aiData: file.aiData,
-          category: file.category,
-          meta: file.meta ? {
-            width: file.meta.width,
-            height: file.meta.height,
-            palette: file.meta.palette,
-            format: file.meta.format,
-          } : undefined
-        };
-      }
-    });
-
+    // NOTE: file-level metadata is persisted in metadata.db (SQLite). Persisting
+    // per-file entries in user_data.json duplicates data and causes large
+    // memory/IPC overhead. Do NOT include `fileMetadata` here — keep
+    // user_data.json small (settings, roots, tags, topics, folderSettings).
     const dataToSave = {
       rootPaths,
       customTags: state.customTags,
       people: peopleWithDisplayCounts,
       topics: state.topics,
       folderSettings: state.folderSettings,
-      settings: state.settings,
-      fileMetadata
+      settings: state.settings
     };
 
     const timer = setTimeout(async () => {
       try {
+        // Save a trimmed payload to avoid sending the entire file map over IPC
         await saveUserData(dataToSave);
       } catch (err) {
         console.error('Auto save failed:', err);
       }
     }, 1000);
     return () => clearTimeout(timer);
-  }, [state.roots, state.files, state.customTags, state.people, state.topics, state.settings, state.folderSettings]);
+  }, [state.roots, state.customTags, state.people, state.topics, state.settings, state.folderSettings]);
 
   useEffect(() => {
     // Prevent double initialization
@@ -523,17 +501,19 @@ export const App: React.FC = () => {
 
                   Object.values(result.files).forEach((f: any) => {
                     const saved = savedMetadata[f.path];
-                    if (saved) {
-                      if (saved.tags) f.tags = saved.tags;
-                      if (saved.description) f.description = saved.description;
-                      if (saved.sourceUrl) f.sourceUrl = saved.sourceUrl;
-                      if (saved.aiData) f.aiData = saved.aiData;
-                      if (saved.category) f.category = saved.category;
-                      if (saved.meta && f.meta) {
-                        if (saved.meta.width) f.meta.width = saved.meta.width;
-                        if (saved.meta.height) f.meta.height = saved.meta.height;
-                        if (saved.meta.palette) f.meta.palette = saved.meta.palette;
-                      }
+                    if (!saved) return;
+
+                    // Only use saved values if the scan/DB did not provide them.
+                    if ((!f.tags || f.tags.length === 0) && saved.tags) f.tags = saved.tags;
+                    if (!f.description && saved.description) f.description = saved.description;
+                    if (!f.sourceUrl && saved.sourceUrl) f.sourceUrl = saved.sourceUrl;
+                    if (!f.aiData && saved.aiData) f.aiData = saved.aiData;
+                    if (!f.category && saved.category) f.category = saved.category;
+
+                    if (saved.meta && f.meta) {
+                      if ((!f.meta.width || f.meta.width === 0) && saved.meta.width) f.meta.width = saved.meta.width;
+                      if ((!f.meta.height || f.meta.height === 0) && saved.meta.height) f.meta.height = saved.meta.height;
+                      if ((!f.meta.palette || f.meta.palette.length === 0) && saved.meta.palette) f.meta.palette = saved.meta.palette;
                     }
                   });
 

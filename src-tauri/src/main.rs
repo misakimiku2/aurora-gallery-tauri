@@ -122,9 +122,66 @@ async fn search_by_palette(
     let is_atmosphere_search = target_labs.len() >= 5;
 
     let pool = pool_state.inner().clone();
-    
+
+    // If cache hasn't been initialized yet, prefer a DB-indexed fast-path to avoid blocking a full refresh.
+    if !pool.is_cache_initialized() {
+        eprintln!("[search_by_palette] cache cold — running DB-index fast-path and starting background preheat");
+        let _ = pool.ensure_cache_initialized_async();
+
+        let mut conn = pool.get_connection();
+        let mut candidate_set = std::collections::HashSet::new();
+
+        for target in &target_labs {
+            let delta = 20.0f32;
+            if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT file_path FROM image_color_indices WHERE l BETWEEN ? AND ? AND a BETWEEN ? AND ? AND b BETWEEN ? AND ? LIMIT 1000") {
+                if let Ok(rows) = stmt.query_map(rusqlite::params![target.l - delta, target.l + delta, target.a - delta, target.a + delta, target.b - delta, target.b + delta], |r| r.get::<_, String>(0)) {
+                    for r in rows { if let Ok(p) = r { candidate_set.insert(p); } }
+                }
+            }
+        }
+
+        eprintln!("[search_by_palette] DB fast-path candidates={}", candidate_set.len());
+
+        let mut scored: Vec<(String, f32)> = Vec::new();
+        for path in candidate_set.into_iter().take(500) {
+            if let Ok(Some(colors)) = {
+                let mut conn2 = pool.get_connection();
+                color_db::get_colors_by_file_path(&mut conn2, &path)
+            } {
+                let candidate_labs: Vec<Lab> = colors.iter().filter_map(|c| hex_to_lab(&c.hex)).collect();
+                if candidate_labs.is_empty() { continue; }
+
+                if is_single_color {
+                    let target = &target_labs[0];
+                    let position_weights = [1.0f32, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08];
+                    let mut best = 0.0f32;
+                    for (idx, candidate) in candidate_labs.iter().enumerate() {
+                        let dist = candidate.difference(*target);
+                        let sim = if dist < 5.0 { 100.0 } else if dist < 10.0 { 100.0 - (dist - 5.0) * 4.0 } else if dist < 20.0 { 80.0 - (dist - 10.0) * 3.0 } else if dist < 30.0 { 50.0 - (dist - 20.0) * 2.0 } else { (30.0 - (dist - 30.0).min(30.0)).max(0.0) };
+                        let w = if idx < position_weights.len() { position_weights[idx] } else { 0.05 };
+                        best = best.max(sim * w);
+                    }
+                    if best >= 60.0 { scored.push((path.clone(), best)); }
+                } else {
+                    let mut total = 0.0f32; let mut cnt = 0u32;
+                    for t in target_labs.iter().take(5) { let md = candidate_labs.iter().map(|c| c.difference(*t)).fold(f32::INFINITY, |a, b| a.min(b)); total += md; cnt += 1; }
+                    if cnt == 0 { continue; }
+                    let avg = total / cnt as f32;
+                    let score = if avg < 5.0 { 100.0 } else if avg < 10.0 { 90.0 } else if avg < 20.0 { 70.0 } else if avg < 30.0 { 50.0 } else { 20.0 };
+                    if (is_atmosphere_search && score >= 85.0) || (!is_atmosphere_search && score >= 70.0) { scored.push((path.clone(), score)); }
+                }
+            }
+        }
+
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(500);
+        let final_results = scored.into_iter().map(|(p, _)| p).collect::<Vec<String>>();
+        eprintln!("[search_by_palette] Returning {} results (DB fast-path)", final_results.len());
+        return Ok(final_results);
+    }
+
     // Offload compute-intensive task to blocking threadpool
-    // Using access_cache to avoid copying data
+    // Try cached full-scan first; if cache is not ready, fall back to a DB-indexed fast-path
     let results = tokio::task::spawn_blocking(move || {
         pool.access_cache(|all_colors| {
              eprintln!("[search_by_palette] Searching in {} cached images", all_colors.len());
@@ -1475,25 +1532,39 @@ fn greet(name: &str) -> String {
 #[tauri::command]
 async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Result<bool, String> {
     use std::io::Write;
-    
+
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-    
+
     // Create directory if it doesn't exist
     fs::create_dir_all(&app_data_dir)
         .map_err(|e| format!("Failed to create app data directory: {}", e))?;
-    
+
     let data_file = app_data_dir.join("user_data.json");
-    
-    let json_string = serde_json::to_string_pretty(&data)
+
+    // Sanitize payload: remove large/duplicated keys that are stored in DB.
+    let mut sanitized = match data {
+        serde_json::Value::Object(mut map) => {
+            if map.remove("fileMetadata").is_some() {
+                eprintln!("save_user_data: stripped 'fileMetadata' from payload before persisting");
+            }
+            if map.remove("files").is_some() {
+                eprintln!("save_user_data: stripped 'files' from payload before persisting");
+            }
+            serde_json::Value::Object(map)
+        }
+        other => other,
+    };
+
+    let json_string = serde_json::to_string_pretty(&sanitized)
         .map_err(|e| format!("Failed to serialize data: {}", e))?;
-    
+
     let mut file = fs::File::create(&data_file)
         .map_err(|e| format!("Failed to create data file: {}", e))?;
-    
+
     file.write_all(json_string.as_bytes())
         .map_err(|e| format!("Failed to write data file: {}", e))?;
-    
+
     Ok(true)
 }
 
@@ -1501,19 +1572,29 @@ async fn save_user_data(app: tauri::AppHandle, data: serde_json::Value) -> Resul
 async fn load_user_data(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
     let app_data_dir = app.path().app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-    
+
     let data_file = app_data_dir.join("user_data.json");
-    
+
     if !data_file.exists() {
         return Ok(None);
     }
-    
+
     let contents = fs::read_to_string(&data_file)
         .map_err(|e| format!("Failed to read data file: {}", e))?;
-    
-    let data: serde_json::Value = serde_json::from_str(&contents)
+
+    let mut data: serde_json::Value = serde_json::from_str(&contents)
         .map_err(|e| format!("Failed to parse data file: {}", e))?;
-    
+
+    // Defensive migration: remove any file-level data that should live in the DB
+    if let serde_json::Value::Object(map) = &mut data {
+        if map.remove("fileMetadata").is_some() {
+            eprintln!("load_user_data: removed 'fileMetadata' from loaded user_data.json (now stored in metadata.db)");
+        }
+        if map.remove("files").is_some() {
+            eprintln!("load_user_data: removed 'files' from loaded user_data.json");
+        }
+    }
+
     Ok(Some(data))
 }
 
@@ -2859,9 +2940,11 @@ fn main() {
                     eprintln!("Failed to reset processing files to pending: {}", e);
                 }
             }
-            // 刷新缓存（加载所有已完成的颜色到内存）
-            if let Err(e) = pool_instance.refresh_cache() {
-                eprintln!("Failed to refresh color cache: {}", e);
+            // 异步分批预热（懒加载）：在后台逐步加载，避免启动阻塞/峰值 I/O
+            if let Err(e) = pool_instance.ensure_cache_initialized_async() {
+                eprintln!("Failed to start background color cache preheat: {}", e);
+            } else {
+                eprintln!("[ColorDB] Background cache preheat initiated");
             }
 
             // 记录初始化后的数据库文件大小
