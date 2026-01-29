@@ -567,16 +567,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "svg",
 ];
 
-// Generate ID from file path (MD5 hash, first 9 chars)
-fn generate_id(path: &str) -> String {
-    // Normalize path (replace backslashes with forward slashes)
-    let normalized = path.replace('\\', "/");
-    
-    let hash = md5::compute(normalized.as_bytes());
-    
-    // Convert to hex and take first 9 characters
-    format!("{:x}", hash)[..9].to_string()
-}
+// Use shared generate_id
+use db::generate_id;
 
 // Normalize path separators
 fn normalize_path(path: &str) -> String {
@@ -1645,17 +1637,52 @@ async fn create_folder(path: String) -> Result<(), String> {
 // Command to rename a file or folder
 #[tauri::command]
 async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    // 1. 先进行物理重命名
     fs::rename(&old_path, &new_path)
-        .map_err(|e| format!("Failed to rename: {}", e))?;
+        .map_err(|e| format!("物理重命名失败 (可能文件被占用): {}", e))?;
     
-    // 清理数据库中的旧路径记录
+    let is_dir = Path::new(&new_path).is_dir();
+    
+    // 2. 同步执行数据库迁移 (避免竞态条件)
+    // 之前使用 spawn_blocking 会导致前端在数据库更新完成前就扫描到新文件，
+    // 从而触发重复提取。由于我们已经优化了 SQL 性能，这里同步执行也不会卡顿。
     let app_db = app.state::<AppDbPool>();
     let conn = app_db.get_connection();
-    let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
-    let _ = db::file_metadata::delete_metadata_by_path(&conn, &old_path);
+    
+    if is_dir {
+        // 目录重命名
+        let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
+        let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_path, &new_path);
+    } else {
+        // 单文件重命名
+        let old_id = generate_id(&old_path);
+        let new_id = generate_id(&new_path);
+        let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
+        let _ = db::file_metadata::migrate_metadata(&conn, &old_id, &new_id, &new_path);
+    }
     
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    let _ = color_db.delete_colors_by_path(&old_path);
+    let _ = color_db.move_colors(&old_path, &new_path);
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let is_dir = Path::new(&dest_path).is_dir();
+    let app_db = app.state::<AppDbPool>();
+    let conn = app_db.get_connection();
+
+    if is_dir {
+        let _ = db::file_metadata::copy_metadata_dir(&conn, &src_path, &dest_path);
+    } else {
+        let old_id = generate_id(&src_path);
+        let new_id = generate_id(&dest_path);
+        let _ = db::file_metadata::copy_metadata(&conn, &old_id, &new_id, &dest_path);
+    }
+
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
+    let _ = color_db.copy_colors(&src_path, &dest_path);
 
     Ok(())
 }
@@ -1694,11 +1721,21 @@ async fn copy_image_colors(
     dest_path: String
 ) -> Result<bool, String> {
     let pool = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    pool.copy_colors(&src_path, &dest_path)
+    eprintln!("[Cmd] copy_image_colors invoked: src='{}' dest='{}'", src_path, dest_path);
+    match pool.copy_colors(&src_path, &dest_path) {
+        Ok(b) => {
+            eprintln!("[Cmd] copy_image_colors succeeded: src='{}' dest='{}' copied={}", src_path, dest_path, b);
+            Ok(b)
+        }
+        Err(e) => {
+            eprintln!("[Cmd] copy_image_colors failed: src='{}' dest='{}' error={}", src_path, dest_path, e);
+            Err(e)
+        }
+    }
 }
 
 #[tauri::command]
-async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
+async fn copy_file(src_path: String, dest_path: String) -> Result<String, String> {
     let src = Path::new(&src_path);
     let mut dest = Path::new(&dest_path);
     
@@ -1790,7 +1827,9 @@ async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
                 let exit_code = output.status.code().unwrap_or(0);
                 if exit_code <= 1 {
                     println!("Directory copy succeeded");
-                    return Ok(());
+                    let norm = normalize_path(&final_dest_path);
+                    println!("Returning normalized path: {}", norm);
+                    return Ok(norm);
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1801,10 +1840,12 @@ async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
             } else {
                 // Use Rust fs::copy for file copying - more reliable than Windows copy command
                 println!("Attempt {}: Using fs::copy: {} -> {}", attempt + 1, src_path, final_dest_path);
-                match fs::copy(src, dest) {
+                    match fs::copy(src, dest) {
                     Ok(_) => {
                         println!("File copy succeeded");
-                        return Ok(());
+                        let norm = normalize_path(&final_dest_path);
+                        println!("Returning normalized path: {}", norm);
+                        return Ok(norm);
                     }
                     Err(e) => {
                         println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
@@ -1835,7 +1876,11 @@ async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
             if is_dir {
                 // Use fs::copy_dir_all for directory copying
                 match fs::copy_dir_all(src, dest) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        let norm = normalize_path(&final_dest_path);
+                        println!("Returning normalized path: {}", norm);
+                        return Ok(norm);
+                    },
                     Err(e) => {
                         println!("copy_dir_all attempt {} failed: {:?}", attempt + 1, e);
                         last_error = Some(e);
@@ -1844,7 +1889,11 @@ async fn copy_file(src_path: String, dest_path: String) -> Result<(), String> {
             } else {
                 // Use fs::copy for file copying
                 match fs::copy(src, dest) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        let norm = normalize_path(&final_dest_path);
+                        println!("Returning normalized path: {}", norm);
+                        return Ok(norm);
+                    },
                     Err(e) => {
                         last_error = Some(e);
                         println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
@@ -1875,84 +1924,71 @@ async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -
     
     // Check if source exists
     if !src.exists() {
-        return Err(format!("Source file does not exist: {}", src_path));
+        return Err(format!("源文件不存在: {}", src_path));
     }
     
+    let is_dir = src.is_dir();
+
     // Create dest directory if it doesn't exist
     if let Some(parent) = dest.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create destination directory: {}", e))?;
+                .map_err(|e| format!("创建目标目录失败: {}", e))?;
         }
     }
     
-    // Try to move file with retry mechanism for file locking issues
+    // Try to move file with retry mechanism
     let max_retries = 3;
-    let mut attempt = 0;
+    let mut success = false;
     let mut last_error: Option<std::io::Error> = None;
-    
-    while attempt < max_retries {
-        match fs::rename(src, dest) {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                attempt += 1;
-                last_error = Some(e);
-                
-                // Wait a bit before retrying
-                if attempt < max_retries {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
-            }
-        }
-    }
-    
-    // If all retries failed, try a fallback approach: copy + delete
-    if let Some(e) = last_error {
-        if e.kind() == std::io::ErrorKind::PermissionDenied || 
-           e.kind() == std::io::ErrorKind::Other {
-            
-            // Fallback: copy then delete
-            match fs::copy(src, dest) {
-                Ok(_) => {
-                    // Copy succeeded, now delete the original
-                    match fs::remove_file(src) {
-                        Ok(_) => {
-                            // 同步清理旧路径数据库记录
-                            let app_db = app.state::<AppDbPool>();
-                            let conn = app_db.get_connection();
-                            let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
-                            let _ = db::file_metadata::delete_metadata_by_path(&conn, &src_path);
-                            
-                            let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
-                            let _ = color_db.delete_colors_by_path(&src_path);
 
-                            return Ok(());
-                        },
-                        Err(delete_err) => {
-                            // If delete fails, try to clean up the copy
-                            let _ = fs::remove_file(dest);
-                            return Err(format!("Failed to delete original file after copy: {}", delete_err));
-                        }
-                    }
-                },
-                Err(copy_err) => {
-                    return Err(format!("Failed to move file after {} attempts, fallback copy also failed: {} (original error: {})", max_retries, copy_err, e));
-                }
+    for attempt in 0..max_retries {
+        match fs::rename(src, dest) {
+            Ok(_) => {
+                success = true;
+                break;
+            },
+            Err(e) => {
+                last_error = Some(e);
+                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
             }
-        } else {
-            return Err(format!("Failed to move file after {} attempts: {}", max_retries, e));
         }
     }
     
-    // 成功移动（通过 fs::rename）后也要清理旧路径
+    // 如果 rename 失败且不是目录，尝试 copy + delete 兜底
+    if !success && !is_dir {
+        if let Ok(_) = fs::copy(src, dest) {
+            if let Ok(_) = fs::remove_file(src) {
+                success = true;
+            } else {
+                let _ = fs::remove_file(dest); // 清理副本
+            }
+        }
+    }
+    
+    if !success {
+        return Err(format!("无法移动文件/文件夹 (可能被锁定或跨卷): {:?}", last_error));
+    }
+
+    // 物理移动成功后，同步迁移元数据 (避免竞态条件)
+    // 之前使用 spawn_blocking，导致前端可能在数据库更新前就扫描到新位置的文件
+    // 从而触发重复提取。现在改为同步执行。
     let app_db = app.state::<AppDbPool>();
     let conn = app_db.get_connection();
-    let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
-    let _ = db::file_metadata::delete_metadata_by_path(&conn, &src_path);
+    
+    if is_dir {
+        let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
+        let _ = db::file_metadata::migrate_metadata_dir(&conn, &src_path, &dest_path);
+    } else {
+        let old_id = generate_id(&src_path);
+        let new_id = generate_id(&dest_path);
+        let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
+        let _ = db::file_metadata::migrate_metadata(&conn, &old_id, &new_id, &dest_path);
+    }
     
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    let _ = color_db.delete_colors_by_path(&src_path);
-
+    let _ = color_db.move_colors(&src_path, &dest_path);
+    
     Ok(())
 }
 
@@ -2793,6 +2829,7 @@ async fn db_upsert_file_metadata(
     db::file_metadata::upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
 }
 
+
 fn main() {
     
     tauri::Builder::default()
@@ -2808,6 +2845,7 @@ fn main() {
             search_by_palette,
             search_by_color,
             scan_directory,
+            db_copy_file_metadata,
             force_rescan,
             add_pending_files_to_db,
             get_default_paths,
@@ -2838,7 +2876,8 @@ fn main() {
             db_upsert_person,
             db_delete_person,
             db_update_person_avatar,
-            db_upsert_file_metadata
+            db_upsert_file_metadata,
+            db_copy_file_metadata
         ])
         .setup(|app| {
             // 创建托盘菜单

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   copyFile, moveFile, scanFile, writeFileFromBytes,
-  deleteFile, createFolder, renameFile, copyImageColors
+  deleteFile, createFolder, renameFile, copyImageColors,
+  dbCopyFileMetadata
 } from '../api/tauri-bridge';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { info as logInfo, debug as logDebug } from '../utils/logger';
@@ -69,11 +70,15 @@ export const useFileOperations = ({
         if (!fileInfo) return;
 
         try {
-          await copyFile(fileInfo.sourcePath, fileInfo.newPath);
-          // 尝试复制颜色信息，避免重复提取
-          await copyImageColors(fileInfo.sourcePath, fileInfo.newPath);
+          const actualDestPath = await copyFile(fileInfo.sourcePath, fileInfo.newPath);
+          // 尝试复制颜色信息，避免重复提取 — 添加日志以便排查
+          console.log('[CopyFiles] copyImageColors invoked', { src: fileInfo.sourcePath, dest: actualDestPath });
+          const copyColorsResult = await copyImageColors(fileInfo.sourcePath, actualDestPath);
+          console.log('[CopyFiles] copyImageColors result', { src: fileInfo.sourcePath, dest: actualDestPath, result: copyColorsResult });
+          // 复制元数据（标签、描述等）
+          await dbCopyFileMetadata(fileInfo.sourcePath, actualDestPath);
 
-          const scannedFile = await scanFile(fileInfo.newPath, targetFolderId);
+          const scannedFile = await scanFile(actualDestPath, targetFolderId);
           scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
           copiedCount++;
           updateTask(taskId, { current: copiedCount });

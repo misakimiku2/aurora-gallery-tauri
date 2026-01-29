@@ -36,6 +36,12 @@ impl AppDbPool {
     }
 }
 
+pub fn generate_id(path: &str) -> String {
+    let normalized = path.replace('\\', "/");
+    let hash = md5::compute(normalized.as_bytes());
+    format!("{:x}", hash)[..9].to_string()
+}
+
 pub fn init_db(conn: &Connection) -> Result<()> {
     // Create persons table
     conn.execute(

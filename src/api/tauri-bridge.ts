@@ -635,13 +635,15 @@ export const deleteFile = async (path: string): Promise<void> => {
 };
 
 /**
- * 复制文件
+ * 复制文件 — 返回实际写入的目标路径（Rust 可能在同目录自复制时生成唯一文件名）
  * @param srcPath 源文件路径
- * @param destPath 目标文件路径
+ * @param destPath 目标文件路径（请求的）
+ * @returns 实际写入的目标路径
  */
-export const copyFile = async (srcPath: string, destPath: string): Promise<void> => {
+export const copyFile = async (srcPath: string, destPath: string): Promise<string> => {
   try {
-    await invoke('copy_file', { srcPath, destPath });
+    const finalPath = await invoke<string>('copy_file', { srcPath, destPath });
+    return finalPath;
   } catch (error) {
     console.error('Failed to copy file:', error);
     throw error;
@@ -962,6 +964,20 @@ export const dbUpsertFileMetadata = async (metadata: {
     await invoke('db_upsert_file_metadata', { metadata });
   } catch (error) {
     console.error('Failed to upsert file metadata:', error);
+    throw error;
+  }
+};
+
+/**
+ * 复制文件元数据
+ * @param srcPath 源文件路径
+ * @param destPath 目标文件路径
+ */
+export const dbCopyFileMetadata = async (srcPath: string, destPath: string): Promise<void> => {
+  try {
+    await invoke('db_copy_file_metadata', { srcPath, destPath });
+  } catch (error) {
+    console.error('Failed to copy file metadata:', error);
     throw error;
   }
 };

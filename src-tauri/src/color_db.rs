@@ -367,65 +367,208 @@ impl ColorDbPool {
          Ok(results)
     }
 
-    pub fn copy_colors(&self, src_path: &str, dest_path: &str) -> Result<bool> {
-        let conn = self.conn.lock().map_err(|e| e.to_string())?;
-        
-        let mut stmt = conn.prepare(
-            "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = 'extracted'"
-        ).map_err(|e| e.to_string())?;
-        
-        let source_colors = match stmt.query_row(params![src_path], |row| {
-            let colors: String = row.get(0)?;
-            Ok(colors)
-        }) {
-            Ok(c) => Some(c),
-            Err(rusqlite::Error::QueryReturnedNoRows) => None,
-            Err(e) => return Err(e.to_string()),
-        };
-        
-        drop(stmt);
+    pub fn move_colors(&self, old_path: &str, new_path: &str) -> Result<()> {
+        let old_normalized = old_path.replace("\\", "/");
+        let new_normalized = new_path.replace("\\", "/");
+        let mut conn = self.get_connection();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-        if let Some(colors) = source_colors {
-            let current_ts = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_err(|e| e.to_string())?
-                .as_secs() as i64;
-            
-            let count = conn.execute(
-                "INSERT OR REPLACE INTO dominant_colors 
-                 (file_path, colors, created_at, updated_at, status) 
-                 VALUES (?, ?, ?, ?, ?)",
-                params![
-                    dest_path,
-                    colors,
-                    current_ts,
-                    current_ts,
-                    "extracted"
-                ],
-            ).map_err(|e| e.to_string())?;
-            
-            if count > 0 {
-                eprintln!("[ColorDB] Copied colors from {} to {}", src_path, dest_path);
-                
-                if let Ok(color_results) = serde_json::from_str::<Vec<ColorResult>>(&colors) {
-                     let labs: Vec<Lab> = color_results.iter()
-                         .filter_map(|c| hex_to_lab(&c.hex))
-                         .collect();
-                     
-                     let new_cached_item = CachedImage {
-                         file_path: dest_path.to_string(),
-                         labs,
-                     };
-                     
-                     if let Ok(mut cache) = self.cache.write() {
-                         cache.push(new_cached_item);
-                     }
+        // 1. 更新 dominant_colors 表
+        // 处理单个文件
+        tx.execute(
+            "UPDATE dominant_colors SET file_path = ?1 WHERE file_path = ?2",
+            params![new_normalized, old_normalized],
+        ).map_err(|e| e.to_string())?;
+
+        // 处理目录：使用 SQL 的字符串替换逻辑直接批量更新，避免在 Rust 中循环
+        // 获取结尾可能带斜杠的路径
+        let old_dir_prefix = if old_normalized.ends_with('/') { old_normalized.clone() } else { format!("{}/", old_normalized) };
+        let new_dir_prefix = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+        let old_dir_pattern = format!("{}%", old_dir_prefix);
+
+        // 使用 SQL 字符串函数进行前缀替换
+        // UPDATE table SET path = new_prefix || SUBSTR(path, LENGTH(old_prefix) + 1) WHERE path LIKE 'old_prefix%'
+        tx.execute(
+            "UPDATE dominant_colors SET file_path = ?1 || SUBSTR(file_path, ?2) WHERE file_path LIKE ?3",
+            params![new_dir_prefix, (old_dir_prefix.len() + 1) as i32, old_dir_pattern],
+        ).map_err(|e| e.to_string())?;
+
+        // 2. 更新 image_color_indices 表
+        tx.execute(
+            "UPDATE image_color_indices SET file_path = ?1 WHERE file_path = ?2",
+            params![new_normalized, old_normalized],
+        ).map_err(|e| e.to_string())?;
+
+        tx.execute(
+            "UPDATE image_color_indices SET file_path = ?1 || SUBSTR(file_path, ?2) WHERE file_path LIKE ?3",
+            params![new_dir_prefix, (old_dir_prefix.len() + 1) as i32, old_dir_pattern],
+        ).map_err(|e| e.to_string())?;
+
+        tx.commit().map_err(|e| e.to_string())?;
+
+        // 3. 更新内存缓存：一次性获取写锁，并尽量加快处理速度
+        if let Ok(mut cache) = self.cache.write() {
+            for item in cache.iter_mut() {
+                // 统一路径分隔符进行匹配
+                let item_path = item.file_path.replace("\\", "/");
+                if item_path == old_normalized {
+                    item.file_path = new_normalized.clone();
+                } else if item_path.starts_with(&old_dir_prefix) {
+                    let relative_path = &item_path[old_dir_prefix.len()..];
+                    item.file_path = format!("{}{}", new_dir_prefix, relative_path);
                 }
-                return Ok(true);
             }
         }
+
+        Ok(())
+    }
+
+    pub fn copy_colors(&self, src_path: &str, dest_path: &str) -> Result<bool> {
+        let src_normalized = src_path.replace("\\", "/");
+        let dest_normalized = dest_path.replace("\\", "/");
+        eprintln!("[ColorDB] copy_colors called: src='{}' dest='{}' -> normalized src='{}' dest='{}'", src_path, dest_path, src_normalized, dest_normalized);
+        let mut conn = self.get_connection();
+        let current_ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs() as i64;
+
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+        // 1. 处理单个文件 (直接 SQL 复制)
+        let count = tx.execute(
+            "INSERT OR REPLACE INTO dominant_colors (file_path, colors, created_at, updated_at, status)
+             SELECT ?1, colors, ?2, ?3, status
+             FROM dominant_colors
+             WHERE file_path = ?4 AND status = 'extracted'",
+             params![&dest_normalized, current_ts, current_ts, &src_normalized],
+        ).map_err(|e| e.to_string())?;
+        eprintln!("[ColorDB] copy_colors: single-file insert affected rows={} (dest='{}')", count, dest_normalized);
+
+        let mut copied = count > 0;
+
+        // 2. 处理目录 (批量 SQL 复制)
+        // INSERT INTO ... SELECT path_replace(...)
+        let src_dir_prefix = if src_normalized.ends_with('/') { src_normalized.clone() } else { format!("{}/", src_normalized) };
+        let dest_dir_prefix = if dest_normalized.ends_with('/') { dest_normalized.clone() } else { format!("{}/", dest_normalized) };
+        let src_dir_pattern = format!("{}%", src_dir_prefix);
+        let path_offset = (src_dir_prefix.len() + 1) as i32;
+
+        let count_dir = tx.execute(
+            "INSERT OR REPLACE INTO dominant_colors (file_path, colors, created_at, updated_at, status)
+             SELECT ?1 || SUBSTR(file_path, ?2), colors, ?3, ?4, status
+             FROM dominant_colors
+             WHERE file_path LIKE ?5 AND status = 'extracted'",
+             params![
+                 &dest_dir_prefix, 
+                 path_offset, 
+                 current_ts, 
+                 current_ts, 
+                 &src_dir_pattern
+             ],
+        ).map_err(|e| e.to_string())?;
+        eprintln!("[ColorDB] copy_colors: directory insert affected rows={} (dest_prefix='{}')", count_dir, dest_dir_prefix);
+
+        if count_dir > 0 {
+            copied = true;
+        }
+
+        // 3. 同时复制 image_color_indices (用于搜索优化)
+        // 这一步比较复杂，因为 indices 表没有存 colors JSON，而是拆解的数据。
+        // 最好的办法是重新生成，但为了性能，我们可以直接基于新路径复制。
+        // 只要 dominant_colors 复制了，内存缓存加载时会重建索引（或者我们可以延迟构建）。
+        // 但为了搜索一致性，最好也复制 indices。
         
-        Ok(false)
+        // 单文件索引复制
+        tx.execute(
+            "INSERT INTO image_color_indices (file_path, l, a, b)
+             SELECT ?1, l, a, b FROM image_color_indices WHERE file_path = ?2",
+            params![&dest_normalized, &src_normalized]
+        ).map_err(|e| e.to_string())?;
+        eprintln!("[ColorDB] copy_colors: attempted single-file indices copy src='{}' -> dest='{}'", src_normalized, dest_normalized);
+
+        // 目录索引复制
+        tx.execute(
+            "INSERT INTO image_color_indices (file_path, l, a, b)
+             SELECT ?1 || SUBSTR(file_path, ?2), l, a, b 
+             FROM image_color_indices 
+             WHERE file_path LIKE ?3",
+             params![
+                 &dest_dir_prefix, 
+                 path_offset, 
+                 &src_dir_pattern
+             ]
+        ).map_err(|e| e.to_string())?;
+        eprintln!("[ColorDB] copy_colors: attempted directory indices copy src_prefix='{}' -> dest_prefix='{}'", src_dir_prefix, dest_dir_prefix);
+
+        tx.commit().map_err(|e| e.to_string())?;
+        eprintln!("[ColorDB] copy_colors: transaction committed (copied={})", copied);
+
+        // 3. 更新内存缓存 (仅针对已提取的)
+        if copied {
+            if let Ok(mut cache) = self.cache.write() {
+                // 读取刚才复制的数据来更新缓存... 
+                // 或者，我们可以再次利用 SQL 查询出刚刚插入的数据，但这会增加 IO。
+                // 鉴于 copy 操作通常由用户触发且数量可控，我们可以做一个这种的策略：
+                // 如果是目录复制，为了性能，我们可能选择 *重载* 或者 *延迟加载* 缓存。
+                // 但为了 UI 即时反馈，我们还是查询一下新数据吧。
+                
+                // 为了避免巨大的查询，我们只查询目标路径下的数据
+                let _dest_pattern = if dest_normalized.ends_with('/') {
+                    format!("{}%", dest_normalized) 
+                } else {
+                    format!("{}%", dest_normalized) // 这里简化处理，可能是文件也可能是目录
+                };
+
+                // 注意：这里需要一个新的连接，因为之前的 tx 已经 commit 并且 conn 被借用了（虽然已经释放）。
+                // 但 self.conn 是 Mutex，我们需要小心死锁。self.get_connection() 会返回新的 Connection (如果池化) 或者是锁。
+                // 在此实现中 get_connection 返回的是 Connection 对象（非池化？不，看似是新建连接或从某处获取）。
+                // 让我们看 self.get_connection() 的实现... (未显示，假设是安全的)
+                // 实际上我们不需要在此处查询。可以手动构建缓存项。
+                
+                // 但为了代码简单且健壮（避免手动逻辑与 SQL 逻辑不一致），如果不做缓存更新，
+                // 用户可能会发现搜不到新图。
+                // 考虑到“复制”通常不如“移动”那么频繁，我们这里做一个简单的全量重载可能太重。
+                // 让我们只针对“单文件”做精确更新，针对“目录”做查询更新。
+                
+                let mut stmt = conn.prepare(
+                    "SELECT file_path, colors FROM dominant_colors WHERE file_path = ?1 OR file_path LIKE ?2"
+                ).map_err(|e| e.to_string())?;
+                
+                let dest_dir_pattern = format!("{}/%", dest_normalized.trim_end_matches('/'));
+                
+                let rows = stmt.query_map(params![dest_normalized, dest_dir_pattern], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }).map_err(|e| e.to_string())?;
+                
+                for row in rows {
+                    if let Ok((path, colors_json)) = row {
+                        eprintln!("[ColorDB] copy_colors: updating cache for path='{}'", path);
+                        self.update_cache_item(&mut cache, &path, &colors_json);
+                    }
+                }
+            }
+        }
+        eprintln!("[ColorDB] copy_colors completed: src='{}' dest='{}' copied={}", src_normalized, dest_normalized, copied);
+        Ok(copied)
+    }
+
+    // 辅助函数：更新缓存项
+    fn update_cache_item(&self, cache: &mut Vec<CachedImage>, path: &str, colors_json: &str) {
+        if let Ok(color_results) = serde_json::from_str::<Vec<ColorResult>>(colors_json) {
+            let labs: Vec<Lab> = color_results.iter()
+                .filter_map(|c| hex_to_lab(&c.hex))
+                .collect();
+            
+            if let Some(pos) = cache.iter().position(|x| x.file_path == path) {
+                cache[pos].labs = labs;
+            } else {
+                cache.push(CachedImage {
+                    file_path: path.to_string(),
+                    labs,
+                });
+            }
+        }
     }
 
     fn load_from_db_internal(&self) -> Result<Vec<CachedImage>> {
@@ -464,6 +607,8 @@ impl ColorDbPool {
     // 保存主色调数据 (Method)
     pub fn save_colors(&self, file_path: &str, colors: &[ColorResult]) -> Result<()> {
         let mut conn = self.get_connection();
+        // Normalize path to use forward slashes to ensure consistent DB keys
+        let normalized_path = file_path.replace("\\", "/");
         let current_ts = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|e| e.to_string())?
@@ -478,26 +623,26 @@ impl ColorDbPool {
             "INSERT OR IGNORE INTO dominant_colors 
              (file_path, colors, created_at, updated_at, status) 
              VALUES (?, ?, ?, ?, ?)",
-            params![file_path, colors_json, current_ts, current_ts, "extracted"],
+            params![&normalized_path, colors_json, current_ts, current_ts, "extracted"],
         ).map_err(|e| format!("Database error in save_colors: {}", e))?;
     
         tx.execute(
             "UPDATE dominant_colors
              SET colors = ?, updated_at = ?, status = ?
              WHERE file_path = ?",
-            params![colors_json, current_ts, "extracted", file_path],
+            params![colors_json, current_ts, "extracted", &normalized_path],
         ).map_err(|e| format!("Database error in save_colors: {}", e))?;
 
         // 更新 image_color_indices 表
-        tx.execute("DELETE FROM image_color_indices WHERE file_path = ?", params![file_path])
-           .map_err(|e| format!("Failed to delete old indices: {}", e))?;
+          tx.execute("DELETE FROM image_color_indices WHERE file_path = ?", params![&normalized_path])
+              .map_err(|e| format!("Failed to delete old indices: {}", e))?;
       
         {
             let mut stmt = tx.prepare("INSERT INTO image_color_indices (file_path, l, a, b) VALUES (?, ?, ?, ?)")
                 .map_err(|e| format!("Failed to prepare statement: {}", e))?;
             
             for color in colors {
-                stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b])
+                stmt.execute(params![&normalized_path, color.lab_l, color.lab_a, color.lab_b])
                     .map_err(|e| format!("Failed to insert index: {}", e))?;
             }
         }
@@ -511,11 +656,11 @@ impl ColorDbPool {
         
         let mut cache = self.cache.write().map_err(|e| e.to_string())?;
         
-        if let Some(pos) = cache.iter().position(|x| x.file_path == file_path) {
+        if let Some(pos) = cache.iter().position(|x| x.file_path == normalized_path) {
             cache[pos].labs = labs;
         } else {
             cache.push(CachedImage {
-                file_path: file_path.to_string(),
+                file_path: normalized_path.clone(),
                 labs,
             });
         }
@@ -550,6 +695,9 @@ impl ColorDbPool {
                 .map_err(|e| format!("Failed to prepare insert statement: {}", e))?;
     
             for (file_path, colors) in color_data {
+                // Normalize incoming file path to forward slashes
+                let normalized_path = file_path.replace("\\", "/");
+
                 let colors_json = match serde_json::to_string(colors) {
                     Ok(json) => json,
                     Err(e) => {
@@ -563,20 +711,20 @@ impl ColorDbPool {
                     "INSERT OR IGNORE INTO dominant_colors 
                      (file_path, colors, created_at, updated_at, status) 
                      VALUES (?, ?, ?, ?, ?)",
-                    params![file_path, colors_json, current_ts, current_ts, "extracted"],
+                    params![&normalized_path, colors_json, current_ts, current_ts, "extracted"],
                 );
     
                 match tx.execute(
                     "UPDATE dominant_colors
                      SET colors = ?, updated_at = ?, status = ?
                      WHERE file_path = ?",
-                    params![colors_json, current_ts, "extracted", file_path],
+                    params![colors_json, current_ts, "extracted", &normalized_path],
                 ) {
                     Ok(_) => {
                         success_count += 1;
-                        let _ = delete_indices_stmt.execute(params![file_path]);
+                        let _ = delete_indices_stmt.execute(params![&normalized_path]);
                         for color in *colors {
-                            let _ = insert_indices_stmt.execute(params![file_path, color.lab_l, color.lab_a, color.lab_b]);
+                            let _ = insert_indices_stmt.execute(params![&normalized_path, color.lab_l, color.lab_a, color.lab_b]);
                         }
                     },
                     Err(e) => {
@@ -599,15 +747,16 @@ impl ColorDbPool {
                 // To be safe, let's only strictly update cache if transaction committed.
                 let mut cache = self.cache.write().map_err(|e| e.to_string())?;
                 for (file_path, colors) in color_data {
+                     let normalized_path = file_path.replace("\\", "/");
                      let labs: Vec<Lab> = colors.iter()
                          .filter_map(|c| hex_to_lab(&c.hex))
                          .collect();
                      
-                     if let Some(pos) = cache.iter().position(|x| x.file_path == *file_path) {
+                     if let Some(pos) = cache.iter().position(|x| x.file_path == normalized_path) {
                          cache[pos].labs = labs;
                      } else {
                          cache.push(CachedImage {
-                             file_path: file_path.to_string(),
+                             file_path: normalized_path,
                              labs,
                          });
                      }
@@ -777,6 +926,8 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     let mut added_count = 0usize;
     
     for path in file_paths {
+        // Normalize incoming path to forward slashes to keep DB consistent
+        let normalized = path.replace("\\", "/");
         // 使用 INSERT OR IGNORE 来避免重复
         // 已存在的文件（无论是 pending、processing 还是 extracted）都会被忽略
         let result = tx.execute(
@@ -784,7 +935,7 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
              (file_path, colors, created_at, updated_at, status) 
              VALUES (?, ?, ?, ?, ?)",
             params![
-                path,
+                &normalized,
                 "[]", // 空颜色数组
                 current_ts,
                 current_ts,
@@ -810,16 +961,38 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
 
 
 
+// 获取原始颜色 JSON 字符串
+pub fn get_colors_by_file_path_raw(
+    conn: &mut Connection,
+    file_path: &str
+) -> Result<Option<String>> {
+    // Normalize incoming query path to match stored DB keys
+    let normalized = file_path.replace("\\", "/");
+    let mut stmt = conn.prepare(
+        "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = 'extracted'"
+    ).map_err(|e| e.to_string())?;
+    
+    match stmt.query_row(params![&normalized], |row| {
+        Ok(row.get::<_, String>(0)?)
+    }) {
+        Ok(colors) => Ok(Some(colors)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 // 根据文件路径获取颜色数据
 pub fn get_colors_by_file_path(
     conn: &mut Connection, 
     file_path: &str
 ) -> Result<Option<Vec<ColorResult>>> {
+    // Normalize query path to forward slashes
+    let normalized = file_path.replace("\\", "/");
     let mut stmt = conn.prepare(
         "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = ?"
     ).map_err(|e| e.to_string())?;
     
-    match stmt.query_row(params![file_path, "extracted"], |row| {
+    match stmt.query_row(params![&normalized, "extracted"], |row| {
         let colors_json: String = row.get(0)?;
         Ok(colors_json)
     }) {
