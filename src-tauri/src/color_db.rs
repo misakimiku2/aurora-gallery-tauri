@@ -368,8 +368,8 @@ impl ColorDbPool {
     }
 
     pub fn move_colors(&self, old_path: &str, new_path: &str) -> Result<()> {
-        let old_normalized = old_path.replace("\\", "/");
-        let new_normalized = new_path.replace("\\", "/");
+        let old_normalized = crate::db::normalize_path(old_path);
+        let new_normalized = crate::db::normalize_path(new_path);
         let mut conn = self.get_connection();
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
@@ -406,18 +406,38 @@ impl ColorDbPool {
 
         tx.commit().map_err(|e| e.to_string())?;
 
-        // 3. 更新内存缓存：一次性获取写锁，并尽量加快处理速度
-        if let Ok(mut cache) = self.cache.write() {
-            for item in cache.iter_mut() {
-                // 统一路径分隔符进行匹配
-                let item_path = item.file_path.replace("\\", "/");
-                if item_path == old_normalized {
-                    item.file_path = new_normalized.clone();
-                } else if item_path.starts_with(&old_dir_prefix) {
-                    let relative_path = &item_path[old_dir_prefix.len()..];
-                    item.file_path = format!("{}{}", new_dir_prefix, relative_path);
+        // 3. 非关键路径：将内存缓存的更新移到后台线程执行以避免阻塞重命名操作
+        //    SQL 已经在事务中完成，因此可以安全地异步更新内存缓存以提高响应性。
+        {
+            let cache_arc = Arc::clone(&self.cache);
+            let old_dir_prefix_cl = old_dir_prefix.clone();
+            let new_dir_prefix_cl = new_dir_prefix.clone();
+            let old_norm_cl = old_normalized.clone();
+            let new_norm_cl = new_normalized.clone();
+
+            std::thread::spawn(move || {
+                let start = std::time::Instant::now();
+                match cache_arc.write() {
+                    Ok(mut cache) => {
+                        let mut updated: usize = 0;
+                        for item in cache.iter_mut() {
+                            let item_path = item.file_path.replace("\\", "/");
+                            if item_path == old_norm_cl {
+                                item.file_path = new_norm_cl.clone();
+                                updated += 1;
+                            } else if item_path.starts_with(&old_dir_prefix_cl) {
+                                let relative_path = &item_path[old_dir_prefix_cl.len()..];
+                                item.file_path = format!("{}{}", new_dir_prefix_cl, relative_path);
+                                updated += 1;
+                            }
+                        }
+                        eprintln!("[ColorDB] async cache update completed — updated {} entries in {:?}", updated, start.elapsed());
+                    }
+                    Err(e) => {
+                        eprintln!("[ColorDB] async cache update failed to acquire write lock: {:?}", e);
+                    }
                 }
-            }
+            });
         }
 
         Ok(())

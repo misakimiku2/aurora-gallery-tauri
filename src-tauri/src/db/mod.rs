@@ -36,8 +36,17 @@ impl AppDbPool {
     }
 }
 
+pub fn normalize_path(path: &str) -> String {
+    let mut normalized = path.replace('\\', "/");
+    // Handle Windows leading slash from Tauri/Frontend (e.g. /C:/path -> C:/path)
+    if cfg!(windows) && normalized.starts_with('/') && normalized.len() > 2 && normalized.chars().nth(2) == Some(':') {
+        normalized = normalized[1..].to_string();
+    }
+    normalized
+}
+
 pub fn generate_id(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
+    let normalized = normalize_path(path);
     let hash = md5::compute(normalized.as_bytes());
     format!("{:x}", hash)[..9].to_string()
 }

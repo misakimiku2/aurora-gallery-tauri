@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
-  copyFile, moveFile, scanFile, writeFileFromBytes,
+  copyFile, moveFile, scanFile, scanDirectory, writeFileFromBytes,
   deleteFile, createFolder, renameFile, copyImageColors,
   dbCopyFileMetadata
 } from '../api/tauri-bridge';
@@ -581,22 +581,64 @@ export const useFileOperations = ({
     const file = state.files[id];
     if (!value || value === file.name) { setState(s => ({ ...s, renamingId: null })); return; }
     if (file.path) {
-      try {
-        const separator = file.path.includes('/') ? '/' : '\\';
-        const parentPath = file.path.substring(0, file.path.lastIndexOf(separator));
-        const newPath = `${parentPath}${separator}${value}`;
-        if (isTauriEnvironment()) {
-          await renameFile(file.path, newPath);
-        } else {
-          throw new Error("No file system access available");
+      const separator = file.path.includes('/') ? '/' : '\\';
+      const parentPath = file.path.substring(0, file.path.lastIndexOf(separator));
+      const newPath = `${parentPath}${separator}${value}`;
+
+      // --- 乐观更新（立即在 UI 中反映） ---
+      const prevFileSnapshot = { ...file };
+      setState(prev => ({
+        ...prev,
+        files: {
+          ...prev.files,
+          [id]: {
+            ...prev.files[id],
+            name: value,
+            path: newPath
+          }
         }
-        await handleRefresh();
-        setState(s => ({ ...s, renamingId: null }));
-      } catch (e) {
-        console.error(e);
-        showToast("Rename failed");
+      }));
+      setState(s => ({ ...s, renamingId: null }));
+      const _renameTimer = performanceMonitor.start('rename.optimistic', undefined, true);
+      console.log('[Rename] optimistic update applied', { id, oldPath: prevFileSnapshot.path, newPath });
+
+      // 先执行 OS 层重命名；失败则回滚并通知用户
+      try {
+        if (isTauriEnvironment()) {
+          await renameFile(prevFileSnapshot.path, newPath);
+        } else {
+          throw new Error('No file system access available');
+        }
+      } catch (err) {
+        // 回滚乐观更新
+        console.error('[Rename] physical rename failed, rolling back optimistic update', err);
+        setState(prev => ({
+          ...prev,
+          files: {
+            ...prev.files,
+            [id]: prevFileSnapshot
+          }
+        }));
+        showToast('Rename failed');
+        performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
+        return;
       }
+
+      // 在后台异步刷新（不阻塞 UI）——由于后端现在会同步迁移索引，不再需要昂贵的全量扫描
+      (async () => {
+        try {
+          // 快速刷新当前文件夹显示即可，不需要 forceRescan=true
+          await handleRefresh();
+          console.log('[Rename][bg] display refreshed via handleRefresh');
+          performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true });
+        } catch (e) {
+          console.error('[Rename][bg] refresh failed', e);
+          performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
+          showToast('Rename completed — refresh failed');
+        }
+      })();
     } else {
+      // Virtual item (no real path) — safe to update synchronously
       handleUpdateFile(id, { name: value });
       setState(s => ({ ...s, renamingId: null }));
     }

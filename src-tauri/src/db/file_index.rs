@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, Result};
+use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +176,42 @@ pub fn delete_entries_by_path(conn: &Connection, path: &str) -> Result<()> {
     conn.execute(
         "DELETE FROM file_index WHERE path LIKE ?",
         params![dir_pattern],
+    )?;
+    
+    Ok(())
+}
+
+pub fn migrate_index_dir(conn: &Connection, old_path: &str, new_path: &str) -> Result<()> {
+    let old_normalized = super::normalize_path(old_path);
+    let new_normalized = super::normalize_path(new_path);
+    
+    // 找出新文件夹的名称
+    let new_name = Path::new(&new_normalized)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 1. 更新顶层文件夹的路径和名称
+    // ID 不变，ParentID 不变
+    conn.execute(
+        "UPDATE file_index SET path = ?1, name = ?2 WHERE path = ?3",
+        params![new_normalized, new_name, old_normalized],
+    )?;
+
+    // 2. 批量更新子文件的路径 (Stable ID: ID and ParentID remain unchanged)
+    // 使用 SQL 字符串拼接功能：new_path_prefix + SUBSTR(old_path, length(old_path_prefix) + 1)
+    let old_dir_prefix = if old_normalized.ends_with('/') { old_normalized.clone() } else { format!("{}/", old_normalized) };
+    let new_dir_prefix = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+    let dir_pattern = format!("{}%", old_dir_prefix);
+
+    // SQLite SUBSTR starts at 1. We want to skip old_dir_prefix.
+    // So if prefix len is N, we want from N+1.
+    let skip_len = (old_dir_prefix.len() + 1) as i32;
+
+    conn.execute(
+        "UPDATE file_index SET path = ?1 || SUBSTR(path, ?2) WHERE path LIKE ?3",
+        params![new_dir_prefix, skip_len, dir_pattern],
     )?;
     
     Ok(())

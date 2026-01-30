@@ -125,55 +125,27 @@ pub fn copy_metadata(conn: &Connection, src_id: &str, dest_id: &str, dest_path: 
 }
 
 pub fn migrate_metadata_dir(conn: &Connection, old_path: &str, new_path: &str) -> Result<()> {
-    let old_normalized = old_path.replace("\\", "/");
-    let new_normalized = new_path.replace("\\", "/");
+    let old_normalized = super::normalize_path(old_path);
+    let new_normalized = super::normalize_path(new_path);
     
-    // 找出所有路径匹配的元数据
-    let mut stmt = conn.prepare(
-        "SELECT file_id, path FROM file_metadata WHERE path = ?1 OR path LIKE ?2"
+    // 1. 更新顶层文件夹 (如果有 metadata 的话)
+    conn.execute(
+        "UPDATE file_metadata SET path = ?1 WHERE path = ?2",
+        params![new_normalized, old_normalized],
     )?;
-    
+
+    // 2. 批量更新子文件的路径 (Stable ID: ID remains unchanged)
     let old_dir_prefix = if old_normalized.ends_with('/') { old_normalized.clone() } else { format!("{}/", old_normalized) };
-    let _new_dir_prefix = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+    let new_dir_prefix = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
     let dir_pattern = format!("{}%", old_dir_prefix);
     
-    let rows = stmt.query_map(params![old_normalized, dir_pattern], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    
-    let mut updates = Vec::new();
-    for row in rows {
-        let (old_id, old_full_path) = row?;
-        let relative_path = if old_full_path == old_normalized {
-            "".to_string()
-        } else {
-            old_full_path[old_normalized.len()..].to_string()
-        };
-        
-        // 确保新路径生成正确
-        let new_full_path = match relative_path.as_str() {
-            "" => new_normalized.clone(),
-            _ => format!("{}{}", new_normalized.trim_end_matches('/'), relative_path),
-        };
-        
-        let new_id = super::generate_id(&new_full_path);
-        updates.push((old_id, new_id, new_full_path));
-    }
-    drop(stmt);
-    
-    // 使用显式事务一次性执行所有更新，避免频繁 IO
-    // 由于 migrate_metadata 内部也可能使用连接，我们手动执行 UPDATE 以确保性能
-    if !updates.is_empty() {
-        // 由于我们传入的是 &Connection，无法直接创建 Transaction
-        // 但我们可以直接执行 SQL。如果上层已经开启了事务，这里会参与上层事务。
-        // 如果没有，这仍然比分散的 execute 快一些。
-        for (old_id, new_id, new_full_path) in updates {
-            conn.execute(
-                "UPDATE file_metadata SET file_id = ?1, path = ?2 WHERE file_id = ?3",
-                params![new_id, new_full_path, old_id],
-            )?;
-        }
-    }
+    // SQLite SUBSTR starts at 1. Skip prefix len.
+    let skip_len = (old_dir_prefix.len() + 1) as i32;
+
+    conn.execute(
+        "UPDATE file_metadata SET path = ?1 || SUBSTR(path, ?2) WHERE path LIKE ?3",
+        params![new_dir_prefix, skip_len, dir_pattern],
+    )?;
     
     Ok(())
 }

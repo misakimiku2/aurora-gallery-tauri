@@ -12,6 +12,7 @@ use tauri::Emitter;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
 use serde_json;
+use rusqlite::params; // Import params macro
 
 
 use base64::{Engine as _, engine::general_purpose};
@@ -25,6 +26,11 @@ mod color_extractor;
 mod color_db;
 mod color_worker;
 mod db;
+mod color_search;
+mod thumbnail;
+
+use crate::thumbnail::{process_single_thumbnail, get_thumbnail, get_thumbnails_batch, generate_drag_preview, BatchResult, ThumbnailBatchResult};
+use crate::color_search::{hex_to_lab, search_by_palette, search_by_color};
 
 // --- Window State Management ---
 
@@ -86,440 +92,7 @@ fn save_window_state(app_handle: &tauri::AppHandle) {
 }
 
 // --- Color Search Implementation ---
-
-// Helper: Hex string to Lab color
-fn hex_to_lab(hex: &str) -> Option<Lab> {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 { return None; }
-    
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    
-    // Normalize to 0.0 - 1.0
-    let srgb = Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
-    Some(Lab::from_color(srgb))
-}
-
-#[tauri::command]
-async fn search_by_palette(
-    pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
-    target_palette: Vec<String>
-) -> Result<Vec<String>, String> {
-    eprintln!("[search_by_palette] Called with {} colors: {:?}", target_palette.len(), target_palette);
-    
-    // Parse target palette to Lab once
-    let target_labs: Vec<Lab> = target_palette.iter()
-        .filter_map(|h| hex_to_lab(h))
-        .collect();
-    eprintln!("[search_by_palette] Parsed {} valid Lab colors", target_labs.len());
-        
-    if target_labs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let is_single_color = target_labs.len() == 1;
-    let is_atmosphere_search = target_labs.len() >= 5;
-
-    let pool = pool_state.inner().clone();
-
-    // If cache hasn't been initialized yet, prefer a DB-indexed fast-path to avoid blocking a full refresh.
-    if !pool.is_cache_initialized() {
-        eprintln!("[search_by_palette] cache cold — running DB-index fast-path and starting background preheat");
-        let _ = pool.ensure_cache_initialized_async();
-
-        let conn = pool.get_connection();
-        let mut candidate_set = std::collections::HashSet::new();
-
-        for target in &target_labs {
-            let delta = 20.0f32;
-            if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT file_path FROM image_color_indices WHERE l BETWEEN ? AND ? AND a BETWEEN ? AND ? AND b BETWEEN ? AND ? LIMIT 1000") {
-                if let Ok(rows) = stmt.query_map(rusqlite::params![target.l - delta, target.l + delta, target.a - delta, target.a + delta, target.b - delta, target.b + delta], |r| r.get::<_, String>(0)) {
-                    for r in rows { if let Ok(p) = r { candidate_set.insert(p); } }
-                }
-            }
-        }
-
-        eprintln!("[search_by_palette] DB fast-path candidates={}", candidate_set.len());
-
-        let mut scored: Vec<(String, f32)> = Vec::new();
-        for path in candidate_set.into_iter().take(500) {
-            if let Ok(Some(colors)) = {
-                let mut conn2 = pool.get_connection();
-                color_db::get_colors_by_file_path(&mut conn2, &path)
-            } {
-                let candidate_labs: Vec<Lab> = colors.iter().filter_map(|c| hex_to_lab(&c.hex)).collect();
-                if candidate_labs.is_empty() { continue; }
-
-                if is_single_color {
-                    let target = &target_labs[0];
-                    let position_weights = [1.0f32, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08];
-                    let mut best = 0.0f32;
-                    for (idx, candidate) in candidate_labs.iter().enumerate() {
-                        let dist = candidate.difference(*target);
-                        let sim = if dist < 5.0 { 100.0 } else if dist < 10.0 { 100.0 - (dist - 5.0) * 4.0 } else if dist < 20.0 { 80.0 - (dist - 10.0) * 3.0 } else if dist < 30.0 { 50.0 - (dist - 20.0) * 2.0 } else { (30.0 - (dist - 30.0).min(30.0)).max(0.0) };
-                        let w = if idx < position_weights.len() { position_weights[idx] } else { 0.05 };
-                        best = best.max(sim * w);
-                    }
-                    if best >= 60.0 { scored.push((path.clone(), best)); }
-                } else {
-                    let mut total = 0.0f32; let mut cnt = 0u32;
-                    for t in target_labs.iter().take(5) { let md = candidate_labs.iter().map(|c| c.difference(*t)).fold(f32::INFINITY, |a, b| a.min(b)); total += md; cnt += 1; }
-                    if cnt == 0 { continue; }
-                    let avg = total / cnt as f32;
-                    let score = if avg < 5.0 { 100.0 } else if avg < 10.0 { 90.0 } else if avg < 20.0 { 70.0 } else if avg < 30.0 { 50.0 } else { 20.0 };
-                    if (is_atmosphere_search && score >= 85.0) || (!is_atmosphere_search && score >= 70.0) { scored.push((path.clone(), score)); }
-                }
-            }
-        }
-
-        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(500);
-        let final_results = scored.into_iter().map(|(p, _)| p).collect::<Vec<String>>();
-        eprintln!("[search_by_palette] Returning {} results (DB fast-path)", final_results.len());
-        return Ok(final_results);
-    }
-
-    // Offload compute-intensive task to blocking threadpool
-    // Try cached full-scan first; if cache is not ready, fall back to a DB-indexed fast-path
-    let results = tokio::task::spawn_blocking(move || {
-        pool.access_cache(|all_colors| {
-             eprintln!("[search_by_palette] Searching in {} cached images", all_colors.len());
-             
-             let mut results: Vec<(String, f32)> = all_colors.par_iter()
-                .filter_map(|image_data| {
-                     // Use PRECOMPUTED Labs! No hex_to_lab parsing here anymore.
-                     let candidate_labs = &image_data.labs;
-                     
-                     if candidate_labs.is_empty() { return None; }
-                     
-                     let score: f32;
-                     let threshold: f32;
-    
-                     if is_single_color {
-                 // ========== 单色搜索：考虑颜色位置权重 ==========
-                 // 核心思想：用户搜索红色时，想找的是"红色氛围为主"的图片
-                 // 所以不仅要找到相似颜色，还要求该颜色在图片中占比足够大（位置靠前）
-                 
-                 let target = &target_labs[0];
-                 
-                 // 辅助函数：计算颜色的"色彩程度"（基于Lab空间）
-                 fn calc_colorfulness(lab_a: f32, lab_b: f32) -> f32 {
-                     (lab_a * lab_a + lab_b * lab_b).sqrt() / 127.0
-                 }
-                 
-                 // 检查目标颜色是否有明显色彩（非灰色）
-                 let target_colorfulness = calc_colorfulness(target.a, target.b);
-                 let target_is_colorful = target_colorfulness > 0.05; // 目标颜色有色彩
-                 
-                 // 检查候选图片是否为纯黑白/灰度
-                 let candidate_max_colorfulness = candidate_labs.iter()
-                     .take(5)
-                     .map(|lab| calc_colorfulness(lab.a, lab.b))
-                     .fold(0.0f32, f32::max);
-                 let candidate_is_grayscale = candidate_max_colorfulness < 0.03;
-                 
-                 // 如果搜索的是彩色，但候选图是纯灰度，直接排除
-                 if target_is_colorful && candidate_is_grayscale {
-                     return None;
-                 }
-                 
-                 // 位置权重：第1位=1.0, 第2位=0.7, 第3位=0.5, 第4位=0.35, 之后更低
-                 // 这确保占比大的颜色能贡献高分，但也允许第2-3位的颜色有一定权重
-                 let position_weights = [1.0f32, 0.7, 0.5, 0.35, 0.25, 0.18, 0.12, 0.08];
-                 
-                 let mut best_weighted_score = 0.0f32;
-                 
-                 for (idx, candidate) in candidate_labs.iter().enumerate() {
-                     let dist = candidate.difference(*target); // CIEDE2000
-                     
-                     // 相似度分数：距离越小，分数越高
-                     // DeltaE < 10 认为是相似颜色，< 5 非常相似
-                     let similarity = if dist < 5.0 {
-                         100.0
-                     } else if dist < 10.0 {
-                         100.0 - (dist - 5.0) * 4.0 // 5-10 -> 100-80
-                     } else if dist < 20.0 {
-                         80.0 - (dist - 10.0) * 3.0 // 10-20 -> 80-50
-                     } else if dist < 30.0 {
-                         50.0 - (dist - 20.0) * 2.0 // 20-30 -> 50-30
-                     } else {
-                         (30.0 - (dist - 30.0).min(30.0)).max(0.0) // 30+ -> 30-0
-                     };
-                     
-                     // 位置权重
-                     let pos_weight = if idx < position_weights.len() {
-                         position_weights[idx]
-                     } else {
-                         0.05 // 第8个以后的颜色权重很低
-                     };
-                     
-                     // 加权分数 = 相似度 * 位置权重
-                     let weighted_score = similarity * pos_weight;
-                     
-                     if weighted_score > best_weighted_score {
-                         best_weighted_score = weighted_score;
-                     }
-                 }
-                 
-                 score = best_weighted_score;
-                 // 阈值：需要 score >= 60 才认为是"红色氛围为主"的图片
-                 // 这意味着要么前3位颜色中有相似颜色，要么第1位颜色非常接近
-                 threshold = 60.0;
-                 
-             } else if is_atmosphere_search {
-                 // ========== 氛围搜索（5色以上）：整体调色板结构匹配 ==========
-                 // 核心思想：找与参考图片整体色调相似的图片
-                 // 要求双向匹配：目标颜色能在候选中找到 + 候选主色也要在目标中有对应
-                 // 同时避免将黑白漫画与彩色图片匹配（通过彩度检测）
-                 
-                 // 辅助函数：计算颜色的"色彩程度"（基于Lab空间）
-                 // 在Lab空间中，a和b值决定了色彩，值越大表示色彩越饱和
-                 fn calc_colorfulness(lab_a: f32, lab_b: f32) -> f32 {
-                     // 计算a、b值的欧氏距离，表示离灰色轴（a=0, b=0）有多远
-                     (lab_a * lab_a + lab_b * lab_b).sqrt() / 127.0 // 除以Lab色彩空间的最大值作为归一化
-                 }
-                 
-                 // 计算目标调色板的整体色彩程度
-                 let target_colorfulness: Vec<f32> = target_labs.iter()
-                     .take(5)
-                     .map(|lab| calc_colorfulness(lab.a, lab.b))
-                     .collect();
-                 
-                 let target_avg_colorfulness = if !target_colorfulness.is_empty() {
-                     target_colorfulness.iter().sum::<f32>() / target_colorfulness.len() as f32
-                 } else {
-                     0.0
-                 };
-                 
-                 // 计算候选调色板的整体色彩程度
-                 let candidate_colorfulness: Vec<f32> = candidate_labs.iter()
-                     .take(5)
-                     .map(|lab| calc_colorfulness(lab.a, lab.b))
-                     .collect();
-                 
-                 let candidate_avg_colorfulness = if !candidate_colorfulness.is_empty() {
-                     candidate_colorfulness.iter().sum::<f32>() / candidate_colorfulness.len() as f32
-                 } else {
-                     0.0
-                 };
-                 
-                 // 策略1：计算加权最小距离（考虑位置）
-                 // 目标调色板中的前几个颜色更重要
-                 let target_weights = [1.0f32, 0.85, 0.7, 0.55, 0.4];
-                 
-                 let mut weighted_total_dist = 0.0f32;
-                 let mut total_weight = 0.0f32;
-                 
-                 for (t_idx, t) in target_labs.iter().enumerate() {
-                     let t_weight = if t_idx < target_weights.len() {
-                         target_weights[t_idx]
-                     } else {
-                         0.05
-                     };
-                     
-                     // 找候选颜色中最佳匹配，同时考虑候选位置
-                     let mut best_match_dist = f32::INFINITY;
-                     let mut best_match_pos = candidate_labs.len();
-                     
-                     for (c_idx, c) in candidate_labs.iter().enumerate() {
-                         let dist = c.difference(*t);
-                         if dist < best_match_dist {
-                             best_match_dist = dist;
-                             best_match_pos = c_idx;
-                         }
-                     }
-                     
-                     // 位置惩罚：如果目标的主色（前3位）只能在候选的后面找到匹配，大幅增加惩罚
-                     let position_penalty = if t_idx < 3 {
-                         if best_match_pos > 4 {
-                             best_match_dist * 0.8 // 主色匹配在后面，增加80%惩罚
-                         } else if best_match_pos > 2 {
-                             best_match_dist * 0.4 // 主色匹配在中间，增加40%惩罚
-                         } else {
-                             0.0 // 主色匹配在前面，无惩罚
-                         }
-                     } else {
-                         0.0
-                     };
-                     
-                     let adjusted_dist = best_match_dist + position_penalty;
-                     weighted_total_dist += adjusted_dist * t_weight;
-                     total_weight += t_weight;
-                 }
-                 
-                 let avg_weighted_dist = weighted_total_dist / total_weight;
-                 
-                 // 策略2：严格的双向匹配 - 候选图片的主色也必须在目标调色板中找到对应
-                 // 这是关键：防止完全不同氛围的图片被匹配进来
-                 let mut reverse_mismatch_penalty = 0.0f32;
-                 
-                 // 检查候选图片的前5个主色
-                 for (c_idx, c) in candidate_labs.iter().take(5).enumerate() {
-                     let min_dist_to_target = target_labs.iter()
-                         .map(|t| c.difference(*t))
-                         .fold(f32::INFINITY, |a, b| a.min(b));
-                     
-                     // 更严格的不匹配阈值：DeltaE > 12 就开始惩罚
-                     // 第1个主色最重要，第2、3个次之
-                     if min_dist_to_target > 12.0 {
-                         let penalty_weight = match c_idx {
-                             0 => 10.0,  // 第1个主色不匹配，重罚
-                             1 => 7.5,   // 第2个主色
-                             2 => 5.5,   // 第3个主色
-                             3 => 4.0,   // 第4个主色
-                             _ => 2.5,   // 第5个主色
-                         };
-                         
-                         // 惩罚力度：差异越大，惩罚越重
-                         let excess_dist = min_dist_to_target - 12.0;
-                         reverse_mismatch_penalty += excess_dist * penalty_weight * 0.18;
-                     }
-                 }
-                 
-                 // 策略3：色彩程度不匹配惩罚 - 防止将黑白漫画与彩色图片匹配
-                 // 改进版：区分纯黑白、低饱和度彩色、高饱和度彩色三种情况
-                 let mut colorfulness_mismatch_penalty = 0.0f32;
-                 
-                 // 辅助函数：判断是否为"纯黑白/灰度"图片
-                 // 纯黑白图片的特征：所有颜色的 colorfulness 都非常低（< 0.03）
-                 fn is_pure_grayscale(colorfulness_values: &[f32]) -> bool {
-                     if colorfulness_values.is_empty() { return true; }
-                     let max_cf = colorfulness_values.iter().cloned().fold(0.0f32, f32::max);
-                     // 如果最大 colorfulness 都 < 0.03，认为是纯灰度
-                     max_cf < 0.03
-                 }
-                 
-                 // 辅助函数：判断颜色是否有明确的色相方向（而不是散乱或接近灰色轴）
-                 // 通过检查 a、b 值是否有一致的倾向
-                 fn has_color_tendency(labs: &[Lab]) -> bool {
-                     if labs.len() < 2 { return false; }
-                     
-                     // 统计有意义的色彩值（colorfulness > 0.02 的颜色）
-                     let meaningful_colors: Vec<(f32, f32)> = labs.iter()
-                         .take(5)
-                         .filter(|lab| {
-                             let cf = (lab.a * lab.a + lab.b * lab.b).sqrt() / 127.0;
-                             cf > 0.02  // 只考虑有一点色彩的颜色
-                         })
-                         .map(|lab| (lab.a, lab.b))
-                         .collect();
-                     
-                     // 如果没有足够的有意义颜色，没有色彩倾向
-                     if meaningful_colors.len() < 2 { return false; }
-                     
-                     // 计算平均 a、b 值
-                     let avg_a = meaningful_colors.iter().map(|(a, _)| *a).sum::<f32>() / meaningful_colors.len() as f32;
-                     let avg_b = meaningful_colors.iter().map(|(_, b)| *b).sum::<f32>() / meaningful_colors.len() as f32;
-                     
-                     // 如果平均值离原点有一定距离，说明有色彩倾向
-                     let avg_chroma = (avg_a * avg_a + avg_b * avg_b).sqrt();
-                     avg_chroma > 3.0  // Lab 空间中，a/b 差异 > 3 就有可感知的颜色倾向
-                 }
-                 
-                 let target_is_pure_grayscale = is_pure_grayscale(&target_colorfulness);
-                 let candidate_is_pure_grayscale = is_pure_grayscale(&candidate_colorfulness);
-                 let target_has_color = has_color_tendency(&target_labs);
-                 let candidate_has_color = has_color_tendency(&candidate_labs);
-                 
-                 // 核心逻辑：目标有颜色倾向，但候选是纯灰度 → 重罚
-                 if target_has_color && candidate_is_pure_grayscale {
-                     // 目标是低饱和度彩色（如暖色调），候选是纯黑白 → 绝对排除
-                     colorfulness_mismatch_penalty = 50.0;
-                 } else if target_has_color && !candidate_has_color {
-                     // 目标有色彩倾向，候选没有明确色彩倾向 → 强惩罚
-                     colorfulness_mismatch_penalty = 40.0;
-                 } else if !target_is_pure_grayscale && candidate_is_pure_grayscale {
-                     // 目标有一点色彩（可能是轻微偏色的图），候选是纯黑白 → 强惩罚
-                     colorfulness_mismatch_penalty = 35.0;
-                 } else if target_is_pure_grayscale && !candidate_is_pure_grayscale {
-                     // 目标是纯黑白，候选有颜色 → 中等惩罚
-                     colorfulness_mismatch_penalty = 25.0;
-                 } else {
-                     // 两者都有颜色或都是灰度，检查 colorfulness 差异
-                     let colorfulness_diff = (target_avg_colorfulness - candidate_avg_colorfulness).abs();
-                     
-                     if target_avg_colorfulness > 0.2 && candidate_avg_colorfulness < 0.05 {
-                         // 高饱和目标 vs 极低饱和候选
-                         colorfulness_mismatch_penalty = colorfulness_diff * 40.0;
-                     } else if colorfulness_diff > 0.1 {
-                         // 一般的色彩程度差异惩罚
-                         colorfulness_mismatch_penalty = (colorfulness_diff - 0.1) * 15.0;
-                     }
-                 }
-                 
-                 // 最终分数
-                 let raw_score = 100.0 - avg_weighted_dist - reverse_mismatch_penalty - colorfulness_mismatch_penalty;
-                 score = raw_score.max(0.0);
-                 
-                 // 氛围搜索阈值提高到85分
-                 // 这确保只有真正氛围相似的图片才能通过
-                 threshold = 85.0;
-                 
-             } else {
-                 // ========== 中等数量颜色搜索（2-4色）==========
-                 // 混合策略：要求每个目标颜色都能找到匹配，但也考虑位置
-                 
-                 let mut total_min_dist = 0.0f32;
-                 let mut position_bonus = 0.0f32;
-                 
-                 for t in &target_labs {
-                     let mut min_dist = f32::INFINITY;
-                     let mut best_pos = candidate_labs.len();
-                     
-                     for (idx, c) in candidate_labs.iter().enumerate() {
-                         let dist = c.difference(*t);
-                         if dist < min_dist {
-                             min_dist = dist;
-                             best_pos = idx;
-                         }
-                     }
-                     
-                     total_min_dist += min_dist;
-                     
-                     // 如果匹配颜色在前4位，给予位置奖励
-                     if best_pos < 4 && min_dist < 15.0 {
-                         position_bonus += (4.0 - best_pos as f32) * 2.0;
-                     }
-                 }
-                 
-                 let avg_dist = total_min_dist / target_labs.len() as f32;
-                 score = 100.0 - avg_dist + position_bonus / target_labs.len() as f32;
-                 threshold = 88.0;
-             }
-             
-             if score >= threshold {
-                 Some((image_data.file_path.clone(), score))
-             } else {
-                 None
-             }
-        })
-        .collect();
-
-        // Sort by score descending (best match first)
-        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        
-        // Return top results directly here inside the closure
-        (results, is_single_color, is_atmosphere_search)
-        }) // End of access_cache closure
-    }).await.map_err(|e| format!("Search task failed: {}", e))? // End of spawn_blocking, handle JoinError
-    .map_err(|e| format!("Cache access failed: {}", e))?; // Handle access_cache error
-
-    // Destructure results
-    let (results, _, _) = results; // is_single_color etc are from inside, but we have them outside too.
-    let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
-    eprintln!("[search_by_palette] Returning {} results", final_results.len());
-    
-    Ok(final_results)
-}
-
-#[tauri::command]
-async fn search_by_color(
-     pool_state: tauri::State<'_, Arc<color_db::ColorDbPool>>,
-     color: String
-) -> Result<Vec<String>, String> {
-    search_by_palette(pool_state, vec![color]).await
-}
+// (moved to `color_search.rs`)
 
 use db::AppDbPool;
 
@@ -567,13 +140,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "svg",
 ];
 
-// Use shared generate_id
-use db::generate_id;
-
-// Normalize path separators
-fn normalize_path(path: &str) -> String {
-    path.replace('\\', "/")
-}
+// Use shared generate_id and normalize_path
+use db::{generate_id, normalize_path};
 
 // Generate a unique file path by adding _copy suffix if file exists
 fn generate_unique_file_path(dest_path: &str) -> String {
@@ -834,13 +402,36 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     let normalized_root_path = normalize_path(&path);
     
     // Build path -> id mapping (will be populated as we process entries)
+    // Stable ID: Pre-load existing IDs from database for this directory and subdirectories
     let mut path_to_id: HashMap<String, String> = HashMap::new();
     path_to_id.insert(normalized_root_path.clone(), root_id.clone());
+
+    {
+        let app_db = app.state::<AppDbPool>();
+        let conn = app_db.get_connection();
+        let root_prefix = if normalized_root_path.ends_with('/') { normalized_root_path.clone() } else { format!("{}/", normalized_root_path) };
+        let pattern = format!("{}%", root_prefix);
+        
+        if let Ok(mut stmt) = conn.prepare("SELECT path, file_id FROM file_index WHERE path LIKE ?") {
+            if let Ok(rows) = stmt.query_map(params![pattern], |row| {
+                Ok((row.get::<usize, String>(0)?, row.get::<usize, String>(1)?))
+            }) {
+                for row in rows {
+                    if let Ok((p, id)) = row {
+                        path_to_id.insert(p, id);
+                    }
+                }
+            }
+        };
+    }
     
     // Process entries in parallel using jwalk (streaming)
     // First run a fast counting pass (parallel but synchronous) to compute an accurate total before streaming detailed nodes.
     let (tx, rx) = crossbeam_channel::unbounded::<(String, FileNode, String)>();
     let producer_path = path.clone();
+    
+    // Clone path_to_id for the producer thread (read-only access)
+    let existing_ids = Arc::new(path_to_id.clone());
 
     // Fast synchronous counting pass (parallel iterator) to get accurate total quickly
     let root_path_local = Path::new(&path);
@@ -947,7 +538,12 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     normalized_root.clone()
                 };
 
-                let file_id = generate_id(&full_path);
+                // Stable ID: Reuse existing ID if available, otherwise generate new one
+                let file_id = if let Some(id) = existing_ids.get(&full_path) {
+                    id.clone()
+                } else {
+                    generate_id(&full_path)
+                };
                 let file_name = entry_path
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -1123,7 +719,21 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
     // Receive nodes from producer and update processed counts
     let mut current_processed_images = processed_images;
-    while let Ok((id, mut node, parent_path)) = rx.recv() {
+    
+    // 预填充逻辑：由于生产者是并行的，为了防止子节点的 parent_id 映射失败，
+    // 我们在这里接收所有文件夹节点并先填充 path_to_id，然后再处理层级关系。
+    // 注意：rx 现在接收的是初步节点。
+    
+    let mut pending_nodes = Vec::new();
+    while let Ok(item) = rx.recv() {
+        let (ref id, ref node, _) = item;
+        if matches!(node.r#type, FileType::Folder) {
+            path_to_id.insert(node.path.clone(), id.clone());
+        }
+        pending_nodes.push(item);
+    }
+
+    for (id, mut node, parent_path) in pending_nodes {
         // Resolve parent_id from parent_path if possible
         if !parent_path.is_empty() {
             if let Some(parent_id) = path_to_id.get(&parent_path).cloned() {
@@ -1647,23 +1257,40 @@ async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) 
     // 之前使用 spawn_blocking 会导致前端在数据库更新完成前就扫描到新文件，
     // 从而触发重复提取。由于我们已经优化了 SQL 性能，这里同步执行也不会卡顿。
     let app_db = app.state::<AppDbPool>();
-    let conn = app_db.get_connection();
     
     if is_dir {
         // 目录重命名
-        let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
-        let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_path, &new_path);
+        let mut conn = app_db.get_connection();
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
+        
+        db::file_index::migrate_index_dir(&tx, &old_path, &new_path)
+            .map_err(|e| format!("索引迁移失败: {}", e))?;
+        db::file_metadata::migrate_metadata_dir(&tx, &old_path, &new_path)
+            .map_err(|e| format!("元数据迁移失败: {}", e))?;
+            
+        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     } else {
         // 单文件重命名
         let old_id = generate_id(&old_path);
         let new_id = generate_id(&new_path);
-        let _ = db::file_index::delete_entries_by_path(&conn, &old_path);
-        let _ = db::file_metadata::migrate_metadata(&conn, &old_id, &new_id, &new_path);
+        let mut conn = app_db.get_connection();
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
+
+        db::file_index::migrate_index_dir(&tx, &old_path, &new_path)
+            .map_err(|e| format!("索引迁移失败: {}", e))?;
+        db::file_metadata::migrate_metadata(&tx, &old_id, &new_id, &new_path)
+            .map_err(|e| format!("元数据迁移失败: {}", e))?;
+
+        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     }
     
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    let _ = color_db.move_colors(&old_path, &new_path);
+    // Log timing for DB move — useful to detect whether DB work is blocking the rename command
+    let db_move_start = std::time::Instant::now();
+    let res = color_db.move_colors(&old_path, &new_path);
+    eprintln!("[rename_file] color_db.move_colors elapsed={:?} result={:?}", db_move_start.elapsed(), res.as_ref().err());
 
+    // Return quickly; non-critical cache updates inside `move_colors` are performed asynchronously.
     Ok(())
 }
 
@@ -1942,7 +1569,7 @@ async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -
     let mut success = false;
     let mut last_error: Option<std::io::Error> = None;
 
-    for attempt in 0..max_retries {
+    for _attempt in 0..max_retries {
         match fs::rename(src, dest) {
             Ok(_) => {
                 success = true;
@@ -1974,16 +1601,24 @@ async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -
     // 之前使用 spawn_blocking，导致前端可能在数据库更新前就扫描到新位置的文件
     // 从而触发重复提取。现在改为同步执行。
     let app_db = app.state::<AppDbPool>();
-    let conn = app_db.get_connection();
-    
     if is_dir {
-        let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
-        let _ = db::file_metadata::migrate_metadata_dir(&conn, &src_path, &dest_path);
+        let mut conn = app_db.get_connection();
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
+        
+        let _ = db::file_index::migrate_index_dir(&tx, &src_path, &dest_path);
+        let _ = db::file_metadata::migrate_metadata_dir(&tx, &src_path, &dest_path);
+        
+        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     } else {
         let old_id = generate_id(&src_path);
         let new_id = generate_id(&dest_path);
-        let _ = db::file_index::delete_entries_by_path(&conn, &src_path);
-        let _ = db::file_metadata::migrate_metadata(&conn, &old_id, &new_id, &dest_path);
+        let mut conn = app_db.get_connection();
+        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
+
+        let _ = db::file_index::migrate_index_dir(&tx, &src_path, &dest_path);
+        let _ = db::file_metadata::migrate_metadata(&tx, &old_id, &new_id, &dest_path);
+        
+        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
     }
     
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
@@ -2199,483 +1834,7 @@ async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
     }
 }
 
-#[derive(Clone, Serialize)]
-struct BatchResult {
-    path: String,
-    url: Option<String>,
-}
 
-// 1. 提取核心生成逻辑为独立函数 (不作为 command)
-fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
-    use std::fs;
-    use std::io::{Read, BufWriter, BufReader};
-    use image::codecs::jpeg::{JpegEncoder, JpegDecoder};
-    use image::ImageFormat;
-    
-    let image_path = Path::new(file_path);
-    if !image_path.exists() || file_path.contains(".Aurora_Cache") {
-        return None;
-    }
-
-    // 快速 Hash
-    let metadata = fs::metadata(image_path).ok()?;
-    let size = metadata.len();
-    let modified = metadata.modified()
-        .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-        .unwrap_or(0);
-    
-    let mut file = fs::File::open(image_path).ok()?;
-    let mut buffer = [0u8; 4096];
-    let bytes_read = file.read(&mut buffer).unwrap_or(0);
-    
-    let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-    let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
-    
-    // 先尝试检查两种格式的缓存文件是否存在，避免不必要的图像处理
-    let jpg_cache_file_path = cache_root.join(format!("{}.jpg", cache_filename));
-    let webp_cache_file_path = cache_root.join(format!("{}.webp", cache_filename));
-    
-    // 如果任一缓存文件存在，直接返回路径
-    if jpg_cache_file_path.exists() {
-        return Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string());
-    }
-    
-    if webp_cache_file_path.exists() {
-        return Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
-    }
-    
-    // 缓存未命中，继续生成逻辑
-    // 重新打开文件，使用 BufReader 以流式方式读取，避免一次性分配大内存
-    let file = fs::File::open(image_path).ok()?;
-    let reader = BufReader::new(file);
-    
-    // 1. 尝试识别格式
-    let format = image::guess_format(&buffer[..bytes_read]).unwrap_or(ImageFormat::Png);
-
-    let img = if format == ImageFormat::Jpeg {
-        // 【针对 JPEG 的超大图优化】
-        // 使用 BufReader 直接作为输入源，配合 scale 解码
-        let mut decoder = JpegDecoder::new(reader).ok()?;
-        
-        // 如果原图非常大，我们可以只加载它的缩略版
-        decoder.scale(256, 256).ok()?; 
-        
-        image::DynamicImage::from_decoder(decoder).ok()?
-    } else {
-        // 【针对 PNG 及其他格式的优化】
-        // 使用流式解码器，避免先将整个文件读入 Vec<u8>
-        // 这对于大尺寸 PNG (几十MB) 能节省大量内存带宽
-        let mut image_reader = image::io::Reader::new(reader);
-        image_reader.set_format(format);
-        
-        // 限制解码时的内存使用，防止炸弹攻击（可选，这里设为 512MB 足够应对 8K 图）
-        image_reader.no_limits(); 
-        
-        image_reader.decode().ok()?
-    };
-
-    // 检查图片是否包含透明像素 (alpha < 255)
-    let has_transparency = {
-        let rgba = img.to_rgba8();
-        let mut found_transparent = false;
-        for pixel in rgba.pixels() {
-            if pixel[3] < 255 {
-                found_transparent = true;
-                break;
-            }
-        }
-        found_transparent
-    };
-
-    let width = img.width();
-    let height = img.height();
-    const TARGET_MIN_SIZE: u32 = 256;
-    
-    let (dst_width, dst_height) = if width < height {
-        let ratio = height as f32 / width as f32;
-        (TARGET_MIN_SIZE, (TARGET_MIN_SIZE as f32 * ratio) as u32)
-    } else {
-        let ratio = width as f32 / height as f32;
-        ((TARGET_MIN_SIZE as f32 * ratio) as u32, TARGET_MIN_SIZE)
-    };
-
-    let src_width = NonZeroU32::new(width)?;
-    let src_height = NonZeroU32::new(height)?;
-    let dst_width_nz = NonZeroU32::new(dst_width)?;
-    let dst_height_nz = NonZeroU32::new(dst_height)?;
-
-    // 根据是否有透明度选择不同的处理方式
-    if has_transparency {
-        // 有透明度，生成 WebP 格式
-        let src_image = fr::Image::from_vec_u8(
-            src_width,
-            src_height,
-            img.to_rgba8().into_raw(),
-            fr::PixelType::U8x4,
-        ).ok()?;
-
-        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
-        
-        // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
-        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
-        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
-
-        // 确保目录存在
-        if !cache_root.exists() {
-            let _ = fs::create_dir_all(cache_root);
-        }
-
-        let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
-        let mut writer = BufWriter::new(cache_file);
-        // 使用 image 库的 write_to 方法来处理 WebP 编码
-        let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
-        resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
-
-        Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
-    } else {
-        // 无透明度，生成 JPEG 格式
-        let src_image = fr::Image::from_vec_u8(
-            src_width,
-            src_height,
-            img.to_rgb8().into_raw(),
-            fr::PixelType::U8x3,
-        ).ok()?;
-
-        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
-        
-        // 使用 Hamming 滤镜 (比 Lanczos3 快，质量也很好)
-        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
-        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
-
-        // 确保目录存在
-        if !cache_root.exists() {
-            let _ = fs::create_dir_all(cache_root);
-        }
-
-        let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
-        let mut writer = BufWriter::new(cache_file);
-        let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
-        encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
-
-        Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
-    }
-}
-
-#[tauri::command]
-async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let root = Path::new(&cache_root);
-        if !root.exists() {
-             let _ = fs::create_dir_all(root);
-        }
-        process_single_thumbnail(&file_path, root)
-    }).await;
-    
-    match result {
-        Ok(val) => Ok(val),
-        Err(e) => Err(e.to_string())
-    }
-}
-
-#[derive(Clone, Serialize)]
-struct ThumbnailBatchResult {
-    path: String,
-    url: Option<String>,
-    colors: Option<Vec<color_extractor::ColorResult>>,
-    from_cache: bool,
-}
-
-#[tauri::command]
-async fn get_thumbnails_batch(
-    file_paths: Vec<String>,
-    cache_root: String,
-    on_event: tauri::ipc::Channel<ThumbnailBatchResult>,
-    _app: tauri::AppHandle
-) -> Result<(), String> {
-    // 放入 blocking 线程处理缩略图读取
-    let file_paths_clone2 = file_paths;
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        let root = Path::new(&cache_root);
-        if !root.exists() {
-             let _ = fs::create_dir_all(root);
-        }
-
-        // 使用 Rayon 并行处理！
-        file_paths_clone2.par_iter().for_each(|path| {
-            // 快速检查缓存是否存在，跳过复杂的缩略图生成逻辑
-            use std::fs;
-            use std::io::{Read};
-            
-            let image_path = Path::new(path);
-            if !image_path.exists() || path.contains(".Aurora_Cache") {
-                let _ = on_event.send(ThumbnailBatchResult {
-                    path: path.clone(),
-                    url: None,
-                    colors: None,
-                    from_cache: false,
-                });
-                return;
-            }
-
-            // 快速 Hash - 复用 process_single_thumbnail 中的缓存逻辑
-            let metadata = match fs::metadata(image_path) {
-                Ok(m) => m,
-                Err(_) => {
-                    let _ = on_event.send(ThumbnailBatchResult {
-                        path: path.clone(),
-                        url: None,
-                        colors: None,
-                        from_cache: false,
-                    });
-                    return;
-                }
-            };
-            let size = metadata.len();
-            let modified = metadata.modified()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
-                .unwrap_or(0);
-            
-            let mut file = match fs::File::open(image_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    let _ = on_event.send(ThumbnailBatchResult {
-                        path: path.clone(),
-                        url: None,
-                        colors: None,
-                        from_cache: false,
-                    });
-                    return;
-                }
-            };
-            let mut buffer = [0u8; 4096];
-            let bytes_read = file.read(&mut buffer).unwrap_or(0);
-            
-            let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-            let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
-            
-            // 先尝试检查两种格式的缓存文件是否存在，避免不必要的图像处理
-            let jpg_cache_file_path = root.join(format!("{}.jpg", cache_filename));
-            let webp_cache_file_path = root.join(format!("{}.webp", cache_filename));
-            
-            // 如果任一缓存文件存在，直接返回路径，跳过不必要的处理
-            if jpg_cache_file_path.exists() {
-                let url = Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string());
-                let _ = on_event.send(ThumbnailBatchResult {
-                    path: path.clone(),
-                    url,
-                    colors: None, // 跳过颜色提取，提高响应速度
-                    from_cache: true,
-                });
-                return;
-            }
-            
-            if webp_cache_file_path.exists() {
-                let url = Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
-                let _ = on_event.send(ThumbnailBatchResult {
-                    path: path.clone(),
-                    url,
-                    colors: None, // 跳过颜色提取，提高响应速度
-                    from_cache: true,
-                });
-                return;
-            }
-            
-            // 缓存未命中，才执行完整的缩略图生成逻辑
-            let url = process_single_thumbnail(path, root);
-            
-            // 立即发送结果回前端，跳过颜色提取
-            let _ = on_event.send(ThumbnailBatchResult {
-                path: path.clone(),
-                url,
-                colors: None, // 跳过颜色提取，提高响应速度
-                from_cache: false,
-            });
-        });
-        
-        Ok(())
-    }).await;
-
-    match result {
-        Ok(val) => val,
-        Err(e) => Err(e.to_string())
-    }
-}
-
-/// 生成拖拽预览图（用于外部拖拽时显示）
-/// 将多个缩略图组合成一个堆叠效果的预览图
-#[tauri::command]
-async fn generate_drag_preview(
-    thumbnail_paths: Vec<String>,
-    total_count: usize,
-    cache_root: String,
-) -> Result<Option<String>, String> {
-    use std::io::BufWriter;
-    use image::{ImageBuffer, Rgba, RgbaImage, ImageEncoder};
-    use image::imageops::{overlay, resize, FilterType};
-    
-    let result = tauri::async_runtime::spawn_blocking(move || -> Option<String> {
-        // 预览图尺寸
-        const PREVIEW_SIZE: u32 = 128;
-        const THUMB_SIZE: u32 = 100;
-        const BORDER_WIDTH: u32 = 2;
-        
-        // 创建透明背景
-        let mut canvas: RgbaImage = ImageBuffer::from_pixel(
-            PREVIEW_SIZE, 
-            PREVIEW_SIZE, 
-            Rgba([0, 0, 0, 0])
-        );
-        
-        // 最多显示3个缩略图
-        let preview_count = thumbnail_paths.len().min(3);
-        
-        // 加载并绘制每个缩略图（从后往前绘制，最后一个在最上面）
-        for (i, thumb_path) in thumbnail_paths.iter().take(preview_count).enumerate().rev() {
-            let thumb_path = Path::new(thumb_path);
-            if !thumb_path.exists() {
-                continue;
-            }
-            
-            // 加载缩略图
-            let img = match image::open(thumb_path) {
-                Ok(img) => img,
-                Err(_) => continue,
-            };
-            
-            // 调整大小
-            let thumb = resize(&img, THUMB_SIZE - BORDER_WIDTH * 2, THUMB_SIZE - BORDER_WIDTH * 2, FilterType::Triangle);
-            
-            // 创建带白色边框的缩略图
-            let mut bordered: RgbaImage = ImageBuffer::from_pixel(
-                THUMB_SIZE,
-                THUMB_SIZE,
-                Rgba([255, 255, 255, 230]) // 白色边框，略微透明
-            );
-            
-            // 将缩略图放在边框中央
-            overlay(&mut bordered, &thumb, BORDER_WIDTH as i64, BORDER_WIDTH as i64);
-            
-            // 计算位置偏移（堆叠效果）
-            let offset_x = match i {
-                0 => (PREVIEW_SIZE - THUMB_SIZE) / 2,
-                1 => (PREVIEW_SIZE - THUMB_SIZE) / 2 - 8,
-                _ => (PREVIEW_SIZE - THUMB_SIZE) / 2 + 8,
-            };
-            let offset_y = (PREVIEW_SIZE - THUMB_SIZE) / 2 + (i as u32) * 6;
-            
-            // 绘制到画布
-            overlay(&mut canvas, &bordered, offset_x as i64, offset_y as i64);
-        }
-        
-        // 如果有多个文件，添加计数徽章（总是显示，即使只有1个文件也显示）
-        if total_count > 1 {
-            // 绘制蓝色圆形徽章
-            let badge_size = 28u32;
-            let badge_x = PREVIEW_SIZE - badge_size - 4;
-            let badge_y = PREVIEW_SIZE - badge_size - 4;
-            
-            // 绘制圆形背景
-            for y in 0..badge_size {
-                for x in 0..badge_size {
-                    let dx = x as f32 - badge_size as f32 / 2.0;
-                    let dy = y as f32 - badge_size as f32 / 2.0;
-                    let dist = (dx * dx + dy * dy).sqrt();
-                    if dist <= badge_size as f32 / 2.0 {
-                        let px = badge_x + x;
-                        let py = badge_y + y;
-                        if px < PREVIEW_SIZE && py < PREVIEW_SIZE {
-                            canvas.put_pixel(px, py, Rgba([37, 99, 235, 255])); // 蓝色
-                        }
-                    }
-                }
-            }
-            
-            // 绘制数字
-            let count_text = total_count.to_string();
-            // 使用简单的位图字体绘制数字
-            // 数字 0-9 的 5x7 位图
-            let digit_bitmaps: [[[u8; 5]; 7]; 10] = [
-                // 0
-                [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-                // 1
-                [[0,0,1,0,0], [0,1,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,0,1,0,0], [0,1,1,1,0]],
-                // 2
-                [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1]],
-                // 3
-                [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
-                // 4
-                [[1,0,0,0,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
-                // 5
-                [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
-                // 6
-                [[1,1,1,1,1], [1,0,0,0,0], [1,0,0,0,0], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-                // 7
-                [[1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1], [0,0,0,0,1]],
-                // 8
-                [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1]],
-                // 9
-                [[1,1,1,1,1], [1,0,0,0,1], [1,0,0,0,1], [1,1,1,1,1], [0,0,0,0,1], [0,0,0,0,1], [1,1,1,1,1]],
-            ];
-            
-            let digit_width = 5u32;
-            let digit_height = 7u32;
-            let spacing = 1u32;
-            let total_text_width = (digit_width + spacing) * count_text.len() as u32 - spacing;
-            let text_start_x = badge_x + (badge_size - total_text_width) / 2;
-            let text_start_y = badge_y + (badge_size - digit_height) / 2;
-            
-            // 绘制每个数字
-            for (char_idx, ch) in count_text.chars().enumerate() {
-                if let Some(digit) = ch.to_digit(10) {
-                    let digit_bitmap = &digit_bitmaps[digit as usize];
-                    let digit_x = text_start_x + (digit_width + spacing) * char_idx as u32;
-                    
-                    for (row_idx, row) in digit_bitmap.iter().enumerate() {
-                        for (col_idx, &pixel) in row.iter().enumerate() {
-                            if pixel == 1 {
-                                let px = digit_x + col_idx as u32;
-                                let py = text_start_y + row_idx as u32;
-                                if px < PREVIEW_SIZE && py < PREVIEW_SIZE {
-                                    canvas.put_pixel(px, py, Rgba([255, 255, 255, 255])); // 白色
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 保存预览图到缓存目录
-        let cache_path = Path::new(&cache_root);
-        if !cache_path.exists() {
-            let _ = fs::create_dir_all(cache_path);
-        }
-        
-        let preview_file = cache_path.join("_drag_preview.png");
-        
-        let file = match fs::File::create(&preview_file) {
-            Ok(f) => f,
-            Err(_) => return None,
-        };
-        let writer = BufWriter::new(file);
-        
-        let encoder = image::codecs::png::PngEncoder::new(writer);
-        match encoder.write_image(
-            canvas.as_raw(),
-            PREVIEW_SIZE,
-            PREVIEW_SIZE,
-            image::ColorType::Rgba8,
-        ) {
-            Ok(_) => Some(preview_file.to_str().unwrap_or_default().to_string()),
-            Err(_) => None,
-        }
-    }).await;
-    
-    match result {
-        Ok(val) => Ok(val),
-        Err(e) => Err(e.to_string())
-    }
-}
 
 #[tauri::command]
 async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String> {
