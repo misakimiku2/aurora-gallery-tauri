@@ -23,7 +23,7 @@ pub fn create_table(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS file_index (
             file_id TEXT PRIMARY KEY,
             parent_id TEXT,
-            path TEXT NOT NULL,
+            path TEXT NOT NULL UNIQUE,
             name TEXT NOT NULL,
             file_type TEXT NOT NULL,
             size INTEGER DEFAULT 0,
@@ -143,6 +143,97 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     Ok(entries)
 }
 
+/// Lightweight query that only selects the minimal columns needed for UI-first-paint
+/// (used to demonstrate/measure a fast-start strategy). Returns `FileIndexEntry` with
+/// non-essential fields left empty to keep the shape consistent.
+pub fn get_minimal_entries_under_path(conn: &Connection, root_path: &str) -> Result<Vec<FileIndexEntry>> {
+    let pattern = format!("{}%", root_path);
+    let mut stmt = conn.prepare("SELECT file_id, path, file_type, size, modified_at FROM file_index WHERE path LIKE ?1")?;
+    let rows = stmt.query_map(params![pattern], |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: None,
+            path: row.get(1)?,
+            name: String::new(),
+            file_type: row.get(2)?,
+            size: row.get(3)?,
+            created_at: 0,
+            modified_at: row.get(4)?,
+            width: None,
+            height: None,
+            format: None,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
+
+#[cfg(test)]
+mod bench_tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::time::Instant;
+    use std::fs;
+    use std::env;
+
+    #[test]
+    fn bench_entries_fetch() {
+        // 可通过环境变量 AURORA_BENCH_COUNT 调整样本大小（默认 68k）
+        let n: usize = env::var("AURORA_BENCH_COUNT").ok().and_then(|s| s.parse().ok()).unwrap_or(68000);
+        let tmpdir = env::temp_dir().join(format!("aurora_bench_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmpdir);
+        fs::create_dir_all(&tmpdir).unwrap();
+        let db_path = tmpdir.join("bench.db");
+
+        let mut conn = Connection::open(db_path).expect("open db");
+        create_table(&conn).expect("create table");
+
+        // 生成伪索引数据
+        let mut entries = Vec::with_capacity(n);
+        for i in 0..n {
+            let path = format!("/bench/root/dir{}/file{}.jpg", i / 100, i);
+            entries.push(FileIndexEntry {
+                file_id: format!("id{}", i),
+                parent_id: None,
+                path: path.clone(),
+                name: format!("file{}.jpg", i),
+                file_type: "Image".into(),
+                size: 1024,
+                created_at: 0,
+                modified_at: i as i64,
+                width: Some(800),
+                height: Some(600),
+                format: Some("jpg".into()),
+            });
+        }
+
+        // 批量写入（衡量写入成本不在此次基准主要关注点，但仍需要）
+        batch_upsert(&mut conn, &entries).expect("batch upsert");
+
+        // 测量当前（重字段）查询
+        let t0 = Instant::now();
+        let all = get_entries_under_path(&conn, "/bench/root").expect("get_entries_under_path");
+        let dur_all = t0.elapsed();
+
+        // 测量轻量查询
+        let t1 = Instant::now();
+        let minimal = get_minimal_entries_under_path(&conn, "/bench/root").expect("get_minimal_entries_under_path");
+        let dur_min = t1.elapsed();
+
+        println!("bench: inserted={}, get_entries_under_path -> {:?} (count={}), get_minimal -> {:?} (count={})", n, dur_all, all.len(), dur_min, minimal.len());
+
+        assert_eq!(all.len(), minimal.len(), "row counts must match");
+
+        // 清理
+        let _ = fs::remove_dir_all(&tmpdir);
+    }
+}
+
 pub fn delete_entries_by_ids(conn: &mut Connection, ids: &[String]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
@@ -162,23 +253,48 @@ pub fn delete_entries_by_ids(conn: &mut Connection, ids: &[String]) -> Result<()
 }
 
 pub fn delete_entries_by_path(conn: &Connection, path: &str) -> Result<()> {
-    // 规范化路径，确保以正斜杠处理以便匹配子项
+    // 规范化路径
     let normalized_path = path.replace("\\", "/");
     
-    // 删除完全匹配的文件记录
+    // 删除记录
     conn.execute(
-        "DELETE FROM file_index WHERE path = ?",
-        params![normalized_path],
-    )?;
-    
-    // 如果是目录，删除其下所有内容 (LIKE 'path/%')
-    let dir_pattern = format!("{}/%", normalized_path.trim_end_matches('/'));
-    conn.execute(
-        "DELETE FROM file_index WHERE path LIKE ?",
-        params![dir_pattern],
+        "DELETE FROM file_index WHERE path = ? OR path LIKE ?",
+        params![normalized_path, format!("{}/%", normalized_path.trim_end_matches('/'))],
     )?;
     
     Ok(())
+}
+
+pub fn delete_orphaned_entries(conn: &mut Connection, root_path: &str, existing_paths: &[String]) -> Result<usize> {
+    let tx = conn.transaction()?;
+    
+    let deleted_count = {
+        // 找出该目录下所有已经在数据库中的路径
+        let pattern = format!("{}%", root_path);
+        let mut stmt = tx.prepare("SELECT path FROM file_index WHERE path = ?1 OR path LIKE ?2")?;
+        let db_paths: Vec<String> = stmt.query_map(params![root_path, pattern], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+            
+        // 找出在数据库中但不在磁盘上的路径
+        let to_delete: Vec<String> = db_paths.into_iter()
+            .filter(|p| !existing_paths.contains(p))
+            .collect();
+            
+        let count = to_delete.len();
+        
+        // 分批删除
+        for chunk in to_delete.chunks(900) {
+            let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!("DELETE FROM file_index WHERE path IN ({})", placeholders);
+            let mut stmt = tx.prepare(&sql)?;
+            stmt.execute(rusqlite::params_from_iter(chunk))?;
+        }
+        count
+    };
+    
+    tx.commit()?;
+    Ok(deleted_count)
 }
 
 pub fn migrate_index_dir(conn: &Connection, old_path: &str, new_path: &str) -> Result<()> {
@@ -191,6 +307,15 @@ pub fn migrate_index_dir(conn: &Connection, old_path: &str, new_path: &str) -> R
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_string();
+
+    // 0. 清理目标路径及其子项的残留项（防止 UNIQUE 约束冲突）
+    // 使用 lower() 确保大小写不敏感匹配，防止 abc -> ABC 这种重命名失败
+    let new_dir_prefix_clean = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+    let new_dir_pattern = format!("{}%", new_dir_prefix_clean);
+    conn.execute(
+        "DELETE FROM file_index WHERE lower(path) = lower(?1) OR lower(path) LIKE lower(?2)",
+        params![new_normalized, new_dir_pattern],
+    )?;
 
     // 1. 更新顶层文件夹的路径和名称
     // ID 不变，ParentID 不变
@@ -206,8 +331,9 @@ pub fn migrate_index_dir(conn: &Connection, old_path: &str, new_path: &str) -> R
     let dir_pattern = format!("{}%", old_dir_prefix);
 
     // SQLite SUBSTR starts at 1. We want to skip old_dir_prefix.
-    // So if prefix len is N, we want from N+1.
-    let skip_len = (old_dir_prefix.len() + 1) as i32;
+    // So if prefix char count is N, we want from N+1.
+    // IMPORTANT: SUBSTR in SQLite uses character index, not byte index.
+    let skip_len = (old_dir_prefix.chars().count() + 1) as i32;
 
     conn.execute(
         "UPDATE file_index SET path = ?1 || SUBSTR(path, ?2) WHERE path LIKE ?3",

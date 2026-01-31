@@ -134,9 +134,11 @@ export const scanDirectory = async (
         updatedAt: node.updatedAt || undefined,
         // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
         url: undefined, // Don't use file path as URL - use getThumbnail() instead
-        meta: node.meta ? {
-          width: node.meta.width || 0,
-          height: node.meta.height || 0,
+        // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
+        // frontend falls back to optimistic/layout defaults instead of showing 0x0.
+        meta: (node.meta && node.meta.width > 0 && node.meta.height > 0) ? {
+          width: node.meta.width,
+          height: node.meta.height,
           sizeKb: node.meta.sizeKb || 0,
           created: node.meta.created,
           modified: node.meta.modified,
@@ -194,9 +196,11 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
         createdAt: node.createdAt || undefined,
         updatedAt: node.updatedAt || undefined,
         url: undefined,
-        meta: node.meta ? {
-          width: node.meta.width || 0,
-          height: node.meta.height || 0,
+        // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
+        // frontend falls back to optimistic/layout defaults instead of showing 0x0.
+        meta: (node.meta && node.meta.width > 0 && node.meta.height > 0) ? {
+          width: node.meta.width,
+          height: node.meta.height,
           sizeKb: node.meta.sizeKb || 0,
           created: node.meta.created,
           modified: node.meta.modified,

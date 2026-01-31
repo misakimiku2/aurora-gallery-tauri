@@ -107,6 +107,11 @@ pub fn delete_metadata_by_path(conn: &Connection, path: &str) -> Result<()> {
 
 pub fn migrate_metadata(conn: &Connection, old_id: &str, new_id: &str, new_path: &str) -> Result<()> {
     let normalized_path = new_path.replace("\\", "/");
+    // 清理目标路径残留 (大小写不敏感)
+    conn.execute(
+        "DELETE FROM file_metadata WHERE lower(path) = lower(?1)",
+        params![normalized_path],
+    )?;
     conn.execute(
         "UPDATE file_metadata SET file_id = ?1, path = ?2 WHERE file_id = ?3",
         params![new_id, normalized_path, old_id],
@@ -128,6 +133,14 @@ pub fn migrate_metadata_dir(conn: &Connection, old_path: &str, new_path: &str) -
     let old_normalized = super::normalize_path(old_path);
     let new_normalized = super::normalize_path(new_path);
     
+    // 0. 清理目标路径残留 (大小写不敏感)
+    let new_dir_prefix_clean = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+    let new_dir_pattern = format!("{}%", new_dir_prefix_clean);
+    conn.execute(
+        "DELETE FROM file_metadata WHERE lower(path) = lower(?1) OR lower(path) LIKE lower(?2)",
+        params![new_normalized, new_dir_pattern],
+    )?;
+
     // 1. 更新顶层文件夹 (如果有 metadata 的话)
     conn.execute(
         "UPDATE file_metadata SET path = ?1 WHERE path = ?2",
@@ -139,8 +152,9 @@ pub fn migrate_metadata_dir(conn: &Connection, old_path: &str, new_path: &str) -
     let new_dir_prefix = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
     let dir_pattern = format!("{}%", old_dir_prefix);
     
-    // SQLite SUBSTR starts at 1. Skip prefix len.
-    let skip_len = (old_dir_prefix.len() + 1) as i32;
+    // SQLite SUBSTR starts at 1. Skip prefix char count.
+    // IMPORTANT: SUBSTR in SQLite uses character index, not byte index.
+    let skip_len = (old_dir_prefix.chars().count() + 1) as i32;
 
     conn.execute(
         "UPDATE file_metadata SET path = ?1 || SUBSTR(path, ?2) WHERE path LIKE ?3",

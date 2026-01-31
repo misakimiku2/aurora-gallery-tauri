@@ -67,6 +67,8 @@ export interface FileNode {
   createdAt?: string;
   updatedAt?: string;
   lastRefresh?: number;
+  /** Transient UI-only flag used to show a loading state for folder-level refreshes */
+  isRefreshing?: boolean;
 }
 
 export interface Person {

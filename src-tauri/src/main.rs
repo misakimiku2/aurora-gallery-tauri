@@ -5,21 +5,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
-use std::num::NonZeroU32;
+
 use std::sync::Arc;
 use tauri::Manager;
 use tauri::Emitter;
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
 use tauri::menu::{Menu, MenuItem};
 use serde_json;
-use rusqlite::params; // Import params macro
+use rusqlite::params; // params! macro required for some ad-hoc SQL in this file
 
 
 use base64::{Engine as _, engine::general_purpose};
-use fast_image_resize as fr;
-use rayon::prelude::*;
-use palette::{FromColor, Srgb, Lab};
-use palette::color_difference::Ciede2000;
+// use fast_image_resize as fr;
+
+// use palette::{FromColor, Srgb, Lab};
+// use palette::color_difference::Ciede2000;
 
 // 导入颜色相关模块
 mod color_extractor;
@@ -183,6 +183,12 @@ fn is_supported_image(extension: &str) -> bool {
 }
 
 
+#[derive(Serialize, Clone)]
+struct ScanProgress {
+    processed: usize,
+    total: usize,
+}
+
 #[tauri::command]
 async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
@@ -190,640 +196,313 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     use rayon::prelude::*;
     
     let force = force_rescan.unwrap_or(false);
-    let root_path = Path::new(&path);
+    let root_path_os = Path::new(&path);
     
-    // Check if path exists and is a directory
-    if !root_path.exists() {
-        return Err(format!("Path does not exist: {}", path));
+    if !root_path_os.exists() {
+        return Err(format!("路径不存在: {}", path));
     }
-    
-    if !root_path.is_dir() {
-        return Err(format!("Path is not a directory: {}", path));
+    if !root_path_os.is_dir() {
+        return Err(format!("路径不是目录: {}", path));
     }
 
-    // Load metadata from database
-    let metadatas = {
-        let pool = app.state::<AppDbPool>();
-        let conn = pool.get_connection();
-        db::file_metadata::get_all_metadata(&conn).map_err(|e| e.to_string())?
-    };
-    let metadata_map: HashMap<String, db::file_metadata::FileMetadata> = metadatas
-        .into_iter()
-        .map(|m| (m.file_id.clone(), m))
-        .collect();
-
-    // Normalized path for DB queries
     let normalized_root_path = normalize_path(&path);
 
-    // Check file_index cache
-    {
+    // 1. 加载元数据以便合并
+    let metadata_map: HashMap<String, db::file_metadata::FileMetadata> = {
         let pool = app.state::<AppDbPool>();
         let conn = pool.get_connection();
-        let index_entries = db::file_index::get_entries_under_path(&conn, &normalized_root_path).map_err(|e| e.to_string())?;
-
-        if !force && !index_entries.is_empty() {
-            // Inform frontend we are returning cached result
-            #[derive(Clone, Serialize)]
-            struct ScanMode {
-                mode: String,
-                count: usize,
-            }
-            let _ = app.emit("scan-mode", ScanMode { mode: "cache".to_string(), count: index_entries.len() });
-
-            // Build FileNode map from index entries and merge metadata
-            let mut all_files: HashMap<String, FileNode> = HashMap::new();
-
-            for entry in index_entries.iter() {
-                let file_type = match entry.file_type.as_str() {
-                    "Image" => FileType::Image,
-                    "Folder" => FileType::Folder,
-                    _ => FileType::Unknown,
-                };
-
-                let meta = if matches!(file_type, FileType::Image) {
-                    entry.width.map(|w| ImageMeta {
-                        width: w,
-                        height: entry.height.unwrap_or(0),
-                        size_kb: (entry.size / 1024) as u32,
-                        created: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
-                        modified: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
-                        format: entry.format.clone().unwrap_or_default(),
-                    })
-                } else {
-                    None
-                };
-
-                let node = FileNode {
-                    id: entry.file_id.clone(),
-                    parent_id: entry.parent_id.clone(),
-                    name: entry.name.clone(),
-                    r#type: file_type.clone(),
-                    path: entry.path.clone(),
-                    size: Some(entry.size),
-                    children: if matches!(file_type, FileType::Folder) { Some(Vec::new()) } else { None },
-                    tags: Vec::new(),
-                    created_at: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()),
-                    updated_at: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()),
-                    url: None,
-                    meta,
-                    description: None,
-                    source_url: None,
-                    ai_data: None,
-                };
-
-                all_files.insert(node.id.clone(), node);
-            }
-
-            // Build parent-child relationships
-            let mut children_to_add: Vec<(String, String)> = Vec::new();
-            for (id, node) in all_files.iter() {
-                if let Some(parent_id) = &node.parent_id {
-                    children_to_add.push((parent_id.clone(), id.clone()));
-                }
-            }
-            for (parent_id, child_id) in children_to_add {
-                if let Some(parent_node) = all_files.get_mut(&parent_id) {
-                    if let Some(children) = &mut parent_node.children {
-                        children.push(child_id);
-                    }
-                }
-            }
-
-            // Merge file metadata table (tags, description, etc.)
-            for (file_id, meta) in metadata_map.iter() {
-                if let Some(node) = all_files.get_mut(file_id) {
-                    if let Some(tags_val) = &meta.tags {
-                        if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
-                            node.tags = tags_vec;
-                        }
-                    }
-                    node.description = meta.description.clone();
-                    node.source_url = meta.source_url.clone();
-                    node.ai_data = meta.ai_data.clone();
-                }
-            }
-
-            // Ensure root node exists
-            let root_id = generate_id(&path);
-            if !all_files.contains_key(&root_id) {
-                let root_metadata = fs::metadata(root_path).map_err(|e| format!("Failed to read root directory: {}", e))?;
-                let root_name = root_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("Root")
-                    .to_string();
-                let root_node = FileNode {
-                    id: root_id.clone(),
-                    parent_id: None,
-                    name: root_name,
-                    r#type: FileType::Folder,
-                    path: normalize_path(&path),
-                    size: None,
-                    children: Some(Vec::new()),
-                    tags: Vec::new(),
-                    created_at: root_metadata
-                        .created()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-                        .map(|dt| dt.to_rfc3339()),
-                    updated_at: root_metadata
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                        .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-                        .map(|dt| dt.to_rfc3339()),
-                    url: None,
-                    meta: None,
-                    description: None,
-                    source_url: None,
-                    ai_data: None,
-                };
-
-                all_files.insert(root_id.clone(), root_node);
-            }
-
-            return Ok(all_files);
+        // 当环境变量 AURORA_BENCH=1 时打印耗时（仅用于开发/benchmark）
+        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
+            let t0 = std::time::Instant::now();
+            let v = db::file_metadata::get_all_metadata(&conn).unwrap_or_default();
+            eprintln!("AURORA_BENCH: get_all_metadata -> rows={} elapsed={:?}", v.len(), t0.elapsed());
+            v.into_iter().map(|m| (m.file_id.clone(), m)).collect()
         } else {
-            // Emit full scan mode
-            #[derive(Clone, Serialize)]
-            struct ScanModeSimple { mode: String }
-            let _ = app.emit("scan-mode", ScanModeSimple { mode: "full".to_string() });
+            db::file_metadata::get_all_metadata(&conn)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|m| (m.file_id.clone(), m))
+                .collect()
         }
-    }
-    
-    let mut all_files: HashMap<String, FileNode> = HashMap::new();
-    
-    // Get root directory metadata
-    let root_metadata = match fs::metadata(root_path) {
-        Ok(m) => m,
-        Err(e) => return Err(format!("Failed to read root directory: {}", e)),
+    };
+
+    // 2. 预加载现有的索引条目，用于元数据复用
+    let cached_index_map: HashMap<String, db::file_index::FileIndexEntry> = {
+        let pool = app.state::<AppDbPool>();
+        let conn = pool.get_connection();
+        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
+            let t0 = std::time::Instant::now();
+            let entries = db::file_index::get_entries_under_path(&conn, &normalized_root_path).unwrap_or_default();
+            eprintln!("AURORA_BENCH: get_entries_under_path -> rows={} elapsed={:?}", entries.len(), t0.elapsed());
+            entries.into_iter().map(|e| (e.path.clone(), e)).collect()
+        } else {
+            db::file_index::get_entries_under_path(&conn, &normalized_root_path)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|e| (e.path.clone(), e))
+                .collect()
+        }
     };
     
     let root_id = generate_id(&path);
-    let root_name = root_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("Root")
-        .to_string();
-    
-    // Create root directory node
+    let root_metadata = fs::metadata(root_path_os).map_err(|e| format!("无法读取根目录: {}", e))?;
     let root_node = FileNode {
-        id: root_id.clone(),
-        parent_id: None,
-        name: root_name,
-        r#type: FileType::Folder,
-        path: normalize_path(&path),
-        size: None,
-        children: Some(Vec::new()),
-        tags: Vec::new(),
-        created_at: root_metadata
-            .created()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-            .map(|dt| dt.to_rfc3339()),
-        updated_at: root_metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
-            .map(|dt| dt.to_rfc3339()),
-        url: None,
-        meta: None,
-        description: None,
-        source_url: None,
-        ai_data: None,
+        id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
+        r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
+        url: None, meta: None, description: None, source_url: None, ai_data: None,
+        created_at: root_metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
+        updated_at: root_metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
     };
-    
-    all_files.insert(root_id.clone(), root_node.clone());
-    
-    // Use jwalk for parallel directory traversal
-    let normalized_root_path = normalize_path(&path);
-    
-    // Build path -> id mapping (will be populated as we process entries)
-    // Stable ID: Pre-load existing IDs from database for this directory and subdirectories
-    let mut path_to_id: HashMap<String, String> = HashMap::new();
-    path_to_id.insert(normalized_root_path.clone(), root_id.clone());
 
-    {
-        let app_db = app.state::<AppDbPool>();
-        let conn = app_db.get_connection();
-        let root_prefix = if normalized_root_path.ends_with('/') { normalized_root_path.clone() } else { format!("{}/", normalized_root_path) };
-        let pattern = format!("{}%", root_prefix);
-        
-        if let Ok(mut stmt) = conn.prepare("SELECT path, file_id FROM file_index WHERE path LIKE ?") {
-            if let Ok(rows) = stmt.query_map(params![pattern], |row| {
-                Ok((row.get::<usize, String>(0)?, row.get::<usize, String>(1)?))
-            }) {
-                for row in rows {
-                    if let Ok((p, id)) = row {
-                        path_to_id.insert(p, id);
-                    }
-                }
-            }
-        };
-    }
-    
-    // Process entries in parallel using jwalk (streaming)
-    // First run a fast counting pass (parallel but synchronous) to compute an accurate total before streaming detailed nodes.
-    let (tx, rx) = crossbeam_channel::unbounded::<(String, FileNode, String)>();
-    let producer_path = path.clone();
-    
-    // Clone path_to_id for the producer thread (read-only access)
-    let existing_ids = Arc::new(path_to_id.clone());
-
-    // Fast synchronous counting pass (parallel iterator) to get accurate total quickly
-    let root_path_local = Path::new(&path);
+    // 3. 快速计算总数 (限制线程以平衡性能与 CPU 占用)
     let fast_total: usize = jwalk::WalkDir::new(&path)
+        .parallelism(jwalk::Parallelism::RayonNewPool(8))
         .into_iter()
         .par_bridge()
-        .filter_map(|entry_result| {
-            let entry = match entry_result {
-                Ok(e) => e,
-                Err(_) => return None,
-            };
-
-            let entry_path = entry.path();
-            if entry_path == root_path_local {
-                return None;
-            }
-
-            // Skip hidden and cache files
-            let file_name = entry_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-
-            if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") {
-                return None;
-            }
-
-            if file_name.starts_with('.') && file_name != ".pixcall" {
-                return None;
-            }
-
-            let extension = entry_path
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(|e| e.to_lowercase())
-                .unwrap_or_default();
-
-            if is_supported_image(&extension) {
-                Some(1usize)
-            } else {
-                None
-            }
+        .filter_map(|e| {
+            let entry = e.ok()?;
+            let p = entry.path();
+            if p == root_path_os { return None; }
+            let name = p.file_name()?.to_str()?;
+            if p.components().any(|c| c.as_os_str() == ".Aurora_Cache") || (name.starts_with('.') && name != ".pixcall") { return None; }
+            let ext = p.extension()?.to_str()?.to_lowercase();
+            if is_supported_image(&ext) { Some(1) } else { None }
         })
         .count();
 
-    // Emit initial total immediately so the UI can show determinate progress
-    let mut total_images = fast_total;
-    let processed_images = 0usize;
-    #[derive(Serialize, Clone)]
-    struct ScanProgress {
-        processed: usize,
-        total: usize,
-    }
-    let _ = app.emit("scan-progress", ScanProgress { processed: processed_images, total: total_images });
+    let total_images = fast_total;
+    let _ = app.emit("scan-progress", ScanProgress { processed: 0, total: total_images });
 
-    // Producer: full node producer (heavy work: read image dimensions, metadata)
+    // 4. 并行扫描逻辑
+    let (tx, rx) = crossbeam_channel::unbounded::<(String, FileNode, String)>();
+    let producer_path = path.clone();
+    let cached_index_arc = Arc::new(cached_index_map);
+
     std::thread::spawn(move || {
         let normalized_root = normalize_path(&producer_path);
-        let root_path_local = Path::new(&producer_path);
+        let root_p_local = Path::new(&producer_path);
 
         jwalk::WalkDir::new(&producer_path)
+            .parallelism(jwalk::Parallelism::RayonNewPool(8))
             .into_iter()
             .par_bridge()
             .filter_map(|entry_result| {
-                let entry = match entry_result {
-                    Ok(e) => e,
-                    Err(_) => return None,
-                };
-
+                let entry = entry_result.ok()?;
                 let entry_path = entry.path();
+                if entry_path == root_p_local { return None; }
 
-                // Skip root directory itself
-                if entry_path == root_path_local {
-                    return None;
-                }
+                let file_name = entry_path.file_name()?.to_str()?;
+                if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") || (file_name.starts_with('.') && file_name != ".pixcall") { return None; }
 
-                // Skip hidden files (except .pixcall)
-                let file_name = entry_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-
-                // Skip .Aurora_Cache folder and its contents
-                if entry_path.components().any(|c| c.as_os_str() == ".Aurora_Cache") {
-                    return None;
-                }
-
-                if file_name.starts_with('.') && file_name != ".pixcall" {
-                    return None;
-                }
-
-                let full_path = normalize_path(entry_path.to_str().unwrap_or(""));
-
-                // Get metadata
-                let metadata = match entry.metadata() {
-                    Ok(m) => m,
-                    Err(_) => return None,
-                };
-
-                // Get parent path directly from entry_path (thread-safe)
-                let parent_path = if let Some(parent) = entry_path.parent() {
-                    normalize_path(parent.to_str().unwrap_or(""))
-                } else {
-                    normalized_root.clone()
-                };
-
-                // Stable ID: Reuse existing ID if available, otherwise generate new one
-                let file_id = if let Some(id) = existing_ids.get(&full_path) {
-                    id.clone()
-                } else {
-                    generate_id(&full_path)
-                };
-                let file_name = entry_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                // Check if it's a directory
+                let full_path = normalize_path(entry_path.to_str()?);
+                let metadata = entry.metadata().ok()?;
+                let p_path = entry_path.parent().map(|p| normalize_path(p.to_str().unwrap_or(""))).unwrap_or(normalized_root.clone());
+                
                 let is_directory = metadata.is_dir();
+                let extension = entry_path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+                
+                let cached = cached_index_arc.get(&full_path);
+                let mtime = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
+                
+                let reuse_metadata = !force && cached.map_or(false, |c| c.modified_at == mtime && c.size == metadata.len());
+                let file_id = if let Some(c) = cached { c.file_id.clone() } else { generate_id(&full_path) };
 
                 if is_directory {
-                    // Create folder node (parent_id will be set later)
                     let folder_node = FileNode {
-                        id: file_id.clone(),
-                        parent_id: None, // Will be set later
-                        name: file_name,
-                        r#type: FileType::Folder,
-                        path: full_path.clone(),
-                        size: None,
-                        children: Some(Vec::new()),
-                        tags: Vec::new(),
-                        created_at: metadata
-                            .created()
-                            .ok()
-                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                            .and_then(|secs| {
-                                chrono::DateTime::from_timestamp(secs as i64, 0)
-                                    .map(|dt| dt.to_rfc3339())
-                            }),
-                        updated_at: metadata
-                            .modified()
-                            .ok()
-                            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                            .and_then(|secs| {
-                                chrono::DateTime::from_timestamp(secs as i64, 0)
-                                    .map(|dt| dt.to_rfc3339())
-                            }),
-                        url: None,
-                        meta: None,
-                        description: None,
-                        source_url: None,
-                        ai_data: None,
+                        id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Folder, path: full_path.clone(),
+                        size: None, children: Some(Vec::new()), tags: Vec::new(), url: None, meta: None, description: None, source_url: None, ai_data: None,
+                        created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
+                        updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
+                    };
+                    Some((file_id, folder_node, p_path))
+                } else if is_supported_image(&extension) {
+                    let (width, height) = if reuse_metadata {
+                        let c = cached.unwrap(); (c.width.unwrap_or(0), c.height.unwrap_or(0))
+                    } else {
+                        image::image_dimensions(&entry_path).unwrap_or((0, 0))
                     };
 
-                    Some((file_id, folder_node, parent_path))
-                } else {
-                    // Check if it's a supported image
-                    let extension = entry_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e.to_lowercase())
-                        .unwrap_or_default();
-
-                    if is_supported_image(&extension) {
-                        // Create image file node (parent_id will be set later)
-                        let file_size = metadata.len();
-
-                        // Use imageinfo to quickly get image dimensions
-                        let (width, height) = match image::image_dimensions(&entry_path) {
-                            Ok((w, h)) => (w as u32, h as u32),
-                            Err(_) => {
-                                const MAX_HEADER_BYTES: usize = 256 * 1024; // 256KB
-                                const CHUNK: usize = 16 * 1024; // read in 16KB chunks
-
-                                if let Ok(mut file) = fs::File::open(&entry_path) {
-                                    let mut buffer: Vec<u8> = Vec::new();
-                                    let mut found: Option<(u32, u32)> = None;
-
-                                    loop {
-                                        let mut tmp = vec![0u8; CHUNK];
-                                        match file.read(&mut tmp) {
-                                            Ok(0) => break, // EOF
-                                            Ok(n) => buffer.extend_from_slice(&tmp[..n]),
-                                            Err(_) => break,
-                                        }
-
-                                        if let Ok(info) = imageinfo::ImageInfo::from_raw_data(&buffer) {
-                                            found = Some((info.size.width as u32, info.size.height as u32));
-                                            break;
-                                        }
-
-                                        if buffer.len() >= MAX_HEADER_BYTES {
-                                            break;
-                                        }
-                                    }
-
-                                    if let Some(v) = found {
-                                        v
-                                    } else {
-                                        if let Ok(f2) = fs::File::open(&entry_path) {
-                                            let reader = BufReader::new(f2);
-                                            let mut dec = jpeg_decoder::Decoder::new(reader);
-                                            let _ = dec.read_info();
-                                            if let Some(info) = dec.info() {
-                                                (info.width as u32, info.height as u32)
-                                            } else {
-                                                (0, 0)
-                                            }
-                                        } else {
-                                            (0, 0)
-                                        }
-                                    }
-                                } else {
-                                    (0, 0)
-                                }
-                            }
-                        };
-
-                        let image_node = FileNode {
-                            id: file_id.clone(),
-                            parent_id: None, // Will be set later
-                            name: file_name,
-                            r#type: FileType::Image,
-                            path: full_path.clone(),
-                            size: Some(file_size),
-                            children: None,
-                            tags: Vec::new(),
-                            created_at: metadata
-                                .created()
-                                .ok()
-                                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                                .and_then(|secs| {
-                                    chrono::DateTime::from_timestamp(secs as i64, 0)
-                                        .map(|dt| dt.to_rfc3339())
-                                }),
-                            updated_at: metadata
-                                .modified()
-                                .ok()
-                                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                                .and_then(|secs| {
-                                    chrono::DateTime::from_timestamp(secs as i64, 0)
-                                        .map(|dt| dt.to_rfc3339())
-                                }),
-                            url: None, // Don't use file path as URL - frontend will use getThumbnail() instead
-                            meta: Some(ImageMeta {
-                                width,
-                                height,
-                                size_kb: (file_size / 1024) as u32,
-                                created: metadata
-                                    .created()
-                                    .ok()
-                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                                    .and_then(|secs| {
-                                        chrono::DateTime::from_timestamp(secs as i64, 0)
-                                            .map(|dt| dt.to_rfc3339())
-                                    })
-                                    .unwrap_or_default(),
-                                modified: metadata
-                                    .modified()
-                                    .ok()
-                                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
-                                    .and_then(|secs| {
-                                        chrono::DateTime::from_timestamp(secs as i64, 0)
-                                            .map(|dt| dt.to_rfc3339())
-                                    })
-                                    .unwrap_or_default(),
-                                format: extension,
-                            }),
-                            description: None,
-                            source_url: None,
-                            ai_data: None,
-                        };
-
-                        Some((file_id, image_node, parent_path))
-                    } else {
-                        None
-                    }
-                }
+                    let image_node = FileNode {
+                        id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Image, path: full_path.clone(),
+                        size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, ai_data: None,
+                        created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
+                        updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
+                        meta: Some(ImageMeta {
+                            width, height, size_kb: (metadata.len() / 1024) as u32, format: extension,
+                            created: chrono::DateTime::from_timestamp(metadata.created().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                            modified: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                        }),
+                    };
+                    Some((file_id, image_node, p_path))
+                } else { None }
             })
+            .collect::<Vec<_>>()
+            .into_iter()
             .for_each(|item| {
                 let _ = tx.send(item);
             });
     });
 
-    // Receive nodes from producer and update processed counts
-    let mut current_processed_images = processed_images;
-    
-    // 预填充逻辑：由于生产者是并行的，为了防止子节点的 parent_id 映射失败，
-    // 我们在这里接收所有文件夹节点并先填充 path_to_id，然后再处理层级关系。
-    // 注意：rx 现在接收的是初步节点。
-    
-    let mut pending_nodes = Vec::new();
-    while let Ok(item) = rx.recv() {
-        let (ref id, ref node, _) = item;
-        if matches!(node.r#type, FileType::Folder) {
-            path_to_id.insert(node.path.clone(), id.clone());
-        }
-        pending_nodes.push(item);
-    }
+    // 5. 聚合结果
+    let mut all_files: HashMap<String, FileNode> = HashMap::new();
+    let mut path_to_id: HashMap<String, String> = HashMap::new();
+    path_to_id.insert(normalized_root_path.clone(), root_id.clone());
+    all_files.insert(root_id.clone(), root_node);
 
-    for (id, mut node, parent_path) in pending_nodes {
-        // Resolve parent_id from parent_path if possible
-        if !parent_path.is_empty() {
-            if let Some(parent_id) = path_to_id.get(&parent_path).cloned() {
-                node.parent_id = Some(parent_id);
-            } else if parent_path == normalize_path(&path) {
-                node.parent_id = Some(root_id.clone());
-            }
-        }
+    let mut scanned_paths = Vec::new();
+    let mut processed_count = 0;
+    let mut p_path_map: HashMap<String, String> = HashMap::new(); // temp map to store parent path for nodes
 
-        // If folder, add to path map immediately
-        if matches!(node.r#type, FileType::Folder) {
-            path_to_id.insert(node.path.clone(), id.clone());
+    while let Ok((id, mut node, p_path)) = rx.recv() {
+        scanned_paths.push(node.path.clone());
+        if matches!(node.r#type, FileType::Folder) { 
+            path_to_id.insert(node.path.clone(), id.clone()); 
         }
+        p_path_map.insert(id.clone(), p_path);
 
-        // Merge metadata if available
         if let Some(meta) = metadata_map.get(&id) {
             if let Some(tags_val) = &meta.tags {
-                if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
-                    node.tags = tags_vec;
-                }
+                if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { node.tags = tags_vec; }
             }
             node.description = meta.description.clone();
             node.source_url = meta.source_url.clone();
             node.ai_data = meta.ai_data.clone();
         }
 
-        // For images, increment processed count and emit progress
         if matches!(node.r#type, FileType::Image) {
-            current_processed_images += 1;
-            let _ = app.emit("scan-progress", ScanProgress { processed: current_processed_images, total: total_images });
+            processed_count += 1;
+            let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: total_images });
         }
-
-        all_files.insert(id.clone(), node);
+        all_files.insert(id, node);
     }
 
-    // After both channels closed, ensure final progress reflects actual scanned images.
-    // Because the lightweight counter may undercount in some edge cases, reconcile with the actual map.
-    let actual_total: usize = all_files.iter().filter(|(_, n)| matches!(n.r#type, FileType::Image)).count();
-    if actual_total > total_images {
-        total_images = actual_total;
-    }
-
-    // Emit final progress event (use reconciled total)
-    let _ = app.emit("scan-progress", ScanProgress { processed: current_processed_images, total: total_images });
-
-    // Build parent-child relationships
-    let mut children_to_add: Vec<(String, String)> = Vec::new(); // (parent_id, child_id)
+    // 建立父子关系 - 二次解析阶段以防并行导致的顺序问题
+    let mut assignments = Vec::new();
     for (id, node) in all_files.iter() {
-        if let Some(parent_id) = &node.parent_id {
-            children_to_add.push((parent_id.clone(), id.clone()));
-        } else if node.id != root_id {
-            // Root-level item (parent resolution failed earlier) - attach to root and set parent_id
-            children_to_add.push((root_id.clone(), id.clone()));
-        }
-    }
-    
-    // Add children to their parents and ensure child's parent_id is set
-    for (parent_id, child_id) in children_to_add {
-        // Attach child id to parent's children list if possible
-        if let Some(parent_node) = all_files.get_mut(&parent_id) {
-            if let Some(children) = &mut parent_node.children {
-                children.push(child_id.clone());
-            }
-        }
+        if id == &root_id { continue; }
+        
+        let parent_id = if let Some(pid) = &node.parent_id {
+            Some(pid.clone())
+        } else if let Some(ppath) = p_path_map.get(id) {
+            path_to_id.get(ppath).cloned().or_else(|| if ppath == &normalized_root_path { Some(root_id.clone()) } else { None })
+        } else {
+            Some(root_id.clone())
+        };
 
-        // If child's parent_id was missing (was None), update it to reflect attachment
-        if let Some(child_node) = all_files.get_mut(&child_id) {
-            if child_node.parent_id.is_none() && child_node.id != root_id {
-                child_node.parent_id = Some(parent_id.clone());
-            }
+        if let Some(pid) = parent_id {
+            assignments.push((pid, id.clone()));
         }
     }
-    
-    // Sort children for all folders
+
+    for (pid, cid) in assignments {
+        if let Some(pnode) = all_files.get_mut(&pid) {
+            if let Some(children) = &mut pnode.children {
+                children.push(cid.clone());
+            }
+        }
+        if let Some(cnode) = all_files.get_mut(&cid) {
+            cnode.parent_id = Some(pid);
+        }
+    }
+
+    sort_children(&mut all_files);
+
+    // 持久化（快速）并异步清理 + 后台补充 heavy metadata（受限速）
+    let files_to_upsert = all_files.clone();
+    let files_for_background = files_to_upsert.clone(); // 为后台索引保留一份副本
+    let root_to_clean = normalized_root_path.clone();
+    let app_db_inner = app.state::<AppDbPool>().inner().clone();
+
+    // 快速写入当前主索引（不阻塞 UI）
+    tokio::task::spawn_blocking(move || {
+        let mut conn = app_db_inner.get_connection();
+        let entries: Vec<db::file_index::FileIndexEntry> = files_to_upsert.values().map(|node| {
+            let (w, h, fmt) = node.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
+            db::file_index::FileIndexEntry {
+                file_id: node.id.clone(), parent_id: node.parent_id.clone(), path: node.path.clone(), name: node.name.clone(),
+                file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
+                size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
+                created_at: 0, modified_at: 0, 
+            }
+        }).collect();
+        let _ = db::file_index::batch_upsert(&mut conn, &entries);
+        let _ = db::file_index::delete_orphaned_entries(&mut conn, &root_to_clean, &scanned_paths);
+    });
+
+    // 后台增量补全 missing heavy metadata（dimensions 等）——有批次与延迟以避免瞬时 CPU/IO 峰值
+    if std::env::var("AURORA_DISABLE_BACKGROUND_INDEX").as_deref().ok() != Some("1") {
+        let pool = app.state::<AppDbPool>().inner().clone();
+        tokio::spawn(async move {
+            // 可调参数：默认批量大小 200，批次间隔 50ms
+            let batch_size: usize = std::env::var("AURORA_INDEX_BATCH_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
+            let batch_delay_ms: u64 = std::env::var("AURORA_INDEX_BATCH_DELAY_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
+
+            // 收集需要补全尺寸的图片路径
+            let mut to_process: Vec<String> = Vec::new();
+            for (_id, node) in files_for_background.iter() {
+                if matches!(node.r#type, FileType::Image) {
+                    let need = node.meta.as_ref().map(|m| m.width == 0 || m.height == 0).unwrap_or(true);
+                    if need { to_process.push(node.path.clone()); }
+                }
+            }
+
+            if to_process.is_empty() { return; }
+
+            // 分批顺序执行：每批在 blocking 线程中计算并写回 DB，以避免大量并发阻塞导致 CPU 飙升
+            for chunk in to_process.chunks(batch_size) {
+                let chunk_vec: Vec<String> = chunk.to_vec();
+                let pool_clone = pool.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    let mut conn = pool_clone.get_connection();
+                    let mut entries = Vec::new();
+                    for path in chunk_vec.iter() {
+                        if let Ok(md) = std::fs::metadata(path) {
+                            if md.is_file() {
+                                if let Ok((w, h)) = image::image_dimensions(path) {
+                                    let id = generate_id(path);
+                                    let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                                    let fmt = std::path::Path::new(path).extension().and_then(|e| e.to_str()).map(|s| s.to_string());
+                                    entries.push(db::file_index::FileIndexEntry {
+                                        file_id: id,
+                                        parent_id: None,
+                                        path: path.clone(),
+                                        name,
+                                        file_type: "Image".to_string(),
+                                        size: md.len(),
+                                        width: Some(w),
+                                        height: Some(h),
+                                        format: fmt,
+                                        created_at: 0,
+                                        modified_at: 0,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if !entries.is_empty() {
+                        let _ = db::file_index::batch_upsert(&mut conn, &entries);
+                    }
+                }).await.ok();
+
+                // 让出调度并限制下一批的突发性
+                tokio::time::sleep(std::time::Duration::from_millis(batch_delay_ms)).await;
+            }
+        });
+    }
+
+    Ok(all_files)
+}
+
+fn sort_children(all_files: &mut HashMap<String, FileNode>) {
     let folder_ids: Vec<String> = all_files.keys().cloned().collect();
     for folder_id in folder_ids {
-        // Get children list first (immutable borrow)
-        let children_opt = all_files.get(&folder_id)
-            .and_then(|n| n.children.as_ref())
-            .map(|c| c.clone());
-        
+        let children_opt = all_files.get(&folder_id).and_then(|n| n.children.as_ref()).cloned();
         if let Some(mut children_sorted) = children_opt {
-            // Sort using immutable borrow of all_files
             children_sorted.sort_by(|a, b| {
                 let a_node = all_files.get(a);
                 let b_node = all_files.get(b);
-                
                 match (a_node, b_node) {
                     (Some(a_n), Some(b_n)) => {
-                        // Folders first
                         match (&a_n.r#type, &b_n.r#type) {
                             (FileType::Folder, FileType::Folder) => a_n.name.cmp(&b_n.name),
                             (FileType::Folder, _) => std::cmp::Ordering::Less,
@@ -834,82 +513,9 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     _ => std::cmp::Ordering::Equal,
                 }
             });
-            
-            // Now update with mutable borrow
-            if let Some(node) = all_files.get_mut(&folder_id) {
-                if let Some(children) = &mut node.children {
-                    *children = children_sorted;
-                }
-            }
+            if let Some(node) = all_files.get_mut(&folder_id) { if let Some(children) = &mut node.children { *children = children_sorted; } }
         }
     }
-    
-    // Collect all image paths from the scan results (for later use)
-    let _image_paths: Vec<String> = all_files
-        .iter()
-        .filter(|(_, node)| matches!(node.r#type, FileType::Image))
-        .map(|(_, node)| node.path.clone())
-        .collect();
-    
-    // DO NOT update root node in map - it's already there with children!
-    // all_files.insert(root_id, root_node); // This line was overwriting the root node!
-
-    // Persist file index to database (best-effort, non-blocking from UI perspective)
-    {
-        let files_clone = all_files.clone();
-        // Spawn blocking DB upsert so we don't block async runtime for long disk IO
-        let pool_clone = app.state::<AppDbPool>().inner().clone();
-        let upsert_result = tokio::task::spawn_blocking(move || {
-            let mut conn = pool_clone.get_connection();
-            let mut entries_vec: Vec<db::file_index::FileIndexEntry> = Vec::new();
-            for (_, node) in files_clone.iter() {
-                // Read timestamps from FS when possible
-                let (created_ts, modified_ts) = match std::fs::metadata(&node.path) {
-                    Ok(m) => {
-                        let created = m.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
-                        let modified = m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
-                        (created, modified)
-                    }
-                    Err(_) => (0, 0),
-                };
-
-                let (w, h, fmt) = if let Some(meta) = &node.meta {
-                    (Some(meta.width as u32), Some(meta.height as u32), Some(meta.format.clone()))
-                } else {
-                    (None, None, None)
-                };
-
-                let entry = db::file_index::FileIndexEntry {
-                    file_id: node.id.clone(),
-                    parent_id: node.parent_id.clone(),
-                    path: node.path.clone(),
-                    name: node.name.clone(),
-                    file_type: match node.r#type {
-                        FileType::Image => "Image".to_string(),
-                        FileType::Folder => "Folder".to_string(),
-                        _ => "Unknown".to_string(),
-                    },
-                    size: node.size.unwrap_or(0),
-                    created_at: created_ts,
-                    modified_at: modified_ts,
-                    width: w,
-                    height: h,
-                    format: fmt,
-                };
-
-                entries_vec.push(entry);
-            }
-            db::file_index::batch_upsert(&mut conn, &entries_vec)
-        }).await;
-
-        match upsert_result {
-            Err(e) => eprintln!("Failed to persist file index (task join error): {}", e),
-            Ok(Err(e)) => eprintln!("Failed to persist file index (db error): {}", e),
-            Ok(Ok(_)) => { /* persisted successfully */ }
-        }
-    }
-
-    Ok(all_files)
 }
 
 #[tauri::command]
@@ -1247,50 +853,76 @@ async fn create_folder(path: String) -> Result<(), String> {
 // Command to rename a file or folder
 #[tauri::command]
 async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) -> Result<(), String> {
-    // 1. 先进行物理重命名
+    // 1. 先进行物理重命名（必须同步完成以保证用户可见性）
     fs::rename(&old_path, &new_path)
         .map_err(|e| format!("物理重命名失败 (可能文件被占用): {}", e))?;
-    
+
     let is_dir = Path::new(&new_path).is_dir();
-    
-    // 2. 同步执行数据库迁移 (避免竞态条件)
-    // 之前使用 spawn_blocking 会导致前端在数据库更新完成前就扫描到新文件，
-    // 从而触发重复提取。由于我们已经优化了 SQL 性能，这里同步执行也不会卡顿。
     let app_db = app.state::<AppDbPool>();
-    
-    if is_dir {
-        // 目录重命名
-        let mut conn = app_db.get_connection();
-        let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
-        
-        db::file_index::migrate_index_dir(&tx, &old_path, &new_path)
-            .map_err(|e| format!("索引迁移失败: {}", e))?;
-        db::file_metadata::migrate_metadata_dir(&tx, &old_path, &new_path)
-            .map_err(|e| format!("元数据迁移失败: {}", e))?;
-            
-        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
-    } else {
-        // 单文件重命名
-        let old_id = generate_id(&old_path);
-        let new_id = generate_id(&new_path);
+
+    // 2. 快速事务：只做顶层路径的原子更新与目的路径冲突清理，确保不会触发 UNIQUE 约束
+    //    这样可以立即让 UI 可见新路径；子路径的批量更新将异步执行以避免 CPU 峰值。
+    {
         let mut conn = app_db.get_connection();
         let tx = conn.transaction().map_err(|e| format!("开启事务失败: {}", e))?;
 
-        db::file_index::migrate_index_dir(&tx, &old_path, &new_path)
-            .map_err(|e| format!("索引迁移失败: {}", e))?;
-        db::file_metadata::migrate_metadata(&tx, &old_id, &new_id, &new_path)
-            .map_err(|e| format!("元数据迁移失败: {}", e))?;
+        if is_dir {
+            // 清理目标路径的顶层残留，防止 UNIQUE 冲突
+            let new_normalized = normalize_path(&new_path);
+            let new_dir_prefix_clean = if new_normalized.ends_with('/') { new_normalized.clone() } else { format!("{}/", new_normalized) };
+            let new_dir_pattern = format!("{}%", new_dir_prefix_clean);
+            tx.execute(
+                "DELETE FROM file_index WHERE lower(path) = lower(?1) OR lower(path) LIKE lower(?2)",
+                params![new_normalized, new_dir_pattern],
+            ).ok();
 
-        tx.commit().map_err(|e| format!("提交事务失败: {}", e))?;
+            // 只更新顶层目录的路径与名称（快速）
+            tx.execute(
+                "UPDATE file_index SET path = ?1, name = ?2 WHERE path = ?3",
+                params![normalize_path(&new_path), Path::new(&new_path).file_name().and_then(|n| n.to_str()).unwrap_or(""), normalize_path(&old_path)],
+            ).ok();
+        } else {
+            // 单文件：只更新该文件的路径（快速）
+            tx.execute(
+                "UPDATE file_index SET path = ?1, name = ?2 WHERE file_id = ?3",
+                params![normalize_path(&new_path), Path::new(&new_path).file_name().and_then(|n| n.to_str()).unwrap_or(""), generate_id(&old_path)],
+            ).ok();
+
+            // 尝试快速迁移元数据条目（单文件）
+            let old_id = generate_id(&old_path);
+            let new_id = generate_id(&new_path);
+            let _ = db::file_metadata::migrate_metadata(&tx, &old_id, &new_id, &new_path);
+        }
+
+        tx.commit().map_err(|e| format!("提交快速事务失败: {}", e))?;
     }
-    
-    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    // Log timing for DB move — useful to detect whether DB work is blocking the rename command
-    let db_move_start = std::time::Instant::now();
-    let res = color_db.move_colors(&old_path, &new_path);
-    eprintln!("[rename_file] color_db.move_colors elapsed={:?} result={:?}", db_move_start.elapsed(), res.as_ref().err());
 
-    // Return quickly; non-critical cache updates inside `move_colors` are performed asynchronously.
+    // 3. 后台异步完成子路径与 heavy-metadata 的完整迁移（限速并记录耗时）
+    let old_clone = old_path.clone();
+    let new_clone = new_path.clone();
+    let pool_clone = app_db.inner().clone();
+    let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+
+    tokio::spawn(async move {
+        let bg_start = std::time::Instant::now();
+        let res = tokio::task::spawn_blocking(move || {
+            let mut conn = pool_clone.get_connection();
+            // 完整迁移（包括子路径）——重用已有的迁移函数以保证一致性
+            let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
+            let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_clone, &new_clone);
+            // move_colors 可能内部也是异步/批量化的，但调用它以确保 color DB 一致性
+            let _ = color_db.move_colors(&old_clone, &new_clone);
+        }).await;
+
+        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
+            eprintln!("AURORA_BENCH: rename_file background migration elapsed={:?}", bg_start.elapsed());
+        }
+
+        if let Err(e) = res {
+            eprintln!("[rename_file][bg] migration failed: {:?}", e);
+        }
+    });
+
     Ok(())
 }
 

@@ -624,15 +624,244 @@ export const useFileOperations = ({
         return;
       }
 
-      // 在后台异步刷新（不阻塞 UI）——由于后端现在会同步迁移索引，不再需要昂贵的全量扫描
+      // 在后台异步做更安全的 targeted 更新（防抖 + 优先使用 scanFile），避免触发大范围扫描
       (async () => {
+        const TARGETED_REFRESH_DEBOUNCE_MS = 250; // 可调
+        const start = Date.now();
+        await new Promise(r => setTimeout(r, TARGETED_REFRESH_DEBOUNCE_MS));
+
         try {
-          // 快速刷新当前文件夹显示即可，不需要 forceRescan=true
-          await handleRefresh();
-          console.log('[Rename][bg] display refreshed via handleRefresh');
-          performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true });
+          const parentId = prevFileSnapshot.parentId || undefined;
+          console.log('[Rename][bg] initiating targeted refresh (debounced)', { id, parentId });
+
+          // Strategy:
+          // - If renamed item is a file -> call scanFile(newPath) and merge single node
+          // - If renamed item is a folder -> call scanFile(newPath) to get the folder node (lightweight)
+          // - Only if scanFile fails, fall back to handleRefresh(parentId)
+          const { scanFile } = await import('../api/tauri-bridge');
+
+          let scanned: any = null;
+          try {
+            scanned = await scanFile(newPath, parentId);
+          } catch (err) {
+            console.warn('[Rename][bg] scanFile failed, will fallback to handleRefresh', { err, newPath, parentId });
+            scanned = null;
+          }
+
+          if (scanned) {
+            // Merge single-node result into UI (preserve user metadata where possible)
+            const nodeId = scanned.id;
+            console.log('[Rename][bg] scanned single node', { nodeId, path: scanned.path });
+
+            setState(prev => {
+              const files = { ...prev.files };
+              // remove old entry if id changed
+              if (prevFileSnapshot.id && prevFileSnapshot.id !== nodeId) {
+                // don't immediately orphan existing children — we'll migrate them below if present
+                delete files[prevFileSnapshot.id];
+              }
+
+              files[nodeId] = {
+                ...files[nodeId],
+                ...scanned,
+                // preserve user data if present
+                tags: files[nodeId]?.tags || scanned.tags || [],
+                description: files[nodeId]?.description || scanned.description,
+                aiData: files[nodeId]?.aiData || scanned.aiData,
+              };
+
+              // If the rename changed the node's id but we had a prior children list,
+              // preserve those children until a full directory scan can confirm changes.
+              const prevChildren = prevFileSnapshot.children || [];
+              if (prevFileSnapshot.id && prevFileSnapshot.id !== nodeId && prevChildren.length > 0 && (!scanned.children || scanned.children.length === 0)) {
+                console.log('[Rename][bg] preserving previous children on id-change until directory scan', { oldId: prevFileSnapshot.id, newId: nodeId, preserved: prevChildren.length });
+                files[nodeId] = { ...files[nodeId], children: prevChildren };
+
+                // Update child entries to point to the new parent id so they remain navigable
+                // Also update their `path` (and all descendant paths) to reflect the renamed parent
+                // — otherwise the UI will try to load assets from the old (now-missing) paths.
+                try {
+                  const oldBaseRaw = prevFileSnapshot.path || '';
+                  const newBaseRaw = scanned.path || '';
+                  const normalize = (p: string) => p.replace(/\\/g, '/');
+                  const oldBase = normalize(oldBaseRaw).toLowerCase();
+                  const newBase = normalize(newBaseRaw);
+                  const oldBaseSlash = oldBase.endsWith('/') ? oldBase : oldBase + '/';
+
+                  let updatedCount = 0;
+
+                  // Update direct children parentId first
+                  prevChildren.forEach(childId => {
+                    if (files[childId]) {
+                      files[childId] = { ...files[childId], parentId: nodeId };
+                    }
+                  });
+
+                  // Update paths for any entry whose path starts with the old folder path
+                  Object.keys(files).forEach(fid => {
+                    const f = files[fid];
+                    if (!f || !f.path) return;
+                    const p = normalize(f.path);
+                    if (p.toLowerCase().startsWith(oldBaseSlash)) {
+                      const relative = p.substring(oldBase.length);
+                      const newPath = (newBase.endsWith('/') ? newBase.slice(0, -1) : newBase) + relative;
+                      files[fid] = { ...f, path: newPath };
+                      updatedCount++;
+                    }
+                  });
+
+                  console.log('[Rename][bg] migrated child/descendant paths to new folder path', { oldBase: oldBaseRaw, newBase: newBaseRaw, updatedCount });
+                } catch (err) {
+                  console.warn('[Rename][bg] failed to migrate child paths after rename — children preserved but paths unchanged', { err });
+                  // fallback: at least update parentId so folder navigation still works
+                  prevChildren.forEach(childId => {
+                    if (files[childId]) files[childId] = { ...files[childId], parentId: nodeId };
+                  });
+                }
+              }
+
+              // ensure parent relationship updated
+              if (scanned.parentId) {
+                const parent = files[scanned.parentId];
+                if (parent) {
+                  const children = parent.children ? Array.from(new Set([...(parent.children || []), nodeId])) : [nodeId];
+                  files[scanned.parentId] = { ...parent, children };
+                }
+              }
+
+              return { ...prev, files };
+            });
+
+            // If the renamed item is a folder but the backend returned no children,
+            // perform an immediate folder-level refresh (equivalent to toolbar "Refresh")
+            // so the folder's contents appear immediately in the UI.
+            // Guard to avoid unnecessary work for folders that already include children.
+            try {
+              if (scanned.type === FileType.FOLDER && (!scanned.children || scanned.children.length === 0)) {
+                console.log('[Rename][bg] scanned folder lacks children — performing folder-level refresh', { nodeId });
+
+                // Mark folder as refreshing so UI shows a loading state instead of empty
+                setState(prev => ({
+                  ...prev,
+                  files: {
+                    ...prev.files,
+                    [nodeId]: { ...prev.files[nodeId], isRefreshing: true }
+                  }
+                }));
+
+                // Ensure the UI shows the refreshing state for at least this duration
+                const MIN_VISIBLE_MS = 800;
+                const visibleStart = Date.now();
+
+                // refresh the renamed folder itself (shallow merge handled by handleRefresh)
+                await handleRefresh(nodeId);
+
+                // Some platforms/FS may exhibit a small race where the first refresh
+                // after a rename returns an empty listing even when files exist on disk.
+                // If the folder previously had children, retry a few times with backoff
+                // before giving up — this mirrors a robust "refresh until stable" behavior
+                // but keeps retries limited to avoid large root scans.
+                const prevChildrenCount = prevFileSnapshot.children?.length || 0;
+                if (prevChildrenCount > 0) {
+                  const MAX_RETRIES = 3;
+                  let attempt = 0;
+                  let delayMs = 150;
+                  let populated = false;
+
+                  while (attempt < MAX_RETRIES) {
+                    const currentChildren = (function() { try { return state.files[nodeId]?.children?.length || 0;} catch { return 0; }})();
+                    if (currentChildren > 0) {
+                      populated = true;
+                      break;
+                    }
+
+                    attempt++;
+                    console.log('[Rename][bg] folder still empty after refresh — retrying', { nodeId, attempt, delayMs });
+                    await new Promise(r => setTimeout(r, delayMs));
+
+                    try {
+                      await handleRefresh(nodeId);
+                    } catch (err) {
+                      console.warn('[Rename][bg] retry handleRefresh failed', { nodeId, attempt, err });
+                    }
+
+                    delayMs *= 2;
+                  }
+
+                  if (!populated) {
+                    console.warn('[Rename][bg] folder remains empty after retries — will fall back to parent-level refresh', { nodeId, prevChildrenCount });
+                    // Let the existing fallback (below) handle a parent-level refresh which
+                    // is more likely to discover moved/renamed children in corner cases.
+                  } else {
+                    console.log('[Rename][bg] folder populated after retry', { nodeId });
+
+                    // ensure min visible duration for spinner
+                    const remain = Math.max(0, MIN_VISIBLE_MS - (Date.now() - visibleStart));
+                    if (remain > 0) await new Promise(r => setTimeout(r, remain));
+
+                    setState(prev => ({
+                      ...prev,
+                      files: {
+                        ...prev.files,
+                        [nodeId]: { ...prev.files[nodeId], isRefreshing: false }
+                      }
+                    }));
+
+                    performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true, targeted: true, refreshedFolder: true, elapsed: Date.now() - start });
+                    return;
+                  }
+                } else {
+                  console.log('[Rename][bg] folder-level refresh completed (no previous children)', { nodeId });
+
+                  const remain = Math.max(0, MIN_VISIBLE_MS - (Date.now() - visibleStart));
+                  if (remain > 0) await new Promise(r => setTimeout(r, remain));
+
+                  setState(prev => ({
+                    ...prev,
+                    files: {
+                      ...prev.files,
+                      [nodeId]: { ...prev.files[nodeId], isRefreshing: false }
+                    }
+                  }));
+
+                  performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true, targeted: true, refreshedFolder: true, elapsed: Date.now() - start });
+                  return;
+                }
+
+                // If we reach here, retries didn't populate the folder — clear transient flag
+                setState(prev => ({
+                  ...prev,
+                  files: {
+                    ...prev.files,
+                    [nodeId]: { ...prev.files[nodeId], isRefreshing: false }
+                  }
+                }));
+              }
+
+              // Otherwise we already have sufficient info (either file or folder with children)
+              console.log('[Rename][bg] performed targeted scan_file and merged result', { nodeId });
+              performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true, targeted: true, elapsed: Date.now() - start });
+              return;
+            } catch (err) {
+              console.warn('[Rename][bg] folder-level refresh failed, will fallback to parent refresh', { err, nodeId });
+              // fall through to existing fallback behavior below (will call handleRefresh(parentId) if needed)
+            }
+          }
+
+          // fallback: targeted refresh by folderId (may still be large)
+          try {
+            await handleRefresh(parentId);
+            console.log('[Rename][bg] fallback: handleRefresh completed', { parentId });
+            performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true, fallback: true, elapsed: Date.now() - start });
+            return;
+          } catch (err) {
+            console.error('[Rename][bg] fallback handleRefresh failed', err);
+            performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
+            showToast('Rename completed — refresh failed');
+            return;
+          }
         } catch (e) {
-          console.error('[Rename][bg] refresh failed', e);
+          console.error('[Rename][bg] targeted refresh failed unexpectedly', e);
           performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
           showToast('Rename completed — refresh failed');
         }

@@ -10,6 +10,7 @@ import { SequenceViewer } from './components/SequenceViewer';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
 import { FileGrid, InlineRenameInput, ImageThumbnail } from './components/FileGrid';
+import EmptyFolderPlaceholder from './components/EmptyFolderPlaceholder';
 import { TopicModule } from './components/TopicModule';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
@@ -1092,11 +1093,13 @@ export const App: React.FC = () => {
                 // Use new children from scan to reflect file system changes (add/remove)
                 children: newFile.children || existingFile.children,
                 // IMPORTANT: Preserve parentId for the scanned root to maintain tree structure
-                parentId: (fileId === targetFolderId) ? existingFile.parentId : newFile.parentId
+                parentId: (fileId === targetFolderId) ? existingFile.parentId : newFile.parentId,
+                // Clear any transient refreshing flag for this node (refresh completed)
+                isRefreshing: false
               };
             } else {
               // New file, add as-is
-              mergedFiles[fileId] = newFile;
+              mergedFiles[fileId] = { ...newFile, isRefreshing: false };
             }
           });
 
@@ -3384,10 +3387,12 @@ export const App: React.FC = () => {
                     onShowToast={showToast}
                   />
                 ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
-                  <div className="w-full h-full flex flex-col items-center justify-center text-gray-400" onMouseDown={handleMouseDown} onContextMenu={(e) => handleContextMenu(e, 'background', '')}>
-                    <div className="text-6xl mb-4 opacity-20"><FolderOpen /></div>
-                    <p>{t('context.noFiles')}</p>
-                  </div>
+                  // If folder is being actively refreshed after an operation, show a loading state
+                  <EmptyFolderPlaceholder
+                    isRefreshing={state.files[activeTab.folderId]?.isRefreshing}
+                    onRefresh={() => handleRefresh(activeTab.folderId)}
+                    t={t}
+                  />
                 ) : (
                   <FileGrid
                     displayFileIds={displayFileIds}
