@@ -122,8 +122,17 @@ pub async fn color_extraction_worker(
     });
     
     // 2. 启动多个消费者任务：并行处理文件
-    let num_workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-    let num_workers = num_workers.min(8); // 最多8个消费者线程
+    // - 优先使用环境变量 AURORA_COLOR_WORKERS
+    // - 否则使用 logical_cores - 1（保留一个用于系统/GUI）
+    // - 对外设置上限以避免过度并发（默认上限 32）
+    let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let env_workers = std::env::var("AURORA_COLOR_WORKERS").ok().and_then(|s| s.parse::<usize>().ok());
+    let default_workers = logical_cores.saturating_sub(1).max(1);
+    let num_workers = env_workers.unwrap_or(default_workers).min(32);
+    // 在基准模式下输出配置（方便快速验证）
+    if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
+        eprintln!("[AURORA_BENCH] logical_cores={} configured_color_workers={}", logical_cores, num_workers);
+    }
     let mut consumer_handles = Vec::new();
     
     for _ in 0..num_workers {
@@ -370,28 +379,48 @@ fn consumer_loop(
             Ok((batch_id, file_path)) => {
                 // 更新当前处理的文件
                 let _ = *current_file.lock().unwrap() = file_path.clone();
-                
-                // 处理图片
-                let processing_result: ProcessingResult = match load_and_resize_image_optimized(&file_path, cache_root.as_deref()) {
+
+                // 可选基准：测量 load / extract 时间（仅在 AURORA_BENCH=1 时输出）
+                let bench = std::env::var("AURORA_BENCH").as_deref().ok() == Some("1");
+                let t_start = std::time::Instant::now();
+                let img_res = load_and_resize_image_optimized(&file_path, cache_root.as_deref());
+                let t_after_load = std::time::Instant::now();
+
+                // 处理图片（解码 + 提取）并记录耗时
+                let processing_result: ProcessingResult = match img_res {
                     Ok(img) => {
                         let colors = color_extractor::get_dominant_colors(&img, 8);
+                        let t_after_extract = std::time::Instant::now();
+
+                        if bench {
+                            let load_ms = (t_after_load - t_start).as_millis();
+                            let extract_ms = (t_after_extract - t_after_load).as_millis();
+                            eprintln!("[AURORA_BENCH] file={} load_ms={} extract_ms={}", file_path, load_ms, extract_ms);
+                        }
+
                         if colors.is_empty() {
                             Err((batch_id, format!("No colors extracted from file: {}", file_path)))
                         } else {
                             Ok((batch_id, file_path.clone(), colors))
                         }
                     },
-                    Err(e) => Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
+                    Err(e) => {
+                        if bench {
+                            let load_ms = (t_after_load - t_start).as_millis();
+                            eprintln!("[AURORA_BENCH] file={} load_ms={} error={}", file_path, load_ms, e);
+                        }
+                        Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
+                    }
                 };
-                
+
                 // 克隆结果用于后续错误处理
                 let result_clone = processing_result.clone();
-                
+
                 if result_sender.send(processing_result).is_err() {
                     eprintln!("Result sender closed, consumer exiting");
                     break;
                 }
-                
+
                 // 如果处理失败，更新文件状态为error
                 if let Err((_, error_msg)) = result_clone {
                     let pool_clone = pool.clone();
