@@ -163,9 +163,10 @@ interface PeopleSectionProps {
 interface PeopleSectionControlledProps extends PeopleSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
+  listHeight: number;
 }
 
-const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, expanded, onToggleExpand }) => {
+const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, expanded, onToggleExpand, listHeight }) => {
   const peopleList = useMemo(() => Object.values(people), [people]);
 
   const PersonCardInner: React.FC<{ person: Person }> = ({ person }) => {
@@ -229,7 +230,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ peop
   const PersonCard = React.memo(PersonCardInner, personCardEqual);
 
   return (
-      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
         <div 
           className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
           style={isSelected ? { backgroundColor: '#a855f7', borderLeftColor: 'rgba(168,85,247,0.35)' } : undefined}
@@ -259,7 +260,10 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ peop
         </div>
 
           {expanded && (
-           <div className="pl-6 pr-2 pb-2 mt-1">
+           <div 
+             className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0"
+             style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
+           >
              {peopleList.length === 0 ? (
                 <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>
              ) : (
@@ -292,11 +296,12 @@ interface TagSectionProps {
 interface TagSectionControlledProps extends TagSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
+  listHeight: number;
 }
 
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
-  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected 
+  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, listHeight 
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -396,12 +401,12 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   };
 
   return (
-    <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
        <div 
         className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
         style={isSelected ? { backgroundColor: '#5391f6', borderLeftColor: 'rgba(83,145,246,0.28)' } : undefined}
       >
-         <div className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded" onClick={() => onToggleExpand()}>
+         <div className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded" onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}>
            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
         <div className="flex items-center flex-1" onClick={onNavigateAllTags}>
@@ -419,7 +424,8 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
 
       {expanded && (
         <div 
-          className="pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px]"
+          className="pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto scrollbar-thin"
+          style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
           onContextMenu={(e) => { 
             e.preventDefault(); 
             e.stopPropagation(); 
@@ -555,6 +561,184 @@ const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics
   );
 });
 
+interface FolderSectionProps {
+  visibleNodes: any[];
+  files: Record<string, FileNode>;
+  roots: string[];
+  currentFolderId: string;
+  expandedSet: Set<string>;
+  onToggle: (id: string) => void;
+  onNavigate: (id: string, options?: { resetScroll?: boolean }) => void;
+  onContextMenu: (e: React.MouseEvent, type: any, id: string) => void;
+  onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  listHeight: number;
+  rowHeight: number;
+  scrollTop: number;
+  bufferRows: number;
+  FixedSizeListComp: any;
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  t: (key: string) => string;
+}
+
+const FolderSection: React.FC<FolderSectionProps> = React.memo(({
+  visibleNodes, files, roots, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder,
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t
+}) => {
+  const isSingleRoot = roots.length === 1;
+  const rootId = roots[0];
+  const rootNode = files[rootId];
+  const isSelected = isSingleRoot && currentFolderId === rootId;
+
+  const displayNodes = useMemo(() => {
+    if (isSingleRoot) {
+      return visibleNodes.filter(n => n.id !== rootId);
+    }
+    return visibleNodes;
+  }, [visibleNodes, isSingleRoot, rootId]);
+
+  const handleHeaderClick = (e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest('.expand-icon')) {
+      e.stopPropagation();
+      onToggleExpand();
+    } else if (isSingleRoot) {
+      onNavigate(rootId, { resetScroll: true });
+      if (!expanded) {
+        onToggleExpand();
+        if (!expandedSet.has(rootId)) onToggle(rootId);
+      }
+    } else {
+      onToggleExpand();
+    }
+  };
+
+  const [isDragOver, setIsDragOver] = useState(false);
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!isSingleRoot) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  };
+  const handleDragLeave = () => setIsDragOver(false);
+  const handleDrop = (e: React.DragEvent) => {
+    if (!isSingleRoot || !onDropOnFolder) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    try {
+      const data = e.dataTransfer.getData('application/json');
+      const { type, ids } = JSON.parse(data);
+      if (type === 'file' && ids) onDropOnFolder(rootId, ids);
+    } catch (err) {}
+  };
+
+  return (
+    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+      <div 
+        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 
+          ${isDragOver ? 'bg-blue-500/30 border-2 border-blue-400 ring-2 ring-blue-300/50' : ''}
+          ${isSelected && !isDragOver ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : !isDragOver ? 'hover:bg-gray-200 dark:hover:bg-gray-800' : ''}`}
+        onClick={handleHeaderClick}
+        onContextMenu={(e) => isSingleRoot && onContextMenu(e, 'root-folder', rootId)}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <div className="expand-icon p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        </div>
+        <div className="flex items-center flex-1">
+          <HardDrive size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
+          <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>
+            {isSingleRoot && rootNode ? rootNode.name : "文件目录"}
+          </span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div 
+          ref={containerRef} 
+          onScroll={onScroll} 
+          className="overflow-y-auto scrollbar-thin min-h-0"
+          style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
+        >
+          {displayNodes.length > 0 ? (
+            FixedSizeListComp ? (
+              <FixedSizeListComp
+                height={listHeight}
+                itemCount={displayNodes.length}
+                itemSize={rowHeight}
+                width={'100%'}
+                itemData={{ visibleNodes: displayNodes, files, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder }}
+              >
+                {({ index, style, data }: any) => {
+                  const nodeItem = data.visibleNodes[index];
+                  return (
+                    <div style={style} key={nodeItem.id}>
+                      <TreeNode
+                        node={nodeItem.node}
+                        nodeId={nodeItem.id}
+                        currentFolderId={data.currentFolderId}
+                        expandedSet={data.expandedSet}
+                        hasFolderChildren={nodeItem.hasFolderChildren}
+                        onToggle={data.onToggle}
+                        onNavigate={data.onNavigate}
+                        onContextMenu={data.onContextMenu}
+                        onDropOnFolder={data.onDropOnFolder}
+                        depth={nodeItem.depth}
+                      />
+                    </div>
+                  );
+                }}
+              </FixedSizeListComp>
+            ) : (
+              (() => {
+                const total = displayNodes.length;
+                const totalHeight = total * rowHeight;
+                const viewportRows = Math.ceil(listHeight / rowHeight);
+                const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
+                const last = Math.min(total, first + viewportRows + bufferRows * 2);
+                const topHeight = first * rowHeight;
+                const bottomHeight = Math.max(0, (total - last) * rowHeight);
+                const slice = displayNodes.slice(first, last);
+
+                return (
+                  <div style={{ height: totalHeight, position: 'relative' }}>
+                    <div style={{ height: topHeight }} />
+                    {slice.map((nodeItem) => (
+                      <div key={nodeItem.id} style={{ height: rowHeight }}>
+                        <TreeNode
+                          node={nodeItem.node}
+                          nodeId={nodeItem.id}
+                          currentFolderId={currentFolderId}
+                          expandedSet={expandedSet}
+                          hasFolderChildren={nodeItem.hasFolderChildren}
+                          onToggle={onToggle}
+                          onNavigate={onNavigate}
+                          onContextMenu={onContextMenu}
+                          onDropOnFolder={onDropOnFolder}
+                          depth={nodeItem.depth}
+                        />
+                      </div>
+                    ))}
+                    <div style={{ height: bottomHeight }} />
+                  </div>
+                );
+              })()
+            )
+          ) : (
+            <div className="px-10 py-4 text-xs text-gray-400 italic">
+              {t('sidebar.noFolders')}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
 export const Sidebar: React.FC<{
   roots: string[];
   files: Record<string, FileNode>;
@@ -623,6 +807,7 @@ export const Sidebar: React.FC<{
 
   // Virtualization helpers
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const sidebarHeightRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
   const rowHeight = 32; // px per row
   const [scrollTop, setScrollTop] = useState(0);
@@ -641,7 +826,7 @@ export const Sidebar: React.FC<{
   }, []);
 
   useEffect(() => {
-    const el = containerRef.current;
+    const el = sidebarHeightRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       setListHeight(el.clientHeight);
@@ -650,7 +835,7 @@ export const Sidebar: React.FC<{
     // set initial
     setListHeight(el.clientHeight);
     return () => ro.disconnect();
-  }, []);
+  }, [activeSection]);
 
   
 
@@ -697,11 +882,11 @@ export const Sidebar: React.FC<{
   console.debug && console.debug('TreeSidebar: FixedSizeList available=', !!FixedSizeListComp, 'visibleNodes=', visibleNodes.length);
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div className="w-full h-full flex flex-col overflow-hidden">
       <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
         {t('sidebar.catalog')}
       </div>
-      <div ref={containerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto scrollbar-thin">
+      <div ref={sidebarHeightRef} className="flex-1 flex flex-col overflow-hidden pb-4">
           <TopicSection 
             onNavigateTopics={handleNavigateTopics}
             onCreateTopic={onCreateTopic}
@@ -709,78 +894,33 @@ export const Sidebar: React.FC<{
             isSelected={activeViewMode === 'topics-overview'}
           />
 
-          <div className="my-2 border-t border-gray-200 dark:border-gray-800"></div>
+          <FolderSection 
+             visibleNodes={visibleNodes}
+             files={files}
+             currentFolderId={currentFolderForNodes}
+             expandedSet={expandedSet}
+             onToggle={stableOnToggle}
+             onNavigate={stableOnNavigate}
+             onContextMenu={stableOnContextMenu}
+             onDropOnFolder={stableOnDropOnFolder}
+             expanded={activeSection === 'roots'}
+             onToggleExpand={() => {
+               if (activeSection !== 'roots' && roots.length === 1 && !expandedSet.has(roots[0])) {
+                 onToggle(roots[0]);
+               }
+               setActiveSection(prev => prev === 'roots' ? null : 'roots');
+             }}
+             listHeight={listHeight}
+             rowHeight={rowHeight}
+             scrollTop={scrollTop}
+             bufferRows={bufferRows}
+             FixedSizeListComp={FixedSizeListComp}
+             containerRef={containerRef}
+             onScroll={handleScroll}
+             t={t}
+             roots={roots}
+          />
 
-          {/** Build visible nodes and render via react-window for virtualization; fallback to safe render if lib unresolved **/}
-          {visibleNodes.length > 0 && (
-          FixedSizeListComp ? (
-            <FixedSizeListComp
-              height={listHeight}
-              itemCount={visibleNodes.length}
-              itemSize={rowHeight}
-              width={'100%'}
-              itemData={{ visibleNodes, files, currentFolderId: currentFolderForNodes, expandedSet, onToggle: stableOnToggle, onNavigate: stableOnNavigate, onContextMenu: stableOnContextMenu, onDropOnFolder: stableOnDropOnFolder }}
-            >
-              {({ index, style, data }: any) => {
-                const nodeItem = data.visibleNodes[index];
-                return (
-                  <div style={style} key={nodeItem.id}>
-                    <TreeNode
-                      node={nodeItem.node}
-                      nodeId={nodeItem.id}
-                      currentFolderId={data.currentFolderId}
-                      expandedSet={data.expandedSet}
-                      hasFolderChildren={nodeItem.hasFolderChildren}
-                      onToggle={data.onToggle}
-                      onNavigate={data.onNavigate}
-                      onContextMenu={data.onContextMenu}
-                      onDropOnFolder={data.onDropOnFolder}
-                      depth={nodeItem.depth}
-                    />
-                  </div>
-                );
-              }}
-            </FixedSizeListComp>
-          ) : (
-            // Lightweight local virtualization when react-window is unavailable
-            (() => {
-              const total = visibleNodes.length;
-              const totalHeight = total * rowHeight;
-              const viewportRows = Math.ceil(listHeight / rowHeight);
-              const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-              const last = Math.min(total, first + viewportRows + bufferRows * 2);
-              const topHeight = first * rowHeight;
-              const bottomHeight = Math.max(0, (total - last) * rowHeight);
-              const slice = visibleNodes.slice(first, last);
-
-              return (
-                <div style={{ height: totalHeight, position: 'relative' }}>
-                  <div style={{ height: topHeight }} />
-                  {slice.map((nodeItem) => (
-                    <div key={nodeItem.id} style={{ height: rowHeight }}>
-                      <TreeNode
-                        node={nodeItem.node}
-                        nodeId={nodeItem.id}
-                        currentFolderId={currentFolderForNodes}
-                        expandedSet={expandedSet}
-                        hasFolderChildren={nodeItem.hasFolderChildren}
-                        onToggle={stableOnToggle}
-                        onNavigate={stableOnNavigate}
-                        onContextMenu={stableOnContextMenu}
-                        onDropOnFolder={stableOnDropOnFolder}
-                        depth={nodeItem.depth}
-                      />
-                    </div>
-                  ))}
-                  <div style={{ height: bottomHeight }} />
-                </div>
-              );
-            })()
-          )
-        )}
-        
-        <div className="my-2 border-t border-gray-200 dark:border-gray-800"></div>
-        
           <PeopleSection 
             people={people}
             files={files}
@@ -793,9 +933,8 @@ export const Sidebar: React.FC<{
             isSelected={activeViewMode === 'people-overview'}
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
+            listHeight={listHeight}
           />
-
-          <div className="my-2 border-t border-gray-200 dark:border-gray-800"></div>
 
         <TagSection 
           files={files} 
@@ -811,7 +950,10 @@ export const Sidebar: React.FC<{
           expanded={activeSection === 'tags'}
           onToggleExpand={() => setActiveSection(prev => prev === 'tags' ? null : 'tags')}
           isSelected={activeViewMode === 'tags-overview'}
+          listHeight={listHeight}
         />
+        
+        <div className="flex-1" />
       </div>
       
       {minimizedTasks.length > 0 && (

@@ -46,7 +46,8 @@ export const translations = {
       tasks: '后台任务',
       topics: '专题',
       files: '个文件',
-      noDescription: '暂无描述'
+      noDescription: '暂无描述',
+      noFolders: '暂无文件夹'
     },
     context: {
       viewInExplorer: '在系统文件管理器中查看',
