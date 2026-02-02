@@ -164,10 +164,28 @@ interface PeopleSectionControlledProps extends PeopleSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
   listHeight: number;
+  rowHeight: number;
+  scrollTop: number;
+  bufferRows: number;
+  FixedSizeListComp: any;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
-const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, expanded, onToggleExpand, listHeight }) => {
+const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ 
+  people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll 
+}) => {
   const peopleList = useMemo(() => Object.values(people), [people]);
+  
+  const peopleRows = useMemo(() => {
+    const rows = [];
+    for (let i = 0; i < peopleList.length; i += 4) {
+      rows.push(peopleList.slice(i, i + 4));
+    }
+    return rows;
+  }, [peopleList]);
+
+  const availableHeight = Math.max(200, listHeight - 180);
 
   const PersonCardInner: React.FC<{ person: Person }> = ({ person }) => {
     const coverFile = files[person.coverFileId];
@@ -262,16 +280,54 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ peop
           {expanded && (
            <div 
              className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0"
-             style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
+             style={{ maxHeight: `${availableHeight}px` }}
+             onScroll={onScroll}
            >
              {peopleList.length === 0 ? (
                 <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>
              ) : (
-                <div className="grid grid-cols-4 gap-2">
-                  {peopleList.map(person => (
-                    <PersonCard key={person.id} person={person} />
-                  ))}
-                </div>
+                FixedSizeListComp ? (
+                  <FixedSizeListComp
+                    height={Math.min(peopleRows.length * rowHeight, availableHeight)}
+                    itemCount={peopleRows.length}
+                    itemSize={rowHeight}
+                    width={'100%'}
+                    itemData={{ rows: peopleRows, PersonCard }}
+                  >
+                    {({ index, style, data }: any) => (
+                      <div style={style} className="grid grid-cols-4 gap-2">
+                        {data.rows[index].map((person: Person) => (
+                          <data.PersonCard key={person.id} person={person} />
+                        ))}
+                      </div>
+                    )}
+                  </FixedSizeListComp>
+                ) : (
+                  (() => {
+                    const total = peopleRows.length;
+                    const totalHeight = total * rowHeight;
+                    const viewportRows = Math.ceil(availableHeight / rowHeight);
+                    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
+                    const last = Math.min(total, first + viewportRows + bufferRows * 2);
+                    const topHeight = first * rowHeight;
+                    const bottomHeight = Math.max(0, (total - last) * rowHeight);
+                    const slice = peopleRows.slice(first, last);
+
+                    return (
+                      <div style={{ height: totalHeight, position: 'relative' }}>
+                        <div style={{ height: topHeight }} />
+                        {slice.map((row, rowIdx) => (
+                          <div key={rowIdx} className="grid grid-cols-4 gap-2" style={{ height: rowHeight }}>
+                            {row.map(person => (
+                              <PersonCard key={person.id} person={person} />
+                            ))}
+                          </div>
+                        ))}
+                        <div style={{ height: bottomHeight }} />
+                      </div>
+                    );
+                  })()
+                )
              )}
            </div>
           )}
@@ -297,11 +353,17 @@ interface TagSectionControlledProps extends TagSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
   listHeight: number;
+  rowHeight: number;
+  scrollTop: number;
+  bufferRows: number;
+  FixedSizeListComp: any;
+  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
 }
 
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
-  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, listHeight 
+  isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, 
+  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -309,6 +371,8 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const availableHeight = Math.max(200, listHeight - 180);
 
   useEffect(() => {
     if (isCreatingTag) {
@@ -425,7 +489,8 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       {expanded && (
         <div 
           className="pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto scrollbar-thin"
-          style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
+          style={{ maxHeight: `${availableHeight}px` }}
+          onScroll={onScroll}
           onContextMenu={(e) => { 
             e.preventDefault(); 
             e.stopPropagation(); 
@@ -476,52 +541,137 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
               </div>
           )}
 
-          {sortedTags.map(tag => (
-            <div 
-              key={tag}
-              className="relative group"
-              onMouseEnter={(e) => handleMouseEnter(e, tag)}
-              onMouseLeave={handleMouseLeave}
-              onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
-            >
-              <div 
-                className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
-                   hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
-                `}
-                onClick={() => onTagSelect(tag)}
+          {sortedTags.length > 0 ? (
+            FixedSizeListComp ? (
+              <FixedSizeListComp
+                height={Math.min(sortedTags.length * rowHeight, availableHeight)}
+                itemCount={sortedTags.length}
+                itemSize={rowHeight}
+                width={'100%'}
+                itemData={{ 
+                  tags: sortedTags, tagCounts, onTagSelect, onContextMenu, 
+                  handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t 
+                }}
               >
-                 <span className="pointer-events-none">{tag}</span>
-                 <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none">
-                   {tagCounts[tag] || 0}
-                 </span>
-              </div>
-              
-              {hoveredTag === tag && previewImages.length > 0 && hoveredTagPos && createPortal(
-                <div 
-                  className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
-                  style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
-                >
-                  <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
-                     <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
-                     <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {previewImages.map(img => (
-                      <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                         {/* Note: In Tauri, file.url is a file path, not a usable URL. Use placeholder for now. */}
-                         <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                           <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                {({ index, style, data }: any) => {
+                  const tag = data.tags[index];
+                  return (
+                    <div 
+                      style={style}
+                      key={tag}
+                      className="relative group"
+                      onMouseEnter={(e) => data.handleMouseEnter(e, tag)}
+                      onMouseLeave={data.handleMouseLeave}
+                      onContextMenu={(e) => data.onContextMenu(e, 'tag', tag)}
+                    >
+                      <div 
+                        className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
+                           hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
+                        `}
+                        onClick={() => data.onTagSelect(tag)}
+                      >
+                         <div className="flex items-center min-w-0">
+                           <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
+                           <span className="pointer-events-none truncate">{tag}</span>
                          </div>
+                         <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+                           {data.tagCounts[tag] || 0}
+                         </span>
                       </div>
-                    ))}
-                  </div>
-                </div>,
-                document.body
-              )}
-            </div>
-          ))}
-          {sortedTags.length === 0 && !isCreatingTag && (
-             <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>
+                      
+                      {data.hoveredTag === tag && data.previewImages.length > 0 && data.hoveredTagPos && data.createPortal(
+                        <div 
+                          className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                          style={{ top: data.hoveredTagPos.top, left: data.hoveredTagPos.left }}
+                        >
+                          <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
+                             <span>{data.t('sidebar.tagPreview')} "{data.hoveredTag}"</span>
+                             <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{data.previewImages.length} {data.t('sidebar.recent')}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            {data.previewImages.map((img: any) => (
+                              <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
+                                 <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                   <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                                 </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>,
+                        document.body
+                      )}
+                    </div>
+                  );
+                }}
+              </FixedSizeListComp>
+            ) : (
+                (() => {
+                  const total = sortedTags.length;
+                  const totalHeight = total * rowHeight;
+                  const viewportRows = Math.ceil(availableHeight / rowHeight);
+                  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
+                  const last = Math.min(total, first + viewportRows + bufferRows * 2);
+                  const topHeight = first * rowHeight;
+                  const bottomHeight = Math.max(0, (total - last) * rowHeight);
+                  const slice = sortedTags.slice(first, last);
+
+                  return (
+                    <div style={{ height: totalHeight, position: 'relative' }}>
+                      <div style={{ height: topHeight }} />
+                      {slice.map(tag => (
+                        <div 
+                          key={tag}
+                          className="relative group"
+                          style={{ height: rowHeight }}
+                          onMouseEnter={(e) => handleMouseEnter(e, tag)}
+                          onMouseLeave={handleMouseLeave}
+                          onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
+                        >
+                          <div 
+                            className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
+                               hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
+                            `}
+                            onClick={() => onTagSelect(tag)}
+                          >
+                             <div className="flex items-center min-w-0">
+                               <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
+                               <span className="pointer-events-none truncate">{tag}</span>
+                             </div>
+                             <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+                               {tagCounts[tag] || 0}
+                             </span>
+                          </div>
+                          
+                          {hoveredTag === tag && previewImages.length > 0 && hoveredTagPos && createPortal(
+                            <div 
+                              className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                              style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
+                            >
+                              <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
+                                 <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
+                                 <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
+                              </div>
+                              <div className="grid grid-cols-3 gap-2">
+                                {previewImages.map(img => (
+                                  <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
+                                     <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                                       <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                                     </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>,
+                            document.body
+                          )}
+                        </div>
+                      ))}
+                      <div style={{ height: bottomHeight }} />
+                    </div>
+                  );
+                })()
+            )
+          ) : (
+             !isCreatingTag && <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>
           )}
         </div>
       )}
@@ -578,7 +728,7 @@ interface FolderSectionProps {
   scrollTop: number;
   bufferRows: number;
   FixedSizeListComp: any;
-  containerRef: React.RefObject<HTMLDivElement | null>;
+  containerRef: React.RefObject<HTMLDivElement>;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   t: (key: string) => string;
 }
@@ -598,6 +748,20 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     }
     return visibleNodes;
   }, [visibleNodes, isSingleRoot, rootId]);
+
+  // Calculate actual viewport height available for the list
+  const availableHeight = Math.max(200, listHeight - 180);
+
+  // Log estimated rendered count when folder section is expanded or scroll/list size changes
+  useEffect(() => {
+    if (!expanded) return;
+    const total = displayNodes.length;
+    const viewportRows = Math.max(1, Math.ceil(availableHeight / rowHeight));
+    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
+    const last = Math.min(total, first + viewportRows + bufferRows * 2);
+    const rendered = Math.max(0, last - first);
+    console.info(`[Sidebar] FolderSection rendered ${rendered} of ${total} nodes (first=${first}, last=${last}, viewportRows=${viewportRows})`);
+  }, [expanded, displayNodes.length, availableHeight, scrollTop, bufferRows, rowHeight, FixedSizeListComp]);
 
   const handleHeaderClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.expand-icon')) {
@@ -662,12 +826,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
           ref={containerRef} 
           onScroll={onScroll} 
           className="overflow-y-auto scrollbar-thin min-h-0"
-          style={{ maxHeight: `${Math.max(200, listHeight - 180)}px` }}
+          style={{ maxHeight: `${availableHeight}px` }}
         >
           {displayNodes.length > 0 ? (
             FixedSizeListComp ? (
               <FixedSizeListComp
-                height={listHeight}
+                height={Math.min(displayNodes.length * rowHeight, availableHeight)}
                 itemCount={displayNodes.length}
                 itemSize={rowHeight}
                 width={'100%'}
@@ -697,7 +861,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
               (() => {
                 const total = displayNodes.length;
                 const totalHeight = total * rowHeight;
-                const viewportRows = Math.ceil(listHeight / rowHeight);
+                const viewportRows = Math.ceil(availableHeight / rowHeight);
                 const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
                 const last = Math.min(total, first + viewportRows + bufferRows * 2);
                 const topHeight = first * rowHeight;
@@ -806,7 +970,7 @@ export const Sidebar: React.FC<{
   const handleNavigateTopics = useCallback(() => { setActiveSection('topics'); onNavigateTopics(); }, [onNavigateTopics]);
 
   // Virtualization helpers
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const sidebarHeightRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
   const rowHeight = 32; // px per row
@@ -834,6 +998,8 @@ export const Sidebar: React.FC<{
     ro.observe(el);
     // set initial
     setListHeight(el.clientHeight);
+    // reset scroll top when switching sections to avoid carry-over
+    setScrollTop(0);
     return () => ro.disconnect();
   }, [activeSection]);
 
@@ -870,16 +1036,16 @@ export const Sidebar: React.FC<{
     lastLogRef.current = now;
 
     const total = visibleNodes.length;
-    const viewportRows = Math.max(1, Math.ceil(listHeight / rowHeight));
+    const availableHeight = Math.max(200, listHeight - 180);
+    const viewportRows = Math.max(1, Math.ceil(availableHeight / rowHeight));
     const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
     const last = Math.min(total, first + viewportRows + bufferRows * 2);
     const rendered = Math.max(0, last - first);
 
-    console.debug && console.debug('TreeSidebar.slice', { totalVisibleNodes: total, viewportRows, firstIndex: first, lastIndex: last - 1, renderedCount: rendered });
+    // debug logs removed
   }, [scrollTop, listHeight, visibleNodes.length, bufferRows, rowHeight]);
 
-  // virtualization status log (kept minimal)
-  console.debug && console.debug('TreeSidebar: FixedSizeList available=', !!FixedSizeListComp, 'visibleNodes=', visibleNodes.length);
+  // virtualization status log removed
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden">
@@ -934,6 +1100,11 @@ export const Sidebar: React.FC<{
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
             listHeight={listHeight}
+            rowHeight={72} /* Estimated height for person grid row */
+            scrollTop={scrollTop}
+            bufferRows={bufferRows}
+            FixedSizeListComp={FixedSizeListComp}
+            onScroll={handleScroll}
           />
 
         <TagSection 
@@ -951,6 +1122,11 @@ export const Sidebar: React.FC<{
           onToggleExpand={() => setActiveSection(prev => prev === 'tags' ? null : 'tags')}
           isSelected={activeViewMode === 'tags-overview'}
           listHeight={listHeight}
+          rowHeight={28} /* Estimated height for tag item */
+          scrollTop={scrollTop}
+          bufferRows={bufferRows}
+          FixedSizeListComp={FixedSizeListComp}
+          onScroll={handleScroll}
         />
         
         <div className="flex-1" />
