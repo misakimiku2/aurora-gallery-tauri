@@ -612,7 +612,7 @@ const GroupContent = React.memo(({
             
             return (
               <FileCard
-                key={`${file.id}-${refreshVersion || 0}`}
+                key={file.id}
                 file={file}
                 files={files}
                 isSelected={activeTab.selectedFileIds.includes(file.id)}
@@ -716,7 +716,6 @@ interface FileGridProps {
   setDraggedFilePaths?: (paths: string[]) => void;
   isVisible?: boolean;
   onConsumeScrollToItem?: () => void;
-  refreshVersion?: number;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -727,7 +726,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
   thumbnailSize,
   resourceRoot,
   cachePath,
-  refreshVersion,
   hoverPlayingId,
   onSetHoverPlayingId,
   onFileClick,
@@ -1326,7 +1324,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                               
                               return (
                                   <FileCard
-                                      key={`${file.id}-${refreshVersion || 0}`}
+                                      key={file.id}
                                       file={file}
                                       files={files}
                                       isSelected={activeTab.selectedFileIds.includes(file.id)}

@@ -984,8 +984,8 @@ export const App: React.FC = () => {
           } catch (err) {
             console.warn('Failed to pause color extraction:', err);
           }
-          // Start scanning immediately but colors remain paused until resume
-          scanAndMerge(path);
+          // --- 修改点：初次选择文件夹时，使用 force=true 以确保进度条显示准确 ---
+          scanAndMerge(path, true);
         })();
 
 
@@ -993,10 +993,10 @@ export const App: React.FC = () => {
     } catch (e) { console.error("Failed to open directory", e); }
   };
 
-  const scanAndMerge = async (path: string) => {
+  const scanAndMerge = async (path: string, force: boolean = false) => {
     const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
     try {
-      const result = await scanDirectory(path, true);
+      const result = await scanDirectory(path, force);
 
       performanceMonitor.end(scanTimer, 'scanDirectory', {
         path,

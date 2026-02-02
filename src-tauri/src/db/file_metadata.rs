@@ -86,6 +86,31 @@ pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
     Ok(results)
 }
 
+pub fn get_metadata_under_path(conn: &Connection, root_path: &str) -> Result<Vec<FileMetadata>> {
+    let pattern = format!("{}%", root_path.replace("\\", "/"));
+    let mut stmt = conn.prepare(
+        "SELECT file_id, path, tags, description, source_url, ai_data, updated_at FROM file_metadata WHERE path LIKE ?1"
+    )?;
+    
+    let metadata_iter = stmt.query_map(params![pattern], |row| {
+        Ok(FileMetadata {
+            file_id: row.get(0)?,
+            path: row.get(1)?,
+            tags: row.get(2)?,
+            description: row.get(3)?,
+            source_url: row.get(4)?,
+            ai_data: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+
+    let mut results = Vec::new();
+    for item in metadata_iter {
+        results.push(item?);
+    }
+    Ok(results)
+}
+
 pub fn delete_metadata_by_path(conn: &Connection, path: &str) -> Result<()> {
     let normalized_path = path.replace("\\", "/");
     
