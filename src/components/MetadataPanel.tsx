@@ -41,7 +41,7 @@ import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
-import { Folder3DIcon } from './FileGrid';
+import { Folder3DIcon } from './Folder3DIcon';
 // 导入 ImageViewer 的高分辨率缓�?
 import { getBlobCacheSync, preloadToCache } from './ImageViewer';
 

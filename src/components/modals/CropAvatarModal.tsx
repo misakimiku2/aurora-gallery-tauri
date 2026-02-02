@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Search, Image as ImageIcon, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Person, FileNode } from '../../types';
-import { ImageThumbnail } from '../FileGrid';
+import { ImageThumbnail } from '../ImageThumbnail';
 
 interface CropAvatarModalProps {
     fileUrl: string;

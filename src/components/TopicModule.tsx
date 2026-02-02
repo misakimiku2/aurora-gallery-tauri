@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check } from 'lucide-react';
-import { ImageThumbnail } from './FileGrid';
+import { ImageThumbnail } from './ImageThumbnail';
 import { debug as logDebug, info as logInfo } from '../utils/logger';
 
 type LayoutMode = 'grid' | 'adaptive' | 'masonry';
