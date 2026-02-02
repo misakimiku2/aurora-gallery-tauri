@@ -169,11 +169,12 @@ interface PeopleSectionControlledProps extends PeopleSectionProps {
   bufferRows: number;
   FixedSizeListComp: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  isHovered: boolean;
 }
 
 const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ 
   people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll 
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered
 }) => {
   const peopleList = useMemo(() => Object.values(people), [people]);
   
@@ -186,6 +187,14 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   }, [peopleList]);
 
   const availableHeight = Math.max(200, listHeight - 180);
+
+  // Performance Optimization: Freeze rendering when not hovered
+  const frozenScrollTop = useRef(scrollTop);
+  useEffect(() => {
+    if (isHovered) {
+      frozenScrollTop.current = scrollTop;
+    }
+  }, [scrollTop, isHovered]);
 
   const PersonCardInner: React.FC<{ person: Person }> = ({ person }) => {
     const coverFile = files[person.coverFileId];
@@ -247,6 +256,59 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
 
   const PersonCard = React.memo(PersonCardInner, personCardEqual);
 
+  const listContent = useMemo(() => {
+    if (!expanded) return null;
+    if (peopleList.length === 0) {
+      return <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>;
+    }
+
+    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
+
+    if (FixedSizeListComp) {
+      return (
+        <FixedSizeListComp
+          height={Math.min(peopleRows.length * rowHeight, availableHeight)}
+          itemCount={peopleRows.length}
+          itemSize={rowHeight}
+          width={'100%'}
+          initialScrollOffset={currentST}
+          itemData={{ rows: peopleRows, PersonCard }}
+        >
+          {({ index, style, data }: any) => (
+            <div style={style} className="grid grid-cols-4 gap-2">
+              {data.rows[index].map((person: Person) => (
+                <data.PersonCard key={person.id} person={person} />
+              ))}
+            </div>
+          )}
+        </FixedSizeListComp>
+      );
+    }
+
+    const total = peopleRows.length;
+    const totalHeight = total * rowHeight;
+    const viewportRows = Math.ceil(availableHeight / rowHeight);
+    const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
+    const last = Math.min(total, first + viewportRows + bufferRows * 2);
+    const topHeight = first * rowHeight;
+    const bottomHeight = Math.max(0, (total - last) * rowHeight);
+    const slice = peopleRows.slice(first, last);
+
+    return (
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ height: topHeight }} />
+        {slice.map((row, rowIdx) => (
+          <div key={rowIdx} className="grid grid-cols-4 gap-2" style={{ height: rowHeight }}>
+            {row.map(person => (
+              <PersonCard key={person.id} person={person} />
+            ))}
+          </div>
+        ))}
+        <div style={{ height: bottomHeight }} />
+      </div>
+    );
+  }, [expanded, peopleRows, rowHeight, availableHeight, FixedSizeListComp, PersonCard, t, isHovered ? scrollTop : null]);
+
   return (
       <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
         <div 
@@ -280,55 +342,13 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           {expanded && (
            <div 
              className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0"
-             style={{ maxHeight: `${availableHeight}px` }}
+             style={{ 
+               maxHeight: `${availableHeight}px`,
+               contentVisibility: 'auto'
+             }}
              onScroll={onScroll}
            >
-             {peopleList.length === 0 ? (
-                <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>
-             ) : (
-                FixedSizeListComp ? (
-                  <FixedSizeListComp
-                    height={Math.min(peopleRows.length * rowHeight, availableHeight)}
-                    itemCount={peopleRows.length}
-                    itemSize={rowHeight}
-                    width={'100%'}
-                    itemData={{ rows: peopleRows, PersonCard }}
-                  >
-                    {({ index, style, data }: any) => (
-                      <div style={style} className="grid grid-cols-4 gap-2">
-                        {data.rows[index].map((person: Person) => (
-                          <data.PersonCard key={person.id} person={person} />
-                        ))}
-                      </div>
-                    )}
-                  </FixedSizeListComp>
-                ) : (
-                  (() => {
-                    const total = peopleRows.length;
-                    const totalHeight = total * rowHeight;
-                    const viewportRows = Math.ceil(availableHeight / rowHeight);
-                    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-                    const last = Math.min(total, first + viewportRows + bufferRows * 2);
-                    const topHeight = first * rowHeight;
-                    const bottomHeight = Math.max(0, (total - last) * rowHeight);
-                    const slice = peopleRows.slice(first, last);
-
-                    return (
-                      <div style={{ height: totalHeight, position: 'relative' }}>
-                        <div style={{ height: topHeight }} />
-                        {slice.map((row, rowIdx) => (
-                          <div key={rowIdx} className="grid grid-cols-4 gap-2" style={{ height: rowHeight }}>
-                            {row.map(person => (
-                              <PersonCard key={person.id} person={person} />
-                            ))}
-                          </div>
-                        ))}
-                        <div style={{ height: bottomHeight }} />
-                      </div>
-                    );
-                  })()
-                )
-             )}
+             {listContent}
            </div>
           )}
       </div>
@@ -358,12 +378,13 @@ interface TagSectionControlledProps extends TagSectionProps {
   bufferRows: number;
   FixedSizeListComp: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
+  isHovered: boolean;
 }
 
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
   isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, 
-  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll
+  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -373,6 +394,14 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   const inputRef = useRef<HTMLInputElement>(null);
 
   const availableHeight = Math.max(200, listHeight - 180);
+
+  // Performance Optimization: Freeze sidebar rendering when not hovered
+  const frozenScrollTop = useRef(scrollTop);
+  useEffect(() => {
+    if (isHovered) {
+      frozenScrollTop.current = scrollTop;
+    }
+  }, [scrollTop, isHovered]);
 
   useEffect(() => {
     if (isCreatingTag) {
@@ -440,7 +469,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
     return res;
   }, [hoveredTag, files]);
 
-  const handleMouseEnter = (e: React.MouseEvent, tag: string) => {
+  const handleMouseEnter = useCallback((e: React.MouseEvent, tag: string) => {
     const target = e.currentTarget as HTMLElement;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     
@@ -456,13 +485,152 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       setHoveredTagPos({ top, left: rect.right + 10 });
       setHoveredTag(tag);
     }, 1000);
-  };
+  }, []);
 
-  const handleMouseLeave = () => {
+  const handleMouseLeave = useCallback(() => {
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
     setHoveredTag(null);
     setHoveredTagPos(null);
-  };
+  }, []);
+
+  const listContent = useMemo(() => {
+    if (!expanded) return null;
+    if (sortedTags.length === 0) {
+      return !isCreatingTag && <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>;
+    }
+
+    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
+
+    if (FixedSizeListComp) {
+      return (
+        <FixedSizeListComp
+          height={Math.min(sortedTags.length * rowHeight, availableHeight)}
+          itemCount={sortedTags.length}
+          itemSize={rowHeight}
+          width={'100%'}
+          initialScrollOffset={currentST}
+          itemData={{ 
+            tags: sortedTags, tagCounts, onTagSelect, onContextMenu, 
+            handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t 
+          }}
+        >
+          {({ index, style, data }: any) => {
+            const tag = data.tags[index];
+            return (
+              <div 
+                style={style}
+                key={tag}
+                className="relative group"
+                onMouseEnter={(e) => data.handleMouseEnter(e, tag)}
+                onMouseLeave={data.handleMouseLeave}
+                onContextMenu={(e) => data.onContextMenu(e, 'tag', tag)}
+              >
+                <div 
+                  className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
+                     hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
+                  `}
+                  onClick={() => data.onTagSelect(tag)}
+                >
+                   <div className="flex items-center min-w-0">
+                     <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
+                     <span className="pointer-events-none truncate">{tag}</span>
+                   </div>
+                   <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+                     {data.tagCounts[tag] || 0}
+                   </span>
+                </div>
+                
+                {data.hoveredTag === tag && data.previewImages.length > 0 && data.hoveredTagPos && data.createPortal(
+                  <div 
+                    className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                    style={{ top: data.hoveredTagPos.top, left: data.hoveredTagPos.left }}
+                  >
+                    <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
+                       <span>{data.t('sidebar.tagPreview')} "{data.hoveredTag}"</span>
+                       <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{data.previewImages.length} {data.t('sidebar.recent')}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {data.previewImages.map((img: any) => (
+                        <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
+                           <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                             <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>,
+                  document.body
+                )}
+              </div>
+            );
+          }}
+        </FixedSizeListComp>
+      );
+    }
+
+    const total = sortedTags.length;
+    const totalHeight = total * rowHeight;
+    const viewportRows = Math.ceil(availableHeight / rowHeight);
+    const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
+    const last = Math.min(total, first + viewportRows + bufferRows * 2);
+    const topHeight = first * rowHeight;
+    const bottomHeight = Math.max(0, (total - last) * rowHeight);
+    const slice = sortedTags.slice(first, last);
+
+    return (
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ height: topHeight }} />
+        {slice.map(tag => (
+          <div 
+            key={tag}
+            className="relative group"
+            style={{ height: rowHeight }}
+            onMouseEnter={(e) => handleMouseEnter(e, tag)}
+            onMouseLeave={handleMouseLeave}
+            onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
+          >
+            <div 
+              className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
+                 hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
+              `}
+              onClick={() => onTagSelect(tag)}
+            >
+               <div className="flex items-center min-w-0">
+                 <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
+                 <span className="pointer-events-none truncate">{tag}</span>
+               </div>
+               <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+                 {tagCounts[tag] || 0}
+               </span>
+            </div>
+            
+            {hoveredTag === tag && previewImages.length > 0 && hoveredTagPos && createPortal(
+              <div 
+                className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
+              >
+                <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
+                   <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
+                   <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {previewImages.map(img => (
+                    <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
+                       <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                         <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
+                       </div>
+                    </div>
+                  ))}
+                </div>
+              </div>,
+              document.body
+            )}
+          </div>
+        ))}
+        <div style={{ height: bottomHeight }} />
+      </div>
+    );
+  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, isHovered ? scrollTop : null]);
 
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
@@ -489,7 +657,10 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       {expanded && (
         <div 
           className="pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto scrollbar-thin"
-          style={{ maxHeight: `${availableHeight}px` }}
+          style={{ 
+            maxHeight: `${availableHeight}px`,
+            contentVisibility: 'auto'
+          }}
           onScroll={onScroll}
           onContextMenu={(e) => { 
             e.preventDefault(); 
@@ -541,138 +712,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
               </div>
           )}
 
-          {sortedTags.length > 0 ? (
-            FixedSizeListComp ? (
-              <FixedSizeListComp
-                height={Math.min(sortedTags.length * rowHeight, availableHeight)}
-                itemCount={sortedTags.length}
-                itemSize={rowHeight}
-                width={'100%'}
-                itemData={{ 
-                  tags: sortedTags, tagCounts, onTagSelect, onContextMenu, 
-                  handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t 
-                }}
-              >
-                {({ index, style, data }: any) => {
-                  const tag = data.tags[index];
-                  return (
-                    <div 
-                      style={style}
-                      key={tag}
-                      className="relative group"
-                      onMouseEnter={(e) => data.handleMouseEnter(e, tag)}
-                      onMouseLeave={data.handleMouseLeave}
-                      onContextMenu={(e) => data.onContextMenu(e, 'tag', tag)}
-                    >
-                      <div 
-                        className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
-                           hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
-                        `}
-                        onClick={() => data.onTagSelect(tag)}
-                      >
-                         <div className="flex items-center min-w-0">
-                           <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
-                           <span className="pointer-events-none truncate">{tag}</span>
-                         </div>
-                         <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
-                           {data.tagCounts[tag] || 0}
-                         </span>
-                      </div>
-                      
-                      {data.hoveredTag === tag && data.previewImages.length > 0 && data.hoveredTagPos && data.createPortal(
-                        <div 
-                          className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
-                          style={{ top: data.hoveredTagPos.top, left: data.hoveredTagPos.left }}
-                        >
-                          <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
-                             <span>{data.t('sidebar.tagPreview')} "{data.hoveredTag}"</span>
-                             <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{data.previewImages.length} {data.t('sidebar.recent')}</span>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            {data.previewImages.map((img: any) => (
-                              <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                                 <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                                   <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
-                                 </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>,
-                        document.body
-                      )}
-                    </div>
-                  );
-                }}
-              </FixedSizeListComp>
-            ) : (
-                (() => {
-                  const total = sortedTags.length;
-                  const totalHeight = total * rowHeight;
-                  const viewportRows = Math.ceil(availableHeight / rowHeight);
-                  const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-                  const last = Math.min(total, first + viewportRows + bufferRows * 2);
-                  const topHeight = first * rowHeight;
-                  const bottomHeight = Math.max(0, (total - last) * rowHeight);
-                  const slice = sortedTags.slice(first, last);
-
-                  return (
-                    <div style={{ height: totalHeight, position: 'relative' }}>
-                      <div style={{ height: topHeight }} />
-                      {slice.map(tag => (
-                        <div 
-                          key={tag}
-                          className="relative group"
-                          style={{ height: rowHeight }}
-                          onMouseEnter={(e) => handleMouseEnter(e, tag)}
-                          onMouseLeave={handleMouseLeave}
-                          onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
-                        >
-                          <div 
-                            className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
-                               hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-700 dark:text-gray-300 dark:hover:text-blue-300 border border-transparent
-                            `}
-                            onClick={() => onTagSelect(tag)}
-                          >
-                             <div className="flex items-center min-w-0">
-                               <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
-                               <span className="pointer-events-none truncate">{tag}</span>
-                             </div>
-                             <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
-                               {tagCounts[tag] || 0}
-                             </span>
-                          </div>
-                          
-                          {hoveredTag === tag && previewImages.length > 0 && hoveredTagPos && createPortal(
-                            <div 
-                              className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
-                              style={{ top: hoveredTagPos.top, left: hoveredTagPos.left }}
-                            >
-                              <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
-                                 <span>{t('sidebar.tagPreview')} "{hoveredTag}"</span>
-                                 <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{previewImages.length} {t('sidebar.recent')}</span>
-                              </div>
-                              <div className="grid grid-cols-3 gap-2">
-                                {previewImages.map(img => (
-                                  <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                                     <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
-                                       <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
-                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>,
-                            document.body
-                          )}
-                        </div>
-                      ))}
-                      <div style={{ height: bottomHeight }} />
-                    </div>
-                  );
-                })()
-            )
-          ) : (
-             !isCreatingTag && <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>
-          )}
+          {listContent}
         </div>
       )}
     </div>
@@ -731,11 +771,12 @@ interface FolderSectionProps {
   containerRef: React.RefObject<HTMLDivElement>;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   t: (key: string) => string;
+  isHovered: boolean;
 }
 
 const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   visibleNodes, files, roots, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered
 }) => {
   const isSingleRoot = roots.length === 1;
   const rootId = roots[0];
@@ -798,6 +839,97 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     } catch (err) {}
   };
 
+  // Performance Optimization: Freeze sidebar rendering when not hovered to improve main grid scroll performance
+  const frozenScrollTop = useRef(scrollTop);
+  useEffect(() => {
+    if (isHovered) {
+      frozenScrollTop.current = scrollTop;
+    }
+  }, [scrollTop, isHovered]);
+
+  const listContent = useMemo(() => {
+    if (!expanded) return null;
+    if (displayNodes.length === 0) {
+      return (
+        <div className="px-10 py-4 text-xs text-gray-400 italic">
+          {t('sidebar.noFolders')}
+        </div>
+      );
+    }
+
+    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
+
+    if (FixedSizeListComp) {
+      return (
+        <FixedSizeListComp
+          height={Math.min(displayNodes.length * rowHeight, availableHeight)}
+          itemCount={displayNodes.length}
+          itemSize={rowHeight}
+          width={'100%'}
+          initialScrollOffset={currentST}
+          itemData={{ visibleNodes: displayNodes, files, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder }}
+        >
+          {({ index, style, data }: any) => {
+            const nodeItem = data.visibleNodes[index];
+            return (
+              <div style={style} key={nodeItem.id}>
+                <TreeNode
+                  node={nodeItem.node}
+                  nodeId={nodeItem.id}
+                  currentFolderId={data.currentFolderId}
+                  expandedSet={data.expandedSet}
+                  hasFolderChildren={nodeItem.hasFolderChildren}
+                  onToggle={data.onToggle}
+                  onNavigate={data.onNavigate}
+                  onContextMenu={data.onContextMenu}
+                  onDropOnFolder={data.onDropOnFolder}
+                  depth={nodeItem.depth}
+                />
+              </div>
+            );
+          }}
+        </FixedSizeListComp>
+      );
+    }
+
+    // Manual virtualization fallback
+    const total = displayNodes.length;
+    const totalHeight = total * rowHeight;
+    const viewportRows = Math.ceil(availableHeight / rowHeight);
+    const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
+    const last = Math.min(total, first + viewportRows + bufferRows * 2);
+    const topHeight = first * rowHeight;
+    const bottomHeight = Math.max(0, (total - last) * rowHeight);
+    const slice = displayNodes.slice(first, last);
+
+    return (
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        <div style={{ height: topHeight }} />
+        {slice.map((nodeItem) => (
+          <div key={nodeItem.id} style={{ height: rowHeight }}>
+            <TreeNode
+              node={nodeItem.node}
+              nodeId={nodeItem.id}
+              currentFolderId={currentFolderId}
+              expandedSet={expandedSet}
+              hasFolderChildren={nodeItem.hasFolderChildren}
+              onToggle={onToggle}
+              onNavigate={onNavigate}
+              onContextMenu={onContextMenu}
+              onDropOnFolder={onDropOnFolder}
+              depth={nodeItem.depth}
+            />
+          </div>
+        ))}
+        <div style={{ height: bottomHeight }} />
+      </div>
+    );
+  }, [
+    expanded, displayNodes, rowHeight, availableHeight, FixedSizeListComp, 
+    currentFolderId, expandedSet, t, onToggle, onNavigate, onContextMenu, onDropOnFolder,
+    isHovered ? scrollTop : null // Only re-memoize on scroll if hovered
+  ]);
+
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
       <div 
@@ -826,77 +958,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
           ref={containerRef} 
           onScroll={onScroll} 
           className="overflow-y-auto scrollbar-thin min-h-0"
-          style={{ maxHeight: `${availableHeight}px` }}
+          style={{ 
+            maxHeight: `${availableHeight}px`,
+            contentVisibility: 'auto'
+          }}
         >
-          {displayNodes.length > 0 ? (
-            FixedSizeListComp ? (
-              <FixedSizeListComp
-                height={Math.min(displayNodes.length * rowHeight, availableHeight)}
-                itemCount={displayNodes.length}
-                itemSize={rowHeight}
-                width={'100%'}
-                itemData={{ visibleNodes: displayNodes, files, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder }}
-              >
-                {({ index, style, data }: any) => {
-                  const nodeItem = data.visibleNodes[index];
-                  return (
-                    <div style={style} key={nodeItem.id}>
-                      <TreeNode
-                        node={nodeItem.node}
-                        nodeId={nodeItem.id}
-                        currentFolderId={data.currentFolderId}
-                        expandedSet={data.expandedSet}
-                        hasFolderChildren={nodeItem.hasFolderChildren}
-                        onToggle={data.onToggle}
-                        onNavigate={data.onNavigate}
-                        onContextMenu={data.onContextMenu}
-                        onDropOnFolder={data.onDropOnFolder}
-                        depth={nodeItem.depth}
-                      />
-                    </div>
-                  );
-                }}
-              </FixedSizeListComp>
-            ) : (
-              (() => {
-                const total = displayNodes.length;
-                const totalHeight = total * rowHeight;
-                const viewportRows = Math.ceil(availableHeight / rowHeight);
-                const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-                const last = Math.min(total, first + viewportRows + bufferRows * 2);
-                const topHeight = first * rowHeight;
-                const bottomHeight = Math.max(0, (total - last) * rowHeight);
-                const slice = displayNodes.slice(first, last);
-
-                return (
-                  <div style={{ height: totalHeight, position: 'relative' }}>
-                    <div style={{ height: topHeight }} />
-                    {slice.map((nodeItem) => (
-                      <div key={nodeItem.id} style={{ height: rowHeight }}>
-                        <TreeNode
-                          node={nodeItem.node}
-                          nodeId={nodeItem.id}
-                          currentFolderId={currentFolderId}
-                          expandedSet={expandedSet}
-                          hasFolderChildren={nodeItem.hasFolderChildren}
-                          onToggle={onToggle}
-                          onNavigate={onNavigate}
-                          onContextMenu={onContextMenu}
-                          onDropOnFolder={onDropOnFolder}
-                          depth={nodeItem.depth}
-                        />
-                      </div>
-                    ))}
-                    <div style={{ height: bottomHeight }} />
-                  </div>
-                );
-              })()
-            )
-          ) : (
-            <div className="px-10 py-4 text-xs text-gray-400 italic">
-              {t('sidebar.noFolders')}
-            </div>
-          )}
+          {listContent}
         </div>
       )}
     </div>
@@ -950,6 +1017,9 @@ export const Sidebar: React.FC<{
 
   // active section controls which primary section is expanded in the sidebar
   const [activeSection, setActiveSection] = useState<'roots' | 'people' | 'tags' | 'topics' | null>('roots');
+
+  // New state to track if mouse is hovering the sidebar
+  const [isSidebarHovered, setIsSidebarHovered] = useState(false);
 
   // When tag creation starts externally, switch active section to tags
   useEffect(() => {
@@ -1048,7 +1118,11 @@ export const Sidebar: React.FC<{
   // virtualization status log removed
 
   return (
-    <div className="w-full h-full flex flex-col overflow-hidden">
+    <div 
+      className="w-full h-full flex flex-col overflow-hidden"
+      onMouseEnter={() => setIsSidebarHovered(true)}
+      onMouseLeave={() => setIsSidebarHovered(false)}
+    >
       <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
         {t('sidebar.catalog')}
       </div>
@@ -1085,6 +1159,7 @@ export const Sidebar: React.FC<{
              onScroll={handleScroll}
              t={t}
              roots={roots}
+             isHovered={isSidebarHovered}
           />
 
           <PeopleSection 
@@ -1105,6 +1180,7 @@ export const Sidebar: React.FC<{
             bufferRows={bufferRows}
             FixedSizeListComp={FixedSizeListComp}
             onScroll={handleScroll}
+            isHovered={isSidebarHovered}
           />
 
         <TagSection 
@@ -1127,6 +1203,7 @@ export const Sidebar: React.FC<{
           bufferRows={bufferRows}
           FixedSizeListComp={FixedSizeListComp}
           onScroll={handleScroll}
+          isHovered={isSidebarHovered}
         />
         
         <div className="flex-1" />

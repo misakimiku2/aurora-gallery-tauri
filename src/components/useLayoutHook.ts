@@ -69,9 +69,11 @@ export const useLayout = (
           layoutMode,
           containerWidth,
           thumbnailSize,
-          viewMode
+          viewMode,
+          groupedTags,
+          searchQuery
       });
-  }, [items, aspectRatios, layoutMode, containerWidth, thumbnailSize, viewMode]);
+  }, [items, aspectRatios, layoutMode, containerWidth, thumbnailSize, viewMode, groupedTags, searchQuery]);
 
   return layoutState;
 };

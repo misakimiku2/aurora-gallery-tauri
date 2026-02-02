@@ -17,8 +17,8 @@ export interface LayoutWorkerInput {
     containerWidth: number;
     thumbnailSize: number;
     viewMode: 'browser' | 'tags-overview' | 'people-overview';
-    // groupedTags: Record<string, string[]>; // Not used in layout calculation logic shown in snippet
-    // searchQuery: string; // Not used in snippet logic
+    groupedTags?: Record<string, string[]>;
+    searchQuery?: string;
 }
 
 export interface LayoutWorkerOutput {
@@ -34,7 +34,9 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
         layoutMode, 
         containerWidth, 
         thumbnailSize,
-        viewMode 
+        viewMode,
+        groupedTags,
+        searchQuery
     } = e.data;
 
     const layout: LayoutItem[] = [];
@@ -161,8 +163,69 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
             });
             totalHeight = y;
         }
+    } else if (viewMode === 'tags-overview') {
+        const query = searchQuery?.toLowerCase().trim();
+        const filteredGroupedTags: Record<string, string[]> = {};
+        if (groupedTags) {
+            Object.entries(groupedTags).forEach(([key, tags]) => {
+                const matchingTags = query 
+                    ? tags.filter(tag => tag.toLowerCase().includes(query))
+                    : tags;
+                if (matchingTags.length > 0) {
+                    filteredGroupedTags[key] = matchingTags;
+                }
+            });
+        }
+
+        const sortedKeys = Object.keys(filteredGroupedTags).sort();
+        let y = PADDING;
+        const HEADER_HEIGHT = 64;
+        const TAG_GAP = 12;
+        
+        // Use a grid for tags within each group
+        // In TagsList: grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6
+        let cols = 2;
+        if (safeContainerWidth >= 1536) cols = 6;
+        else if (safeContainerWidth >= 1280) cols = 5;
+        else if (safeContainerWidth >= 1024) cols = 4;
+        else if (safeContainerWidth >= 768) cols = 3;
+        
+        const itemWidth = (finalAvailableWidth - (cols - 1) * TAG_GAP) / cols;
+        const itemHeight = 100; // Estimated height for TagItem
+
+        sortedKeys.forEach(key => {
+            const tagsInGroup = filteredGroupedTags[key];
+            
+            // Add header layout item
+            layout.push({
+                id: `header:${key}`,
+                x: PADDING,
+                y,
+                width: finalAvailableWidth,
+                height: HEADER_HEIGHT
+            });
+            y += HEADER_HEIGHT;
+
+            // Add tags in this group
+            tagsInGroup.forEach((tag, index) => {
+                const row = Math.floor(index / cols);
+                const col = index % cols;
+                layout.push({
+                    id: `tag:${tag}`,
+                    x: PADDING + col * (itemWidth + TAG_GAP),
+                    y: y + row * (itemHeight + TAG_GAP),
+                    width: itemWidth,
+                    height: itemHeight
+                });
+            });
+
+            const groupRowCount = Math.ceil(tagsInGroup.length / cols);
+            y += groupRowCount * (itemHeight + TAG_GAP) + 32; // 32 is mb-8 spacing
+        });
+        
+        totalHeight = y;
     } else {
-        // Fallback for other modes (people/tags) - simplified grid
+        // Fallback for people-overview - simplified grid
         const minColWidth = thumbnailSize;
         const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
         const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;

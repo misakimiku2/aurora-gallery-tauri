@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Tag, Image as ImageIcon } from 'lucide-react';
-import { FileType } from '../types';
+import { FileType, FileNode } from '../types';
+import { LayoutItem } from './useLayoutHook';
 
 interface TagItemProps {
   tag: string;
@@ -12,6 +13,7 @@ interface TagItemProps {
   onTagContextMenu: (e: React.MouseEvent, tag: string) => void;
   handleMouseEnter: (e: React.MouseEvent, tag: string) => void;
   handleMouseLeave: () => void;
+  style?: React.CSSProperties;
 }
 
 const TagItem = React.memo(({ 
@@ -22,13 +24,15 @@ const TagItem = React.memo(({
   onTagDoubleClick, 
   onTagContextMenu, 
   handleMouseEnter, 
-  handleMouseLeave 
+  handleMouseLeave,
+  style
 }: TagItemProps) => {
   return (
     <div 
       key={tag} 
       data-tag={tag}
       className={`tag-item rounded-lg p-4 border-2 cursor-pointer group transition-all relative ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 shadow-lg ring-2 ring-blue-300/50 dark:ring-blue-700/50' : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-800 hover:border-blue-500 dark:hover:border-blue-500'}`} 
+      style={style}
       onClick={(e) => { e.stopPropagation(); onTagClick && onTagClick(tag, e); }}
       onMouseDown={(e) => e.stopPropagation()}
       onDoubleClick={() => onTagDoubleClick && onTagDoubleClick(tag)} 
@@ -56,6 +60,10 @@ interface TagsListProps {
   onTagContextMenu: (e: React.MouseEvent, tag: string) => void;
   t: (key: string) => string;
   searchQuery?: string;
+  layout: LayoutItem[];
+  totalHeight: number;
+  scrollTop: number;
+  containerHeight: number;
 }
 
 export const TagsList = React.memo(({ 
@@ -67,35 +75,17 @@ export const TagsList = React.memo(({
   onTagDoubleClick, 
   onTagContextMenu, 
   t, 
-  searchQuery 
+  searchQuery,
+  layout,
+  totalHeight,
+  scrollTop,
+  containerHeight
 }: TagsListProps) => {
   const [hoveredTag, setHoveredTag] = useState<string | null>(null);
   const [hoveredTagPos, setHoveredTagPos] = useState<{ top: number, left: number } | null>(null);
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
-  // 根据搜索查询过滤标签
-  const filteredGroupedTags = useMemo(() => {
-      if (!searchQuery || !searchQuery.trim()) {
-          return groupedTags;
-      }
-      const query = searchQuery.toLowerCase().trim();
-      const filtered: Record<string, string[]> = {};
-      Object.entries(groupedTags).forEach(([key, tags]) => {
-          const matchingTags = (tags as string[]).filter(tag => 
-              tag.toLowerCase().includes(query)
-          );
-          if (matchingTags.length > 0) {
-              filtered[key] = matchingTags;
-          }
-      });
-      return filtered;
-  }, [groupedTags, searchQuery]);
-
-  // 根据过滤后的标签生成 keys
-  const filteredKeys = useMemo(() => {
-      return Object.keys(filteredGroupedTags).sort();
-  }, [filteredGroupedTags]);
-
+  // Tag counts
   const tagCounts = useMemo(() => {
       const counts: Record<string, number> = {};
       Object.values(files).forEach((f: FileNode) => {
@@ -108,13 +98,37 @@ export const TagsList = React.memo(({
       return counts;
   }, [files]);
 
+  // Preview images logic
   const previewImages = useMemo(() => {
     if (!hoveredTag) return [];
-    return Object.values(files)
-      .filter((f: FileNode) => f.type === FileType.IMAGE && f.tags?.includes(hoveredTag))
-      .sort((a: FileNode, b: FileNode) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-      .slice(0, 3);
+    const res: FileNode[] = [];
+    const allFiles = Object.values(files);
+    // Find last 3 images with this tag
+    for (let i = allFiles.length - 1; i >= 0 && res.length < 3; i--) {
+        const f = allFiles[i];
+        if (f.type === FileType.IMAGE && f.tags?.includes(hoveredTag)) {
+            res.push(f);
+        }
+    }
+    return res;
   }, [hoveredTag, files]);
+
+  // Filter keys for the index-bar (still needed visually)
+  const filteredKeys = useMemo(() => {
+    const query = searchQuery?.toLowerCase().trim();
+    if (!query) return keys;
+    return keys.filter(key => {
+        const tags = groupedTags[key];
+        return tags?.some(tag => tag.toLowerCase().includes(query));
+    });
+  }, [keys, groupedTags, searchQuery]);
+
+  const visibleItems = useMemo(() => {
+    const buffer = 400; 
+    const minY = scrollTop - buffer;
+    const maxY = scrollTop + containerHeight + buffer;
+    return layout.filter(item => item.y < maxY && item.y + item.height > minY);
+  }, [layout, scrollTop, containerHeight]);
 
   const handleMouseEnter = useCallback((e: React.MouseEvent, tag: string) => {
     const target = e.currentTarget as HTMLElement;
@@ -178,7 +192,7 @@ export const TagsList = React.memo(({
   }, [computeIndexTop]);
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ height: totalHeight }}>
       {/* 字母索引栏 */}
       {filteredKeys.length > 0 && createPortal(
         <div className="fixed transform -translate-y-1/2 z-[110] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
@@ -201,9 +215,12 @@ export const TagsList = React.memo(({
               <button
                 key={group}
                 onClick={() => {
-                  const element = document.getElementById(`tag-group-${group}`);
-                  if (element) {
-                    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  const headerItem = layout.find(item => item.id === `header:${group}`);
+                  if (headerItem) {
+                    const container = document.getElementById('file-grid-container'); 
+                    if (container) {
+                      container.scrollTo({ top: headerItem.y, behavior: 'smooth' });
+                    }
                   }
                 }}
                 className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
@@ -219,45 +236,66 @@ export const TagsList = React.memo(({
       )}
       
       {/* 标签列表内容 */}
-      {filteredKeys.length === 0 && (
+      {layout.length === 0 && (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
               <Tag size={64} className="mb-4 opacity-20"/>
               <p>{t('sidebar.noTagsFound')}</p>
           </div>
       )}
-      {filteredKeys.map((group: string) => {
-          const tagsInGroup = filteredGroupedTags[group];
-          return (
-              <div id={`tag-group-${group}`} key={group} className="mb-8 scroll-mt-4">
-                   <div className="flex items-center mb-0 border-b border-gray-100 dark:border-gray-800 pt-3 pb-3 sticky top-0 bg-white/95 dark:bg-gray-900/95 z-10 backdrop-blur-sm transition-colors h-16">
+
+      {visibleItems.map(item => {
+          if (item.id.startsWith('header:')) {
+              const group = item.id.replace('header:', '');
+              // Count tags in this group for display
+              const countInGroup = groupedTags[group]?.length || 0;
+              return (
+                  <div 
+                    key={item.id} 
+                    id={`tag-group-${group}`} 
+                    className="absolute flex items-center border-b border-gray-100 dark:border-gray-800 transition-colors"
+                    style={{
+                        left: item.x,
+                        top: item.y,
+                        width: item.width,
+                        height: item.height,
+                        zIndex: 10,
+                        backgroundColor: 'inherit' // Helps with backdrop logic
+                    }}
+                  >
                        <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-lg mr-3 shadow-sm border border-blue-100 dark:border-blue-900/50">
                           {group}
                        </div>
                        <span className="text-xs font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">
-                          {tagsInGroup.length} {t('context.items')}
+                          {countInGroup} {t('context.items')}
                        </span>
-                   </div>
-                   <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
-                       {tagsInGroup.map((tag: string) => {
-                           const count = tagCounts[tag] || 0;
-                           const isSelected = selectedTagIds.includes(tag);
-                           return (
-                              <TagItem 
-                                  key={tag}
-                                  tag={tag}
-                                  count={count}
-                                  isSelected={isSelected}
-                                  onTagClick={onTagClick}
-                                  onTagDoubleClick={onTagDoubleClick}
-                                  onTagContextMenu={onTagContextMenu}
-                                  handleMouseEnter={handleMouseEnter}
-                                  handleMouseLeave={handleMouseLeave}
-                              />
-                           );
-                       })}
-                   </div>
-              </div>
-          );
+                  </div>
+              );
+          } else if (item.id.startsWith('tag:')) {
+              const tag = item.id.replace('tag:', '');
+              const count = tagCounts[tag] || 0;
+              const isSelected = selectedTagIds.includes(tag);
+              return (
+                 <TagItem 
+                     key={item.id}
+                     tag={tag}
+                     count={count}
+                     isSelected={isSelected}
+                     onTagClick={onTagClick}
+                     onTagDoubleClick={onTagDoubleClick}
+                     onTagContextMenu={onTagContextMenu}
+                     handleMouseEnter={handleMouseEnter}
+                     handleMouseLeave={handleMouseLeave}
+                     style={{
+                         position: 'absolute',
+                         left: item.x,
+                         top: item.y,
+                         width: item.width,
+                         height: item.height
+                     }}
+                 />
+              );
+          }
+          return null;
       })}
 
       {hoveredTag && previewImages.length > 0 && hoveredTagPos && createPortal(
@@ -288,5 +326,9 @@ export const TagsList = React.memo(({
            prev.files === next.files && 
            prev.selectedTagIds === next.selectedTagIds &&
            prev.keys === next.keys &&
-           prev.searchQuery === next.searchQuery; 
+           prev.searchQuery === next.searchQuery &&
+           prev.layout === next.layout &&
+           prev.totalHeight === next.totalHeight &&
+           prev.scrollTop === next.scrollTop &&
+           prev.containerHeight === next.containerHeight; 
 });

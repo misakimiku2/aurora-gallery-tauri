@@ -612,7 +612,7 @@ const GroupContent = React.memo(({
             
             return (
               <FileCard
-                key={file.id}
+                key={`${file.id}-${refreshVersion || 0}`}
                 file={file}
                 files={files}
                 isSelected={activeTab.selectedFileIds.includes(file.id)}
@@ -716,6 +716,7 @@ interface FileGridProps {
   setDraggedFilePaths?: (paths: string[]) => void;
   isVisible?: boolean;
   onConsumeScrollToItem?: () => void;
+  refreshVersion?: number;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -726,6 +727,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   thumbnailSize,
   resourceRoot,
   cachePath,
+  refreshVersion,
   hoverPlayingId,
   onSetHoverPlayingId,
   onFileClick,
@@ -1078,6 +1080,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
       return (
           <div
               ref={containerRef}
+              id="file-grid-container"
               className="w-full h-full overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
               onContextMenu={onBackgroundContextMenu}
               onMouseDown={handleMouseDownInternal}
@@ -1107,6 +1110,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   onTagContextMenu={handleTagContextMenuStable}
                   t={t}
                   searchQuery={activeTab.searchQuery}
+                  layout={layout}
+                  totalHeight={totalHeight}
+                  scrollTop={scrollTop}
+                  containerHeight={containerRect.height}
               />
           </div>
       );
@@ -1319,7 +1326,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                               
                               return (
                                   <FileCard
-                                      key={file.id}
+                                      key={`${file.id}-${refreshVersion || 0}`}
                                       file={file}
                                       files={files}
                                       isSelected={activeTab.selectedFileIds.includes(file.id)}
