@@ -731,6 +731,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }
   }, [file, files, resourceRoot]);
 
+/* render-count effect removed from here and reinserted after `personStats` to avoid TDZ */
+
   const typeColors: Record<string, string> = {
       'JPG': 'bg-green-500 dark:bg-green-400',
       'JPEG': 'bg-green-500 dark:bg-green-400',
@@ -779,6 +781,37 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     });
     return { totalSize, count };
   }, [person, files]);
+
+  // publish both logical and DOM-mounted "rendered items" counts for this panel
+  useEffect(() => {
+    const win = window as any;
+    win.__AURORA_RENDER_COUNTS__ = win.__AURORA_RENDER_COUNTS__ || {};
+
+    let logical = 0;
+    if (!file && !isMulti) {
+      logical = 0;
+    } else if (isMulti) {
+      logical = selectedFileIds.length;
+    } else if (file && file.type === FileType.FOLDER) {
+      logical = folderPreviewImages.length || 0;
+    } else if (file) {
+      logical = 1 + (file.aiData?.faces?.length || 0) + (colors?.length || 0);
+    } else if (person) {
+      logical = personStats?.count || 0;
+    }
+
+    win.__AURORA_RENDER_COUNTS__.metadataPanelLogical = logical;
+
+    // DOM-mounted approximation: count images and obvious meta rows inside the panel
+    try {
+      const root = panelRef.current;
+      const imgCount = root ? root.querySelectorAll('img').length : 0;
+      const rowCount = root ? root.querySelectorAll('[data-meta-row]').length : 0; // conservative selector if present
+      win.__AURORA_RENDER_COUNTS__.metadataPanelDOM = Math.max(imgCount, rowCount, logical ? 1 : 0);
+    } catch (e) {
+      win.__AURORA_RENDER_COUNTS__.metadataPanelDOM = logical ? 1 : 0;
+    }
+  }, [file?.id, file?.type, folderPreviewImages.length, selectedFileIds.join(','), colors.length, person?.id, personStats?.count, isMulti]);
   
   const batchStats = useMemo(() => {
     if (!isMulti) return null;

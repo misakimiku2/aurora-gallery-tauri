@@ -180,7 +180,8 @@ export const PersonGrid = ({
 
     // Virtualization
     const visibleItems = useMemo(() => {
-        const buffer = 800; 
+        // 降低渲染缓冲区，从 800px 减少到 400px (约 2 排缩略图)
+        const buffer = 400; 
         const minY = scrollTop - buffer;
         const maxY = scrollTop + containerRect.height + buffer;
         return layout.filter(item => item.y < maxY && item.y + item.height > minY);

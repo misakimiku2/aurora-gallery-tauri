@@ -166,7 +166,86 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [scale, setScale] = useState(1); 
   const [rotation, setRotation] = useState(0);
   const [position, setPosition] = useState({ x: 0, y: 0 });
-  
+  const positionRef = useRef(position); // for reading latest position inside callbacks
+  const positionAnimRef = useRef<number | null>(null); // RAF id for ongoing position animation
+
+  // animate position from current to target (cancellable)
+  const animatePositionTo = (toX: number, toY: number, duration = 220) => {
+    // 更明显的“朝向移动”感：时长根据距离自适应，并使用带轻微回弹的 ease-out 曲线
+    if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
+    const fromX = positionRef.current.x;
+    const fromY = positionRef.current.y;
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const dist = Math.hypot(dx, dy);
+    if (dist === 0) return;
+
+    // duration 基于距离伸缩：短距离更快，长距离更明显；并把传入 duration 作为基线
+    const computedDuration = Math.max(120, Math.min(520, Math.round(duration + dist * 0.25)));
+
+    // easeOutBack 提供快速起速和轻微回弹，更能传达“朝向移动”感
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    const easeOutBack = (t: number) => 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / computedDuration);
+      const k = easeOutBack(t);
+      const nx = fromX + dx * k;
+      const ny = fromY + dy * k;
+      setPosition({ x: nx, y: ny });
+      if (t < 1) {
+        positionAnimRef.current = requestAnimationFrame(step);
+      } else {
+        positionAnimRef.current = null;
+      }
+    };
+
+    positionAnimRef.current = requestAnimationFrame(step);
+  };
+
+  // animate both scale and position together (cancellable)
+  const animateTransformTo = (toScale: number, toX: number, toY: number, duration = 320) => {
+    if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
+    const fromX = positionRef.current.x;
+    const fromY = positionRef.current.y;
+    const fromScale = scaleRef.current;
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const ds = toScale - fromScale;
+    const dist = Math.hypot(dx, dy) + Math.abs(ds) * 100;
+    if (dist === 0) return;
+
+    const computedDuration = Math.max(120, Math.min(520, Math.round(duration + dist * 0.2)));
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    const easeOutBack = (t: number) => 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = Math.min(1, (now - start) / computedDuration);
+      const k = easeOutBack(t);
+      const nx = fromX + dx * k;
+      const ny = fromY + dy * k;
+      const ns = fromScale + ds * k;
+      setPosition({ x: nx, y: ny });
+      setScale(ns);
+      if (t < 1) {
+        positionAnimRef.current = requestAnimationFrame(step);
+      } else {
+        positionAnimRef.current = null;
+      }
+    };
+
+    positionAnimRef.current = requestAnimationFrame(step);
+  };
+
+  // keep ref in sync with state
+  useEffect(() => { positionRef.current = position; }, [position]);
+  const scaleRef = useRef(scale);
+  useEffect(() => { scaleRef.current = scale; }, [scale]);
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ x: 0, y: 0, visible: false });
@@ -389,6 +468,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // cleanup animations on unmount
+  useEffect(() => {
+    return () => {
+      if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (lastFileIdRef.current !== file.id) {
       if (slideshowActive) {
@@ -418,21 +504,95 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       const ZOOM_SPEED = 0.1;
       const direction = Math.sign(e.deltaY);
 
-      setScale(currentScale => {
-          let newScale = currentScale;
-          if (direction < 0) {
-              newScale = currentScale * (1 + ZOOM_SPEED);
+      // 获取容器与当前可见图片的 DOMRect
+      const rect = container.getBoundingClientRect();
+      const imgEl = imgRef.current;
+      const imgRect = imgEl ? imgEl.getBoundingClientRect() : rect;
+
+      // 将鼠标位置夹到图片显示区域内（如果鼠标在图片外）。
+      // 这样缩放锚点就是图片上离鼠标最近的点。
+      const clientX = e.clientX;
+      const clientY = e.clientY;
+      const clampedClientX = Math.min(Math.max(clientX, imgRect.left), imgRect.right);
+      const clampedClientY = Math.min(Math.max(clientY, imgRect.top), imgRect.bottom);
+
+      // 转换为相对于容器左上角的坐标，然后再相对于容器中心
+      const mouseX = clampedClientX - rect.left;
+      const mouseY = clampedClientY - rect.top;
+      const centerX = rect.width / 2;
+      const centerY = rect.height / 2;
+
+      // 关键：计算鼠标相对于「图片中心」的向量（包含当前 position），
+      // 而不是仅相对于容器中心。这样在图片已偏移或鼠标在图片外时，
+      // 计算出的 delta 方向将确保图片朝鼠标移动（而非远离）。
+      const dx = mouseX - centerX - positionRef.current.x;
+      const dy = mouseY - centerY - positionRef.current.y;
+
+      // 判断鼠标原始位置是否在图片外（用于触发平滑移动）
+      const mouseWasOutside = clientX < imgRect.left || clientX > imgRect.right || clientY < imgRect.top || clientY > imgRect.bottom;
+
+      // 使用 functional updater 保证读取到最新的 scale/position
+      setScale(prevScale => {
+        let newScale = prevScale;
+        if (direction < 0) newScale = prevScale * (1 + ZOOM_SPEED);
+        else newScale = prevScale / (1 + ZOOM_SPEED);
+
+        newScale = Math.max(0.01, Math.min(newScale, 8));
+
+        const scaleFactor = newScale / prevScale;
+        // 如果缩放比例实际发生改变，则按指针（或图片边界上最近点）修正平移，保持该点像素不动
+        if (scaleFactor !== 1) {
+          const deltaX = (1 - scaleFactor) * dx;
+          const deltaY = (1 - scaleFactor) * dy;
+
+          // 放大：使用平滑动画过渡位置（现在也适用于鼠标在图片内）
+          if (scaleFactor > 1) {
+            const targetX = positionRef.current.x + deltaX;
+            const targetY = positionRef.current.y + deltaY;
+            animatePositionTo(targetX, targetY, 200);
           } else {
-              newScale = currentScale / (1 + ZOOM_SPEED);
+            // 缩小：计算夹取后的目标位置（最小修正），如果鼠标在图片外则用动画移动
+            const naturalW = imgRef.current?.naturalWidth || 0;
+            const naturalH = imgRef.current?.naturalHeight || 0;
+            const containerW = rect.width;
+            const containerH = rect.height;
+
+            if (!naturalW || !naturalH || !containerW || !containerH) {
+              animatePositionTo(0, 0, 200);
+            } else {
+              const fitScale = Math.min(containerW / naturalW, containerH / naturalH);
+              const renderedW = naturalW * fitScale * newScale;
+              const renderedH = naturalH * fitScale * newScale;
+
+              const halfRenderedW = renderedW / 2;
+              const halfRenderedH = renderedH / 2;
+              const halfContainerW = containerW / 2;
+              const halfContainerH = containerH / 2;
+
+              const allowedOffsetX = Math.abs(halfRenderedW - halfContainerW);
+              const allowedOffsetY = Math.abs(halfRenderedH - halfContainerH);
+
+              const intendedX = positionRef.current.x + deltaX;
+              const intendedY = positionRef.current.y + deltaY;
+
+              const tx = Math.max(-allowedOffsetX, Math.min(allowedOffsetX, intendedX));
+              const ty = Math.max(-allowedOffsetY, Math.min(allowedOffsetY, intendedY));
+
+              animatePositionTo(tx, ty, 220);
+            }
           }
-          return Math.max(0.01, Math.min(newScale, 8));
+        }
+
+        return newScale;
       });
+
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
 
     return () => {
       container.removeEventListener('wheel', handleWheel);
+      if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
     };
   }, [slideshowActive]);
 
@@ -503,7 +663,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (e.key === 'Escape') {
         if (showSearch) setShowSearch(false);
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
-        else if (slideshowActive) setSlideshowActive(false);
+        else if (slideshowActive) stopSlideshow();
         else if (canGoBack) onNavigateBack();
         else onClose();
       }
@@ -528,8 +688,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (slideshowActive) return;
+
+    // Middle-button single click: toggle between original and fit (prevent default autoscroll)
+    if (e.button === 1) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleOriginalFit();
+      return;
+    }
+
+    // Left-button: start drag
     if (e.button !== 0) return;
     e.preventDefault();
+    // cancel any in-flight animation when user starts dragging
+    if (positionAnimRef.current) {
+      cancelAnimationFrame(positionAnimRef.current);
+      positionAnimRef.current = null;
+    }
     setIsDragging(true);
     setDragStart({ x: e.clientX, y: e.clientY });
   };
@@ -590,26 +765,66 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [contextMenu.visible, contextMenu.x, contextMenu.y]);
 
-  const toggleSlideshow = () => {
-    if (!slideshowActive) {
-      setSlideshowActive(true);
-      if (!document.fullscreenElement) {
-         rootRef.current?.requestFullscreen().then(() => setIsFullscreen(true));
+    // Stop slideshow and ensure fullscreen / UI state is cleaned up immediately
+    const stopSlideshow = async () => {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
+      } catch (err) {
+        // ignore
+      } finally {
+        setIsFullscreen(false);
+        setSlideshowActive(false);
+        setContextMenu(prev => ({ ...prev, visible: false }));
+        setShowSlideshowSettings(false);
       }
-      setContextMenu({ ...contextMenu, visible: false });
-    } else {
-      setSlideshowActive(false);
-      setContextMenu({ ...contextMenu, visible: false });
-    }
-  };
+    };
 
-  const rotate = (deg: number) => setRotation(r => r + deg);
-  
-  const handleReset = () => {
-    setScale(1);
-    setPosition({ x: 0, y: 0 });
-    setRotation(0);
-  };
+    const toggleSlideshow = async () => {
+      if (!slideshowActive) {
+        setSlideshowActive(true);
+        // try to enter fullscreen when starting slideshow
+        if (!document.fullscreenElement) {
+          try {
+            await rootRef.current?.requestFullscreen();
+            setIsFullscreen(true);
+          } catch (err) {
+            // ignore
+          }
+        }
+        setContextMenu(prev => ({ ...prev, visible: false }));
+        setShowSlideshowSettings(false);
+      } else {
+        await stopSlideshow();
+      }
+    };
+
+    // Keep a ref for latest slideshowActive so fullscreenchange handler can act reliably
+    const slideshowActiveRef = useRef(slideshowActive);
+    useEffect(() => { slideshowActiveRef.current = slideshowActive; }, [slideshowActive]);
+
+    // If user exits fullscreen (usually via Esc), stop the slideshow immediately
+    useEffect(() => {
+      const onFullscreenChange = () => {
+        if (!document.fullscreenElement && slideshowActiveRef.current) {
+          stopSlideshow();
+        }
+      };
+      document.addEventListener('fullscreenchange', onFullscreenChange);
+      return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+    }, []);
+
+    // Safety: ensure settings modal is closed whenever slideshow becomes active
+    useEffect(() => { if (slideshowActive) setShowSlideshowSettings(false); }, [slideshowActive]);
+
+    const rotate = (deg: number) => setRotation(r => r + deg);
+
+    const handleReset = () => {
+      // animate to fit-window (scale=1, center)
+      animateTransformTo(1, 0, 0, 260);
+      setRotation(0);
+    };
   
   const handleFitWindow = () => handleReset();
 
@@ -628,9 +843,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       // If fitScale < 1 (image larger than window), we scale UP by 1/fitScale to reach 1.0 (original size).
       // If fitScale > 1 (image smaller than window), we scale DOWN.
       const newScale = 1 / fitScale;
-      
-      setScale(newScale);
-      setPosition({ x: 0, y: 0 });
+
+      animateTransformTo(newScale, 0, 0, 320);
+  };
+
+  // Toggle between fit-window (scale ~= 1) and original-size (scale = 1/fitScale).
+  const toggleOriginalFit = () => {
+    if (!imgRef.current || !containerRef.current) return;
+    const { naturalWidth, naturalHeight } = imgRef.current;
+    const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaleX = containerWidth / naturalWidth;
+    const scaleY = containerHeight / naturalHeight;
+    const fitScale = Math.min(scaleX, scaleY);
+    const originalScale = 1 / fitScale;
+
+    const current = scaleRef.current;
+    // if currently close to original, go to fit; otherwise go to original
+    const toOriginal = Math.abs(current - originalScale) > Math.abs(current - 1);
+    if (toOriginal) animateTransformTo(originalScale, 0, 0, 360);
+    else animateTransformTo(1, 0, 0, 260);
   };
 
   const getScopeIcon = () => {
@@ -1055,7 +1288,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
             <div className="mt-6 flex justify-end space-x-2">
                <button 
-                onClick={toggleSlideshow}
+                onClick={() => { toggleSlideshow(); setShowSlideshowSettings(false); }}
                 className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded text-sm flex items-center"
               >
                 <Play size={12} className="mr-1"/> {t('context.startSlideshow')}

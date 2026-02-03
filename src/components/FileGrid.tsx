@@ -543,12 +543,18 @@ const GroupContent = React.memo(({
   handleSetHoverPlayingId,
   settings,
   containerRect,
+  scrollTop, // 接收父级滚动位置
   t,
   resourceRoot,
   cachePath,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  setIsDraggingInternal,
+  setDraggedFilePaths
 }: any) => {
+  const groupRef = useRef<HTMLDivElement>(null);
+  const [offsetTop, setOffsetTop] = useState(0);
+
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
@@ -563,43 +569,70 @@ const GroupContent = React.memo(({
     'browser'
   );
 
-  // 锟狡筹拷锟斤拷锟斤拷锟斤拷锟斤拷呒锟斤拷锟街憋拷锟绞癸拷锟斤拷锟斤拷锟斤拷锟??
-  const visibleItems = layout;
+  // 测量分组相对于容器顶部的偏移，用于内部虚拟滚动过滤
+  useLayoutEffect(() => {
+      if (groupRef.current) {
+          setOffsetTop(groupRef.current.offsetTop);
+      }
+  }, [layout, containerRect.width]);
+
+  // 根据全局滚动位置，动态计算当前分组内容中可见的项目
+  const visibleItems = useMemo(() => {
+      // 降低渲染缓冲区，从 800px 减少到 400px
+      const buffer = 400; 
+      // 计算相对于当前分组坐标系的视口范围
+      const minY = (scrollTop || 0) - offsetTop - buffer;
+      const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
+      
+      return layout.filter(item => item.y < maxY && item.y + item.height > minY);
+  }, [layout, scrollTop, offsetTop, containerRect.height]);
 
   return (
-    <div>
+    <div ref={groupRef}>
       {activeTab.layoutMode === 'list' ? (
-        // List layout: keep padding for visual spacing
-        <div className="p-6 overflow-hidden">
-          {group.fileIds.map((id: string) => {
-            const file = files[id];
+        // 列表布局：以前是一次性渲染，现在支持绝对定位虚拟滚动
+        <div className="relative w-full overflow-hidden" style={{ height: totalHeight }}>
+          {visibleItems.map((item) => {
+            const file = files[item.id];
             if (!file) return null;
             return (
-              <FileListItem
-                  key={file.id}
-                  file={file}
-                  files={files}
-                  isSelected={activeTab.selectedFileIds.includes(file.id)}
-                  renamingId={renamingId}
-                  onFileClick={handleFileClick}
-                  onFileDoubleClick={handleFileDoubleClick}
-                  onContextMenu={handleContextMenu}
-                  onStartRename={handleStartRename}
-                  onRenameSubmit={handleRenameSubmit}
-                  onRenameCancel={handleRenameCancel}
-                  t={t}
-                  resourceRoot={effectiveResourceRoot}
-                  cachePath={effectiveCachePath}
-                  selectedFileIds={activeTab.selectedFileIds}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                  thumbnailSize={thumbnailSize}
-              />
+              <div 
+                key={file.id} 
+                className="absolute"
+                style={{ 
+                    top: item.y, 
+                    left: item.x, 
+                    width: item.width, 
+                    height: item.height 
+                }}
+              >
+                  <FileListItem
+                      file={file}
+                      files={files}
+                      isSelected={activeTab.selectedFileIds.includes(file.id)}
+                      renamingId={renamingId}
+                      onFileClick={handleFileClick}
+                      onFileDoubleClick={handleFileDoubleClick}
+                      onContextMenu={handleContextMenu}
+                      onStartRename={handleStartRename}
+                      onRenameSubmit={handleRenameSubmit}
+                      onRenameCancel={handleRenameCancel}
+                      t={t}
+                      resourceRoot={effectiveResourceRoot}
+                      cachePath={effectiveCachePath}
+                      selectedFileIds={activeTab.selectedFileIds}
+                      onDragStart={onDragStart}
+                      onDragEnd={onDragEnd}
+                      thumbnailSize={thumbnailSize}
+                      setIsDraggingInternal={setIsDraggingInternal}
+                      setDraggedFilePaths={setDraggedFilePaths}
+                  />
+              </div>
             );
           })}
         </div>
       ) : (
-        // Grid, adaptive, or masonry layout - 使锟斤拷锟斤拷锟斤拷锟斤拷锟?
+        // Grid, adaptive, or masonry layout - 使用虚拟滚动过滤
         // No outer padding here because the layout worker already includes internal padding
         <div 
           className="relative" 
@@ -636,6 +669,8 @@ const GroupContent = React.memo(({
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 thumbnailSize={thumbnailSize}
+                setIsDraggingInternal={setIsDraggingInternal}
+                setDraggedFilePaths={setDraggedFilePaths}
             />
             );
           })}
@@ -789,6 +824,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // #endregion
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
+  // timestamp ref used to throttle consolidated render-count logs emitted during scroll
+  const renderLogLastRef = useRef<number>(0);
 
   const handleTagClickStable = useCallback((tag: string, e: React.MouseEvent) => {
       onTagClick?.(tag, e);
@@ -950,6 +987,65 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
             setScrollTop(currentScroll);
             onScrollTopChange?.(currentScroll);
+
+            // --- render-counts consolidated logging (throttled & more accurate) ---
+            try {
+                const now = Date.now();
+                if (!renderLogLastRef.current || now - renderLogLastRef.current > 200) {
+                    renderLogLastRef.current = now;
+
+                    const win = window as any;
+                    const counts = win.__AURORA_RENDER_COUNTS__ || {};
+
+                    // authoritative logical count (from virtualization calculations)
+                    const fileGridLogical = typeof counts.fileGrid === 'number' ? counts.fileGrid : (Array.isArray(layout) ? layout.length : 0);
+
+                    // runtime DOM-mounted count (what's actually in the DOM right now)
+                    const fileGridDOM = document.querySelectorAll('.file-item[data-id]').length;
+
+                    // prefer published sidebar logical/dom counts if available
+                    const treeSidebarLogical = typeof counts.treeSidebarLogical === 'number' ? counts.treeSidebarLogical : (typeof counts.treeSidebar === 'number' ? counts.treeSidebar : null);
+                    const treeSidebarDOM = typeof counts.treeSidebarDOM === 'number' ? counts.treeSidebarDOM : (document.querySelectorAll('.sidebar .file-item[data-id]').length || null);
+
+                    const metadataPanelLogical = typeof counts.metadataPanelLogical === 'number' ? counts.metadataPanelLogical : (typeof counts.metadataPanel === 'number' ? counts.metadataPanel : null);
+                    const metadataPanelDOM = typeof counts.metadataPanelDOM === 'number' ? counts.metadataPanelDOM : (document.querySelectorAll('#metadata-panel img').length || null);
+
+                    const usingFileGridVirtualization = !!(fileGridDOM < fileGridLogical || fileGridLogical < (counts.fileGridTotal || Number.MAX_SAFE_INTEGER));
+
+                    const combined = {
+                        // both logical and DOM numbers so caller can reason about virtualization
+                        fileGridVisibleLogical: fileGridLogical,
+                        fileGridVisibleDOM: fileGridDOM,
+                        fileGridVisibleResolved: fileGridDOM || fileGridLogical,
+                        fileGridTotal: counts.fileGridTotal ?? displayFileIds.length,
+
+                        // explicit flags (helpful for automation)
+                        fileGridVirtualizedLogical: !!counts.fileGridVirtualizedLogical,
+                        fileGridVirtualizedDOM: !!counts.fileGridVirtualizedDOM,
+                        fileGridUsingVirtualization: !!counts.fileGridUsingVirtualization || usingFileGridVirtualization,
+
+                        treeSidebarLogical,
+                        treeSidebarDOM,
+                        treeSidebarUsingReactWindow: !!counts.treeSidebarUsingReactWindow,
+                        treeSidebarVirtualized: !!counts.treeSidebarVirtualized,
+
+                        metadataPanelLogical,
+                        metadataPanelDOM,
+                        metadataPanelVirtualized: !!counts.metadataPanelVirtualized,
+
+                        activeTab: activeTab.id,
+                        ts: new Date().toISOString(),
+                        note: (fileGridLogical === 0 && fileGridDOM === 0) ? 'layout-or-dom-not-ready' : undefined
+                    };
+
+                    // Only log when container/layout looks initialized to avoid misleading zeros during mount
+                    if (containerRef.current && containerRef.current.clientHeight > 0) {
+                        console.info('[render-counts]', combined);
+                    }
+                }
+            } catch (err) {
+                // best-effort logging — swallow any exception to avoid interfering with scrolling
+            }
         }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
@@ -1064,11 +1160,40 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
-      const buffer = 800; 
+      // 降低渲染缓冲区，从 800px 减少到 400px (约 2 排缩略图)
+      // 这能显著减少冗余渲染，同时保持滚动时的视觉连贯性
+      const buffer = 400; 
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
   }, [layout, scrollTop, containerRect.height, totalHeight]);
+
+  // keep a cheap, always-available source of truth for how many items FileGrid is rendering
+  useEffect(() => {
+      const win = window as any;
+      win.__AURORA_RENDER_COUNTS__ = win.__AURORA_RENDER_COUNTS__ || {};
+
+      // logical (virtualized) count published earlier as `fileGrid` — keep for backward-compat
+      win.__AURORA_RENDER_COUNTS__.fileGrid = visibleItems.length;
+
+      // total items the view intends to show
+      const totalLogical = Array.isArray(displayFileIds) ? displayFileIds.length : 0;
+      win.__AURORA_RENDER_COUNTS__.fileGridTotal = totalLogical;
+
+      // DOM-mounted count (best-effort)
+      const domCount = typeof document !== 'undefined' ? document.querySelectorAll('.file-item[data-id]').length : 0;
+      win.__AURORA_RENDER_COUNTS__.fileGridDOM = domCount;
+
+      // virtualization heuristics
+      const logicalWindowSmaller = typeof visibleItems.length === 'number' && totalLogical > 0 && visibleItems.length < totalLogical;
+      const domMuchSmaller = domCount > 0 && totalLogical > 0 && domCount < totalLogical;
+
+      win.__AURORA_RENDER_COUNTS__.fileGridVirtualizedLogical = !!logicalWindowSmaller;
+      win.__AURORA_RENDER_COUNTS__.fileGridVirtualizedDOM = !!domMuchSmaller;
+
+      // expose a simple / authoritative boolean
+      win.__AURORA_RENDER_COUNTS__.fileGridUsingVirtualization = !!(logicalWindowSmaller || domMuchSmaller || (Array.isArray(layout) && layout.length < totalLogical));
+  }, [visibleItems.length, displayFileIds.length, layout]);
 
   const sortedKeys = useMemo(() => {
       if (!groupedTags) return [];
@@ -1264,45 +1389,58 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   handleSetHoverPlayingId={handleSetHoverPlayingId}
                                   settings={settings}
                                   containerRect={containerRect}
+                                  scrollTop={scrollTop}
                                   t={t}
                                   resourceRoot={effectiveResourceRoot}
                                   cachePath={effectiveCachePath}
                                   onDragStart={onDragStart}
                                   onDragEnd={onDragEnd}
+                                  setIsDraggingInternal={setIsDraggingInternal}
+                                  setDraggedFilePaths={setDraggedFilePaths}
                               />
                           )}
                       </div>
                   ))}
               </div>
           ) : activeTab.layoutMode === 'list' ? (
-              <div className="w-full h-full min-w-0 overflow-y-auto overflow-x-hidden">
-                  <div className="p-6">
-                      {displayFileIds.map((id) => {
-                          const file = files[id];
+              <div className="w-full h-full min-w-0">
+                  <div className="relative w-full" style={{ height: totalHeight }}>
+                      {visibleItems.map((item) => {
+                          const file = files[item.id];
                           if (!file) return null;
                           return (
-                              <FileListItem
-                                  key={file.id}
-                                  file={file}
-                                  files={files}
-                                  isSelected={activeTab.selectedFileIds.includes(file.id)}
-                                  renamingId={renamingId}
-                                  onFileClick={handleFileClick}
-                                  onFileDoubleClick={handleFileDoubleClick}
-                                  onContextMenu={handleContextMenu}
-                                  onStartRename={onStartRename}
-                                  onRenameSubmit={onRenameSubmit}
-                                  onRenameCancel={onRenameCancel}
-                                  t={t}
-                                  resourceRoot={effectiveResourceRoot}
-                                  cachePath={effectiveCachePath}
-                                  selectedFileIds={activeTab.selectedFileIds}
-                                  onDragStart={onDragStart}
-                                  onDragEnd={onDragEnd}
-                                  thumbnailSize={thumbnailSize}
-                                  setIsDraggingInternal={setIsDraggingInternal}
-                                  setDraggedFilePaths={setDraggedFilePaths}
-                              />
+                              <div 
+                                key={file.id} 
+                                className="absolute"
+                                style={{ 
+                                    top: item.y, 
+                                    left: item.x, 
+                                    width: item.width, 
+                                    height: item.height 
+                                }}
+                              >
+                                  <FileListItem
+                                      file={file}
+                                      files={files}
+                                      isSelected={activeTab.selectedFileIds.includes(file.id)}
+                                      renamingId={renamingId}
+                                      onFileClick={handleFileClick}
+                                      onFileDoubleClick={handleFileDoubleClick}
+                                      onContextMenu={handleContextMenu}
+                                      onStartRename={onStartRename}
+                                      onRenameSubmit={onRenameSubmit}
+                                      onRenameCancel={onRenameCancel}
+                                      t={t}
+                                      resourceRoot={effectiveResourceRoot}
+                                      cachePath={effectiveCachePath}
+                                      selectedFileIds={activeTab.selectedFileIds}
+                                      onDragStart={onDragStart}
+                                      onDragEnd={onDragEnd}
+                                      thumbnailSize={thumbnailSize}
+                                      setIsDraggingInternal={setIsDraggingInternal}
+                                      setDraggedFilePaths={setDraggedFilePaths}
+                                  />
+                              </div>
                           );
                       })}
                   </div>

@@ -1012,11 +1012,35 @@ export const Sidebar: React.FC<{
 
   // New state to track if mouse is hovering the sidebar
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleMouseEnterSidebar = useCallback(() => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+    setIsSidebarHovered(true);
+  }, []);
+
+  const handleMouseLeaveSidebar = useCallback(() => {
+    if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    hoverTimeoutRef.current = setTimeout(() => {
+      setIsSidebarHovered(false);
+      hoverTimeoutRef.current = null;
+    }, 200);
+  }, []);
 
   // When tag creation starts externally, switch active section to tags
   useEffect(() => {
     if (isCreatingTag) setActiveSection('tags');
   }, [isCreatingTag]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
+    };
+  }, []);
 
   // Stable wrappers to avoid recreating callbacks on each render
   const stableOnToggle = useCallback((id: string) => {
@@ -1108,11 +1132,37 @@ export const Sidebar: React.FC<{
     return out;
   }, [roots, files, expandedSet]);
 
+  // publish sidebar visible-node counts and virtualization detection for debug/telemetry consumers
+  useEffect(() => {
+    const win = window as any;
+    win.__AURORA_RENDER_COUNTS__ = win.__AURORA_RENDER_COUNTS__ || {};
+
+    // logical count (how many nodes the virtualization/layout considers visible)
+    win.__AURORA_RENDER_COUNTS__.treeSidebarLogical = visibleNodes.length;
+
+    // total folder count (authoritative for virtualization detection)
+    const totalFolders = Object.values(files).filter(f => f.type === FileType.FOLDER).length;
+    win.__AURORA_RENDER_COUNTS__.treeSidebarTotal = totalFolders;
+
+    // DOM-mounted count (best-effort selector matching TreeNode structure)
+    const el = sidebarHeightRef.current;
+    try {
+      // Tree nodes render a `span.truncate` for the label — use that as a proxy
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el ? el.querySelectorAll('span.truncate').length : 0;
+    } catch (e) {
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = 0;
+    }
+
+    // virtualization heuristics
+    win.__AURORA_RENDER_COUNTS__.treeSidebarVirtualized = typeof visibleNodes.length === 'number' && totalFolders > 0 && visibleNodes.length < totalFolders;
+    win.__AURORA_RENDER_COUNTS__.treeSidebarUsingReactWindow = !!FixedSizeListComp;
+  }, [visibleNodes.length, isSidebarHovered, Object.keys(files).length]);
+
   return (
     <div 
       className="w-full h-full flex flex-col overflow-hidden"
-      onMouseEnter={() => setIsSidebarHovered(true)}
-      onMouseLeave={() => setIsSidebarHovered(false)}
+      onMouseEnter={handleMouseEnterSidebar}
+      onMouseLeave={handleMouseLeaveSidebar}
     >
       <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
         {t('sidebar.catalog')}
