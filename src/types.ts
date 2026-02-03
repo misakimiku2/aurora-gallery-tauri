@@ -249,6 +249,7 @@ export interface HistoryItem {
   selectedPersonIds?: string[];
   aiFilter?: AiSearchFilter | null;
   scrollTop?: number;
+  currentPage?: number;
 }
 
 export interface TabState {
@@ -269,6 +270,7 @@ export interface TabState {
   lastSelectedId: string | null;
   selectedTagIds: string[];
   selectedPersonIds: string[];
+  currentPage: number;
   isCompareMode: boolean;
   sessionName?: string;
   scrollToItemId?: string;

@@ -24,7 +24,7 @@ import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
-import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
+import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
 import md5 from 'md5';
 
@@ -958,6 +958,8 @@ export const App: React.FC = () => {
 
   const {
     displayFileIds,
+    totalResults,
+    pageSize,
     groupedFiles,
     collapsedGroups,
     toggleGroup,
@@ -3266,6 +3268,10 @@ export const App: React.FC = () => {
               onToggleMetadata={toggleMetadata}
               onToggleSettings={toggleSettings}
               onUpdateDateFilter={(f) => updateActiveTab({ dateFilter: f })}
+              // Pagination
+              totalResults={totalResults}
+              pageSize={pageSize}
+              onPageChange={(page) => updateActiveTab({ currentPage: page, scrollTop: 0 })}
               groupBy={groupBy}
               onGroupByChange={setGroupBy}
               isAISearchEnabled={state.settings.search.isAISearchEnabled}
@@ -3278,10 +3284,11 @@ export const App: React.FC = () => {
               t={t}
             />
             {/* ... (Filter UI, same as before) ... */}
-            {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter) && (
+            {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || totalResults > pageSize) && (
               <div className="flex items-center px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-x-2 overflow-x-auto shrink-0 z-20">
                 <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
-                  <Filter size={12} className="mr-1" /> {t('context.filters')}
+                  <Filter size={12} className="mr-1" /> 
+                  {t('context.filters')}
                 </div>
 
                 {activeTab.aiFilter && (
@@ -3341,6 +3348,43 @@ export const App: React.FC = () => {
                 ))}
 
                 <button onClick={() => { handleClearAllTags(); handleClearPersonFilter(); updateActiveTab({ dateFilter: { start: null, end: null, mode: 'created' as const }, aiFilter: null }); }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>
+                
+                {/* Pagination & Count Display */}
+                <div className="flex-1" />
+                {totalResults > 0 && (
+                  totalResults > pageSize ? (
+                    <div className="flex items-center gap-1 ml-4 pr-1 px-1 bg-white/50 dark:bg-black/20 rounded shadow-sm border border-gray-200 dark:border-gray-800">
+                      <button 
+                        disabled={(activeTab.currentPage || 1) <= 1}
+                        onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) - 1, scrollTop: 0 })}
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"
+                        title={t('search.prevPage')}
+                      >
+                        <ChevronLeft size={14} />
+                      </button>
+                      <div className="flex items-center text-[11px] font-medium px-2 min-w-[60px] justify-center select-none">
+                        <span className="text-blue-500 font-bold">{activeTab.currentPage || 1}</span>
+                        <span className="mx-1 text-gray-400">/</span>
+                        <span className="text-gray-600 dark:text-gray-400">{Math.ceil(totalResults / pageSize)}</span>
+                        <span className="ml-1 text-[9px] text-gray-400 font-normal">({totalResults})</span>
+                      </div>
+                      <button 
+                        disabled={(activeTab.currentPage || 1) >= Math.ceil(totalResults / pageSize)}
+                        onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) + 1, scrollTop: 0 })}
+                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"
+                        title={t('search.nextPage')}
+                      >
+                        <ChevronRight size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    (activeTab.searchQuery || activeTab.aiFilter || activeTab.activeTags.length > 0 || activeTab.activePersonId) && (
+                      <div className="flex items-center text-[11px] font-medium px-2 py-0.5 bg-white/50 dark:bg-black/20 rounded border border-gray-200 dark:border-gray-800 text-gray-500">
+                        {totalResults} {t('context.items')}
+                      </div>
+                    )
+                  )
+                )}
               </div>
             )}
 
@@ -3368,9 +3412,18 @@ export const App: React.FC = () => {
                   ) : (
                     <div className="flex items-center w-full justify-between">
                       <div className="flex items-center space-x-1 overflow-hidden">
-                        <HardDrive size={12} />
-                        <span>/</span>
-                        {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
+                        {!(activeTab.searchQuery || activeTab.aiFilter) ? (
+                          <>
+                            <HardDrive size={12} />
+                            <span>/</span>
+                            {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
+                          </>
+                        ) : (
+                          <>
+                            <Search size={12} className="text-blue-500" />
+                            <span className="font-medium text-blue-500">{t('search.scopeAll')}</span>
+                          </>
+                        )}
                         {activeTab.activeTags.length > 0 && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
                       </div>
                       <div className="text-[10px] opacity-60">
@@ -3429,6 +3482,8 @@ export const App: React.FC = () => {
                     topicLayoutMode={(topicLayoutMode === 'grid' || topicLayoutMode === 'adaptive' || topicLayoutMode === 'masonry') ? topicLayoutMode : 'grid'}
                     onTopicLayoutModeChange={handleTopicLayoutModeChange}
                     onShowToast={showToast}
+                    hoverPlayingId={hoverPlayingId}
+                    onSetHoverPlayingId={setHoverPlayingId}
                   />
                 ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                   // If folder is being actively refreshed after an operation, show a loading state

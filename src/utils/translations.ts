@@ -519,7 +519,10 @@ export const translations = {
       scopeTag: '标签',
       scopeFolder: '文件夹',
       placeholder: '搜索...',
-      tagSearchPlaceholder: '搜索标签...'
+      tagSearchPlaceholder: '搜索标签...',
+      prevPage: '上一页',
+      nextPage: '下一页',
+      searching: '正在搜索...'
     },
     sort: {
       sortBy: '排序方式',
@@ -1082,7 +1085,10 @@ export const translations = {
       scopeTag: 'Tags',
       scopeFolder: 'Folders',
       placeholder: 'Search...',
-      tagSearchPlaceholder: 'Search tags...'
+      tagSearchPlaceholder: 'Search tags...',
+      prevPage: 'Previous Page',
+      nextPage: 'Next Page',
+      searching: 'Searching...'
     },
     sort: {
       sortBy: 'Sort By',

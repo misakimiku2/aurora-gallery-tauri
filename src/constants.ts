@@ -16,6 +16,7 @@ export const DUMMY_TAB: TabState = {
     lastSelectedId: null,
     selectedTagIds: [],
     selectedPersonIds: [],
+    currentPage: 1,
     isCompareMode: false,
     dateFilter: { start: null, end: null, mode: 'created' },
     history: { stack: [], currentIndex: -1 },

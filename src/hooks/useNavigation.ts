@@ -30,12 +30,16 @@ export const useNavigation = (
         stackCopy[active.history.currentIndex] = {
           ...stackCopy[active.history.currentIndex],
           scrollTop: currentScrollTop,
+          currentPage: active.currentPage,
           selectedTopicIds: active.selectedTopicIds,
           selectedPersonIds: active.selectedPersonIds
         };
       }
 
-      const newStack = [...stackCopy.slice(0, active.history.currentIndex + 1), { folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, scrollTop: nextScrollTop, activeTopicId, selectedTopicIds, selectedPersonIds }];
+      const newStack = [...stackCopy.slice(0, active.history.currentIndex + 1), { 
+        folderId, viewingId, viewMode, searchQuery, searchScope, activeTags, activePersonId, aiFilter, 
+        scrollTop: nextScrollTop, currentPage: 1, activeTopicId, selectedTopicIds, selectedPersonIds 
+      }];
 
       return {
         ...prev,
@@ -50,6 +54,7 @@ export const useNavigation = (
           activePersonId,
           aiFilter,
           scrollTop: nextScrollTop,
+          currentPage: 1,
           activeTopicId,
           selectedTopicIds,
           selectedPersonIds,
@@ -86,6 +91,8 @@ export const useNavigation = (
             selectedPersonIds: step.selectedPersonIds || [],
             aiFilter: step.aiFilter,
             scrollTop: step.scrollTop || 0,
+            currentPage: step.currentPage || 1,
+            viewingFileId: step.viewingId,
             selectedFileIds: step.viewingId ? [step.viewingId] : [],
             selectedTagIds: [],
             history: { ...t.history, currentIndex: newIndex }
@@ -120,6 +127,7 @@ export const useNavigation = (
             selectedPersonIds: step.selectedPersonIds || [],
             aiFilter: step.aiFilter,
             scrollTop: step.scrollTop || 0,
+            currentPage: step.currentPage || 1,
             selectedFileIds: step.viewingId ? [step.viewingId] : [],
             selectedTagIds: [],
             history: { ...t.history, currentIndex: newIndex }

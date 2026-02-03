@@ -95,9 +95,9 @@ pub async fn search_by_palette(
         }
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        scored.truncate(500);
+        scored.truncate(50000);
         let final_results = scored.into_iter().map(|(p, _)| p).collect::<Vec<String>>();
-        eprintln!("[search_by_palette] Returning {} results (DB fast-path)", final_results.len());
+        eprintln!("[search_by_palette] Returning {} results (DB fast-path truncated)", final_results.len());
         return Ok(final_results);
     }
 
@@ -181,9 +181,9 @@ pub async fn search_by_palette(
                          }
                          
                          score = best_weighted_score;
-                         // 阈值：需要 score >= 60 才认为是"红色氛围为主"的图片
-                         // 这意味着要么前3位颜色中有相似颜色，要么第1位颜色非常接近
-                         threshold = 60.0;
+                         // 阈值：提高到 75.0 以减少不相关的结果数量
+                         // 这确保只有主色非常接近或前几位颜色有极高相似度的图片才会被召回
+                         threshold = 75.0;
                      } else if is_atmosphere_search {
                          // ========== 氛围搜索（5色以上）：整体调色板结构匹配 ==========
                          // 核心思想：找与参考图片整体色调相似的图片
@@ -423,9 +423,13 @@ pub async fn search_by_palette(
     .map_err(|e| format!("Cache access failed: {}", e))?; // Handle access_cache error
 
     // Destructure results
-    let (results, _, _) = results; // is_single_color etc are from inside, but we have them outside too.
+    let (mut results, _, _) = results;
+    
+    // 限制在 50000 条以内，以兼顾性能和用户的分页需求
+    results.truncate(50000);
+    
     let final_results: Vec<String> = results.iter().map(|(path, _)| path.clone()).collect();
-    eprintln!("[search_by_palette] Returning {} results", final_results.len());
+    eprintln!("[search_by_palette] Returning {} results (paged support)", final_results.len());
     
     Ok(final_results)
 }

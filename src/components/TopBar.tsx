@@ -44,14 +44,52 @@ interface TopBarProps {
   // --- Topic view specific controls ---
   topicLayoutMode?: LayoutMode;
   onTopicLayoutModeChange?: (mode: LayoutMode) => void;
+  // --- Pagination ---
+  totalResults?: number;
+  pageSize?: number;
+  onPageChange?: (page: number) => void;
   t: (key: string) => string;
 } 
+
+const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { current: number, total: number, pageSize: number, onPageChange: (page: number) => void, t: any }) => {
+  const totalPages = Math.ceil(total / pageSize);
+  if (totalPages <= 1) return null;
+
+  return (
+    <div className="flex items-center gap-1 ml-2 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+      <button 
+        disabled={current <= 1}
+        onClick={() => onPageChange(current - 1)}
+        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+        title={t('search.prevPage') || 'Previous Page'}
+      >
+        <ChevronLeft size={16} />
+      </button>
+      
+      <div className="flex items-center text-xs font-medium px-2 min-w-[80px] justify-center">
+        <span className="text-blue-600 dark:text-blue-400">{current}</span>
+        <span className="mx-1 text-gray-400">/</span>
+        <span className="text-gray-600 dark:text-gray-400">{totalPages}</span>
+        <span className="ml-2 text-[10px] text-gray-400 font-normal">({total})</span>
+      </div>
+
+      <button 
+        disabled={current >= totalPages}
+        onClick={() => onPageChange(current + 1)}
+        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+        title={t('search.nextPage') || 'Next Page'}
+      >
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+};
 
 const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearchQuery }: { groupedTags: Record<string, string[]>, onTagClick: (tag: string, e: React.MouseEvent) => void, t: (key: string) => string, tagSearchQuery: string, onSetTagSearchQuery: (query: string) => void }) => {
   const [localSearchQuery, setLocalSearchQuery] = React.useState(tagSearchQuery);
   const [isFocused, setIsFocused] = React.useState(false);
   
-  // 当外部tagSearchQuery变化时，更新本地状�?
+  // 当外部tagSearchQuery变化时，更新本地状?
   React.useEffect(() => {
     setLocalSearchQuery(tagSearchQuery);
   }, [tagSearchQuery]);
