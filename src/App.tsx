@@ -2664,7 +2664,6 @@ export const App: React.FC = () => {
       try {
         const results = await searchByColor(`#${hex}`);
 
-        const allFiles = Object.values(state.files);
         const validPaths: string[] = [];
         const missingPaths: string[] = [];
         const newFilesMap: Record<string, FileNode> = {};
@@ -2676,15 +2675,18 @@ export const App: React.FC = () => {
           return clean.toLowerCase();
         };
 
+        // Check against state.files using a lookup map for performance O(n+m)
+        const allFiles = Object.values(state.files);
+        const pathMap = new Map<string, string>();
+        allFiles.forEach(f => {
+          if (f.path) pathMap.set(normalize(f.path), f.path);
+        });
+
         results.forEach(rustPath => {
           const normRust = normalize(rustPath);
-          const match = allFiles.find(f => {
-            if (!f.path) return false;
-            const normFront = normalize(f.path);
-            return normFront === normRust;
-          });
-          if (match && match.path) {
-            validPaths.push(match.path);
+          const matchedPath = pathMap.get(normRust);
+          if (matchedPath) {
+            validPaths.push(matchedPath);
           } else {
             missingPaths.push(rustPath);
           }
@@ -2751,7 +2753,6 @@ export const App: React.FC = () => {
       try {
         const results = await searchByPalette(palette);
 
-        const allFiles = Object.values(state.files);
         const validPaths: string[] = [];
         const missingPaths: string[] = [];
         const newFilesMap: Record<string, FileNode> = {};
@@ -2763,16 +2764,19 @@ export const App: React.FC = () => {
           return clean.toLowerCase();
         };
 
+        // Create lookup map for performance O(n+m) instead of O(n*m)
+        const allFiles = Object.values(state.files);
+        const pathMap = new Map<string, string>();
+        allFiles.forEach(f => {
+          if (f.path) pathMap.set(normalize(f.path), f.path);
+        });
+
         // 1. 锟斤拷锟斤拷锟节达拷锟叫诧拷锟斤拷
         results.forEach(rustPath => {
           const normRust = normalize(rustPath);
-          const match = allFiles.find(f => {
-            if (!f.path) return false;
-            const normFront = normalize(f.path);
-            return normFront === normRust;
-          });
-          if (match && match.path) {
-            validPaths.push(match.path);
+          const matchedPath = pathMap.get(normRust);
+          if (matchedPath) {
+            validPaths.push(matchedPath);
           } else {
             missingPaths.push(rustPath);
           }

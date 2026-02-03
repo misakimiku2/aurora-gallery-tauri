@@ -50,12 +50,15 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     if (activeTab.aiFilter && (state.settings.search.isAISearchEnabled || activeTab.aiFilter.filePaths)) {
       const { keywords, colors, people, description, filePaths } = activeTab.aiFilter;
 
+      // Use a Set for fast file path matching
+      const filePathSet = filePaths && filePaths.length > 0 ? new Set(filePaths) : null;
+
       candidates = allFiles.filter(f => {
         if (f.type !== FileType.IMAGE) return false;
 
-        // Exact file path match (e.g. from color search)
-        if (filePaths && filePaths.length > 0) {
-          return filePaths.includes(f.path);
+        // Exact file path match (e.g. from color search) - O(1) with Set
+        if (filePathSet) {
+          return filePathSet.has(f.path);
         }
 
         // Early return if no criteria match

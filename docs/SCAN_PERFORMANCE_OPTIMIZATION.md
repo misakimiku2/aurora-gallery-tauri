@@ -45,6 +45,20 @@
 - **优化点**：`all_metadata` 加载。
 - **优化**：通过 SQL `path LIKE 'root_path%'` 仅加载当前库相关的元数据，而非全表加载（防止跨库数据过大）。
 
+### 7. 极速启动一致性检查 (Fast Startup Consistency Check)
+- **问题**：在极速模式下，如果在应用关闭期间通过文件资源管理器添加了新文件，或在软件运行时通过“拖拽”添加了文件，由于统计逻辑口径不一或索引同步延迟，应用重启后可能误认为文件系统差异过大，从而降级为耗时的全量磁盘扫描（约 7200ms+）。
+- **优化**：
+    - **对齐统计口径**：根目录物理计数逻辑现在会过滤掉所有非业务相关的杂质文件（如 `.txt`, `.exe` 等），仅统计“文件夹”和“受支持的图片格式”，确保与数据库索引的计数逻辑完全闭合。
+    - **路径不敏感对比**：在 Windows 环境下对比路径时采用忽略大小写的匹配，并统一处理末尾斜杠，防止由于 `C:/` 与 `c:/` 的微小差异触发重扫。
+    - **写时索引同步 (Write-Through Indexing)**：
+        - `create_folder`：创建文件夹时同步写入索引表。
+        - `copy_file` / `db_copy_file_metadata`：文件复制操作后立即将新位置信息写入 `file_index`。
+        - `write_file_from_bytes` (Drop 处理)：外部文件拖入并保存后，立即同步更新索引。
+- **逻辑**：
+    - 若 `物理业务文件数量 > 数据库索引数量`：判定为文件系统发生了变更，自动降级为全量/增量磁盘扫描。
+    - 若 `物理业务文件数量 <= 数据库索引数量`：继续保持极速模式，直接返回数据库结果。
+- **收益**：解决了大量文件背景下，仅因拖入一个普通文件就导致下次启动变慢的问题，确保 68k 级别库的启动能在 1-2秒 内稳定完成。
+
 ---
 
 ## 核心代码参考 (For AI Assistant Reference)
@@ -52,28 +66,31 @@
 ### Rust (src-tauri/src/main.rs):
 ```rust
 // 1. 缓存优先的尺寸获取逻辑
-let meta_entry = metadata_map.get(&relative_path);
-let needs_refresh = match meta_entry {
-    Some(m) => m.mtime != mtime || m.size != size || m.width == 0,
-    None => true,
-};
+// ... (omitted)
 
-if force || needs_refresh {
-    // 强制模式或缓存失效：执行重度 IO 获取尺寸
-    if let Ok(dim) = image::image_dimensions(&path) {
-        width = dim.0;
-        height = dim.1;
+// 2. 节流通知
+// ... (omitted)
+
+// 3. 极速启动一致性检查：严格对齐过滤规则
+let fs_root_count = rd.filter_map(|e| e.ok()).filter(|e| {
+    let name = e.file_name().to_string_lossy().to_string();
+    if name == ".Aurora_Cache" || (name.starts_with('.') && name != ".pixcall") { return false; }
+    if let Ok(md) = e.metadata() {
+        if md.is_dir() { return true; }
+        let ext = e.path().extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).unwrap_or_default();
+        return is_supported_image(&ext);
     }
-} else if let Some(m) = meta_entry {
-    // 缓存命中：直接从数据库读取，无需磁盘 IO
-    width = m.width;
-    height = m.height;
-}
+    false
+}).count();
 
-// 2. 节流通知 (仅在强制扫描模式下显示进度，避免日常启动过度消耗)
-if force && processed_count % 500 == 0 {
-    let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: current_total });
-}
+// 4. 写时同步 (以复制为例)
+let new_entry = db::file_index::FileIndexEntry {
+    file_id: generate_id(&dest_normalized),
+    path: dest_normalized,
+    file_type: "Image".to_string(),
+    // ...
+};
+let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
 ```
 
 ### TypeScript (src/App.tsx & MetadataPanel.tsx):

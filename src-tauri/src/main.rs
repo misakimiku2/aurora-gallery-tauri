@@ -246,12 +246,28 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     if !force && !cached_index_map.is_empty() {
         // [Hotfix] 简单的一致性检查：
         // 读取此目录下的第一层物理文件/文件夹，看数量是否大致匹配。
-        // 或者是是否有明显的新增文件没有被索引。
-        // 如果物理数量 > 数据库数量，说明有新文件，不要直接返回缓存，而是回落到磁盘扫描。
+        // 只有当物理文件没有显著增加时，才信任数据库缓存。
+
+        // 规范化路径对比基准 (对齐末尾斜杠处理)
+        let root_match_path = normalized_root_path.trim_end_matches('/').to_string();
+
         let fs_root_count = if let Ok(rd) = root_path_os.read_dir() {
             rd.filter_map(|e| e.ok()).filter(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                name != ".Aurora_Cache" && !(name.starts_with('.') && name != ".pixcall")
+                // 排除缓存和隐藏文件
+                if name == ".Aurora_Cache" || (name.starts_with('.') && name != ".pixcall") {
+                    return false;
+                }
+                
+                // 只统计文件夹和支持的图片类型，与数据库存储策略保持一致
+                // 否则如果根目录下有 txt/exe 等文件，会因为数据库不索引它们而导致 fs_count 永远 > db_count，
+                // 导致每次启动都触发降级全量扫描。
+                if let Ok(md) = e.metadata() {
+                    if md.is_dir() { return true; }
+                    let ext = e.path().extension().and_then(|s| s.to_str()).map(|s| s.to_lowercase()).unwrap_or_default();
+                    return is_supported_image(&ext);
+                }
+                false
             }).count()
         } else {
             0
@@ -260,22 +276,30 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
         // 计算数据库中作为直接子项的数量
         let db_root_children_count = cached_index_map.values()
             .filter(|entry| {
-                // 只有父目录为空（或者是这层根目录）的才算顶层
-                // 注意：cached_index_map 存储的是 path -> Entry
-                // 我们需要反推一下是不是只有一层。
-                // 简单点：normalize_path 后，其 parent 是否等于 normalized_root_path
                 let p = std::path::Path::new(&entry.path);
                 if let Some(parent) = p.parent() {
-                    normalize_path(parent.to_str().unwrap_or("")) == normalized_root_path
+                    let parent_normalized = normalize_path(parent.to_str().unwrap_or(""));
+                    let p_match = parent_normalized.trim_end_matches('/');
+                    
+                    #[cfg(windows)]
+                    {
+                        p_match.eq_ignore_ascii_case(&root_match_path)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        p_match == root_match_path
+                    }
                 } else {
                     false
                 }
             })
             .count();
 
-        // 只有当数量一致（或数据库更多，意味着有残留但没新文件）时才信任数据库
-        // 如果文件系统里的东西更多，说明有新文件进来了，必须执行下面的物理扫描逻辑。
+        // 只有当物理文件没有显著增加时，才信任数据库缓存
         if fs_root_count <= db_root_children_count {
+            if std::env::var("AURORA_DEBUG").ok() == Some("1".to_string()) {
+                println!("Fast startup: Root consistency check passed (FS: {}, DB: {})", fs_root_count, db_root_children_count);
+            }
             let mut all_files = HashMap::new();
             let mut path_to_id = HashMap::new();
             
@@ -1058,9 +1082,33 @@ async fn file_exists(file_path: String) -> Result<bool, String> {
 
 // Command to create a folder
 #[tauri::command]
-async fn create_folder(path: String) -> Result<(), String> {
-    fs::create_dir(&path)
+async fn create_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
+    let folder_path = Path::new(&path);
+    fs::create_dir(folder_path)
         .map_err(|e| format!("Failed to create folder: {}", e))?;
+    
+    // 同步更新索引数据库
+    let app_db = app.state::<AppDbPool>();
+    let mut conn = app_db.get_connection();
+    let normalized_path = normalize_path(&path);
+    let id = generate_id(&normalized_path);
+    let name = folder_path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+    let md = fs::metadata(folder_path).ok();
+    
+    let entry = db::file_index::FileIndexEntry {
+        file_id: id,
+        parent_id: folder_path.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))),
+        path: normalized_path,
+        name,
+        file_type: "Folder".to_string(),
+        size: 0,
+        width: None, height: None, format: None,
+        created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+        modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+    };
+    
+    let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
+    
     Ok(())
 }
 
@@ -1142,10 +1190,12 @@ async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) 
 
 #[tauri::command]
 async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tauri::AppHandle) -> Result<(), String> {
-    let is_dir = Path::new(&dest_path).is_dir();
+    let dest_p = Path::new(&dest_path);
+    let is_dir = dest_p.is_dir();
     let app_db = app.state::<AppDbPool>();
     let conn = app_db.get_connection();
 
+    // 1. 同步元数据 (Tags, AI Data 等)
     if is_dir {
         let _ = db::file_metadata::copy_metadata_dir(&conn, &src_path, &dest_path);
     } else {
@@ -1154,8 +1204,55 @@ async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tauri::
         let _ = db::file_metadata::copy_metadata(&conn, &old_id, &new_id, &dest_path);
     }
 
+    // 2. 同步颜色数据库
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
     let _ = color_db.copy_colors(&src_path, &dest_path);
+
+    // [New] 3. 同步索引数据库 (file_index) - 这是解决启动降级的关键
+    // 获取源文件的索引信息作为模板
+    let src_normalized = normalize_path(&src_path);
+    let dest_normalized = normalize_path(&dest_path);
+    
+    let mut conn_mut = app_db.get_connection(); // 需要可变连接用于 upsert
+    
+    if is_dir {
+        // 如果是文件夹复制，逻辑较复杂，建议直接让下一次扫描处理，或者递归更新索引
+        // 这里简单处理：清理掉目标路径的旧索引，迫使下次扫描该路径
+        let _ = db::file_index::delete_entries_by_path(&conn_mut, &dest_normalized);
+    } else {
+        // 如果是单文件复制，我们直接插入一条新索引
+        if let Ok(md) = fs::metadata(dest_p) {
+            let new_id = generate_id(&dest_normalized);
+            let file_name = dest_p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let ext = dest_p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+            
+            // 尝试获取尺寸（如果之前有的话）
+            let mut width = None;
+            let mut height = None;
+            let mut format = None;
+
+            let all_entries = db::file_index::get_entries_under_path(&conn_mut, &src_normalized).unwrap_or_default();
+            if let Some(src_entry) = all_entries.iter().find(|e| e.path == src_normalized) {
+                width = src_entry.width;
+                height = src_entry.height;
+                format = src_entry.format.clone();
+            }
+
+            let new_entry = db::file_index::FileIndexEntry {
+                file_id: new_id,
+                parent_id: dest_p.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))),
+                path: dest_normalized,
+                name: file_name,
+                file_type: "Image".to_string(),
+                size: md.len(),
+                width, height, format: format.or(Some(ext)),
+                created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+            };
+            
+            let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
+        }
+    }
 
     Ok(())
 }
@@ -1474,7 +1571,7 @@ async fn move_file(src_path: String, dest_path: String, app: tauri::AppHandle) -
 }
 
 #[tauri::command]
-async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>) -> Result<(), String> {
+async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>, app: tauri::AppHandle) -> Result<(), String> {
     use std::io::Write;
     
     let path = Path::new(&file_path);
@@ -1496,7 +1593,32 @@ async fn write_file_from_bytes(file_path: String, bytes: Vec<u8>) -> Result<(), 
         match fs::File::create(path) {
             Ok(mut file) => {
                 match file.write_all(&bytes) {
-                    Ok(_) => return Ok(()),
+                    Ok(_) => {
+                        // 同步更新索引数据库
+                        let app_db = app.state::<AppDbPool>();
+                        let mut conn = app_db.get_connection();
+                        let normalized_path = normalize_path(&file_path);
+                        let id = generate_id(&normalized_path);
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+                        let md = fs::metadata(path).ok();
+
+                        if is_supported_image(&ext) {
+                            let entry = db::file_index::FileIndexEntry {
+                                file_id: id,
+                                parent_id: path.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))),
+                                path: normalized_path,
+                                name,
+                                file_type: "Image".to_string(),
+                                size: md.as_ref().map(|m| m.len()).unwrap_or(0),
+                                width: None, height: None, format: Some(ext),
+                                created_at: md.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                                modified_at: md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                            };
+                            let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
+                        }
+                        return Ok(());
+                    },
                     Err(e) => {
                         attempt += 1;
                         last_error = Some(e);
