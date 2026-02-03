@@ -262,7 +262,7 @@ export const translations = {
       folderCategory: '文件夹分类',
       catGeneral: '常规',
       catBook: '图书',
-      catSequence: '序列帧',
+      catSequence: '动画',
       unknown: '未知',
       other: '其他',
       aiSection: 'AI 智能分析',
@@ -312,22 +312,6 @@ export const translations = {
       random: '随机播放',
       enableZoom: '图片逐渐放大',
       done: '完成'
-    },
-    sequence: {
-      play: '播放',
-      pause: '暂停',
-      prev: '上一帧',
-      next: '下一帧',
-      fps: '播放帧率',
-      loop: '循环播放',
-      playOnce: '播放一次',
-      frame: '帧',
-      settings: '序列设置',
-      folderInfo: '文件夹信息',
-      fit: '自适应窗口',
-      original: '原始大小',
-      deleteWarning: '删除当前图片会导致无法播放或播放闪烁，点击确认后才会删除该文件。',
-      confirmDelete: '确认删除'
     },
     settings: {
       title: '设置',
@@ -831,7 +815,7 @@ export const translations = {
       folderCategory: 'Folder Category',
       catGeneral: 'General',
       catBook: 'Book',
-      catSequence: 'Sequence',
+      catSequence: 'Animation',
       unknown: 'Unknown',
       other: 'Other',
       aiSection: 'AI INTELLIGENCE',
@@ -881,22 +865,6 @@ export const translations = {
       random: 'Random Shuffle',
       enableZoom: 'Gradual Zoom',
       done: 'Done'
-    },
-    sequence: {
-      play: 'Play',
-      pause: 'Pause',
-      prev: 'Previous Frame',
-      next: 'Next Frame',
-      fps: 'Playback FPS',
-      loop: 'Loop Playback',
-      playOnce: 'Play Once',
-      frame: 'Frame',
-      settings: 'Sequence Settings',
-      folderInfo: 'Folder Info',
-      fit: 'Fit to Window',
-      original: 'Original Size',
-      deleteWarning: 'Deleting this image may cause playback issues or flickering. Confirm delete?',
-      confirmDelete: 'Confirm Delete'
     },
     settings: {
       title: 'Settings',

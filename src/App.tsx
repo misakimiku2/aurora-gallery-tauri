@@ -6,7 +6,6 @@ import { Sidebar } from './components/TreeSidebar';
 import { MetadataPanel } from './components/MetadataPanel';
 import { ImageViewer } from './components/ImageViewer';
 import { ImageComparer } from './components/ImageComparer';
-import { SequenceViewer } from './components/SequenceViewer';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
 import { FileGrid } from './components/FileGrid';
@@ -3164,64 +3163,39 @@ export const App: React.FC = () => {
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
           {activeTab.viewingFileId && (
-            (() => {
-              const viewingFile = state.files[activeTab.viewingFileId];
-              const parentFolder = viewingFile && viewingFile.parentId ? state.files[viewingFile.parentId] : null;
-
-              if (parentFolder && parentFolder.category === 'sequence') {
-                return (
-                  <SequenceViewer
-                    file={viewingFile}
-                    folder={parentFolder}
-                    files={state.files}
-                    sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
-                    onClose={closeViewer}
-                    onNavigate={handleViewerJump}
-                    isSidebarOpen={state.layout.isSidebarVisible}
-                    onToggleSidebar={toggleSidebar}
-                    onDelete={(id) => requestDelete([id])}
-                    onNavigateBack={goBack}
-                    t={t}
-                  />
-                );
-              }
-
-              return (
-                <ImageViewer
-                  file={state.files[activeTab.viewingFileId]}
-                  sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
-                  files={state.files}
-                  layout={state.layout}
-                  slideshowConfig={state.slideshowConfig}
-                  onLayoutToggle={onLayoutToggle}
-                  onClose={closeViewer}
-                  onNext={(random) => handleViewerNavigate(random ? 'random' : 'next')}
-                  onPrev={() => handleViewerNavigate('prev')}
-                  onNavigateBack={goBack}
-                  onNavigateForward={goForward}
-                  canGoBack={activeTab.history.currentIndex > 0}
-                  canGoForward={activeTab.history.currentIndex < activeTab.history.stack.length - 1}
-                  onDelete={(id) => requestDelete([id])}
-                  onViewInExplorer={handleViewInExplorer}
-                  onCopyToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }))}
-                  onMoveToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }))}
-                  onNavigateToFolder={(fid, options) => enterFolder(fid, options && options.targetId ? { scrollToItemId: options.targetId } : undefined)}
-                  searchQuery={activeTab.searchQuery}
-                  onSearch={handleViewerSearch}
-                  searchScope={activeTab.searchScope}
-                  onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
-                  onUpdateSlideshowConfig={(cfg) => setState(s => ({ ...s, slideshowConfig: cfg }))}
-                  onPasteTags={(id) => handlePasteTags([id])}
-                  onEditTags={() => setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: activeTab.viewingFileId } } }))}
-                  onCopyTags={() => handleCopyTags([activeTab.viewingFileId!])}
-                  onAIAnalysis={(id) => handleAIAnalysis([id])}
-                  isAISearchEnabled={state.settings.search.isAISearchEnabled}
-                  onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
-                  t={t}
-                  activeTab={activeTab}
-                />
-              );
-            })()
+            <ImageViewer
+              file={state.files[activeTab.viewingFileId]}
+              sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
+              files={state.files}
+              layout={state.layout}
+              slideshowConfig={state.slideshowConfig}
+              onLayoutToggle={onLayoutToggle}
+              onClose={closeViewer}
+              onNext={(random) => handleViewerNavigate(random ? 'random' : 'next')}
+              onPrev={() => handleViewerNavigate('prev')}
+              onNavigateBack={goBack}
+              onNavigateForward={goForward}
+              canGoBack={activeTab.history.currentIndex > 0}
+              canGoForward={activeTab.history.currentIndex < activeTab.history.stack.length - 1}
+              onDelete={(id) => requestDelete([id])}
+              onViewInExplorer={handleViewInExplorer}
+              onCopyToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }))}
+              onMoveToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }))}
+              onNavigateToFolder={(fid, options) => enterFolder(fid, options && options.targetId ? { scrollToItemId: options.targetId } : undefined)}
+              searchQuery={activeTab.searchQuery}
+              onSearch={handleViewerSearch}
+              searchScope={activeTab.searchScope}
+              onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
+              onUpdateSlideshowConfig={(cfg) => setState(s => ({ ...s, slideshowConfig: cfg }))}
+              onPasteTags={(id) => handlePasteTags([id])}
+              onEditTags={() => setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: activeTab.viewingFileId } } }))}
+              onCopyTags={() => handleCopyTags([activeTab.viewingFileId!])}
+              onAIAnalysis={(id) => handleAIAnalysis([id])}
+              isAISearchEnabled={state.settings.search.isAISearchEnabled}
+              onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
+              t={t}
+              activeTab={activeTab}
+            />
           )}
           {state.tabs.map(tab => tab.isCompareMode && (
             <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
