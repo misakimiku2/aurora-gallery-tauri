@@ -1562,12 +1562,13 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             </div>
                         );
                     })}
-                    {layoutItems.length === 0 && (
-                        <div className="absolute inset-0 flex items-center justify-center text-gray-400" style={{ height: 200 }}>
-                            {/* Empty state placeholder */}
-                        </div>
-                    )}
                 </div>
+                {layoutItems.length === 0 && (
+                    <div className="flex flex-col items-center justify-center text-gray-400 w-full" style={{ height: 'calc(100vh - 250px)' }}>
+                        <Layout size={80} strokeWidth={1.5} className="mb-4 opacity-20" />
+                        <p className="text-xl font-medium">{t('sidebar.noTopics')}</p>
+                    </div>
+                )}
                 {/* Selection Box */}
                 <div
                     ref={selectionOverlayRef}
@@ -1785,7 +1786,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                     })}
                                 </div>
                             ) : (
-                                <div className="text-sm text-gray-400 italic">No sub-topics yet.</div>
+                                <div className="flex flex-col items-center justify-center py-12 bg-gray-50/50 dark:bg-gray-900/20 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-400">
+                                    <Layout size={40} className="mb-3 opacity-20" />
+                                    <p className="text-sm italic">{t('sidebar.noSubTopics')}</p>
+                                </div>
                             )}
                         </section>
                     )}
@@ -1858,7 +1862,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 })}
                             </div>
                         ) : (
-                            <div className="text-sm text-gray-400 italic">No people added.</div>
+                            <div className="flex flex-col items-center justify-center py-10 bg-gray-50/50 dark:bg-gray-900/20 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-400">
+                                <User size={40} className="mb-3 opacity-20" />
+                                <p className="text-sm italic">{t('sidebar.noPeople')}</p>
+                            </div>
                         )}
                     </section>
 
@@ -1915,7 +1922,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 onSetHoverPlayingId={onSetHoverPlayingId}
                             />
                         ) : (
-                            <div className="text-sm text-gray-400 italic">No images in this topic.</div>
+                            <div className="flex flex-col items-center justify-center py-20 bg-gray-50/50 dark:bg-gray-900/20 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-800 text-gray-400">
+                                <FileImage size={40} className="mb-3 opacity-20" />
+                                <p className="text-sm italic">{t('context.noFiles')}</p>
+                            </div>
                         )}
                     </section>
                 </div>

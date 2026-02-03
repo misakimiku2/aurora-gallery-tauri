@@ -192,7 +192,7 @@ export const TagsList = React.memo(({
   }, [computeIndexTop]);
 
   return (
-    <div className="relative" style={{ height: totalHeight }}>
+    <div className={`relative ${layout.length === 0 ? 'h-full' : ''}`} style={{ height: layout.length === 0 ? '100%' : totalHeight }}>
       {/* 字母索引栏 */}
       {filteredKeys.length > 0 && createPortal(
         <div className="fixed transform -translate-y-1/2 z-[110] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
@@ -237,9 +237,9 @@ export const TagsList = React.memo(({
       
       {/* 标签列表内容 */}
       {layout.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-full text-gray-400">
-              <Tag size={64} className="mb-4 opacity-20"/>
-              <p>{t('sidebar.noTagsFound')}</p>
+          <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full min-h-[400px]">
+              <Tag size={80} strokeWidth={1.5} className="mb-4 opacity-20"/>
+              <p className="text-xl font-medium">{t('sidebar.noTags')}</p>
           </div>
       )}
 

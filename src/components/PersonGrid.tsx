@@ -189,37 +189,44 @@ export const PersonGrid = ({
 
 
     return (
-        <div className="w-full min-w-0" style={{ position: 'relative', minHeight: '100%' }}>
-            <div className="min-w-0" style={{ position: 'relative' }}>
-                <div
-                    className="relative min-w-0"
-                    style={{
-                        width: '100%',
-                        maxWidth: '100%',
-                        height: totalHeight,
-                        position: 'relative'
-                    }}
-                >
-                    {visibleItems.map((item) => {
-                        const person = people[item.id];
-                        if (!person) return null;
-                        return (
-                            <PersonCard
-                                key={person.id}
-                                person={person}
-                                files={files}
-                                isSelected={selectedPersonIds.includes(person.id)}
-                                onPersonClick={onPersonClick}
-                                onPersonDoubleClick={onPersonDoubleClick}
-                                onStartRenamePerson={onStartRenamePerson}
-                                onPersonContextMenu={onPersonContextMenu}
-                                t={t}
-                                style={item}
-                            />
-                        );
-                    })}
+        <div className="w-full min-w-0 h-full" style={{ position: 'relative' }}>
+            {peopleIds.length === 0 ? (
+                <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full min-h-[400px]">
+                    <User size={80} strokeWidth={1.5} className="mb-4 opacity-20" />
+                    <p className="text-xl font-medium">{t('sidebar.noPeople')}</p>
                 </div>
-            </div>
+            ) : (
+                <div className="min-w-0" style={{ position: 'relative' }}>
+                    <div
+                        className="relative min-w-0"
+                        style={{
+                            width: '100%',
+                            maxWidth: '100%',
+                            height: totalHeight,
+                            position: 'relative'
+                        }}
+                    >
+                        {visibleItems.map((item) => {
+                            const person = people[item.id];
+                            if (!person) return null;
+                            return (
+                                <PersonCard
+                                    key={person.id}
+                                    person={person}
+                                    files={files}
+                                    isSelected={selectedPersonIds.includes(person.id)}
+                                    onPersonClick={onPersonClick}
+                                    onPersonDoubleClick={onPersonDoubleClick}
+                                    onStartRenamePerson={onStartRenamePerson}
+                                    onPersonContextMenu={onPersonContextMenu}
+                                    t={t}
+                                    style={item}
+                                />
+                            );
+                        })}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

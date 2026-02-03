@@ -96,11 +96,25 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     // 关键词搜索
     if (searchCriteria.query && !searchCriteria.query.startsWith('tag:') && !searchCriteria.aiFilter) {
       const q = searchCriteria.query.toLowerCase();
-      candidates = candidates.filter(f => 
-        f.name.toLowerCase().includes(q) || 
-        f.tags?.some(t => t.toLowerCase().includes(q)) ||
-        f.description?.toLowerCase().includes(q)
-      );
+      const scope = searchCriteria.scope || 'all';
+
+      candidates = candidates.filter(f => {
+        // According to scope, filter by type or content
+        if (scope === 'file') {
+          return f.type !== FileType.FOLDER && f.name.toLowerCase().includes(q);
+        }
+        if (scope === 'folder') {
+          return f.type === FileType.FOLDER && f.name.toLowerCase().includes(q);
+        }
+        if (scope === 'tag') {
+          return f.tags?.some(t => t.toLowerCase().includes(q));
+        }
+        
+        // default: 'all'
+        return f.name.toLowerCase().includes(q) || 
+               f.tags?.some(t => t.toLowerCase().includes(q)) ||
+               f.description?.toLowerCase().includes(q);
+      });
     }
 
     // 时间过滤

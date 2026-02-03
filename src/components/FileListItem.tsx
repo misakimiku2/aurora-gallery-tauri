@@ -370,14 +370,19 @@ export const FileListItem = React.memo(({
             >{file.name}</span>
             )}
         </div>
+        <div className="w-24 text-xs text-gray-500 hidden md:block pointer-events-none">
+            {file.type === FileType.IMAGE && file.meta?.width ? `${file.meta.width}×${file.meta.height}` : '-'}
+        </div>
         <div className="w-32 text-xs text-gray-500 truncate hidden sm:block pointer-events-none">
             {file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : '-'}
         </div>
-        <div className="w-24 text-xs text-gray-500 uppercase hidden md:block pointer-events-none">
+        <div className="w-12 text-xs text-gray-500 uppercase hidden md:block pointer-events-none">
             {file.type === FileType.FOLDER ? t('meta.folderType') : file.meta?.format || '-'}
         </div>
         <div className="w-20 text-xs text-gray-500 text-right font-mono hidden sm:block pointer-events-none">
-            {file.type === FileType.IMAGE ? formatSize(file.meta?.sizeKb || 0) : '-'}
+            {file.type === FileType.IMAGE 
+                ? formatSize(file.meta?.sizeKb || 0) 
+                : (file.type === FileType.FOLDER ? `${file.children?.length || 0} ${t('meta.items')}` : '-')}
         </div>
     </div>
   );
