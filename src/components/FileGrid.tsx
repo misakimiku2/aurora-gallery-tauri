@@ -518,7 +518,9 @@ const FileCard = React.memo(({
             </div>
             )}
             {file.type === FileType.IMAGE && layoutMode !== 'masonry' && (
-            <div className="text-[9px] text-gray-400 truncate">{file.meta ? `${file.meta.width}x${file.meta.height}` : ''}</div>
+            <div className="text-[9px] text-gray-400 truncate">
+              {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
+            </div>
             )}
         </div>
     </div>

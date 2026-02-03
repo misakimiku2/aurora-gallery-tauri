@@ -73,6 +73,11 @@ const [state, setState] = useState<AppState>({
 const { tasks, startTask, updateTask } = useTasks(t);
 // tasks: 包含所有后台任务 (复制/移动/AI/色彩提取)
 // updateTask: 负责处理进度更新、防抖和自动完成清理
+
+// 实时元数据同步
+// - 监听 'metadata-updated' 全局事件以更新 App 状态中的文件元数据。
+// - 用于处理后台扫描、AI 标签生成等异步数据的即时反馈。
+
 // 其他重要自定义 Hooks:
 // - useAIAnalysis: 封装文件/文件夹级别 AI 分析流程并与 aiService 协作
 // - useFileOperations: 统一封装复制/移动/重命名/删除等文件操作

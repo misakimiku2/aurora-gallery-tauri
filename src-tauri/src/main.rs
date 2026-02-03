@@ -96,7 +96,7 @@ fn save_window_state(app_handle: &tauri::AppHandle) {
 
 use db::AppDbPool;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum FileType {
     Image,
@@ -207,43 +207,187 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
     let normalized_root_path = normalize_path(&path);
 
-    // 1. 加载元数据以便合并 (仅加载当前路径下的)
-    let metadata_map: HashMap<String, db::file_metadata::FileMetadata> = {
-        let pool = app.state::<AppDbPool>();
-        let conn = pool.get_connection();
-        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
-            let t0 = std::time::Instant::now();
-            let v = db::file_metadata::get_metadata_under_path(&conn, &normalized_root_path).unwrap_or_default();
-            eprintln!("AURORA_BENCH: get_metadata_under_path -> rows={} elapsed={:?}", v.len(), t0.elapsed());
-            v.into_iter().map(|m| (m.file_id.clone(), m)).collect()
-        } else {
-            db::file_metadata::get_metadata_under_path(&conn, &normalized_root_path)
+    // 1. & 2. 并行加载元数据和索引条目
+    let pool = app.state::<AppDbPool>();
+    let pool_inner = pool.inner().clone();
+    let path_for_metadata = normalized_root_path.clone();
+    let path_for_index = normalized_root_path.clone();
+
+    let pool_for_metadata = pool_inner.clone();
+    let pool_for_index = pool_inner.clone();
+
+    let (metadata_map, cached_index_map) = tokio::join!(
+        tokio::task::spawn_blocking(move || {
+            let conn = pool_for_metadata.get_connection();
+            db::file_metadata::get_metadata_under_path(&conn, &path_for_metadata)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|m| (m.file_id.clone(), m))
-                .collect()
-        }
-    };
-
-    // 2. 预加载现有的索引条目，用于元数据复用
-    let cached_index_map: HashMap<String, db::file_index::FileIndexEntry> = {
-        let pool = app.state::<AppDbPool>();
-        let conn = pool.get_connection();
-        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
-            let t0 = std::time::Instant::now();
-            let entries = db::file_index::get_entries_under_path(&conn, &normalized_root_path).unwrap_or_default();
-            eprintln!("AURORA_BENCH: get_entries_under_path -> rows={} elapsed={:?}", entries.len(), t0.elapsed());
-            entries.into_iter().map(|e| (e.path.clone(), e)).collect()
-        } else {
-            db::file_index::get_entries_under_path(&conn, &normalized_root_path)
+                .collect::<HashMap<String, db::file_metadata::FileMetadata>>()
+        }),
+        tokio::task::spawn_blocking(move || {
+            let conn = pool_for_index.get_connection();
+            db::file_index::get_entries_under_path(&conn, &path_for_index)
                 .unwrap_or_default()
                 .into_iter()
                 .map(|e| (e.path.clone(), e))
-                .collect()
-        }
-    };
+                .collect::<HashMap<String, db::file_index::FileIndexEntry>>()
+        })
+    );
+
+    let metadata_map = metadata_map.unwrap_or_default();
+    let cached_index_map = cached_index_map.unwrap_or_default();
     
     let root_id = generate_id(&path);
+
+    // --- 极速启动模式 (Database First) ---
+    // 如果是非强制扫描，且数据库里有数据，直接使用数据库数据返回，跳过磁盘扫描
+    // 这可以将启动时间从 7s+ 降低到 1-2s (仅受限于数据库读取速度)
+    if !force && !cached_index_map.is_empty() {
+        // [Hotfix] 简单的一致性检查：
+        // 读取此目录下的第一层物理文件/文件夹，看数量是否大致匹配。
+        // 或者是是否有明显的新增文件没有被索引。
+        // 如果物理数量 > 数据库数量，说明有新文件，不要直接返回缓存，而是回落到磁盘扫描。
+        let fs_root_count = if let Ok(rd) = root_path_os.read_dir() {
+            rd.filter_map(|e| e.ok()).filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name != ".Aurora_Cache" && !(name.starts_with('.') && name != ".pixcall")
+            }).count()
+        } else {
+            0
+        };
+
+        // 计算数据库中作为直接子项的数量
+        let db_root_children_count = cached_index_map.values()
+            .filter(|entry| {
+                // 只有父目录为空（或者是这层根目录）的才算顶层
+                // 注意：cached_index_map 存储的是 path -> Entry
+                // 我们需要反推一下是不是只有一层。
+                // 简单点：normalize_path 后，其 parent 是否等于 normalized_root_path
+                let p = std::path::Path::new(&entry.path);
+                if let Some(parent) = p.parent() {
+                    normalize_path(parent.to_str().unwrap_or("")) == normalized_root_path
+                } else {
+                    false
+                }
+            })
+            .count();
+
+        // 只有当数量一致（或数据库更多，意味着有残留但没新文件）时才信任数据库
+        // 如果文件系统里的东西更多，说明有新文件进来了，必须执行下面的物理扫描逻辑。
+        if fs_root_count <= db_root_children_count {
+            let mut all_files = HashMap::new();
+            let mut path_to_id = HashMap::new();
+            
+            // 1. 转换条目
+            for (f_path, entry) in cached_index_map.iter() {
+                // 可选：在这里检查文件是否存在。为了极致速度，暂时信任数据库。
+                // 如果文件被删除了，用户点开大图会发现失效，此时手动刷新即可。
+                
+                let mut node = FileNode {
+                    id: entry.file_id.clone(),
+                    parent_id: entry.parent_id.clone(),
+                    name: entry.name.clone(),
+                    r#type: if entry.file_type == "Image" { FileType::Image } else { FileType::Folder },
+                    path: f_path.clone(),
+                    size: Some(entry.size),
+                    children: if entry.file_type == "Folder" { Some(Vec::new()) } else { None },
+                    tags: Vec::new(),
+                    url: None, meta: None, description: None, source_url: None, ai_data: None,
+                    created_at: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()),
+                    updated_at: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()),
+                };
+
+                // 恢复元数据
+                if let Some(meta) = metadata_map.get(&entry.file_id) {
+                    if let Some(tags_val) = &meta.tags {
+                        if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { node.tags = tags_vec; }
+                    }
+                    node.description = meta.description.clone();
+                    node.source_url = meta.source_url.clone();
+                    node.ai_data = meta.ai_data.clone();
+                }
+
+                // 恢复图片尺寸信息
+                if node.r#type == FileType::Image {
+                     node.meta = Some(ImageMeta {
+                        width: entry.width.unwrap_or(0),
+                        height: entry.height.unwrap_or(0),
+                        size_kb: (entry.size / 1024) as u32,
+                        format: entry.format.clone().unwrap_or_default(),
+                        created: node.created_at.clone().unwrap_or_default(),
+                        modified: node.updated_at.clone().unwrap_or_default(),
+                    });
+                }
+
+                path_to_id.insert(f_path.clone(), entry.file_id.clone());
+                all_files.insert(entry.file_id.clone(), node);
+            }
+
+            // 确保根节点存在 (如果数据库里没有根节点记录，手动补一个)
+            if !all_files.contains_key(&root_id) {
+                 let root_metadata = std::fs::metadata(root_path_os).ok();
+                 let root_node = FileNode {
+                    id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
+                    r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
+                    url: None, meta: None, description: None, source_url: None, ai_data: None,
+                    created_at: root_metadata.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
+                    updated_at: root_metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
+                };
+                path_to_id.insert(normalized_root_path.clone(), root_id.clone());
+                all_files.insert(root_id.clone(), root_node);
+            }
+
+            // 2. 重建父子关系
+            // 数据库里可能存了 parent_id，但为了保险，或者应对移动文件夹的情况，
+            // 我们可以信任数据库的 parent_id，也可以重新计算。
+            // 这里为了速度，直接使用数据库里的 parent_id。如果不一致，下次 force scan 会修正。
+            // 但是，数据库里的 parent_id 可能是旧的。比较稳妥的是重新通过 path 映射一次。
+            
+            let mut assignments = Vec::new();
+            for (id, node) in all_files.iter() {
+                if id == &root_id { continue; }
+                
+                // 尝试通过路径找 parent
+                let parent_path_str = std::path::Path::new(&node.path).parent()
+                    .map(|p| normalize_path(p.to_str().unwrap_or("")))
+                    .unwrap_or_default();
+                
+                let computed_parent_id = if parent_path_str == normalized_root_path || parent_path_str.is_empty() {
+                    Some(root_id.clone())
+                } else {
+                    path_to_id.get(&parent_path_str).cloned()
+                };
+
+                if let Some(pid) = computed_parent_id {
+                    assignments.push((pid, id.clone()));
+                }
+            }
+
+            for (pid, cid) in assignments {
+                 if let Some(pnode) = all_files.get_mut(&pid) {
+                    if let Some(children) = &mut pnode.children {
+                        children.push(cid.clone());
+                    }
+                }
+                if let Some(cnode) = all_files.get_mut(&cid) {
+                    cnode.parent_id = Some(pid);
+                }
+            }
+
+            sort_children(&mut all_files);
+
+            // 发送 100% 进度
+            let _ = app.emit("scan-progress", ScanProgress { processed: all_files.len(), total: all_files.len() });
+            
+            return Ok(all_files);
+        } else {
+             println!("Detected new files in root directory (DB: {}, FS: {}). Creating incremental update...", db_root_children_count, fs_root_count);
+             // 如果数量不一致，不需要 return，直接 fall through 继续执行下面的物理扫描
+        }
+    }
+    // --- 结束极速启动模式 ---
+
     let root_metadata = fs::metadata(root_path_os).map_err(|e| format!("无法读取根目录: {}", e))?;
     let root_node = FileNode {
         id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
@@ -321,7 +465,24 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                 let cached = cached_index_arc.get(&full_path);
                 let mtime = metadata.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64;
                 
-                let reuse_metadata = !force && cached.map_or(false, |c| c.modified_at == mtime && c.size == metadata.len());
+                // 即使是强制刷新，如果文件没变且有缓存，我们也优先使用缓存中的维度。
+                // 这样可以避免“强制刷新”把已经加载好的维度又重置成 0。
+                let mut width = 0;
+                let mut height = 0;
+                let mut has_cached_dims = false;
+
+                if let Some(c) = cached {
+                    if c.modified_at == mtime && c.size == metadata.len() {
+                        if let (Some(w), Some(h)) = (c.width, c.height) {
+                            if w > 0 && h > 0 {
+                                width = w;
+                                height = h;
+                                has_cached_dims = true;
+                            }
+                        }
+                    }
+                }
+
                 let file_id = if let Some(c) = cached { c.file_id.clone() } else { generate_id(&full_path) };
 
                 if is_directory {
@@ -333,12 +494,14 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     };
                     Some((file_id, folder_node, p_path))
                 } else if is_supported_image(&extension) {
-                    let (width, height) = if reuse_metadata {
-                        let c = cached.unwrap(); (c.width.unwrap_or(0), c.height.unwrap_or(0))
-                    } else {
-                        // 如果不复用元数据，暂时标记为 0，由后台任务异步补全，避免扫描阻塞
-                        (0, 0)
-                    };
+                    // 如果没有缓存可复用维度，且处于强制扫描模式（通常是欢迎界面或手动刷新），
+                    // 我们直接在这里同步读取维度，这样最终写入数据库的就是完整信息。
+                    if !has_cached_dims && force {
+                        if let Ok((w, h)) = image::image_dimensions(&entry_path) {
+                            width = w;
+                            height = h;
+                        }
+                    }
 
                     let image_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Image, path: full_path.clone(),
@@ -347,15 +510,18 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                         meta: Some(ImageMeta {
                             width, height, size_kb: (metadata.len() / 1024) as u32, format: extension,
-                            created: chrono::DateTime::from_timestamp(metadata.created().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs() as i64, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                            created: metadata.created().ok()
+                                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                                .map(|d| d.as_secs() as i64)
+                                .and_then(|s| chrono::DateTime::from_timestamp(s, 0))
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_default(),
                             modified: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                         }),
                     };
                     Some((file_id, image_node, p_path))
                 } else { None }
             })
-            .collect::<Vec<_>>()
-            .into_iter()
             .for_each(|item| {
                 let _ = tx.send(item);
             });
@@ -367,22 +533,20 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     path_to_id.insert(normalized_root_path.clone(), root_id.clone());
     all_files.insert(root_id.clone(), root_node);
 
-    let mut decoded_items = Vec::new();
-    while let Ok(item) = rx.recv() {
-        decoded_items.push(item);
-    }
-
     let mut scanned_paths = Vec::new();
     let mut processed_count = 0;
     let mut current_total = total_images;
     let mut p_path_map: HashMap<String, String> = HashMap::new(); 
+    
+    // 准备数据库持久化数据，在接收时直接构建，避免二次遍历
+    let mut entries_to_save = Vec::with_capacity(total_images + 1);
 
-    for (id, mut node, p_path) in decoded_items {
+    while let Ok((id, mut node, p_path)) = rx.recv() {
         scanned_paths.push(node.path.clone());
         if matches!(node.r#type, FileType::Folder) { 
             path_to_id.insert(node.path.clone(), id.clone()); 
         }
-        p_path_map.insert(id.clone(), p_path);
+        p_path_map.insert(id.clone(), p_path.clone());
 
         if let Some(meta) = metadata_map.get(&id) {
             if let Some(tags_val) = &meta.tags {
@@ -395,57 +559,59 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
         if matches!(node.r#type, FileType::Image) {
             processed_count += 1;
-            // 只有在非强制模式（预估模式）下才需要动态更新总数
             if !force && processed_count > current_total { current_total = processed_count; }
-            // 节流发送进度：强制模式每 500 个文件发一次，非强制模式（秒启）仅在最后发一次（或保持较低频率）
-            if force {
-                if processed_count % 500 == 0 {
-                    let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: current_total });
-                }
+            if force && processed_count % 500 == 0 {
+                let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: current_total });
             }
         }
+
+        // 同步构建索引条目
+        let (w, h, fmt) = node.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
+        let c_at = node.created_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
+        let m_at = node.updated_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
+
+        entries_to_save.push(db::file_index::FileIndexEntry {
+            file_id: id.clone(),
+            parent_id: None, // 稍后修正
+            path: node.path.clone(),
+            name: node.name.clone(),
+            file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
+            size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
+            created_at: c_at, modified_at: m_at, 
+        });
+
         all_files.insert(id, node);
     }
+
     // 发送最终进度
     let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: processed_count });
 
-
-    // 建立父子关系 - 二次解析阶段以防并行导致的顺序问题
-    let mut assignments = Vec::new();
-    for (id, node) in all_files.iter() {
-        if id == &root_id { continue; }
-        
-        let parent_id = if let Some(pid) = &node.parent_id {
-            Some(pid.clone())
-        } else if let Some(ppath) = p_path_map.get(id) {
+    // 建立父子关系
+    for entry in entries_to_save.iter_mut() {
+        if entry.file_id == root_id { continue; }
+        let parent_id = p_path_map.get(&entry.file_id).and_then(|ppath| {
             path_to_id.get(ppath).cloned().or_else(|| if ppath == &normalized_root_path { Some(root_id.clone()) } else { None })
-        } else {
-            Some(root_id.clone())
-        };
-
+        });
+        
         if let Some(pid) = parent_id {
-            assignments.push((pid, id.clone()));
-        }
-    }
-
-    for (pid, cid) in assignments {
-        if let Some(pnode) = all_files.get_mut(&pid) {
-            if let Some(children) = &mut pnode.children {
-                children.push(cid.clone());
+            entry.parent_id = Some(pid.clone());
+            if let Some(pnode) = all_files.get_mut(&pid) {
+                if let Some(children) = &mut pnode.children {
+                    children.push(entry.file_id.clone());
+                }
             }
-        }
-        if let Some(cnode) = all_files.get_mut(&cid) {
-            cnode.parent_id = Some(pid);
+            if let Some(cnode) = all_files.get_mut(&entry.file_id) {
+                cnode.parent_id = Some(pid);
+            }
         }
     }
 
     sort_children(&mut all_files);
 
-    // 6. 后台增量补全 missing heavy metadata（dimensions 等）
-    // 先收集路径，避免之后对全量数据的巨大 Clone
+    // 6. 后台增量补全逻辑
     let mut to_process: Vec<String> = Vec::new();
     if std::env::var("AURORA_DISABLE_BACKGROUND_INDEX").as_deref().ok() != Some("1") {
-        for (_id, node) in all_files.iter() {
+        for node in all_files.values() {
             if matches!(node.r#type, FileType::Image) {
                 let need = node.meta.as_ref().map(|m| m.width == 0 || m.height == 0).unwrap_or(true);
                 if need { to_process.push(node.path.clone()); }
@@ -453,31 +619,20 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
         }
     }
 
-    // 7. 持久化到索引数据库（快速）
+    // 7. 持久化到索引数据库（异步执行，不阻塞 Ok 返回）
     let root_to_clean = normalized_root_path.clone();
     let app_db_inner = app.state::<AppDbPool>().inner().clone();
-    let scanned_paths_for_orphan = scanned_paths.clone();
     
-    // 提前构建需要写入数据库的条目，避免在闭包中 Clone 大字典
-    let entries_to_save: Vec<db::file_index::FileIndexEntry> = all_files.values().map(|node| {
-        let (w, h, fmt) = node.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
-        db::file_index::FileIndexEntry {
-            file_id: node.id.clone(), parent_id: node.parent_id.clone(), path: node.path.clone(), name: node.name.clone(),
-            file_type: match node.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
-            size: node.size.unwrap_or(0), width: w, height: h, format: fmt,
-            created_at: 0, modified_at: 0, 
-        }
-    }).collect();
-
     tokio::task::spawn_blocking(move || {
         let mut conn = app_db_inner.get_connection();
         let _ = db::file_index::batch_upsert(&mut conn, &entries_to_save);
-        let _ = db::file_index::delete_orphaned_entries(&mut conn, &root_to_clean, &scanned_paths_for_orphan);
+        let _ = db::file_index::delete_orphaned_entries(&mut conn, &root_to_clean, &scanned_paths);
     });
 
     // 8. 处理后台补充逻辑
     if !to_process.is_empty() {
         let pool = app.state::<AppDbPool>().inner().clone();
+        let app_handle = app.clone();
         tokio::spawn(async move {
             let batch_size: usize = std::env::var("AURORA_INDEX_BATCH_SIZE").ok().and_then(|s| s.parse().ok()).unwrap_or(200);
             let batch_delay_ms: u64 = std::env::var("AURORA_INDEX_BATCH_DELAY_MS").ok().and_then(|s| s.parse().ok()).unwrap_or(50);
@@ -485,6 +640,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
             for chunk in to_process.chunks(batch_size) {
                 let chunk_vec: Vec<String> = chunk.to_vec();
                 let pool_clone = pool.clone();
+                let app_handle_clone = app_handle.clone();
                 let _ = tokio::task::spawn_blocking(move || {
                     let mut conn = pool_clone.get_connection();
                     let mut entries = Vec::new();
@@ -495,9 +651,13 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                                     let id = generate_id(path);
                                     let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                                     let fmt = std::path::Path::new(path).extension().and_then(|e| e.to_str()).map(|s| s.to_string());
+                                    
+                                    let c_at = md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
+                                    let m_at = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0);
+
                                     entries.push(db::file_index::FileIndexEntry {
                                         file_id: id, parent_id: None, path: path.clone(), name, file_type: "Image".to_string(),
-                                        size: md.len(), width: Some(w), height: Some(h), format: fmt, created_at: 0, modified_at: 0,
+                                        size: md.len(), width: Some(w), height: Some(h), format: fmt, created_at: c_at, modified_at: m_at,
                                     });
                                 }
                             }
@@ -505,6 +665,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     }
                     if !entries.is_empty() {
                         let _ = db::file_index::batch_upsert(&mut conn, &entries);
+                        // 通知前端这些文件的元数据已更新
+                        let _ = app_handle_clone.emit("metadata-updated", &entries);
                     }
                 }).await.ok();
                 tokio::time::sleep(std::time::Duration::from_millis(batch_delay_ms)).await;
@@ -576,9 +738,12 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
     let is_directory = path.is_dir();
     let is_image = is_supported_image(&extension);
     
-    if is_directory {
+    let is_directory = path.is_dir();
+    let is_image = is_supported_image(&extension);
+    
+    let mut result_node = if is_directory {
         // Create folder node
-        Ok(FileNode {
+        FileNode {
             id: file_id,
             parent_id,
             name: file_name,
@@ -608,7 +773,7 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             description: None,
             source_url: None,
             ai_data: None,
-        })
+        }
     } else if is_image {
         // Create image file node
         let file_size = metadata.len();
@@ -704,12 +869,12 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             }
         }
 
-        Ok(final_node)
+        final_node
     } else {
         // Create unknown file node
         let file_size = metadata.len();
         
-        Ok(FileNode {
+        FileNode {
             id: file_id,
             parent_id,
             name: file_name,
@@ -739,8 +904,35 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             description: None,
             source_url: None,
             ai_data: None,
-        })
+        }
+    };
+
+    // --- 持久化到 file_index 以确保下次极速启动时能看见新文件 ---
+    if result_node.r#type != FileType::Unknown {
+        let node_clone = result_node.clone();
+        let app_db_inner = app.state::<AppDbPool>().inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = app_db_inner.get_connection();
+            let (w, h, fmt) = node_clone.meta.as_ref().map_or((None, None, None), |m| (Some(m.width), Some(m.height), Some(m.format.clone())));
+            
+            let c_at = node_clone.created_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
+            let m_at = node_clone.updated_at.as_ref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).map(|dt| dt.timestamp()).unwrap_or(0);
+            
+            let entry = db::file_index::FileIndexEntry {
+                file_id: node_clone.id,
+                parent_id: node_clone.parent_id,
+                path: node_clone.path,
+                name: node_clone.name,
+                file_type: match node_clone.r#type { FileType::Image => "Image".to_string(), FileType::Folder => "Folder".to_string(), _ => "Unknown".to_string() },
+                size: node_clone.size.unwrap_or(0),
+                width: w, height: h, format: fmt,
+                created_at: c_at, modified_at: m_at, 
+            };
+            let _ = db::file_index::batch_upsert(&mut conn, &[entry]);
+        });
     }
+
+    Ok(result_node)
 }
 
 #[tauri::command]
@@ -928,7 +1120,7 @@ async fn rename_file(old_path: String, new_path: String, app: tauri::AppHandle) 
     tokio::spawn(async move {
         let bg_start = std::time::Instant::now();
         let res = tokio::task::spawn_blocking(move || {
-            let mut conn = pool_clone.get_connection();
+            let conn = pool_clone.get_connection();
             // 完整迁移（包括子路径）——重用已有的迁移函数以保证一致性
             let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
             let _ = db::file_metadata::migrate_metadata_dir(&conn, &old_clone, &new_clone);

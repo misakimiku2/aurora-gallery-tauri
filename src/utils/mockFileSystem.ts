@@ -275,7 +275,8 @@ export const initializeFileSystem = (): { roots: string[], files: Record<string,
   return { roots, files };
 };
 
-export const formatSize = (kb: number) => {
+export const formatSize = (kb: number | undefined | null) => {
+  if (kb === undefined || kb === null) return '---';
   if (kb > 1024 * 1024) return `${(kb / (1024 * 1024)).toFixed(2)} GB`;
   if (kb > 1024) return `${(kb / 1024).toFixed(2)} MB`;
   return `${kb} KB`;

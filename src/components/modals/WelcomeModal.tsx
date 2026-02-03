@@ -21,8 +21,23 @@ export const WelcomeModal: React.FC<WelcomeModalProps> = ({ show, onFinish, onSe
     if (!show) return null;
 
     return (
-        <div className="fixed inset-0 z-[200] bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-8 animate-fade-in">
-            <div className="max-w-2xl w-full bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col md:flex-row h-[500px]">
+        <div className="fixed inset-0 z-[200] bg-white dark:bg-gray-950 flex flex-col items-center justify-center p-8 animate-fade-in overflow-hidden">
+            {/* Background Decorative Elements */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                {/* Noise Texture to fix banding (color steps) */}
+                <div className="absolute inset-0 opacity-[0.3] dark:opacity-[0.4] mix-blend-overlay" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 250 250' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E")` }}></div>
+
+                {/* Grid Texture - More distinct and larger points */}
+                <div className="absolute inset-0 opacity-[0.15] dark:opacity-[0.1] text-blue-900 dark:text-blue-300" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, currentColor 1.5px, transparent 0)', backgroundSize: '40px 40px' }}></div>
+                
+                {/* Dynamic Color Blobs - Adjusted for softer blending */}
+                <div className="absolute top-[-10%] left-[-10%] w-[60%] h-[60%] bg-blue-400/30 dark:bg-blue-600/15 rounded-full blur-[120px] animate-pulse" style={{ animationDuration: '7s' }}></div>
+                <div className="absolute bottom-[-10%] right-[-10%] w-[70%] h-[70%] bg-purple-400/30 dark:bg-purple-600/15 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '2s', animationDuration: '10s' }}></div>
+                <div className="absolute top-[20%] right-[10%] w-[45%] h-[45%] bg-cyan-400/25 dark:bg-cyan-600/10 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '4s', animationDuration: '13s' }}></div>
+                <div className="absolute bottom-[20%] left-[10%] w-[40%] h-[40%] bg-indigo-400/30 dark:bg-indigo-600/20 rounded-full blur-[110px] animate-pulse" style={{ animationDelay: '1s', animationDuration: '9s' }}></div>
+            </div>
+
+            <div className="relative z-10 max-w-2xl w-full bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-gray-800 overflow-hidden flex flex-col md:flex-row h-[500px]">
                 {/* Left Side: Branding & Info */}
                 <div className="w-full md:w-1/2 bg-blue-600 p-8 flex flex-col justify-between text-white relative overflow-hidden">
                     <div className="z-10">

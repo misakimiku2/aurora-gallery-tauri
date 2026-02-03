@@ -136,13 +136,13 @@ export const scanDirectory = async (
         url: undefined, // Don't use file path as URL - use getThumbnail() instead
         // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
         // frontend falls back to optimistic/layout defaults instead of showing 0x0.
-        meta: (node.meta && node.meta.width > 0 && node.meta.height > 0) ? {
-          width: node.meta.width,
-          height: node.meta.height,
+        meta: node.meta ? {
+          width: node.meta.width || 0,
+          height: node.meta.height || 0,
           sizeKb: node.meta.sizeKb || 0,
-          created: node.meta.created,
-          modified: node.meta.modified,
-          format: node.meta.format,
+          created: node.meta.created || '',
+          modified: node.meta.modified || '',
+          format: node.meta.format || '',
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
@@ -198,13 +198,13 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
         url: undefined,
         // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
         // frontend falls back to optimistic/layout defaults instead of showing 0x0.
-        meta: (node.meta && node.meta.width > 0 && node.meta.height > 0) ? {
-          width: node.meta.width,
-          height: node.meta.height,
+        meta: node.meta ? {
+          width: node.meta.width || 0,
+          height: node.meta.height || 0,
           sizeKb: node.meta.sizeKb || 0,
-          created: node.meta.created,
-          modified: node.meta.modified,
-          format: node.meta.format,
+          created: node.meta.created || '',
+          modified: node.meta.modified || '',
+          format: node.meta.format || '',
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
@@ -720,12 +720,12 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
       updatedAt: rustFile.updatedAt || undefined,
       url: rustFile.url || undefined,
       meta: rustFile.meta ? {
-        width: rustFile.meta.width,
-        height: rustFile.meta.height,
-        sizeKb: rustFile.meta.sizeKb,
-        created: rustFile.meta.created,
-        modified: rustFile.meta.modified,
-        format: rustFile.meta.format
+        width: rustFile.meta.width || 0,
+        height: rustFile.meta.height || 0,
+        sizeKb: rustFile.meta.sizeKb || 0,
+        created: rustFile.meta.created || '',
+        modified: rustFile.meta.modified || '',
+        format: rustFile.meta.format || ''
       } : undefined,
       description: rustFile.description || undefined,
       sourceUrl: rustFile.sourceUrl || undefined,

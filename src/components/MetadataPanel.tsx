@@ -415,6 +415,24 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
       setName(file.name);
       setDesc(file.description || '');
       setSource(file.sourceUrl || '');
+
+      // 当文件选中时，如果元数据缺失（如尺寸为 0），尝试重新扫描单个文件以获取最新信息
+      if (!isMulti && file.type === FileType.IMAGE && file.path) {
+        const needsMeta = !file.meta || file.meta.width === 0 || file.meta.height === 0;
+        if (needsMeta) {
+          (async () => {
+            try {
+              const { scanFile } = await import('../api/tauri-bridge');
+              const updatedNode = await scanFile(file.path!);
+              if (updatedNode && updatedNode.meta && updatedNode.meta.width > 0) {
+                onUpdate(file.id, { meta: updatedNode.meta });
+              }
+            } catch (err) {
+              console.error('Failed to auto-refresh file metadata:', err);
+            }
+          })();
+        }
+      }
       
       // Extract palette colors when file is selected
       if (file.type === FileType.IMAGE && (file.path || file.url)) {
@@ -611,7 +629,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     subFolderCount++;
                 } else if (node.type === FileType.IMAGE) {
                     totalFiles++;
-                    const fmt = node.meta?.format.toUpperCase() || 'OTHER';
+                    const fmt = node.meta?.format?.toUpperCase() || 'OTHER';
                     types[fmt] = (types[fmt] || 0) + 1;
                 }
             }
@@ -773,7 +791,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     selectedNodes.forEach(node => {
         if (node.type === FileType.IMAGE) {
             totalSize += node.meta?.sizeKb || 0;
-            const fmt = node.meta?.format.toUpperCase() || 'UNKNOWN';
+            const fmt = node.meta?.format?.toUpperCase() || 'UNKNOWN';
             typeCount[fmt] = (typeCount[fmt] || 0) + 1;
         } else {
             typeCount['FOLDER'] = (typeCount['FOLDER'] || 0) + 1;
@@ -2206,15 +2224,17 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         <>
                             <div>
                                 <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><FileText size={10} className="mr-1"/> {t('meta.format')}</div>
-                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.format.toUpperCase()}</div>
+                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.format?.toUpperCase() || '---'}</div>
                             </div>
                             <div>
                                 <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><HardDrive size={10} className="mr-1"/> {t('meta.size')}</div>
-                                <div className="font-medium text-gray-800 dark:text-gray-200">{formatSize(file.meta.sizeKb)}</div>
+                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.sizeKb !== undefined ? formatSize(file.meta.sizeKb) : '---'}</div>
                             </div>
                             <div>
                                 <div className="text-xs text-gray-500 dark:text-gray-500 mb-0.5 flex items-center"><ImageIcon size={10} className="mr-1"/> {t('meta.dimensions')}</div>
-                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.meta.width} x {file.meta.height}</div>
+                                <div className="font-medium text-gray-800 dark:text-gray-200">
+                                    {(file.meta.width || file.meta.height) ? `${file.meta.width || 0} x ${file.meta.height || 0}` : '---'}
+                                </div>
                             </div>
                         </>
                     )}

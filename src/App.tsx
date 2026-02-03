@@ -829,6 +829,44 @@ export const App: React.FC = () => {
       } catch (e) {
         console.warn('Failed to listen for scan-mode', e);
       }
+
+      try {
+        await listen('metadata-updated', (event: any) => {
+          if (!isMounted) return;
+          const updatedEntries = event.payload as any[];
+          if (!updatedEntries || !updatedEntries.length) return;
+
+          setState(prev => {
+            const nextFiles = { ...prev.files };
+            let changed = false;
+
+            updatedEntries.forEach(entry => {
+              const fileId = entry.fileId;
+              if (nextFiles[fileId]) {
+                const current = nextFiles[fileId];
+                // Only update if width/height changed from 0
+                if (entry.width > 0 && entry.height > 0 && (!current.meta || current.meta.width === 0)) {
+                  nextFiles[fileId] = {
+                    ...current,
+                    meta: {
+                      ...current.meta,
+                      width: entry.width,
+                      height: entry.height,
+                      format: entry.format || current.meta?.format || '',
+                      sizeKb: (entry.size / 1024) || current.meta?.sizeKb || 0,
+                    } as any
+                  };
+                  changed = true;
+                }
+              }
+            });
+
+            return changed ? { ...prev, files: nextFiles } : prev;
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to listen for metadata-updated', e);
+      }
     };
 
     setupListeners();

@@ -41,8 +41,6 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
   const isSelected = nodeId === currentFolderId;
   const expanded = !!(expandedSet && expandedSet.has(nodeId));
   
-  const folderChildren = hasFolderChildren ? (node.children || []).filter(Boolean) : [];
-
   const handleToggle = (e: React.MouseEvent) => {
     e.stopPropagation();
     onToggle(nodeId);
@@ -123,7 +121,7 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
           className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded"
           onClick={handleToggle}
         >
-          {folderChildren.length > 0 ? (
+          {hasFolderChildren ? (
             expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
           ) : <div className="w-[14px]" />}
         </div>
@@ -431,14 +429,19 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       counts[tag] = 0;
     });
 
-    Object.values(files).forEach((file: FileNode) => {
-      if (file.tags) {
-        file.tags.forEach(tag => {
+    // Optimization: avoid Object.values() and forEach which create large temporary arrays and closures.
+    // For 68k+ items, a simple for...in loop is much more memory-efficient.
+    for (const id in files) {
+      const file = files[id];
+      const tags = file.tags;
+      if (tags && tags.length > 0) {
+        for (let i = 0; i < tags.length; i++) {
+          const tag = tags[i];
           allTags.add(tag);
           counts[tag] = (counts[tag] || 0) + 1;
-        });
+        }
       }
-    });
+    }
 
     return {
       sortedTags: Array.from(allTags).sort((a, b) => a.localeCompare(b, "zh-CN")),
@@ -793,17 +796,6 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   // Calculate actual viewport height available for the list
   const availableHeight = Math.max(200, listHeight - 180);
 
-  // Log estimated rendered count when folder section is expanded or scroll/list size changes
-  useEffect(() => {
-    if (!expanded) return;
-    const total = displayNodes.length;
-    const viewportRows = Math.max(1, Math.ceil(availableHeight / rowHeight));
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-    const last = Math.min(total, first + viewportRows + bufferRows * 2);
-    const rendered = Math.max(0, last - first);
-    console.info(`[Sidebar] FolderSection rendered ${rendered} of ${total} nodes (first=${first}, last=${last}, viewportRows=${viewportRows})`);
-  }, [expanded, displayNodes.length, availableHeight, scrollTop, bufferRows, rowHeight, FixedSizeListComp]);
-
   const handleHeaderClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.expand-icon')) {
       e.stopPropagation();
@@ -1073,49 +1065,48 @@ export const Sidebar: React.FC<{
     return () => ro.disconnect();
   }, [activeSection]);
 
-  
+  // Cache to store folder-only children pointers to avoid repeating O(N) filtering of large mixed directories
+  // Keyed by folder ID, tracks the children array reference to detect structural changes vs metadata-only changes
+  const folderChildCache = useRef<Record<string, { children: string[], version: any }>>({});
 
   const visibleNodes = useMemo(() => {
     const set = expandedSet || new Set<string>();
     const out: { id: string; depth: number; node: FileNode; hasFolderChildren: boolean }[] = [];
     const stack: { id: string; depth: number }[] = [];
 
+    // Push roots in reverse order to the stack so they are popped in correct top-down order
     for (let i = roots.length - 1; i >= 0; --i) {
-      stack.unshift({ id: roots[i], depth: 0 });
+      stack.push({ id: roots[i], depth: 0 });
     }
 
-    while (stack.length) {
-      const { id, depth } = stack.shift()!;
+    while (stack.length > 0) {
+      const { id, depth } = stack.pop()!;
       const node = files[id];
       if (!node || node.type !== FileType.FOLDER) continue;
-      const children = node.children && node.children.length > 0 ? node.children.filter(childId => files[childId]?.type === FileType.FOLDER) : [];
+      
+      // Optimization: use cached folder-filtered children if the node structure hasn't changed.
+      // This skips the O(N) filter loop when files within the folder update metadata but the folder contents set is stable.
+      let folderChildrenEntry = folderChildCache.current[id];
+      if (!folderChildrenEntry || folderChildrenEntry.version !== node.children) {
+        folderChildrenEntry = {
+          version: node.children,
+          children: (node.children || []).filter(childId => files[childId]?.type === FileType.FOLDER)
+        };
+        folderChildCache.current[id] = folderChildrenEntry;
+      }
+      
+      const children = folderChildrenEntry.children;
       out.push({ id, depth, node, hasFolderChildren: children.length > 0 });
+      
       if (set.has(id) && children.length > 0) {
+        // Push children in reverse order so they are processed in correct top-to-bottom order (standard DFS)
         for (let i = children.length - 1; i >= 0; --i) {
-          stack.unshift({ id: children[i], depth: depth + 1 });
+          stack.push({ id: children[i], depth: depth + 1 });
         }
       }
     }
     return out;
   }, [roots, files, expandedSet]);
-
-  // Low-frequency debug logging for virtualization slice (limit to once per 200ms)
-  useEffect(() => {
-    const now = Date.now();
-    if (now - lastLogRef.current < 200) return;
-    lastLogRef.current = now;
-
-    const total = visibleNodes.length;
-    const availableHeight = Math.max(200, listHeight - 180);
-    const viewportRows = Math.max(1, Math.ceil(availableHeight / rowHeight));
-    const first = Math.max(0, Math.floor(scrollTop / rowHeight) - bufferRows);
-    const last = Math.min(total, first + viewportRows + bufferRows * 2);
-    const rendered = Math.max(0, last - first);
-
-    // debug logs removed
-  }, [scrollTop, listHeight, visibleNodes.length, bufferRows, rowHeight]);
-
-  // virtualization status log removed
 
   return (
     <div 

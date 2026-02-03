@@ -266,19 +266,23 @@ pub fn delete_entries_by_path(conn: &Connection, path: &str) -> Result<()> {
 }
 
 pub fn delete_orphaned_entries(conn: &mut Connection, root_path: &str, existing_paths: &[String]) -> Result<usize> {
+    use std::collections::HashSet;
     let tx = conn.transaction()?;
     
     let deleted_count = {
-        // 找出该目录下所有已经在数据库中的路径
+        // 1. 快速索引：将磁盘路径存入 HashSet，查找速度从 O(N) 变为 O(1)
+        let existing_set: HashSet<&String> = existing_paths.iter().collect();
+
+        // 2. 找出该目录下所有已经在数据库中的路径
         let pattern = format!("{}%", root_path);
         let mut stmt = tx.prepare("SELECT path FROM file_index WHERE path = ?1 OR path LIKE ?2")?;
         let db_paths: Vec<String> = stmt.query_map(params![root_path, pattern], |row| row.get(0))?
             .filter_map(|r| r.ok())
             .collect();
             
-        // 找出在数据库中但不在磁盘上的路径
+        // 3. 找出在数据库中但不在磁盘上的路径
         let to_delete: Vec<String> = db_paths.into_iter()
-            .filter(|p| !existing_paths.contains(p))
+            .filter(|p| !existing_set.contains(p))
             .collect();
             
         let count = to_delete.len();
