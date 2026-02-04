@@ -644,6 +644,9 @@ export const App: React.FC = () => {
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
   // Handle Special Search Queries (palette:, color:)
+  // Note: Most of this is now handled more robustly via onPerformSearch which calls pushHistory.
+  // We keep this only for potential direct searchQuery changes, but remove the auto-clear 
+  // that conflicts with onPerformSearch's own pushHistory calls.
   useEffect(() => {
     const query = activeTab.searchQuery?.trim() || '';
 
@@ -651,36 +654,17 @@ export const App: React.FC = () => {
       const isPalette = query.startsWith('palette:');
       const content = query.replace(/^(palette:|color:)/, '').trim();
 
-      console.log('[ColorSearch] Query detected:', { isPalette, query, content });
-
-      if (!content) {
-        console.log('[ColorSearch] Empty content, skipping');
-        return;
-      }
+      if (!content) return;
 
       const colors = content.split(/[,\s]+/).map(c => c.trim()).filter(Boolean);
-      console.log('[ColorSearch] Parsed colors:', colors);
-
-      if (colors.length === 0) {
-        console.log('[ColorSearch] No valid colors, skipping');
-        return;
-      }
+      if (colors.length === 0) return;
 
       // Fetch results from Rust backend
       const searchFn = isPalette ? searchByPalette : searchByColor;
       const arg = isPalette ? colors : colors[0];
 
-      console.log('[ColorSearch] Calling backend with:', { isPalette, arg });
-
       // @ts-ignore - Argument types are handled inside wrapper functions
       searchFn(arg).then((paths: string[]) => {
-        console.log('[ColorSearch] Backend returned:', paths.length, 'paths');
-        if (paths.length > 0) {
-          console.log('[ColorSearch] Sample paths:', paths.slice(0, 3));
-        }
-
-        // Update active tab with AI Filter results
-        // We map the results to aiFilter.filePaths to drive the view
         updateActiveTab({
           aiFilter: {
             keywords: [],
@@ -692,16 +676,8 @@ export const App: React.FC = () => {
           }
         });
       }).catch(err => {
-        console.error('[ColorSearch] Backend error:', err);
+        console.error('[ColorSearch Sync] Backend error:', err);
       });
-    } else {
-      // Clear AI filter if we exit special search mode
-      if (activeTab.aiFilter?.filePaths && activeTab.aiFilter.colors?.length > 0) {
-        // Only clear if it looks like a color search (no keywords/people)
-        if (!activeTab.aiFilter.keywords.length && !activeTab.aiFilter.people.length) {
-          updateActiveTab({ aiFilter: undefined });
-        }
-      }
     }
   }, [activeTab.searchQuery]);
 
@@ -2854,7 +2830,7 @@ export const App: React.FC = () => {
           filePaths: validPaths
         };
 
-        pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+        pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
 
       } catch (e) {
         console.error("Color search failed", e);
@@ -2950,7 +2926,7 @@ export const App: React.FC = () => {
           filePaths: validPaths
         };
 
-        pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+        pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
 
         if (validPaths.length > 0) {
           showToast(t('context.found') + ` ${validPaths.length} ` + t('context.files'));
@@ -3386,12 +3362,23 @@ export const App: React.FC = () => {
               t={t}
             />
             {/* ... (Filter UI, same as before) ... */}
-            {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || totalResults > pageSize) && (
+            {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
               <div className="flex items-center px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-x-2 overflow-x-auto shrink-0 z-20">
                 <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
                   <Filter size={12} className="mr-1" /> 
                   {t('context.filters')}
                 </div>
+
+                {activeTab.searchQuery && !activeTab.aiFilter && (
+                   <div className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
+                     {activeTab.searchScope === 'file' ? <FileText size={10} className="mr-1" /> :
+                      activeTab.searchScope === 'tag' ? <Tag size={10} className="mr-1" /> :
+                      activeTab.searchScope === 'folder' ? <Folder size={10} className="mr-1" /> :
+                      <Globe size={10} className="mr-1" />}
+                     <span>{activeTab.searchQuery}</span>
+                     <button onClick={() => { setToolbarQuery(''); onPerformSearch(''); }} className="ml-1.5 hover:text-red-500 font-bold"><X size={12} /></button>
+                   </div>
+                )}
 
                 {activeTab.aiFilter && (
                   activeTab.aiFilter.originalQuery.startsWith('color:') ? (
@@ -3449,7 +3436,16 @@ export const App: React.FC = () => {
                   </div>
                 ))}
 
-                <button onClick={() => { handleClearAllTags(); handleClearPersonFilter(); updateActiveTab({ dateFilter: { start: null, end: null, mode: 'created' as const }, aiFilter: null }); }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>
+                <button onClick={() => { 
+                  setToolbarQuery(''); 
+                  updateActiveTab({ 
+                    activeTags: [], 
+                    activePersonId: null, 
+                    searchQuery: '', 
+                    dateFilter: { start: null, end: null, mode: 'created' as const }, 
+                    aiFilter: null 
+                  }); 
+                }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>
                 
                 {/* Pagination & Count Display */}
                 <div className="flex-1" />
