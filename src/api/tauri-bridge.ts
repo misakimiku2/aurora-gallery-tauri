@@ -1029,3 +1029,13 @@ export const dbUpdatePersonAvatar = async (personId: string, coverFileId: string
     throw e;
   }
 };
+
+export const switchRootDatabase = async (newRootPath: string): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('switch_root_database', { newRootPath });
+  } catch (e) {
+    console.error('Failed to switch root database:', e);
+    throw e;
+  }
+};

@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -551,6 +551,24 @@ export const App: React.FC = () => {
                   setGroupBy(savedForRootOutside.groupBy as any);
                 }
 
+                // 在应用启动初始化时，确保所有图像文件都被添加到颜色提取队列中
+                if (isTauriSyncEnv) {
+                  const imagePaths = Object.values(allFiles)
+                    .filter(f => f.type === FileType.IMAGE)
+                    .map(f => f.path);
+                  
+                  if (imagePaths.length > 0) {
+                    addPendingFilesToDb(imagePaths).catch(err => {
+                      console.error('Failed to add pending files to color database on init:', err);
+                    });
+                  }
+                  
+                  // 确保恢复颜色提取任务
+                  resumeColorExtraction().catch(err => {
+                    console.warn('Failed to resume color extraction on init:', err);
+                  });
+                }
+
                 // Mark initialization complete (saved-data loading finished/handled)
                 savedDataLoadedRef.current = true;
                 setSavedDataLoaded(true);
@@ -973,6 +991,9 @@ export const App: React.FC = () => {
         if (isTauriEnvironment()) {
           const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
           await ensureDirectory(cachePath);
+          
+          // 切换数据库到新根目录下的 .aurora 文件夹
+          await switchRootDatabase(path);
         }
 
         // --- UX: 立刻创建并显示占位根（skeleton），避免等待后端扫描完成才能看到路径或文件列表 ---
@@ -1095,6 +1116,20 @@ export const App: React.FC = () => {
       const path = folder.path;
       try {
         const result = await scanDirectory(path, true);
+
+        // 如果在 Tauri 环境中，将新发现的图片添加到颜色提取队列
+        if (isTauriEnvironment()) {
+          const imagePaths = Object.values(result.files)
+            .filter(f => f.type === FileType.IMAGE)
+            .map(f => f.path);
+          
+          if (imagePaths.length > 0) {
+            addPendingFilesToDb(imagePaths).catch(err => {
+              console.error('Failed to add pending files on refresh:', err);
+            });
+          }
+        }
+
         setState(prev => {
           // Create a copy of all files
           const mergedFiles = { ...prev.files };
@@ -2083,6 +2118,12 @@ export const App: React.FC = () => {
         // 锟斤拷锟姐缓锟斤拷路锟斤拷
         const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
         await ensureDirectory(cachePath);
+        
+        // 暂停后台颜色提取任务
+        await pauseColorExtraction();
+
+        // 切换数据库到新根目录下的 .aurora 文件夹
+        await switchRootDatabase(selectedPath);
       }
 
       const newSettings = {
@@ -2095,68 +2136,155 @@ export const App: React.FC = () => {
         }
       };
 
+      // 立即更新 UI 状态，清空当前文件列表，给用户即时反馈
+      // 清空当前文件和 tabs，让界面进入“准备中”状态
       setState(prev => ({
         ...prev,
-        settings: newSettings
+        files: {},
+        roots: [],
+        tabs: [],
+        settings: newSettings,
+        settingsCategory: 'general',
+        isSettingsOpen: false  // 立即关闭设置弹窗
       }));
 
-      startTask('ai', [], t('tasks.processing'));
-      const result = await scanDirectory(selectedPath);
+      // 启动扫描任务，禁用自动进度，手动通过事件驱动
+      const taskId = startTask('ai', [], t('tasks.scanning'), false);
+      
+      // 设置初始进度，避免 0% 让用户以为死机
+      // 注意：total 只是一个虚拟值，真正更新会来自事件
+      updateTask(taskId, { total: 100, current: 0, currentStep: t('tasks.preparing') });
 
-      setState(prev => {
-        const newRoots = result.roots;
-        const newFiles = result.files;
-        const newRootId = newRoots.length > 0 ? newRoots[0] : '';
-        if (!newRootId) return prev;
-        const newTab: TabState = {
-          ...DUMMY_TAB,
-          id: Math.random().toString(36).substr(2, 9),
-          folderId: newRootId,
-          history: {
-            stack: [{
-              folderId: newRootId,
-              viewingId: null,
-              viewMode: 'browser',
-              searchQuery: '',
-              searchScope: 'all',
-              activeTags: [],
-              activePersonId: null
-            }],
-            currentIndex: 0
-          }
-        };
-        return {
-          ...prev,
-          roots: newRoots,
-          files: newFiles,
-          expandedFolderIds: [newRootId],
-          tabs: [newTab],
-          activeTabId: newTab.id,
-          settings: newSettings
-        };
-      });
-
-      // 锟斤拷要锟斤拷锟斤拷扫锟斤拷目录锟斤拷锟斤拷锟斤拷 state 锟斤拷锟劫憋拷锟斤拷锟斤拷锟斤拷
-      // 使锟斤拷扫锟斤拷锟斤拷锟叫碉拷路锟斤拷锟斤拷确锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟矫碉拷目录
-      const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
-      // 锟斤拷锟缴拷锟斤拷锟斤拷锟矫伙拷锟铰凤拷锟斤拷锟绞癸拷锟?selectedPath
-      const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
-
-      const dataToSave = {
-        rootPaths: updatedRootPaths,
-        customTags: state.customTags,
-        people: state.people,
-        settings: newSettings,
-        fileMetadata: {}
-      };
-
-      const saveResult = await saveUserData(dataToSave);
-
-      if (!saveResult) {
-        console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
+      // 监听扫描进度事件
+      let unlistenProgress: (() => void) | undefined;
+      try {
+        unlistenProgress = await listen('scan-progress', (event: any) => {
+          const payload = event.payload as { processed: number; total: number };
+          if (!payload) return;
+          
+          updateTask(taskId, { 
+            total: payload.total || 1000, // 如果 total 为 0，给个估算值防止除零
+            current: payload.processed,
+            currentStep: `${t('welcome.scanning')} ${payload.processed}`
+          });
+        });
+      } catch (e) {
+        console.warn('Failed to listen for scan-progress in handleChangePath', e);
       }
 
-      showToast(t('settings.success'));
+      try {
+        const result = await scanDirectory(selectedPath);
+        
+        // 扫描完成，移除监听器
+        if (unlistenProgress) unlistenProgress();
+
+        // 恢复后台颜色提取任务
+        if (isTauriEnvironment()) {
+          // 收集所有图像文件路径并添加到颜色提取队列，确保新切换的目录能开始提取颜色
+          const imagePaths = Object.values(result.files)
+            .filter(f => f.type === FileType.IMAGE)
+            .map(f => f.path);
+            
+          if (imagePaths.length > 0) {
+            addPendingFilesToDb(imagePaths).catch(err => {
+              console.error('Failed to add pending files to color database:', err);
+            });
+          }
+
+          await resumeColorExtraction();
+        }
+
+        // 标记任务完成
+        updateTask(taskId, { current: 100, total: 100, status: 'completed' });
+        
+        // 稍后移除任务（给用户一点看到 100% 的时间）
+        setTimeout(() => {
+          setState(prev => ({
+            ...prev,
+            tasks: prev.tasks.filter(t => t.id !== taskId)
+          }));
+        }, 1000);
+
+        setState(prev => {
+          const newRoots = result.roots;
+          const newFiles = result.files;
+          const newRootId = newRoots.length > 0 ? newRoots[0] : '';
+          
+          // 如果扫描结果为空（可能出错或空目录），至少保持设置更新
+          if (!newRootId) return { ...prev, roots: newRoots, files: newFiles };
+
+          const newTab: TabState = {
+            ...DUMMY_TAB,
+            id: Math.random().toString(36).substr(2, 9),
+            folderId: newRootId,
+            history: {
+              stack: [{
+                folderId: newRootId,
+                viewingId: null,
+                viewMode: 'browser',
+                searchQuery: '',
+                searchScope: 'all',
+                activeTags: [],
+                activePersonId: null
+              }],
+              currentIndex: 0
+            }
+          };
+          return {
+            ...prev,
+            roots: newRoots,
+            files: newFiles,
+            expandedFolderIds: [newRootId],
+            tabs: [newTab],
+            activeTabId: newTab.id,
+            // settings 已经在前面更新过了，这里不需要再次更新，除非 scanDirectory 失败恢复旧值（这里暂不处理回滚）
+          };
+        });
+
+        // 保存配置
+        const resultRootPaths = result.roots.map(id => result.files[id]?.path).filter(Boolean);
+        const updatedRootPaths = resultRootPaths.length > 0 ? resultRootPaths : [selectedPath];
+
+        const dataToSave = {
+          rootPaths: updatedRootPaths,
+          customTags: state.customTags,
+          people: state.people,
+          settings: newSettings,
+          fileMetadata: {}
+        };
+
+        const saveResult = await saveUserData(dataToSave);
+
+        if (!saveResult) {
+          console.error('[HANDLE_CHANGE_PATH] saveUserData returned false!');
+        }
+
+        showToast(t('settings.success'));
+        
+        // 恢复后台颜色提取
+        (async () => {
+          try {
+            await resumeColorExtraction();
+          } catch (err) {
+            console.warn('Failed to resume color extraction:', err);
+          }
+        })();
+
+      } catch (e) {
+        if (unlistenProgress) unlistenProgress();
+        // 标记任务失败
+        updateTask(taskId, { status: 'error' });
+        setTimeout(() => {
+             setState(prev => ({
+            ...prev,
+            tasks: prev.tasks.filter(t => t.id !== taskId)
+          }));
+        }, 3000);
+        
+        console.error("Change path failed", e);
+        showToast("Error changing path: " + e);
+        // 可以在这里恢复之前的状态
+      }
     } catch (e) {
       console.error("Change path failed", e);
       showToast("Error changing path");

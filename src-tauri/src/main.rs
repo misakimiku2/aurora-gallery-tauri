@@ -53,6 +53,30 @@ fn get_window_state_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
     app_handle.path().app_data_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")).join("window_state.json")
 }
 
+fn get_initial_db_paths(app_handle: &tauri::AppHandle) -> (std::path::PathBuf, std::path::PathBuf) {
+    let app_data_dir = app_handle.path().app_data_dir()
+        .expect("Failed to get app data directory");
+    
+    let config_path = app_data_dir.join("user_data.json");
+    
+    if config_path.exists() {
+        if let Ok(json_str) = fs::read_to_string(config_path) {
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
+                    if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
+                        let root = Path::new(first_root);
+                        let aurora_dir = root.join(".aurora");
+                        return (aurora_dir.join("colors.db"), aurora_dir.join("metadata.db"));
+                    }
+                }
+            }
+        }
+    }
+    
+    // Default fallback
+    (app_data_dir.join("colors.db"), app_data_dir.join("metadata.db"))
+}
+
 fn save_window_state(app_handle: &tauri::AppHandle) {
     let window = match app_handle.get_webview_window("main") {
         Some(w) => w,
@@ -1956,6 +1980,32 @@ async fn db_upsert_file_metadata(
     db::file_metadata::upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn switch_root_database(
+    new_root_path: String,
+    app_db_pool: tauri::State<'_, AppDbPool>,
+    color_db_pool: tauri::State<'_, Arc<color_db::ColorDbPool>>,
+) -> Result<(), String> {
+    let root = Path::new(&new_root_path);
+    
+    // 我们将数据库存储在根目录下的 .aurora 文件夹中
+    let aurora_dir = root.join(".aurora");
+    
+    let metadata_db_path = aurora_dir.join("metadata.db");
+    let colors_db_path = aurora_dir.join("colors.db");
+    
+    // 切换元数据数据库
+    app_db_pool.switch(&metadata_db_path)?;
+    
+    // 切换颜色数据库
+    color_db_pool.switch(&colors_db_path)?;
+    
+    // 重新启动缓存预热（可选，因为 switch 已经标记为未初始化）
+    let _ = color_db_pool.ensure_cache_initialized_async();
+    
+    Ok(())
+}
+
 
 fn main() {
     
@@ -2004,7 +2054,8 @@ fn main() {
             db_delete_person,
             db_update_person_avatar,
             db_upsert_file_metadata,
-            db_copy_file_metadata
+            db_copy_file_metadata,
+            switch_root_database
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -2055,11 +2106,10 @@ fn main() {
             // 保存托盘图标到应用状态
             app.manage(Some(tray));
             
-            // 初始化颜色数据库
-            let app_data_dir = app.path().app_data_dir()
-                .expect("Failed to get app data directory");
-            let db_path = app_data_dir.join("colors.db");
+            // 获取数据库路径（如果有保存的根目录，则使用其下的 .aurora 文件夹）
+            let (db_path, app_db_path) = get_initial_db_paths(app.handle());
             
+            // 初始化颜色数据库
             let pool = match color_db::ColorDbPool::new(&db_path) {
         Ok(pool_instance) => {
             // 初始化数据库表结构
@@ -2098,7 +2148,6 @@ fn main() {
             app.manage(pool_arc.clone());
 
             // 初始化应用通用数据库 (Metadata/Persons)
-            let app_db_path = app_data_dir.join("metadata.db");
             let app_db_pool = match AppDbPool::new(&app_db_path) {
                 Ok(pool) => {
                     // Limit the scope of the connection guard so it is dropped

@@ -155,6 +155,7 @@ interface PeopleSectionProps {
   onStartRenamePerson: (personId: string) => void;
   onCreatePerson: () => void;
   t: (key: string) => string;
+  roots: string[];
   isSelected?: boolean;
 }
 
@@ -172,7 +173,7 @@ interface PeopleSectionControlledProps extends PeopleSectionProps {
 
 const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ 
   people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots
 }) => {
   const peopleList = useMemo(() => Object.values(people), [people]);
   
@@ -193,6 +194,11 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
       frozenScrollTop.current = scrollTop;
     }
   }, [scrollTop, isHovered]);
+
+  // Force update when roots change (indicates a database switch)
+  useEffect(() => {
+    frozenScrollTop.current = scrollTop;
+  }, [roots]);
 
   const PersonCardInner: React.FC<{ person: Person }> = ({ person }) => {
     const coverFile = files[person.coverFileId];
@@ -364,6 +370,7 @@ interface TagSectionProps {
   onSaveNewTag: (tag: string) => void;
   onCancelCreateTag: () => void;
   t: (key: string) => string;
+  roots: string[];
   isSelected?: boolean;
 }
 
@@ -382,7 +389,7 @@ interface TagSectionControlledProps extends TagSectionProps {
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
   isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, 
-  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered
+  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -400,6 +407,11 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       frozenScrollTop.current = scrollTop;
     }
   }, [scrollTop, isHovered]);
+
+  // Force update when roots change (indicates a database switch)
+  useEffect(() => {
+    frozenScrollTop.current = scrollTop;
+  }, [roots]);
 
   useEffect(() => {
     if (isCreatingTag) {
@@ -839,6 +851,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     }
   }, [scrollTop, isHovered]);
 
+  // Force update scroll position when roots change (e.g. after a root directory switch)
+  // this ensures the UI refreshes immediately without waiting for mouse hover
+  useEffect(() => {
+    frozenScrollTop.current = scrollTop;
+  }, [roots]);
+
   const listContent = useMemo(() => {
     if (!expanded) return null;
     if (displayNodes.length === 0) {
@@ -1087,7 +1105,7 @@ export const Sidebar: React.FC<{
     // reset scroll top when switching sections to avoid carry-over
     setScrollTop(0);
     return () => ro.disconnect();
-  }, [activeSection]);
+  }, [activeSection, roots]);
 
   // Cache to store folder-only children pointers to avoid repeating O(N) filtering of large mixed directories
   // Keyed by folder ID, tracks the children array reference to detect structural changes vs metadata-only changes
@@ -1222,6 +1240,7 @@ export const Sidebar: React.FC<{
             FixedSizeListComp={FixedSizeListComp}
             onScroll={handleScroll}
             isHovered={isSidebarHovered}
+            roots={roots}
           />
 
         <TagSection 
@@ -1245,6 +1264,7 @@ export const Sidebar: React.FC<{
           FixedSizeListComp={FixedSizeListComp}
           onScroll={handleScroll}
           isHovered={isSidebarHovered}
+          roots={roots}
         />
         
         <div className="flex-1" />

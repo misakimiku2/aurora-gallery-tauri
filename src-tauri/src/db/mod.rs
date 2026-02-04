@@ -34,6 +34,27 @@ impl AppDbPool {
     pub fn get_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
+
+    pub fn switch<P: AsRef<Path>>(&self, path: P) -> std::result::Result<(), String> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
+
+        // Performance settings
+        let _ = conn.execute("PRAGMA journal_mode=WAL", []);
+        let _ = conn.execute("PRAGMA synchronous=NORMAL", []);
+        let _ = conn.execute("PRAGMA foreign_keys=ON", []);
+
+        // Initialize tables for the new database
+        init_db(&conn).map_err(|e| e.to_string())?;
+
+        let mut conn_guard = self.conn.lock().unwrap();
+        *conn_guard = conn;
+        Ok(())
+    }
 }
 
 pub fn normalize_path(path: &str) -> String {

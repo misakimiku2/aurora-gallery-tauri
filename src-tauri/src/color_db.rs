@@ -34,7 +34,7 @@ type Result<T> = std::result::Result<T, String>;
 // 数据库连接池（简单实现，使用Mutex包裹）
 pub struct ColorDbPool {
     conn: Arc<Mutex<Connection>>,
-    db_path: String,
+    db_path: Arc<RwLock<String>>,
     cache: Arc<RwLock<Vec<CachedImage>>>,
     cache_inited: Arc<AtomicBool>, // 一次性初始化标志（防止并发重复预热）
 } 
@@ -43,7 +43,7 @@ impl Clone for ColorDbPool {
     fn clone(&self) -> Self {
         Self {
             conn: Arc::clone(&self.conn),
-            db_path: self.db_path.clone(),
+            db_path: Arc::clone(&self.db_path),
             cache: Arc::clone(&self.cache),
             cache_inited: Arc::clone(&self.cache_inited),
         }
@@ -96,10 +96,49 @@ impl ColorDbPool {
         
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
-            db_path: db_path_str,
+            db_path: Arc::new(RwLock::new(db_path_str)),
             cache: Arc::new(RwLock::new(Vec::new())),
             cache_inited: Arc::new(AtomicBool::new(false)),
         })
+    }
+
+    pub fn switch<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+
+        let mut conn = Connection::open(path).map_err(|e| e.to_string())?;
+        
+        // Performance settings
+        let _ = conn.execute("PRAGMA journal_mode=WAL", []);
+        let _ = conn.execute("PRAGMA synchronous=NORMAL", []);
+        let _ = conn.execute("PRAGMA cache_size=-64000", []);
+        let _ = conn.execute("PRAGMA busy_timeout=5000", []);
+        let _ = conn.execute("PRAGMA temp_store=MEMORY", []);
+        let _ = conn.execute("PRAGMA mmap_size=30000000000", []);
+        let _ = conn.execute("PRAGMA journal_size_limit=20971520", []);
+
+        // Initialize tables
+        init_db(&mut conn).map_err(|e| e.to_string())?;
+
+        // Reset processing status
+        reset_processing_to_pending(&mut conn).map_err(|e| e.to_string())?;
+
+        let db_path_str = path.to_string_lossy().to_string();
+
+        let mut conn_guard = self.conn.lock().unwrap();
+        *conn_guard = conn;
+        
+        let mut path_guard = self.db_path.write().map_err(|e| e.to_string())?;
+        *path_guard = db_path_str;
+
+        // Clear cache
+        let mut cache = self.cache.write().map_err(|e| e.to_string())?;
+        cache.clear();
+        self.cache_inited.store(false, Ordering::SeqCst);
+        
+        Ok(())
     }
     
     pub fn get_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
@@ -790,9 +829,10 @@ impl ColorDbPool {
     // 获取数据库文件大小
     pub fn get_db_file_sizes(&self) -> Result<(u64, u64)> {
         eprintln!("=== get_db_file_sizes called ===");
-        eprintln!("Database path from self.db_path: {}", self.db_path);
+        let current_db_path = self.db_path.read().map_err(|e| e.to_string())?.clone();
+        eprintln!("Database path from self.db_path: {}", current_db_path);
         
-        let db_path = Path::new(&self.db_path);
+        let db_path = Path::new(&current_db_path);
         let db_file_name = db_path.file_name().unwrap().to_string_lossy();
         let db_file_name_wal = format!("{}-wal", db_file_name);
         let wal_path = db_path.with_file_name(&db_file_name_wal);
