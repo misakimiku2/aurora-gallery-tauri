@@ -1,8 +1,47 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Tag, Image as ImageIcon } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { getThumbnail } from '../api/tauri-bridge';
+import { getGlobalCache } from '../utils/thumbnailCache';
 import { FileType, FileNode } from '../types';
 import { LayoutItem } from './useLayoutHook';
+
+const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
+  const [src, setSrc] = useState<string | null>(() => {
+    if (!file.path) return null;
+    return getGlobalCache().get(file.path) || null;
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (file.type === FileType.IMAGE && resourceRoot && !src) {
+      getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
+        if (active && url) {
+          setSrc(url);
+          getGlobalCache().set(file.path, url);
+        }
+      });
+    }
+    return () => { active = false; };
+  }, [file.path, file.meta?.modified, resourceRoot, src]);
+
+  // Use thumbnail if available, otherwise fallback to converted original path
+  const displaySrc = src || convertFileSrc(file.path);
+
+  return (
+    <img 
+      src={displaySrc} 
+      alt="" 
+      className="w-full h-full object-cover"
+      style={{ 
+        imageRendering: 'high-quality' as any,
+        transform: 'translateZ(0)'
+      }}
+      loading="lazy"
+    />
+  );
+};
 
 interface TagItemProps {
   tag: string;
@@ -64,6 +103,7 @@ interface TagsListProps {
   totalHeight: number;
   scrollTop: number;
   containerHeight: number;
+  resourceRoot?: string;
 }
 
 export const TagsList = React.memo(({ 
@@ -79,7 +119,8 @@ export const TagsList = React.memo(({
   layout,
   totalHeight,
   scrollTop,
-  containerHeight
+  containerHeight,
+  resourceRoot
 }: TagsListProps) => {
   const [hoveredTag, setHoveredTag] = useState<string | null>(null);
   const [hoveredTagPos, setHoveredTagPos] = useState<{ top: number, left: number } | null>(null);
@@ -309,8 +350,9 @@ export const TagsList = React.memo(({
           </div>
           <div className="grid grid-cols-3 gap-2">
             {previewImages.map((f: any) => (
-              <div key={f.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                 <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+              <div key={f.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
+                 <TagPreviewThumbnail file={f} resourceRoot={resourceRoot} />
+                 <div className="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-gray-700 -z-10">
                    <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                  </div>
               </div>

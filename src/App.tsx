@@ -2560,7 +2560,7 @@ export const App: React.FC = () => {
     // Measure main grid & panels after layout change to help debug layout issues
     setTimeout(() => {
       try {
-        const mainEl = document.getElementById('file-grid-container') as HTMLElement | null;
+        const mainEl = document.getElementById('main-content-area') as HTMLElement | null;
         const mainWidth = mainEl ? mainEl.clientWidth : null;
         const sidebarEl = document.querySelector('.border-r') as HTMLElement | null; // left sidebar
         const sidebarWidth = sidebarEl ? sidebarEl.clientWidth : null;
@@ -3159,9 +3159,9 @@ export const App: React.FC = () => {
 
     try {
       if (isTauriEnvironment()) {
-        // Tauri 锟斤拷锟斤拷锟斤拷使锟斤拷 openPath API
+        // Tauri 环境下使用 openPath API
         const { openPath } = await import('./api/tauri-bridge');
-        // 锟斤拷锟斤拷 isFile 锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷锟叫讹拷锟斤拷锟侥硷拷锟斤拷锟斤拷要选锟叫ｏ拷锟侥硷拷锟斤拷直锟接达拷
+        // 传入 isFile 以便在文件管理器中选中该项（无论是文件还是文件夹）
         const isFile = file.type !== FileType.FOLDER;
         logDebug('[App] callingOpenPath', { path: targetPath, isFile });
         await openPath(targetPath, isFile);
@@ -3510,7 +3510,7 @@ export const App: React.FC = () => {
                   ) : (
                     <div className="flex items-center w-full justify-between">
                       <div className="flex items-center space-x-1 overflow-hidden">
-                        {!(activeTab.searchQuery || activeTab.aiFilter) ? (
+                        {!(activeTab.searchQuery || activeTab.aiFilter || activeTab.activeTags.length > 0 || activeTab.activePersonId || (activeTab.dateFilter.start && activeTab.dateFilter.end)) ? (
                           <>
                             <HardDrive size={12} />
                             <span>/</span>
@@ -3522,7 +3522,7 @@ export const App: React.FC = () => {
                             <span className="font-medium text-blue-500">{t('search.scopeAll')}</span>
                           </>
                         )}
-                        {activeTab.activeTags.length > 0 && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
+                        {activeTab.activeTags.length > 0 && activeTab.searchScope !== 'tag' && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
                       </div>
                       <div className="text-[10px] opacity-60">
                         {displayFileIds.length} {t('context.items')}
@@ -3531,7 +3531,7 @@ export const App: React.FC = () => {
                   )}
                 </div>
               )}
-              <div className="flex-1 overflow-hidden relative" id="file-grid-container">
+              <div className="flex-1 overflow-hidden relative" id="main-content-area">
                 {activeTab.viewMode === 'topics-overview' ? (
                   <TopicModule
                     topics={state.topics}

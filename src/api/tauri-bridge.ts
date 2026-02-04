@@ -588,6 +588,11 @@ export const getDefaultPaths = async (): Promise<Record<string, string>> => {
  * @param path 要打开的路径
  * @param isFile 是否为文件（可选，如果未提供则根据路径判断）
  */
+/**
+ * 在系统文件管理器中打开路径
+ * @param path 要打开的路径
+ * @param isFile 是否是文件。如果提供此参数，将在文件管理器中选中该项；如果未提供，则直接打开该路径。
+ */
 export const openPath = async (path: string, isFile?: boolean): Promise<void> => {
   try {
     console.log('tauri-bridge.openPath called:', { path, isFile });

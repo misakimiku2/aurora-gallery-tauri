@@ -112,16 +112,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   }, [state.settingsCategory, refreshInterval]);
 
   const handleExportData = () => {
-    // ... (keep existing implementation)
+    // 过滤专题信息，只保留基本属性、子专题结构和人物关联，剔除文件关联
+    const simplifiedTopics: Record<string, any> = {};
+    Object.values(state.topics || {}).forEach(topic => {
+      simplifiedTopics[topic.id] = {
+        id: topic.id,
+        name: topic.name,
+        parentId: topic.parentId,
+        description: topic.description,
+        type: topic.type,
+        peopleIds: topic.peopleIds || [],
+      };
+    });
+
     const dataToExport = {
       tags: state.customTags,
-      people: state.people
+      people: state.people,
+      topics: simplifiedTopics
     };
     const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `aurora_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `aurora_metadata_backup_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -129,7 +142,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   };
 
   const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // ... (keep existing implementation)
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -137,14 +149,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     reader.onload = (event) => {
       try {
         const json = JSON.parse(event.target?.result as string);
-        if (json.tags || json.people) {
+        if (json.tags || json.people || json.topics) {
            const newTags = json.tags && Array.isArray(json.tags) ? json.tags : [];
            const newPeople = json.people && typeof json.people === 'object' ? json.people : {};
+           const newTopics = json.topics && typeof json.topics === 'object' ? json.topics : {};
            
            const combinedTags = Array.from(new Set([...state.customTags, ...newTags]));
            const combinedPeople = { ...state.people, ...newPeople };
            
-           onUpdateSettings({ customTags: combinedTags, people: combinedPeople });
+           // 对于专题，根据 ID 去重合并
+           const combinedTopics = { ...state.topics };
+           Object.keys(newTopics).forEach(id => {
+             if (!combinedTopics[id]) {
+               combinedTopics[id] = newTopics[id];
+             }
+           });
+           
+           onUpdateSettings({ 
+             customTags: combinedTags, 
+             people: combinedPeople, 
+             topics: combinedTopics 
+           });
            alert(t('settings.importSuccess'));
         } else {
            throw new Error('Invalid format');

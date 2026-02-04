@@ -35,7 +35,9 @@ export const InlineRenameInput = ({ defaultValue, onCommit, onCancel }: { defaul
       onBlur={(e) => onCommit(e.target.value)}
       onKeyDown={handleKeyDown}
       onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
+      onDragStart={(e) => e.stopPropagation()}
       className="w-full text-center text-xs font-bold bg-white dark:bg-gray-700 border border-blue-500 rounded px-1 py-0.5 focus:outline-none shadow-sm cursor-text"
     />
   );

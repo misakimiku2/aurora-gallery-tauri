@@ -322,7 +322,7 @@ export const FileListItem = React.memo(({
             onFileDoubleClick(file.id);
         }}
         onContextMenu={(e) => onContextMenu(e, file.id)}
-        draggable={true}
+        draggable={renamingId !== file.id}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}>
         <div className="flex-1 flex items-center overflow-hidden min-w-0 pointer-events-none">

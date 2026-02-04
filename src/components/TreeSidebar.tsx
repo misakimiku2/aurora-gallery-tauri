@@ -15,7 +15,43 @@ import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
 import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { pauseColorExtraction, resumeColorExtraction } from '../api/tauri-bridge';
+import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
+import { getGlobalCache } from '../utils/thumbnailCache';
+
+const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
+  const [src, setSrc] = useState<string | null>(() => {
+    if (!file.path) return null;
+    return getGlobalCache().get(file.path) || null;
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (file.type === FileType.IMAGE && resourceRoot && !src) {
+      getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
+        if (active && url) {
+          setSrc(url);
+          getGlobalCache().set(file.path, url);
+        }
+      });
+    }
+    return () => { active = false; };
+  }, [file.path, file.meta?.modified, resourceRoot, src]);
+
+  const displaySrc = src || convertFileSrc(file.path);
+
+  return (
+    <img 
+      src={displaySrc} 
+      alt="" 
+      className="w-full h-full object-cover"
+      style={{ 
+        imageRendering: 'high-quality' as any,
+        transform: 'translateZ(0)'
+      }}
+      loading="lazy"
+    />
+  );
+};
 
 interface TreeProps {
   node: FileNode;
@@ -311,7 +347,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
         <div style={{ height: bottomHeight }} />
       </div>
     );
-  }, [expanded, peopleRows, rowHeight, availableHeight, FixedSizeListComp, PersonCard, t, isHovered ? scrollTop : null]);
+  }, [expanded, peopleRows, rowHeight, availableHeight, FixedSizeListComp, PersonCard, t, (isHovered ? scrollTop : null), peopleRows.length]);
 
   return (
       <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
@@ -514,7 +550,8 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       return !isCreatingTag && <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>;
     }
 
-    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
+    // Force real scrollTop if currently creating a tag to ensure the new input and list stay in sync
+    const currentST = (isHovered || isCreatingTag) ? scrollTop : frozenScrollTop.current;
 
     if (FixedSizeListComp) {
       return (
@@ -526,7 +563,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
           initialScrollOffset={currentST}
           itemData={{ 
             tags: sortedTags, tagCounts, onTagSelect, onContextMenu, 
-            handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t 
+            handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, createPortal, t, roots 
           }}
         >
           {({ index, style, data }: any) => {
@@ -565,9 +602,10 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                        <span className="text-[10px] bg-gray-100 dark:bg-gray-700 px-1.5 rounded">{data.previewImages.length} {data.t('sidebar.recent')}</span>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
-                      {data.previewImages.map((img: any) => (
-                        <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                           <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                       {data.previewImages.map((img: any) => (
+                        <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
+                           <TagPreviewThumbnail file={img} resourceRoot={data.roots?.[0]} />
+                           <div className="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-gray-700 -z-10">
                              <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                            </div>
                         </div>
@@ -630,8 +668,9 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {previewImages.map(img => (
-                    <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden">
-                       <div className="w-full h-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center">
+                    <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
+                       <TagPreviewThumbnail file={img} resourceRoot={roots?.[0]} />
+                       <div className="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-gray-700 -z-10">
                          <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                        </div>
                     </div>
@@ -645,7 +684,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
         <div style={{ height: bottomHeight }} />
       </div>
     );
-  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, isHovered ? scrollTop : null]);
+  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, (isHovered || isCreatingTag ? scrollTop : null), sortedTags.length]);
 
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
@@ -937,7 +976,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   }, [
     expanded, displayNodes, rowHeight, availableHeight, FixedSizeListComp, 
     currentFolderId, expandedSet, t, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-    isHovered ? scrollTop : null // Only re-memoize on scroll if hovered
+    (isHovered ? scrollTop : null), displayNodes.length // Ensure re-memoize when node count changes even if frozen
   ]);
 
   return (

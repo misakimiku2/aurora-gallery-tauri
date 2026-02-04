@@ -373,7 +373,7 @@ const FileCard = React.memo(({
             height: `${height}px`,
             willChange: 'transform'
         }}
-        draggable={true}
+        draggable={renamingId !== file.id}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onMouseDown={async (e) => {
@@ -1239,6 +1239,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   totalHeight={totalHeight}
                   scrollTop={scrollTop}
                   containerHeight={containerRect.height}
+                  resourceRoot={resourceRoot}
               />
           </div>
       );

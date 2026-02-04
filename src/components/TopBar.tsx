@@ -132,7 +132,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const totalTags = Object.values(filteredGroupedTags).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
-    <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[400px] font-sans border border-gray-200 dark:border-gray-800 z-50">
+    <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50">
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-sm tracking-wide">{t('sidebar.allTags')}</span>
@@ -216,7 +216,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
         </div>
         {/* 字母索引�?*/}
         {keys.length > 0 && (
-          <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-gray-900/50 border-l border-gray-100 dark:border-gray-800">
+          <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-gray-900/50 border-l border-gray-100 dark:border-gray-800 overflow-y-auto no-scrollbar">
             {keys.map(key => (
               <button
                 key={key}

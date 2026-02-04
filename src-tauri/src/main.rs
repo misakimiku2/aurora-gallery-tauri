@@ -1708,6 +1708,8 @@ async fn get_default_paths() -> Result<HashMap<String, String>, String> {
 async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
     use std::process::Command;
     use std::path::Path;
+    #[cfg(target_os = "windows")]
+    use std::os::windows::process::CommandExt;
     
     // 规范化路径：确保使用正确的路径分隔符，并转换为绝对路径
     let path_obj = Path::new(&path);
@@ -1738,88 +1740,101 @@ async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String> {
     // 使用绝对路径创建Path对象，确保所有后续操作都基于绝对路径
     let abs_path_obj = Path::new(&absolute_path);
     
-    let is_file_path = is_file.unwrap_or_else(|| abs_path_obj.is_file());
+    // 是否是从右键菜单（上下文菜单）调用的
+    // is_file 为 Some 时表示从文件列表/文件夹树的右键菜单调用
+    // is_file 为 None 时表示从设置面板等地方直接打开文件夹
+    let is_context_menu = is_file.is_some();
     
-    // 计算目标路径
-    let target_path = if is_file_path {
-        // 情况1：文件 - 打开父目录
-        match abs_path_obj.parent() {
-            Some(parent) => {
-                let parent_str = parent.to_str().unwrap_or(&absolute_path);
-                println!("File parent path: {}", parent_str);
-                parent_str.to_string()
-            },
-            None => {
-                println!("File has no parent, using absolute path: {}", absolute_path);
-                absolute_path.clone()
-            },
-        }
-    } else {
-        // 情况2：文件夹
-        match is_file {
-            Some(false) => {
-                // 右键菜单打开文件夹：打开父目录
-                match abs_path_obj.parent() {
-                    Some(parent) => {
-                        let parent_str = parent.to_str().unwrap_or(&absolute_path);
-                        println!("Folder parent path (from context menu): {}", parent_str);
-                        parent_str.to_string()
-                    },
-                    None => {
-                        println!("Folder has no parent, using absolute path: {}", absolute_path);
-                        absolute_path.clone()
-                    },
-                }
-            },
-            _ => {
-                // 设置面板打开文件夹：直接打开该文件夹
-                println!("Opening folder directly: {}", absolute_path);
-                absolute_path.clone()
-            }
-        }
-    };
-    
-    println!("open_path: path={}, target_path={}, is_file={:?}, is_file_path={}", 
-             path, target_path, is_file, is_file_path);
-    
-    println!("Final target_path: {}", target_path);
+    println!("open_path: path={}, is_file={:?}, is_context_menu={}", 
+             path, is_file, is_context_menu);
     
     // 直接使用系统命令打开文件管理器，但不等待命令完成，避免阻塞和闪退问题
     let result = if cfg!(windows) {
-        // Windows: 使用explorer命令，确保路径使用正确的反斜杠格式
-        // 将正斜杠转换为反斜杠，确保Windows能够正确识别路径
-        let win_target_path = target_path.replace("/", "\\");
-        println!("Windows command: explorer.exe \"{}\"", win_target_path);
-        
-        // 使用spawn()而不是status()或output()，这样命令会在后台运行，不会阻塞主线程
-        // 同时，使用Command::new("explorer.exe")直接调用，避免使用cmd.exe包装
-        Command::new("explorer.exe")
-            .arg(win_target_path)
-            .spawn()
-            .map(|_| ())
+        #[cfg(target_os = "windows")]
+        {
+            // Windows: 使用 explorer.exe
+            // 将正斜杠转换为反斜杠，确保 Windows 能够正确识别路径
+            let win_path = absolute_path.replace("/", "\\");
+            
+            if is_context_menu {
+                // 如果是右键菜单调用，使用 /select 选项在文件管理器中选中该文件/文件夹
+                // 对路径进行安全处理：去除尾部的反斜杠（如果是文件夹）
+                let clean_path = win_path.trim_end_matches('\\');
+                
+                // 使用 raw_arg 手动构建参数，确保 /select 格式正确
+                // 我们在 /select, 后面加一个空格，并用引号包裹路径，这是最兼容的格式
+                // 格式：/select, "C:\Path\To\File"
+                let raw_arg = format!("/select, \"{}\"", clean_path);
+                
+                println!("Windows command: explorer.exe [raw_arg] {}", raw_arg);
+                
+                Command::new("explorer.exe")
+                    .raw_arg(raw_arg)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                    .map(|_| ())
+            } else {
+                // 否则直接打开该路径
+                println!("Windows command: explorer.exe \"{}\"", win_path);
+                Command::new("explorer.exe")
+                    .arg(win_path)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+                    .map(|_| ())
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+             // Fallback for non-windows if cross-compiling (shouldn't happen here due to outer if)
+             Ok(())
+        }
     } else if cfg!(target_os = "macos") {
-        // macOS: 使用open命令
-        println!("macOS command: open \"{}\"", target_path);
-        Command::new("open")
-            .arg(target_path.clone())
-            .spawn()
-            .map(|_| ())
+        // macOS: 使用 open 命令
+        if is_context_menu {
+            // 使用 -R 参数在 Finder 中显示并选中
+            println!("macOS command: open -R \"{}\"", absolute_path);
+            Command::new("open")
+                .arg("-R")
+                .arg(&absolute_path)
+                .spawn()
+                .map(|_| ())
+        } else {
+            println!("macOS command: open \"{}\"", absolute_path);
+            Command::new("open")
+                .arg(&absolute_path)
+                .spawn()
+                .map(|_| ())
+        }
     } else {
-        // Linux: 使用xdg-open命令
+        // Linux: 使用 xdg-open 命令
+        // Linux 下 xdg-open 不支持选中文件，如果是文件则打开其父目录
+        let target_path = if is_context_menu {
+            match abs_path_obj.parent() {
+                Some(parent) => parent.to_string_lossy().to_string(),
+                None => absolute_path.clone(),
+            }
+        } else {
+            absolute_path.clone()
+        };
+        
         println!("Linux command: xdg-open \"{}\"", target_path);
         Command::new("xdg-open")
-            .arg(target_path.clone())
+            .arg(target_path)
             .spawn()
             .map(|_| ())
     };
     
     match result {
         Ok(_) => {
-            println!("Successfully started file manager for: {}", target_path);
+            println!("Successfully started file manager for path: {}", absolute_path);
             Ok(())
         },
         Err(e) => {
-            let error_msg = format!("Failed to open path '{}': {}", target_path, e);
+            let error_msg = format!("Failed to start file manager for '{}': {}", absolute_path, e);
             println!("{}", error_msg);
             Err(error_msg)
         }
