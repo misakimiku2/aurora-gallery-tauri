@@ -477,12 +477,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => {
     if (lastFileIdRef.current !== file.id) {
-      if (slideshowActive) {
-         if (slideshowConfig.transition === 'fade') setAnimationClass('animate-fade-in');
-         else if (slideshowConfig.transition === 'slide') setAnimationClass('animate-slide-left');
-         else setAnimationClass('');
+      if (!slideshowActive) {
+         setAnimationClass('animate-zoom-in');
       } else {
-         if (!animationClass) setAnimationClass('animate-zoom-in');
+         // 幻灯片模式下过渡由图层自身的 transition/animation 处理，此处清空容器动画防止冲突
+         setAnimationClass('');
       }
 
       setRotation(0);
@@ -1034,7 +1033,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
              ref={activeLayer === 0 ? imgRef : undefined}
              src={layer0Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
              alt={activeLayer === 0 ? file.name : ''}
-             className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && activeLayer === 0 ? 'animate-ken-burns' : ''}`}
+             className={`max-w-none absolute inset-0 m-auto ${
+               slideshowActive 
+                 ? (activeLayer === 0 
+                    ? (slideshowConfig.transition === 'slide' ? 'animate-slide-left' : (slideshowConfig.enableZoom ? 'animate-ken-burns' : ''))
+                    : '')
+                 : ''
+             }`}
              onLoad={handleLayer0Load}
              loading="eager"
              decoding="sync"
@@ -1043,7 +1048,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                height: '100%',
                objectFit: 'contain',
                transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+               transition: isDragging ? 'none' : 
+                 (slideshowActive 
+                    ? (slideshowConfig.transition !== 'none' ? 'opacity 0.6s ease-in-out' : 'none')
+                    : 'transform 0.1s linear'),
                pointerEvents: slideshowActive ? 'none' : (activeLayer === 0 ? 'auto' : 'none'),
                transformOrigin: 'center center',
                opacity: activeLayer === 0 && layer0Url ? 1 : 0,
@@ -1058,7 +1066,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
              ref={activeLayer === 1 ? imgRef : undefined}
              src={layer1Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
              alt={activeLayer === 1 ? file.name : ''}
-             className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && activeLayer === 1 ? 'animate-ken-burns' : ''}`}
+             className={`max-w-none absolute inset-0 m-auto ${
+               slideshowActive 
+                 ? (activeLayer === 1 
+                    ? (slideshowConfig.transition === 'slide' ? 'animate-slide-left' : (slideshowConfig.enableZoom ? 'animate-ken-burns' : ''))
+                    : '')
+                 : ''
+             }`}
              onLoad={handleLayer1Load}
              loading="eager"
              decoding="sync"
@@ -1067,7 +1081,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                height: '100%',
                objectFit: 'contain',
                transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : (slideshowActive ? undefined : 'transform 0.1s linear'),
+               transition: isDragging ? 'none' : 
+                 (slideshowActive 
+                    ? (slideshowConfig.transition !== 'none' ? 'opacity 0.6s ease-in-out' : 'none')
+                    : 'transform 0.1s linear'),
                pointerEvents: slideshowActive ? 'none' : (activeLayer === 1 ? 'auto' : 'none'),
                transformOrigin: 'center center',
                opacity: activeLayer === 1 && layer1Url ? 1 : 0,

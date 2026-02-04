@@ -18,6 +18,7 @@
         "height": 800,
         "minWidth": 1280,
         "minHeight": 800,
+        "center": true,
         "resizable": true,
         "fullscreen": false,
         "label": "main",

@@ -519,7 +519,9 @@ export const translations = {
       date: '按时间',
       size: '按大小',
       asc: '升序',
-      desc: '降序'
+      desc: '降序',
+      newest: '最新优先',
+      oldest: '最早优先'
     },
     groupBy: {
       title: '分组方式',
@@ -1074,7 +1076,9 @@ export const translations = {
       date: 'Date',
       size: 'Size',
       asc: 'Ascending',
-      desc: 'Descending'
+      desc: 'Descending',
+      newest: 'Newest First',
+      oldest: 'Oldest First'
     },
     groupBy: {
       title: 'Group By',

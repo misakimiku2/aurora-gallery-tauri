@@ -1346,8 +1346,8 @@ export const App: React.FC = () => {
         });
       }
 
-      // 锟街久伙拷锟斤拷锟斤拷锟捷匡拷
-      if (updates.tags || updates.description || updates.sourceUrl || updates.aiData) {
+      // 持久化到数据库
+      if (updates.tags || updates.description || updates.sourceUrl || updates.aiData || updates.category !== undefined) {
         const file = prev.files[id];
         if (file) {
           const mergedFile = { ...file, ...updates };
@@ -1357,6 +1357,7 @@ export const App: React.FC = () => {
             tags: mergedFile.tags,
             description: mergedFile.description,
             sourceUrl: mergedFile.sourceUrl,
+            category: mergedFile.category,
             aiData: mergedFile.aiData,
             updatedAt: Date.now()
           }).catch(err => console.error('Failed to persist file metadata:', err));
@@ -1788,6 +1789,9 @@ export const App: React.FC = () => {
       people: { ...prev.people, [newId]: newPerson },
       activeModal: { type: 'rename-person', data: { personId: newId } }
     }));
+
+    // 自动跳转到人物界面 (人物概览)
+    enterPeopleOverview();
   };
 
   const handleDeletePerson = (personId: string | string[]) => {
@@ -2472,7 +2476,10 @@ export const App: React.FC = () => {
       updatedAt: new Date().toISOString()
     };
     setState(prev => ({ ...prev, topics: { ...prev.topics, [id]: newTopic } }));
-  }, [t]);
+
+    // 自动跳转到专题概览界面
+    handleNavigateTopics();
+  }, [t, handleNavigateTopics]);
 
   const handleUpdateTopic = useCallback((topicId: string, updates: Partial<Topic>) => {
     setState(prev => ({
@@ -2492,7 +2499,9 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const handleCreateRootTopic = useCallback(() => handleCreateTopic(null), [handleCreateTopic]);
+  const handleCreateRootTopic = useCallback(() => {
+    setState(prev => ({ ...prev, activeModal: { type: 'create-topic', data: { parentId: null } } }));
+  }, []);
 
   const handleToggleFolder = useCallback((id: string) => {
     setState(prev => {
@@ -3712,6 +3721,8 @@ export const App: React.FC = () => {
         handleRenamePerson={handleRenamePerson}
         handleConfirmDeleteTags={handleConfirmDeleteTags}
         handleDeletePerson={handleDeletePerson}
+        handleCreateTopic={handleCreateTopic}
+        handleUpdateTopic={handleUpdateTopic}
         handleUpdateFile={handleUpdateFile}
         handleCopyFiles={handleCopyFiles}
         handleMoveFiles={handleMoveFiles}

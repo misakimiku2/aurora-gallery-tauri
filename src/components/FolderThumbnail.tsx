@@ -41,7 +41,7 @@ const findImagesDeeply = (
 };
 
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
   
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
@@ -126,15 +126,13 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
-      {(isInView || wasInView) && (
-          <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
-             <Folder3DIcon  
-                previewSrcs={previewSrcs}
-                count={file.children?.length}
-                category={file.category}
-             />
-          </div>
-      )}
+      <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
+         <Folder3DIcon  
+            previewSrcs={previewSrcs}
+            count={file.children?.length}
+            category={file.category}
+         />
+      </div>
     </div>
   );
 });

@@ -156,6 +156,7 @@ pub struct FileNode {
     pub meta: Option<ImageMeta>,
     pub description: Option<String>,
     pub source_url: Option<String>,
+    pub category: Option<String>,
     pub ai_data: Option<serde_json::Value>,
 }
 
@@ -243,8 +244,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     let (metadata_map, cached_index_map) = tokio::join!(
         tokio::task::spawn_blocking(move || {
             let conn = pool_for_metadata.get_connection();
-            db::file_metadata::get_metadata_under_path(&conn, &path_for_metadata)
-                .unwrap_or_default()
+            let res = db::file_metadata::get_metadata_under_path(&conn, &path_for_metadata);
+            res.unwrap_or_default()
                 .into_iter()
                 .map(|m| (m.file_id.clone(), m))
                 .collect::<HashMap<String, db::file_metadata::FileMetadata>>()
@@ -263,7 +264,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     let cached_index_map = cached_index_map.unwrap_or_default();
     
     let root_id = generate_id(&path);
-
+    
     // --- 极速启动模式 (Database First) ---
     // 如果是非强制扫描，且数据库里有数据，直接使用数据库数据返回，跳过磁盘扫描
     // 这可以将启动时间从 7s+ 降低到 1-2s (仅受限于数据库读取速度)
@@ -341,7 +342,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     size: Some(entry.size),
                     children: if entry.file_type == "Folder" { Some(Vec::new()) } else { None },
                     tags: Vec::new(),
-                    url: None, meta: None, description: None, source_url: None, ai_data: None,
+                    url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
                     created_at: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()),
                     updated_at: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()),
                 };
@@ -353,20 +354,11 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     }
                     node.description = meta.description.clone();
                     node.source_url = meta.source_url.clone();
+                    node.category = meta.category.clone();
                     node.ai_data = meta.ai_data.clone();
                 }
 
                 // 恢复图片尺寸信息
-                if node.r#type == FileType::Image {
-                     node.meta = Some(ImageMeta {
-                        width: entry.width.unwrap_or(0),
-                        height: entry.height.unwrap_or(0),
-                        size_kb: (entry.size / 1024) as u32,
-                        format: entry.format.clone().unwrap_or_default(),
-                        created: node.created_at.clone().unwrap_or_default(),
-                        modified: node.updated_at.clone().unwrap_or_default(),
-                    });
-                }
 
                 path_to_id.insert(f_path.clone(), entry.file_id.clone());
                 all_files.insert(entry.file_id.clone(), node);
@@ -375,14 +367,26 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
             // 确保根节点存在 (如果数据库里没有根节点记录，手动补一个)
             if !all_files.contains_key(&root_id) {
                  let root_metadata = std::fs::metadata(root_path_os).ok();
-                 let root_node = FileNode {
+                 let mut root_node = FileNode {
                     id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
                     r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
-                    url: None, meta: None, description: None, source_url: None, ai_data: None,
+                    url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
                     created_at: root_metadata.as_ref().and_then(|m| m.created().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                     updated_at: root_metadata.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                 };
                 path_to_id.insert(normalized_root_path.clone(), root_id.clone());
+                
+                // 恢复根节点元数据
+                if let Some(meta) = metadata_map.get(&root_id) {
+                    if let Some(tags_val) = &meta.tags {
+                        if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { root_node.tags = tags_vec; }
+                    }
+                    root_node.description = meta.description.clone();
+                    root_node.source_url = meta.source_url.clone();
+                    root_node.category = meta.category.clone();
+                    root_node.ai_data = meta.ai_data.clone();
+                }
+                
                 all_files.insert(root_id.clone(), root_node);
             }
 
@@ -437,13 +441,24 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     // --- 结束极速启动模式 ---
 
     let root_metadata = fs::metadata(root_path_os).map_err(|e| format!("无法读取根目录: {}", e))?;
-    let root_node = FileNode {
+    let mut root_node = FileNode {
         id: root_id.clone(), parent_id: None, name: root_path_os.file_name().and_then(|n| n.to_str()).unwrap_or("Root").to_string(),
         r#type: FileType::Folder, path: normalized_root_path.clone(), size: None, children: Some(Vec::new()), tags: Vec::new(),
-        url: None, meta: None, description: None, source_url: None, ai_data: None,
+        url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
         created_at: root_metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
         updated_at: root_metadata.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
     };
+
+    // 恢复根节点元数据
+    if let Some(meta) = metadata_map.get(&root_id) {
+        if let Some(tags_val) = &meta.tags {
+            if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) { root_node.tags = tags_vec; }
+        }
+        root_node.description = meta.description.clone();
+        root_node.source_url = meta.source_url.clone();
+        root_node.category = meta.category.clone();
+        root_node.ai_data = meta.ai_data.clone();
+    }
 
     // 3. 决定计数策略
     // 如果是强制扫描（首次或手动刷新），提前数准总量以获得平滑进度条
@@ -536,7 +551,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                 if is_directory {
                     let folder_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name, r#type: FileType::Folder, path: full_path.clone(),
-                        size: None, children: Some(Vec::new()), tags: Vec::new(), url: None, meta: None, description: None, source_url: None, ai_data: None,
+                        size: None, children: Some(Vec::new()), tags: Vec::new(), url: None, meta: None, description: None, source_url: None, category: None, ai_data: None,
                         created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                     };
@@ -553,7 +568,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
                     let image_node = FileNode {
                         id: file_id.clone(), parent_id: None, name: file_name.to_string(), r#type: FileType::Image, path: full_path.clone(),
-                        size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, ai_data: None,
+                        size: Some(metadata.len()), children: None, tags: Vec::new(), url: None, description: None, source_url: None, category: None, ai_data: None,
                         created_at: metadata.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)).map(|dt| dt.to_rfc3339()),
                         updated_at: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()),
                         meta: Some(ImageMeta {
@@ -591,6 +606,10 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
     while let Ok((id, mut node, p_path)) = rx.recv() {
         scanned_paths.push(node.path.clone());
+        if node.name.contains("棕色") || node.name.contains("素材") {
+             println!("[DEBUG] Scanning node check: Name={}, GeneratedID={}, FoundMeta={}", node.name, id, metadata_map.contains_key(&id));
+        }
+
         if matches!(node.r#type, FileType::Folder) { 
             path_to_id.insert(node.path.clone(), id.clone()); 
         }
@@ -602,6 +621,7 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
             }
             node.description = meta.description.clone();
             node.source_url = meta.source_url.clone();
+            node.category = meta.category.clone();
             node.ai_data = meta.ai_data.clone();
         }
 
@@ -630,17 +650,20 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
         all_files.insert(id, node);
     }
+    
 
-    // 发送最终进度
-    let _ = app.emit("scan-progress", ScanProgress { processed: processed_count, total: processed_count });
-
-    // 建立父子关系
+    // 5. 修正 Parent ID 引用
     for entry in entries_to_save.iter_mut() {
         if entry.file_id == root_id { continue; }
-        let parent_id = p_path_map.get(&entry.file_id).and_then(|ppath| {
-            path_to_id.get(ppath).cloned().or_else(|| if ppath == &normalized_root_path { Some(root_id.clone()) } else { None })
-        });
-        
+
+        let parent_id = if let Some(pp) = p_path_map.get(&entry.file_id) {
+             if pp == &normalized_root_path || pp.is_empty() {
+                 Some(root_id.clone())
+             } else {
+                 path_to_id.get(pp).cloned()
+             }
+        } else { None };
+
         if let Some(pid) = parent_id {
             entry.parent_id = Some(pid.clone());
             if let Some(pnode) = all_files.get_mut(&pid) {
@@ -786,9 +809,6 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
     let is_directory = path.is_dir();
     let is_image = is_supported_image(&extension);
     
-    let is_directory = path.is_dir();
-    let is_image = is_supported_image(&extension);
-    
     let mut result_node = if is_directory {
         // Create folder node
         FileNode {
@@ -820,6 +840,7 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             meta: None,
             description: None,
             source_url: None,
+            category: None,
             ai_data: None,
         }
     } else if is_image {
@@ -880,6 +901,7 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             }),
             description: None,
             source_url: None,
+            category: None,
             ai_data: None,
         };
         
@@ -899,25 +921,7 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             eprintln!("Database error when adding file: {}", e);
         }
         
-        let mut final_node = image_node;
-        
-        // Merge metadata if available
-        {
-            let pool = app.state::<AppDbPool>();
-            let conn = pool.get_connection();
-            if let Ok(Some(meta)) = db::file_metadata::get_metadata_by_id(&conn, &final_node.id) {
-                if let Some(tags_val) = &meta.tags {
-                    if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
-                        final_node.tags = tags_vec;
-                    }
-                }
-                final_node.description = meta.description.clone();
-                final_node.source_url = meta.source_url.clone();
-                final_node.ai_data = meta.ai_data.clone();
-            }
-        }
-
-        final_node
+        image_node
     } else {
         // Create unknown file node
         let file_size = metadata.len();
@@ -951,9 +955,27 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
             meta: None,
             description: None,
             source_url: None,
+            category: None,
             ai_data: None,
         }
     };
+
+    // --- Merge metadata from database if available ---
+    {
+        let pool = app.state::<AppDbPool>();
+        let conn = pool.get_connection();
+        if let Ok(Some(meta)) = db::file_metadata::get_metadata_by_id(&conn, &result_node.id) {
+            if let Some(tags_val) = &meta.tags {
+                if let Ok(tags_vec) = serde_json::from_value::<Vec<String>>(tags_val.clone()) {
+                    result_node.tags = tags_vec;
+                }
+            }
+            result_node.description = meta.description.clone();
+            result_node.source_url = meta.source_url.clone();
+            result_node.category = meta.category.clone();
+            result_node.ai_data = meta.ai_data.clone();
+        }
+    }
 
     // --- 持久化到 file_index 以确保下次极速启动时能看见新文件 ---
     if result_node.r#type != FileType::Unknown {
@@ -1989,8 +2011,11 @@ fn db_update_person_avatar(
 #[tauri::command]
 async fn db_upsert_file_metadata(
     pool: tauri::State<'_, AppDbPool>, 
-    metadata: db::file_metadata::FileMetadata
+    mut metadata: db::file_metadata::FileMetadata
 ) -> Result<(), String> {
+    // Ensure path is normalized before saving, so that get_metadata_under_path (which uses LIKE 'path/%') works correctly
+    metadata.path = normalize_path(&metadata.path);
+    
     let conn = pool.get_connection();
     db::file_metadata::upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
 }
@@ -2218,6 +2243,7 @@ fn main() {
             if let Some(window) = app.get_webview_window("main") {
                 let app_handle_for_state = app.handle();
                 let path = get_window_state_path(app_handle_for_state);
+                let mut state_restored = false;
                 if path.exists() {
                     if let Ok(json) = fs::read_to_string(&path) {
                         if let Ok(state) = serde_json::from_str::<SavedWindowState>(&json) {
@@ -2226,8 +2252,13 @@ fn main() {
                             if state.maximized {
                                 let _ = window.maximize();
                             }
+                            state_restored = true;
                         }
                     }
+                }
+
+                if !state_restored {
+                    let _ = window.center();
                 }
                 let _ = window.show();
             }

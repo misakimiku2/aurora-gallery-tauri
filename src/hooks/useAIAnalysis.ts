@@ -559,6 +559,7 @@ Please output only the summary text without any prefixes.`;
           path: file.path,
           description: aiData.description,
           tags: aiData.tags,
+          category: file.category,
           aiData
         });
       }

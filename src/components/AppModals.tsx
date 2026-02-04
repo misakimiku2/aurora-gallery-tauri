@@ -25,6 +25,8 @@ import { TagEditor as TagEditorComp } from './modals/TagEditor';
 import { FolderPickerModal as FolderPickerModalComp } from './modals/FolderPickerModal';
 import { ExitConfirmModal as ExitConfirmModalComp } from './modals/ExitConfirmModal';
 import { CropAvatarModal as CropAvatarModalComp } from './modals/CropAvatarModal';
+import { CreateTopicModal as CreateTopicModalComp } from './modals/CreateTopicModal';
+import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicModal';
 
 interface AppModalsProps {
   state: AppState;
@@ -39,6 +41,8 @@ interface AppModalsProps {
   handleRenamePerson: (personId: string, newName: string) => void | Promise<void>;
   handleConfirmDeleteTags: (tags: string[]) => void | Promise<void>;
   handleDeletePerson: (idOrIds: string | string[]) => void | Promise<void>;
+  handleCreateTopic: (parentId: string | null, name?: string, type?: string) => void;
+  handleUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
   handleUpdateFile: (fileId: string, updates: Partial<FileNode>) => void;
   handleCopyFiles: (fileIds: string[], targetFolderId: string) => void | Promise<void>;
   handleMoveFiles: (fileIds: string[], targetFolderId: string) => void | Promise<void>;
@@ -79,6 +83,8 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleRenamePerson,
   handleConfirmDeleteTags,
   handleDeletePerson,
+  handleCreateTopic,
+  handleUpdateTopic,
   handleUpdateFile,
   handleCopyFiles,
   handleMoveFiles,
@@ -158,6 +164,29 @@ export const AppModals: React.FC<AppModalsProps> = ({
               onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} 
               onClose={closeModals} 
               t={t} 
+            />
+          )}
+
+          {state.activeModal.type === 'create-topic' && (
+            <CreateTopicModalComp
+              onClose={closeModals}
+              onCreate={(name, type) => {
+                handleCreateTopic(state.activeModal.data?.parentId || null, name, type);
+                closeModals();
+              }}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'rename-topic' && state.activeModal.data && (
+            <RenameTopicModalComp
+              topic={state.topics[state.activeModal.data.topicId]}
+              onClose={closeModals}
+              onRename={(name, type) => {
+                handleUpdateTopic(state.activeModal.data.topicId, { name, ...(typeof type === 'string' ? { type } : {}) });
+                closeModals();
+              }}
+              t={t}
             />
           )}
           

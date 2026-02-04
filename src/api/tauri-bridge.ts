@@ -43,6 +43,7 @@ interface RustFileNode {
   } | null;
   description?: string | null;
   sourceUrl?: string | null;
+  category?: string | null;     // <--- ADDED THIS FIELD
   aiData?: any | null;
 }
 
@@ -132,6 +133,12 @@ export const scanDirectory = async (
         tags: node.tags || [],
         createdAt: node.createdAt || undefined,
         updatedAt: node.updatedAt || undefined,
+        // Map persistent fields from backend
+        description: node.description || undefined,
+        sourceUrl: node.sourceUrl || undefined,
+        category: (node.category === 'general' || node.category === 'book' || node.category === 'sequence') ? node.category : undefined,
+        aiData: node.aiData || undefined,
+        
         // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
         url: undefined, // Don't use file path as URL - use getThumbnail() instead
         // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
@@ -144,9 +151,6 @@ export const scanDirectory = async (
           modified: node.meta.modified || '',
           format: node.meta.format || '',
         } : undefined,
-        description: node.description || undefined,
-        sourceUrl: node.sourceUrl || undefined,
-        aiData: node.aiData || undefined,
       };
 
       fileMap[id] = fileNode;
@@ -966,6 +970,7 @@ export const dbUpsertFileMetadata = async (metadata: {
   tags?: string[];
   description?: string;
   sourceUrl?: string;
+  category?: string;
   aiData?: any;
   updatedAt?: number;
 }): Promise<void> => {

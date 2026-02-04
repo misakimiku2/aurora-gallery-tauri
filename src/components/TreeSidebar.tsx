@@ -13,7 +13,7 @@ const FixedSizeListComp: any = (() => {
 })();
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
@@ -826,11 +826,15 @@ interface FolderSectionProps {
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   t: (key: string) => string;
   isHovered: boolean;
+  sortMode?: 'name' | 'date';
+  sortOrder?: 'asc' | 'desc';
+  onToggleSort?: () => void;
 }
 
 const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   visibleNodes, files, roots, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered
+  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered,
+  sortMode = 'name', sortOrder = 'asc', onToggleSort
 }) => {
   const isSingleRoot = roots.length === 1;
   const rootId = roots[0];
@@ -1000,6 +1004,22 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
             {isSingleRoot && rootNode ? rootNode.name : "文件目录"}
           </span>
         </div>
+        {onToggleSort && (
+          <div 
+            className={`p-1 flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-blue-500'}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleSort();
+            }}
+            title={sortMode === 'name' ? (sortOrder === 'asc' ? 'A-Z' : 'Z-A') : (sortOrder === 'desc' ? t('sort.newest') : t('sort.oldest'))}
+          >
+            {sortMode === 'name' ? (
+               sortOrder === 'asc' ? <SortAsc size={14} /> : <SortDesc size={14} />
+            ) : (
+               <Clock size={14} className={sortOrder === 'asc' ? 'rotate-180' : ''} />
+            )}
+          </div>
+        )}
       </div>
 
       {expanded && (
@@ -1066,6 +1086,40 @@ export const Sidebar: React.FC<{
 
   // active section controls which primary section is expanded in the sidebar
   const [activeSection, setActiveSection] = useState<'roots' | 'people' | 'tags' | 'topics' | null>('roots');
+
+  // Sidebar sorting state with persistence
+  const [folderSortMode, setFolderSortMode] = useState<'name' | 'date'>(() => 
+    (localStorage.getItem('aurora_sidebar_folder_sort_mode') as 'name' | 'date') || 'name'
+  );
+  const [folderSortOrder, setFolderSortOrder] = useState<'asc' | 'desc'>(() => 
+    (localStorage.getItem('aurora_sidebar_folder_sort_order') as 'asc' | 'desc') || 'asc'
+  );
+
+  const handleToggleFolderSort = useCallback(() => {
+    let nextMode: 'name' | 'date' = folderSortMode;
+    let nextOrder: 'asc' | 'desc' = folderSortOrder;
+
+    if (folderSortMode === 'name') {
+      if (folderSortOrder === 'asc') {
+        nextOrder = 'desc';
+      } else {
+        nextMode = 'date';
+        nextOrder = 'desc'; // Newest first by default
+      }
+    } else {
+      if (folderSortOrder === 'desc') {
+        nextOrder = 'asc';
+      } else {
+        nextMode = 'name';
+        nextOrder = 'asc';
+      }
+    }
+
+    setFolderSortMode(nextMode);
+    setFolderSortOrder(nextOrder);
+    localStorage.setItem('aurora_sidebar_folder_sort_mode', nextMode);
+    localStorage.setItem('aurora_sidebar_folder_sort_order', nextOrder);
+  }, [folderSortMode, folderSortOrder]);
 
   // New state to track if mouse is hovering the sidebar
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
@@ -1147,8 +1201,8 @@ export const Sidebar: React.FC<{
   }, [activeSection, roots]);
 
   // Cache to store folder-only children pointers to avoid repeating O(N) filtering of large mixed directories
-  // Keyed by folder ID, tracks the children array reference to detect structural changes vs metadata-only changes
-  const folderChildCache = useRef<Record<string, { children: string[], version: any }>>({});
+  // Keyed by folder ID, tracks the children array reference and sorting to detect structural changes vs metadata-only changes
+  const folderChildCache = useRef<Record<string, { children: string[], version: any, sortKey: string }>>({});
 
   const visibleNodes = useMemo(() => {
     const set = expandedSet || new Set<string>();
@@ -1156,22 +1210,59 @@ export const Sidebar: React.FC<{
     const stack: { id: string; depth: number }[] = [];
 
     // Push roots in reverse order to the stack so they are popped in correct top-down order
-    for (let i = roots.length - 1; i >= 0; --i) {
-      stack.push({ id: roots[i], depth: 0 });
+    // But we need to sort roots too if there are multiple roots
+    const sortedRoots = [...roots].sort((aId, bId) => {
+      const a = files[aId];
+      const b = files[bId];
+      if (!a || !b) return 0;
+      
+      let res = 0;
+      if (folderSortMode === 'name') {
+        res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+      } else {
+        const atime = a.meta?.modified || 0;
+        const btime = b.meta?.modified || 0;
+        res = atime - btime;
+      }
+      return folderSortOrder === 'asc' ? res : -res;
+    });
+
+    for (let i = sortedRoots.length - 1; i >= 0; --i) {
+      stack.push({ id: sortedRoots[i], depth: 0 });
     }
+
+    const sortKey = `${folderSortMode}_${folderSortOrder}`;
 
     while (stack.length > 0) {
       const { id, depth } = stack.pop()!;
       const node = files[id];
       if (!node || node.type !== FileType.FOLDER) continue;
       
-      // Optimization: use cached folder-filtered children if the node structure hasn't changed.
-      // This skips the O(N) filter loop when files within the folder update metadata but the folder contents set is stable.
+      // Optimization: use cached folder-filtered and sorted children if the node structure hasn't changed.
       let folderChildrenEntry = folderChildCache.current[id];
-      if (!folderChildrenEntry || folderChildrenEntry.version !== node.children) {
+      if (!folderChildrenEntry || folderChildrenEntry.version !== node.children || folderChildrenEntry.sortKey !== sortKey) {
+        const filtered = (node.children || []).filter(childId => files[childId]?.type === FileType.FOLDER);
+        
+        filtered.sort((aId, bId) => {
+          const a = files[aId];
+          const b = files[bId];
+          if (!a || !b) return 0;
+          
+          let res = 0;
+          if (folderSortMode === 'name') {
+            res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+          } else {
+            const atime = a.meta?.modified || 0;
+            const btime = b.meta?.modified || 0;
+            res = atime - btime;
+          }
+          return folderSortOrder === 'asc' ? res : -res;
+        });
+
         folderChildrenEntry = {
           version: node.children,
-          children: (node.children || []).filter(childId => files[childId]?.type === FileType.FOLDER)
+          sortKey,
+          children: filtered
         };
         folderChildCache.current[id] = folderChildrenEntry;
       }
@@ -1187,7 +1278,7 @@ export const Sidebar: React.FC<{
       }
     }
     return out;
-  }, [roots, files, expandedSet]);
+  }, [roots, files, expandedSet, folderSortMode, folderSortOrder]);
 
   // publish sidebar visible-node counts and virtualization detection for debug/telemetry consumers
   useEffect(() => {
@@ -1258,6 +1349,9 @@ export const Sidebar: React.FC<{
              t={t}
              roots={roots}
              isHovered={isSidebarHovered}
+             sortMode={folderSortMode}
+             sortOrder={folderSortOrder}
+             onToggleSort={handleToggleFolderSort}
           />
 
           <PeopleSection 

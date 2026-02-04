@@ -282,7 +282,7 @@ export const OptimizedFolderThumbnail = memo(({
   enablePreview?: boolean
 }) => {
   // 使用useInView实现延迟加载
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
   
   // 简化的图片查找逻辑 - 使用缓存
   const imageChildren = useMemo(() => {
@@ -385,15 +385,13 @@ export const OptimizedFolderThumbnail = memo(({
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
-      {(isInView || wasInView) && (
-        <div className="relative w-full aspect-square p-2 group" style={{ maxHeight: '100%' }}>
-          <Folder3DIcon
-            previewSrcs={previewSrcs}
-            count={file.children?.length}
-            category={file.category}
-          />
-        </div>
-      )}
+      <div className="relative w-full aspect-square p-2 group" style={{ maxHeight: '100%' }}>
+        <Folder3DIcon
+          previewSrcs={previewSrcs}
+          count={file.children?.length}
+          category={file.category}
+        />
+      </div>
     </div>
   );
 });

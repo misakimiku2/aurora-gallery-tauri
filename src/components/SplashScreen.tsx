@@ -18,8 +18,8 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
           100% { transform: translateY(0px) rotate(0deg); }
         }
         @keyframes pulse-glow {
-          0%, 100% { opacity: 0.4; transform: scale(1); filter: blur(80px); }
-          50% { opacity: 0.7; transform: scale(1.1); filter: blur(100px); }
+          0%, 100% { opacity: 0.3; transform: scale(1); filter: blur(120px); }
+          50% { opacity: 0.5; transform: scale(1.2); filter: blur(160px); }
         }
         @keyframes mesh-move {
           0% { background-position: 0% 50%; }
@@ -38,14 +38,14 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
           animation: float 6s ease-in-out infinite;
         }
         .animate-pulse-glow {
-          animation: pulse-glow 5s ease-in-out infinite;
+          animation: pulse-glow 7s ease-in-out infinite;
         }
         .mesh-gradient {
-          background: radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.12), transparent 40%),
-                      radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.12), transparent 40%),
-                      radial-gradient(circle at 50% 50%, rgba(236, 72, 153, 0.04), transparent 50%);
+          background: radial-gradient(circle at 20% 30%, rgba(59, 130, 246, 0.1) 0%, rgba(59, 130, 246, 0.04) 30%, transparent 70%),
+                      radial-gradient(circle at 80% 70%, rgba(139, 92, 246, 0.1) 0%, rgba(139, 92, 246, 0.04) 30%, transparent 70%),
+                      radial-gradient(circle at 50% 50%, rgba(236, 72, 153, 0.06) 0%, rgba(236, 72, 153, 0.02) 40%, transparent 80%);
           background-size: 200% 200%;
-          animation: mesh-move 20s ease infinite;
+          animation: mesh-move 20s ease-in-out infinite;
         }
         .text-shimmer {
           background: linear-gradient(
@@ -76,7 +76,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
           background-clip: text;
         }
         .noise-overlay {
-          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+          background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
         }
         .delay-0 { animation-delay: 0s; }
         .delay-15 { animation-delay: 0.15s; }
@@ -160,7 +160,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
         </div>
         <div className="flex flex-col items-center space-y-1">
           <span className="text-[9px] font-black text-blue-500/50 dark:text-blue-400/40 tracking-widest uppercase">
-            Product of Aurora Labs
+            Product of Misakimiku
           </span>
           <span className="text-[10px] font-medium text-gray-400/60 dark:text-gray-500/60">
             v1.1.0-stable
@@ -169,7 +169,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
       </div>
 
       {/* 噪点纹理叠加 */}
-      <div className="absolute inset-0 pointer-events-none opacity-[0.02] dark:opacity-[0.04] mix-blend-overlay noise-overlay" />
+      <div className="absolute inset-0 pointer-events-none opacity-[0.03] dark:opacity-[0.05] mix-blend-overlay noise-overlay" />
     </div>
   );
 };

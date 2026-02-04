@@ -17,7 +17,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   resourceRoot?: string;
   cachePath?: string;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '100px' }); 
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' }); 
   
   const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(() => {
       if (!filePath) return null;

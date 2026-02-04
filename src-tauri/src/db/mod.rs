@@ -26,6 +26,9 @@ impl AppDbPool {
         let _ = conn.execute("PRAGMA synchronous=NORMAL", []);
         let _ = conn.execute("PRAGMA foreign_keys=ON", []);
 
+        // Initialize tables for the database
+        init_db(&conn).map_err(|e| e.to_string())?;
+
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -63,6 +66,20 @@ pub fn normalize_path(path: &str) -> String {
     if cfg!(windows) && normalized.starts_with('/') && normalized.len() > 2 && normalized.chars().nth(2) == Some(':') {
         normalized = normalized[1..].to_string();
     }
+    
+    // Strip trailing slash to ensure consistent ID generation and Path matching (except for root paths)
+    if normalized.len() > 1 && normalized.ends_with('/') {
+        let is_root = if cfg!(windows) {
+             normalized.len() == 3 && normalized.chars().nth(1) == Some(':')
+        } else {
+             normalized == "/"
+        };
+        
+        if !is_root {
+            normalized.pop();
+        }
+    }
+
     normalized
 }
 
@@ -99,10 +116,14 @@ pub fn init_db(conn: &Connection) -> Result<()> {
             description TEXT,
             source_url TEXT,
             ai_data TEXT,
+            category TEXT,
             updated_at INTEGER
         )",
         [],
     )?;
+
+    // Migration: Add category column if it doesn't exist
+    let _ = conn.execute("ALTER TABLE file_metadata ADD COLUMN category TEXT", []);
 
     // Create indexes for file_metadata
     conn.execute(

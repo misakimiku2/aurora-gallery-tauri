@@ -11,19 +11,21 @@ pub struct FileMetadata {
     pub description: Option<String>,
     pub source_url: Option<String>,
     pub ai_data: Option<serde_json::Value>,
+    pub category: Option<String>,
     pub updated_at: Option<i64>,
 }
 
 pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Result<()> {
     conn.execute(
-        "INSERT INTO file_metadata (file_id, path, tags, description, source_url, ai_data, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+        "INSERT INTO file_metadata (file_id, path, tags, description, source_url, ai_data, category, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(file_id) DO UPDATE SET
             path = excluded.path,
             tags = excluded.tags,
             description = excluded.description,
             source_url = excluded.source_url,
             ai_data = excluded.ai_data,
+            category = excluded.category,
             updated_at = excluded.updated_at",
         params![
             metadata.file_id,
@@ -32,6 +34,7 @@ pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Resul
             metadata.description,
             metadata.source_url,
             metadata.ai_data,
+            metadata.category,
             metadata.updated_at
         ],
     )?;
@@ -40,7 +43,7 @@ pub fn upsert_file_metadata(conn: &Connection, metadata: &FileMetadata) -> Resul
 
 pub fn get_metadata_by_id(conn: &Connection, file_id: &str) -> Result<Option<FileMetadata>> {
     let mut stmt = conn.prepare(
-        "SELECT file_id, path, tags, description, source_url, ai_data, updated_at FROM file_metadata WHERE file_id = ?1"
+        "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at FROM file_metadata WHERE file_id = ?1"
     )?;
     
     let mut rows = stmt.query_map(params![file_id], |row| {
@@ -51,7 +54,8 @@ pub fn get_metadata_by_id(conn: &Connection, file_id: &str) -> Result<Option<Fil
             description: row.get(3)?,
             source_url: row.get(4)?,
             ai_data: row.get(5)?,
-            updated_at: row.get(6)?,
+            category: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     })?;
 
@@ -64,7 +68,7 @@ pub fn get_metadata_by_id(conn: &Connection, file_id: &str) -> Result<Option<Fil
 
 pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
     let mut stmt = conn.prepare(
-        "SELECT file_id, path, tags, description, source_url, ai_data, updated_at FROM file_metadata"
+        "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at FROM file_metadata"
     )?;
     
     let metadata_iter = stmt.query_map([], |row| {
@@ -75,7 +79,8 @@ pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
             description: row.get(3)?,
             source_url: row.get(4)?,
             ai_data: row.get(5)?,
-            updated_at: row.get(6)?,
+            category: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     })?;
 
@@ -89,7 +94,7 @@ pub fn get_all_metadata(conn: &Connection) -> Result<Vec<FileMetadata>> {
 pub fn get_metadata_under_path(conn: &Connection, root_path: &str) -> Result<Vec<FileMetadata>> {
     let pattern = format!("{}%", root_path.replace("\\", "/"));
     let mut stmt = conn.prepare(
-        "SELECT file_id, path, tags, description, source_url, ai_data, updated_at FROM file_metadata WHERE path LIKE ?1"
+        "SELECT file_id, path, tags, description, source_url, ai_data, category, updated_at FROM file_metadata WHERE path LIKE ?1"
     )?;
     
     let metadata_iter = stmt.query_map(params![pattern], |row| {
@@ -100,7 +105,8 @@ pub fn get_metadata_under_path(conn: &Connection, root_path: &str) -> Result<Vec
             description: row.get(3)?,
             source_url: row.get(4)?,
             ai_data: row.get(5)?,
-            updated_at: row.get(6)?,
+            category: row.get(6)?,
+            updated_at: row.get(7)?,
         })
     })?;
 
