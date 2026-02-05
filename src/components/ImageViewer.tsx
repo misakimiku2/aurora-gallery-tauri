@@ -366,6 +366,24 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const displayPathRef = useRef<string>(file.path || '');
   // 追踪正在加载的文件路径
   const loadingPathRef = useRef<string>('');
+  
+  // 幻灯片模式专用：前一张图片的 URL（用于过渡效果）
+  const [prevDisplayUrl, setPrevDisplayUrl] = useState<string>('');
+  // 幻灯片过渡状态：是否正在过渡中
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  // 幻灯片过渡专用：存储前一张图片的最后变换状态，实现“暂停”效果
+  const [prevTransform, setPrevTransform] = useState<string>('none');
+  // 过渡计时器
+  const transitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 使用 ref 存储最新的状态值，避免 useEffect 闭包问题
+  const slideshowActiveRef = useRef(slideshowActive);
+  const slideshowTransitionRef = useRef(slideshowConfig.transition);
+  const displayUrlRef = useRef(displayUrl);
+  
+  // 保持 ref 与 state 同步
+  useEffect(() => { slideshowActiveRef.current = slideshowActive; }, [slideshowActive]);
+  useEffect(() => { slideshowTransitionRef.current = slideshowConfig.transition; }, [slideshowConfig.transition]);
+  useEffect(() => { displayUrlRef.current = displayUrl; }, [displayUrl]);
 
   // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
@@ -381,6 +399,35 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const cachedUrl = getBlobCacheSync(path);
     
     if (cachedUrl) {
+      // 幻灯片模式下，保存当前图片作为过渡的起始图
+      const shouldTransition = slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none';
+      
+      if (shouldTransition) {
+        // 捕获当前图片的最后变换状态，用于实现幻灯片切换时的“暂停效果”
+        // 仅在淡入淡出模式且开启了缩放时生效
+        if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
+          const currentImg = imgRef.current;
+          if (currentImg) {
+            const computedStyle = window.getComputedStyle(currentImg);
+            setPrevTransform(computedStyle.transform);
+          }
+        } else {
+          setPrevTransform('none');
+        }
+
+        setPrevDisplayUrl(displayUrlRef.current);
+        setIsTransitioning(true);
+        // 清除之前的计时器
+        if (transitionTimerRef.current) {
+          clearTimeout(transitionTimerRef.current);
+        }
+        // 过渡完成后清除状态
+        transitionTimerRef.current = setTimeout(() => {
+          setIsTransitioning(false);
+          setPrevDisplayUrl('');
+        }, 600); // 与 CSS 过渡时长一致
+      }
+      
       // 缓存命中：立即切换，无需等待
       setDisplayUrl(cachedUrl);
       displayPathRef.current = path;
@@ -392,6 +439,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       loadToCache(path).then(url => {
         // 只有当这仍然是我们想要的图片时才更新
         if (loadingPathRef.current === path) {
+          // 幻灯片模式下的过渡处理
+          if (slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none') {
+            // 捕获当前图片的最后变换状态
+            if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
+              const currentImg = imgRef.current;
+              if (currentImg) {
+                const computedStyle = window.getComputedStyle(currentImg);
+                setPrevTransform(computedStyle.transform);
+              }
+            } else {
+              setPrevTransform('none');
+            }
+
+            setPrevDisplayUrl(displayUrlRef.current);
+            setIsTransitioning(true);
+            if (transitionTimerRef.current) {
+              clearTimeout(transitionTimerRef.current);
+            }
+            transitionTimerRef.current = setTimeout(() => {
+              setIsTransitioning(false);
+              setPrevDisplayUrl('');
+            }, 600);
+          }
+          
           setDisplayUrl(url);
           displayPathRef.current = path;
           loadingPathRef.current = '';
@@ -399,6 +470,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       });
     }
   }, [file.path]);
+  
+  // 清理过渡计时器
+  useEffect(() => {
+    return () => {
+      if (transitionTimerRef.current) {
+        clearTimeout(transitionTimerRef.current);
+      }
+    };
+  }, []);
 
 
   // --- Calculate Preload Nodes ---
@@ -819,10 +899,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
     };
 
-    // Keep a ref for latest slideshowActive so fullscreenchange handler can act reliably
-    const slideshowActiveRef = useRef(slideshowActive);
-    useEffect(() => { slideshowActiveRef.current = slideshowActive; }, [slideshowActive]);
-
     // If user exits fullscreen (usually via Esc), stop the slideshow immediately
     useEffect(() => {
       const onFullscreenChange = () => {
@@ -1047,14 +1123,50 @@ export const ImageViewer: React.FC<ViewerProps> = ({
            </div>
         )}
 
-        {/* 单图层渲染 - 简洁高效 */}
-        <div className="w-full h-full flex items-center justify-center pointer-events-none">
+        {/* 单图层渲染 - 简洁高效（普通模式） */}
+        {/* 幻灯片模式下使用双图层实现过渡效果 */}
+        <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
+           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
+           {slideshowActive && prevDisplayUrl && (
+             <img 
+               key={`prev-${prevDisplayUrl}`}
+               src={prevDisplayUrl} 
+               alt=""
+               className={`max-w-none absolute inset-0 m-auto ${
+                 slideshowConfig.transition === 'fade' 
+                   ? 'animate-slideshow-fade-out' 
+                   : slideshowConfig.transition === 'slide'
+                     ? 'animate-slideshow-slide-out'
+                     : ''
+               }`}
+               loading="eager"
+               decoding="sync"
+               style={{
+                 width: '100%',
+                 height: '100%',
+                 objectFit: 'contain',
+                 pointerEvents: 'none',
+                 zIndex: 1,
+                 transform: slideshowConfig.transition === 'fade' ? prevTransform : undefined,
+               }}
+               draggable={false}
+             />
+           )}
+           
+           {/* 当前图片 */}
            <img 
              ref={imgRef}
+             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
              src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
              alt={file.name}
              className={`max-w-none absolute inset-0 m-auto ${
-               slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''
+               slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
+             } ${
+               slideshowActive && isTransitioning && slideshowConfig.transition === 'fade' 
+                 ? 'animate-slideshow-fade-in' 
+                 : slideshowActive && isTransitioning && slideshowConfig.transition === 'slide'
+                   ? 'animate-slideshow-slide-in'
+                   : ''
              }`}
              loading="eager"
              decoding="sync"
@@ -1062,10 +1174,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                width: '100%',
                height: '100%',
                objectFit: 'contain',
-               transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : 'transform 0.1s linear',
+               // 普通模式或幻灯片无过渡时的 transform
+               ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
+                 transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                 transition: isDragging ? 'none' : 'transform 0.1s linear',
+               } : {}),
                pointerEvents: slideshowActive ? 'none' : 'auto',
                transformOrigin: 'center center',
+               zIndex: 2,
                ...filterStyle
              }}
              draggable={false}

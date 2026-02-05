@@ -31,6 +31,11 @@ export default {
         'toast-up': 'toastUp 0.3s ease-out forwards',
         'countdown': 'countdown 5s linear forwards',
         'ken-burns': 'kenBurns 20s ease-out infinite alternate',
+        // 幻灯片过渡动画 - 使用 both 确保动画开始前就应用初始状态
+        'slideshow-fade-in': 'slideshowFadeIn 0.6s ease-in-out both',
+        'slideshow-fade-out': 'slideshowFadeOut 0.6s ease-in-out both',
+        'slideshow-slide-in': 'slideshowSlideIn 0.6s ease-in-out both',
+        'slideshow-slide-out': 'slideshowSlideOut 0.6s ease-in-out both',
       },
       keyframes: {
         zoomIn: {
@@ -64,7 +69,25 @@ export default {
         kenBurns: {
           '0%': { transform: 'scale(1)' },
           '100%': { transform: 'scale(1.15)' },
-        }
+        },
+        // 幻灯片淡入淡出
+        slideshowFadeIn: {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+        slideshowFadeOut: {
+          '0%': { opacity: '1' },
+          '100%': { opacity: '0' },
+        },
+        // 幻灯片滑动
+        slideshowSlideIn: {
+          '0%': { opacity: '0', transform: 'translateX(100%)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
+        slideshowSlideOut: {
+          '0%': { opacity: '1', transform: 'translateX(0)' },
+          '100%': { opacity: '0', transform: 'translateX(-100%)' },
+        },
       }
     }
   },
