@@ -121,6 +121,39 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
   const hueRef = useRef<HTMLDivElement>(null);
   const [isDraggingSV, setIsDraggingSV] = useState(false);
   const [isDraggingHue, setIsDraggingHue] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // Prevent background scrolling when mouse is over the picker
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const step = 5;
+      const direction = e.deltaY > 0 ? 1 : -1;
+      
+      setHsv(prev => {
+        let nextH = prev.h + direction * step;
+        if (nextH < 0) nextH += 360;
+        if (nextH >= 360) nextH -= 360;
+        
+        const updatedHsv = { ...prev, h: nextH };
+        const rgb = hsvToRgb(updatedHsv);
+        const newHex = rgbToHex(rgb);
+        
+        setHex(newHex);
+        onChange(newHex);
+        
+        return updatedHsv;
+      });
+    };
+
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => el.removeEventListener('wheel', handleWheel);
+  }, [onChange]);
 
   const updateSV = useCallback((clientX: number, clientY: number) => {
     if (!svRef.current) return;
@@ -178,7 +211,10 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
   const hueColor = `hsl(${hsv.h}, 100%, 50%)`;
 
   return (
-    <div className={`p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-800 w-64 select-none ${className}`}>
+    <div 
+      ref={containerRef}
+      className={`p-3 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-800 w-64 select-none ${className}`}
+    >
       {/* Saturation/Value Area */}
       <div 
         ref={svRef}

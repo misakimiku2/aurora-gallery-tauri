@@ -532,6 +532,20 @@ export const TopBar: React.FC<TopBarProps> = ({
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
+  const colorPickerContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isColorPickerOpen) return;
+    
+    const handleClickOutside = (event: MouseEvent) => {
+      if (colorPickerContainerRef.current && !colorPickerContainerRef.current.contains(event.target as Node)) {
+        setIsColorPickerOpen(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isColorPickerOpen]);
 
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const currentSearchColor = useMemo(() => isColorSearchQuery ? toolbarQuery.replace('color:', '') : '', [isColorSearchQuery, toolbarQuery]);
@@ -665,7 +679,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             </div>
           )}
 
-          <div className="relative">
+          <div className="relative" ref={colorPickerContainerRef}>
              {isColorSearching ? (
                 <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
              ) : (
@@ -679,20 +693,14 @@ export const TopBar: React.FC<TopBarProps> = ({
              )}
              
              {isColorPickerOpen && (
-                 <>
-                   <div 
-                     className="fixed inset-0 z-40" 
-                     onClick={() => setIsColorPickerOpen(false)}
-                   />
-                   <div className="absolute top-full left-0 mt-2 z-50">
-                       <ColorPickerPopover 
-                          onChange={handleColorSelect}
-                          onClose={() => setIsColorPickerOpen(false)}
-                          initialColor={pickerInitialColor}
-                         t={t}
-                       />
-                   </div>
-                 </>
+                <div className="absolute top-full left-0 mt-2 z-50">
+                    <ColorPickerPopover 
+                       onChange={handleColorSelect}
+                       onClose={() => setIsColorPickerOpen(false)}
+                       initialColor={pickerInitialColor}
+                      t={t}
+                    />
+                </div>
              )}
           </div>
           
