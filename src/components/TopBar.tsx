@@ -547,6 +547,27 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isColorPickerOpen]);
 
+  // Handle mouse side buttons (back/forward)
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      // 3: Back button, 4: Forward button
+      if (e.button === 3) {
+        if (activeTab.history.currentIndex > 0) {
+          e.preventDefault();
+          onGoBack();
+        }
+      } else if (e.button === 4) {
+        if (activeTab.history.currentIndex < activeTab.history.stack.length - 1) {
+          e.preventDefault();
+          onGoForward();
+        }
+      }
+    };
+
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => window.removeEventListener('mouseup', handleMouseUp);
+  }, [onGoBack, onGoForward, activeTab.history.currentIndex, activeTab.history.stack.length]);
+
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const currentSearchColor = useMemo(() => isColorSearchQuery ? toolbarQuery.replace('color:', '') : '', [isColorSearchQuery, toolbarQuery]);
 

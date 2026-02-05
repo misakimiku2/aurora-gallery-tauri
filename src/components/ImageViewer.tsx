@@ -1,11 +1,13 @@
 ﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { FileNode, SlideshowConfig, SearchScope } from '../types';
+import { debounce } from '../utils/debounce';
+import { ColorPickerPopover } from './ColorPickerPopover';
 import { 
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight, 
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight, 
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
-  Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen
+  Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette
 } from 'lucide-react';
 
 
@@ -353,6 +355,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const lastFileIdRef = useRef(file.id);
+
+  // Color Picker State
+  const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
+  const [isColorSearching, setIsColorSearching] = useState(false);
+  const colorPickerContainerRef = useRef<HTMLDivElement>(null);
   
   // 简化的单图层机制：当前显示的 URL + 正在加载的路径
   const [displayUrl, setDisplayUrl] = useState<string>(() => {
@@ -593,6 +600,46 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       lastFileIdRef.current = file.id;
     }
   }, [file.id]);
+
+  useEffect(() => {
+    if (!isColorPickerOpen) return;
+    
+    const handleClickOutside = (event: MouseEvent) => {
+      if (colorPickerContainerRef.current && !colorPickerContainerRef.current.contains(event.target as Node)) {
+        setIsColorPickerOpen(false);
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isColorPickerOpen]);
+
+  const isColorSearchQuery = useMemo(() => localQuery.startsWith('color:'), [localQuery]);
+  const currentSearchColor = useMemo(() => isColorSearchQuery ? localQuery.replace('color:', '') : '', [isColorSearchQuery, localQuery]);
+
+  const pickerInitialColor = useMemo(() => {
+    if (currentSearchColor) return currentSearchColor;
+    return '#3b82f6'; // 默认蓝色
+  }, [currentSearchColor]);
+
+  // Debounce color search to prevent event flooding
+  const debouncedColorSearch = useMemo(() => 
+    debounce(async (color: string) => {
+       setIsColorSearching(true);
+       try {
+         onSearch(`color:${color}`);
+       } catch (e) {
+         console.error(e);
+       } finally {
+         setIsColorSearching(false);
+       }
+    }, 300)
+  , [onSearch]);
+
+  const handleColorSelect = (color: string) => {
+    setLocalQuery(`color:${color}`);
+    debouncedColorSearch(color);
+  };
 
   useEffect(() => {
     const container = containerRef.current;
@@ -976,7 +1023,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     <div 
       ref={rootRef}
       className={`flex-1 flex flex-col h-full relative select-none overflow-hidden transition-colors duration-300 ${slideshowActive ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
-      onClick={() => setContextMenu({ ...contextMenu, visible: false })}
+      onClick={(e) => {
+        setContextMenu({ ...contextMenu, visible: false });
+        setIsColorPickerOpen(false);
+      }}
     >
       {/* Preloading handled in useEffect now */}
 
@@ -1011,8 +1061,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           {showSearch ? (
-            <div className="relative w-full max-w-[672px] animate-fade-in">
-              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border overflow-hidden ${localQuery ? 'border-blue-500 shadow-sm' : 'border-transparent'}`}>
+            <div className="relative w-full max-w-[672px] animate-fade-in" onClick={(e) => e.stopPropagation()}>
+              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
+                isColorSearchQuery
+                  ? 'border-blue-500 shadow-sm'
+                  : isAISearchEnabled 
+                    ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
+                    : localQuery 
+                      ? 'border-blue-500 shadow-sm' 
+                      : 'border-transparent'
+              }`}>
                  <div className="relative flex-shrink-0">
                    <button 
                      ref={scopeBtnRef}
@@ -1024,7 +1082,50 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                      <ChevronDown size={12} className="ml-1 opacity-70"/>
                    </button>
                  </div>
-                <Search size={16} className="mr-2 flex-shrink-0 text-gray-400" />
+                <div className="relative flex items-center" ref={colorPickerContainerRef}>
+                   {isColorSearching ? (
+                      <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
+                   ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          e.preventDefault(); // 添加 preventDefault 以防万一
+                          setIsColorPickerOpen(!isColorPickerOpen);
+                        }}
+                        className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center relative z-[110]`}
+                        title="Search by color"
+                        >
+                        <Palette size={16} />
+                      </button>
+                   )}
+                   
+                   {isColorPickerOpen && (
+                      <div 
+                        className="fixed z-[9999]" 
+                        style={{ 
+                          top: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().bottom + 8 : 'auto',
+                          left: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().left : 'auto'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                          <ColorPickerPopover 
+                             onChange={handleColorSelect}
+                             onClose={() => setIsColorPickerOpen(false)}
+                             initialColor={pickerInitialColor}
+                            t={t}
+                          />
+                      </div>
+                   )}
+                </div>
+
+                {isColorSearchQuery && (
+                  <div 
+                      className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
+                      style={{ backgroundColor: currentSearchColor }}
+                  />
+                )}
+
                 <input
                   id="viewer-search-input"
                   name="viewer-search-input"
