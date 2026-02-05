@@ -359,6 +359,16 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                 }
 
                 // 恢复图片尺寸信息
+                if let (Some(w), Some(h)) = (entry.width, entry.height) {
+                    node.meta = Some(ImageMeta {
+                        width: w,
+                        height: h,
+                        size_kb: (entry.size / 1024) as u32,
+                        created: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                        modified: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                        format: entry.format.clone().unwrap_or_else(|| "unknown".to_string()),
+                    });
+                }
 
                 path_to_id.insert(f_path.clone(), entry.file_id.clone());
                 all_files.insert(entry.file_id.clone(), node);

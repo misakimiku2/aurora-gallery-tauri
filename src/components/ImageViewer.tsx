@@ -72,6 +72,99 @@ export const preloadToCache = (path: string): void => {
     }
 };
 
+// ============ 全局调色板缓存 ============
+// 用于预加载和快速获取图片主色调
+const paletteCache = new Map<string, string[]>();
+const paletteLoadingPromises = new Map<string, Promise<string[]>>();
+const MAX_PALETTE_CACHE_SIZE = 200;
+
+// 调色板缓存更新事件名
+export const PALETTE_CACHE_UPDATE_EVENT = 'aurora-palette-cache-update';
+
+// 同步获取调色板缓存
+export const getPaletteCacheSync = (path: string): string[] | null => {
+    if (paletteCache.has(path)) {
+        const palette = paletteCache.get(path)!;
+        // LRU: 移动到最后
+        paletteCache.delete(path);
+        paletteCache.set(path, palette);
+        return palette;
+    }
+    return null;
+};
+
+// 检查调色板缓存是否存在
+export const hasPaletteCache = (path: string): boolean => {
+    return paletteCache.has(path);
+};
+
+// 加载调色板到缓存
+const loadPaletteToCache = async (path: string, existingPalette?: string[]): Promise<string[]> => {
+    // 如果已在缓存中，直接返回
+    const cached = getPaletteCacheSync(path);
+    if (cached) return cached;
+
+    // 如果已经在加载中，等待现有的 Promise
+    if (paletteLoadingPromises.has(path)) {
+        return paletteLoadingPromises.get(path)!;
+    }
+    
+    // 如果已有有效的调色板数据，直接缓存
+    if (existingPalette && existingPalette.length > 0 && !existingPalette.every(c => c === '#000000')) {
+        // 检查是否是有效调色板（非全黑、非重复）
+        const isValidPalette = existingPalette.length >= 2;
+        if (isValidPalette) {
+            // 缓存管理
+            if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
+                const firstKey = paletteCache.keys().next().value;
+                if (firstKey) paletteCache.delete(firstKey);
+            }
+            paletteCache.set(path, existingPalette);
+            // 触发事件通知其他组件
+            window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: existingPalette } }));
+            return existingPalette;
+        }
+    }
+
+    // 创建新的加载 Promise
+    const loadPromise = (async () => {
+        try {
+            const { getDominantColors } = await import('../api/tauri-bridge');
+            const colors = await getDominantColors(path, 8);
+            
+            if (colors && colors.length > 0) {
+                const hexColors = colors.map(c => c.hex);
+                
+                // 缓存管理
+                if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
+                    const firstKey = paletteCache.keys().next().value;
+                    if (firstKey) paletteCache.delete(firstKey);
+                }
+                paletteCache.set(path, hexColors);
+                // 触发事件通知其他组件
+                window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: hexColors } }));
+                return hexColors;
+            }
+            return [];
+        } catch (e) {
+            console.error("Failed to load palette to cache", path, e);
+            return [];
+        } finally {
+            paletteLoadingPromises.delete(path);
+        }
+    })();
+    
+    paletteLoadingPromises.set(path, loadPromise);
+    return loadPromise;
+};
+
+// 预加载调色板到缓存（静默，不返回结果）
+export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
+    if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
+        loadPaletteToCache(path, existingPalette).catch(() => {});
+    }
+};
+
 interface ViewerProps {
   file: FileNode;
   prevFile?: FileNode; // Optional now, mostly legacy or direct neighbor specific
@@ -259,120 +352,53 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [scopeMenuPos, setScopeMenuPos] = useState({ top: 0, left: 0 });
   
   const [localQuery, setLocalQuery] = useState(searchQuery);
-  const [animationClass, setAnimationClass] = useState('animate-zoom-in');
   const lastFileIdRef = useRef(file.id);
   
-  // 真正的双缓冲机制：两个图层交替显�?
-  // activeLayer: 0 �?1，表示当前显示的是哪个图�?
-  const [activeLayer, setActiveLayer] = useState<0 | 1>(0);
-  // 增加 Layer ID 状态，用于记录图层当前加载的是哪个文件路径，防止旧内容闪烁
-  const [layer0Id, setLayer0Id] = useState<string>(file.path || '');
-  const [layer1Id, setLayer1Id] = useState<string>('');
-  
-  const [layer0Url, setLayer0Url] = useState<string>(() => {
+  // 简化的单图层机制：当前显示的 URL + 正在加载的路径
+  const [displayUrl, setDisplayUrl] = useState<string>(() => {
     if (file.path) {
       const cached = getBlobCacheSync(file.path);
       if (cached) return cached;
     }
     return '';
   });
-  const [layer1Url, setLayer1Url] = useState<string>('');
-  const [layer0Ready, setLayer0Ready] = useState(!!layer0Url);
-  const [layer1Ready, setLayer1Ready] = useState(false);
-  
-  // 用于追踪当前正在加载的文件路�?
-  const currentLoadingPath = useRef<string>('');
-  // 追踪当前目标图层
-  const targetLayerRef = useRef<0 | 1>(0);
-  // 追踪每个图层期望�?URL，用于验�?onLoad 是否是我们期望的图片
-  const expectedLayer0Url = useRef<string>(layer0Url);
-  const expectedLayer1Url = useRef<string>('');
+  // 追踪当前显示的文件路径（用于验证）
+  const displayPathRef = useRef<string>(file.path || '');
+  // 追踪正在加载的文件路径
+  const loadingPathRef = useRef<string>('');
 
-  // Load image using Blob Cache - 真正的双缓冲
+  // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
     if (!file.path) {
-      setLayer0Url('');
-      setLayer1Url('');
+      setDisplayUrl('');
+      displayPathRef.current = '';
       return;
     }
     
     const path = file.path;
-    currentLoadingPath.current = path;
-    
-    // 确定目标图层（与当前显示的图层相反）
-    const targetLayer = activeLayer === 0 ? 1 : 0;
-    targetLayerRef.current = targetLayer;
     
     // 尝试同步获取缓存
     const cachedUrl = getBlobCacheSync(path);
     
     if (cachedUrl) {
-      // 缓存命中：设置到目标图层，并重置 ready 状�?
-      if (targetLayer === 0) {
-        expectedLayer0Url.current = cachedUrl;
-        setLayer0Ready(false); // 重置 ready，等待新图片�?onLoad
-        setLayer0Url(cachedUrl);
-        setLayer0Id(path); // 标记此图层的内容归属
-      } else {
-        expectedLayer1Url.current = cachedUrl;
-        setLayer1Ready(false); // 重置 ready，等待新图片�?onLoad
-        setLayer1Url(cachedUrl);
-        setLayer1Id(path); // 标记此图层的内容归属
-      }
+      // 缓存命中：立即切换，无需等待
+      setDisplayUrl(cachedUrl);
+      displayPathRef.current = path;
+      loadingPathRef.current = '';
     } else {
-      // 缓存未命中：先重置目标图层的 ready 状�?
-      if (targetLayer === 0) {
-        setLayer0Ready(false);
-      } else {
-        setLayer1Ready(false);
-      }
+      // 缓存未命中：保留当前图片，异步加载新图
+      loadingPathRef.current = path;
       
-      // 异步加载到目标图�?
       loadToCache(path).then(url => {
-        if (currentLoadingPath.current === path) {
-          if (targetLayerRef.current === 0) {
-            expectedLayer0Url.current = url;
-            setLayer0Url(url);
-            setLayer0Id(path); // 标记此图层的内容归属
-          } else {
-            expectedLayer1Url.current = url;
-            setLayer1Url(url);
-            setLayer1Id(path); // 标记此图层的内容归属
-          }
+        // 只有当这仍然是我们想要的图片时才更新
+        if (loadingPathRef.current === path) {
+          setDisplayUrl(url);
+          displayPathRef.current = path;
+          loadingPathRef.current = '';
         }
       });
     }
   }, [file.path]);
-  
-  // 处理图层 0 �?onLoad - 验证是期望的图片才设�?ready
-  const handleLayer0Load = useCallback(() => {
-    // 只有当加载的是我们期望的 URL 时才设置 ready
-    if (layer0Url === expectedLayer0Url.current) {
-      setLayer0Ready(true);
-    }
-  }, [layer0Url]);
-  
-  // 处理图层 1 �?onLoad
-  const handleLayer1Load = useCallback(() => {
-    if (layer1Url === expectedLayer1Url.current) {
-      setLayer1Ready(true);
-    }
-  }, [layer1Url]);
-  
-  // 当目标图层准备好后，切换显示
-  useEffect(() => {
-    const targetLayer = targetLayerRef.current;
-    
-    // 只有当图�?URL、图层内�?ID 都匹配当前文件时，才允许切换
-    if (targetLayer === 0 && layer0Ready && layer0Url && layer0Id === file.path && currentLoadingPath.current === file.path) {
-      setActiveLayer(0);
-    } else if (targetLayer === 1 && layer1Ready && layer1Url && layer1Id === file.path && currentLoadingPath.current === file.path) {
-      setActiveLayer(1);
-    }
-  }, [layer0Ready, layer1Ready, layer0Url, layer1Url, layer0Id, layer1Id, file.path]);
-  
-  // 便捷变量：当前显示的 URL
-  const displayUrl = activeLayer === 0 ? layer0Url : layer1Url;
 
 
   // --- Calculate Preload Nodes ---
@@ -397,25 +423,28 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       return nodes.filter(node => node && node.path && node.id !== file.id);
   }, [file.id, sortedFileIds, files]);
 
-  // Preload neighbors into Blob Cache - 使用优化后的静默预加�?
+  // Preload neighbors into Blob Cache - 使用优化后的静默预加载
   useEffect(() => {
-     // 优先预加载前后各3张（最可能被访问的�?
+     // 优先预加载前后各3张（最可能被访问的）
      const priorityCount = 3;
      const priorityNodes = preloadImages.slice(0, priorityCount * 2);
      const restNodes = preloadImages.slice(priorityCount * 2);
      
-     // 立即预加载优先级高的图片
+     // 立即预加载优先级高的图片和调色板
      priorityNodes.forEach(node => {
         if (node.path) {
            preloadToCache(node.path);
+           // 同时预加载调色板（使用文件已有的 palette 数据，如果有的话）
+           preloadPaletteToCache(node.path, node.meta?.palette);
         }
      });
      
-     // 延迟预加载其余图片，避免阻塞
+     // 延迟预加载其余图片和调色板，避免阻塞
      const timeoutId = setTimeout(() => {
          restNodes.forEach(node => {
             if (node.path) {
                preloadToCache(node.path);
+               preloadPaletteToCache(node.path, node.meta?.palette);
             }
          });
      }, 100);
@@ -477,20 +506,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => {
     if (lastFileIdRef.current !== file.id) {
-      if (!slideshowActive) {
-         setAnimationClass('animate-zoom-in');
-      } else {
-         // 幻灯片模式下过渡由图层自身的 transition/animation 处理，此处清空容器动画防止冲突
-         setAnimationClass('');
-      }
-
+      // 重置视图状态（缩放、旋转、位置）
       setRotation(0);
       setPosition({ x: 0, y: 0 });
       setScale(1); 
-      // Removed setIsLoaded(false) to prevent flickering (keep old image until new one loads)
       lastFileIdRef.current = file.id;
     }
-  }, [file.id, slideshowActive, slideshowConfig]);
+  }, [file.id]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -676,12 +698,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery]); 
 
   const handleNext = () => {
-    setAnimationClass('animate-slide-left');
     onNext();
   };
 
   const handlePrev = () => {
-    setAnimationClass('animate-slide-right');
     onPrev();
   };
 
@@ -1021,26 +1041,21 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         style={slideshowActive ? { cursor: 'none' } : {}}
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
-        {!layer0Url && !layer1Url && (
+        {!displayUrl && (
            <div className="absolute inset-0 flex items-center justify-center z-0">
                <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
            </div>
         )}
 
-        <div className={`w-full h-full flex items-center justify-center pointer-events-none ${animationClass}`}>
-           {/* 图层 0 - 始终存在 */}
+        {/* 单图层渲染 - 简洁高效 */}
+        <div className="w-full h-full flex items-center justify-center pointer-events-none">
            <img 
-             ref={activeLayer === 0 ? imgRef : undefined}
-             src={layer0Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
-             alt={activeLayer === 0 ? file.name : ''}
+             ref={imgRef}
+             src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
+             alt={file.name}
              className={`max-w-none absolute inset-0 m-auto ${
-               slideshowActive 
-                 ? (activeLayer === 0 
-                    ? (slideshowConfig.transition === 'slide' ? 'animate-slide-left' : (slideshowConfig.enableZoom ? 'animate-ken-burns' : ''))
-                    : '')
-                 : ''
+               slideshowActive && slideshowConfig.enableZoom ? 'animate-ken-burns' : ''
              }`}
-             onLoad={handleLayer0Load}
              loading="eager"
              decoding="sync"
              style={{
@@ -1048,47 +1063,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                height: '100%',
                objectFit: 'contain',
                transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : 
-                 (slideshowActive 
-                    ? (slideshowConfig.transition !== 'none' ? 'opacity 0.6s ease-in-out' : 'none')
-                    : 'transform 0.1s linear'),
-               pointerEvents: slideshowActive ? 'none' : (activeLayer === 0 ? 'auto' : 'none'),
+               transition: isDragging ? 'none' : 'transform 0.1s linear',
+               pointerEvents: slideshowActive ? 'none' : 'auto',
                transformOrigin: 'center center',
-               opacity: activeLayer === 0 && layer0Url ? 1 : 0,
-               zIndex: activeLayer === 0 ? 2 : 1,
-               ...filterStyle
-             }}
-             draggable={false}
-           />
-           
-           {/* 图层 1 - 始终存在 */}
-           <img 
-             ref={activeLayer === 1 ? imgRef : undefined}
-             src={layer1Url || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
-             alt={activeLayer === 1 ? file.name : ''}
-             className={`max-w-none absolute inset-0 m-auto ${
-               slideshowActive 
-                 ? (activeLayer === 1 
-                    ? (slideshowConfig.transition === 'slide' ? 'animate-slide-left' : (slideshowConfig.enableZoom ? 'animate-ken-burns' : ''))
-                    : '')
-                 : ''
-             }`}
-             onLoad={handleLayer1Load}
-             loading="eager"
-             decoding="sync"
-             style={{
-               width: '100%',
-               height: '100%',
-               objectFit: 'contain',
-               transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-               transition: isDragging ? 'none' : 
-                 (slideshowActive 
-                    ? (slideshowConfig.transition !== 'none' ? 'opacity 0.6s ease-in-out' : 'none')
-                    : 'transform 0.1s linear'),
-               pointerEvents: slideshowActive ? 'none' : (activeLayer === 1 ? 'auto' : 'none'),
-               transformOrigin: 'center center',
-               opacity: activeLayer === 1 && layer1Url ? 1 : 0,
-               zIndex: activeLayer === 1 ? 2 : 1,
                ...filterStyle
              }}
              draggable={false}

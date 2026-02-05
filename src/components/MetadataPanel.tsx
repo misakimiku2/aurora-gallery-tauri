@@ -42,8 +42,8 @@ import { FileNode, FileType, Person, TabState, Topic } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
-// 导入 ImageViewer 的高分辨率缓�?
-import { getBlobCacheSync, preloadToCache } from './ImageViewer';
+// 导入 ImageViewer 的高分辨率缓存和调色板缓存
+import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
 
 interface MetadataProps {
   files: Record<string, FileNode>;
@@ -595,21 +595,57 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }
   }, [personDesc]);
 
-  const colors = useMemo(() => {
-    if (!file) return [];
+  // 使用状态来存储颜色，以便能响应缓存更新
+  const [colors, setColors] = useState<string[]>([]);
+  
+  // 当文件变化时，检查缓存和文件数据来获取调色板
+  useEffect(() => {
+    if (!file) {
+      setColors([]);
+      return;
+    }
     
-    // Prioritize locally extracted palette because it now has smart filtering
+    // 优先从预加载缓存获取（图片查看器预加载的调色板）
+    if (file.path) {
+      const cachedPalette = getPaletteCacheSync(file.path);
+      if (cachedPalette && cachedPalette.length > 0) {
+        setColors(cachedPalette);
+        return;
+      }
+    }
+    
+    // 使用文件已有的 palette 数据
     if (file.meta?.palette && file.meta.palette.length > 0) {
-        return file.meta.palette;
+      setColors(file.meta.palette);
+      return;
     }
     
-    // Fallback to AI data if local palette is missing
+    // Fallback to AI data
     if (file.aiData?.dominantColors && file.aiData.dominantColors.length > 0) {
-        return file.aiData.dominantColors;
+      setColors(file.aiData.dominantColors);
+      return;
     }
     
-    return [];
-  }, [file?.meta?.palette, file?.aiData?.dominantColors, file]);
+    // 如果都没有，设置空数组（触发后续的提取逻辑）
+    setColors([]);
+  }, [file?.id, file?.path, file?.meta?.palette, file?.aiData?.dominantColors]);
+  
+  // 监听调色板缓存更新事件
+  useEffect(() => {
+    if (!file?.path) return;
+    
+    const handlePaletteCacheUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ path: string; palette: string[] }>;
+      if (customEvent.detail.path === file.path && customEvent.detail.palette.length > 0) {
+        setColors(customEvent.detail.palette);
+      }
+    };
+    
+    window.addEventListener(PALETTE_CACHE_UPDATE_EVENT, handlePaletteCacheUpdate);
+    return () => {
+      window.removeEventListener(PALETTE_CACHE_UPDATE_EVENT, handlePaletteCacheUpdate);
+    };
+  }, [file?.path]);
 
   const folderDetails = useMemo(() => {
     if (file && file.type === FileType.FOLDER) {

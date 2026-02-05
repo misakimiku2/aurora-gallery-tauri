@@ -224,24 +224,35 @@ const FileCard = React.memo(({
           // 图片占位??
           thumbElement.innerHTML = `<div style="font-size: 32px;">????/div>`;
         } else if (draggedFile.type === FileType.FOLDER) {
-          // 锟侥硷拷锟斤拷占位锟斤拷锟斤拷使锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷Folder3DIcon一锟铰碉拷锟斤拷锟?
+          const folderColor = draggedFile.category === 'book' ? '#f59e0b' : 
+                             draggedFile.category === 'sequence' ? '#a855f7' : 
+                             '#3b82f6';
+          const folderFrontColor = draggedFile.category === 'book' ? '#d97706' : 
+                                  draggedFile.category === 'sequence' ? '#9333ea' : 
+                                  '#2563eb';
+          const innerIconPath = draggedFile.category === 'book' 
+            ? 'M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20' 
+            : (draggedFile.category === 'sequence' 
+               ? 'M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-2' 
+               : 'M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z');
+          
           thumbElement.innerHTML = `
             <div style="width: 100%; height: 100%; position: relative;">
               <!-- Back Plate -->
-              <svg viewBox="0 0 100 100" style="position: absolute; width: 100%; height: 100%; fill: #3b82f6; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));" preserveAspectRatio="none">
+              <svg viewBox="0 0 100 100" style="position: absolute; width: 100%; height: 100%; fill: ${folderColor}; filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));" preserveAspectRatio="none">
                 <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" />
               </svg>
               
               <!-- Front Plate -->
               <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60%; transform: perspective(800px) rotateX(-10deg);">
-                <svg viewBox="0 0 100 65" style="width: 100%; height: 100%; fill: #2563eb; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));" preserveAspectRatio="none">
+                <svg viewBox="0 0 100 65" style="width: 100%; height: 100%; fill: ${folderFrontColor}; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.15));" preserveAspectRatio="none">
                   <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" />
                 </svg>
                 
                 <!-- Folder Icon -->
                 <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; opacity: 0.5; mix-blend-mode: overlay;">
                   <svg viewBox="0 0 24 24" style="width: 32px; height: 32px; fill: white; stroke: white; stroke-width: 1.5;" preserveAspectRatio="xMidYMid meet">
-                    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+                    <path d="${innerIconPath}" />
                   </svg>
                 </div>
               </div>
@@ -517,7 +528,7 @@ const FileCard = React.memo(({
                 {file.name}
             </div>
             )}
-            {file.type === FileType.IMAGE && layoutMode !== 'masonry' && (
+            {file.type === FileType.IMAGE && (
             <div className="text-[9px] text-gray-400 truncate">
               {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
             </div>
