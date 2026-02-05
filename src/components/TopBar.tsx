@@ -707,7 +707,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 <button
                   onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
                   className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center`}
-                  title="Search by color"
+                  title={t('search.byColor')}
                   >
                   <Palette size={16} />
                 </button>

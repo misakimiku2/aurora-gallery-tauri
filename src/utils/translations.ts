@@ -511,7 +511,8 @@ export const translations = {
       tagSearchPlaceholder: '搜索标签...',
       prevPage: '上一页',
       nextPage: '下一页',
-      searching: '正在搜索...'
+      searching: '正在搜索...',
+      byColor: '按颜色搜索'
     },
     sort: {
       sortBy: '排序方式',
@@ -1068,7 +1069,8 @@ export const translations = {
       tagSearchPlaceholder: 'Search tags...',
       prevPage: 'Previous Page',
       nextPage: 'Next Page',
-      searching: 'Searching...'
+      searching: 'Searching...',
+      byColor: 'Search by color'
     },
     sort: {
       sortBy: 'Sort By',

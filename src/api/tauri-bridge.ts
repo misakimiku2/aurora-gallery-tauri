@@ -473,14 +473,14 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   // 计算缓存目录路径
   const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
 
-  // 使用批量处理器，记录时长并绕过采样以确保收集到关键路径数据
-  const timerId = performanceMonitor.start('getThumbnail', undefined, true);
+  // 使用批量处理器，记录时长 (使用采样以避免过高性能开销)
+  const timerId = performanceMonitor.start('getThumbnail', undefined, false);
   try {
     const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
-    performanceMonitor.end(timerId, 'getThumbnail', { success: !!res, filePath });
+    performanceMonitor.end(timerId, 'getThumbnail', { success: !!res });
     return res;
   } catch (err) {
-    performanceMonitor.end(timerId, 'getThumbnail', { success: false, filePath, error: true });
+    performanceMonitor.end(timerId, 'getThumbnail', { success: false, error: true });
     throw err;
   }
 };

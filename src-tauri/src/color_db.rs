@@ -274,7 +274,6 @@ impl ColorDbPool {
         *cache = cached_images;
         // 标记已完成一次初始化（使后续 ensure_cache_initialized 能快速返回）
         let _ = self.cache_inited.store(true, Ordering::SeqCst);
-        eprintln!("[ColorDB] Cache refreshed with {} items (precomputed Labs)", cache.len());
         Ok(())
     }
 
@@ -319,8 +318,6 @@ impl ColorDbPool {
                     eprintln!("[ColorDB] background preheat failed: {}", e);
                     // allow retry on next ensure call
                     let _ = pool.cache_inited.store(false, Ordering::SeqCst);
-                } else {
-                    eprintln!("[ColorDB] background preheat completed");
                 }
             });
             Ok(())
@@ -347,7 +344,6 @@ impl ColorDbPool {
 
     // Load DB rows in batches and append to cache to avoid big IO/CPU spike
     pub fn refresh_cache_in_batches(&self, batch_size: usize) -> Result<()> {
-        eprintln!("[ColorDB] refresh_cache_in_batches start (batch_size={})", batch_size);
         let mut offset: i64 = 0;
         loop {
             let batch = self.load_from_db_internal_batch(offset, batch_size as i64)?;
@@ -358,7 +354,6 @@ impl ColorDbPool {
             {
                 let mut cache = self.cache.write().map_err(|e| e.to_string())?;
                 cache.extend(batch.into_iter());
-                eprintln!("[ColorDB] preheated cache size={} (offset={})", cache.len(), offset);
             }
 
             // Small pause to reduce IO burst on startup
@@ -367,14 +362,10 @@ impl ColorDbPool {
             offset += batch_size as i64;
         }
 
-        // Final sanity log
-        let cache_len = { self.cache.read().map_err(|e| e.to_string())?.len() };
-        eprintln!("[ColorDB] refresh_cache_in_batches completed, total_cached={}", cache_len);
         Ok(())
     }
 
     fn load_from_db_internal_batch(&self, offset: i64, limit: i64) -> Result<Vec<CachedImage>> {
-        eprintln!("[ColorDB] load_from_db_internal_batch called offset={} limit={}", offset, limit);
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
 
         let mut stmt = conn.prepare(
@@ -402,7 +393,6 @@ impl ColorDbPool {
                  }
              }
          }
-         eprintln!("[ColorDB] Loaded {} images from DB (batch)", results.len());
          Ok(results)
     }
 
@@ -470,7 +460,6 @@ impl ColorDbPool {
                                 updated += 1;
                             }
                         }
-                        eprintln!("[ColorDB] async cache update completed — updated {} entries in {:?}", updated, start.elapsed());
                     }
                     Err(e) => {
                         eprintln!("[ColorDB] async cache update failed to acquire write lock: {:?}", e);
@@ -485,7 +474,6 @@ impl ColorDbPool {
     pub fn copy_colors(&self, src_path: &str, dest_path: &str) -> Result<bool> {
         let src_normalized = src_path.replace("\\", "/");
         let dest_normalized = dest_path.replace("\\", "/");
-        eprintln!("[ColorDB] copy_colors called: src='{}' dest='{}' -> normalized src='{}' dest='{}'", src_path, dest_path, src_normalized, dest_normalized);
         let mut conn = self.get_connection();
         let current_ts = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -502,7 +490,6 @@ impl ColorDbPool {
              WHERE file_path = ?4 AND status = 'extracted'",
              params![&dest_normalized, current_ts, current_ts, &src_normalized],
         ).map_err(|e| e.to_string())?;
-        eprintln!("[ColorDB] copy_colors: single-file insert affected rows={} (dest='{}')", count, dest_normalized);
 
         let mut copied = count > 0;
 
@@ -526,7 +513,6 @@ impl ColorDbPool {
                  &src_dir_pattern
              ],
         ).map_err(|e| e.to_string())?;
-        eprintln!("[ColorDB] copy_colors: directory insert affected rows={} (dest_prefix='{}')", count_dir, dest_dir_prefix);
 
         if count_dir > 0 {
             copied = true;
@@ -544,7 +530,6 @@ impl ColorDbPool {
              SELECT ?1, l, a, b FROM image_color_indices WHERE file_path = ?2",
             params![&dest_normalized, &src_normalized]
         ).map_err(|e| e.to_string())?;
-        eprintln!("[ColorDB] copy_colors: attempted single-file indices copy src='{}' -> dest='{}'", src_normalized, dest_normalized);
 
         // 目录索引复制
         tx.execute(
@@ -558,10 +543,8 @@ impl ColorDbPool {
                  &src_dir_pattern
              ]
         ).map_err(|e| e.to_string())?;
-        eprintln!("[ColorDB] copy_colors: attempted directory indices copy src_prefix='{}' -> dest_prefix='{}'", src_dir_prefix, dest_dir_prefix);
 
         tx.commit().map_err(|e| e.to_string())?;
-        eprintln!("[ColorDB] copy_colors: transaction committed (copied={})", copied);
 
         // 3. 更新内存缓存 (仅针对已提取的)
         if copied {
@@ -602,13 +585,11 @@ impl ColorDbPool {
                 
                 for row in rows {
                     if let Ok((path, colors_json)) = row {
-                        eprintln!("[ColorDB] copy_colors: updating cache for path='{}'", path);
                         self.update_cache_item(&mut cache, &path, &colors_json);
                     }
                 }
             }
         }
-        eprintln!("[ColorDB] copy_colors completed: src='{}' dest='{}' copied={}", src_normalized, dest_normalized, copied);
         Ok(copied)
     }
 
@@ -631,7 +612,6 @@ impl ColorDbPool {
     }
 
     fn load_from_db_internal(&self) -> Result<Vec<CachedImage>> {
-        eprintln!("[ColorDB] load_from_db_internal called");
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
         
         let mut stmt = conn.prepare(
@@ -659,7 +639,6 @@ impl ColorDbPool {
                  }
              }
          }
-         eprintln!("[ColorDB] Loaded {} images from DB", results.len());
          Ok(results)
     }
 

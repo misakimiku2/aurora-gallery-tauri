@@ -2177,8 +2177,6 @@ fn main() {
             // 异步分批预热（懒加载）：在后台逐步加载，避免启动阻塞/峰值 I/O
             if let Err(e) = pool_instance.ensure_cache_initialized_async() {
                 eprintln!("Failed to start background color cache preheat: {}", e);
-            } else {
-                eprintln!("[ColorDB] Background cache preheat initiated");
             }
 
             // 记录初始化后的数据库文件大小

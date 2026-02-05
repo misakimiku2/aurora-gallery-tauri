@@ -420,12 +420,13 @@ interface TagSectionControlledProps extends TagSectionProps {
   FixedSizeListComp: any;
   onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   isHovered: boolean;
+  filesVersion?: number;
 }
 
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
   isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, 
-  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots
+  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots, filesVersion
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -495,7 +496,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       sortedTags: Array.from(allTags).sort((a, b) => a.localeCompare(b, "zh-CN")),
       tagCounts: counts
     };
-  }, [files, customTags]);
+  }, [filesVersion, customTags]);
 
   const suggestions = useMemo(() => {
     if (!isCreatingTag || !tagInputValue) return [];
@@ -1069,7 +1070,8 @@ export const Sidebar: React.FC<{
   t: (key: string) => string;
   aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
   activeViewMode?: string;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected' }) => {
+  filesVersion?: number;
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -1398,6 +1400,7 @@ export const Sidebar: React.FC<{
           onScroll={handleScroll}
           isHovered={isSidebarHovered}
           roots={roots}
+          filesVersion={filesVersion}
         />
         
         <div className="flex-1" />

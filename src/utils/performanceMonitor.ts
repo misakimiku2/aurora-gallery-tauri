@@ -35,8 +35,8 @@ export interface PerformanceConfig {
 // 默认配置
 const DEFAULT_CONFIG: PerformanceConfig = {
   enabled: true,
-  samplingRate: 0.1, // 默认10%采样率
-  maxHistorySize: 1000,
+  samplingRate: 0.05, // 降低采样率到5%
+  maxHistorySize: 300, // 减少历史记录大小
   retentionDays: 7,
   enableMemoryMonitoring: true
 };
@@ -49,6 +49,7 @@ export class PerformanceMonitor {
   private counters: Map<string, number>;
   private memoryHistory: { timestamp: number; memory: number }[];
   private memoryTimer: number | null = null;
+  private saveTimer: any = null;
 
   constructor(config?: Partial<PerformanceConfig>) {
     // 从本地存储加载配置
@@ -215,8 +216,27 @@ export class PerformanceMonitor {
       this.metrics.shift();
     }
 
-    // 保存到本地存储
-    this.saveHistory();
+    // 异步保存到本地存储，避免阻塞主线程
+    this.requestSave();
+  }
+
+  /**
+   * 异步请求保存历史数据
+   */
+  private requestSave(): void {
+    if (this.saveTimer) return;
+
+    // 使用 requestIdleCallback 或 setTimeout 来异步执行保存操作
+    const doSave = () => {
+      this.saveHistory();
+      this.saveTimer = null;
+    };
+
+    if (typeof window !== 'undefined' && (window as any).requestIdleCallback) {
+      this.saveTimer = (window as any).requestIdleCallback(doSave, { timeout: 2000 });
+    } else {
+      this.saveTimer = setTimeout(doSave, 1000);
+    }
   }
 
   /**

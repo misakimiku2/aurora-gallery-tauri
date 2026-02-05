@@ -12,6 +12,7 @@ import { PersonGrid } from './PersonGrid';
 import { TagsList } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
+import { throttle } from '../utils/debounce';
 import { useInView } from '../hooks/useInView';
 import { Folder3DIcon } from './Folder3DIcon';
 import { ImageThumbnail } from './ImageThumbnail';
@@ -835,8 +836,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // #endregion
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
-  // timestamp ref used to throttle consolidated render-count logs emitted during scroll
-  const renderLogLastRef = useRef<number>(0);
+
+  // 节流处理滚动位置同步到全局状态，减少全局重绘
+  const throttledOnScrollTopChange = useMemo(() => 
+    onScrollTopChange ? throttle(onScrollTopChange, 100) : undefined
+  , [onScrollTopChange]);
 
   const handleTagClickStable = useCallback((tag: string, e: React.MouseEvent) => {
       onTagClick?.(tag, e);
@@ -997,66 +1001,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
             }
 
             setScrollTop(currentScroll);
-            onScrollTopChange?.(currentScroll);
-
-            // --- render-counts consolidated logging (throttled & more accurate) ---
-            try {
-                const now = Date.now();
-                if (!renderLogLastRef.current || now - renderLogLastRef.current > 200) {
-                    renderLogLastRef.current = now;
-
-                    const win = window as any;
-                    const counts = win.__AURORA_RENDER_COUNTS__ || {};
-
-                    // authoritative logical count (from virtualization calculations)
-                    const fileGridLogical = typeof counts.fileGrid === 'number' ? counts.fileGrid : (Array.isArray(layout) ? layout.length : 0);
-
-                    // runtime DOM-mounted count (what's actually in the DOM right now)
-                    const fileGridDOM = document.querySelectorAll('.file-item[data-id]').length;
-
-                    // prefer published sidebar logical/dom counts if available
-                    const treeSidebarLogical = typeof counts.treeSidebarLogical === 'number' ? counts.treeSidebarLogical : (typeof counts.treeSidebar === 'number' ? counts.treeSidebar : null);
-                    const treeSidebarDOM = typeof counts.treeSidebarDOM === 'number' ? counts.treeSidebarDOM : (document.querySelectorAll('.sidebar .file-item[data-id]').length || null);
-
-                    const metadataPanelLogical = typeof counts.metadataPanelLogical === 'number' ? counts.metadataPanelLogical : (typeof counts.metadataPanel === 'number' ? counts.metadataPanel : null);
-                    const metadataPanelDOM = typeof counts.metadataPanelDOM === 'number' ? counts.metadataPanelDOM : (document.querySelectorAll('#metadata-panel img').length || null);
-
-                    const usingFileGridVirtualization = !!(fileGridDOM < fileGridLogical || fileGridLogical < (counts.fileGridTotal || Number.MAX_SAFE_INTEGER));
-
-                    const combined = {
-                        // both logical and DOM numbers so caller can reason about virtualization
-                        fileGridVisibleLogical: fileGridLogical,
-                        fileGridVisibleDOM: fileGridDOM,
-                        fileGridVisibleResolved: fileGridDOM || fileGridLogical,
-                        fileGridTotal: counts.fileGridTotal ?? displayFileIds.length,
-
-                        // explicit flags (helpful for automation)
-                        fileGridVirtualizedLogical: !!counts.fileGridVirtualizedLogical,
-                        fileGridVirtualizedDOM: !!counts.fileGridVirtualizedDOM,
-                        fileGridUsingVirtualization: !!counts.fileGridUsingVirtualization || usingFileGridVirtualization,
-
-                        treeSidebarLogical,
-                        treeSidebarDOM,
-                        treeSidebarUsingReactWindow: !!counts.treeSidebarUsingReactWindow,
-                        treeSidebarVirtualized: !!counts.treeSidebarVirtualized,
-
-                        metadataPanelLogical,
-                        metadataPanelDOM,
-                        metadataPanelVirtualized: !!counts.metadataPanelVirtualized,
-
-                        activeTab: activeTab.id,
-                        ts: new Date().toISOString(),
-                        note: (fileGridLogical === 0 && fileGridDOM === 0) ? 'layout-or-dom-not-ready' : undefined
-                    };
-
-                    // Only log when container/layout looks initialized to avoid misleading zeros during mount
-                    if (containerRef.current && containerRef.current.clientHeight > 0) {
-                        console.info('[render-counts]', combined);
-                    }
-                }
-            } catch (err) {
-                // best-effort logging — swallow any exception to avoid interfering with scrolling
-            }
+            throttledOnScrollTopChange?.(currentScroll);
         }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });

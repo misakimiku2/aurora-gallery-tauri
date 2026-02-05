@@ -65,6 +65,7 @@ interface MetadataProps {
   activeTab: TabState;
   resourceRoot?: string;
   cachePath?: string;
+  filesVersion?: number;
 }
 
 // Image Preview Component for Tauri
@@ -253,7 +254,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
   
@@ -380,7 +381,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     const tags = new Set<string>();
     Object.values(files).forEach((f: FileNode) => f.tags.forEach(tag => tags.add(tag)));
     return Array.from(tags).sort();
-  }, [files]);
+  }, [filesVersion]);
 
   // Find which topic the selected file belongs to
   const fileTopic = useMemo(() => {
@@ -678,14 +679,14 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         return { types, totalFiles, subFolderCount };
     }
     return null;
-  }, [file, files]);
+  }, [file?.id, filesVersion]);
 
   const folderStats = useMemo(() => {
     if (file && file.type === FileType.FOLDER) {
       return getFolderStats(files, file.id);
     }
     return null;
-  }, [file, files]);
+  }, [file?.id, filesVersion]);
 
   // 获取或初始化全局缓存 (与FileGrid.tsx共享)
   const getGlobalCache = () => {
@@ -816,7 +817,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         }
     });
     return { totalSize, count };
-  }, [person, files]);
+  }, [person?.id, filesVersion]);
 
   // publish both logical and DOM-mounted "rendered items" counts for this panel
   useEffect(() => {
@@ -871,7 +872,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     });
 
     return { totalSize, typeCount, allTags: Array.from(allTags).sort() };
-  }, [selectedFileIds, files]);
+  }, [selectedFileIds, filesVersion]);
 
   const batchChartData = useMemo(() => {
       if (!batchStats) return [];

@@ -92,7 +92,6 @@ export const useNavigation = (
             aiFilter: step.aiFilter,
             scrollTop: step.scrollTop || 0,
             currentPage: step.currentPage || 1,
-            viewingFileId: step.viewingId,
             selectedFileIds: step.viewingId ? [step.viewingId] : [],
             selectedTagIds: [],
             history: { ...t.history, currentIndex: newIndex }

@@ -21,6 +21,7 @@
     "core:window:allow-hide",
     "core:window:allow-toggle-maximize",
     "core:window:allow-unmaximize",
+    "core:window:allow-set-title",
     "dialog:allow-open",
     "dialog:default",
     "fs:default",

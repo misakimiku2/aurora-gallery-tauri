@@ -117,6 +117,15 @@ export const App: React.FC = () => {
     }
   });
 
+  // Track "major" updates to files (scan completion, delete, etc.)
+  // to avoid O(N) recalculations on minor property updates (like palette, description)
+  const [filesVersion, setFilesVersion] = useState(0);
+
+  // Auto-increment filesVersion when state.files reference changes
+  // This helps differentiate between structural file changes and selection/metadata updates
+  useEffect(() => {
+    setFilesVersion(v => v + 1);
+  }, [state.files]);
 
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
@@ -730,6 +739,23 @@ export const App: React.FC = () => {
     };
   }, []); // Empty dependency array - ref is always current
 
+  // Update window title based on language
+  useEffect(() => {
+    const updateTitle = async () => {
+      // Avoid updating during initial load to ensure state.settings is ready
+      if (!isLoading && isTauriEnvironment()) {
+        try {
+          const { getCurrentWindow } = await import('@tauri-apps/api/window');
+          const title = (translations as any)[state.settings.language]?.app?.title || 'Aurora Gallery';
+          console.log('Updating window title to:', title, 'for language:', state.settings.language);
+          await getCurrentWindow().setTitle(title);
+        } catch (err) {
+          console.error('Failed to update window title:', err);
+        }
+      }
+    };
+    updateTitle();
+  }, [state.settings.language, isLoading]);
 
   // ... (keep welcome modal logic)
   useEffect(() => {
@@ -1235,7 +1261,22 @@ export const App: React.FC = () => {
     });
   };
 
-  const groupedTags: Record<string, string[]> = useMemo(() => { const allTags = new Set<string>(state.customTags); (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); const groups: Record<string, string[]> = {}; filteredTags.forEach(tag => { const key = getPinyinGroup(tag); if (!groups[key]) groups[key] = []; groups[key].push(tag); }); const sortedKeys = Object.keys(groups).sort(); return sortedKeys.reduce((obj, key) => { obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); return obj; }, {} as Record<string, string[]>); }, [state.files, state.settings.language, state.customTags, tagSearchQuery]);
+  const groupedTags: Record<string, string[]> = useMemo(() => { 
+    const allTags = new Set<string>(state.customTags); 
+    (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); 
+    const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); 
+    const groups: Record<string, string[]> = {}; 
+    filteredTags.forEach(tag => { 
+      const key = getPinyinGroup(tag); 
+      if (!groups[key]) groups[key] = []; 
+      groups[key].push(tag); 
+    }); 
+    const sortedKeys = Object.keys(groups).sort(); 
+    return sortedKeys.reduce((obj, key) => { 
+      obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); 
+      return obj; 
+    }, {} as Record<string, string[]>); 
+  }, [filesVersion, state.settings.language, state.customTags, tagSearchQuery]);
   // Memoized person counts to avoid recalculating every time
   const personCounts = useMemo(() => {
     // 锟斤拷始锟斤拷录锟斤拷员锟斤拷锟斤拷锟斤拷锟斤拷
@@ -1265,7 +1306,7 @@ export const App: React.FC = () => {
     });
 
     return counts;
-  }, [state.files, state.people]);
+  }, [filesVersion, state.people]);
 
   // Use a derived people object for UI that always has the correct counts based on files metadata
   const peopleWithDisplayCounts = useMemo(() => {
@@ -3271,7 +3312,7 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
-          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} />
+          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} />
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
@@ -3678,6 +3719,7 @@ export const App: React.FC = () => {
             activeTab={activeTab}
             resourceRoot={state.settings.paths.resourceRoot}
             cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
+            filesVersion={filesVersion}
           />
         </div>
         <TaskProgressModal
