@@ -66,11 +66,6 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         image_reader.decode().ok()?
     };
 
-    let has_transparency = {
-        let rgba = img.to_rgba8();
-        rgba.pixels().any(|p| p[3] < 255)
-    };
-
     let width = img.width();
     let height = img.height();
     const TARGET_MIN_SIZE: u32 = 256;
@@ -87,7 +82,9 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
     let dst_width_nz = NonZeroU32::new(dst_width)?;
     let dst_height_nz = NonZeroU32::new(dst_height)?;
 
-    if has_transparency {
+    // Optimization: Only use RGBA if the image format actually supports alpha
+    // And check for actual transparency on the SMALL thumbnail to save time.
+    if img.color().has_alpha() {
         let src_image = fr::Image::from_vec_u8(
             src_width,
             src_height,
@@ -99,12 +96,29 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
         resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
 
+        // Check transparency on the SMALL thumbnail buffer
+        let pixels = dst_image.buffer();
+        let has_actual_transparency = pixels.chunks_exact(4).any(|p| p[3] < 255);
+
         if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
-        let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
-        let mut writer = BufWriter::new(cache_file);
-        let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
-        resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
-        Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
+
+        if has_actual_transparency {
+            let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
+            let mut writer = BufWriter::new(cache_file);
+            let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
+            resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
+            Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
+        } else {
+            // If no transparency was actually found, save as JPEG to save space
+            let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
+            let mut writer = BufWriter::new(cache_file);
+            let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+            
+            // Convert RGBA to RGB for JPEG
+            let rgb_buffer: Vec<u8> = pixels.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+            encoder.encode(&rgb_buffer, dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
+            Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
+        }
     } else {
         let src_image = fr::Image::from_vec_u8(
             src_width,
