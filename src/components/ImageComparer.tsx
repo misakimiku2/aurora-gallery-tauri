@@ -79,6 +79,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // Marquee selection (screen coordinates)
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
+  // Animation state for smooth zoom transitions
+  const [isAnimating, setIsAnimating] = useState(false);
+  const animationFrameRef = useRef<number | null>(null);
+  // 滚轮缩放的目标值，用于平滑过渡
+  const wheelTargetRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+  const wheelAnimationRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (sessionNameProp && sessionNameProp !== sessionName) {
@@ -643,11 +649,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
-  // Mouse wheel zoom
+  // Mouse wheel zoom with smooth animation
   const handleWheel = (e: React.WheelEvent) => {
     // Only call preventDefault if the native event is cancelable.
-    // In some browsers the wheel event may be passive; calling preventDefault
-    // on a passive listener throws: "Unable to preventDefault inside passive event listener invocation.".
     const native = e.nativeEvent as WheelEvent | any;
     if (native && native.cancelable) {
       e.preventDefault();
@@ -663,17 +667,61 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const zoomSpeed = 0.0015;
     const factor = Math.exp(-e.deltaY * zoomSpeed);
 
-    const newScale = Math.min(Math.max(transform.scale * factor, 0.04), 20);
-
     const rect = containerRef.current?.getBoundingClientRect();
-    if (rect) {
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+    if (!rect) return;
 
-      const newX = mouseX - (mouseX - transform.x) * (newScale / transform.scale);
-      const newY = mouseY - (mouseY - transform.y) * (newScale / transform.scale);
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
 
-      setTransform({ x: newX, y: newY, scale: newScale });
+    // 计算目标缩放值，基于当前目标或当前实际值
+    const currentScale = wheelTargetRef.current?.scale || transform.scale;
+    const newScale = Math.min(Math.max(currentScale * factor, 0.04), 20);
+
+    // 计算新的位置，保持鼠标位置为缩放中心
+    const currentX = wheelTargetRef.current?.x || transform.x;
+    const currentY = wheelTargetRef.current?.y || transform.y;
+    const newX = mouseX - (mouseX - currentX) * (newScale / currentScale);
+    const newY = mouseY - (mouseY - currentY) * (newScale / currentScale);
+
+    // 更新目标值
+    wheelTargetRef.current = { x: newX, y: newY, scale: newScale };
+
+    // 如果没有正在进行的滚轮动画，启动一个
+    if (wheelAnimationRef.current === null) {
+      const startTransform = { ...transform };
+      const startTime = performance.now();
+      const duration = 150; // 较短的动画时长，使滚轮响应更灵敏
+
+      const animate = (currentTime: number) => {
+        if (!wheelTargetRef.current) {
+          wheelAnimationRef.current = null;
+          return;
+        }
+
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+
+        // 使用 easeOutQuad 缓动函数，使滚轮缩放更加自然
+        const eased = 1 - (1 - progress) * (1 - progress);
+
+        const currentTransform = {
+          x: startTransform.x + (wheelTargetRef.current.x - startTransform.x) * eased,
+          y: startTransform.y + (wheelTargetRef.current.y - startTransform.y) * eased,
+          scale: startTransform.scale + (wheelTargetRef.current.scale - startTransform.scale) * eased
+        };
+
+        setTransform(currentTransform);
+
+        if (progress < 1) {
+          wheelAnimationRef.current = requestAnimationFrame(animate);
+        } else {
+          // 动画结束，清理状态
+          wheelAnimationRef.current = null;
+          wheelTargetRef.current = null;
+        }
+      };
+
+      wheelAnimationRef.current = requestAnimationFrame(animate);
     }
   };
 
@@ -967,6 +1015,91 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setMenuTargetId(null);
   };
 
+  // 平滑动画辅助函数
+  const animateTransform = (targetTransform: { x: number; y: number; scale: number }, duration: number = 400) => {
+    // 取消之前的动画
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+
+    const startTransform = { ...transform };
+    const startTime = performance.now();
+
+    setIsAnimating(true);
+
+    const animate = (currentTime: number) => {
+      const elapsed = currentTime - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+
+      // 使用 easeInOutCubic 缓动函数
+      const eased = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      const currentTransform = {
+        x: startTransform.x + (targetTransform.x - startTransform.x) * eased,
+        y: startTransform.y + (targetTransform.y - startTransform.y) * eased,
+        scale: startTransform.scale + (targetTransform.scale - startTransform.scale) * eased
+      };
+
+      setTransform(currentTransform);
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate);
+      } else {
+        setIsAnimating(false);
+        animationFrameRef.current = null;
+      }
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+  };
+
+  // 清理动画
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (wheelAnimationRef.current !== null) {
+        cancelAnimationFrame(wheelAnimationRef.current);
+      }
+    };
+  }, []);
+
+  const handleViewImage = () => {
+    const targetId = menuTargetId || (activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null);
+    if (!targetId) return;
+
+    const targetItem = layoutItemMap[targetId];
+    if (!targetItem) return;
+
+    // 计算图片的中心点
+    const imageCenterX = targetItem.x + targetItem.width / 2;
+    const imageCenterY = targetItem.y + targetItem.height / 2;
+
+    // 计算合适的缩放比例，使图片适应容器大小
+    const padding = 60;
+    const scaleX = (containerSize.width - padding * 2) / targetItem.width;
+    const scaleY = (containerSize.height - padding * 2) / targetItem.height;
+    const newScale = Math.min(scaleX, scaleY, 1.2);
+
+    // 计算新的变换，使图片居中显示
+    const newX = containerSize.width / 2 - imageCenterX * newScale;
+    const newY = containerSize.height / 2 - imageCenterY * newScale;
+
+    // 使用平滑动画过渡
+    animateTransform({
+      x: newX,
+      y: newY,
+      scale: newScale
+    }, 500); // 500ms 动画时长
+
+    userInteractedRef.current = true;
+    setContextMenu(null);
+    setMenuTargetId(null);
+  };
+
   const handleReorder = (type: 'top' | 'bottom' | 'up' | 'down') => {
     // For simplicity, reorder affects the primary target or all selected? 
     // Implementing "Group Reorder" is complex because they might be interleaved.
@@ -1131,6 +1264,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const selectedMenuOptions = [
+    { label: '查看此图', onClick: handleViewImage, icon: <Maximize size={14} /> },
     { label: '重置变换', onClick: handleResetItem, icon: <RefreshCcw size={14} /> },
     { divider: true, label: '', onClick: () => { } },
     { label: '放置到最顶层', onClick: () => handleReorder('top'), icon: <Maximize size={14} className="rotate-45" /> },
@@ -1165,6 +1299,27 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, onCloseTab]);
+
+  // Handle mouse side buttons (Back/Forward) override
+  // We use capture phase to intercept events before TopBar receives them
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      // 3: Back button, 4: Forward button
+      if (e.button === 3) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        if (onCloseTab) onCloseTab();
+        else onClose();
+      } else if (e.button === 4) {
+        // Block forward navigation
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+
+    window.addEventListener('mouseup', handleMouseUp, { capture: true });
+    return () => window.removeEventListener('mouseup', handleMouseUp, { capture: true });
   }, [onClose, onCloseTab]);
 
   return (
@@ -1296,7 +1451,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             backgroundColor: 'rgba(59,130,246,0.06)',
             zIndex: 130
           }} />
-        )} 
+        )}
 
         {/* 编辑层 Overlay */}
         {/* 编辑层 Overlay */}
