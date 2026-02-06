@@ -2,19 +2,21 @@ use std::sync::Arc;
 use std::time::Duration;
 use image::{ImageFormat, GenericImageView};
 use image::codecs::jpeg::JpegDecoder;
+use jxl_oxide::JxlImage;
 use fast_image_resize as fr;
 use std::num::NonZeroU32;
 use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{AppHandle, Emitter};
 use serde::Serialize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use tokio::task;
 
 use crate::color_db::{self, ColorDbPool};
 use crate::color_extractor;
+use crate::{is_jxl, ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
 
 // 全局暂停状态
 static IS_PAUSED: AtomicBool = AtomicBool::new(false);
@@ -127,8 +129,8 @@ pub async fn color_extraction_worker(
     // - 对外设置上限以避免过度并发（默认上限 32）
     let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let env_workers = std::env::var("AURORA_COLOR_WORKERS").ok().and_then(|s| s.parse::<usize>().ok());
-    let default_workers = logical_cores.saturating_sub(1).max(1);
-    let num_workers = env_workers.unwrap_or(default_workers).min(32);
+    let default_workers = (logical_cores / 2).max(1);
+    let num_workers = env_workers.unwrap_or(default_workers).min(8); // 将默认上限从32降低到8，减轻后台压力
     // 在基准模式下输出配置（方便快速验证）
     if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
         eprintln!("[AURORA_BENCH] logical_cores={} configured_color_workers={}", logical_cores, num_workers);
@@ -380,11 +382,27 @@ fn consumer_loop(
                 // 更新当前处理的文件
                 let _ = *current_file.lock().unwrap() = file_path.clone();
 
+                // 识别重载格式并进入信号量保护
+                let is_heavy = file_path.to_lowercase().ends_with(".jxl") || file_path.to_lowercase().ends_with(".avif");
+                
+                if is_heavy {
+                    // 等待直到活跃重载任务少于阈值
+                    while ACTIVE_HEAVY_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_HEAVY_DECODES {
+                        std::thread::sleep(Duration::from_millis(100));
+                        if is_shutting_down() { break; }
+                    }
+                    ACTIVE_HEAVY_DECODES.fetch_add(1, Ordering::SeqCst);
+                }
+
                 // 可选基准：测量 load / extract 时间（仅在 AURORA_BENCH=1 时输出）
                 let bench = std::env::var("AURORA_BENCH").as_deref().ok() == Some("1");
                 let t_start = std::time::Instant::now();
                 let img_res = load_and_resize_image_optimized(&file_path, cache_root.as_deref());
                 let t_after_load = std::time::Instant::now();
+
+                if is_heavy {
+                    ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
+                }
 
                 // 处理图片（解码 + 提取）并记录耗时
                 let processing_result: ProcessingResult = match img_res {
@@ -420,6 +438,10 @@ fn consumer_loop(
                     eprintln!("Result sender closed, consumer exiting");
                     break;
                 }
+
+                // Throttle CPU: Sleep after processing to avoid continuous 100% usage
+                let sleep_ms = if is_heavy { 200 } else { 20 }; // 增加休眠时间，JXL/AVIF 给 200ms 喘息时间
+                std::thread::sleep(Duration::from_millis(sleep_ms));
 
                 // 如果处理失败，更新文件状态为error
                 if let Err((_, error_msg)) = result_clone {
@@ -774,32 +796,67 @@ pub fn load_and_resize_image_optimized(file_path: &str, cache_root: Option<&std:
     }
 
     // 2. 缓存未命中，从原图加载
+    use std::io::Seek;
+    
+    // Read header to identify format and magic bytes
     let mut file = File::open(image_path).map_err(|e| e.to_string())?;
     let mut header = [0u8; 1024];
     let n = file.read(&mut header).unwrap_or(0);
-    let format = image::guess_format(&header[..n]).map_err(|e| e.to_string())?;
-    
-    use std::io::Seek;
-    file.seek(std::io::SeekFrom::Start(0)).map_err(|e| e.to_string())?;
-    let reader = BufReader::new(file);
+    let buf = &header[..n];
 
-    if format == ImageFormat::Jpeg {
-        // JPEG 优化加载：解码时降采样
-        let mut decoder = JpegDecoder::new(reader).map_err(|e| e.to_string())?;
-        // 目标是 256px，利用 JpegDecoder 的 scale 功能
-        let _ = decoder.scale(256, 256);
-        image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())
-    } else {
-        // 其他格式：正常加载后使用 fast_image_resize
-        let mut img_reader = image::io::Reader::new(reader);
-        img_reader.set_format(format);
-        let img = img_reader.decode().map_err(|e| e.to_string())?;
+    let is_jxl_file = image_path.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase() == "jxl").unwrap_or(false) || is_jxl(buf);
+    
+    let img = if is_jxl_file {
+        // Special handling for JXL using jxl-oxide
+        let jxl_image = JxlImage::builder().open(image_path).map_err(|e| format!("JXL error: {:?}", e))?;
         
-        let (width, height) = img.dimensions();
-        let target_size = 256;
-        if width <= target_size && height <= target_size {
-            return Ok(img);
+        let render = jxl_image.render_frame(0).map_err(|e| format!("JXL render error: {:?}", e))?;
+        let framebuffer = render.image_all_channels();
+        
+        let width = framebuffer.width() as u32;
+        let height = framebuffer.height() as u32;
+        let channels = framebuffer.channels();
+        let buf = framebuffer.buf();
+        
+        if channels == 3 {
+            use rayon::prelude::*;
+            let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+            image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels).ok_or("Failed to create RGB image")?)
+        } else {
+            use rayon::prelude::*;
+            let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+            image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels).ok_or("Failed to create RGBA image")?)
         }
+    } else {
+        let format = image::guess_format(buf).ok();
+
+        file.seek(std::io::SeekFrom::Start(0)).map_err(|e| e.to_string())?;
+        let reader = BufReader::new(file);
+
+        if format == Some(ImageFormat::Jpeg) {
+            // JPEG 优化加载：解码时降采样
+            let mut decoder = JpegDecoder::new(reader).map_err(|e| e.to_string())?;
+            // 目标是 256px，利用 JpegDecoder 的 scale 功能
+            let _ = decoder.scale(256, 256);
+            image::DynamicImage::from_decoder(decoder).map_err(|e| e.to_string())?
+        } else {
+            // 其他格式：正常加载后使用 fast_image_resize
+            let mut img_reader = image::io::Reader::new(reader);
+            if let Some(fmt) = format {
+                img_reader.set_format(fmt);
+            } else {
+                img_reader = img_reader.with_guessed_format().map_err(|e| e.to_string())?;
+            }
+            img_reader.no_limits();
+            img_reader.decode().map_err(|e| e.to_string())?
+        }
+    };
+
+    let (width, height) = img.dimensions();
+    let target_size = 256;
+    if width <= target_size && height <= target_size {
+        return Ok(img);
+    }
 
         let (dst_width, dst_height) = if width < height {
             let ratio = height as f32 / width as f32;
@@ -842,7 +899,6 @@ pub fn load_and_resize_image_optimized(file_path: &str, cache_root: Option<&std:
                     .ok_or("Failed to create RgbImage")?
             ))
         }
-    }
 }
 
 // 处理单个文件，提取主色调并保存到数据库

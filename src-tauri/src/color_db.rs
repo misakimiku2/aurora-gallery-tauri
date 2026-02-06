@@ -145,11 +145,6 @@ impl ColorDbPool {
         self.conn.lock().unwrap()
     }
     
-    pub fn close(&self) {
-        if let Ok(conn) = self.conn.try_lock() {
-            let _ = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)", []);
-        }
-    }
     
     // 手动执行WAL检查点
     pub fn force_wal_checkpoint(&self) -> Result<()> {
@@ -445,19 +440,15 @@ impl ColorDbPool {
             let new_norm_cl = new_normalized.clone();
 
             std::thread::spawn(move || {
-                let start = std::time::Instant::now();
                 match cache_arc.write() {
                     Ok(mut cache) => {
-                        let mut updated: usize = 0;
                         for item in cache.iter_mut() {
                             let item_path = item.file_path.replace("\\", "/");
                             if item_path == old_norm_cl {
                                 item.file_path = new_norm_cl.clone();
-                                updated += 1;
                             } else if item_path.starts_with(&old_dir_prefix_cl) {
                                 let relative_path = &item_path[old_dir_prefix_cl.len()..];
                                 item.file_path = format!("{}{}", new_dir_prefix_cl, relative_path);
-                                updated += 1;
                             }
                         }
                     }
@@ -1000,25 +991,6 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
 
 
 
-// 获取原始颜色 JSON 字符串
-pub fn get_colors_by_file_path_raw(
-    conn: &mut Connection,
-    file_path: &str
-) -> Result<Option<String>> {
-    // Normalize incoming query path to match stored DB keys
-    let normalized = file_path.replace("\\", "/");
-    let mut stmt = conn.prepare(
-        "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = 'extracted'"
-    ).map_err(|e| e.to_string())?;
-    
-    match stmt.query_row(params![&normalized], |row| {
-        Ok(row.get::<_, String>(0)?)
-    }) {
-        Ok(colors) => Ok(Some(colors)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e.to_string()),
-    }
-}
 
 // 根据文件路径获取颜色数据
 pub fn get_colors_by_file_path(
@@ -1087,56 +1059,8 @@ pub fn update_status(
 }
 
 
-// 批量删除颜色数据
-pub fn batch_delete_colors(
-    conn: &mut Connection, 
-    file_paths: &[String]
-) -> Result<()> {
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
-    
-    for path in file_paths {
-        tx.execute(
-            "DELETE FROM dominant_colors WHERE file_path = ?",
-            params![path],
-        ).map_err(|e| e.to_string())?;
-    }
-    
-    tx.commit().map_err(|e| e.to_string())?;
-    Ok(())
-}
 
-// 获取所有已提取颜色的文件
-pub fn get_all_extracted_files(
-    conn: &mut Connection
-) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT file_path FROM dominant_colors WHERE status = ?"
-    ).map_err(|e| e.to_string())?;
-    
-    let mut rows = stmt.query(params!["extracted"])
-        .map_err(|e| e.to_string())?;
-    
-    let mut files = Vec::new();
-    while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-        let file_path: String = row.get(0).map_err(|e| e.to_string())?;
-        files.push(file_path);
-    }
-    
-    Ok(files)
-}
 
-// 获取数据库中文件总数
-pub fn get_total_files(
-    conn: &mut Connection
-) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM dominant_colors",
-        [],
-        |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
-    
-    Ok(count as usize)
-}
 
 // 重置所有"processing"状态的文件为"pending"状态
 pub fn reset_processing_to_pending(conn: &mut Connection) -> Result<usize> {

@@ -138,7 +138,7 @@ export const scanDirectory = async (
         sourceUrl: node.sourceUrl || undefined,
         category: (node.category === 'general' || node.category === 'book' || node.category === 'sequence') ? node.category : undefined,
         aiData: node.aiData || undefined,
-        
+
         // In Tauri, url is a file path, not a usable URL. Set to undefined to prevent misuse.
         url: undefined, // Don't use file path as URL - use getThumbnail() instead
         // If backend hasn't populated valid dimensions yet, keep `meta` undefined so
@@ -477,6 +477,15 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   const timerId = performanceMonitor.start('getThumbnail', undefined, false);
   try {
     const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
+
+    // 如果处理失败且是 AVIF 格式，尝试前端降级生成
+    if (!res && filePath.toLowerCase().endsWith('.avif') && !signal?.aborted) {
+      console.log('AVIF detected and backend failed, attempting frontend fall-back generation:', filePath);
+      const remoteRes = await generateAvifThumbnailAndColors(filePath, cachePath, onColors);
+      performanceMonitor.end(timerId, 'getThumbnail', { success: !!remoteRes, fallback: true });
+      return remoteRes;
+    }
+
     performanceMonitor.end(timerId, 'getThumbnail', { success: !!res });
     return res;
   } catch (err) {
@@ -484,6 +493,146 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
     throw err;
   }
 };
+
+/**
+ * [FALLBACK] 前端辅助生成 AVIF 缩略图和主色调
+ * 利用 WebView2 原生解码能力，生成后通过 save_remote_thumbnail 同步到后端
+ */
+const generateAvifThumbnailAndColors = async (
+  filePath: string,
+  cachePath: string,
+  onColors?: (colors: DominantColor[] | null) => void
+): Promise<string | null> => {
+  try {
+    // 1. 获取原始 Base64 (WebView2 原生支持)
+    const rawBase64 = await readFileAsBase64(filePath);
+    if (!rawBase64) return null;
+
+    // 2. 使用 Canvas 缩放
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = async () => {
+        const canvas = document.createElement('canvas');
+        const TARGET_SIZE = 256;
+        let w = img.width;
+        let h = img.height;
+
+        if (w < h) {
+          h = Math.round((h * TARGET_SIZE) / w);
+          w = TARGET_SIZE;
+        } else {
+          w = Math.round((w * TARGET_SIZE) / h);
+          h = TARGET_SIZE;
+        }
+
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(null);
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
+
+        // 3. 提取颜色 (简单实现核心逻辑，或者使用第三方库，这里为了轻量化手动取样)
+        const imageData = ctx.getImageData(0, 0, w, h).data;
+        const colors = extractColorsFromImageData(imageData, 8);
+        if (onColors) onColors(colors);
+
+        // 4. 导出缩略图 Base64 (提升质量)
+        const thumbBase64 = canvas.toDataURL('image/jpeg', 0.9);
+
+        // 5. 同步回后端保存
+        try {
+          // 调用刚才在 Rust 中新增的命令
+          const savedPath = await invoke<string>('save_remote_thumbnail', {
+            filePath,
+            thumbnailData: thumbBase64,
+            colors,
+            cacheRoot: cachePath
+          });
+
+          if (savedPath) {
+            const assetUrl = convertFileSrc(savedPath);
+            // 更新本地路径缓存，防止 getDominantColors 再次触发
+            (window as any).__AURORA_THUMBNAIL_PATH_CACHE__?.set(filePath, savedPath);
+            resolve(assetUrl);
+          } else {
+            resolve(null);
+          }
+        } catch (e) {
+          console.error('Failed to save remote thumbnail:', e);
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+      img.src = rawBase64;
+    });
+  } catch (error) {
+    console.error('generateAvifThumbnailAndColors failed:', error);
+    return null;
+  }
+};
+
+/**
+ * 从 Canvas ImageData 中提取主色调 (简单中值切分或频率统计)
+ */
+function extractColorsFromImageData(data: Uint8ClampedArray, count: number): DominantColor[] {
+  const colorMap: Record<string, number> = {};
+  const step = 4 * 4; // 步进抽样提高性能
+
+  for (let i = 0; i < data.length; i += step) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const a = data[i + 3];
+    if (a < 128) continue; // 忽略透明像素
+
+    // 简单的颜色量化，减少 key 数量 (每 8 位取高 5 位)
+    const qr = r & 0xF8;
+    const qg = g & 0xF8;
+    const qb = b & 0xF8;
+    const key = `${qr},${qg},${qb}`;
+    colorMap[key] = (colorMap[key] || 0) + 1;
+  }
+
+  const sorted = Object.entries(colorMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, count);
+
+  return sorted.map(([key, _]) => {
+    const [r, g, b] = key.split(',').map(Number);
+    const hex = '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+
+    // 粗略计算 LAB (这里可以用更精准的库，若为了极速则保持此简版)
+    const { l, a, b: lab_b } = rgbToLab(r, g, b);
+
+    // 补充 DominantColor 必须的字段
+    const rgb: [number, number, number] = [r, g, b];
+    const isDark = (r * 0.299 + g * 0.587 + b * 0.114) < 128; // 感知亮度阈值
+
+    return { hex, rgb, isDark, labL: l, labA: a, labB: lab_b, percentage: 0 }; // percentage 暂时设为 0
+  });
+}
+
+function rgbToLab(r: number, g: number, b: number) {
+  // 简化的 RGB -> LAB 转换逻辑
+  let rf = r / 255, gf = g / 255, bf = b / 255;
+  rf = rf > 0.04045 ? Math.pow((rf + 0.055) / 1.055, 2.4) : rf / 12.92;
+  gf = gf > 0.04045 ? Math.pow((gf + 0.055) / 1.055, 2.4) : gf / 12.92;
+  bf = bf > 0.04045 ? Math.pow((bf + 0.055) / 1.055, 2.4) : bf / 12.92;
+
+  let x = (rf * 0.4124 + gf * 0.3576 + bf * 0.1805) * 100;
+  let y = (rf * 0.2126 + gf * 0.7152 + bf * 0.0722) * 100;
+  let z = (rf * 0.0193 + gf * 0.1192 + bf * 0.9505) * 100;
+
+  x /= 95.047; y /= 100.0; z /= 108.883;
+  x = x > 0.008856 ? Math.pow(x, 1 / 3) : (7.787 * x) + (16 / 116);
+  y = y > 0.008856 ? Math.pow(y, 1 / 3) : (7.787 * y) + (16 / 116);
+  z = z > 0.008856 ? Math.pow(z, 1 / 3) : (7.787 * z) + (16 / 116);
+
+  return { l: (116 * y) - 16, a: 500 * (x - y), b: 200 * (y - z) };
+}
 
 /**
  * 读取完整图片文件并转换为 Base64 数据 URL
@@ -797,6 +946,14 @@ export const exitApp = async (): Promise<void> => {
  */
 export const getDominantColors = async (filePath: string, count: number = 8, thumbnailPath?: string): Promise<DominantColor[]> => {
   try {
+    // 特殊处理 AVIF：如果后端尚不支持从原图提取，优先尝试前端降级生成
+    if (filePath.toLowerCase().endsWith('.avif') && !thumbnailPath) {
+      const cachedPath = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__?.get(filePath);
+      if (cachedPath) {
+        thumbnailPath = cachedPath;
+      }
+    }
+
     const result = await invoke('get_dominant_colors', { filePath, count, thumbnailPath });
     return result as DominantColor[];
   } catch (error) {

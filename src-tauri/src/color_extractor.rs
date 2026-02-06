@@ -4,6 +4,7 @@ use palette::{Srgb, FromColor, Lab};
 
 /// 颜色提取结果结构体
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ColorResult {
     pub hex: String,      // 网页常用的 #RRGGBB
     pub rgb: [u8; 3],     // 原始 RGB 数值

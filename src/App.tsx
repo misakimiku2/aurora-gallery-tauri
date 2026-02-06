@@ -565,13 +565,13 @@ export const App: React.FC = () => {
                   const imagePaths = Object.values(allFiles)
                     .filter(f => f.type === FileType.IMAGE)
                     .map(f => f.path);
-                  
+
                   if (imagePaths.length > 0) {
                     addPendingFilesToDb(imagePaths).catch(err => {
                       console.error('Failed to add pending files to color database on init:', err);
                     });
                   }
-                  
+
                   // 确保恢复颜色提取任务
                   resumeColorExtraction().catch(err => {
                     console.warn('Failed to resume color extraction on init:', err);
@@ -993,7 +993,7 @@ export const App: React.FC = () => {
         if (isTauriEnvironment()) {
           const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
           await ensureDirectory(cachePath);
-          
+
           // 切换数据库到新根目录下的 .aurora 文件夹
           await switchRootDatabase(path);
         }
@@ -1124,7 +1124,7 @@ export const App: React.FC = () => {
           const imagePaths = Object.values(result.files)
             .filter(f => f.type === FileType.IMAGE)
             .map(f => f.path);
-          
+
           if (imagePaths.length > 0) {
             addPendingFilesToDb(imagePaths).catch(err => {
               console.error('Failed to add pending files on refresh:', err);
@@ -1261,21 +1261,21 @@ export const App: React.FC = () => {
     });
   };
 
-  const groupedTags: Record<string, string[]> = useMemo(() => { 
-    const allTags = new Set<string>(state.customTags); 
-    (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t))); 
-    const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase())); 
-    const groups: Record<string, string[]> = {}; 
-    filteredTags.forEach(tag => { 
-      const key = getPinyinGroup(tag); 
-      if (!groups[key]) groups[key] = []; 
-      groups[key].push(tag); 
-    }); 
-    const sortedKeys = Object.keys(groups).sort(); 
-    return sortedKeys.reduce((obj, key) => { 
-      obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language)); 
-      return obj; 
-    }, {} as Record<string, string[]>); 
+  const groupedTags: Record<string, string[]> = useMemo(() => {
+    const allTags = new Set<string>(state.customTags);
+    (Object.values(state.files) as FileNode[]).forEach(f => f.tags.forEach(t => allTags.add(t)));
+    const filteredTags = Array.from(allTags).filter(t => !tagSearchQuery || t.toLowerCase().includes(tagSearchQuery.toLowerCase()));
+    const groups: Record<string, string[]> = {};
+    filteredTags.forEach(tag => {
+      const key = getPinyinGroup(tag);
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(tag);
+    });
+    const sortedKeys = Object.keys(groups).sort();
+    return sortedKeys.reduce((obj, key) => {
+      obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language));
+      return obj;
+    }, {} as Record<string, string[]>);
   }, [filesVersion, state.settings.language, state.customTags, tagSearchQuery]);
   // Memoized person counts to avoid recalculating every time
   const personCounts = useMemo(() => {
@@ -2139,7 +2139,7 @@ export const App: React.FC = () => {
         // 锟斤拷锟姐缓锟斤拷路锟斤拷
         const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
         await ensureDirectory(cachePath);
-        
+
         // 暂停后台颜色提取任务
         await pauseColorExtraction();
 
@@ -2171,7 +2171,7 @@ export const App: React.FC = () => {
 
       // 启动扫描任务，禁用自动进度，手动通过事件驱动
       const taskId = startTask('ai', [], t('tasks.scanning'), false);
-      
+
       // 设置初始进度，避免 0% 让用户以为死机
       // 注意：total 只是一个虚拟值，真正更新会来自事件
       updateTask(taskId, { total: 100, current: 0, currentStep: t('tasks.preparing') });
@@ -2182,8 +2182,8 @@ export const App: React.FC = () => {
         unlistenProgress = await listen('scan-progress', (event: any) => {
           const payload = event.payload as { processed: number; total: number };
           if (!payload) return;
-          
-          updateTask(taskId, { 
+
+          updateTask(taskId, {
             total: payload.total || 1000, // 如果 total 为 0，给个估算值防止除零
             current: payload.processed,
             currentStep: `${t('welcome.scanning')} ${payload.processed}`
@@ -2195,7 +2195,7 @@ export const App: React.FC = () => {
 
       try {
         const result = await scanDirectory(selectedPath);
-        
+
         // 扫描完成，移除监听器
         if (unlistenProgress) unlistenProgress();
 
@@ -2205,7 +2205,7 @@ export const App: React.FC = () => {
           const imagePaths = Object.values(result.files)
             .filter(f => f.type === FileType.IMAGE)
             .map(f => f.path);
-            
+
           if (imagePaths.length > 0) {
             addPendingFilesToDb(imagePaths).catch(err => {
               console.error('Failed to add pending files to color database:', err);
@@ -2217,7 +2217,7 @@ export const App: React.FC = () => {
 
         // 标记任务完成
         updateTask(taskId, { current: 100, total: 100, status: 'completed' });
-        
+
         // 稍后移除任务（给用户一点看到 100% 的时间）
         setTimeout(() => {
           setState(prev => ({
@@ -2230,7 +2230,7 @@ export const App: React.FC = () => {
           const newRoots = result.roots;
           const newFiles = result.files;
           const newRootId = newRoots.length > 0 ? newRoots[0] : '';
-          
+
           // 如果扫描结果为空（可能出错或空目录），至少保持设置更新
           if (!newRootId) return { ...prev, roots: newRoots, files: newFiles };
 
@@ -2281,7 +2281,7 @@ export const App: React.FC = () => {
         }
 
         showToast(t('settings.success'));
-        
+
         // 恢复后台颜色提取
         (async () => {
           try {
@@ -2296,12 +2296,12 @@ export const App: React.FC = () => {
         // 标记任务失败
         updateTask(taskId, { status: 'error' });
         setTimeout(() => {
-             setState(prev => ({
+          setState(prev => ({
             ...prev,
             tasks: prev.tasks.filter(t => t.id !== taskId)
           }));
         }, 3000);
-        
+
         console.error("Change path failed", e);
         showToast("Error changing path: " + e);
         // 可以在这里恢复之前的状态
@@ -3415,19 +3415,19 @@ export const App: React.FC = () => {
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
               <div className="flex items-center px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-x-2 overflow-x-auto shrink-0 z-20">
                 <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
-                  <Filter size={12} className="mr-1" /> 
+                  <Filter size={12} className="mr-1" />
                   {t('context.filters')}
                 </div>
 
                 {activeTab.searchQuery && !activeTab.aiFilter && (
-                   <div className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
-                     {activeTab.searchScope === 'file' ? <FileText size={10} className="mr-1" /> :
+                  <div className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
+                    {activeTab.searchScope === 'file' ? <FileText size={10} className="mr-1" /> :
                       activeTab.searchScope === 'tag' ? <Tag size={10} className="mr-1" /> :
-                      activeTab.searchScope === 'folder' ? <Folder size={10} className="mr-1" /> :
-                      <Globe size={10} className="mr-1" />}
-                     <span>{activeTab.searchQuery}</span>
-                     <button onClick={() => { setToolbarQuery(''); onPerformSearch(''); }} className="ml-1.5 hover:text-red-500 font-bold"><X size={12} /></button>
-                   </div>
+                        activeTab.searchScope === 'folder' ? <Folder size={10} className="mr-1" /> :
+                          <Globe size={10} className="mr-1" />}
+                    <span>{activeTab.searchQuery}</span>
+                    <button onClick={() => { setToolbarQuery(''); onPerformSearch(''); }} className="ml-1.5 hover:text-red-500 font-bold"><X size={12} /></button>
+                  </div>
                 )}
 
                 {activeTab.aiFilter && (
@@ -3486,23 +3486,23 @@ export const App: React.FC = () => {
                   </div>
                 ))}
 
-                <button onClick={() => { 
-                  setToolbarQuery(''); 
-                  updateActiveTab({ 
-                    activeTags: [], 
-                    activePersonId: null, 
-                    searchQuery: '', 
-                    dateFilter: { start: null, end: null, mode: 'created' as const }, 
-                    aiFilter: null 
-                  }); 
+                <button onClick={() => {
+                  setToolbarQuery('');
+                  updateActiveTab({
+                    activeTags: [],
+                    activePersonId: null,
+                    searchQuery: '',
+                    dateFilter: { start: null, end: null, mode: 'created' as const },
+                    aiFilter: null
+                  });
                 }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>
-                
+
                 {/* Pagination & Count Display */}
                 <div className="flex-1" />
                 {totalResults > 0 && (
                   totalResults > pageSize ? (
                     <div className="flex items-center gap-1 ml-4 pr-1 px-1 bg-white/50 dark:bg-black/20 rounded shadow-sm border border-gray-200 dark:border-gray-800">
-                      <button 
+                      <button
                         disabled={(activeTab.currentPage || 1) <= 1}
                         onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) - 1, scrollTop: 0 })}
                         className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"
@@ -3516,7 +3516,7 @@ export const App: React.FC = () => {
                         <span className="text-gray-600 dark:text-gray-400">{Math.ceil(totalResults / pageSize)}</span>
                         <span className="ml-1 text-[9px] text-gray-400 font-normal">({totalResults})</span>
                       </div>
-                      <button 
+                      <button
                         disabled={(activeTab.currentPage || 1) >= Math.ceil(totalResults / pageSize)}
                         onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) + 1, scrollTop: 0 })}
                         className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"

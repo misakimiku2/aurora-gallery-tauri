@@ -3,9 +3,9 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { FileNode, SlideshowConfig, SearchScope } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
-import { 
-  X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight, 
-  RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight, 
+import {
+  X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
+  RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette
 } from 'lucide-react';
@@ -20,58 +20,71 @@ const loadingPromises = new Map<string, Promise<string>>();
 
 // 同步获取缓存（如果存在）- 用于无闪烁切�?
 export const getBlobCacheSync = (path: string): string | null => {
-    if (blobCache.has(path)) {
-        const url = blobCache.get(path)!;
-        // LRU: 移动到最�?
-        blobCache.delete(path);
-        blobCache.set(path, url);
-        return url;
-    }
-    return null;
+  if (blobCache.has(path)) {
+    const url = blobCache.get(path)!;
+    // LRU: 移动到最�?
+    blobCache.delete(path);
+    blobCache.set(path, url);
+    return url;
+  }
+  return null;
 };
 
 // 检查缓存是否存�?
 export const hasBlobCache = (path: string): boolean => {
-    return blobCache.has(path);
+  return blobCache.has(path);
 };
 
 const loadToCache = async (path: string): Promise<string> => {
-    // 如果已在缓存中，直接返回
-    const cached = getBlobCacheSync(path);
-    if (cached) return cached;
+  // 如果已在缓存中，直接返回
+  const cached = getBlobCacheSync(path);
+  if (cached) return cached;
 
-    // 如果已经在加载中，等待现有的 Promise
-    if (loadingPromises.has(path)) {
-        return loadingPromises.get(path)!;
-    }
+  // 如果已经在加载中，等待现有的 Promise
+  if (loadingPromises.has(path)) {
+    return loadingPromises.get(path)!;
+  }
 
-    // 创建新的加载 Promise
-    const loadPromise = (async () => {
-      try {
-        // 直接使用 convertFileSrc 返回的 URL，不需要 fetch
-        const url = convertFileSrc(path);
-
-        // 缓存 URL（虽然不是 blob，但仍然可以重用）
-        blobCache.set(path, url);
-        return url;
-      } catch (e) {
-        console.error("Failed to load image to cache", path, e);
-        // 出错时也返回 convertFileSrc URL
-        return convertFileSrc(path);
-      } finally {
-        loadingPromises.delete(path);
+  // 创建新的加载 Promise
+  const loadPromise = (async () => {
+    try {
+      // 对于 JXL 和 AVIF 文件，调用后端转码指令以提高性能和稳定性
+      if (path.toLowerCase().endsWith('.jxl')) {
+        const previewUrl = await invoke<string>('get_jxl_preview', { path });
+        blobCache.set(path, previewUrl);
+        return previewUrl;
       }
-    })();
-    
-    loadingPromises.set(path, loadPromise);
-    return loadPromise;
+
+      if (path.toLowerCase().endsWith('.avif')) {
+        const previewUrl = await invoke<string>('get_avif_preview', { path });
+        blobCache.set(path, previewUrl);
+        return previewUrl;
+      }
+
+      // 其他格式直接使用 convertFileSrc 返回的 URL，不需要 fetch
+      const url = convertFileSrc(path);
+
+      // 缓存 URL（虽然不是 blob，但仍然可以重用）
+      blobCache.set(path, url);
+      return url;
+    } catch (e) {
+      console.error("Failed to load image to cache", path, e);
+      // 出错时也返回 convertFileSrc URL
+      return convertFileSrc(path);
+    } finally {
+      loadingPromises.delete(path);
+    }
+  })();
+
+  loadingPromises.set(path, loadPromise);
+  return loadPromise;
 };
 
 // 预加载图片到缓存（静默，不返回结果）
 export const preloadToCache = (path: string): void => {
-    if (!blobCache.has(path) && !loadingPromises.has(path)) {
-        loadToCache(path).catch(() => {});
-    }
+  if (!blobCache.has(path) && !loadingPromises.has(path)) {
+    loadToCache(path).catch(() => { });
+  }
 };
 
 // ============ 全局调色板缓存 ============
@@ -85,86 +98,86 @@ export const PALETTE_CACHE_UPDATE_EVENT = 'aurora-palette-cache-update';
 
 // 同步获取调色板缓存
 export const getPaletteCacheSync = (path: string): string[] | null => {
-    if (paletteCache.has(path)) {
-        const palette = paletteCache.get(path)!;
-        // LRU: 移动到最后
-        paletteCache.delete(path);
-        paletteCache.set(path, palette);
-        return palette;
-    }
-    return null;
+  if (paletteCache.has(path)) {
+    const palette = paletteCache.get(path)!;
+    // LRU: 移动到最后
+    paletteCache.delete(path);
+    paletteCache.set(path, palette);
+    return palette;
+  }
+  return null;
 };
 
 // 检查调色板缓存是否存在
 export const hasPaletteCache = (path: string): boolean => {
-    return paletteCache.has(path);
+  return paletteCache.has(path);
 };
 
 // 加载调色板到缓存
 const loadPaletteToCache = async (path: string, existingPalette?: string[]): Promise<string[]> => {
-    // 如果已在缓存中，直接返回
-    const cached = getPaletteCacheSync(path);
-    if (cached) return cached;
+  // 如果已在缓存中，直接返回
+  const cached = getPaletteCacheSync(path);
+  if (cached) return cached;
 
-    // 如果已经在加载中，等待现有的 Promise
-    if (paletteLoadingPromises.has(path)) {
-        return paletteLoadingPromises.get(path)!;
-    }
-    
-    // 如果已有有效的调色板数据，直接缓存
-    if (existingPalette && existingPalette.length > 0 && !existingPalette.every(c => c === '#000000')) {
-        // 检查是否是有效调色板（非全黑、非重复）
-        const isValidPalette = existingPalette.length >= 2;
-        if (isValidPalette) {
-            // 缓存管理
-            if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
-                const firstKey = paletteCache.keys().next().value;
-                if (firstKey) paletteCache.delete(firstKey);
-            }
-            paletteCache.set(path, existingPalette);
-            // 触发事件通知其他组件
-            window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: existingPalette } }));
-            return existingPalette;
-        }
-    }
+  // 如果已经在加载中，等待现有的 Promise
+  if (paletteLoadingPromises.has(path)) {
+    return paletteLoadingPromises.get(path)!;
+  }
 
-    // 创建新的加载 Promise
-    const loadPromise = (async () => {
-        try {
-            const { getDominantColors } = await import('../api/tauri-bridge');
-            const colors = await getDominantColors(path, 8);
-            
-            if (colors && colors.length > 0) {
-                const hexColors = colors.map(c => c.hex);
-                
-                // 缓存管理
-                if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
-                    const firstKey = paletteCache.keys().next().value;
-                    if (firstKey) paletteCache.delete(firstKey);
-                }
-                paletteCache.set(path, hexColors);
-                // 触发事件通知其他组件
-                window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: hexColors } }));
-                return hexColors;
-            }
-            return [];
-        } catch (e) {
-            console.error("Failed to load palette to cache", path, e);
-            return [];
-        } finally {
-            paletteLoadingPromises.delete(path);
+  // 如果已有有效的调色板数据，直接缓存
+  if (existingPalette && existingPalette.length > 0 && !existingPalette.every(c => c === '#000000')) {
+    // 检查是否是有效调色板（非全黑、非重复）
+    const isValidPalette = existingPalette.length >= 2;
+    if (isValidPalette) {
+      // 缓存管理
+      if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
+        const firstKey = paletteCache.keys().next().value;
+        if (firstKey) paletteCache.delete(firstKey);
+      }
+      paletteCache.set(path, existingPalette);
+      // 触发事件通知其他组件
+      window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: existingPalette } }));
+      return existingPalette;
+    }
+  }
+
+  // 创建新的加载 Promise
+  const loadPromise = (async () => {
+    try {
+      const { getDominantColors } = await import('../api/tauri-bridge');
+      const colors = await getDominantColors(path, 8);
+
+      if (colors && colors.length > 0) {
+        const hexColors = colors.map(c => c.hex);
+
+        // 缓存管理
+        if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
+          const firstKey = paletteCache.keys().next().value;
+          if (firstKey) paletteCache.delete(firstKey);
         }
-    })();
-    
-    paletteLoadingPromises.set(path, loadPromise);
-    return loadPromise;
+        paletteCache.set(path, hexColors);
+        // 触发事件通知其他组件
+        window.dispatchEvent(new CustomEvent(PALETTE_CACHE_UPDATE_EVENT, { detail: { path, palette: hexColors } }));
+        return hexColors;
+      }
+      return [];
+    } catch (e) {
+      console.error("Failed to load palette to cache", path, e);
+      return [];
+    } finally {
+      paletteLoadingPromises.delete(path);
+    }
+  })();
+
+  paletteLoadingPromises.set(path, loadPromise);
+  return loadPromise;
 };
 
 // 预加载调色板到缓存（静默，不返回结果）
 export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
-    if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
-        loadPaletteToCache(path, existingPalette).catch(() => {});
-    }
+  if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
+    loadPaletteToCache(path, existingPalette).catch(() => { });
+  }
 };
 
 interface ViewerProps {
@@ -175,9 +188,9 @@ interface ViewerProps {
   files: Record<string, FileNode>;
   layout: { isSidebarVisible: boolean; isMetadataVisible: boolean };
   slideshowConfig: SlideshowConfig;
-  activeChannel?: 'original' | 'r' | 'g' | 'b' | 'l'; 
+  activeChannel?: 'original' | 'r' | 'g' | 'b' | 'l';
   onLayoutToggle: (part: 'sidebar' | 'metadata') => void;
-  onClose: () => void; 
+  onClose: () => void;
   onNext: (random?: boolean) => void;
   onPrev: () => void;
   onNavigateBack: () => void;
@@ -190,11 +203,11 @@ interface ViewerProps {
   onMoveToFolder: (fileId: string) => void;
   onNavigateToFolder: (folderId: string, options?: { targetId?: string }) => void;
   searchQuery: string;
-  onSearch: (query: string) => void; 
+  onSearch: (query: string) => void;
   searchScope: SearchScope;
   onSearchScopeChange: (scope: SearchScope) => void;
   onUpdateSlideshowConfig: (config: SlideshowConfig) => void;
-  onPasteTags: (targetId: string) => void; 
+  onPasteTags: (targetId: string) => void;
   onEditTags: () => void;
   onCopyTags: () => void;
   onAIAnalysis: (fileId: string) => void;
@@ -210,15 +223,15 @@ interface ContextMenuState {
   visible: boolean;
 }
 
-export const ImageViewer: React.FC<ViewerProps> = ({ 
-  file, 
+export const ImageViewer: React.FC<ViewerProps> = ({
+  file,
   prevFile: legacyPrev,
   nextFile: legacyNext,
   sortedFileIds,
   files,
-  onClose, 
-  onNext, 
-  onPrev, 
+  onClose,
+  onNext,
+  onPrev,
   onDelete,
   layout,
   onLayoutToggle,
@@ -251,14 +264,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     onClose();
     return null;
   }
-  
+
   const containerRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const scopeBtnRef = useRef<HTMLButtonElement>(null);
-  
-  const [scale, setScale] = useState(1); 
+
+  const [scale, setScale] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const positionRef = useRef(position); // for reading latest position inside callbacks
@@ -301,7 +314,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   };
 
   // animate both scale and position together (cancellable)
-  const animateTransformTo = (toScale: number, toX: number, toY: number, duration = 320) => {
+  const animateTransformTo = (toScale: number, toX: number, toY: number, duration = 320, easing: 'back' | 'smooth' = 'back') => {
     if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
     const fromX = positionRef.current.x;
     const fromY = positionRef.current.y;
@@ -316,11 +329,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const c1 = 1.70158;
     const c3 = c1 + 1;
     const easeOutBack = (t: number) => 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+    const easeOutQuint = (t: number) => 1 - Math.pow(1 - t, 5);
 
     const start = performance.now();
     const step = (now: number) => {
       const t = Math.min(1, (now - start) / computedDuration);
-      const k = easeOutBack(t);
+      const k = easing === 'back' ? easeOutBack(t) : easeOutQuint(t);
       const nx = fromX + dx * k;
       const ny = fromY + dy * k;
       const ns = fromScale + ds * k;
@@ -352,7 +366,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [showSearch, setShowSearch] = useState(false);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [scopeMenuPos, setScopeMenuPos] = useState({ top: 0, left: 0 });
-  
+
+  const [isWheeling, setIsWheeling] = useState(false);
+  const wheelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const lastFileIdRef = useRef(file.id);
 
@@ -360,7 +376,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
   const colorPickerContainerRef = useRef<HTMLDivElement>(null);
-  
+
   // 简化的单图层机制：当前显示的 URL + 正在加载的路径
   const [displayUrl, setDisplayUrl] = useState<string>(() => {
     if (file.path) {
@@ -373,7 +389,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const displayPathRef = useRef<string>(file.path || '');
   // 追踪正在加载的文件路径
   const loadingPathRef = useRef<string>('');
-  
+
   // 幻灯片模式专用：前一张图片的 URL（用于过渡效果）
   const [prevDisplayUrl, setPrevDisplayUrl] = useState<string>('');
   // 幻灯片过渡状态：是否正在过渡中
@@ -386,7 +402,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const slideshowActiveRef = useRef(slideshowActive);
   const slideshowTransitionRef = useRef(slideshowConfig.transition);
   const displayUrlRef = useRef(displayUrl);
-  
+
   // 保持 ref 与 state 同步
   useEffect(() => { slideshowActiveRef.current = slideshowActive; }, [slideshowActive]);
   useEffect(() => { slideshowTransitionRef.current = slideshowConfig.transition; }, [slideshowConfig.transition]);
@@ -399,16 +415,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       displayPathRef.current = '';
       return;
     }
-    
+
     const path = file.path;
-    
+
     // 尝试同步获取缓存
     const cachedUrl = getBlobCacheSync(path);
-    
+
     if (cachedUrl) {
       // 幻灯片模式下，保存当前图片作为过渡的起始图
       const shouldTransition = slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none';
-      
+
       if (shouldTransition) {
         // 捕获当前图片的最后变换状态，用于实现幻灯片切换时的“暂停效果”
         // 仅在淡入淡出模式且开启了缩放时生效
@@ -434,7 +450,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           setPrevDisplayUrl('');
         }, 600); // 与 CSS 过渡时长一致
       }
-      
+
       // 缓存命中：立即切换，无需等待
       setDisplayUrl(cachedUrl);
       displayPathRef.current = path;
@@ -442,7 +458,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     } else {
       // 缓存未命中：保留当前图片，异步加载新图
       loadingPathRef.current = path;
-      
+
       loadToCache(path).then(url => {
         // 只有当这仍然是我们想要的图片时才更新
         if (loadingPathRef.current === path) {
@@ -469,7 +485,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               setPrevDisplayUrl('');
             }, 600);
           }
-          
+
           setDisplayUrl(url);
           displayPathRef.current = path;
           loadingPathRef.current = '';
@@ -477,7 +493,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       });
     }
   }, [file.path]);
-  
+
   // 清理过渡计时器
   useEffect(() => {
     return () => {
@@ -490,53 +506,53 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   // --- Calculate Preload Nodes ---
   const preloadImages = useMemo(() => {
-      if (!sortedFileIds || sortedFileIds.length === 0) return [];
-      
-      const currentIdx = sortedFileIds.indexOf(file.id);
-      if (currentIdx === -1) return [];
+    if (!sortedFileIds || sortedFileIds.length === 0) return [];
 
-      const getNeighbor = (offset: number) => {
-          const idx = (currentIdx + offset + sortedFileIds.length) % sortedFileIds.length;
-          return files[sortedFileIds[idx]];
-      };
+    const currentIdx = sortedFileIds.indexOf(file.id);
+    if (currentIdx === -1) return [];
 
-      const nodes = [];
-      // 增加预加载范围到 +/- 10 张，确保快速切换时有足够的缓存
-      for (let i = 1; i <= 10; i++) {
-          nodes.push(getNeighbor(-i));
-          nodes.push(getNeighbor(i));
-      }
+    const getNeighbor = (offset: number) => {
+      const idx = (currentIdx + offset + sortedFileIds.length) % sortedFileIds.length;
+      return files[sortedFileIds[idx]];
+    };
 
-      return nodes.filter(node => node && node.path && node.id !== file.id);
+    const nodes = [];
+    // 预加载范围到 +/- 5 张
+    for (let i = 1; i <= 5; i++) {
+      nodes.push(getNeighbor(-i));
+      nodes.push(getNeighbor(i));
+    }
+
+    return nodes.filter(node => node && node.path && node.id !== file.id);
   }, [file.id, sortedFileIds, files]);
 
   // Preload neighbors into Blob Cache - 使用优化后的静默预加载
   useEffect(() => {
-     // 优先预加载前后各3张（最可能被访问的）
-     const priorityCount = 3;
-     const priorityNodes = preloadImages.slice(0, priorityCount * 2);
-     const restNodes = preloadImages.slice(priorityCount * 2);
-     
-     // 立即预加载优先级高的图片和调色板
-     priorityNodes.forEach(node => {
+    // 优先预加载前后各3张（最可能被访问的）
+    const priorityCount = 3;
+    const priorityNodes = preloadImages.slice(0, priorityCount * 2);
+    const restNodes = preloadImages.slice(priorityCount * 2);
+
+    // 立即预加载优先级高的图片和调色板
+    priorityNodes.forEach(node => {
+      if (node.path) {
+        preloadToCache(node.path);
+        // 同时预加载调色板（使用文件已有的 palette 数据，如果有的话）
+        preloadPaletteToCache(node.path, node.meta?.palette);
+      }
+    });
+
+    // 延迟预加载其余图片和调色板，避免阻塞
+    const timeoutId = setTimeout(() => {
+      restNodes.forEach(node => {
         if (node.path) {
-           preloadToCache(node.path);
-           // 同时预加载调色板（使用文件已有的 palette 数据，如果有的话）
-           preloadPaletteToCache(node.path, node.meta?.palette);
+          preloadToCache(node.path);
+          preloadPaletteToCache(node.path, node.meta?.palette);
         }
-     });
-     
-     // 延迟预加载其余图片和调色板，避免阻塞
-     const timeoutId = setTimeout(() => {
-         restNodes.forEach(node => {
-            if (node.path) {
-               preloadToCache(node.path);
-               preloadPaletteToCache(node.path, node.meta?.palette);
-            }
-         });
-     }, 100);
-     
-     return () => clearTimeout(timeoutId);
+      });
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
   }, [preloadImages]);
   // ------------------------------
 
@@ -588,6 +604,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     return () => {
       if (positionAnimRef.current) cancelAnimationFrame(positionAnimRef.current);
+      if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
     };
   }, []);
 
@@ -596,20 +613,20 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       // 重置视图状态（缩放、旋转、位置）
       setRotation(0);
       setPosition({ x: 0, y: 0 });
-      setScale(1); 
+      setScale(1);
       lastFileIdRef.current = file.id;
     }
   }, [file.id]);
 
   useEffect(() => {
     if (!isColorPickerOpen) return;
-    
+
     const handleClickOutside = (event: MouseEvent) => {
       if (colorPickerContainerRef.current && !colorPickerContainerRef.current.contains(event.target as Node)) {
         setIsColorPickerOpen(false);
       }
     };
-    
+
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isColorPickerOpen]);
@@ -623,18 +640,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   }, [currentSearchColor]);
 
   // Debounce color search to prevent event flooding
-  const debouncedColorSearch = useMemo(() => 
+  const debouncedColorSearch = useMemo(() =>
     debounce(async (color: string) => {
-       setIsColorSearching(true);
-       try {
-         onSearch(`color:${color}`);
-       } catch (e) {
-         console.error(e);
-       } finally {
-         setIsColorSearching(false);
-       }
+      setIsColorSearching(true);
+      try {
+        onSearch(`color:${color}`);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setIsColorSearching(false);
+      }
     }, 300)
-  , [onSearch]);
+    , [onSearch]);
 
   const handleColorSelect = (color: string) => {
     setLocalQuery(`color:${color}`);
@@ -649,91 +666,71 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       e.preventDefault();
       e.stopPropagation();
 
-      const ZOOM_SPEED = 0.1;
+      const ZOOM_SPEED = 0.3; // 显著提高缩放步长，提升缩放效率
       const direction = Math.sign(e.deltaY);
 
-      // 获取容器与当前可见图片的 DOMRect
+      if (!imgRef.current || !containerRef.current) return;
+
       const rect = container.getBoundingClientRect();
-      const imgEl = imgRef.current;
-      const imgRect = imgEl ? imgEl.getBoundingClientRect() : rect;
+      const { naturalWidth, naturalHeight } = imgRef.current;
+      if (!naturalWidth || !naturalHeight) return;
 
-      // 将鼠标位置夹到图片显示区域内（如果鼠标在图片外）。
-      // 这样缩放锚点就是图片上离鼠标最近的点。
-      const clientX = e.clientX;
-      const clientY = e.clientY;
-      const clampedClientX = Math.min(Math.max(clientX, imgRect.left), imgRect.right);
-      const clampedClientY = Math.min(Math.max(clientY, imgRect.top), imgRect.bottom);
+      // 1. 计算当前逻辑上的图片边界（不依赖实时 DOM，消除抖动）
+      const containerW = rect.width;
+      const containerH = rect.height;
+      const fitScale = Math.min(containerW / naturalWidth, containerH / naturalHeight);
 
-      // 转换为相对于容器左上角的坐标，然后再相对于容器中心
-      const mouseX = clampedClientX - rect.left;
-      const mouseY = clampedClientY - rect.top;
-      const centerX = rect.width / 2;
-      const centerY = rect.height / 2;
+      const currentScale = scaleRef.current;
+      const currentPos = positionRef.current;
 
-      // 关键：计算鼠标相对于「图片中心」的向量（包含当前 position），
-      // 而不是仅相对于容器中心。这样在图片已偏移或鼠标在图片外时，
-      // 计算出的 delta 方向将确保图片朝鼠标移动（而非远离）。
-      const dx = mouseX - centerX - positionRef.current.x;
-      const dy = mouseY - centerY - positionRef.current.y;
+      const logicalW = naturalWidth * fitScale * currentScale;
+      const logicalH = naturalHeight * fitScale * currentScale;
+      const centerX = containerW / 2;
+      const centerY = containerH / 2;
 
-      // 判断鼠标原始位置是否在图片外（用于触发平滑移动）
-      const mouseWasOutside = clientX < imgRect.left || clientX > imgRect.right || clientY < imgRect.top || clientY > imgRect.bottom;
+      // 图片逻辑中心坐标（相对于容器左上角）
+      const imgCenterX = centerX + currentPos.x;
+      const imgCenterY = centerY + currentPos.y;
 
-      // 使用 functional updater 保证读取到最新的 scale/position
-      setScale(prevScale => {
-        let newScale = prevScale;
-        if (direction < 0) newScale = prevScale * (1 + ZOOM_SPEED);
-        else newScale = prevScale / (1 + ZOOM_SPEED);
+      // 图片逻辑边界
+      const imgLeft = imgCenterX - logicalW / 2;
+      const imgTop = imgCenterY - logicalH / 2;
+      const imgRight = imgCenterX + logicalW / 2;
+      const imgBottom = imgCenterY + logicalH / 2;
 
-        newScale = Math.max(0.01, Math.min(newScale, 8));
+      // 2. 找到图片上距离鼠标最近的点作为缩放中心
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const anchorX = Math.min(Math.max(mouseX, imgLeft), imgRight);
+      const anchorY = Math.min(Math.max(mouseY, imgTop), imgBottom);
 
-        const scaleFactor = newScale / prevScale;
-        // 如果缩放比例实际发生改变，则按指针（或图片边界上最近点）修正平移，保持该点像素不动
-        if (scaleFactor !== 1) {
-          const deltaX = (1 - scaleFactor) * dx;
-          const deltaY = (1 - scaleFactor) * dy;
+      // 3. 计算新缩放比例
+      let newScale = direction < 0 ? currentScale * (1 + ZOOM_SPEED) : currentScale / (1 + ZOOM_SPEED);
+      newScale = Math.max(0.01, Math.min(newScale, 15)); // 扩大缩放范围
 
-          // 放大：使用平滑动画过渡位置（现在也适用于鼠标在图片内）
-          if (scaleFactor > 1) {
-            const targetX = positionRef.current.x + deltaX;
-            const targetY = positionRef.current.y + deltaY;
-            animatePositionTo(targetX, targetY, 200);
-          } else {
-            // 缩小：计算夹取后的目标位置（最小修正），如果鼠标在图片外则用动画移动
-            const naturalW = imgRef.current?.naturalWidth || 0;
-            const naturalH = imgRef.current?.naturalHeight || 0;
-            const containerW = rect.width;
-            const containerH = rect.height;
+      const scaleFactor = newScale / currentScale;
+      if (scaleFactor === 1) return;
 
-            if (!naturalW || !naturalH || !containerW || !containerH) {
-              animatePositionTo(0, 0, 200);
-            } else {
-              const fitScale = Math.min(containerW / naturalW, containerH / naturalH);
-              const renderedW = naturalW * fitScale * newScale;
-              const renderedH = naturalH * fitScale * newScale;
+      // 4. 计算为保持锚点不动所需的新位移
+      // 向量：中心 -> 锚点
+      const vecX = anchorX - imgCenterX;
+      const vecY = anchorY - imgCenterY;
 
-              const halfRenderedW = renderedW / 2;
-              const halfRenderedH = renderedH / 2;
-              const halfContainerW = containerW / 2;
-              const halfContainerH = containerH / 2;
+      // 新位移应让锚点在缩放后依然处于原来的容器坐标
+      // 公式推导：(anchor - center) * scaleFactor + newCenter = anchor
+      // newCenter = anchor - (anchor - center) * scaleFactor
+      // newPos = newCenter - defaultCenter
+      const targetX = currentPos.x + vecX * (1 - scaleFactor);
+      const targetY = currentPos.y + vecY * (1 - scaleFactor);
 
-              const allowedOffsetX = Math.abs(halfRenderedW - halfContainerW);
-              const allowedOffsetY = Math.abs(halfRenderedH - halfContainerH);
+      // 5. 执行平滑变换动画
+      // 激活滚轮缩放状态，用于禁用 CSS 过渡
+      setIsWheeling(true);
+      if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+      wheelTimeoutRef.current = setTimeout(() => setIsWheeling(false), 350);
 
-              const intendedX = positionRef.current.x + deltaX;
-              const intendedY = positionRef.current.y + deltaY;
-
-              const tx = Math.max(-allowedOffsetX, Math.min(allowedOffsetX, intendedX));
-              const ty = Math.max(-allowedOffsetY, Math.min(allowedOffsetY, intendedY));
-
-              animatePositionTo(tx, ty, 220);
-            }
-          }
-        }
-
-        return newScale;
-      });
-
+      // 使用 280ms 和五次方缓出曲线 (smooth)，提供类似于“原始尺寸”的高级质感但无回弹
+      animateTransformTo(newScale, targetX, targetY, 280, 'smooth');
     };
 
     container.addEventListener('wheel', handleWheel, { passive: false });
@@ -771,32 +768,32 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const toggleScopeMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!scopeMenuOpen && scopeBtnRef.current) {
-       const rect = scopeBtnRef.current.getBoundingClientRect();
-       setScopeMenuPos({ top: rect.bottom + 8, left: rect.left });
+      const rect = scopeBtnRef.current.getBoundingClientRect();
+      setScopeMenuPos({ top: rect.bottom + 8, left: rect.left });
     }
     setScopeMenuOpen(!scopeMenuOpen);
   };
 
   const handleCopyImage = async () => {
-      try {
-          if (!file.path) return;
-          
-          // Read file as base64 and convert to blob
-          const { readFileAsBase64 } = await import('../api/tauri-bridge');
-          const dataUrl = await readFileAsBase64(file.path);
-          if (!dataUrl) return;
-          
-          // Convert data URL to blob
-          const response = await fetch(dataUrl);
-          const blob = await response.blob();
-          await navigator.clipboard.write([
-              new ClipboardItem({
-                  [blob.type]: blob
-              })
-          ]);
-      } catch (err) {
-          console.error('Failed to copy image: ', err);
-      }
+    try {
+      if (!file.path) return;
+
+      // Read file as base64 and convert to blob
+      const { readFileAsBase64 } = await import('../api/tauri-bridge');
+      const dataUrl = await readFileAsBase64(file.path);
+      if (!dataUrl) return;
+
+      // Convert data URL to blob
+      const response = await fetch(dataUrl);
+      const blob = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          [blob.type]: blob
+        })
+      ]);
+    } catch (err) {
+      console.error('Failed to copy image: ', err);
+    }
   };
 
   useEffect(() => {
@@ -822,7 +819,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery]); 
+  }, [onClose, onNavigateBack, canGoBack, slideshowActive, showSlideshowSettings, showSearch, localQuery]);
 
   const handleNext = () => {
     onNext();
@@ -839,7 +836,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     if (e.button === 1) {
       e.preventDefault();
       e.stopPropagation();
-      toggleOriginalFit();
+      toggleOriginalFit(e.clientX, e.clientY);
       return;
     }
 
@@ -911,89 +908,90 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     };
   }, [contextMenu.visible, contextMenu.x, contextMenu.y]);
 
-    // Stop slideshow and ensure fullscreen / UI state is cleaned up immediately
-    const stopSlideshow = async () => {
-      try {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
+  // Stop slideshow and ensure fullscreen / UI state is cleaned up immediately
+  const stopSlideshow = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      // ignore
+    } finally {
+      setIsFullscreen(false);
+      setSlideshowActive(false);
+      setContextMenu(prev => ({ ...prev, visible: false }));
+      setShowSlideshowSettings(false);
+    }
+  };
+
+  const toggleSlideshow = async () => {
+    if (!slideshowActive) {
+      setSlideshowActive(true);
+      // try to enter fullscreen when starting slideshow
+      if (!document.fullscreenElement) {
+        try {
+          await rootRef.current?.requestFullscreen();
+          setIsFullscreen(true);
+        } catch (err) {
+          // ignore
         }
-      } catch (err) {
-        // ignore
-      } finally {
-        setIsFullscreen(false);
-        setSlideshowActive(false);
-        setContextMenu(prev => ({ ...prev, visible: false }));
-        setShowSlideshowSettings(false);
+      }
+      setContextMenu(prev => ({ ...prev, visible: false }));
+      setShowSlideshowSettings(false);
+    } else {
+      await stopSlideshow();
+    }
+  };
+
+  // If user exits fullscreen (usually via Esc), stop the slideshow immediately
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement && slideshowActiveRef.current) {
+        stopSlideshow();
       }
     };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
+  }, []);
 
-    const toggleSlideshow = async () => {
-      if (!slideshowActive) {
-        setSlideshowActive(true);
-        // try to enter fullscreen when starting slideshow
-        if (!document.fullscreenElement) {
-          try {
-            await rootRef.current?.requestFullscreen();
-            setIsFullscreen(true);
-          } catch (err) {
-            // ignore
-          }
-        }
-        setContextMenu(prev => ({ ...prev, visible: false }));
-        setShowSlideshowSettings(false);
-      } else {
-        await stopSlideshow();
-      }
-    };
+  // Safety: ensure settings modal is closed whenever slideshow becomes active
+  useEffect(() => { if (slideshowActive) setShowSlideshowSettings(false); }, [slideshowActive]);
 
-    // If user exits fullscreen (usually via Esc), stop the slideshow immediately
-    useEffect(() => {
-      const onFullscreenChange = () => {
-        if (!document.fullscreenElement && slideshowActiveRef.current) {
-          stopSlideshow();
-        }
-      };
-      document.addEventListener('fullscreenchange', onFullscreenChange);
-      return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
-    }, []);
+  const rotate = (deg: number) => setRotation(r => r + deg);
 
-    // Safety: ensure settings modal is closed whenever slideshow becomes active
-    useEffect(() => { if (slideshowActive) setShowSlideshowSettings(false); }, [slideshowActive]);
+  const handleReset = () => {
+    // animate to fit-window (scale=1, center)
+    animateTransformTo(1, 0, 0, 260);
+    setRotation(0);
+  };
 
-    const rotate = (deg: number) => setRotation(r => r + deg);
-
-    const handleReset = () => {
-      // animate to fit-window (scale=1, center)
-      animateTransformTo(1, 0, 0, 260);
-      setRotation(0);
-    };
-  
   const handleFitWindow = () => handleReset();
 
   const handleOriginalSize = () => {
-      if (!imgRef.current || !containerRef.current) return;
-      const { naturalWidth, naturalHeight } = imgRef.current;
-      const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
-      
-      if (!naturalWidth || !naturalHeight) return;
-
-      const scaleX = containerWidth / naturalWidth;
-      const scaleY = containerHeight / naturalHeight;
-      const fitScale = Math.min(scaleX, scaleY);
-      
-      // Calculate new scale. 
-      // If fitScale < 1 (image larger than window), we scale UP by 1/fitScale to reach 1.0 (original size).
-      // If fitScale > 1 (image smaller than window), we scale DOWN.
-      const newScale = 1 / fitScale;
-
-      animateTransformTo(newScale, 0, 0, 320);
-  };
-
-  // Toggle between fit-window (scale ~= 1) and original-size (scale = 1/fitScale).
-  const toggleOriginalFit = () => {
     if (!imgRef.current || !containerRef.current) return;
     const { naturalWidth, naturalHeight } = imgRef.current;
     const { width: containerWidth, height: containerHeight } = containerRef.current.getBoundingClientRect();
+
+    if (!naturalWidth || !naturalHeight) return;
+
+    const scaleX = containerWidth / naturalWidth;
+    const scaleY = containerHeight / naturalHeight;
+    const fitScale = Math.min(scaleX, scaleY);
+
+    // Calculate new scale. 
+    // If fitScale < 1 (image larger than window), we scale UP by 1/fitScale to reach 1.0 (original size).
+    // If fitScale > 1 (image smaller than window), we scale DOWN.
+    const newScale = 1 / fitScale;
+
+    animateTransformTo(newScale, 0, 0, 320);
+  };
+
+  // Toggle between fit-window (scale ~= 1) and original-size (scale = 1/fitScale).
+  const toggleOriginalFit = (clientX?: number, clientY?: number) => {
+    if (!imgRef.current || !containerRef.current) return;
+    const { naturalWidth, naturalHeight } = imgRef.current;
+    const containerRect = containerRef.current.getBoundingClientRect();
+    const { width: containerWidth, height: containerHeight } = containerRect;
     if (!naturalWidth || !naturalHeight) return;
 
     const scaleX = containerWidth / naturalWidth;
@@ -1004,8 +1002,37 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const current = scaleRef.current;
     // if currently close to original, go to fit; otherwise go to original
     const toOriginal = Math.abs(current - originalScale) > Math.abs(current - 1);
-    if (toOriginal) animateTransformTo(originalScale, 0, 0, 360);
-    else animateTransformTo(1, 0, 0, 260);
+
+    if (toOriginal) {
+      // 检测鼠标是否在图片内
+      const imgRect = imgRef.current.getBoundingClientRect();
+      const isMouseInImage =
+        clientX !== undefined && clientY !== undefined &&
+        clientX >= imgRect.left &&
+        clientX <= imgRect.right &&
+        clientY >= imgRect.top &&
+        clientY <= imgRect.bottom;
+
+      if (isMouseInImage && clientX !== undefined && clientY !== undefined) {
+        // 鼠标在图片内：以鼠标位置为中心
+        // 将鼠标位置转换为相对于容器中心的向量
+        const centerX = containerWidth / 2;
+        const centerY = containerHeight / 2;
+        const dx = clientX - (containerRect.left + centerX);
+        const dy = clientY - (containerRect.top + centerY);
+
+        // 计算目标位移，使缩放时鼠标位置下的图片内容保持不变
+        // 公式：targetPos = mouseOffset * (1 - originalScale)
+        const targetX = dx * (1 - originalScale);
+        const targetY = dy * (1 - originalScale);
+        animateTransformTo(originalScale, targetX, targetY, 360);
+      } else {
+        // 鼠标在图片外或没有鼠标位置信息：保持原逻辑（居中）
+        animateTransformTo(originalScale, 0, 0, 360);
+      }
+    } else {
+      animateTransformTo(1, 0, 0, 260);
+    }
   };
 
   const getScopeIcon = () => {
@@ -1020,7 +1047,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const filterStyle = activeChannel === 'original' ? {} : { filter: `url(#channel-${activeChannel})` };
 
   return (
-    <div 
+    <div
       ref={rootRef}
       className={`flex-1 flex flex-col h-full relative select-none overflow-hidden transition-colors duration-300 ${slideshowActive ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
       onClick={(e) => {
@@ -1031,25 +1058,25 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       {/* Preloading handled in useEffect now */}
 
       <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
-        
+
         <div className="flex items-center space-x-2">
-          <button 
+          <button
             onClick={() => onLayoutToggle('sidebar')}
             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
             title={t('viewer.toggleSidebar')}
           >
             <Sidebar size={18} />
           </button>
-          
+
           <div className="flex space-x-1">
-            <button 
+            <button
               onClick={onNavigateBack} disabled={!canGoBack}
               className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
               title={t('viewer.back')}
             >
               <ChevronLeft size={18} />
             </button>
-            <button 
+            <button
               onClick={onNavigateForward} disabled={!canGoForward}
               className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
               title={t('viewer.forward')}
@@ -1062,67 +1089,66 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           {showSearch ? (
             <div className="relative w-full max-w-[672px] animate-fade-in" onClick={(e) => e.stopPropagation()}>
-              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
-                isColorSearchQuery
-                  ? 'border-blue-500 shadow-sm'
-                  : isAISearchEnabled 
-                    ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
-                    : localQuery 
-                      ? 'border-blue-500 shadow-sm' 
-                      : 'border-transparent'
-              }`}>
-                 <div className="relative flex-shrink-0">
-                   <button 
-                     ref={scopeBtnRef}
-                     type="button"
-                     onClick={toggleScopeMenu}
-                     className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-800 whitespace-nowrap"
-                   >
-                     {getScopeIcon()}
-                     <ChevronDown size={12} className="ml-1 opacity-70"/>
-                   </button>
-                 </div>
+              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${isColorSearchQuery
+                ? 'border-blue-500 shadow-sm'
+                : isAISearchEnabled
+                  ? 'border-purple-500 shadow-sm shadow-purple-500/20'
+                  : localQuery
+                    ? 'border-blue-500 shadow-sm'
+                    : 'border-transparent'
+                }`}>
+                <div className="relative flex-shrink-0">
+                  <button
+                    ref={scopeBtnRef}
+                    type="button"
+                    onClick={toggleScopeMenu}
+                    className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-800 whitespace-nowrap"
+                  >
+                    {getScopeIcon()}
+                    <ChevronDown size={12} className="ml-1 opacity-70" />
+                  </button>
+                </div>
                 <div className="relative flex items-center" ref={colorPickerContainerRef}>
-                   {isColorSearching ? (
-                      <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
-                   ) : (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          e.preventDefault(); // 添加 preventDefault 以防万一
-                          setIsColorPickerOpen(!isColorPickerOpen);
-                        }}
-                        className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center relative z-[110]`}
-                        title={t('search.byColor')}
-                        >
-                        <Palette size={16} />
-                      </button>
-                   )}
-                   
-                   {isColorPickerOpen && (
-                      <div 
-                        className="fixed z-[9999]" 
-                        style={{ 
-                          top: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().bottom + 8 : 'auto',
-                          left: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().left : 'auto'
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                          <ColorPickerPopover 
-                             onChange={handleColorSelect}
-                             onClose={() => setIsColorPickerOpen(false)}
-                             initialColor={pickerInitialColor}
-                            t={t}
-                          />
-                      </div>
-                   )}
+                  {isColorSearching ? (
+                    <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault(); // 添加 preventDefault 以防万一
+                        setIsColorPickerOpen(!isColorPickerOpen);
+                      }}
+                      className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center relative z-[110]`}
+                      title={t('search.byColor')}
+                    >
+                      <Palette size={16} />
+                    </button>
+                  )}
+
+                  {isColorPickerOpen && (
+                    <div
+                      className="fixed z-[9999]"
+                      style={{
+                        top: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().bottom + 8 : 'auto',
+                        left: colorPickerContainerRef.current ? colorPickerContainerRef.current.getBoundingClientRect().left : 'auto'
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ColorPickerPopover
+                        onChange={handleColorSelect}
+                        onClose={() => setIsColorPickerOpen(false)}
+                        initialColor={pickerInitialColor}
+                        t={t}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {isColorSearchQuery && (
-                  <div 
-                      className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
-                      style={{ backgroundColor: currentSearchColor }}
+                  <div
+                    className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
+                    style={{ backgroundColor: currentSearchColor }}
                   />
                 )}
 
@@ -1135,9 +1161,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   onChange={(e) => setLocalQuery(e.target.value)}
                   placeholder={
                     searchScope === 'file' ? '搜索文件名' :
-                    searchScope === 'tag' ? '搜索标签' :
-                    searchScope === 'folder' ? '搜索文件夹' :
-                    t('search.placeholder')
+                      searchScope === 'tag' ? '搜索标签' :
+                        searchScope === 'folder' ? '搜索文件夹' :
+                          t('search.placeholder')
                   }
                   className="bg-transparent border-none flex-1 focus:outline-none text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
                   onKeyDown={(e) => { if (e.key === 'Enter') handleSearchSubmit(); }}
@@ -1160,11 +1186,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="flex items-center space-x-2 justify-end">
           <div className="flex items-center space-x-2 mr-4 w-32 hidden min-[1580px]:flex">
             <Minimize size={14} className="text-gray-500" />
-            <input 
-              type="range" 
-              min="0.01" 
-              max="8" 
-              step="0.01" 
+            <input
+              type="range"
+              min="0.01"
+              max="8"
+              step="0.01"
               value={scale}
               onChange={(e) => {
                 setScale(parseFloat(e.target.value));
@@ -1175,7 +1201,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
 
           <button onClick={handleOriginalSize} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.original')}>
-             <span className="text-xs font-bold">1:1</span>
+            <span className="text-xs font-bold">1:1</span>
           </button>
           <button onClick={handleReset} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.fit')}>
             <Maximize size={18} />
@@ -1188,16 +1214,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             <RotateCw size={18} />
           </button>
           <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
-          
-          <button 
-            onClick={() => setShowSearch(!showSearch)} 
-            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`} 
+
+          <button
+            onClick={() => setShowSearch(!showSearch)}
+            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
             title={t('viewer.search')}
           >
             <Search size={18} />
           </button>
-          
-          <button 
+
+          <button
             onClick={() => onLayoutToggle('metadata')}
             className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
             title={t('viewer.toggleMeta')}
@@ -1207,7 +1233,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         </div>
       </div>
 
-      <div 
+      <div
         ref={containerRef}
         className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : 'bg-gray-200 dark:bg-gray-900'}`}
         onMouseDown={handleMouseDown}
@@ -1219,80 +1245,77 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
         {!displayUrl && (
-           <div className="absolute inset-0 flex items-center justify-center z-0">
-               <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
-           </div>
+          <div className="absolute inset-0 flex items-center justify-center z-0">
+            <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
+          </div>
         )}
 
         {/* 单图层渲染 - 简洁高效（普通模式） */}
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
         <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
-           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
-           {slideshowActive && prevDisplayUrl && (
-             <img 
-               key={`prev-${prevDisplayUrl}`}
-               src={prevDisplayUrl} 
-               alt=""
-               className={`max-w-none absolute inset-0 m-auto ${
-                 slideshowConfig.transition === 'fade' 
-                   ? 'animate-slideshow-fade-out' 
-                   : slideshowConfig.transition === 'slide'
-                     ? 'animate-slideshow-slide-out'
-                     : ''
-               }`}
-               loading="eager"
-               decoding="sync"
-               style={{
-                 width: '100%',
-                 height: '100%',
-                 objectFit: 'contain',
-                 pointerEvents: 'none',
-                 zIndex: 1,
-                 transform: slideshowConfig.transition === 'fade' ? prevTransform : undefined,
-               }}
-               draggable={false}
-             />
-           )}
-           
-           {/* 当前图片 */}
-           <img 
-             ref={imgRef}
-             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
-             src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'} 
-             alt={file.name}
-             className={`max-w-none absolute inset-0 m-auto ${
-               slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
-             } ${
-               slideshowActive && isTransitioning && slideshowConfig.transition === 'fade' 
-                 ? 'animate-slideshow-fade-in' 
-                 : slideshowActive && isTransitioning && slideshowConfig.transition === 'slide'
-                   ? 'animate-slideshow-slide-in'
-                   : ''
-             }`}
-             loading="eager"
-             decoding="sync"
-             style={{
-               width: '100%',
-               height: '100%',
-               objectFit: 'contain',
-               // 普通模式或幻灯片无过渡时的 transform
-               ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
-                 transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                 transition: isDragging ? 'none' : 'transform 0.1s linear',
-               } : {}),
-               pointerEvents: slideshowActive ? 'none' : 'auto',
-               transformOrigin: 'center center',
-               zIndex: 2,
-               ...filterStyle
-             }}
-             draggable={false}
-           />
+          {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
+          {slideshowActive && prevDisplayUrl && (
+            <img
+              key={`prev-${prevDisplayUrl}`}
+              src={prevDisplayUrl}
+              alt=""
+              className={`max-w-none absolute inset-0 m-auto ${slideshowConfig.transition === 'fade'
+                ? 'animate-slideshow-fade-out'
+                : slideshowConfig.transition === 'slide'
+                  ? 'animate-slideshow-slide-out'
+                  : ''
+                }`}
+              loading="eager"
+              decoding="sync"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                pointerEvents: 'none',
+                zIndex: 1,
+                transform: slideshowConfig.transition === 'fade' ? prevTransform : undefined,
+              }}
+              draggable={false}
+            />
+          )}
+
+          {/* 当前图片 */}
+          <img
+            ref={imgRef}
+            key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
+            src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
+            alt={file.name}
+            className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
+              } ${slideshowActive && isTransitioning && slideshowConfig.transition === 'fade'
+                ? 'animate-slideshow-fade-in'
+                : slideshowActive && isTransitioning && slideshowConfig.transition === 'slide'
+                  ? 'animate-slideshow-slide-in'
+                  : ''
+              }`}
+            loading="eager"
+            decoding="sync"
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              // 普通模式或幻灯片无过渡时的 transform
+              ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
+                transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                transition: (isDragging || isWheeling) ? 'none' : 'transform 0.1s linear',
+              } : {}),
+              pointerEvents: slideshowActive ? 'none' : 'auto',
+              transformOrigin: 'center center',
+              zIndex: 2,
+              ...filterStyle
+            }}
+            draggable={false}
+          />
         </div>
 
         {!slideshowActive && (
           <>
             <div className="absolute inset-y-0 left-0 w-24 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-black/30 to-transparent z-10 pointer-events-auto">
-              <button 
+              <button
                 onClick={(e) => { e.stopPropagation(); handlePrev(); }}
                 className="p-3 rounded-full bg-black/50 text-white/80 hover:bg-black/80 hover:text-white backdrop-blur-sm transform transition-transform active:scale-95"
               >
@@ -1300,7 +1323,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               </button>
             </div>
             <div className="absolute inset-y-0 right-0 w-24 flex items-center justify-end pr-2 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-gradient-to-l from-black/30 to-transparent z-10 pointer-events-auto">
-              <button 
+              <button
                 onClick={(e) => { e.stopPropagation(); handleNext(); }}
                 className="p-3 rounded-full bg-black/50 text-white/80 hover:bg-black/80 hover:text-white backdrop-blur-sm transform transition-transform active:scale-95"
               >
@@ -1323,32 +1346,32 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginalSize(); setContextMenu({...contextMenu, visible: false}); }}>
-             <Maximize size={14} className="mr-2 opacity-70"/> {t('viewer.original')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginalSize(); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Maximize size={14} className="mr-2 opacity-70" /> {t('viewer.original')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleFitWindow(); setContextMenu({...contextMenu, visible: false}); }}>
-             <Minimize size={14} className="mr-2 opacity-70"/> {t('viewer.fit')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleFitWindow(); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Minimize size={14} className="mr-2 opacity-70" /> {t('viewer.fit')}
           </div>
-          
+
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <ExternalLink size={14} className="mr-2 opacity-70"/> {t('context.viewInExplorer')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <ExternalLink size={14} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
           </div>
           {(() => {
             const parentId = file.parentId;
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
             return (
-              <div 
-                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'}`} 
-                onClick={() => { 
-                  if (!isUnavailable && parentId) { 
-                    onNavigateToFolder(parentId, { targetId: file.id }); 
-                    setContextMenu({...contextMenu, visible: false}); 
+              <div
+                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'}`}
+                onClick={() => {
+                  if (!isUnavailable && parentId) {
+                    onNavigateToFolder(parentId, { targetId: file.id });
+                    setContextMenu({ ...contextMenu, visible: false });
                   }
                 }}
               >
-                <FolderOpen size={14} className={`mr-2 opacity-70 ${isUnavailable ? 'opacity-40' : 'opacity-70'}`}/> 
+                <FolderOpen size={14} className={`mr-2 opacity-70 ${isUnavailable ? 'opacity-40' : 'opacity-70'}`} />
                 {t('context.openFolder')}
               </div>
             );
@@ -1356,88 +1379,88 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({...contextMenu, visible: false}); }}>
-             <Tag size={14} className="mr-2 opacity-70"/> {t('context.editTags')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Tag size={14} className="mr-2 opacity-70" /> {t('context.editTags')}
           </div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({...contextMenu, visible: false}); }}>
-             <Tag size={14} className="mr-2 opacity-70"/> {t('context.copyTag')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Tag size={14} className="mr-2 opacity-70" /> {t('context.copyTag')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onPasteTags(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Tag size={14} className="mr-2 opacity-70"/> {t('context.pasteTag')}
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onPasteTags(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Tag size={14} className="mr-2 opacity-70" /> {t('context.pasteTag')}
+          </div>
+
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Copy size={14} className="mr-2 opacity-70" /> {t('context.copyTo')}
+          </div>
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onMoveToFolder(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Move size={14} className="mr-2 opacity-70" /> {t('context.moveTo')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Copy size={14} className="mr-2 opacity-70"/> {t('context.copyTo')}
-          </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onMoveToFolder(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Move size={14} className="mr-2 opacity-70"/> {t('context.moveTo')}
+          <div className="px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Sliders size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-          
-           <div className="px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Sliders size={14} className="mr-2 opacity-70"/> {t('context.aiAnalyze')}
-           </div>
-          
-          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-          
-          <div 
+
+          <div
             className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
-            onClick={() => { setShowSlideshowSettings(true); setContextMenu({...contextMenu, visible: false}); }}
+            onClick={() => { setShowSlideshowSettings(true); setContextMenu({ ...contextMenu, visible: false }); }}
           >
             <div className="flex items-center">
-                <Settings size={14} className="mr-2"/>
-                {t('context.slideshowSettings')}
+              <Settings size={14} className="mr-2" />
+              {t('context.slideshowSettings')}
             </div>
           </div>
-          <div 
+          <div
             className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
             onClick={toggleSlideshow}
           >
             <div className="flex items-center">
-                {slideshowActive ? <Square size={14} className="mr-2"/> : <Play size={14} className="mr-2"/>}
-                {slideshowActive ? t('context.stopSlideshow') : t('context.startSlideshow')}
+              {slideshowActive ? <Square size={14} className="mr-2" /> : <Play size={14} className="mr-2" />}
+              {slideshowActive ? t('context.stopSlideshow') : t('context.startSlideshow')}
             </div>
           </div>
-          
+
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-          
-          <div className="px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={() => { onDelete(file.id); setContextMenu({...contextMenu, visible: false}); }}>
-             <Trash2 size={14} className="mr-2 opacity-70"/> {t('context.delete')}
+
+          <div className="px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={() => { onDelete(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Trash2 size={14} className="mr-2 opacity-70" /> {t('context.delete')}
           </div>
         </div>
       )}
 
       {scopeMenuOpen && (
         <>
-           <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setScopeMenuOpen(false); }}></div>
-           <div 
-              className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
-              style={{ top: scopeMenuPos.top, left: scopeMenuPos.left }}
-           >
-              {[
-                 { id: 'all', icon: Globe, label: t('search.scopeAll') },
-                 { id: 'file', icon: FileText, label: t('search.scopeFile') },
-                 { id: 'tag', icon: Tag, label: t('search.scopeTag') },
-                 { id: 'folder', icon: FolderIcon, label: t('search.scopeFolder') }
-              ].map((opt) => (
-                 <button
-                    key={opt.id}
-                    type="button"
-                    onClick={(e) => { 
-                      e.stopPropagation(); 
-                      onSearchScopeChange(opt.id as SearchScope); 
-                      setScopeMenuOpen(false); 
-                    }}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/20 ${searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
-                 >
-                    <opt.icon size={14} className="mr-2"/> {opt.label}
-                 </button>
-              ))}
-           </div>
+          <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setScopeMenuOpen(false); }}></div>
+          <div
+            className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
+            style={{ top: scopeMenuPos.top, left: scopeMenuPos.left }}
+          >
+            {[
+              { id: 'all', icon: Globe, label: t('search.scopeAll') },
+              { id: 'file', icon: FileText, label: t('search.scopeFile') },
+              { id: 'tag', icon: Tag, label: t('search.scopeTag') },
+              { id: 'folder', icon: FolderIcon, label: t('search.scopeFolder') }
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSearchScopeChange(opt.id as SearchScope);
+                  setScopeMenuOpen(false);
+                }}
+                className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/20 ${searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
+              >
+                <opt.icon size={14} className="mr-2" /> {opt.label}
+              </button>
+            ))}
+          </div>
         </>
       )}
 
@@ -1445,17 +1468,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center">
           <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg w-80 shadow-2xl p-4 animate-zoom-in" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4 border-b border-gray-200 dark:border-gray-800 pb-2">
-              <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center"><Sliders size={16} className="mr-2"/> {t('context.slideshowSettings')}</h3>
-              <button onClick={() => setShowSlideshowSettings(false)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"><X size={18}/></button>
+              <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center"><Sliders size={16} className="mr-2" /> {t('context.slideshowSettings')}</h3>
+              <button onClick={() => setShowSlideshowSettings(false)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"><X size={18} /></button>
             </div>
-            
+
             <div className="space-y-4">
               <div>
                 <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('viewer.slideshowInterval')} ({slideshowConfig.interval / 1000}s)</label>
-                <input 
-                  type="range" 
-                  min="1000" 
-                  max="10000" 
+                <input
+                  type="range"
+                  min="1000"
+                  max="10000"
                   step="500"
                   value={slideshowConfig.interval}
                   onChange={(e) => onUpdateSlideshowConfig({ ...slideshowConfig, interval: Number(e.target.value) })}
@@ -1465,7 +1488,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
               <div>
                 <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{t('viewer.transition')}</label>
-                <select 
+                <select
                   value={slideshowConfig.transition}
                   onChange={(e) => onUpdateSlideshowConfig({ ...slideshowConfig, transition: e.target.value as any })}
                   className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
@@ -1478,7 +1501,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-700 dark:text-gray-300">{t('viewer.enableZoom')}</span>
-                <button 
+                <button
                   onClick={() => onUpdateSlideshowConfig({ ...slideshowConfig, enableZoom: !slideshowConfig.enableZoom })}
                   className={`w-10 h-5 rounded-full relative transition-colors ${slideshowConfig.enableZoom ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'}`}
                 >
@@ -1488,7 +1511,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-700 dark:text-gray-300">{t('viewer.random')}</span>
-                <button 
+                <button
                   onClick={() => onUpdateSlideshowConfig({ ...slideshowConfig, isRandom: !slideshowConfig.isRandom })}
                   className={`w-10 h-5 rounded-full relative transition-colors ${slideshowConfig.isRandom ? 'bg-blue-600' : 'bg-gray-400 dark:bg-gray-600'}`}
                 >
@@ -1498,13 +1521,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             </div>
 
             <div className="mt-6 flex justify-end space-x-2">
-               <button 
+              <button
                 onClick={() => { toggleSlideshow(); setShowSlideshowSettings(false); }}
                 className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded text-sm flex items-center"
               >
-                <Play size={12} className="mr-1"/> {t('context.startSlideshow')}
+                <Play size={12} className="mr-1" /> {t('context.startSlideshow')}
               </button>
-              <button 
+              <button
                 onClick={() => setShowSlideshowSettings(false)}
                 className="bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-white px-4 py-1.5 rounded text-sm"
               >

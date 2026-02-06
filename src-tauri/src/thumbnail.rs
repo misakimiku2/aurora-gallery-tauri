@@ -1,10 +1,11 @@
-// Moved from main.rs — thumbnail generation, batch thumbnails and drag-preview
+use tauri::Manager;
 use serde::Serialize;
 use std::path::Path;
 use std::fs;
-use std::io::{Read, BufWriter, BufReader};
+use std::io::{Read, BufReader};
 use std::num::NonZeroU32;
 use tauri;
+use jxl_oxide::JxlImage;
 use fast_image_resize as fr;
 use image::codecs::jpeg::{JpegEncoder, JpegDecoder};
 use image::ImageFormat;
@@ -16,6 +17,20 @@ use crate::color_extractor;
 pub struct BatchResult {
     pub path: String,
     pub url: Option<String>,
+}
+
+fn is_jxl(buffer: &[u8]) -> bool {
+    if buffer.starts_with(&[0xFF, 0x0A]) { return true; }
+    if buffer.len() >= 12 && &buffer[0..12] == &[0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] { return true; }
+    false
+}
+
+fn is_avif(buffer: &[u8]) -> bool {
+    if buffer.len() >= 12 {
+        let ftyp = &buffer[4..12];
+        if ftyp == b"ftypavif" || ftyp == b"ftypavis" { return true; }
+    }
+    false
 }
 
 // Core thumbnail generation (kept synchronous; invoked from spawn_blocking)
@@ -51,93 +66,149 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
         return Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
     }
 
-    let file = fs::File::open(image_path).ok()?;
-    let reader = BufReader::new(file);
-    let format = image::guess_format(&buffer[..bytes_read]).unwrap_or(ImageFormat::Png);
+    let format = image::guess_format(&buffer[..bytes_read]).ok();
+    
+    // Fallback for AVIF/JXL if guess_format failed
+    if format.is_none() {
+        if is_avif(&buffer[..bytes_read]) {
+            // 后端暂不支持 AVIF 解码
+        }
+    }
 
-    let img = if format == ImageFormat::Jpeg {
-        let mut decoder = JpegDecoder::new(reader).ok()?;
-        decoder.scale(256, 256).ok()?;
-        image::DynamicImage::from_decoder(decoder).ok()?
-    } else {
-        let mut image_reader = image::io::Reader::new(reader);
-        image_reader.set_format(format);
-        image_reader.no_limits();
-        image_reader.decode().ok()?
-    };
+    let is_jxl_file = file_path.to_lowercase().ends_with(".jxl") || is_jxl(&buffer[..bytes_read]);
+    let _is_avif_file = is_avif(&buffer[..bytes_read]);
 
-    let width = img.width();
-    let height = img.height();
-    const TARGET_MIN_SIZE: u32 = 256;
-    let (dst_width, dst_height) = if width < height {
-        let ratio = height as f32 / width as f32;
-        (TARGET_MIN_SIZE, (TARGET_MIN_SIZE as f32 * ratio) as u32)
-    } else {
-        let ratio = width as f32 / height as f32;
-        ((TARGET_MIN_SIZE as f32 * ratio) as u32, TARGET_MIN_SIZE)
-    };
+    if is_jxl_file {
+        use std::sync::atomic::Ordering;
+        use crate::{ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
+        while ACTIVE_HEAVY_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_HEAVY_DECODES {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        ACTIVE_HEAVY_DECODES.fetch_add(1, Ordering::SeqCst);
+    }
 
-    let src_width = NonZeroU32::new(width)?;
-    let src_height = NonZeroU32::new(height)?;
-    let dst_width_nz = NonZeroU32::new(dst_width)?;
-    let dst_height_nz = NonZeroU32::new(dst_height)?;
-
-    // Optimization: Only use RGBA if the image format actually supports alpha
-    // And check for actual transparency on the SMALL thumbnail to save time.
-    if img.color().has_alpha() {
-        let src_image = fr::Image::from_vec_u8(
-            src_width,
-            src_height,
-            img.to_rgba8().into_raw(),
-            fr::PixelType::U8x4,
-        ).ok()?;
-
-        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
-        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
-        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
-
-        // Check transparency on the SMALL thumbnail buffer
-        let pixels = dst_image.buffer();
-        let has_actual_transparency = pixels.chunks_exact(4).any(|p| p[3] < 255);
-
-        if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
-
-        if has_actual_transparency {
-            let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
-            let mut writer = BufWriter::new(cache_file);
-            let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
-            resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
-            Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
+    let result = (|| {
+        let img = if format == Some(ImageFormat::Jpeg) {
+            let file = fs::File::open(image_path).ok()?;
+            let reader = BufReader::new(file);
+            let mut decoder = JpegDecoder::new(reader).ok()?;
+            decoder.scale(256, 256).ok()?;
+            image::DynamicImage::from_decoder(decoder).ok()?
+        } else if is_jxl_file {
+            // Special handling for JXL using jxl-oxide
+            let jxl_image = JxlImage::builder().open(image_path).ok()?;
+            
+            let render = jxl_image.render_frame(0).ok()?;
+            let framebuffer = render.image_all_channels();
+            
+            let width = framebuffer.width() as u32;
+            let height = framebuffer.height() as u32;
+            let channels = framebuffer.channels();
+            let buf = framebuffer.buf();
+            
+            if channels == 3 {
+                use rayon::prelude::*;
+                let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+                image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels)?)
+            } else {
+                use rayon::prelude::*;
+                let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+                image::DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels)?)
+            }
         } else {
-            // If no transparency was actually found, save as JPEG to save space
+            let file = fs::File::open(image_path).ok()?;
+            let reader = BufReader::new(file);
+            let mut image_reader = image::io::Reader::new(reader);
+            if let Some(fmt) = format {
+                image_reader.set_format(fmt);
+            } else {
+                image_reader = image_reader.with_guessed_format().ok()?;
+            }
+            image_reader.no_limits();
+            image_reader.decode().ok()?
+        };
+
+        let width = img.width();
+        let height = img.height();
+        const TARGET_MIN_SIZE: u32 = 256;
+        let (dst_width, dst_height) = if width < height {
+            let ratio = height as f32 / width as f32;
+            (TARGET_MIN_SIZE, (TARGET_MIN_SIZE as f32 * ratio) as u32)
+        } else {
+            let ratio = width as f32 / height as f32;
+            ((TARGET_MIN_SIZE as f32 * ratio) as u32, TARGET_MIN_SIZE)
+        };
+
+        let src_width = NonZeroU32::new(width)?;
+        let src_height = NonZeroU32::new(height)?;
+        let dst_width_nz = NonZeroU32::new(dst_width)?;
+        let dst_height_nz = NonZeroU32::new(dst_height)?;
+
+        // Optimization: Only use RGBA if the image format actually supports alpha
+        // And check for actual transparency on the SMALL thumbnail to save time.
+        if img.color().has_alpha() {
+            let src_image = fr::Image::from_vec_u8(
+                src_width,
+                src_height,
+                img.to_rgba8().into_raw(),
+                fr::PixelType::U8x4,
+            ).ok()?;
+
+            let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
+            let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+            resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
+
+            // Check transparency on the SMALL thumbnail buffer
+            let pixels = dst_image.buffer();
+            let has_actual_transparency = pixels.chunks_exact(4).any(|p| p[3] < 255);
+
+            if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
+
+            if has_actual_transparency {
+                let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
+                let mut writer = BufWriter::new(cache_file);
+                let resized_img = image::DynamicImage::ImageRgba8(image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())?);
+                resized_img.write_to(&mut writer, ImageFormat::WebP).ok()?;
+                Some(webp_cache_file_path.to_str().unwrap_or_default().to_string())
+            } else {
+                // If no transparency was actually found, save as JPEG to save space
+                let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
+                let mut writer = BufWriter::new(cache_file);
+                let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
+                
+                // Convert RGBA to RGB for JPEG
+                let rgb_buffer: Vec<u8> = pixels.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+                encoder.encode(&rgb_buffer, dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
+                Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
+            }
+        } else {
+            let src_image = fr::Image::from_vec_u8(
+                src_width,
+                src_height,
+                img.to_rgb8().into_raw(),
+                fr::PixelType::U8x3,
+            ).ok()?;
+
+            let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
+            let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+            resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
+
+            if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
             let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
             let mut writer = BufWriter::new(cache_file);
             let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
-            
-            // Convert RGBA to RGB for JPEG
-            let rgb_buffer: Vec<u8> = pixels.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
-            encoder.encode(&rgb_buffer, dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
+            encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
             Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
         }
-    } else {
-        let src_image = fr::Image::from_vec_u8(
-            src_width,
-            src_height,
-            img.to_rgb8().into_raw(),
-            fr::PixelType::U8x3,
-        ).ok()?;
+    })();
 
-        let mut dst_image = fr::Image::new(dst_width_nz, dst_height_nz, src_image.pixel_type());
-        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
-        resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
-
-        if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
-        let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
-        let mut writer = BufWriter::new(cache_file);
-        let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
-        encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into()).ok()?;
-        Some(jpg_cache_file_path.to_str().unwrap_or_default().to_string())
+    if is_jxl_file {
+        use std::sync::atomic::Ordering;
+        use crate::ACTIVE_HEAVY_DECODES;
+        ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
     }
+
+    result
 }
 
 #[derive(Clone, Serialize)]
@@ -213,6 +284,77 @@ pub async fn get_thumbnails_batch(
     }).await;
 
     match result { Ok(val) => val, Err(e) => Err(e.to_string()) }
+}
+
+#[tauri::command]
+pub async fn save_remote_thumbnail(
+    file_path: String,
+    thumbnail_data: String, // Base64
+    colors: Vec<color_extractor::ColorResult>,
+    cache_root: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    use base64::{Engine as _, engine::general_purpose};
+    use std::fs;
+    use crate::color_db::ColorDbPool;
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let image_path = Path::new(&file_path);
+        if !image_path.exists() {
+            return Err("Original file does not exist".to_string());
+        }
+
+        // 1. 生成缓存文件名 (必须与 process_single_thumbnail 中的逻辑一致)
+        let metadata = fs::metadata(image_path).map_err(|e| e.to_string())?;
+        let size = metadata.len();
+        let modified = metadata.modified()
+            .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
+            .unwrap_or(0);
+
+        let mut file = fs::File::open(image_path).map_err(|e| e.to_string())?;
+        let mut buffer = [0u8; 4096];
+        let bytes_read = file.read(&mut buffer).unwrap_or(0);
+
+        let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
+        let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+
+        let root = Path::new(&cache_root);
+        if !root.exists() { let _ = fs::create_dir_all(root); }
+
+        // 解析 Base64 数据
+        // 期望格式: "data:image/jpeg;base64,..." 或直接是 Base64
+        let base64_content = if thumbnail_data.starts_with("data:") {
+            thumbnail_data.split(',').nth(1).unwrap_or(&thumbnail_data)
+        } else {
+            &thumbnail_data
+        };
+        
+        let decoded_data = general_purpose::STANDARD.decode(base64_content)
+            .map_err(|e| format!("Failed to decode base64: {}", e))?;
+
+        // 确定文件扩展名 (简单判断)
+        let is_webp = thumbnail_data.contains("image/webp");
+        let ext = if is_webp { "webp" } else { "jpg" };
+        let cache_file_path = root.join(format!("{}.{}", cache_filename, ext));
+
+        // 2. 写入缓存文件
+        fs::write(&cache_file_path, decoded_data).map_err(|e| e.to_string())?;
+
+        // 3. 持久化颜色数据
+        let pool = app.state::<ColorDbPool>();
+        let mut conn = pool.get_connection();
+        
+        // 这种方式直接调用批量保存即可，虽然只有一个
+        let batch_data = [(&file_path as &str, colors.as_slice())];
+        pool.batch_save_colors(&batch_data).map_err(|e: String| e)?;
+
+        // 4. 更新色彩扫描状态 (在 batch_save_colors 内部通常已经处理了，但为了保险我们显式调用一次 status)
+        let _ = crate::color_db::update_status(&mut conn, &file_path, "completed");
+
+        Ok(cache_file_path.to_str().unwrap_or_default().to_string())
+    }).await.map_err(|e| e.to_string())??;
+
+    Ok(result)
 }
 
 #[tauri::command]

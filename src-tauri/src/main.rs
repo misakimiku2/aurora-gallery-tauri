@@ -29,8 +29,73 @@ mod db;
 mod color_search;
 mod thumbnail;
 
-use crate::thumbnail::{process_single_thumbnail, get_thumbnail, get_thumbnails_batch, generate_drag_preview, BatchResult, ThumbnailBatchResult};
-use crate::color_search::{hex_to_lab, search_by_palette, search_by_color};
+use crate::thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
+use crate::color_search::{search_by_palette, search_by_color};
+
+use image;
+use jxl_oxide;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+// 全局共享的重载格式（JXL/AVIF）解码任务计数，限制并发以保护 CPU
+pub static ACTIVE_HEAVY_DECODES: AtomicUsize = AtomicUsize::new(0);
+pub const MAX_CONCURRENT_HEAVY_DECODES: usize = 3; // 稍微放宽到 3，给 UI 响应一点空间
+
+// Helper for JXL and AVIF magic byte detection
+pub fn is_jxl(buffer: &[u8]) -> bool {
+    // Codestream: FF 0A
+    if buffer.starts_with(&[0xFF, 0x0A]) {
+        return true;
+    }
+    // Container: 00 00 00 0C 4A 58 4C 20 0D 0A 87 0A
+    if buffer.len() >= 12 && (&buffer[0..12] == &[0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] || &buffer[0..12] == b"\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a") {
+        return true;
+    }
+    false
+}
+
+pub fn is_avif(buffer: &[u8]) -> bool {
+    // Look for ftypavif or ftypavis usually at offset 4
+    if buffer.len() >= 12 {
+        let ftyp = &buffer[4..12];
+        if ftyp == b"ftypavif" || ftyp == b"ftypavis" {
+            return true;
+        }
+    }
+    false
+}
+
+pub fn get_image_dimensions(path: &str) -> (u32, u32) {
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (0, 0),
+    };
+
+    use std::io::{Read, Seek, SeekFrom};
+    let mut buffer = [0u8; 16];
+    let n = file.read(&mut buffer).unwrap_or(0);
+    let buf = &buffer[..n];
+    let _ = file.seek(SeekFrom::Start(0));
+
+    // Special priority for JXL and AVIF to avoid imageinfo issues
+    if is_jxl(buf) || path.to_lowercase().ends_with(".jxl") {
+        if let Ok(jxl) = jxl_oxide::JxlImage::builder().open(path) {
+            return (jxl.width(), jxl.height());
+        }
+    }
+
+    if is_avif(buf) || path.to_lowercase().ends_with(".avif") {
+        if let Ok(dim) = image::image_dimensions(path) {
+            return dim;
+        }
+    }
+
+    // Try imageinfo for everything else
+    if let Ok(info) = imageinfo::ImageInfo::from_file(&mut file) {
+        return (info.size.width as u32, info.size.height as u32);
+    }
+
+    (0, 0)
+}
 
 // --- Window State Management ---
 
@@ -162,7 +227,7 @@ pub struct FileNode {
 
 // Supported image extensions
 const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "svg",
+    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "svg", "avif", "jxl",
 ];
 
 // Use shared generate_id and normalize_path
@@ -207,6 +272,95 @@ fn is_supported_image(extension: &str) -> bool {
     SUPPORTED_EXTENSIONS.contains(&extension.to_lowercase().as_str())
 }
 
+#[tauri::command]
+async fn get_avif_preview(path: String) -> Result<String, String> {
+    use base64::{Engine as _, engine::general_purpose};
+    use std::fs;
+
+    // Direct read and base64 encode to leverage WebView2 native AVIF support.
+    // This avoids backend decoding dependencies entirely.
+    let result = tokio::task::spawn_blocking(move || {
+        let content = fs::read(&path).map_err(|e| format!("Failed to read file: {}", e))?;
+        Ok(format!("data:image/avif;base64,{}", general_purpose::STANDARD.encode(content)))
+    }).await.map_err(|e| e.to_string())?;
+    
+    result
+}
+
+#[tauri::command]
+async fn get_jxl_preview(path: String) -> Result<String, String> {
+    use jxl_oxide::JxlImage;
+    use image::DynamicImage;
+    use std::io::Cursor;
+    use base64::{Engine as _, engine::general_purpose};
+    use fast_image_resize as fr;
+    use std::num::NonZeroU32;
+
+    // Concurrency limit for heavy decodes
+    while ACTIVE_HEAVY_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_HEAVY_DECODES {
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    ACTIVE_HEAVY_DECODES.fetch_add(1, Ordering::SeqCst);
+
+    let result = (async {
+        let jxl_image = JxlImage::builder().open(&path).map_err(|e| format!("JXL error: {:?}", e))?;
+        
+        let render = jxl_image.render_frame(0).map_err(|e| format!("Render error: {:?}", e))?;
+        let framebuffer = render.image_all_channels();
+        
+        let width = framebuffer.width() as u32;
+        let height = framebuffer.height() as u32;
+        let channels = framebuffer.channels();
+        let buf = framebuffer.buf();
+        
+        let mut img = if channels == 3 {
+            use rayon::prelude::*;
+            let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+            DynamicImage::ImageRgb8(image::RgbImage::from_raw(width, height, pixels).ok_or("Failed to create RgbImage")?)
+        } else {
+            use rayon::prelude::*;
+            let pixels: Vec<u8> = buf.par_iter().map(|&val| (val * 255.0).clamp(0.0, 255.0) as u8).collect();
+            DynamicImage::ImageRgba8(image::RgbaImage::from_raw(width, height, pixels).ok_or("Failed to create RgbaImage")?)
+        };
+
+        // Resize if too large to reduce CPU/memory during WebP encoding and transfer
+        let max_dimension = 2560;
+        if width > max_dimension || height > max_dimension {
+            let (new_width, new_height) = if width > height {
+                (max_dimension, (max_dimension as f32 * (height as f32 / width as f32)) as u32)
+            } else {
+                ((max_dimension as f32 * (width as f32 / height as f32)) as u32, max_dimension)
+            };
+
+            if let (Some(w_nz), Some(h_nz), Some(nw_nz), Some(nh_nz)) = (
+                NonZeroU32::new(width), NonZeroU32::new(height),
+                NonZeroU32::new(new_width), NonZeroU32::new(new_height)
+            ) {
+                let pixel_type = if channels == 3 { fr::PixelType::U8x3 } else { fr::PixelType::U8x4 };
+                let src_pixels = if channels == 3 { img.to_rgb8().into_raw() } else { img.to_rgba8().into_raw() };
+                let src_image = fr::Image::from_vec_u8(w_nz, h_nz, src_pixels, pixel_type).map_err(|e| e.to_string())?;
+                let mut dst_image = fr::Image::new(nw_nz, nh_nz, pixel_type);
+                let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+                resizer.resize(&src_image.view(), &mut dst_image.view_mut()).map_err(|e| e.to_string())?;
+                
+                img = if channels == 3 {
+                    DynamicImage::ImageRgb8(image::RgbImage::from_raw(new_width, new_height, dst_image.buffer().to_vec()).unwrap())
+                } else {
+                    DynamicImage::ImageRgba8(image::RgbaImage::from_raw(new_width, new_height, dst_image.buffer().to_vec()).unwrap())
+                };
+            }
+        }
+
+        let mut buffer = Vec::new();
+        img.write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::WebP).map_err(|e| e.to_string())?;
+        
+        Ok(format!("data:image/webp;base64,{}", general_purpose::STANDARD.encode(buffer)))
+    }).await;
+
+    ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
+    result
+}
+
 
 #[derive(Serialize, Clone)]
 struct ScanProgress {
@@ -217,7 +371,6 @@ struct ScanProgress {
 #[tauri::command]
 async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
     use std::fs;
-    use std::io::{Read, BufReader};
     use rayon::prelude::*;
     
     let force = force_rescan.unwrap_or(false);
@@ -570,10 +723,9 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     // 如果没有缓存可复用维度，且处于强制扫描模式（通常是欢迎界面或手动刷新），
                     // 我们直接在这里同步读取维度，这样最终写入数据库的就是完整信息。
                     if !has_cached_dims && force {
-                        if let Ok((w, h)) = image::image_dimensions(&entry_path) {
-                            width = w;
-                            height = h;
-                        }
+                         let dims = get_image_dimensions(&entry_path.to_string_lossy());
+                         width = dims.0;
+                         height = dims.1;
                     }
 
                     let image_node = FileNode {
@@ -728,7 +880,8 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                     for path in chunk_vec.iter() {
                         if let Ok(md) = std::fs::metadata(path) {
                             if md.is_file() {
-                                if let Ok((w, h)) = image::image_dimensions(path) {
+                                let (w, h) = get_image_dimensions(path);
+                                if w > 0 && h > 0 {
                                     let id = generate_id(path);
                                     let name = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
                                     let fmt = std::path::Path::new(path).extension().and_then(|e| e.to_str()).map(|s| s.to_string());
@@ -856,7 +1009,7 @@ async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri::App
     } else if is_image {
         // Create image file node
         let file_size = metadata.len();
-        let (width, height) = image::image_dimensions(path).unwrap_or((0, 0));
+        let (width, height) = get_image_dimensions(&path.to_string_lossy());
         
         // Create image file node
         let image_node = FileNode {
@@ -2078,6 +2231,9 @@ fn main() {
             get_default_paths,
             get_thumbnail,
             get_thumbnails_batch,
+            save_remote_thumbnail,
+            get_avif_preview,
+            get_jxl_preview,
             generate_drag_preview,
             read_file_as_base64,
             ensure_directory,

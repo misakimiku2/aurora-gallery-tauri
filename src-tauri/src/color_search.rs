@@ -1,12 +1,10 @@
 // Moved from main.rs — color search helpers and commands
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use rayon::prelude::*;
 use palette::{FromColor, Srgb, Lab};
 use palette::color_difference::Ciede2000;
 use tauri;
 use crate::color_db;
-use rusqlite::params;
 
 // Helper: Hex string to Lab color
 pub fn hex_to_lab(hex: &str) -> Option<Lab> {
