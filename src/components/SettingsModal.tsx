@@ -1,6 +1,6 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2 } from 'lucide-react';
-import { AppState, SettingsCategory, AppSettings } from '../types';
+import React, { useState, useEffect, useRef } from 'react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers } from 'lucide-react';
+import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../types';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
 
@@ -326,6 +326,155 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 ))}
                             </div>
                          </div>
+                     </section>
+
+                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+                        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><LayoutGrid size={20} className="mr-2 text-blue-500"/> {t('settings.defaultLayout') || '默认布局设置'}</h3>
+                        <div className="space-y-6">
+                            {/* Layout Mode Selection */}
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">{t('settings.defaultLayoutMode') || '默认视图模式'}</label>
+                                <div className="grid grid-cols-4 gap-3">
+                                    {[
+                                        { id: 'grid', label: t('layout.grid') || '网格', icon: Grid },
+                                        { id: 'adaptive', label: t('layout.adaptive') || '自适应', icon: LayoutGrid },
+                                        { id: 'list', label: t('layout.list') || '列表', icon: List },
+                                        { id: 'masonry', label: t('layout.masonry') || '瀑布流', icon: LayoutTemplate }
+                                    ].map(mode => {
+                                        const Icon = mode.icon;
+                                        const isSelected = state.settings.defaultLayoutSettings?.layoutMode === mode.id;
+                                        return (
+                                            <button
+                                                key={mode.id}
+                                                onClick={() => onUpdateSettingsData({
+                                                    defaultLayoutSettings: {
+                                                        ...(state.settings.defaultLayoutSettings || { layoutMode: 'grid', sortBy: 'name', sortDirection: 'asc', groupBy: 'none' }),
+                                                        layoutMode: mode.id as LayoutMode
+                                                    }
+                                                })}
+                                                className={`flex flex-col items-center p-3 rounded-lg border-2 transition-all ${
+                                                    isSelected
+                                                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                                                }`}
+                                            >
+                                                <Icon size={24} className={`mb-2 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`} />
+                                                <span className={`text-xs font-medium ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>
+                                                    {mode.label}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Sort Options */}
+                            <div className="grid grid-cols-2 gap-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">{t('settings.defaultSortBy') || '默认排序方式'}</label>
+                                    <div className="space-y-2">
+                                        {[
+                                            { id: 'name', label: t('sort.name') || '名称', icon: Type },
+                                            { id: 'date', label: t('sort.date') || '日期', icon: Calendar },
+                                            { id: 'size', label: t('sort.size') || '大小', icon: HardDrive }
+                                        ].map(sort => {
+                                            const Icon = sort.icon;
+                                            const isSelected = state.settings.defaultLayoutSettings?.sortBy === sort.id;
+                                            return (
+                                                <button
+                                                    key={sort.id}
+                                                    onClick={() => onUpdateSettingsData({
+                                                        defaultLayoutSettings: {
+                                                            ...(state.settings.defaultLayoutSettings || { layoutMode: 'grid', sortBy: 'name', sortDirection: 'asc', groupBy: 'none' }),
+                                                            sortBy: sort.id as SortOption
+                                                        }
+                                                    })}
+                                                    className={`w-full flex items-center px-3 py-2 rounded-lg border transition-all ${
+                                                        isSelected
+                                                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
+                                                    }`}
+                                                >
+                                                    <Icon size={16} className="mr-2" />
+                                                    <span className="text-sm">{sort.label}</span>
+                                                    {isSelected && <Check size={14} className="ml-auto text-blue-500" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">{t('settings.defaultSortDirection') || '默认排序方向'}</label>
+                                    <div className="space-y-2">
+                                        {[
+                                            { id: 'asc', label: t('sort.ascending') || '升序', icon: ArrowUp },
+                                            { id: 'desc', label: t('sort.descending') || '降序', icon: ArrowDown }
+                                        ].map(dir => {
+                                            const Icon = dir.icon;
+                                            const isSelected = state.settings.defaultLayoutSettings?.sortDirection === dir.id;
+                                            return (
+                                                <button
+                                                    key={dir.id}
+                                                    onClick={() => onUpdateSettingsData({
+                                                        defaultLayoutSettings: {
+                                                            ...(state.settings.defaultLayoutSettings || { layoutMode: 'grid', sortBy: 'name', sortDirection: 'asc', groupBy: 'none' }),
+                                                            sortDirection: dir.id as SortDirection
+                                                        }
+                                                    })}
+                                                    className={`w-full flex items-center px-3 py-2 rounded-lg border transition-all ${
+                                                        isSelected
+                                                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
+                                                            : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
+                                                    }`}
+                                                >
+                                                    <Icon size={16} className="mr-2" />
+                                                    <span className="text-sm">{dir.label}</span>
+                                                    {isSelected && <Check size={14} className="ml-auto text-blue-500" />}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Group By Option */}
+                            <div>
+                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-3">{t('settings.defaultGroupBy') || '默认分组方式'}</label>
+                                <div className="grid grid-cols-4 gap-3">
+                                    {[
+                                        { id: 'none', label: t('groupBy.none') || '不分组', icon: Layers },
+                                        { id: 'type', label: t('groupBy.type') || '按类型', icon: Grid },
+                                        { id: 'date', label: t('groupBy.date') || '按日期', icon: Calendar },
+                                        { id: 'size', label: t('groupBy.size') || '按大小', icon: HardDrive }
+                                    ].map(group => {
+                                        const Icon = group.icon;
+                                        const isSelected = state.settings.defaultLayoutSettings?.groupBy === group.id;
+                                        return (
+                                            <button
+                                                key={group.id}
+                                                onClick={() => onUpdateSettingsData({
+                                                    defaultLayoutSettings: {
+                                                        ...(state.settings.defaultLayoutSettings || { layoutMode: 'grid', sortBy: 'name', sortDirection: 'asc', groupBy: 'none' }),
+                                                        groupBy: group.id as GroupByOption
+                                                    }
+                                                })}
+                                                className={`flex flex-col items-center p-3 rounded-lg border-2 transition-all ${
+                                                    isSelected
+                                                        ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                                                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                                                }`}
+                                            >
+                                                <Icon size={20} className={`mb-2 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`} />
+                                                <span className={`text-xs font-medium text-center ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400'}`}>
+                                                    {group.label}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
                      </section>
 
                      <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">

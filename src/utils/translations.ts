@@ -479,6 +479,11 @@ export const translations = {
       importSuccess: '导入成功',
       importError: '导入失败：文件格式无效',
       lmStudioModelSwitched: 'LM Studio 模型已切换为：',
+      defaultLayout: '默认布局设置',
+      defaultLayoutMode: '默认视图模式',
+      defaultSortBy: '默认排序方式',
+      defaultSortDirection: '默认排序方向',
+      defaultGroupBy: '默认分组方式',
     },
     exitModal: {
       title: '关闭确认',
@@ -521,6 +526,8 @@ export const translations = {
       size: '按大小',
       asc: '升序',
       desc: '降序',
+      ascending: '升序',
+      descending: '降序',
       newest: '最新优先',
       oldest: '最早优先'
     },
@@ -1037,6 +1044,11 @@ export const translations = {
       importSuccess: 'Import successful',
       importError: 'Import failed: Invalid file format',
       lmStudioModelSwitched: 'LM Studio model switched to: ',
+      defaultLayout: 'Default Layout Settings',
+      defaultLayoutMode: 'Default View Mode',
+      defaultSortBy: 'Default Sort By',
+      defaultSortDirection: 'Default Sort Direction',
+      defaultGroupBy: 'Default Group By',
     },
     exitModal: {
       title: 'Exit Confirmation',
@@ -1079,6 +1091,8 @@ export const translations = {
       size: 'Size',
       asc: 'Ascending',
       desc: 'Descending',
+      ascending: 'Ascending',
+      descending: 'Descending',
       newest: 'Newest First',
       oldest: 'Oldest First'
     },

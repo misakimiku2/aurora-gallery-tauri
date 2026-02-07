@@ -1,4 +1,4 @@
-import { TabState } from './types';
+import { TabState, LayoutMode, SortOption, SortDirection, GroupByOption } from './types';
 
 export const DUMMY_TAB: TabState = {
     id: 'dummy',
@@ -21,4 +21,11 @@ export const DUMMY_TAB: TabState = {
     dateFilter: { start: null, end: null, mode: 'created' },
     history: { stack: [], currentIndex: -1 },
     scrollTop: 0
+};
+
+export const DEFAULT_LAYOUT_SETTINGS = {
+    layoutMode: 'grid' as LayoutMode,
+    sortBy: 'name' as SortOption,
+    sortDirection: 'asc' as SortDirection,
+    groupBy: 'none' as GroupByOption
 };

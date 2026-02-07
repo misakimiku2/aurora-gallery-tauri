@@ -200,6 +200,12 @@ export interface AppSettings {
   };
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析
   topics?: Record<string, Topic>;
+  defaultLayoutSettings: {
+    layoutMode: LayoutMode;
+    sortBy: SortOption;
+    sortDirection: SortDirection;
+    groupBy: GroupByOption;
+  };
 }
 
 export interface DateFilter {

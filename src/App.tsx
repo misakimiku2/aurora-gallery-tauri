@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -50,7 +50,7 @@ import { ToastItem } from './components/ToastItem';
 import { TaskProgressModal } from './components/TaskProgressModal';
 
 import { getPinyinGroup } from './utils/textUtils';
-import { DUMMY_TAB } from './constants';
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from './constants';
 
 
 import SplashScreen from './components/SplashScreen';
@@ -100,7 +100,8 @@ export const App: React.FC = () => {
         enableTranslation: false,
         targetLanguage: 'zh',
         confidenceThreshold: 0.6
-      }
+      },
+      defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
     },
     // Scan progress (onboarding)
     scanProgress: null,
@@ -384,6 +385,10 @@ export const App: React.FC = () => {
                 ai: {
                   ...finalSettings.ai,
                   ...(savedData.settings?.ai || {})
+                },
+                defaultLayoutSettings: {
+                  ...DEFAULT_LAYOUT_SETTINGS,
+                  ...(savedData.settings?.defaultLayoutSettings || {})
                 }
               };
 
@@ -529,17 +534,37 @@ export const App: React.FC = () => {
                 }
               }
               if (allRoots.length > 0) {
+                // Get global default layout settings from saved data
+                const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+
                 setState(prev => {
                   const initialFolder = allRoots[0];
-                  const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder };
+
+                  // If we have saved folder settings for this initial folder, use them; otherwise use global settings
+                  const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
+
+                  // Determine which settings to use: folder-specific or global defaults
+                  const layoutMode = savedForRoot?.layoutMode || globalLayoutSettings.layoutMode;
+                  const sortBy = savedForRoot?.sortBy || globalLayoutSettings.sortBy;
+                  const sortDirection = savedForRoot?.sortDirection || globalLayoutSettings.sortDirection;
+                  const groupBySetting = savedForRoot?.groupBy || globalLayoutSettings.groupBy;
+
+                  const defaultTab: TabState = {
+                    ...DUMMY_TAB,
+                    id: 'tab-default',
+                    folderId: initialFolder,
+                    layoutMode: layoutMode as any
+                  };
                   defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
-                  // If we have saved folder settings for this initial folder, apply them immediately to the default tab
-                  const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
                   if (savedForRoot) {
                     console.debug('[Init] Applying saved folder settings to default tab', initialFolder, savedForRoot);
-                    if (savedForRoot.layoutMode) defaultTab.layoutMode = savedForRoot.layoutMode as any;
+                  } else {
+                    console.debug('[Init] Applying global default layout settings to default tab', initialFolder, globalLayoutSettings);
                   }
+
+                  // Apply groupBy to component state (outside of setState)
+                  setGroupBy(groupBySetting as any);
 
                   return {
                     ...prev,
@@ -548,17 +573,11 @@ export const App: React.FC = () => {
                     expandedFolderIds: allRoots,
                     tabs: [defaultTab],
                     activeTabId: defaultTab.id,
-                    // initialize sort settings from saved folder settings if present
-                    sortBy: savedForRoot?.sortBy || prev.sortBy,
-                    sortDirection: savedForRoot?.sortDirection || prev.sortDirection
+                    // Use folder-specific or global default sort settings
+                    sortBy: sortBy,
+                    sortDirection: sortDirection
                   };
                 });
-
-                // If savedForRoot exists, also apply groupBy (it's held in component state)
-                const savedForRootOutside = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[allRoots[0]] : undefined;
-                if (savedForRootOutside && savedForRootOutside.groupBy) {
-                  setGroupBy(savedForRootOutside.groupBy as any);
-                }
 
                 // 在应用启动初始化时，确保所有图像文件都被添加到颜色提取队列中
                 if (isTauriSyncEnv) {
@@ -973,7 +992,7 @@ export const App: React.FC = () => {
     handleNewTab,
     handleOpenCompareInNewTab,
     setNavigationTimestamp
-  } = useNavigation(state, setState, { selectionRef, activeTabRef });
+  } = useNavigation(state, setState, { selectionRef, activeTabRef }, setGroupBy);
 
   const {
     displayFileIds,
@@ -2319,18 +2338,38 @@ export const App: React.FC = () => {
     const isFolder = file.type === FileType.FOLDER;
     const targetFolderId = isFolder ? fileId : (file.parentId || fileId);
     const targetViewingId = isFolder ? null : fileId;
+
+    // Check for folder-specific settings, otherwise use global defaults
+    const savedFolderSettings = state.folderSettings[targetFolderId];
+    const globalSettings = state.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+
+    const layoutMode = savedFolderSettings?.layoutMode || globalSettings.layoutMode;
+    const sortBy = savedFolderSettings?.sortBy || globalSettings.sortBy;
+    const sortDirection = savedFolderSettings?.sortDirection || globalSettings.sortDirection;
+    const groupBySetting = savedFolderSettings?.groupBy || globalSettings.groupBy;
+
     const newTab: TabState = {
       ...DUMMY_TAB,
       id: Math.random().toString(36).substr(2, 9),
       folderId: targetFolderId,
       viewingFileId: targetViewingId,
+      layoutMode: layoutMode as any,
       selectedFileIds: [fileId],
       lastSelectedId: fileId,
       isCompareMode: false,
       history: { stack: [{ folderId: targetFolderId, viewingId: targetViewingId, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
     };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [state.files, setState]);
+
+    // Apply groupBy and sort settings
+    setGroupBy(groupBySetting as any);
+    setState(prev => ({
+      ...prev,
+      tabs: [...prev.tabs, newTab],
+      activeTabId: newTab.id,
+      sortBy: sortBy,
+      sortDirection: sortDirection
+    }));
+  }, [state.files, state.folderSettings, state.settings.defaultLayoutSettings, setState]);
 
   const handleOpenTopicInNewTab = useCallback((topicId: string) => {
     const newTab: TabState = {
@@ -3389,9 +3428,55 @@ export const App: React.FC = () => {
               onSetToolbarQuery={setToolbarQuery}
               onSetPersonSearchQuery={setPersonSearchQuery}
               personSearchQuery={personSearchQuery}
-              onLayoutModeChange={(mode) => updateActiveTab({ layoutMode: mode })}
-              onSortOptionChange={(opt) => setState(s => ({ ...s, sortBy: opt }))}
-              onSortDirectionChange={() => setState(s => ({ ...s, sortDirection: s.sortDirection === 'asc' ? 'desc' : 'asc' }))}
+              onLayoutModeChange={(mode) => {
+                updateActiveTab({ layoutMode: mode });
+                // If not remembering this folder, update global default
+                if (!state.folderSettings[activeTab.folderId]) {
+                  setState(s => ({
+                    ...s,
+                    settings: {
+                      ...s.settings,
+                      defaultLayoutSettings: {
+                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
+                        layoutMode: mode
+                      }
+                    }
+                  }));
+                }
+              }}
+              onSortOptionChange={(opt) => {
+                setState(s => ({ ...s, sortBy: opt }));
+                // If not remembering this folder, update global default
+                if (!state.folderSettings[activeTab.folderId]) {
+                  setState(s => ({
+                    ...s,
+                    settings: {
+                      ...s.settings,
+                      defaultLayoutSettings: {
+                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
+                        sortBy: opt
+                      }
+                    }
+                  }));
+                }
+              }}
+              onSortDirectionChange={() => {
+                const newDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+                setState(s => ({ ...s, sortDirection: newDirection }));
+                // If not remembering this folder, update global default
+                if (!state.folderSettings[activeTab.folderId]) {
+                  setState(s => ({
+                    ...s,
+                    settings: {
+                      ...s.settings,
+                      defaultLayoutSettings: {
+                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
+                        sortDirection: newDirection
+                      }
+                    }
+                  }));
+                }
+              }}
               onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
               onToggleMetadata={toggleMetadata}
               onToggleSettings={toggleSettings}
@@ -3401,7 +3486,22 @@ export const App: React.FC = () => {
               pageSize={pageSize}
               onPageChange={(page) => updateActiveTab({ currentPage: page, scrollTop: 0 })}
               groupBy={groupBy}
-              onGroupByChange={setGroupBy}
+              onGroupByChange={(groupByOption) => {
+                setGroupBy(groupByOption);
+                // If not remembering this folder, update global default
+                if (!state.folderSettings[activeTab.folderId]) {
+                  setState(s => ({
+                    ...s,
+                    settings: {
+                      ...s.settings,
+                      defaultLayoutSettings: {
+                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
+                        groupBy: groupByOption
+                      }
+                    }
+                  }));
+                }
+              }}
               isAISearchEnabled={state.settings.search.isAISearchEnabled}
               onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
               onRememberFolderSettings={activeTab.viewMode === 'browser' ? handleRememberFolderSettings : undefined}

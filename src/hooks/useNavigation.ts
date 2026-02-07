@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
-import type { AppState, TabState, SearchScope, AiSearchFilter } from '../types';
-import { DUMMY_TAB } from '../constants';
+import type { AppState, TabState, SearchScope, AiSearchFilter, GroupByOption } from '../types';
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
 
 type Refs = {
   selectionRef: React.RefObject<HTMLElement | null>;
@@ -10,7 +10,8 @@ type Refs = {
 export const useNavigation = (
   state: AppState,
   setState: React.Dispatch<React.SetStateAction<AppState>>,
-  refs: Refs
+  refs: Refs,
+  setGroupBy?: (groupBy: GroupByOption) => void
 ) => {
   const { selectionRef, activeTabRef } = refs;
 
@@ -167,10 +168,38 @@ export const useNavigation = (
   }, [setState]);
 
   const handleNewTab = useCallback(() => {
-    const newTab: TabState = { ...DUMMY_TAB, id: Math.random().toString(36).substr(2, 9), folderId: state.roots[0] || '' };
+    const folderId = state.roots[0] || '';
+
+    // Check for folder-specific settings, otherwise use global defaults
+    const savedFolderSettings = state.folderSettings[folderId];
+    const globalSettings = state.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+
+    const layoutMode = savedFolderSettings?.layoutMode || globalSettings.layoutMode;
+    const sortBy = savedFolderSettings?.sortBy || globalSettings.sortBy;
+    const sortDirection = savedFolderSettings?.sortDirection || globalSettings.sortDirection;
+    const groupBySetting = savedFolderSettings?.groupBy || globalSettings.groupBy;
+
+    const newTab: TabState = {
+      ...DUMMY_TAB,
+      id: Math.random().toString(36).substr(2, 9),
+      folderId: folderId,
+      layoutMode: layoutMode as any
+    };
     newTab.history = { stack: [{ folderId: newTab.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [setState, state.roots]);
+
+    // Apply groupBy if setter is provided
+    if (setGroupBy) {
+      setGroupBy(groupBySetting as GroupByOption);
+    }
+
+    setState(prev => ({
+      ...prev,
+      tabs: [...prev.tabs, newTab],
+      activeTabId: newTab.id,
+      sortBy: sortBy,
+      sortDirection: sortDirection
+    }));
+  }, [setState, state.roots, state.folderSettings, state.settings.defaultLayoutSettings, setGroupBy]);
 
   const handleOpenCompareInNewTab = useCallback((imageIds: string[]) => {
     const newTab: TabState = {
