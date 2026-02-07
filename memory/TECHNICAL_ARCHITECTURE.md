@@ -23,7 +23,12 @@
 │  │ Entry    │  │          │  │Extractor │  │Worker    │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
 │       │             │             │             │          │
-│       └─────────────┴─────────────┴─────────────┴──────────┘
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
+│  │Thumbnail │  │Color     │  │File      │                   │
+│  │Generator │  │Search    │  │Index     │                   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                   │
+│       │             │             │                          │
+│       └─────────────┴─────────────┴──────────────────────────┘
 │                              │                              │
 │                    SQLite 数据库                             │
 │                    文件系统                                   │
@@ -38,26 +43,27 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件 - 3336 行) （以源码为准 · 已同步）
-├── TabBar (标签页管理)
-├── TopBar (工具栏)
+App (根组件 - 3931 行) （以源码为准 · 已同步）
+├── TabBar (标签页管理 - 249 行)
+├── TopBar (工具栏 - 921 行)
 ├── Sidebar (侧边栏)
-│   ├── TreeSidebar (文件树)
-│   └── TaskProgressModal (任务进度)
+│   ├── TreeSidebar (文件树 - 654 行)
+│   └── TaskProgressModal (任务进度 - 200 行)
 ├── MainContent (主内容区)
 │   ├── PersonGrid (人物网格) [新增 - 224 行] （以源码为准 · 已同步）
-│   ├── FileGrid (文件网格) [更新 - 2562 行] （以源码为准 · 已同步）
-│   ├── ImageViewer (图片查看器)
+│   ├── FileGrid (文件网格) [更新 - 1457 行] （以源码为准 · 已同步）
+│   ├── ImageViewer (图片查看器 - 1542 行)
+│   ├── ImageComparer (图片对比 - 2600+ 行) [新增]
 │   ├── SequenceViewer (序列查看器)
-│   └── TopicModule (专题模块)
-├── MetadataPanel (元数据面板)
-├── SettingsModal (设置模态框) [增强 - 1207 行] （以源码为准 · 已同步）
-├── MetadataPanel (元数据面板)
-├── SettingsModal (设置模态框)
+│   └── TopicModule (专题模块 - 2618 行)
+├── MetadataPanel (元数据面板 - 2607 行)
+├── SettingsModal (设置模态框) [增强 - 1347 行] （以源码为准 · 已同步）
 ├── Modals (模态框集合 - src/components/modals/) [重构]
 │   ├── FolderPickerModal
 │   ├── BatchRenameModal
 │   ├── WelcomeModal
+│   ├── CreateTopicModal [新增]
+│   ├── RenameTopicModal [新增]
 │   └── [其他 10+ 模态框...]
 └── Toasts (通知)
 ```
@@ -74,6 +80,10 @@ const { tasks, startTask, updateTask } = useTasks(t);
 // tasks: 包含所有后台任务 (复制/移动/AI/色彩提取)
 // updateTask: 负责处理进度更新、防抖和自动完成清理
 
+// 导航历史管理 (extracted to useNavigation.ts)
+const { navigateTo, goBack, goForward, history } = useNavigation();
+// 支持前进/后退导航，自动保存滚动位置和选中状态
+
 // 实时元数据同步
 // - 监听 'metadata-updated' 全局事件以更新 App 状态中的文件元数据。
 // - 用于处理后台扫描、AI 标签生成等异步数据的即时反馈。
@@ -84,7 +94,11 @@ const { tasks, startTask, updateTask } = useTasks(t);
 // - useContextMenu: 管理右键菜单的位置/项与交互
 // - useFileSearch: 搜索逻辑（处理 color:/palette: 前缀）
 // - useMarqueeSelection: 框选与范围选择逻辑
-  // 文件系统状态
+// - useKeyboardShortcuts: 键盘快捷键管理 [新增]
+// - useInView: 视口检测 [新增]
+// - useToasts: Toast 通知管理 [新增]
+
+// 文件系统状态
   roots: [],
   files: {},
   expandedFolderIds: [],
@@ -122,6 +136,28 @@ const displayFileIds = useMemo(() => {
 }, [state.files, activeTab, state.sortBy, state.sortDirection])
 ```
 
+#### Web Worker 架构 [新增]
+```typescript
+// 布局计算 Worker
+// src/workers/layout.worker.ts (252 行)
+// 功能: 在 Worker 线程中执行布局计算，避免阻塞主线程
+// 支持: Grid、Masonry、Adaptive、List、Tags Overview 布局
+
+// 搜索计算 Worker
+// src/workers/search.worker.ts (125 行)
+// 功能: 在 Worker 线程中执行搜索过滤
+
+// 使用示例
+const worker = new Worker(new URL('./workers/layout.worker.ts', import.meta.url));
+worker.postMessage({
+  type: 'calculate',
+  files: fileList,
+  containerWidth: 1200,
+  thumbnailSize: 200,
+  layoutMode: 'masonry'
+});
+```
+
 ### 2. 业务逻辑层 (Business Logic Layer)
 
 #### 服务层架构
@@ -149,6 +185,17 @@ const aiAnalysis = await analyzeImageWithAI(imagePath, {
 const dominantColors = await getDominantColors(imagePath, 8);
 ```
 
+**2026-02-07 更新**: 新增 OCR 和翻译功能
+```typescript
+// AI 分析支持 OCR 和翻译
+const aiAnalysis = await analyzeImageWithAI(imagePath, {
+  performOCR: true,        // 提取图片中的文字
+  translateText: true,     // 翻译提取的文字
+  targetLanguage: 'zh'     // 目标语言
+});
+// 结果包含 extractedText 和 translatedText
+```
+
 **支持的 AI 提供商**:
 - OpenAI (GPT-4, GPT-3.5)
 - Ollama (本地 LLM)
@@ -156,39 +203,49 @@ const dominantColors = await getDominantColors(imagePath, 8);
 
 ##### 人脸识别服务 (faceRecognitionService.ts)
 **位置**: `src/services/faceRecognitionService.ts`  
-**行数**: 87 行  
+**行数**: 86 行（以源码为准 · 已同步）  
 **功能**: 基于 face-api.js 的人脸识别
 
 ### 3. 数据访问层 (Data Access Layer)
 
 #### Tauri Bridge API
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 920 行  
+**行数**: 1208 行（以源码为准 · 已同步）  
 **功能**: 前后端通信桥接
 
 **核心功能**:
 ```typescript
 // 文件系统操作
-export const scanDirectory = async (path: string, forceRefresh?: boolean) => { ... }
-export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void) => { ... }
+export const scanDirectory = async (path: string, forceRefresh?: boolean): Promise<Record<string, FileNode>> => { ... }
+export const forceRescan = async (path: string): Promise<Record<string, FileNode>> => { ... }
+export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => { ... }
+
+// 缩略图
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => { ... }
+export const generateDragPreview = async (thumbnailPaths: string[], totalCount: number, cacheRoot: string): Promise<string | null> => { ... }
+getAssetUrl(filePath: string): string
+
+// 颜色相关
+export const getDominantColors = async (filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]> => { ... }
+export const searchByColor = async (color: string): Promise<string[]> => { ... }
+export const searchByPalette = async (palette: string[]): Promise<string[]> => { ... }
 
 // 数据库操作
-export const dbGetAllPeople = async () => { ... }
-export const dbUpsertPerson = async (person: any) => { ... }
-
-// 颜色搜索
-export const searchByColor = async (color: string) => { ... }
-export const searchByPalette = async (palette: string[]) => { ... }
+export const dbGetAllPeople = async (): Promise<Person[]> => { ... }
+export const dbUpsertPerson = async (person: Person): Promise<void> => { ... }
+export const dbCopyFileMetadata = async (srcPath: string, destPath: string): Promise<void> => { ... }
+export const switchRootDatabase = async (newRootPath: string): Promise<void> => { ... }
+export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => { ... }
 ```
 
 ### 4. 基础设施层 (Infrastructure Layer)
 
 #### Rust 后端架构
 **位置**: `src-tauri/src/`  
-**总行数**: 4667 行
+**总行数**: ~6500 行
 
 ##### 主程序 (main.rs)
-**行数**: 2602 行  
+**行数**: 2440 行（以源码为准 · 已同步）  
 **功能**: Tauri 应用入口，命令处理器
 
 **架构特点**:
@@ -196,14 +253,27 @@ export const searchByPalette = async (palette: string[]) => { ... }
 - 多线程任务处理（使用 Rayon）
 - SQLite 数据库集成
 - 事件驱动的进度通知
+- 缩略图生成（支持 JXL、AVIF 格式）
 
 ##### 颜色处理模块
 - **color_db.rs** (871 行): 颜色数据存储和管理 （以源码为准 · 已同步）
 - **color_extractor.rs** (258 行): 颜色提取算法
+- **color_search.rs** (796 行): 颜色搜索算法 [新增]
 - **color_worker.rs** (796 行): 后台颜色处理工作器 （以源码为准 · 已同步）
 
+##### 缩略图模块 [新增]
+- **thumbnail.rs** (529 行): 缩略图生成和管理
+  - 单文件/批量缩略图生成
+  - JXL 格式支持（使用 jxl-oxide）
+  - AVIF 格式降级处理
+  - 拖拽预览生成
+  - 智能格式选择（JPEG/WebP）
+
 ##### 数据库模块
-- **db/persons.rs**: 人物数据 CRUD 操作
+- **db/mod.rs** (150 行): 数据库模块入口
+- **db/persons.rs** (118 行): 人物数据 CRUD 操作
+- **db/file_metadata.rs** (87 行): 文件元数据存储
+- **db/file_index.rs** (200 行): 文件索引数据库 [新增]
 - **集成**: Rusqlite 0.30，带 JSON 支持
 
 ## 技术实现细节
@@ -238,6 +308,20 @@ files.par_iter().for_each(|file| {
 });
 ```
 
+#### Web Worker 并发 [新增]
+```typescript
+// 前端使用 Web Worker 处理计算密集型任务
+// - 布局计算 (layout.worker.ts)
+// - 搜索过滤 (search.worker.ts)
+
+// Worker 通信协议
+interface WorkerMessage {
+  type: 'calculate' | 'search' | 'result' | 'error';
+  payload: any;
+  id: string;
+}
+```
+
 ### 数据存储架构
 
 #### SQLite 数据库设计
@@ -255,7 +339,7 @@ CREATE TABLE persons (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 文件元数据表 [新增]
+-- 文件元数据表
 CREATE TABLE file_metadata (
     file_id TEXT PRIMARY KEY,      -- 文件哈希 ID
     path TEXT NOT NULL,            -- 文件路径 (用于反推和验证)
@@ -266,6 +350,21 @@ CREATE TABLE file_metadata (
     updated_at INTEGER             -- 更新时间戳
 );
 CREATE INDEX idx_file_metadata_path ON file_metadata(path);
+
+-- 文件索引表 [新增]
+CREATE TABLE file_index (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    parent_id TEXT,
+    name TEXT NOT NULL,
+    file_type TEXT,
+    size INTEGER,
+    modified_at INTEGER,
+    created_at INTEGER,
+    is_directory BOOLEAN DEFAULT 0
+);
+CREATE INDEX idx_file_index_path ON file_index(path);
+CREATE INDEX idx_file_index_parent ON file_index(parent_id);
 
 -- 颜色索引表
 CREATE TABLE color_index (
@@ -284,6 +383,10 @@ const THUMBNAIL_CACHE_DIR = `${rootPath}/.Aurora_Cache/thumbnails/`;
 
 // 颜色数据缓存
 const colorCache = new Map<string, DominantColor[]>();
+
+// 布局缓存 [新增]
+const layoutCache = new Map<string, LayoutResult>();
+// 缓存布局计算结果，避免重复计算
 ```
 
 ### 性能优化策略
@@ -293,18 +396,21 @@ const colorCache = new Map<string, DominantColor[]>();
 2. **防抖**: 搜索和过滤操作
 3. **懒加载**: 图片和组件按需加载
 4. **内存管理**: 及时清理不用的资源
+5. **Web Worker**: 布局计算卸载到 Worker 线程 [新增]
 
 #### 后端优化
 1. **并行处理**: 使用 Rayon 进行 CPU 密集计算
 2. **批处理**: 聚合多个小任务减少开销
 3. **缓存**: 文件系统和内存双层缓存
 4. **异步 I/O**: 非阻塞文件操作
+5. **WAL 模式**: SQLite 预写日志提高并发性能
 
 #### 数据库优化
 1. **索引**: 为常用查询字段创建索引
 2. **连接池**: 复用数据库连接
 3. **批量操作**: 减少数据库往返
 4. **WAL 模式**: 提高并发性能
+5. **文件索引表**: 加速文件路径查询 [新增]
 
 ### 错误处理策略
 
@@ -427,10 +533,17 @@ Aurora Gallery Tauri 采用现代化的分层架构，结合 React 前端和 Rus
 - Rust 保证后端性能和内存安全
 - SQLite 提供轻量级本地数据存储
 - CIEDE2000 算法确保颜色搜索准确性
+- Web Worker 实现前端计算卸载
 
 **架构优势**:
-- 性能优异: Rust 后端 + 并行处理
-- 用户体验佳: 响应式设计 + 流畅交互
+- 性能优异: Rust 后端 + 并行处理 + Web Worker
+- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史
 - 开发效率高: 现代化工具链 + 热重载
 - 维护性好: 分层架构 + 类型安全
 - 扩展性强: 插件化设计 + 模块化组件
+
+---
+
+**文档版本**: 1.1  
+**更新日期**: 2026-02-07  
+**维护者**: Aurora Gallery Team

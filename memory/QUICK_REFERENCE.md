@@ -26,13 +26,18 @@ npm run tauri:dev
 
 # 或分别运行
 npm run dev              # 前端开发服务器 (http://localhost:14422)
-wait-on http://localhost:14422 && cargo tauri dev  # 等待前端启动后运行 Tauri
+npm run tauri:dev        # Tauri 开发模式
 ```
 
 ### 生产构建
 ```bash
 npm run build
 cargo tauri build
+```
+
+### 测试
+```bash
+npm run test             # 运行单元测试 (Vitest)
 ```
 
 ### 清理缓存
@@ -66,6 +71,12 @@ pending → processing → completed
 - dominantColors 不再通过 AI 分析（性能优化）
 - 仅通过专用图像处理算法提取颜色
 - 减少 AI tokens 消耗，提高分析速度
+- 新增 OCR 和翻译功能支持
+
+### 5. 导航历史管理 (2026-02-07 更新)
+- 使用 `useNavigation` Hook 管理导航历史
+- 支持前进/后退导航
+- 自动保存和恢复滚动位置
 
 ## 常用命令速查
 
@@ -82,6 +93,9 @@ npx prettier --write .
 
 # 构建
 npm run build
+
+# 测试
+npm run test
 ```
 
 ### 后端开发
@@ -119,9 +133,11 @@ npm run clean
 
 # 仅清理 Rust 缓存
 rm -rf src-tauri/target
+cargo clean
 
 # 仅清理 Node.js 缓存
-rm -rf 
+rm -rf node_modules
+npm install
 ```
 
 ## 核心 API 参考
@@ -130,16 +146,20 @@ rm -rf
 
 #### 文件系统
 ```typescript
-// 扫描目录
-await scanDirectory(path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }>
+// 扫描目录 - 返回文件映射（不再包含 roots）
+await scanDirectory(path: string, forceRefresh?: boolean): Promise<Record<string, FileNode>>
+
+// 强制完整扫描目录
+await forceRescan(path: string): Promise<Record<string, FileNode>>
 
 // 扫描单个文件
-await scanFile(filePath: string, parentId?: string): Promise<FileNode>
+await scanFile(filePath: string, parentId?: string | null): Promise<FileNode>
 
 // 文件操作
 await renameFile(oldPath: string, newPath: string): Promise<void>
 await deleteFile(path: string): Promise<void>
-await copyFile(srcPath: string, destPath: string): Promise<void>
+await copyFile(srcPath: string, destPath: string): Promise<string>  // 返回实际路径
+await copyImageColors(srcPath: string, destPath: string): Promise<boolean>  // 复制颜色信息
 await moveFile(srcPath: string, destPath: string): Promise<void>
 await writeFileFromBytes(filePath: string, bytes: Uint8Array): Promise<void>
 
@@ -153,16 +173,27 @@ await searchByColor(targetHex: string): Promise<string[]>
 await searchByPalette(palette: string[]): Promise<string[]>
 
 // 拖拽
+await generateDragPreview(thumbnailPaths: string[], totalCount: number, cacheRoot: string): Promise<string | null>
 await startDragToExternal(filePaths: string[], thumbnailPaths?: string[], cacheRoot?: string, onDragEnd?: () => void): Promise<void>
 ```
 
 #### 数据库操作
 ```typescript
 // 人物管理
-await dbGetAllPeople(): Promise<any[]>
-await dbUpsertPerson(person: any): Promise<void>
+await dbGetAllPeople(): Promise<Person[]>
+await dbUpsertPerson(person: Person): Promise<void>
 await dbDeletePerson(id: string): Promise<void>
 await dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void>
+
+// 文件元数据
+await dbUpsertFileMetadata(metadata: FileMetadata): Promise<void>
+await dbCopyFileMetadata(srcPath: string, destPath: string): Promise<void>
+
+// 数据库切换
+await switchRootDatabase(newRootPath: string): Promise<void>
+
+// 批量添加文件到 pending 表
+await addPendingFilesToDb(filePaths: string[]): Promise<number>
 ```
 
 #### 窗口管理
@@ -178,9 +209,111 @@ await pauseColorExtraction(): Promise<boolean>
 await resumeColorExtraction(): Promise<boolean>
 ```
 
+## Hooks 使用示例
+
+### useNavigation (新增)
+```tsx
+import { useNavigation } from './hooks/useNavigation'
+
+function MyComponent() {
+  const { navigateTo, goBack, goForward, canGoBack, canGoForward } = useNavigation()
+  
+  // 导航到文件夹
+  const handleNavigate = () => {
+    navigateTo('/path/to/folder', { 
+      selectedIds: ['file1', 'file2'],
+      scrollPosition: 100 
+    })
+  }
+  
+  return (
+    <div>
+      <button onClick={goBack} disabled={!canGoBack}>后退</button>
+      <button onClick={goForward} disabled={!canGoForward}>前进</button>
+    </div>
+  )
+}
+```
+
+### useTasks
+```tsx
+import { useTasks } from './hooks/useTasks'
+
+function MyComponent() {
+  const { tasks, startTask, updateTask, pauseTask, resumeTask } = useTasks()
+  
+  // 启动新任务
+  const handleStartTask = () => {
+    startTask({
+      id: 'task-1',
+      type: 'copy',
+      title: '复制文件',
+      totalItems: 100
+    })
+  }
+  
+  return <TaskProgressModal tasks={tasks} />
+}
+```
+
+### useAIAnalysis
+```tsx
+import { useAIAnalysis } from './hooks/useAIAnalysis'
+
+function MyComponent() {
+  const { analyzeFile, analyzeFolder, isAnalyzing } = useAIAnalysis()
+  
+  // 分析单个文件
+  const handleAnalyze = async (filePath: string) => {
+    const result = await analyzeFile(filePath, {
+      generateDescription: true,
+      generateTags: true,
+      performOCR: true,        // OCR 识别
+      translateText: true      // 翻译
+    })
+  }
+  
+  return <button onClick={() => handleAnalyze('/path/to/image.jpg')}>分析</button>
+}
+```
+
+### useFileOperations
+```tsx
+import { useFileOperations } from './hooks/useFileOperations'
+
+function MyComponent() {
+  const { copyFiles, moveFiles, deleteFiles } = useFileOperations()
+  
+  const handleCopy = async (files: string[], destPath: string) => {
+    await copyFiles(files, destPath, {
+      onProgress: (progress) => console.log(`${progress.percentage}%`),
+      overwriteExisting: false
+    })
+  }
+  
+  return <button onClick={() => handleCopy(['file1.jpg'], '/dest')}>复制</button>
+}
+```
+
+### useKeyboardShortcuts (新增)
+```tsx
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+
+function MyComponent() {
+  useKeyboardShortcuts({
+    'Ctrl+C': () => handleCopy(),
+    'Ctrl+V': () => handlePaste(),
+    'Delete': () => handleDelete(),
+    'Escape': () => handleClose()
+  })
+  
+  return <div>...</div>
+}
+```
+
 ## 组件使用示例
 
-### ColorPickerPopover 使用
+### ColorPickerPopover
 ```tsx
 import { ColorPickerPopover } from './components/ColorPickerPopover'
 
@@ -203,7 +336,7 @@ function ColorSearchComponent() {
 }
 ```
 
-### PersonGrid 使用 (新增)
+### PersonGrid
 ```tsx
 import { PersonGrid } from './components/PersonGrid'
 
@@ -222,7 +355,41 @@ function PersonView({ people, files, selectedIds, onSelect, onDoubleClick, onCon
 }
 ```
 
-### 系统提示预设管理 (SettingsModal 新增功能)
+### ImageComparer (新增)
+```tsx
+import { ImageComparer } from './components/ImageComparer'
+
+function CompareView() {
+  return (
+    <ImageComparer
+      files={[
+        { id: '1', path: '/path/to/image1.jpg' },
+        { id: '2', path: '/path/to/image2.jpg' }
+      ]}
+      onClose={() => {}}
+    />
+  )
+}
+```
+
+### FileListItem (新增)
+```tsx
+import { FileListItem } from './components/FileListItem'
+
+function FileList() {
+  return (
+    <FileListItem
+      file={file}
+      isSelected={selected}
+      onClick={handleClick}
+      onDoubleClick={handleDoubleClick}
+      onContextMenu={handleContextMenu}
+    />
+  )
+}
+```
+
+### 系统提示预设管理 (SettingsModal)
 ```tsx
 // 在 SettingsModal 中管理 AI 提示预设
 interface PromptPreset {
@@ -245,7 +412,7 @@ if (preset) {
 #### 开发模式白屏或 500 错误
 ```bash
 # 核心解决：使用自愈清理脚本强制重置环境
-npm run clean:dev
+npm run clean
 ```
 - **原理**: 该命令会释放端口占用、清理错误缓存并注入跳转补丁。
 
@@ -260,13 +427,16 @@ cargo build
 #### 依赖冲突
 ```bash
 # 重新安装依赖
-rm -rf node_modules 
+rm -rf node_modules
 npm install
 ```
 
 #### 数据库问题
 ```bash
-# 检查 SQLite 文件
+# 检查 SQLite 文件 (Windows)
+dir "%APPDATA%\aurora-gallery-tauri"
+
+# 检查 SQLite 文件 (macOS/Linux)
 ls -la ~/.config/aurora-gallery-tauri/
 ```
 
@@ -277,12 +447,14 @@ ls -la ~/.config/aurora-gallery-tauri/
 - 使用 `useMemo` 缓存 expensive 计算
 - 使用 `useCallback` 稳定函数引用
 - 实现虚拟滚动处理大数据集
+- 使用 Web Worker 进行布局计算
 
 #### 后端优化
 - 使用 Rayon 进行并行处理
 - 实现连接池管理数据库连接
 - 使用缓存减少重复计算
 - 实现渐进式加载
+- 使用 WAL 模式优化 SQLite 性能
 
 ## 开发提示
 
@@ -311,8 +483,20 @@ ls -la ~/.config/aurora-gallery-tauri/
 - **数据库**: SQLite 3.x (通过 Rusqlite)
 - **AI**: face-api.js 1.7.12, OpenAI API
 - **UI**: Tailwind CSS 3.4.1, Lucide Icons 0.344.0
+- **测试**: Vitest (单元测试框架)
 
 ## 更新日志
+
+### 2026-02-07 更新
+- 新增 `useNavigation` Hook 用于导航历史管理
+- 新增 `useKeyboardShortcuts` Hook 用于键盘快捷键
+- 新增 `ImageComparer` 组件用于图片对比
+- 新增 `FileListItem` 组件用于文件列表显示
+- 新增 `generateDragPreview` API 用于生成拖拽预览
+- 新增 `copyImageColors` API 用于复制图片颜色信息
+- 更新 `scanDirectory` API 返回类型
+- 添加 Vitest 测试框架支持
+- 新增 OCR 和翻译功能支持
 
 ### 2026-01-14 更新
 - 新增 PersonGrid 组件
@@ -320,3 +504,9 @@ ls -la ~/.config/aurora-gallery-tauri/
 - 增强 SettingsModal 系统提示预设功能
 - 更新构建脚本支持并行开发
 - 改进上下文菜单样式
+
+---
+
+**文档版本**: 1.2  
+**更新日期**: 2026-02-07  
+**维护者**: Aurora Gallery Team

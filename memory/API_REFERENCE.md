@@ -11,7 +11,7 @@
   - `className?: string` - 用于定位/样式的自定义类名。
   - `t?: (key: string) => string` - 可选国际化函数，用于本地化按钮/提示文本。
 
-### `PersonGrid` (src/components/PersonGrid.tsx) - 新增组件
+### `PersonGrid` (src/components/PersonGrid.tsx)
 - **功能**: 专门的人物网格视图组件，提供人物头像显示、选择、管理功能。从 FileGrid 中分离出来以提高代码组织性。
 - **主要 Props**:
   - `people: Record<string, Person>` - 人物数据映射
@@ -44,11 +44,10 @@
   - `onDismiss?: (id: string) => void` - 关闭回调
 
 ### `useAIAnalysis` Hook (src/hooks/useAIAnalysis.ts)
-- **功能**: 封装对单个文件或文件夹的 AI 分析流程（描述、标签、场景、对象识别），调用 `aiService` 并将分析任务注册到 `useTasks`，返回分析状态与结果缓存接口。
+- **功能**: 封装对单个文件或文件夹的 AI 分析流程（描述、标签、场景、对象识别、OCR、翻译），调用 `aiService` 并将分析任务注册到 `useTasks`，返回分析状态与结果缓存接口。
 - **主要接口**:
-  - `analyzeFile(fileId: string): Promise<AiResult>`
-  - `analyzeFolder(folderId: string): Promise<Record<string, AiResult>>`
-  - `getResult(fileId: string): AiResult | undefined`
+  - `handleAIAnalysis(fileIds: string | string[], folderId?: string): Promise<void>` - 分析文件或文件夹
+  - `handleFolderAIAnalysis(folderId: string): Promise<void>` - 分析整个文件夹
 
 ### TopicModule (src/components/TopicModule.tsx)
 - **功能**: 专题（Topic）画廊与专题详情视图，支持专题的创建/编辑/删除、专题与人物（Person）的关联、封面设置与裁剪、以及主题内文件的浏览与选择。
@@ -85,16 +84,17 @@ async function scanDirectory(
 ```
 
 **描述**: 扫描指定目录并返回文件树结构。
-- 目前前端实现会把 `path` 传给后端的 `scan_directory` 命令；`forceRefresh` 参数为可选（当前实现没有把该标志转发给后端，但保留在调用签名中以便未来扩展）。
+- 调用后端的 `scan_directory` 命令
+- 支持极速启动模式：优先从数据库缓存加载，减少启动时间
 
 **参数**:
 - `path`: string - 要扫描的目录路径
-- `forceRefresh?`: boolean - 可选的强制刷新标志（当前未使用）
+- `forceRefresh?`: boolean - 是否强制刷新（重新扫描磁盘）
 
 **返回**: `Promise<{ roots: string[]; files: Record<string, FileNode> }>`
 ```typescript
 // roots: 包含 parentId 为 null 且类型为文件夹的根目录 id
-// files: id -> FileNode 映射（注意：Rust 返回的 url 字段在前端会被忽略，前端使用 getThumbnail()/getAssetUrl() 来获取可用的资源 URL）
+// files: id -> FileNode 映射
 ```
 
 **示例**:
@@ -104,20 +104,29 @@ console.log(result.roots)
 console.log(result.files)
 ```
 
-**错误处理**:
+---
+
+#### `forceRescan`
 ```typescript
-try {
-  const result = await scanDirectory('/invalid/path')
-} catch (error) {
-  console.error('扫描失败:', error)
-}
+async function forceRescan(
+  path: string
+): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 ```
+
+**描述**: 强制完整扫描目录，忽略数据库缓存。
+
+**参数**:
+- `path`: string - 要扫描的目录路径
+
+**返回**: 与 `scanDirectory` 相同
+
+---
 
 #### `scanFile`
 ```typescript
 async function scanFile(
   filePath: string, 
-  parentId?: string
+  parentId?: string | null
 ): Promise<FileNode>
 ```
 
@@ -125,7 +134,7 @@ async function scanFile(
 
 **参数**:
 - `filePath`: string - 文件完整路径
-- `parentId`: string - 父目录 ID (可选)
+- `parentId`: string | null - 父目录 ID (可选)
 
 **返回**: `Promise<FileNode>`
 
@@ -136,6 +145,8 @@ console.log(file.name) // 'photo.jpg'
 console.log(file.type) // 'image'
 ```
 
+---
+
 #### `renameFile`
 ```typescript
 async function renameFile(
@@ -144,7 +155,7 @@ async function renameFile(
 ): Promise<void>
 ```
 
-**描述**: 重命名或移动文件
+**描述**: 重命名或移动文件/文件夹，同时同步更新数据库索引
 
 **参数**:
 - `oldPath`: string - 旧路径
@@ -158,12 +169,14 @@ await renameFile(
 )
 ```
 
+---
+
 #### `deleteFile`
 ```typescript
 async function deleteFile(path: string): Promise<void>
 ```
 
-**描述**: 删除文件或目录
+**描述**: 删除文件或目录，同时清理数据库记录
 
 **参数**:
 - `path`: string - 要删除的路径
@@ -173,49 +186,75 @@ async function deleteFile(path: string): Promise<void>
 await deleteFile('/home/user/Pictures/unwanted.jpg')
 ```
 
+---
+
 #### `copyFile`
 ```typescript
 async function copyFile(
-  source: string, 
-  destination: string
-): Promise<void>
+  srcPath: string, 
+  destPath: string
+): Promise<string>
 ```
 
-**描述**: 复制文件
+**描述**: 复制文件，返回实际写入的目标路径（同目录自复制时会生成唯一文件名）
 
 **参数**:
-- `source`: string - 源文件路径
-- `destination`: string - 目标文件路径
+- `srcPath`: string - 源文件路径
+- `destPath`: string - 目标文件路径
+
+**返回**: `Promise<string>` - 实际写入的目标路径
 
 **示例**:
 ```typescript
-await copyFile(
+const finalPath = await copyFile(
   '/home/user/Pictures/source.jpg',
   '/home/user/Pictures/destination.jpg'
 )
 ```
+
+---
+
+#### `copyImageColors`
+```typescript
+async function copyImageColors(
+  srcPath: string, 
+  destPath: string
+): Promise<boolean>
+```
+
+**描述**: 复制图片的颜色信息到另一个图片
+
+**参数**:
+- `srcPath`: string - 源文件路径
+- `destPath`: string - 目标文件路径
+
+**返回**: `Promise<boolean>` - 是否成功复制
+
+---
 
 #### `moveFile`
 ```typescript
 async function moveFile(
-  source: string, 
-  destination: string
+  srcPath: string, 
+  destPath: string
 ): Promise<void>
 ```
 
-**描述**: 移动文件
+**描述**: 移动文件，同时同步迁移数据库元数据
 
 **参数**:
-- `source`: string - 源文件路径
-- `destination`: string - 目标文件路径
+- `srcPath`: string - 源文件路径
+- `destPath`: string - 目标文件路径
 
 **示例**:
 ```typescript
 await moveFile(
-  '/home/user/Pictures/source.jpg',
-  '/home/user/Pictures/destination.jpg'
+  '/home/user/Downloads/photo.jpg',
+  '/home/user/Pictures/photo.jpg'
 )
 ```
+
+---
 
 #### `writeFileFromBytes`
 ```typescript
@@ -237,6 +276,8 @@ const bytes = new Uint8Array([72, 101, 108, 108, 111]); // "Hello"
 await writeFileFromBytes('/home/user/test.txt', bytes)
 ```
 
+---
+
 #### `getThumbnail`
 ```typescript
 async function getThumbnail(
@@ -248,16 +289,16 @@ async function getThumbnail(
 ): Promise<string | null>
 ```
 
-**描述**: 获取文件缩略图，支持颜色提取回调
+**描述**: 获取文件缩略图，支持颜色提取回调。前端使用批量请求聚合（~50ms 窗口）减少后端调用。
 
 **参数**:
 - `filePath`: string - 文件路径
 - `modified?`: string - 文件修改时间（用于缓存）
-- `rootPath?`: string - 根路径（用于计算缓存路径）
+- `rootPath?`: string - 资源根目录（必需，用于计算缓存路径）
 - `signal?`: AbortSignal - 取消信号
 - `onColors?`: (colors: DominantColor[] | null) => void - 颜色提取回调
 
-**返回**: `Promise<string | null>` - 缩略图 URL 或 null
+**返回**: `Promise<string | null>` - 缩略图 Asset URL 或 null
 
 **示例**:
 ```typescript
@@ -269,6 +310,8 @@ const thumbnailUrl = await getThumbnail(
   (colors) => console.log('Dominant colors:', colors)
 )
 ```
+
+---
 
 #### `getAssetUrl`
 ```typescript
@@ -288,17 +331,19 @@ const url = getAssetUrl('/home/user/Pictures/photo.jpg')
 // 返回: "asset://localhost/home/user/Pictures/photo.jpg"
 ```
 
+---
+
 #### `readFileAsBase64`
 ```typescript
-async function readFileAsBase64(path: string): Promise<string | null>
+async function readFileAsBase64(filePath: string): Promise<string | null>
 ```
 
-**描述**: 以 Base64 格式读取文件内容
+**描述**: 以 Base64 格式读取文件内容，自动检测 MIME 类型
 
 **参数**:
-- `path`: string - 文件路径
+- `filePath`: string - 文件路径
 
-**返回**: `Promise<string | null>` - Base64 编码的文件内容
+**返回**: `Promise<string | null>` - Base64 编码的数据 URL
 
 **示例**:
 ```typescript
@@ -306,17 +351,23 @@ const base64 = await readFileAsBase64('/home/user/Pictures/photo.jpg')
 console.log(base64) // "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQ..."
 ```
 
+---
+
 #### `getDominantColors`
 ```typescript
-async function getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
+async function getDominantColors(
+  filePath: string, 
+  count?: number, 
+  thumbnailPath?: string
+): Promise<DominantColor[]>
 ```
 
-**描述**: 从图片文件中提取主色调
+**描述**: 从图片文件中提取主色调。优先从数据库获取，如无则实时提取并保存。
 
 **参数**:
 - `filePath`: string - 图片文件路径
 - `count?`: number - 要提取的颜色数量（默认 8）
-- `thumbnailPath?`: string - 可选的缩略图路径
+- `thumbnailPath?`: string - 可选的缩略图路径（用于 AVIF 等格式的降级处理）
 
 **返回**: `Promise<DominantColor[]>` - 主色调数组
 
@@ -324,18 +375,20 @@ async function getDominantColors(filePath: string, count?: number, thumbnailPath
 ```typescript
 const colors = await getDominantColors('/home/user/Pictures/photo.jpg', 5)
 console.log(colors)
-// [{ hex: '#FF0000', rgb: [255, 0, 0], isDark: false }, ...]
+// [{ hex: '#FF0000', rgb: [255, 0, 0], isDark: false, labL: 53.2, labA: 80.1, labB: 67.2, percentage: 0.25 }, ...]
 ```
+
+---
 
 #### `searchByColor`
 ```typescript
-async function searchByColor(targetHex: string): Promise<string[]>
+async function searchByColor(color: string): Promise<string[]>
 ```
 
 **描述**: 按颜色搜索图片
 
 **参数**:
-- `targetHex`: string - 目标颜色（十六进制格式）
+- `color`: string - 目标颜色（十六进制格式，如 `#ff0000`）
 
 **返回**: `Promise<string[]>` - 匹配的图片文件路径列表（按相似度排序）
 
@@ -344,6 +397,8 @@ async function searchByColor(targetHex: string): Promise<string[]>
 const results = await searchByColor('#FF0000')
 console.log(results) // ['/path/to/red1.jpg', '/path/to/red2.jpg', ...]
 ```
+
+---
 
 #### `searchByPalette`
 ```typescript
@@ -363,6 +418,8 @@ const results = await searchByPalette(['#FF0000', '#00FF00', '#0000FF'])
 console.log(results) // ['/path/to/image.jpg', ...]
 ```
 
+---
+
 #### `generateDragPreview`
 ```typescript
 async function generateDragPreview(
@@ -372,7 +429,7 @@ async function generateDragPreview(
 ): Promise<string | null>
 ```
 
-**描述**: 生成拖拽预览图
+**描述**: 生成拖拽预览图（最多使用前 3 个缩略图合成）
 
 **参数**:
 - `thumbnailPaths`: string[] - 缩略图路径数组
@@ -380,6 +437,8 @@ async function generateDragPreview(
 - `cacheRoot`: string - 缓存目录
 
 **返回**: `Promise<string | null>` - 预览图路径
+
+---
 
 #### `startDragToExternal`
 ```typescript
@@ -391,7 +450,7 @@ async function startDragToExternal(
 ): Promise<void>
 ```
 
-**描述**: 启动文件拖拽到外部应用的操作
+**描述**: 启动文件拖拽到外部应用的操作（使用 `tauri-plugin-drag`）
 
 **参数**:
 - `filePaths`: string[] - 要拖拽的文件路径数组
@@ -409,6 +468,8 @@ await startDragToExternal(
 )
 ```
 
+---
+
 #### `pauseColorExtraction`
 ```typescript
 async function pauseColorExtraction(): Promise<boolean>
@@ -417,6 +478,8 @@ async function pauseColorExtraction(): Promise<boolean>
 **描述**: 暂停颜色提取后台任务
 
 **返回**: `Promise<boolean>` - 是否成功暂停
+
+---
 
 #### `resumeColorExtraction`
 ```typescript
@@ -427,56 +490,86 @@ async function resumeColorExtraction(): Promise<boolean>
 
 **返回**: `Promise<boolean>` - 是否成功恢复
 
+---
+
+#### `addPendingFilesToDb`
+```typescript
+async function addPendingFilesToDb(filePaths: string[]): Promise<number>
+```
+
+**描述**: 批量添加文件到颜色数据库的 pending 表（用于首次扫描）
+
+**参数**:
+- `filePaths`: string[] - 文件路径列表
+
+**返回**: `Promise<number>` - 实际添加的文件数量
+
+---
+
+### 2. 用户数据 API
+
 #### `saveUserData`
 ```typescript
 async function saveUserData(data: any): Promise<boolean>
 ```
 
-**描述**: 保存用户数据
+**描述**: 保存用户数据到持久化存储。会自动过滤掉大型文件元数据（应使用元数据数据库存储）。
 
 **参数**:
 - `data`: any - 要保存的数据
 
-**返回**: `Promise<boolean>` - 保存是否成功
+**返回**: `Promise<boolean>` - 是否成功
+
+**示例**:
+```typescript
+const success = await saveUserData({
+  rootPaths: ['/home/user/Pictures'],
+  customTags: ['vacation', 'family'],
+  settings: { ... }
+})
+```
+
+---
 
 #### `loadUserData`
 ```typescript
 async function loadUserData(): Promise<any | null>
 ```
 
-**描述**: 加载用户数据
+**描述**: 从持久化存储加载用户数据
 
-**返回**: `Promise<any | null>` - 加载的数据或 null
+**返回**: `Promise<any | null>` - 保存的数据
+
+**示例**:
+```typescript
+const data = await loadUserData()
+if (data) {
+  console.log('根目录:', data.rootPaths)
+  console.log('设置:', data.settings)
+}
+```
+
+---
 
 #### `getDefaultPaths`
 ```typescript
 async function getDefaultPaths(): Promise<Record<string, string>>
 ```
 
-**描述**: 获取默认路径
+**描述**: 获取默认路径配置
 
-**返回**: `Promise<Record<string, string>>` - 路径映射
+**返回**: `Promise<Record<string, string>>` - 包含 `resourceRoot` 和 `cacheRoot`
 
-#### `openPath`
+**示例**:
 ```typescript
-async function openPath(path: string, isFile?: boolean): Promise<void>
+const paths = await getDefaultPaths()
+console.log('资源根目录:', paths.resourceRoot)
+console.log('缓存根目录:', paths.cacheRoot)
 ```
 
-**描述**: 在系统文件管理器中打开路径
+---
 
-**参数**:
-- `path`: string - 要打开的路径
-- `isFile?`: boolean - 是否为文件（默认为 false）
-
-#### `createFolder`
-```typescript
-async function createFolder(path: string): Promise<void>
-```
-
-**描述**: 创建文件夹
-
-**参数**:
-- `path`: string - 文件夹路径
+### 3. 目录和文件操作 API
 
 #### `openDirectory`
 ```typescript
@@ -485,232 +578,7 @@ async function openDirectory(): Promise<string | null>
 
 **描述**: 打开目录选择对话框
 
-**返回**: `Promise<string | null>` - 选择的目录路径
-
-#### `ensureDirectory`
-```typescript
-async function ensureDirectory(path: string): Promise<void>
-```
-
-**描述**: 确保目录存在，如果不存在则创建
-
-**参数**:
-- `path`: string - 目录路径
-
----
-
-## 数据库 API
-
-### `dbGetAllPeople`
-```typescript
-async function dbGetAllPeople(): Promise<any[]>
-```
-
-**描述**: 获取所有人物数据
-
-**返回**: `Promise<any[]>` - 人物数据数组
-
-### `dbUpsertPerson`
-```typescript
-async function dbUpsertPerson(person: any): Promise<void>
-```
-
-**描述**: 插入或更新人物数据
-
-**参数**:
-- `person`: any - 人物数据
-
-### `dbDeletePerson`
-```typescript
-async function dbDeletePerson(id: string): Promise<void>
-```
-
-**描述**: 删除人物
-
-**参数**:
-- `id`: string - 人物 ID
-
-### `dbUpdatePersonAvatar`
-```typescript
-async function dbUpdatePersonAvatar(
-  personId: string, 
-  coverFileId: string, 
-  faceBox: any
-): Promise<void>
-```
-
-**描述**: 更新人物头像
-
-**参数**:
-- `personId`: string - 人物 ID
-- `coverFileId`: string - 封面文件 ID
-- `faceBox`: any - 人脸位置信息
-
-### `dbUpsertFileMetadata`
-```typescript
-async function dbUpsertFileMetadata(metadata: {
-  fileId: string;
-  path: string;
-  tags?: string[];
-  description?: string;
-  sourceUrl?: string;
-  aiData?: any;
-  updatedAt?: number;
-}): Promise<void>
-```
-
-**描述**: 插入或更新文件的元数据（标签、描述、来源 URL、AI 分析数据等）到数据库。
-
-**参数**:
-- `metadata`: Object - 包含文件的 ID、路径、标签数组、描述文本、来源 URL、AI 数据对象以及更新时间戳。
-
----
-
-## 窗口管理 API
-
-### `hideWindow`
-```typescript
-async function hideWindow(): Promise<void>
-```
-
-**描述**: 隐藏主窗口
-
-### `showWindow`
-```typescript
-async function showWindow(): Promise<void>
-```
-
-**描述**: 显示主窗口
-
-### `exitApp`
-```typescript
-async function exitApp(): Promise<void>
-```
-
-**描述**: 退出应用程序
-
-#### `scanFile`
-```typescript
-async function scanFile(
-  filePath: string, 
-  parentId?: string
-): Promise<FileNode>
-```
-
-**描述**: 扫描单个文件，返回文件节点
-
-**参数**:
-- `filePath`: string - 文件完整路径
-- `parentId`: string - 父目录 ID (可选)
-
-**返回**: `Promise<FileNode>`
-
-**示例**:
-```typescript
-const file = await scanFile('/home/user/Pictures/photo.jpg', 'folder1')
-console.log(file.name) // 'photo.jpg'
-console.log(file.type) // 'image'
-```
-
----
-
-#### `renameFile`
-```typescript
-async function renameFile(
-  oldPath: string, 
-  newPath: string
-): Promise<void>
-```
-
-**描述**: 重命名或移动文件
-
-**参数**:
-- `oldPath`: string - 旧路径
-- `newPath`: string - 新路径
-
-**示例**:
-```typescript
-await renameFile(
-  '/home/user/Pictures/old.jpg',
-  '/home/user/Pictures/new.jpg'
-)
-```
-
----
-
-#### `deleteFile`
-```typescript
-async function deleteFile(path: string): Promise<void>
-```
-
-**描述**: 删除文件或目录
-
-**参数**:
-- `path`: string - 要删除的路径
-
-**示例**:
-```typescript
-await deleteFile('/home/user/Pictures/unwanted.jpg')
-```
-
----
-
-#### `copyFile`
-```typescript
-async function copyFile(
-  source: string, 
-  destination: string
-): Promise<void>
-```
-
-**描述**: 复制文件
-
-**参数**:
-- `source`: string - 源文件路径
-- `destination`: string - 目标文件路径
-
-**示例**:
-```typescript
-await copyFile(
-  '/home/user/Pictures/photo.jpg',
-  '/home/user/Backup/photo.jpg'
-)
-```
-
----
-
-#### `moveFile`
-```typescript
-async function moveFile(
-  source: string, 
-  destination: string
-): Promise<void>
-```
-
-**描述**: 移动文件
-
-**参数**:
-- `source`: string - 源文件路径
-- `destination`: string - 目标文件路径
-
-**示例**:
-```typescript
-await moveFile(
-  '/home/user/Downloads/photo.jpg',
-  '/home/user/Pictures/photo.jpg'
-)
-```
-
----
-
-#### `openDirectory`
-```typescript
-async function openDirectory(): Promise<string | null>
-```
-
-**描述**: 打开目录选择对话框
-
-**返回**: `Promise<string | null>` - 选中的目录路径，或 null
+**返回**: `Promise<string | null>` - 选择的目录路径，或 null
 
 **示例**:
 ```typescript
@@ -727,7 +595,7 @@ if (path) {
 async function createFolder(path: string): Promise<void>
 ```
 
-**描述**: 创建新目录
+**描述**: 创建新目录，同时同步更新索引数据库
 
 **参数**:
 - `path`: string - 要创建的目录路径
@@ -758,17 +626,14 @@ await ensureDirectory('/home/user/.aurora/cache')
 
 #### `openPath`
 ```typescript
-async function openPath(
-  path: string, 
-  isFile: boolean = false
-): Promise<void>
+async function openPath(path: string, isFile?: boolean): Promise<void>
 ```
 
 **描述**: 在系统文件管理器中打开路径
 
 **参数**:
 - `path`: string - 要打开的路径
-- `isFile`: boolean - 是否为文件 (默认: false)
+- `isFile?`: boolean - 是否为文件。如果提供，将在文件管理器中选中该项
 
 **示例**:
 ```typescript
@@ -781,259 +646,105 @@ await openPath('/home/user/Pictures/photo.jpg', true)
 
 ---
 
-### 2. 用户数据 API
+### 4. 数据库 / 元数据 API
 
-#### `saveUserData`
+#### `dbUpsertFileMetadata`
 ```typescript
-async function saveUserData(data: any): Promise<boolean>
+async function dbUpsertFileMetadata(metadata: {
+  fileId: string;
+  path: string;
+  tags?: string[];
+  description?: string;
+  sourceUrl?: string;
+  category?: string;
+  aiData?: any;
+  updatedAt?: number;
+}): Promise<void>
 ```
 
-**描述**: 保存用户数据到持久化存储
+**描述**: 插入或更新文件的元数据到数据库
 
 **参数**:
-- `data`: any - 要保存的数据
-
-**返回**: `Promise<boolean>` - 是否成功
-
-**示例**:
-```typescript
-const success = await saveUserData({
-  rootPaths: ['/home/user/Pictures'],
-  customTags: ['vacation', 'family'],
-  people: { ... },
-  settings: { ... }
-})
-```
+- `metadata`: Object - 元数据对象
 
 ---
 
-#### `loadUserData`
+#### `dbCopyFileMetadata`
 ```typescript
-async function loadUserData(): Promise<any>
+async function dbCopyFileMetadata(srcPath: string, destPath: string): Promise<void>
 ```
 
-**描述**: 从持久化存储加载用户数据
-
-**返回**: `Promise<any>` - 保存的数据
-
-**示例**:
-```typescript
-const data = await loadUserData()
-if (data) {
-  console.log('根目录:', data.rootPaths)
-  console.log('设置:', data.settings)
-}
-```
-
----
-
-#### `getDefaultPaths`
-```typescript
-async function getDefaultPaths(): Promise<{ 
-  resourceRoot: string, 
-  cacheRoot: string 
-}>
-```
-
-**描述**: 获取默认路径配置
-
-**返回**: `Promise<{ resourceRoot: string, cacheRoot: string }>`
-
-**示例**:
-```typescript
-const paths = await getDefaultPaths()
-console.log('资源根目录:', paths.resourceRoot)
-console.log('缓存根目录:', paths.cacheRoot)
-```
-
----
-
-### 数据库 / 人物 API
-- `dbGetAllPeople(): Promise<Person[]>` - 从后端读取所有人物
-- `dbUpsertPerson(person: Person): Promise<void>` - 插入或更新人物信息（用于 AI 识别后保存）
-- `dbDeletePerson(id: string): Promise<void>` - 删除人物记录
-- `dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void>` - 更新人物头像信息（包括脸部框）
-
-**后端对应命令 (Tauri)**: `db_get_all_people`, `db_upsert_person`, `db_delete_person`, `db_update_person_avatar`
-
----
-
-### 3. 图像处理 API
-
-#### `getThumbnail`
-```typescript
-async function getThumbnail(
-  filePath: string,
-  modified?: string,
-  rootPath?: string,
-  signal?: AbortSignal,
-  onColors?: (colors: DominantColor[] | null) => void
-): Promise<string | null>
-```
-
-**描述**: 获取或生成缩略图，前端实现对多个缩略图请求进行聚合（batch）以减少与后端的调用次数。
-- **行为要点**:
-  - 需要提供 `rootPath`（资源根）以用于计算缓存目录（实现中使用 `${rootPath}/.Aurora_Cache` 或 Windows 路径分隔符形式）。
-  - 返回值是通过 `convertFileSrc` 转换后的资源 URL（前端会向最终调用者返回可在 `<img>` 中直接使用的 URL），如果失败则返回 `null`。
-  - 支持 `onColors` 回调：当后端同时返回主色调信息时，会通过此回调传出 `DominantColor[] | null`。
-  - 前端内部以 ~50ms 的聚合窗口对请求进行批量调用（见 `ThumbnailBatcher` 实现），以降低开销。
+**描述**: 复制文件元数据（包括索引、颜色、元数据）
 
 **参数**:
-- `filePath`: string - 原图路径
-- `modified?`: string - 文件最近修改时间（用于控制缓存失效）
-- `rootPath?`: string - 资源根目录（必需以便正确定位缓存）
-- `signal?`: AbortSignal - 可选的取消信号，用于中止请求
-- `onColors?`: (colors: DominantColor[] | null) => void - 可选回调，当后端返回颜色信息时触发
-
-**返回**: `Promise<string | null>` - 可直接用作 `img.src` 的资源 URL，或 `null`（失败/不可用）
-
-**示例**:
-```typescript
-const thumbnail = await getThumbnail(
-  '/home/user/Pictures/photo.jpg',
-  '2026-01-01T12:00:00Z',
-  '/home/user/Pictures',
-  undefined,
-  (colors) => console.log('dominant colors', colors)
-)
-// 返回: "http://localhost.../file:///.../cache/thumb.jpg" 或 null
-```
+- `srcPath`: string - 源文件路径
+- `destPath`: string - 目标文件路径
 
 ---
 
-#### `getAssetUrl`
+### 5. 人物数据库 API
+
+#### `dbGetAllPeople`
 ```typescript
-function getAssetUrl(filePath: string): string
+async function dbGetAllPeople(): Promise<Person[]>
 ```
 
-**描述**: 将本地文件路径转换为可在前端直接使用的资源 URL（使用 `convertFileSrc` 实现）。
+**描述**: 从数据库读取所有人物
+
+**返回**: `Promise<Person[]>` - 人物数组
 
 ---
 
-#### `readFileAsBase64`
+#### `dbUpsertPerson`
 ```typescript
-async function readFileAsBase64(path: string): Promise<string | null>
+async function dbUpsertPerson(person: Person): Promise<void>
 ```
 
-**描述**: 读取完整文件并返回 Base64 编码的数据 URL，若失败则返回 `null`。常用于需要把图片直接发送给 AI 服务或本地处理的场景。
-
----
-
-#### `getDominantColors`
-```typescript
-async function getDominantColors(filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]>
-```
-
-**描述**: 向后端请求特定图片的主色调（默认为最多 8 个）。返回 `DominantColor[]`，失败时返回空数组。
-
----
-
-#### `searchByColor`
-```typescript
-async function searchByColor(targetHex: string): Promise<string[]>
-```
-
-**描述**: 在后端基于已存储的色彩数据检索与目标颜色相似的图片，返回匹配图片的绝对路径数组（前端需做路径归一化以匹配 `state.files[*].path`）。
-
----
-
-#### `generateDragPreview`
-```typescript
-async function generateDragPreview(thumbnailPaths: string[], totalCount: number, cacheRoot: string): Promise<string | null>
-```
-
-**描述**: 为外部拖拽生成合成的预览图（最多使用前 3 个缩略图），返回生成的预览图路径或 `null`。
-
----
-
-#### `startDragToExternal`
-```typescript
-async function startDragToExternal(filePaths: string[], thumbnailPaths?: string[], cacheRoot?: string, onDragEnd?: () => void): Promise<void>
-```
-
-**描述**: 使用 `tauri-plugin-drag` 启动从应用拖拽文件到外部应用的流程。函数会尽力生成或选择合适的图标（合成预览图、缓存缩略图或原始图片），并以复制模式（`copy`）开始拖拽。仅在 Tauri 环境下有效。
-
----
-
-## 后端命令 (Rust / Tauri)
-
-### `search_by_color`
-```rust
-// 调用示例 (Tauri invoke)
-let results: Vec<String> = invoke("search_by_color", { targetHex: "#ff0000" }).await?;
-```
-
-**描述**: 在后端基于存储的色彩信息检索与给定颜色相似的图片路径，返回匹配图片的绝对路径数组。
-
-**请求**:
-- `targetHex`: string - 目标颜色的十六进制字符串（带或不带 `#`）。
-
-**响应**:
-- `Vec<String>` - 绝对路径数组 (示例: `C:\Users\...\photo.jpg` 或 `/home/user/.../photo.jpg`)。
-
-**事件**:
-- 颜色提取过程会通过 `color-extraction-progress` 事件向前端推送进度，事件载荷包含批次 id、当前文件、总量及是否完成等字段。
-
-**注意**:
-- 建议后端返回路径时尽量使用与前端索引一致的路径风格，或在后端/导入阶段返回文件 ID 映射以避免路径不一致问题。
-
-
-#### `readFileAsBase64`
-```typescript
-async function readFileAsBase64(path: string): Promise<string | null>
-```
-
-**描述**: 读取文件为 Base64 编码，失败时返回 `null`。
+**描述**: 插入或更新人物信息
 
 **参数**:
-- `path`: string - 文件路径
-
-**返回**: `Promise<string | null>` - Base64 编码的数据 URL 或 `null`
-
-**示例**:
-```typescript
-const base64 = await readFileAsBase64('/home/user/Pictures/photo.jpg')
-// 返回: "data:image/jpeg;base64,/9j/4AAQSkZJRg..." 或 null
-```
+- `person`: Person - 人物数据
 
 ---
 
-#### `searchByColor`
+#### `dbDeletePerson`
 ```typescript
-async function searchByColor(targetHex: string): Promise<string[]>
+async function dbDeletePerson(id: string): Promise<void>
 ```
 
-**描述**: 基于颜色相似度在后端检索匹配图片的路径列表。前端通过 `tauri-bridge` 调用后端命令 `search_by_color`，并对返回的路径进行标准化与索引匹配。
+**描述**: 删除人物记录
 
 **参数**:
-- `targetHex`: string - 目标颜色的十六进制值，例如 `#ff0000` 或 `ff0000`（前端会确保前置 `#`）。
+- `id`: string - 人物 ID
 
-**返回**: `Promise<string[]>` - 匹配图片的绝对路径数组（后端返回）。前端会对路径做归一化并与 `state.files[*].path` 匹配以获取本地文件索引中的条目。
+---
 
-**示例**:
+#### `dbUpdatePersonAvatar`
 ```typescript
-const matches = await searchByColor('#ff0000')
-// matches => ["C:/Users/.../photo1.jpg", "/home/user/Pictures/photo2.jpg", ...]
+async function dbUpdatePersonAvatar(
+  personId: string, 
+  coverFileId: string, 
+  faceBox: any
+): Promise<void>
 ```
 
-**注意**:
-- 前端会移除 Windows 长路径前缀 `\\?\`、把 `\\` 转为 `/` 并统一小写以提高匹配成功率。
-- 如果后端返回的路径无法在前端索引中匹配，前端会在 UI 中以 Toast 提示用户（例如：后端找到 N 张，但前端无法显示）。
+**描述**: 更新人物头像信息（包括脸部框）
 
+**参数**:
+- `personId`: string - 人物 ID
+- `coverFileId`: string - 封面文件 ID
+- `faceBox`: any - 人脸位置信息
 
-### 4. 窗口管理 API
+---
+
+### 6. 窗口管理 API
 
 #### `hideWindow`
 ```typescript
 async function hideWindow(): Promise<void>
 ```
 
-**描述**: 隐藏应用窗口（最小化到托盘）
-
-**示例**:
-```typescript
-await hideWindow()
-```
+**描述**: 隐藏主窗口（最小化到托盘）
 
 ---
 
@@ -1042,12 +753,7 @@ await hideWindow()
 async function showWindow(): Promise<void>
 ```
 
-**描述**: 显示应用窗口
-
-**示例**:
-```typescript
-await showWindow()
-```
+**描述**: 显示主窗口
 
 ---
 
@@ -1056,46 +762,25 @@ await showWindow()
 async function exitApp(): Promise<void>
 ```
 
-**描述**: 退出应用
-
-**示例**:
-```typescript
-await exitApp()
-```
+**描述**: 退出应用程序
 
 ---
 
-### 5. 色彩提取控制 API
+### 7. 数据库切换 API
 
-#### `pauseColorExtraction`
+#### `switchRootDatabase`
 ```typescript
-async function pauseColorExtraction(): Promise<boolean>
+async function switchRootDatabase(newRootPath: string): Promise<void>
 ```
 
-**描述**: 暂停色彩提取任务，返回是否成功
+**描述**: 切换根目录数据库（当用户更改资源根目录时使用）
 
-**示例**:
-```typescript
-const ok = await pauseColorExtraction()
-```
+**参数**:
+- `newRootPath`: string - 新的根目录路径
 
 ---
 
-#### `resumeColorExtraction`
-```typescript
-async function resumeColorExtraction(): Promise<boolean>
-```
-
-**描述**: 恢复色彩提取任务，返回是否成功
-
-**示例**:
-```typescript
-const ok = await resumeColorExtraction()
-```
-
----
-
-## 后端 API (Rust)
+## 后端命令 (Rust / Tauri)
 
 ### 1. 文件系统命令
 
@@ -1104,40 +789,34 @@ const ok = await resumeColorExtraction()
 #[tauri::command]
 async fn scan_directory(
     path: String, 
-    recursive: bool
-) -> Result<ScanResult, String>
+    force_rescan: Option<bool>,
+    app: tauri::AppHandle
+) -> Result<HashMap<String, FileNode>, String>
 ```
 
-**描述**: 扫描目录
+**描述**: 扫描目录，支持极速启动模式（从数据库缓存加载）
 
 **参数**:
 - `path`: String - 目录路径
-- `recursive`: bool - 是否递归
+- `force_rescan`: Option<bool> - 是否强制重新扫描
 
-**返回**: `Result<ScanResult, String>`
+**返回**: `Result<HashMap<String, FileNode>, String>` - 文件节点映射
 
-**ScanResult 结构**:
+**事件**:
+- `scan-progress`: 扫描进度更新
+
+---
+
+#### `force_rescan`
 ```rust
-struct ScanResult {
-    roots: Vec<String>,
-    files: HashMap<String, FileNode>,
-}
-
-struct FileNode {
-    id: String,
-    parent_id: Option<String>,
-    name: String,
-    path: String,
-    file_type: FileType,  // File, Folder, Image, Video, Audio
-    children: Option<Vec<String>>,
-    tags: Vec<String>,
-    description: Option<String>,
-    meta: Option<FileMeta>,
-    ai_data: Option<AiData>,
-    created_at: String,
-    updated_at: String,
-}
+#[tauri::command]
+async fn force_rescan(
+    path: String, 
+    app: tauri::AppHandle
+) -> Result<HashMap<String, FileNode>, String>
 ```
+
+**描述**: 强制完整扫描目录
 
 ---
 
@@ -1146,17 +825,12 @@ struct FileNode {
 #[tauri::command]
 async fn scan_file(
     file_path: String, 
-    parent_id: Option<String>
+    parent_id: Option<String>,
+    app: tauri::AppHandle
 ) -> Result<FileNode, String>
 ```
 
 **描述**: 扫描单个文件
-
-**参数**:
-- `file_path`: String - 文件路径
-- `parent_id`: Option<String> - 父目录 ID
-
-**返回**: `Result<FileNode, String>`
 
 ---
 
@@ -1165,47 +839,38 @@ async fn scan_file(
 #[tauri::command]
 async fn rename_file(
     old_path: String, 
-    new_path: String
+    new_path: String,
+    app: tauri::AppHandle
 ) -> Result<(), String>
 ```
 
-**描述**: 重命名文件
-
-**参数**:
-- `old_path`: String - 旧路径
-- `new_path`: String - 新路径
-
-**返回**: `Result<(), String>`
+**描述**: 重命名文件/文件夹，同步更新数据库索引
 
 ---
 
 #### `delete_file`
 ```rust
 #[tauri::command]
-async fn delete_file(path: String) -> Result<(), String>
+async fn delete_file(
+    path: String,
+    app: tauri::AppHandle
+) -> Result<(), String>
 ```
 
-**描述**: 删除文件
-
-**参数**:
-- `path`: String - 文件路径
-
-**返回**: `Result<(), String>`
+**描述**: 删除文件/文件夹，同步清理数据库记录
 
 ---
 
 #### `create_folder`
 ```rust
 #[tauri::command]
-async fn create_folder(path: String) -> Result<(), String>
+async fn create_folder(
+    path: String,
+    app: tauri::AppHandle
+) -> Result<(), String>
 ```
 
-**描述**: 创建目录
-
-**参数**:
-- `path`: String - 目录路径
-
-**返回**: `Result<(), String>`
+**描述**: 创建目录，同步更新索引数据库
 
 ---
 
@@ -1217,29 +882,32 @@ async fn ensure_directory(path: String) -> Result<(), String>
 
 **描述**: 确保目录存在
 
-**参数**:
-- `path`: String - 目录路径
-
-**返回**: `Result<(), String>`
-
 ---
 
 #### `copy_file`
 ```rust
 #[tauri::command]
 async fn copy_file(
-    source: String, 
-    destination: String
-) -> Result<(), String>
+    src_path: String, 
+    dest_path: String
+) -> Result<String, String>
 ```
 
-**描述**: 复制文件
+**描述**: 复制文件，返回实际写入的路径
 
-**参数**:
-- `source`: String - 源路径
-- `destination`: String - 目标路径
+---
 
-**返回**: `Result<(), String>`
+#### `copy_image_colors`
+```rust
+#[tauri::command]
+async fn copy_image_colors(
+    app: tauri::AppHandle,
+    src_path: String,
+    dest_path: String
+) -> Result<bool, String>
+```
+
+**描述**: 复制图片颜色信息
 
 ---
 
@@ -1247,18 +915,13 @@ async fn copy_file(
 ```rust
 #[tauri::command]
 async fn move_file(
-    source: String, 
-    destination: String
+    src_path: String, 
+    dest_path: String,
+    app: tauri::AppHandle
 ) -> Result<(), String>
 ```
 
-**描述**: 移动文件
-
-**参数**:
-- `source`: String - 源路径
-- `destination`: String - 目标路径
-
-**返回**: `Result<(), String>`
+**描述**: 移动文件，同步迁移数据库元数据
 
 ---
 
@@ -1266,18 +929,13 @@ async fn move_file(
 ```rust
 #[tauri::command]
 async fn write_file_from_bytes(
-    path: String, 
-    bytes: Vec<u8>
+    file_path: String, 
+    bytes: Vec<u8>,
+    app: tauri::AppHandle
 ) -> Result<(), String>
 ```
 
 **描述**: 写入二进制数据到文件
-
-**参数**:
-- `path`: String - 文件路径
-- `bytes`: Vec<u8> - 二进制数据
-
-**返回**: `Result<(), String>`
 
 ---
 
@@ -1292,12 +950,6 @@ async fn open_path(
 
 **描述**: 在系统文件管理器中打开路径
 
-**参数**:
-- `path`: String - 路径
-- `is_file`: Option<bool> - 是否为文件
-
-**返回**: `Result<(), String>`
-
 ---
 
 #### `file_exists`
@@ -1308,156 +960,39 @@ async fn file_exists(file_path: String) -> Result<bool, String>
 
 **描述**: 检查文件是否存在
 
-**参数**:
-- `file_path`: String - 文件路径
-
-**返回**: `Result<bool, String>`
-
 ---
 
-### 2. 数据库命令
-
-#### `get_pending_files`
+#### `read_file_as_base64`
 ```rust
 #[tauri::command]
-async fn get_pending_files(limit: usize) -> Result<Vec<String>, String>
+async fn read_file_as_base64(file_path: String) -> Result<Option<String>, String>
 ```
 
-**描述**: 获取待处理文件列表
-
-**参数**:
-- `limit`: usize - 最大数量
-
-**返回**: `Result<Vec<String>, String>` - 文件路径数组
+**描述**: 读取文件为 Base64 编码
 
 ---
 
-#### `update_status`
+#### `get_avif_preview`
 ```rust
 #[tauri::command]
-async fn update_status(
-    file_path: String, 
-    status: String
-) -> Result<(), String>
+async fn get_avif_preview(path: String) -> Result<String, String>
 ```
 
-**描述**: 更新文件处理状态
-
-**参数**:
-- `file_path`: String - 文件路径
-- `status`: String - 状态 (pending/processing/completed/error)
-
-**返回**: `Result<(), String>`
+**描述**: 获取 AVIF 图片预览（利用 WebView2 原生支持）
 
 ---
 
-#### `batch_save_colors`
+#### `get_jxl_preview`
 ```rust
 #[tauri::command]
-async fn batch_save_colors(
-    colors: Vec<(String, Vec<ColorResult>)>
-) -> Result<(), String>
+async fn get_jxl_preview(path: String) -> Result<String, String>
 ```
 
-**描述**: 批量保存色彩结果
-
-**参数**:
-- `colors`: Vec<(String, Vec<ColorResult>)> - (文件路径, 色彩数组) 数组
-
-**ColorResult 结构**:
-```rust
-struct ColorResult {
-    hex: String,
-    rgb: (u8, u8, u8),
-    count: usize,
-    percentage: f32,
-}
-```
-
-**返回**: `Result<(), String>`
+**描述**: 获取 JXL 图片预览（解码为 WebP）
 
 ---
 
-### 3. 色彩提取控制命令
-
-#### `pause_color_extraction`
-```rust
-#[tauri::command]
-fn pause_color_extraction() -> bool
-```
-
-**描述**: 暂停色彩提取
-
-**返回**: `bool` - 是否成功
-
----
-
-#### `resume_color_extraction`
-```rust
-#[tauri::command]
-fn resume_color_extraction() -> bool
-```
-
-**描述**: 恢复色彩提取
-
-**返回**: `bool` - 是否成功
-
----
-
-#### `shutdown_color_extraction`
-```rust
-#[tauri::command]
-async fn shutdown_color_extraction() -> bool
-```
-
-**描述**: 关闭色彩提取任务
-
-**返回**: `bool` - 是否成功
-
----
-
-### 4. 用户数据命令
-
-#### `save_user_data`
-```rust
-#[tauri::command]
-async fn save_user_data(data: serde_json::Value) -> Result<bool, String>
-```
-
-**描述**: 保存用户数据
-
-**参数**:
-- `data`: serde_json::Value - 要保存的数据
-
-**返回**: `Result<bool, String>` - 是否成功
-
----
-
-#### `load_user_data`
-```rust
-#[tauri::command]
-async fn load_user_data() -> Result<Option<serde_json::Value>, String>
-```
-
-**描述**: 加载用户数据
-
-**返回**: `Result<Option<serde_json::Value>, String>` - 保存的数据
-
----
-
-#### `get_default_paths`
-```rust
-#[tauri::command]
-async fn get_default_paths() -> Result<(String, String), String>
-```
-
-**描述**: 获取默认路径
-
-**返回**: `Result<(String, String), String>` - (资源根目录, 缓存根目录)
-
----
-
-### 5. 工具命令
+### 2. 缩略图命令
 
 #### `get_thumbnail`
 ```rust
@@ -1469,68 +1004,331 @@ async fn get_thumbnail(
 ) -> Result<String, String>
 ```
 
-**描述**: 获取缩略图
+**描述**: 获取单个缩略图
 
-**参数**:
-- `file_path`: String - 原图路径
-- `updated_at`: String - 更新时间
-- `resource_root`: String - 资源根目录
+---
 
-**返回**: `Result<String, String>` - Data URL 或路径
+#### `get_thumbnails_batch`
+```rust
+#[tauri::command]
+async fn get_thumbnails_batch(
+    file_paths: Vec<String>,
+    cache_root: String,
+    on_event: Channel<ThumbnailEvent>
+) -> Result<(), String>
+```
+
+**描述**: 批量获取缩略图（流式返回）
+
+---
+
+#### `save_remote_thumbnail`
+```rust
+#[tauri::command]
+async fn save_remote_thumbnail(
+    file_path: String,
+    thumbnail_data: String,  // base64 data URL
+    colors: Vec<ColorResult>,
+    cache_root: String
+) -> Result<String, String>
+```
+
+**描述**: 保存前端生成的缩略图（用于 AVIF 降级处理）
+
+---
+
+#### `generate_drag_preview`
+```rust
+#[tauri::command]
+async fn generate_drag_preview(
+    thumbnail_paths: Vec<String>, 
+    total_count: number, 
+    cache_root: String
+) -> Result<String, String>
+```
+
+**描述**: 生成拖拽预览图
+
+---
+
+### 3. 颜色相关命令
+
+#### `get_dominant_colors`
+```rust
+#[tauri::command]
+async fn get_dominant_colors(
+    file_path: String, 
+    count: usize, 
+    thumbnail_path: Option<String>,
+    app: tauri::AppHandle
+) -> Result<Vec<ColorResult>, String>
+```
+
+**描述**: 获取图片主色调
+
+---
+
+#### `search_by_color`
+```rust
+#[tauri::command]
+async fn search_by_color(color: String) -> Result<Vec<String>, String>
+```
+
+**描述**: 按颜色搜索图片
+
+---
+
+#### `search_by_palette`
+```rust
+#[tauri::command]
+async fn search_by_palette(target_palette: Vec<String>) -> Result<Vec<String>, String>
+```
+
+**描述**: 按调色板搜索图片
+
+---
+
+#### `add_pending_files_to_db`
+```rust
+#[tauri::command]
+async fn add_pending_files_to_db(
+    app: tauri::AppHandle,
+    file_paths: Vec<String>
+) -> Result<usize, String>
+```
+
+**描述**: 批量添加文件到颜色数据库的 pending 表
+
+---
+
+#### `pause_color_extraction`
+```rust
+#[tauri::command]
+fn pause_color_extraction() -> bool
+```
+
+**描述**: 暂停颜色提取
+
+---
+
+#### `resume_color_extraction`
+```rust
+#[tauri::command]
+fn resume_color_extraction() -> bool
+```
+
+**描述**: 恢复颜色提取
+
+---
+
+### 4. 用户数据命令
+
+#### `save_user_data`
+```rust
+#[tauri::command]
+async fn save_user_data(
+    app_handle: tauri::AppHandle, 
+    data: serde_json::Value
+) -> Result<bool, String>
+```
+
+**描述**: 保存用户数据
+
+---
+
+#### `load_user_data`
+```rust
+#[tauri::command]
+async fn load_user_data(
+    app_handle: tauri::AppHandle
+) -> Result<Option<serde_json::Value>, String>
+```
+
+**描述**: 加载用户数据
+
+---
+
+#### `get_default_paths`
+```rust
+#[tauri::command]
+async fn get_default_paths() -> Result<HashMap<String, String>, String>
+```
+
+**描述**: 获取默认路径
+
+---
+
+### 5. 窗口控制命令
+
+#### `hide_window`
+```rust
+#[tauri::command]
+async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String>
+```
+
+**描述**: 隐藏窗口
+
+---
+
+#### `show_window`
+```rust
+#[tauri::command]
+async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String>
+```
+
+**描述**: 显示窗口
+
+---
+
+#### `exit_app`
+```rust
+#[tauri::command]
+async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String>
+```
+
+**描述**: 退出应用
+
+---
+
+### 6. 数据库命令
+
+#### `db_get_all_people`
+```rust
+#[tauri::command]
+fn db_get_all_people(pool: tauri::State<AppDbPool>) -> Result<Vec<Person>, String>
+```
+
+**描述**: 获取所有人物
+
+---
+
+#### `db_upsert_person`
+```rust
+#[tauri::command]
+fn db_upsert_person(
+    pool: tauri::State<AppDbPool>, 
+    person: Person
+) -> Result<(), String>
+```
+
+**描述**: 插入或更新人物
+
+---
+
+#### `db_delete_person`
+```rust
+#[tauri::command]
+fn db_delete_person(
+    pool: tauri::State<AppDbPool>, 
+    id: String
+) -> Result<(), String>
+```
+
+**描述**: 删除人物
+
+---
+
+#### `db_update_person_avatar`
+```rust
+#[tauri::command]
+fn db_update_person_avatar(
+    pool: tauri::State<AppDbPool>, 
+    person_id: String, 
+    cover_file_id: String, 
+    face_box: Option<FaceBox>
+) -> Result<(), String>
+```
+
+**描述**: 更新人物头像
+
+---
+
+#### `db_upsert_file_metadata`
+```rust
+#[tauri::command]
+async fn db_upsert_file_metadata(
+    pool: tauri::State<'_, AppDbPool>, 
+    metadata: FileMetadata
+) -> Result<(), String>
+```
+
+**描述**: 插入或更新文件元数据
+
+---
+
+#### `db_copy_file_metadata`
+```rust
+#[tauri::command]
+async fn db_copy_file_metadata(
+    src_path: String, 
+    dest_path: String, 
+    app: tauri::AppHandle
+) -> Result<(), String>
+```
+
+**描述**: 复制文件元数据
+
+---
+
+#### `switch_root_database`
+```rust
+#[tauri::command]
+async fn switch_root_database(
+    new_root_path: String,
+    app_db_pool: tauri::State<'_, AppDbPool>,
+    color_db_pool: tauri::State<'_, Arc<ColorDbPool>>,
+) -> Result<(), String>
+```
+
+**描述**: 切换根目录数据库
+
+---
+
+### 7. WAL 检查点命令
+
+#### `force_wal_checkpoint`
+```rust
+#[tauri::command]
+async fn force_wal_checkpoint(app: tauri::AppHandle) -> Result<bool, String>
+```
+
+**描述**: 强制执行 WAL 检查点
 
 ---
 
 #### `get_wal_info`
 ```rust
 #[tauri::command]
-async fn get_wal_info() -> Result<(u64, u64), String>
+async fn get_wal_info(app: tauri::AppHandle) -> Result<(i64, i64), String>
 ```
 
-**描述**: 获取 WAL 信息
-
-**返回**: `Result<(u64, u64), String>` - (WAL 大小, 检查点数)
-
----
-
-#### `force_wal_checkpoint`
-```rust
-#[tauri::command]
-async fn force_wal_checkpoint() -> Result<(), String>
-```
-
-**描述**: 强制 WAL 检查点
-
-**返回**: `Result<(), String>`
-
----
-
-#### `force_full_checkpoint`
-```rust
-#[tauri::command]
-async fn force_full_checkpoint() -> Result<(), String>
-```
-
-**描述**: 强制完整检查点
-
-**返回**: `Result<(), String>`
-
----
-
-#### `get_db_file_sizes`
-```rust
-#[tauri::command]
-async fn get_db_file_sizes() -> Result<(u64, u64), String>
-```
-
-**描述**: 获取数据库文件大小
-
-**返回**: `Result<(u64, u64), String>` - (主库大小, WAL 大小)
+**描述**: 获取 WAL 文件信息（大小和检查点数）
 
 ---
 
 ## 事件监听
 
 ### 前端事件
+
+#### `scan-progress`
+```typescript
+import { listen } from '@tauri-apps/api/event'
+
+const unlisten = await listen('scan-progress', (event) => {
+  const progress = event.payload as ScanProgress
+  console.log(`进度: ${progress.processed}/${progress.total}`)
+})
+```
+
+**事件负载**:
+```typescript
+interface ScanProgress {
+  processed: number
+  total: number
+}
+```
+
+---
 
 #### `color-extraction-progress`
 ```typescript
@@ -1556,7 +1354,30 @@ interface ColorExtractionProgress {
 
 ---
 
+#### `metadata-updated`
+```typescript
+const unlisten = await listen('metadata-updated', (event) => {
+  const entries = event.payload as FileIndexEntry[]
+  console.log('元数据已更新:', entries)
+})
+```
+
+**描述**: 后台索引完成时触发，通知前端更新文件元数据
+
+---
+
 ## 数据类型参考
+
+### FileType
+```typescript
+enum FileType {
+  IMAGE = 'image',
+  FOLDER = 'folder',
+  UNKNOWN = 'unknown'
+}
+```
+
+---
 
 ### FileNode
 ```typescript
@@ -1564,55 +1385,83 @@ interface FileNode {
   id: string                    // 唯一标识
   parentId: string | null       // 父目录 ID
   name: string                  // 文件名
-  path: string                  // 完整路径
   type: FileType                // 文件类型
+  path: string                  // 完整路径
+  size?: number                 // 文件大小（字节）
   children?: string[]           // 子节点 ID 数组
+  
+  category?: 'general' | 'book' | 'sequence'  // 分类
+  author?: string               // 作者
+  
+  url?: string                  // 资源 URL（内部使用）
+  previewUrl?: string           // 预览 URL
   tags: string[]                // 用户标签
   description?: string          // 用户描述
   sourceUrl?: string            // 来源 URL
-  author?: string               // 作者
-  category?: string             // 分类
-  meta?: FileMeta              // 元数据
-  aiData?: AiData              // AI 数据
-  createdAt: string            // 创建时间
-  updatedAt: string            // 更新时间
-}
-
-enum FileType {
-  FILE = 'file',
-  FOLDER = 'folder',
-  IMAGE = 'image',
-  VIDEO = 'video',
-  AUDIO = 'audio'
-}
-
-interface FileMeta {
-  width?: number
-  height?: number
-  sizeKb?: number
-  format?: string
-  palette?: string[]
-  created?: string
-  modified?: string
+  meta?: ImageMeta              // 元数据
+  aiData?: AiData              // AI 分析数据
+  
+  createdAt?: string           // 创建时间
+  updatedAt?: string           // 更新时间
+  lastRefresh?: number         // 上次刷新时间戳
+  isRefreshing?: boolean       // 是否正在刷新（UI 状态）
 }
 ```
+
+---
+
+### ImageMeta
+```typescript
+interface ImageMeta {
+  width: number
+  height: number
+  sizeKb: number
+  created: string
+  modified: string
+  format: string
+  palette?: string[]
+  dominantColors?: DominantColor[]
+}
+```
+
+---
+
+### DominantColor
+```typescript
+interface DominantColor {
+  hex: string
+  rgb: [number, number, number]
+  isDark: boolean
+  labL: number      // LAB 颜色空间 L 值
+  labA: number      // LAB 颜色空间 A 值
+  labB: number      // LAB 颜色空间 B 值
+  percentage: number // 颜色占比
+}
+```
+
+---
 
 ### AiData
 ```typescript
 interface AiData {
   analyzed: boolean
   analyzedAt: string
-  description?: string
-  tags?: string[]
-  faces?: AiFace[]
-  sceneCategory?: string
-  confidence?: number
-  dominantColors?: string[]
-  objects?: string[]
-  extractedText?: string
-  translatedText?: string
+  description: string
+  tags: string[]
+  faces: AiFace[]
+  sceneCategory: string
+  confidence: number
+  dominantColors: string[]
+  objects: string[]
+  extractedText?: string    // OCR 提取的文本
+  translatedText?: string   // 翻译后的文本
 }
+```
 
+---
+
+### AiFace
+```typescript
 interface AiFace {
   id: string
   personId: string
@@ -1622,6 +1471,8 @@ interface AiFace {
 }
 ```
 
+---
+
 ### Person
 ```typescript
 interface Person {
@@ -1630,10 +1481,114 @@ interface Person {
   coverFileId: string
   count: number
   description?: string
-  descriptor?: any
-  faceBox?: { x: number; y: number; w: number; h: number }
+  descriptor?: number[]      // 人脸特征向量
+  faceBox?: { x: number; y: number; w: number; h: number }  // 百分比 0-100
 }
 ```
+
+---
+
+### Topic
+```typescript
+interface Topic {
+  id: string
+  parentId: string | null
+  name: string
+  description?: string
+  type?: string              // 自定义显示类型/标签，最多 12 字
+  coverFileId?: string
+  backgroundFileId?: string
+  coverCrop?: CoverCropData
+  peopleIds: string[]
+  fileIds?: string[]
+  sourceUrl?: string
+  createdAt?: string
+  updatedAt?: string
+}
+```
+
+---
+
+### CoverCropData
+```typescript
+interface CoverCropData {
+  x: number        // 左上角相对于原图的百分比
+  y: number
+  width: number    // 裁剪区域宽度百分比
+  height: number   // 裁剪区域高度百分比
+}
+```
+
+---
+
+### TaskProgress
+```typescript
+interface TaskProgress {
+  id: string
+  type: 'ai' | 'copy' | 'move' | 'thumbnail' | 'color'
+  title: string
+  total: number
+  current: number
+  startTime: number
+  status: 'running' | 'completed' | 'paused'
+  minimized: boolean
+  currentStep?: string
+  currentFile?: string
+  estimatedTime?: number           // 预估剩余时间（毫秒）
+  lastProgressUpdate?: number      // 上次进度更新时间
+  lastProgress?: number            // 上次进度值
+  initialTotal?: number            // 初始总数
+  lastEstimatedTimeUpdate?: number // 上次更新预估时间的时间戳
+  totalProcessedTime?: number      // 累计有效处理时间
+}
+```
+
+---
+
+### AIConfig
+```typescript
+interface AIConfig {
+  provider: 'openai' | 'ollama' | 'lmstudio'
+  openai: {
+    apiKey: string
+    endpoint: string
+    model: string
+  }
+  ollama: {
+    endpoint: string
+    model: string
+  }
+  lmstudio: {
+    endpoint: string
+    model: string
+  }
+  autoTag: boolean
+  autoDescription: boolean
+  enhancePersonDescription: boolean
+  enableFaceRecognition: boolean
+  autoAddPeople: boolean
+  enableOCR: boolean
+  enableTranslation: boolean
+  targetLanguage: 'zh' | 'en' | 'ja' | 'ko'
+  confidenceThreshold: number
+  systemPrompt?: string           // 系统提示词
+  promptPresets?: PromptPreset[]  // 提示词预设
+  currentPresetId?: string        // 当前预设 ID
+}
+```
+
+---
+
+### PromptPreset
+```typescript
+interface PromptPreset {
+  id: string
+  name: string
+  content: string
+}
+```
+
+---
 
 ### AppSettings
 ```typescript
@@ -1642,6 +1597,7 @@ interface AppSettings {
   language: 'zh' | 'en'
   autoStart: boolean
   exitAction: 'ask' | 'minimize' | 'exit'
+  animateOnHover: boolean
   paths: {
     resourceRoot: string
     cacheRoot: string
@@ -1649,33 +1605,20 @@ interface AppSettings {
   search: {
     isAISearchEnabled: boolean
   }
-  ai: {
-    provider: 'openai' | 'ollama' | 'lmstudio'
-    openai: {
-      apiKey: string
-      endpoint: string
-      model: string
-    }
-    ollama: {
-      endpoint: string
-      model: string
-    }
-    lmstudio: {
-      endpoint: string
-      model: string
-    }
-    autoTag: boolean
-    autoDescription: boolean
-    enhancePersonDescription: boolean
-    enableFaceRecognition: boolean
-    autoAddPeople: boolean
-    enableOCR: boolean
-    enableTranslation: boolean
-    targetLanguage: string
-    confidenceThreshold: number
+  ai: AIConfig
+  performance: {
+    refreshInterval: number  // 毫秒
+  }
+  defaultLayoutSettings: {
+    layoutMode: LayoutMode
+    sortBy: SortOption
+    sortDirection: SortDirection
+    groupBy: GroupByOption
   }
 }
 ```
+
+---
 
 ### TabState
 ```typescript
@@ -1683,67 +1626,113 @@ interface TabState {
   id: string
   folderId: string
   viewingFileId: string | null
-  viewMode: 'browser' | 'tags-overview' | 'people-overview'
-  layoutMode: 'grid' | 'list'
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview'
+  layoutMode: LayoutMode
   searchQuery: string
-  searchScope: 'all' | 'file' | 'folder' | 'tag'
+  searchScope: SearchScope
+  aiFilter?: AiSearchFilter | null
   activeTags: string[]
   activePersonId: string | null
+  activeTopicId: string | null
+  selectedTopicIds: string[]
+  dateFilter: DateFilter
   selectedFileIds: string[]
   lastSelectedId: string | null
   selectedTagIds: string[]
   selectedPersonIds: string[]
-  dateFilter: {
-    start: string | null
-    end: string | null
-    mode: 'created' | 'modified'
-  }
+  currentPage: number
+  isCompareMode: boolean
+  sessionName?: string
+  scrollToItemId?: string
   history: {
-    stack: Array<{
-      folderId: string
-      viewingId: string | null
-      viewMode: string
-      searchQuery: string
-      searchScope: string
-      activeTags: string[]
-      activePersonId: string | null
-      aiFilter?: AiSearchFilter | null
-      scrollTop: number
-    }>
+    stack: HistoryItem[]
     currentIndex: number
   }
   scrollTop: number
-  aiFilter?: AiSearchFilter | null
-}
-
-interface AiSearchFilter {
-  originalQuery: string
-  keywords: string[]
-  colors: string[]
-  people: string[]
-  description?: string
 }
 ```
 
-### TaskProgress
+---
+
+### HistoryItem
 ```typescript
-interface TaskProgress {
-  id: string
-  type: 'copy' | 'move' | 'ai' | 'thumbnail' | 'color'
-  title: string
-  total: number
-  current: number
-  startTime: number
-  status: 'running' | 'completed' | 'paused'
-  minimized: boolean
-  currentFile?: string
-  currentStep?: string
-  estimatedTime?: number
-  lastProgressUpdate?: number
-  lastProgress?: number
-  totalProcessedTime?: number
-  lastEstimatedTimeUpdate?: number
+interface HistoryItem {
+  folderId: string
+  viewingId: string | null
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview'
+  searchQuery: string
+  searchScope: SearchScope
+  activeTags: string[]
+  activePersonId: string | null
+  activeTopicId?: string | null
+  selectedTopicIds?: string[]
+  selectedPersonIds?: string[]
+  aiFilter?: AiSearchFilter | null
+  scrollTop?: number
+  currentPage?: number
 }
+```
+
+---
+
+### AiSearchFilter
+```typescript
+interface AiSearchFilter {
+  keywords: string[]
+  colors: string[]
+  people: string[]
+  originalQuery: string
+  description?: string
+  filePaths?: string[]
+}
+```
+
+---
+
+### DateFilter
+```typescript
+interface DateFilter {
+  start: string | null
+  end: string | null
+  mode: 'created' | 'updated'
+}
+```
+
+---
+
+### FolderSettings
+```typescript
+interface FolderSettings {
+  layoutMode: LayoutMode
+  sortBy: SortOption
+  sortDirection: SortDirection
+  groupBy: GroupByOption
+}
+```
+
+---
+
+### DragState
+```typescript
+interface DragState {
+  isDragging: boolean
+  draggedFileIds: string[]
+  sourceFolderId: string | null
+  dragOverFolderId: string | null
+  dragOverPosition: 'inside' | 'before' | 'after' | null
+}
+```
+
+---
+
+### 类型别名
+```typescript
+type SearchScope = 'all' | 'file' | 'tag' | 'folder'
+type SortOption = 'name' | 'date' | 'size'
+type SortDirection = 'asc' | 'desc'
+type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry'
+type GroupByOption = 'none' | 'type' | 'date' | 'size'
+type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'performance'
 ```
 
 ---
@@ -1757,47 +1746,46 @@ import {
   scanDirectory, 
   readFileAsBase64, 
   pauseColorExtraction,
-  listen 
+  getThumbnail,
+  dbUpsertFileMetadata
 } from './api/tauri-bridge'
-import { AIService } from './services/aiService'
 
 // 1. 扫描目录
 async function loadPictures() {
-  const result = await scanDirectory('/home/user/Pictures', true)
+  const result = await scanDirectory('/home/user/Pictures')
   return result
 }
 
-// 2. AI 分析图片
-async function analyzeImage(filePath: string, settings: AppSettings) {
-  const aiService = new AIService()
-  const aiData = await aiService.analyzeImage(filePath, settings)
-  return aiData
+// 2. 获取缩略图
+async function loadThumbnail(filePath: string, rootPath: string) {
+  const thumbnailUrl = await getThumbnail(
+    filePath,
+    '2024-01-01T00:00:00Z',
+    rootPath,
+    undefined,
+    (colors) => console.log('Dominant colors:', colors)
+  )
+  return thumbnailUrl
 }
 
-// 3. 监听色彩提取进度
-async function monitorColorExtraction() {
-  const unlisten = await listen('color-extraction-progress', (event) => {
+// 3. 监听扫描进度
+async function monitorScanProgress() {
+  const unlisten = await listen('scan-progress', (event) => {
     const progress = event.payload
-    console.log(`进度: ${progress.current}/${progress.total}`)
-    
-    if (progress.batch_completed) {
-      console.log('批次完成!')
-    }
+    console.log(`扫描进度: ${progress.processed}/${progress.total}`)
   })
-  
   return unlisten
 }
 
-// 4. 控制色彩提取
-async function controlExtraction() {
-  // 暂停
-  await pauseColorExtraction()
-  
-  // 等待一段时间
-  await new Promise(resolve => setTimeout(resolve, 5000))
-  
-  // 恢复
-  await resumeColorExtraction()
+// 4. 保存文件元数据
+async function saveFileMetadata(fileId: string, path: string, tags: string[], description: string) {
+  await dbUpsertFileMetadata({
+    fileId,
+    path,
+    tags,
+    description,
+    updatedAt: Date.now()
+  })
 }
 ```
 
@@ -1816,7 +1804,6 @@ async function safeOperation<T>(
     return [result, null]
   } catch (error) {
     console.error(`${errorMessage}:`, error)
-    // 显示用户通知
     showNotification(errorMessage)
     return [null, error as Error]
   }
@@ -1829,30 +1816,9 @@ const [result, error] = await safeOperation(
 )
 ```
 
-### 后端错误处理
-```rust
-#[tauri::command]
-async fn safe_operation(path: String) -> Result<(), String> {
-    // 验证输入
-    if path.is_empty() {
-        return Err("路径不能为空".to_string());
-    }
-    
-    // 执行操作
-    match do_something(&path).await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            // 记录日志
-            error!("操作失败: {}", e);
-            // 返回用户友好的错误信息
-            Err(format!("操作失败: {}", e))
-        }
-    }
-}
-```
-
 ---
 
-**文档版本**: 1.0  
+**文档版本**: 1.1  
+**更新日期**: 2026-02-07  
 **覆盖范围**: 所有公共 API  
 **详细程度**: 高
