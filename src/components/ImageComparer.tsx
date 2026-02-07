@@ -1278,7 +1278,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   ];
 
   const nonSelectedMenuOptions = [
-    { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} /> },
+    { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} />, disabled: imageFiles.length === 0 },
     { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
     { divider: true, label: '', onClick: () => { } },
     { label: '重置窗口', onClick: handleReset, icon: <RefreshCcw size={14} /> },
@@ -1396,7 +1396,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
           <button
             onClick={handleSaveSession}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+            disabled={imageFiles.length === 0}
+            className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300`}
             title="保存对比信息"
           >
             <Save size={18} />
@@ -1439,6 +1440,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           ref={canvasRef}
           className="w-full h-full block"
         />
+
+        {/* Empty state message */}
+        {imageFiles.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="text-center text-gray-400 dark:text-gray-500">
+              <Scan size={64} className="mx-auto mb-6 opacity-40" />
+              <h2 className="text-3xl font-bold mb-3">暂无图片</h2>
+              <p className="text-sm text-gray-400 dark:text-gray-500">请使用右键菜单中的图片对比功能或者读取画布信息</p>
+            </div>
+          </div>
+        )}
 
         {/* Marquee selection overlay (screen-space) */}
         {marquee && marquee.active && (

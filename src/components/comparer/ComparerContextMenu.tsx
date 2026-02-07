@@ -6,6 +6,7 @@ interface Option {
     icon?: React.ReactNode;
     divider?: boolean;
     style?: string;
+    disabled?: boolean;
 }
 
 interface ComparerContextMenuProps {
@@ -68,12 +69,14 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
                         onMouseDown={(e) => e.stopPropagation()}
                         onClick={(e) => {
                             e.stopPropagation();
+                            if (opt.disabled) return;
                             opt.onClick();
                             onClose();
                         }}
-                        className={`w-full text-left px-4 py-2 text-sm flex items-center space-x-2 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors ${opt.style || 'text-gray-700 dark:text-gray-200'}`}
+                        disabled={opt.disabled}
+                        className={`w-full text-left px-4 py-2 text-sm flex items-center space-x-2 transition-colors ${opt.disabled ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500' : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`}`}
                     >
-                        {opt.icon && <span className="opacity-70">{opt.icon}</span>}
+                        {opt.icon && <span className={opt.disabled ? 'opacity-40' : 'opacity-70'}>{opt.icon}</span>}
                         <span>{opt.label}</span>
                     </button>
                 )

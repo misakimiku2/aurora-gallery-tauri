@@ -1,4 +1,4 @@
-﻿
+
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import * as RW from 'react-window';
 
@@ -13,7 +13,7 @@ const FixedSizeListComp: any = (() => {
 })();
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc, Scan } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
@@ -784,23 +784,51 @@ interface TopicSectionProps {
 const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics, onCreateTopic, t, isSelected }) => {
   return (
       <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
-        <div 
+        <div
           className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
           style={isSelected ? { backgroundColor: '#ee5ea5', borderLeftColor: 'rgba(238,94,165,0.32)' } : undefined}
           onClick={onNavigateTopics}
         >
-          <div className="p-1 mr-1 rounded opacity-0"></div>
+          <div className="p-1 mr-1 rounded w-[22px] h-[22px] flex items-center justify-center opacity-0">
+            <ChevronRight size={14} />
+          </div>
           <div className="flex items-center flex-1">
             <Layout size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-pink-500 dark:text-pink-400'}`} />
             <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.topics')}</span>
           </div>
-          <button 
+          <button
            className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onCreateTopic(); }}
            title={t('context.newTopic')}
           >
            <Plus size={14} className={`${isSelected ? 'text-white' : ''}`} />
           </button>
+        </div>
+      </div>
+  );
+});
+
+interface CanvasSectionProps {
+  onOpenCanvas: () => void;
+  t: (key: string) => string;
+  isSelected?: boolean;
+}
+
+const CanvasSection: React.FC<CanvasSectionProps> = React.memo(({ onOpenCanvas, t, isSelected }) => {
+  return (
+      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+        <div 
+          className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
+          style={isSelected ? { backgroundColor: '#10b981', borderLeftColor: 'rgba(16,185,129,0.32)' } : undefined}
+          onClick={onOpenCanvas}
+        >
+          <div className="p-1 mr-1 rounded w-[22px] h-[22px] flex items-center justify-center opacity-0">
+            <ChevronRight size={14} />
+          </div>
+          <div className="flex items-center flex-1">
+            <Scan size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-emerald-500 dark:text-emerald-400'}`} />
+            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.canvas')}</span>
+          </div>
         </div>
       </div>
   );
@@ -1067,11 +1095,12 @@ export const Sidebar: React.FC<{
   onNavigateTopics: () => void;
   onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
+  onOpenCanvas?: () => void;
   t: (key: string) => string;
   aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
   activeViewMode?: string;
   filesVersion?: number;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -1402,6 +1431,14 @@ export const Sidebar: React.FC<{
           roots={roots}
           filesVersion={filesVersion}
         />
+
+        {onOpenCanvas && (
+          <CanvasSection 
+            onOpenCanvas={onOpenCanvas}
+            t={t}
+            isSelected={activeViewMode === 'canvas'}
+          />
+        )}
         
         <div className="flex-1" />
       </div>
