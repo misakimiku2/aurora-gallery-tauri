@@ -29,6 +29,8 @@ export const translations = {
     sidebar: {
       catalog: '资源目录',
       localSupport: '本地磁盘 & 局域网支持',
+      folders: '文件目录',
+      tags: '标签',
       people: '人物',
       allTags: '所有标签',
       canvas: '画布',
@@ -514,7 +516,7 @@ export const translations = {
       scopeFile: '文件名',
       scopeTag: '标签',
       scopeFolder: '文件夹',
-      placeholder: '搜索...',
+      placeholder: '搜索文件名，按Enter执行...',
       tagSearchPlaceholder: '搜索标签...',
       prevPage: '上一页',
       nextPage: '下一页',
@@ -569,6 +571,28 @@ export const translations = {
     },
     color: {
       pickColor: "选取颜色"
+    },
+    comparer: {
+      addImages: '添加图片到画布',
+      selectAll: '全选',
+      clearSelection: '清除',
+      selectNode: '请选择左侧项目查看图片',
+      noImages: '暂无图片',
+      selectedCount: '已选择',
+      images: '张图片',
+      totalResults: '共找到',
+      totalCount: '总计',
+      limitReached: '已达到上限',
+      canvasCount: '画布中',
+      confirmAdd: '确认添加'
+    },
+    pagination: {
+      prev: '上一页',
+      page: '第',
+      pageOf: '页',
+      next: '下一页',
+      perPage: '每页',
+      items: '条'
     }
   },
   en: {
@@ -601,6 +625,8 @@ export const translations = {
     sidebar: {
       catalog: 'CATALOG',
       localSupport: 'Local Disk & LAN Support',
+      folders: 'Folders',
+      tags: 'Tags',
       people: 'PEOPLE',
       allTags: 'ALL TAGS',
       canvas: 'Canvas',
@@ -1081,7 +1107,7 @@ export const translations = {
       scopeFile: 'Filename',
       scopeTag: 'Tags',
       scopeFolder: 'Folders',
-      placeholder: 'Search...',
+      placeholder: 'Search filename, press Enter...',
       tagSearchPlaceholder: 'Search tags...',
       prevPage: 'Previous Page',
       nextPage: 'Next Page',
@@ -1136,6 +1162,28 @@ export const translations = {
     },
     color: {
       pickColor: "Pick Color"
+    },
+    comparer: {
+      addImages: 'Add Images to Canvas',
+      selectAll: 'Select All',
+      clearSelection: 'Clear',
+      selectNode: 'Please select an item from the left to view images',
+      noImages: 'No images',
+      selectedCount: 'Selected',
+      images: 'images',
+      totalResults: 'Total results',
+      totalCount: 'Total',
+      limitReached: 'Limit reached',
+      canvasCount: 'In canvas',
+      confirmAdd: 'Confirm Add'
+    },
+    pagination: {
+      prev: 'Previous',
+      page: 'Page',
+      pageOf: 'of',
+      next: 'Next',
+      perPage: 'per page',
+      items: 'items'
     }
   }
 };

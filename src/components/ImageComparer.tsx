@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan } from 'lucide-react';
-import { FileNode, Person, Topic } from '../types';
+import { FileNode, Person, Topic, FileType } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
@@ -92,6 +92,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Add image modal state
   const [isAddImageModalOpen, setIsAddImageModalOpen] = useState(false);
+  // Session files: stores temporary FileNode objects loaded from .aurora file
+  const [sessionFiles, setSessionFiles] = useState<Record<string, FileNode>>({});
   // Marquee selection (screen coordinates)
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
@@ -184,11 +186,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   // Filter selected files to get only valid images.
   // We respect the order of internalSelectedIds naturally.
+  // Prioritize sessionFiles (loaded from .aurora) over files (from library)
   const imageFiles = useMemo(() => {
     return internalSelectedIds
-      .map(id => files[id])
+      .map(id => sessionFiles[id] || files[id])
       .filter(file => file && file.path);
-  }, [internalSelectedIds, files]);
+  }, [internalSelectedIds, files, sessionFiles]);
 
   // Load images & create small versions for anti-aliasing
   useEffect(() => {
@@ -1095,6 +1098,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           const newIds: string[] = [];
           const newZOrder: string[] = [];
           const imageBlobUrls: Record<string, string> = {};
+          const newSessionFiles: Record<string, FileNode> = {}; // 存储从 ZIP 加载的文件对象
 
           for (const item of layoutData.items) {
             if (item.imageFileName) {
@@ -1111,20 +1115,33 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 const objectUrl = URL.createObjectURL(blob);
                 imageBlobUrls[item.id] = objectUrl;
 
-                // 创建临时的 file 对象用于显示
-                if (!files[item.id]) {
-                  // 如果文件不在当前库中，创建一个临时引用
-                  // 注意：这里我们仍然使用 item.id，但图片数据来自 ZIP
-                }
+                // 创建完整的 FileNode 对象，使图片不依赖外部库
+                newSessionFiles[item.id] = {
+                  id: item.id,
+                  parentId: null,
+                  path: objectUrl,
+                  name: item.imageFileName,
+                  type: FileType.IMAGE,
+                  tags: [],
+                  meta: {
+                    width: item.width,
+                    height: item.height,
+                    sizeKb: 0,
+                    created: new Date().toISOString(),
+                    modified: new Date().toISOString(),
+                    format: getFileExtension(item.imageFileName)
+                  }
+                } as FileNode;
               }
             }
 
+            // 恢复所有布局信息（位置、大小、旋转）
             newManuals[item.id] = {
               x: item.x,
               y: item.y,
               width: item.width,
               height: item.height,
-              rotation: item.rotation
+              rotation: item.rotation || 0
             };
             newIds.push(item.id);
           }
@@ -1148,10 +1165,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             newZOrder.push(...newIds);
           }
 
+          // 更新所有状态，完整恢复会话
+          setSessionFiles(newSessionFiles);  // 存储临时文件对象
           setInternalSelectedIds(newIds);
-          setManualLayouts(newManuals);
-          setAnnotations(layoutData.annotations || []);
-          setZOrderIds(newZOrder);
+          setManualLayouts(newManuals);      // 恢复位置、大小、旋转
+          setAnnotations(layoutData.annotations || []);  // 恢复注释
+          setZOrderIds(newZOrder);           // 恢复层级顺序
           initializedRef.current = true;
 
           // 标记需要执行自适应缩放（在 layout 更新后通过 useEffect 执行）
@@ -1264,7 +1283,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     animationFrameRef.current = requestAnimationFrame(animate);
   };
 
-  // 清理动画
+  // 清理动画和 Blob URL
   useEffect(() => {
     return () => {
       if (animationFrameRef.current !== null) {
@@ -1273,8 +1292,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (wheelAnimationRef.current !== null) {
         cancelAnimationFrame(wheelAnimationRef.current);
       }
+      // 清理 sessionFiles 中的 Blob URL，防止内存泄漏
+      Object.values(sessionFiles).forEach(file => {
+        if (file.path?.startsWith('blob:')) {
+          URL.revokeObjectURL(file.path);
+        }
+      });
     };
-  }, []);
+  }, [sessionFiles]);
 
   const handleViewImage = () => {
     const targetId = menuTargetId || (activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null);
