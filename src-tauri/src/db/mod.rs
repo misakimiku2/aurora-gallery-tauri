@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 pub mod persons;
 pub mod file_metadata;
 pub mod file_index;
+pub mod topics;
 
 #[derive(Clone)]
 pub struct AppDbPool {
@@ -133,6 +134,9 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Create file_index table
     file_index::create_table(conn)?;
+
+    // Create topics table
+    topics::create_table(conn)?;
 
     Ok(())
 }

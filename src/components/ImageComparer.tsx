@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan } from 'lucide-react';
-import { FileNode } from '../types';
+import { FileNode, Person, Topic } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
 import { AnnotationLayer } from './comparer/AnnotationLayer';
 import { ComparerContextMenu } from './comparer/ComparerContextMenu';
+import { AddImageModal } from './modals/AddImageModal';
 import { writeTextFile, readTextFile, writeFile, readFile } from '@tauri-apps/plugin-fs';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { Plus, Save, FolderOpen, Trash2 } from 'lucide-react';
@@ -16,6 +17,11 @@ import { invoke } from '@tauri-apps/api/core';
 interface ImageComparerProps {
   selectedFileIds: string[];
   files: Record<string, FileNode>;
+  people?: Record<string, Person>;
+  topics?: Record<string, Topic>;
+  customTags?: string[];
+  resourceRoot?: string;
+  cachePath?: string;
   onClose: () => void;
   onReady?: () => void;
   // Optional layout/navigation handlers to mirror ImageViewer
@@ -43,6 +49,11 @@ interface ImageLayoutInfo {
 export const ImageComparer: React.FC<ImageComparerProps> = ({
   selectedFileIds,
   files,
+  people = {},
+  topics = {},
+  customTags = [],
+  resourceRoot,
+  cachePath,
   onClose,
   onReady,
   t,
@@ -79,6 +90,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(true);
   const [sessionName, setSessionName] = useState(sessionNameProp || "画布01");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  // Add image modal state
+  const [isAddImageModalOpen, setIsAddImageModalOpen] = useState(false);
   // Marquee selection (screen coordinates)
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
@@ -664,6 +677,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   // Mouse wheel zoom with smooth animation
   const handleWheel = (e: React.WheelEvent) => {
+    // Disable zoom when add image modal is open
+    if (isAddImageModalOpen) {
+      return;
+    }
+    
     // Only call preventDefault if the native event is cancelable.
     const native = e.nativeEvent as WheelEvent | any;
     if (native && native.cancelable) {
@@ -1504,7 +1522,71 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     { label: '从对比中移除', onClick: handleRemoveImage, icon: <Trash2 size={14} />, style: 'text-red-500 hover:bg-red-50' }
   ];
 
+  const handleOpenAddImageModal = () => {
+    setIsAddImageModalOpen(true);
+    setContextMenu(null);
+  };
+
+  const handleAddImages = (newIds: string[]) => {
+    // Filter out already existing ids
+    const existingIds = new Set(internalSelectedIds);
+    const uniqueNewIds = newIds.filter(id => !existingIds.has(id));
+    
+    if (uniqueNewIds.length === 0) return;
+
+    // Add new images to the selection
+    setInternalSelectedIds(prev => [...prev, ...uniqueNewIds]);
+    setZOrderIds(prev => [...prev, ...uniqueNewIds]);
+    
+    // Mark that we need to auto-fit after images are loaded
+    shouldAutoFitAfterLoadRef.current = true;
+    
+    // Load images into cache
+    let loadedImagesCount = 0;
+    uniqueNewIds.forEach(id => {
+      const file = files[id];
+      if (file && file.path && !imagesCache.current.has(file.id)) {
+        const img = new Image();
+        img.src = convertFileSrc(file.path);
+        img.onload = () => {
+          // Create small canvas for anti-aliasing
+          const smallCanvas = document.createElement('canvas');
+          const scale = 0.25;
+          const w = (file.meta?.width || img.width);
+          const h = (file.meta?.height || img.height);
+          smallCanvas.width = w * scale;
+          smallCanvas.height = h * scale;
+          const sctx = smallCanvas.getContext('2d');
+          if (sctx) {
+            sctx.imageSmoothingEnabled = true;
+            sctx.imageSmoothingQuality = 'high';
+            sctx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
+          }
+          imagesCache.current.set(file.id, {
+            original: img,
+            small: smallCanvas
+          });
+          loadedImagesCount++;
+          setLoadedCount(prev => prev + 1);
+          
+          // After all new images are loaded, trigger auto-fit
+          if (loadedImagesCount >= uniqueNewIds.length) {
+            // Reset flags to trigger auto-fit
+            userInteractedRef.current = false;
+            autoZoomAppliedRef.current = false;
+          }
+        };
+      } else {
+        loadedImagesCount++;
+      }
+    });
+
+    setIsAddImageModalOpen(false);
+  };
+
   const nonSelectedMenuOptions = [
+    { label: '添加图片', onClick: handleOpenAddImageModal, icon: <Plus size={14} /> },
+    { divider: true, label: '', onClick: () => { } },
     { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} />, disabled: imageFiles.length === 0 },
     { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
     { divider: true, label: '', onClick: () => { } },
@@ -1936,6 +2018,22 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
         </div>
       </div>
+
+      {/* Add Image Modal */}
+      {isAddImageModalOpen && (
+        <AddImageModal
+          files={files}
+          people={people}
+          topics={topics}
+          customTags={customTags}
+          resourceRoot={resourceRoot}
+          cachePath={cachePath}
+          existingImageIds={internalSelectedIds}
+          onConfirm={handleAddImages}
+          onClose={() => setIsAddImageModalOpen(false)}
+          t={t}
+        />
+      )}
     </div>
   );
 };

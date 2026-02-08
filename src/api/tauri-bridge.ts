@@ -1206,3 +1206,37 @@ export const switchRootDatabase = async (newRootPath: string): Promise<void> => 
     throw e;
   }
 };
+
+// ==========================================
+// Database / Topic APIs
+// ==========================================
+
+export const dbGetAllTopics = async (): Promise<any[]> => {
+  if (!isTauriEnvironment()) return [];
+  try {
+    return await invoke('db_get_all_topics');
+  } catch (e) {
+    console.error('Failed to get topics from db:', e);
+    return [];
+  }
+};
+
+export const dbUpsertTopic = async (topic: any): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('db_upsert_topic', { topic });
+  } catch (e) {
+    console.error('Failed to upsert topic:', e);
+    throw e;
+  }
+};
+
+export const dbDeleteTopic = async (id: string): Promise<void> => {
+  if (!isTauriEnvironment()) return;
+  try {
+    await invoke('db_delete_topic', { id });
+  } catch (e) {
+    console.error('Failed to delete topic:', e);
+    throw e;
+  }
+};

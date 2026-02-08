@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -403,12 +403,39 @@ export const App: React.FC = () => {
                 }
               } catch (e) { console.error("Failed to load people from DB", e); }
 
+              // Load topics from DB
+              let topicsData = savedData.topics || {};
+              try {
+                const dbTopics = await dbGetAllTopics();
+                if (Array.isArray(dbTopics) && dbTopics.length > 0) {
+                  const dbTopicsMap: Record<string, Topic> = {};
+                  dbTopics.forEach((t: any) => {
+                    dbTopicsMap[t.id] = {
+                      id: t.id,
+                      parentId: t.parentId,
+                      name: t.name,
+                      description: t.description,
+                      type: t.topicType,
+                      coverFileId: t.coverFileId,
+                      backgroundFileId: t.backgroundFileId,
+                      coverCrop: t.coverCrop,
+                      peopleIds: t.peopleIds || [],
+                      fileIds: t.fileIds || [],
+                      sourceUrl: t.sourceUrl,
+                      createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
+                      updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
+                    };
+                  });
+                  topicsData = dbTopicsMap;
+                }
+              } catch (e) { console.error("Failed to load topics from DB", e); }
+
               // 锟斤拷锟斤拷 state 锟叫碉拷 customTags 锟斤拷 people
               setState(prev => ({
                 ...prev,
                 customTags: savedData.customTags || [],
                 people: peopleData,
-                topics: savedData.topics || {},
+                topics: topicsData,
                 folderSettings: savedData.folderSettings || {},
                 settings: finalSettings
               }));
@@ -1065,6 +1092,47 @@ export const App: React.FC = () => {
           } catch (err) {
             console.warn('Failed to pause color extraction:', err);
           }
+
+          // 切换根目录后，重新加载人物数据
+          try {
+            const dbPeople = await dbGetAllPeople();
+            if (Array.isArray(dbPeople)) {
+              const dbPeopleMap: Record<string, Person> = {};
+              dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
+              setState(prev => ({ ...prev, people: dbPeopleMap }));
+            }
+          } catch (e) {
+            console.error('Failed to reload people after switching root:', e);
+          }
+
+          // 切换根目录后，重新加载专题数据
+          try {
+            const dbTopics = await dbGetAllTopics();
+            if (Array.isArray(dbTopics)) {
+              const dbTopicsMap: Record<string, Topic> = {};
+              dbTopics.forEach((t: any) => {
+                dbTopicsMap[t.id] = {
+                  id: t.id,
+                  parentId: t.parentId,
+                  name: t.name,
+                  description: t.description,
+                  type: t.topicType,
+                  coverFileId: t.coverFileId,
+                  backgroundFileId: t.backgroundFileId,
+                  coverCrop: t.coverCrop,
+                  peopleIds: t.peopleIds || [],
+                  fileIds: t.fileIds || [],
+                  sourceUrl: t.sourceUrl,
+                  createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
+                  updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
+                };
+              });
+              setState(prev => ({ ...prev, topics: dbTopicsMap }));
+            }
+          } catch (e) {
+            console.error('Failed to reload topics after switching root:', e);
+          }
+
           // --- 修改点：初次选择文件夹时，使用 force=true 以确保进度条显示准确 ---
           scanAndMerge(path, true);
         })();
@@ -2234,6 +2302,46 @@ export const App: React.FC = () => {
           await resumeColorExtraction();
         }
 
+        // 切换根目录后，重新加载人物数据
+        try {
+          const dbPeople = await dbGetAllPeople();
+          if (Array.isArray(dbPeople)) {
+            const dbPeopleMap: Record<string, Person> = {};
+            dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
+            setState(prev => ({ ...prev, people: dbPeopleMap }));
+          }
+        } catch (e) {
+          console.error('Failed to reload people after switching root:', e);
+        }
+
+        // 切换根目录后，重新加载专题数据
+        try {
+          const dbTopics = await dbGetAllTopics();
+          if (Array.isArray(dbTopics)) {
+            const dbTopicsMap: Record<string, Topic> = {};
+            dbTopics.forEach((t: any) => {
+              dbTopicsMap[t.id] = {
+                id: t.id,
+                parentId: t.parentId,
+                name: t.name,
+                description: t.description,
+                type: t.topicType,
+                coverFileId: t.coverFileId,
+                backgroundFileId: t.backgroundFileId,
+                coverCrop: t.coverCrop,
+                peopleIds: t.peopleIds || [],
+                fileIds: t.fileIds || [],
+                sourceUrl: t.sourceUrl,
+                createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
+                updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
+              };
+            });
+            setState(prev => ({ ...prev, topics: dbTopicsMap }));
+          }
+        } catch (e) {
+          console.error('Failed to reload topics after switching root:', e);
+        }
+
         // 标记任务完成
         updateTask(taskId, { current: 100, total: 100, status: 'completed' });
 
@@ -2313,7 +2421,7 @@ export const App: React.FC = () => {
       } catch (e) {
         if (unlistenProgress) unlistenProgress();
         // 标记任务失败
-        updateTask(taskId, { status: 'error' });
+        updateTask(taskId, { status: 'completed' });
         setTimeout(() => {
           setState(prev => ({
             ...prev,
@@ -2580,18 +2688,60 @@ export const App: React.FC = () => {
     };
     setState(prev => ({ ...prev, topics: { ...prev.topics, [id]: newTopic } }));
 
+    // 保存到数据库
+    if (isTauriEnvironment()) {
+      dbUpsertTopic({
+        id: newTopic.id,
+        parentId: newTopic.parentId,
+        name: newTopic.name,
+        description: newTopic.description,
+        topicType: newTopic.type,
+        coverFileId: newTopic.coverFileId,
+        backgroundFileId: newTopic.backgroundFileId,
+        coverCrop: newTopic.coverCrop,
+        peopleIds: newTopic.peopleIds,
+        fileIds: newTopic.fileIds,
+        sourceUrl: newTopic.sourceUrl,
+        createdAt: newTopic.createdAt ? new Date(newTopic.createdAt).getTime() : undefined,
+        updatedAt: newTopic.updatedAt ? new Date(newTopic.updatedAt).getTime() : undefined,
+      }).catch(e => console.error('Failed to save topic to DB:', e));
+    }
+
     // 自动跳转到专题概览界面
     handleNavigateTopics();
   }, [t, handleNavigateTopics]);
 
   const handleUpdateTopic = useCallback((topicId: string, updates: Partial<Topic>) => {
-    setState(prev => ({
-      ...prev,
-      topics: {
-        ...prev.topics,
-        [topicId]: { ...prev.topics[topicId], ...updates, updatedAt: new Date().toISOString() }
+    setState(prev => {
+      const updatedTopic = { ...prev.topics[topicId], ...updates, updatedAt: new Date().toISOString() };
+
+      // 保存到数据库
+      if (isTauriEnvironment()) {
+        dbUpsertTopic({
+          id: updatedTopic.id,
+          parentId: updatedTopic.parentId,
+          name: updatedTopic.name,
+          description: updatedTopic.description,
+          topicType: updatedTopic.type,
+          coverFileId: updatedTopic.coverFileId,
+          backgroundFileId: updatedTopic.backgroundFileId,
+          coverCrop: updatedTopic.coverCrop,
+          peopleIds: updatedTopic.peopleIds,
+          fileIds: updatedTopic.fileIds,
+          sourceUrl: updatedTopic.sourceUrl,
+          createdAt: updatedTopic.createdAt ? new Date(updatedTopic.createdAt).getTime() : undefined,
+          updatedAt: updatedTopic.updatedAt ? new Date(updatedTopic.updatedAt).getTime() : undefined,
+        }).catch(e => console.error('Failed to update topic in DB:', e));
       }
-    }));
+
+      return {
+        ...prev,
+        topics: {
+          ...prev.topics,
+          [topicId]: updatedTopic
+        }
+      };
+    });
   }, []);
 
   const handleDeleteTopic = useCallback((topicId: string) => {
@@ -2600,6 +2750,11 @@ export const App: React.FC = () => {
       delete newTopics[topicId];
       return { ...prev, topics: newTopics };
     });
+
+    // 从数据库删除
+    if (isTauriEnvironment()) {
+      dbDeleteTopic(topicId).catch(e => console.error('Failed to delete topic from DB:', e));
+    }
   }, []);
 
   const handleCreateRootTopic = useCallback(() => {
@@ -3419,6 +3574,11 @@ export const App: React.FC = () => {
               <ImageComparer
                 selectedFileIds={tab.selectedFileIds}
                 files={state.files}
+                people={state.people}
+                topics={state.topics}
+                customTags={state.customTags}
+                resourceRoot={state.settings.paths.resourceRoot}
+                cachePath={state.settings.paths.cacheRoot}
                 onClose={() => updateTabById(tab.id, { isCompareMode: false })}
                 onCloseTab={() => handleCloseTab({ stopPropagation: () => { } } as any, tab.id)}
                 onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}

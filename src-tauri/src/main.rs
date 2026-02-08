@@ -2162,13 +2162,31 @@ fn db_delete_person(pool: tauri::State<AppDbPool>, id: String) -> Result<(), Str
 
 #[tauri::command]
 fn db_update_person_avatar(
-    pool: tauri::State<AppDbPool>, 
-    person_id: String, 
-    cover_file_id: String, 
+    pool: tauri::State<AppDbPool>,
+    person_id: String,
+    cover_file_id: String,
     face_box: Option<db::persons::FaceBox>
 ) -> Result<(), String> {
     let conn = pool.get_connection();
     db::persons::update_person_avatar(&conn, &person_id, &cover_file_id, face_box.as_ref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_get_all_topics(pool: tauri::State<AppDbPool>) -> Result<Vec<db::topics::Topic>, String> {
+    let conn = pool.get_connection();
+    db::topics::get_all_topics(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_upsert_topic(pool: tauri::State<AppDbPool>, topic: db::topics::Topic) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::upsert_topic(&conn, &topic).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn db_delete_topic(pool: tauri::State<AppDbPool>, id: String) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::delete_topic(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2259,6 +2277,9 @@ fn main() {
             db_upsert_person,
             db_delete_person,
             db_update_person_avatar,
+            db_get_all_topics,
+            db_upsert_topic,
+            db_delete_topic,
             db_upsert_file_metadata,
             db_copy_file_metadata,
             switch_root_database
