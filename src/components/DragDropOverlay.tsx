@@ -1,5 +1,5 @@
 ﻿import React from 'react';
-import { Copy, UploadCloud, FileText, ImageIcon, FileCode } from 'lucide-react';
+import { Copy, UploadCloud, FileText, ImageIcon, FileCode, Folder } from 'lucide-react';
 
 export type DropAction = 'copy' | null;
 
@@ -9,6 +9,7 @@ interface DragDropOverlayProps {
   hoveredAction: DropAction;
   onHoverAction: (action: DropAction) => void;
   t: (key: string) => string;
+  targetPath?: string;
 }
 
 export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
@@ -16,7 +17,8 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
   fileCount,
   hoveredAction,
   onHoverAction,
-  t
+  t,
+  targetPath
 }) => {
   if (!isVisible) return null;
 
@@ -98,6 +100,17 @@ export const DragDropOverlay: React.FC<DragDropOverlayProps> = ({
                     {fileCount === 1 ? t('meta.file') : t('meta.files')}
                   </span>
                 </div>
+
+                {/* 目标文件夹路径 */}
+                {targetPath && (
+                  <div className="mt-4 flex items-center text-gray-500 dark:text-gray-400">
+                    <Folder size={16} className="mr-2 flex-shrink-0 text-blue-400" />
+                    <span className="text-sm font-medium truncate max-w-[400px]" title={targetPath}>
+                      {targetPath}
+                    </span>
+                  </div>
+                )}
+
                 <p className="mt-6 text-gray-400 dark:text-gray-500 text-lg font-medium leading-relaxed">
                   {t('drag.copyHint')}
                 </p>

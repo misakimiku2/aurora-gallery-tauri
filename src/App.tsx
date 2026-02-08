@@ -3348,11 +3348,12 @@ export const App: React.FC = () => {
 
       {/* 锟解部锟斤拷拽锟斤拷锟角诧拷 */}
       <DragDropOverlay
-        isVisible={isExternalDragging}
+        isVisible={isExternalDragging && !activeTab.isCompareMode}
         fileCount={externalDragItems.length}
         hoveredAction={hoveredDropAction}
         onHoverAction={setHoveredDropAction}
         t={t}
+        targetPath={state.files[activeTab.folderId]?.path}
       />
 
       {/* ... (SVG filters) ... */}
