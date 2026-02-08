@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan } from 'lucide-react';
 import { FileNode, Person, Topic, FileType } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -24,10 +24,8 @@ interface ImageComparerProps {
   cachePath?: string;
   onClose: () => void;
   onReady?: () => void;
-  // Optional layout/navigation handlers to mirror ImageViewer
   onLayoutToggle?: (part: 'sidebar' | 'metadata') => void;
   onNavigateBack?: () => void;
-  // Called when comparer requests closing the entire tab (e.g., back/ESC should close tab)
   onCloseTab?: () => void;
   layoutProp?: { isSidebarVisible?: boolean; isMetadataVisible?: boolean };
   canGoBack?: boolean;
@@ -44,6 +42,59 @@ interface ImageLayoutInfo {
   width: number;
   height: number;
   src: string;
+}
+
+// 多级 Mipmap 缓存结构
+interface MipmapCache {
+  original: HTMLImageElement;
+  levels: {
+    scale: number;
+    canvas: HTMLCanvasElement;
+  }[];
+}
+
+// 获取最适合当前缩放比例的缓存级别
+function getBestMipmapLevel(cache: MipmapCache, targetScale: number): HTMLImageElement | HTMLCanvasElement {
+  // 如果目标缩放比例 >= 0.8，使用原图以获得最佳清晰度
+  if (targetScale >= 0.8) {
+    return cache.original;
+  }
+
+  // 找到最适合的缩小级别
+  let bestLevel = cache.levels[0];
+  let bestScore = Infinity;
+
+  for (const level of cache.levels) {
+    const effectiveScale = targetScale / level.scale;
+    const score = Math.abs(Math.log(effectiveScale));
+    if (score < bestScore) {
+      bestScore = score;
+      bestLevel = level;
+    }
+  }
+
+  return bestLevel.canvas;
+}
+
+// 创建多级 Mipmap
+function createMipmapLevels(img: HTMLImageElement, originalWidth: number, originalHeight: number): MipmapCache['levels'] {
+  const levels: MipmapCache['levels'] = [];
+  const scales = [0.5, 0.25, 0.125];
+
+  for (const scale of scales) {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.floor(originalWidth * scale));
+    canvas.height = Math.max(1, Math.floor(originalHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    }
+    levels.push({ scale, canvas });
+  }
+
+  return levels;
 }
 
 export const ImageComparer: React.FC<ImageComparerProps> = ({
@@ -68,20 +119,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  // 变换状态
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const [activeImageIds, setActiveImageIds] = useState<string[]>([]); const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
+  const [activeImageIds, setActiveImageIds] = useState<string[]>([]);
+  const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [pendingAnnotation, setPendingAnnotation] = useState<{ imageId: string, x: number, y: number } | null>(null);
-  // zOrderIds controls drawing/interaction order (last = top)
   const [zOrderIds, setZOrderIds] = useState<string[]>([]);
-  // menuTargetId stores the item id that the context menu was opened for
   const [menuTargetId, setMenuTargetId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
-  // Keep an internal snapshot of selected IDs so comparer remains visible
-  // even if parent clears selection after images load.
   const initializedRef = useRef(false);
   const onReadyCalledRef = useRef(false);
   const userInteractedRef = useRef(false);
@@ -90,21 +141,21 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(true);
   const [sessionName, setSessionName] = useState(sessionNameProp || "画布01");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  // Add image modal state
   const [isAddImageModalOpen, setIsAddImageModalOpen] = useState(false);
-  // Session files: stores temporary FileNode objects loaded from .aurora file
   const [sessionFiles, setSessionFiles] = useState<Record<string, FileNode>>({});
-  // Marquee selection (screen coordinates)
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
-  // Animation state for smooth zoom transitions
-  const [isAnimating, setIsAnimating] = useState(false);
-  const animationFrameRef = useRef<number | null>(null);
-  // 滚轮缩放的目标值，用于平滑过渡
-  const wheelTargetRef = useRef<{ x: number; y: number; scale: number } | null>(null);
-  const wheelAnimationRef = useRef<number | null>(null);
-  // 标记加载后需要执行自适应缩放
   const shouldAutoFitAfterLoadRef = useRef(false);
+
+  // 多级 Mipmap 缓存
+  const imagesCache = useRef<Map<string, MipmapCache>>(new Map());
+  const [loadedCount, setLoadedCount] = useState(0);
+
+  // 使用 ref 存储 transform 以避免动画循环中的闭包问题
+  const transformRef = useRef(transform);
+  useEffect(() => {
+    transformRef.current = transform;
+  }, [transform]);
 
   useEffect(() => {
     if (sessionNameProp && sessionNameProp !== sessionName) {
@@ -112,7 +163,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   }, [sessionNameProp]);
 
-  // Track dark mode changes so canvas can redraw immediately when theme toggles
+  // Track dark mode changes
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => document.documentElement.classList.contains('dark'));
   useEffect(() => {
     const target = document.documentElement;
@@ -129,10 +180,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // 缓存已加载的 HTMLImageElement 及其缩小版 (Mipmap) 以减少缩小时的锯齿
-  const imagesCache = useRef<Map<string, { original: HTMLImageElement, small?: HTMLCanvasElement }>>(new Map());
-  const [loadedCount, setLoadedCount] = useState(0);
-
   // Update container size on mount and resize
   useEffect(() => {
     const updateSize = () => {
@@ -144,7 +191,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       }
     };
     updateSize();
-    // Also observe element resize (e.g. sidebars toggling) to catch layout changes
     let ro: ResizeObserver | null = null;
     if ((window as any).ResizeObserver && containerRef.current) {
       ro = new ResizeObserver(() => updateSize());
@@ -159,23 +205,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
   }, []);
 
-  // Keep previous container width so we can adjust transform.x when panels toggle
+  // Keep previous container width for panel toggle handling
   const prevContainerWidthRef = useRef<number>(0);
   const prevMetadataVisibleRef = useRef<boolean | undefined>(layoutProp?.isMetadataVisible);
 
-  // General width change handling: keep a prev width and update it
   useEffect(() => {
     const prev = prevContainerWidthRef.current;
     const curr = containerSize.width;
     if (prev && curr && prev !== curr && !isDragging) {
-      // If metadata visibility changed, shift by the full delta so content moves left/right
       const prevMeta = prevMetadataVisibleRef.current;
       const currMeta = layoutProp?.isMetadataVisible;
       if (typeof prevMeta !== 'undefined' && prevMeta !== currMeta) {
         const delta = curr - prev;
         setTransform(prevT => ({ ...prevT, x: prevT.x + delta }));
       } else {
-        // Otherwise keep visual center stable by shifting half the change
         const delta = curr - prev;
         setTransform(prevT => ({ ...prevT, x: prevT.x + delta / 2 }));
       }
@@ -184,40 +227,27 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     prevMetadataVisibleRef.current = layoutProp?.isMetadataVisible;
   }, [containerSize.width, isDragging, layoutProp?.isMetadataVisible]);
 
-  // Filter selected files to get only valid images.
-  // We respect the order of internalSelectedIds naturally.
-  // Prioritize sessionFiles (loaded from .aurora) over files (from library)
+  // Filter selected files
   const imageFiles = useMemo(() => {
     return internalSelectedIds
       .map(id => sessionFiles[id] || files[id])
       .filter(file => file && file.path);
   }, [internalSelectedIds, files, sessionFiles]);
 
-  // Load images & create small versions for anti-aliasing
+  // Load images & create mipmap levels
   useEffect(() => {
     imageFiles.forEach(file => {
       if (!imagesCache.current.has(file.id)) {
         const img = new Image();
         img.src = convertFileSrc(file.path);
         img.onload = () => {
-          // 创建一个 0.25 倍的中间层 Canvas
-          // 当图片缩小到很小时，从这个中间层绘图能大幅减少锯齿
-          const smallCanvas = document.createElement('canvas');
-          const scale = 0.25;
-          const w = (file.meta?.width || img.width);
-          const h = (file.meta?.height || img.height);
-          smallCanvas.width = w * scale;
-          smallCanvas.height = h * scale;
-          const sctx = smallCanvas.getContext('2d');
-          if (sctx) {
-            sctx.imageSmoothingEnabled = true;
-            sctx.imageSmoothingQuality = 'high';
-            sctx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
-          }
+          const w = file.meta?.width || img.width;
+          const h = file.meta?.height || img.height;
+          const levels = createMipmapLevels(img, w, h);
 
           imagesCache.current.set(file.id, {
             original: img,
-            small: smallCanvas
+            levels
           });
           setLoadedCount(prev => prev + 1);
         };
@@ -225,12 +255,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
   }, [imageFiles]);
 
-  // Initialize internal selection once when component mounts
-  // Initialize internal selection once when component mounts, and sort by size initially for better packing
+  // Initialize internal selection
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
-      // Initial sort by size
       const sortedIds = selectedFileIds.slice().sort((idA, idB) => {
         const a = files[idA];
         const b = files[idB];
@@ -240,18 +268,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         return sizeB - sizeA;
       });
       setInternalSelectedIds(sortedIds);
-      // Initialize z-order to the same deterministic order
       setZOrderIds(sortedIds);
       imagesCache.current.clear();
       setLoadedCount(0);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Notify parent when all images are loaded
   useEffect(() => {
     if (imageFiles.length > 0 && loadedCount >= imageFiles.length) {
-      // Ensure onReady only fired once to avoid parent repeatedly clearing selection
       if (!onReadyCalledRef.current) {
         onReadyCalledRef.current = true;
         onReady?.();
@@ -259,7 +284,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   }, [loadedCount, imageFiles.length, onReady]);
 
-  // Layout calculation (紧凑型环绕填充)
+  // Layout calculation
   const layout = useMemo(() => {
     if (imageFiles.length === 0)
       return { items: [], totalWidth: 0, totalHeight: 0 };
@@ -267,7 +292,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const spacing = 40;
     const items: ImageLayoutInfo[] = [];
 
-    // 按尺寸排序进行填充（与 z-order 无关）
     const packOrder = imageFiles.slice().sort((a, b) => {
       const sizeA = (a.meta?.width || 0) * (a.meta?.height || 0);
       const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
@@ -276,7 +300,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     const checkOverlap = (rect: { x: number; y: number; w: number; h: number }, existing: ImageLayoutInfo[]) => {
       for (const item of existing) {
-        // 增加一点容差避免数学计算误差
         if (
           rect.x < item.x + item.width + spacing - 1 &&
           rect.x + rect.w + spacing - 1 > item.x &&
@@ -289,7 +312,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       return false;
     };
 
-    // 第一张图（最大）居中
     const first = packOrder[0];
     const firstW = first.meta?.width || 1000;
     const firstH = first.meta?.height || 750;
@@ -313,13 +335,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       const candidates: { x: number; y: number }[] = [];
 
       items.forEach(item => {
-        // 主方位
-        candidates.push({ x: item.x + item.width + spacing, y: item.y }); // 右
-        candidates.push({ x: item.x - w - spacing, y: item.y }); // 左
-        candidates.push({ x: item.x, y: item.y + item.height + spacing }); // 下
-        candidates.push({ x: item.x, y: item.y - h - spacing }); // 上
-
-        // 补角
+        candidates.push({ x: item.x + item.width + spacing, y: item.y });
+        candidates.push({ x: item.x - w - spacing, y: item.y });
+        candidates.push({ x: item.x, y: item.y + item.height + spacing });
+        candidates.push({ x: item.x, y: item.y - h - spacing });
         candidates.push({ x: item.x + item.width + spacing, y: item.y + item.height - h });
         candidates.push({ x: item.x - w - spacing, y: item.y + item.height - h });
         candidates.push({ x: item.x + item.width - w, y: item.y + item.height + spacing });
@@ -371,7 +390,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
   }, [imageFiles, manualLayouts]);
 
-  // Persist computed layout positions for any items that do not yet have manual overrides
+  // Persist computed layout positions
   useEffect(() => {
     if (layout.items.length === 0) return;
     setManualLayouts(prev => {
@@ -385,10 +404,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       }
       return changed ? next : prev;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout.items]);
 
-  // 加载后执行自适应缩放
+  // Auto-fit after load
   useEffect(() => {
     if (shouldAutoFitAfterLoadRef.current && layout.totalWidth > 0 && containerSize.width > 0) {
       shouldAutoFitAfterLoadRef.current = false;
@@ -396,31 +414,24 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
-  // Group transform state
-
   const layoutItemMap = useMemo(() => {
     const m: Record<string, ComparisonItem> = {};
     layout.items.forEach(it => (m[it.id] = it));
     return m;
   }, [layout.items]);
 
-  // Group transform state
   const [groupBounds, setGroupBounds] = useState<{ x: number, y: number, width: number, height: number, rotation: number } | null>(null);
-  // transientGroup tracks in-flight group updates while user drags (so overlay follows)
   const [transientGroup, setTransientGroup] = useState<ComparisonItem | null>(null);
-  // flag to indicate group is being edited (prevents auto-recalc during drag)
   const isGroupEditingRef = useRef(false);
 
-  // Re-calculate group bounds when selection changes (only if > 1 items)
+  // Re-calculate group bounds when selection changes
   useEffect(() => {
     if (activeImageIds.length <= 1) {
       setGroupBounds(null);
       return;
     }
 
-    // Compute AABB
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    // We use the 'layout' directly as it contains the freshest positions including manualLayouts
     const items = layout.items.filter(it => activeImageIds.includes(it.id));
 
     if (items.length === 0) return;
@@ -450,10 +461,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       height: maxY - minY,
       rotation: 0
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeImageIds]); // Intentionally ignore layout changes to avoid re-calcing AABB during drag interaction
+  }, [activeImageIds]);
 
-  // Helper: rotate a point (x,y) around center (cx,cy) by angle degrees
   const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
     const rad = angleDeg * Math.PI / 180;
     const dx = x - cx;
@@ -463,7 +472,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return { x: rx + cx, y: ry + cy };
   };
 
-  // Recompute group AABB from current item layouts (callable after interactions)
   const computeAndSetGroupBounds = () => {
     if (activeImageIds.length <= 1) {
       setGroupBounds(null);
@@ -501,12 +509,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
   };
 
-  // Ensure transientGroup is cleared and groupBounds recalculated when selection changes
   useEffect(() => {
-    // If currently editing a group, don't override the in-flight state
     if (isGroupEditingRef.current) return;
-
-    // Clear any leftover transient state from previous interactions
     setTransientGroup(null);
 
     if (activeImageIds.length > 1) {
@@ -516,26 +520,24 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   }, [activeImageIds]);
 
-  // Helper: test whether world point is inside a rotated rect item
   const pointInRotatedItem = (worldX: number, worldY: number, it: ComparisonItem) => {
     const cx = it.x + it.width / 2;
     const cy = it.y + it.height / 2;
-    // rotate world point by -rotation to bring into item's local (unrotated) space
     const local = rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
     return local.x >= it.x && local.x <= it.x + it.width && local.y >= it.y && local.y <= it.y + it.height;
   };
 
-  // Helper: transform a world point to item's local (unrotated) coords
   const worldToLocalPoint = (worldX: number, worldY: number, it: ComparisonItem) => {
     const cx = it.x + it.width / 2;
     const cy = it.y + it.height / 2;
     return rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
   };
 
-  // Helper: transform a world point to screen pixel coords based on transform
-  const worldToScreen = (wx: number, wy: number) => ({ x: wx * transform.scale + transform.x, y: wy * transform.scale + transform.y });
+  const worldToScreen = (wx: number, wy: number) => ({
+    x: wx * transform.scale + transform.x,
+    y: wy * transform.scale + transform.y
+  });
 
-  // Helper: compute axis-aligned bounding box of a rotated item in world coords
   const computeAABB = (it: ComparisonItem) => {
     const cx = it.x + it.width / 2;
     const cy = it.y + it.height / 2;
@@ -561,8 +563,33 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return aabbOverlap(computeAABB(a), computeAABB(b));
   };
 
-  // Canvas drawing
-  useEffect(() => {
+  // 视口裁剪：计算可见图片
+  const getVisibleItems = useCallback(() => {
+    const viewport = {
+      minX: -transform.x / transform.scale,
+      minY: -transform.y / transform.scale,
+      maxX: (containerSize.width - transform.x) / transform.scale,
+      maxY: (containerSize.height - transform.y) / transform.scale
+    };
+
+    // 添加一些缓冲区域，避免边缘闪烁
+    const buffer = 100 / transform.scale;
+    viewport.minX -= buffer;
+    viewport.minY -= buffer;
+    viewport.maxX += buffer;
+    viewport.maxY += buffer;
+
+    const drawOrder = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+    return drawOrder.filter(id => {
+      const item = layoutItemMap[id];
+      if (!item) return false;
+      const aabb = computeAABB(item);
+      return aabbOverlap(aabb, viewport);
+    });
+  }, [transform, containerSize, zOrderIds, layoutItemMap, layout.items]);
+
+  // Canvas 绘制函数 - 使用 requestAnimationFrame 实现平滑渲染
+  const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || containerSize.width === 0) return;
 
@@ -570,16 +597,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = containerSize.width * dpr;
-    canvas.height = containerSize.height * dpr;
-    ctx.scale(dpr, dpr);
+    // 只在尺寸变化时重新设置 canvas 尺寸
+    if (canvas.width !== containerSize.width * dpr || canvas.height !== containerSize.height * dpr) {
+      canvas.width = containerSize.width * dpr;
+      canvas.height = containerSize.height * dpr;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // Use tracked dark mode state so canvas redraws immediately when theme changes
     const isDark = isDarkMode;
     const bgColor = isDark ? '#0a0a0a' : '#f9fafb';
-    const dotColor = isDark ? 'rgba(156, 163, 175, 0.25)' : 'rgba(107, 114, 128, 0.2)'; // 调高了点阵的可见度
+    const dotColor = isDark ? 'rgba(156, 163, 175, 0.25)' : 'rgba(107, 114, 128, 0.2)';
 
-    // 开启高质量平滑
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
@@ -587,11 +615,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, containerSize.width, containerSize.height);
 
-    // 智能点阵背景 (在任何缩放级别下保持可见且不卡顿)
+    // 智能点阵背景
     const baseSpacing = 40;
     let gridSize = baseSpacing * transform.scale;
 
-    // 性能与视觉保护：如果点阵过密（间距小于 15px），则跨步显示（如每隔 2 个点显示一个）
     let step = 1;
     if (gridSize < 15) {
       step = Math.max(1, Math.floor(30 / gridSize));
@@ -601,8 +628,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     ctx.fillStyle = dotColor;
     const offsetX = transform.x % gridSize;
     const offsetY = transform.y % gridSize;
-
-    // 点的大小：缩小比例很大时，稍微增大点的大小以便看见
     const radius = transform.scale < 0.2 ? 1.5 : 1.2;
 
     for (let x = offsetX; x < containerSize.width; x += gridSize) {
@@ -613,20 +638,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       }
     }
 
-    // 绘制图片
+    // 绘制图片 - 只绘制可见的
     ctx.save();
     ctx.translate(transform.x, transform.y);
     ctx.scale(transform.scale, transform.scale);
 
-    // Draw according to z-order (last = top). If zOrderIds empty, fallback to layout.items order.
-    const drawOrder = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
-    for (const id of drawOrder) {
+    const visibleItems = getVisibleItems();
+
+    for (const id of visibleItems) {
       const item = layoutItemMap[id];
       if (!item) continue;
       const cache = imagesCache.current.get(item.id);
 
       ctx.save();
-      // 应用旋转和位移
       ctx.translate(item.x + item.width / 2, item.y + item.height / 2);
       ctx.rotate((item.rotation * Math.PI) / 180);
       ctx.translate(-item.width / 2, -item.height / 2);
@@ -636,12 +660,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       ctx.fillRect(0, 0, item.width, item.height);
 
       if (cache) {
-        const currentEffectiveScale = transform.scale;
-        if (currentEffectiveScale < 0.2 && cache.small) {
-          ctx.drawImage(cache.small, 0, 0, item.width, item.height);
-        } else {
-          ctx.drawImage(cache.original, 0, 0, item.width, item.height);
-        }
+        // 根据当前缩放比例选择最佳 Mipmap 级别
+        const imageToDraw = getBestMipmapLevel(cache, transform.scale);
+        ctx.drawImage(imageToDraw, 0, 0, item.width, item.height);
 
         // 绘制边框
         if (activeImageIds.includes(item.id)) {
@@ -658,47 +679,107 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
 
     ctx.restore();
-  }, [transform, layout, containerSize, loadedCount, isDarkMode, activeImageIds, zOrderIds, layoutItemMap]);
+  }, [transform, containerSize, isDarkMode, activeImageIds, zOrderIds, layoutItemMap, getVisibleItems]);
+
+  // Canvas 绘制 effect
+  useEffect(() => {
+    drawCanvas();
+  }, [drawCanvas]);
+
+  // 动画系统 - 使用单个 requestAnimationFrame 循环
+  const animationRef = useRef<number | null>(null);
+  const animationTargetRef = useRef<{ x: number; y: number; scale: number } | null>(null);
+
+  const startAnimation = useCallback((target: { x: number; y: number; scale: number }) => {
+    // 取消之前的动画
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
+
+    animationTargetRef.current = target;
+
+    let lastTime = performance.now();
+
+    const animate = (currentTime: number) => {
+      const deltaTime = currentTime - lastTime;
+      lastTime = currentTime;
+
+      const current = transformRef.current;
+      const target = animationTargetRef.current;
+
+      if (!target) return;
+
+      // 线性插值 - 使用基于时间的缓动
+      const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+      const ease = Math.min(1, deltaTime * 0.025); // 约 40ms 完成
+
+      const newX = lerp(current.x, target.x, ease);
+      const newY = lerp(current.y, target.y, ease);
+      const newScale = lerp(current.scale, target.scale, ease);
+
+      // 检查是否接近目标
+      const isClose =
+        Math.abs(newX - target.x) < 0.5 &&
+        Math.abs(newY - target.y) < 0.5 &&
+        Math.abs(newScale - target.scale) < 0.005;
+
+      if (isClose) {
+        setTransform(target);
+        animationRef.current = null;
+        animationTargetRef.current = null;
+        return;
+      }
+
+      setTransform({ x: newX, y: newY, scale: newScale });
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    animationRef.current = requestAnimationFrame(animate);
+  }, []);
+
+  // 清理动画
+  useEffect(() => {
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, []);
 
   // Initial auto-zoom and center
   useEffect(() => {
-    // Only auto-fit if we haven't applied auto-zoom yet and user hasn't interacted
     if (layout.totalWidth > 0 && containerSize.width > 0 && !userInteractedRef.current && !autoZoomAppliedRef.current) {
       const padding = 60;
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
       const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
       const initialScale = Math.min(scaleX, scaleY, 1.2);
 
-      setTransform({
+      const newTransform = {
         x: (containerSize.width - layout.totalWidth * initialScale) / 2,
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
         scale: initialScale
-      });
+      };
+
+      setTransform(newTransform);
       autoZoomAppliedRef.current = true;
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
-  // Mouse wheel zoom with smooth animation
+  // Mouse wheel zoom - 直接更新以获得即时响应
   const handleWheel = (e: React.WheelEvent) => {
-    // Disable zoom when add image modal is open
-    if (isAddImageModalOpen) {
-      return;
-    }
-    
-    // Only call preventDefault if the native event is cancelable.
+    if (isAddImageModalOpen) return;
+
     const native = e.nativeEvent as WheelEvent | any;
     if (native && native.cancelable) {
       e.preventDefault();
     }
-    // mark manual interaction
     userInteractedRef.current = true;
 
-    // 滚轮缩放时自动关闭右键菜单
     if (contextMenu) {
       setContextMenu(null);
     }
 
-    const zoomSpeed = 0.0015;
+    const zoomSpeed = 0.0012;
     const factor = Math.exp(-e.deltaY * zoomSpeed);
 
     const rect = containerRef.current?.getBoundingClientRect();
@@ -707,74 +788,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // 计算目标缩放值，基于当前目标或当前实际值
-    const currentScale = wheelTargetRef.current?.scale || transform.scale;
-    const newScale = Math.min(Math.max(currentScale * factor, 0.04), 20);
-
-    // 计算新的位置，保持鼠标位置为缩放中心
-    const currentX = wheelTargetRef.current?.x || transform.x;
-    const currentY = wheelTargetRef.current?.y || transform.y;
-    const newX = mouseX - (mouseX - currentX) * (newScale / currentScale);
-    const newY = mouseY - (mouseY - currentY) * (newScale / currentScale);
-
-    // 更新目标值
-    wheelTargetRef.current = { x: newX, y: newY, scale: newScale };
-
-    // 如果没有正在进行的滚轮动画，启动一个
-    if (wheelAnimationRef.current === null) {
-      const startTransform = { ...transform };
-      const startTime = performance.now();
-      const duration = 150; // 较短的动画时长，使滚轮响应更灵敏
-
-      const animate = (currentTime: number) => {
-        if (!wheelTargetRef.current) {
-          wheelAnimationRef.current = null;
-          return;
-        }
-
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-
-        // 使用 easeOutQuad 缓动函数，使滚轮缩放更加自然
-        const eased = 1 - (1 - progress) * (1 - progress);
-
-        const currentTransform = {
-          x: startTransform.x + (wheelTargetRef.current.x - startTransform.x) * eased,
-          y: startTransform.y + (wheelTargetRef.current.y - startTransform.y) * eased,
-          scale: startTransform.scale + (wheelTargetRef.current.scale - startTransform.scale) * eased
-        };
-
-        setTransform(currentTransform);
-
-        if (progress < 1) {
-          wheelAnimationRef.current = requestAnimationFrame(animate);
-        } else {
-          // 动画结束，清理状态
-          wheelAnimationRef.current = null;
-          wheelTargetRef.current = null;
-        }
-      };
-
-      wheelAnimationRef.current = requestAnimationFrame(animate);
-    }
+    // 直接更新 transform，不使用动画，以获得即时响应
+    setTransform(prev => {
+      const newScale = Math.min(Math.max(prev.scale * factor, 0.04), 20);
+      const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
+      const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
+      return { x: newX, y: newY, scale: newScale };
+    });
   };
 
   // Dragging
   const handleMouseDown = (e: React.MouseEvent) => {
     userInteractedRef.current = true;
 
-    // 左键点击：选择图片
     if (e.button === 0) {
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
 
-        // 转换画布坐标到世界坐标
         const worldX = (mouseX - transform.x) / transform.scale;
         const worldY = (mouseY - transform.y) / transform.scale;
 
-        // 查找点击到了哪张图（根据 zOrder，从顶层向下查找）
         const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
         let clickedId: string | null = null;
         for (let i = visible.length - 1; i >= 0; i--) {
@@ -792,24 +827,18 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           const isSelected = activeImageIds.includes(clickedId);
 
           if (isCtrl) {
-            // Toggle selection
             if (isSelected) {
               setActiveImageIds(prev => prev.filter(id => id !== clickedId));
             } else {
-              // Add to end (becomes new primary active)
               setActiveImageIds(prev => [...prev, clickedId!]);
             }
           } else {
-            // No Ctrl
             if (isSelected) {
-              // 如果点击的是已选中的项，保持当前多选状态不变
-              // 并将被点击的项移到数组末尾使其成为“主控项”，方便 EditOverlay 对齐
               setActiveImageIds(prev => {
                 const others = prev.filter(id => id !== clickedId);
                 return [...others, clickedId!];
               });
             } else {
-              // 点击未选中的项 -> 单选
               setActiveImageIds([clickedId]);
             }
           }
@@ -818,25 +847,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             onSelect?.(clickedId);
           }
 
-          // Clicking an item cancels any pending marquee start
           potentialClearSelectionRef.current = false;
           setMarquee(null);
         } else {
-          // Clicked empty space -> start marquee selection (don't clear immediately)
-          const rect = containerRef.current?.getBoundingClientRect();
-          if (rect) {
-            setMarquee({ active: true, startX: mouseX, startY: mouseY, x: mouseX, y: mouseY });
-            potentialClearSelectionRef.current = true;
-          } else {
-            setActiveImageIds([]);
-            onSelect?.('');
-          }
+          setMarquee({ active: true, startX: mouseX, startY: mouseY, x: mouseX, y: mouseY });
+          potentialClearSelectionRef.current = true;
         }
       }
     }
-    // 中键点击：执行拖拽
     else if (e.button === 1) {
-      e.preventDefault(); // 防止中键自动滚动
+      e.preventDefault();
       setIsDragging(true);
       setDragStart({ x: e.clientX, y: e.clientY });
     }
@@ -846,11 +866,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     if (isDragging) {
       const dx = e.clientX - dragStart.x;
       const dy = e.clientY - dragStart.y;
-      setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+
+      // 直接更新 transform，不使用动画
+      setTransform(prev => ({
+        ...prev,
+        x: prev.x + dx,
+        y: prev.y + dy
+      }));
+
       setDragStart({ x: e.clientX, y: e.clientY });
     }
 
-    // Update marquee selection box (screen coords)
     if (marquee && marquee.active) {
       const rect = containerRef.current?.getBoundingClientRect();
       if (rect) {
@@ -896,7 +922,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }
           onSelect?.(ids[ids.length - 1] || '');
         } else {
-          // If it was a click (tiny box) and we set a potential clear, clear selection
           const dx = marquee.x - marquee.startX;
           const dy = marquee.y - marquee.startY;
           const distSq = dx * dx + dy * dy;
@@ -949,7 +974,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
-  // 获取文件扩展名
   const getFileExtension = (filePath: string): string => {
     const match = filePath.match(/\.([^.]+)$/);
     return match ? match[1].toLowerCase() : 'png';
@@ -964,7 +988,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (path) {
         const zip = new JSZip();
 
-        // 1. 添加 manifest.json
         const manifest: ComparisonSessionManifest = {
           version: '2.0',
           createdAt: Date.now(),
@@ -972,7 +995,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         };
         zip.file('manifest.json', JSON.stringify(manifest));
 
-        // 2. 添加 viewport.json（画布视图状态）
         const viewport: ComparisonSessionViewport = {
           scale: transform.scale,
           x: transform.x,
@@ -980,7 +1002,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         };
         zip.file('viewport.json', JSON.stringify(viewport));
 
-        // 3. 创建 images 文件夹并添加图片
         const imagesFolder = zip.folder('images');
         const imageFileNames: Record<string, string> = {};
 
@@ -989,10 +1010,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           const file = files[item.id];
           if (file && file.path) {
             try {
-              // 使用 Tauri 命令读取图片数据
               const base64Data = await invoke<string>('read_file_as_base64', { filePath: file.path });
               if (base64Data) {
-                // 提取纯 base64 部分（去掉 data:image/xxx;base64, 前缀）
                 const base64Content = base64Data.includes(',')
                   ? base64Data.split(',')[1]
                   : base64Data;
@@ -1008,7 +1027,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }
         }
 
-        // 4. 添加 layout.json
         const layoutData: ComparisonSessionLayout = {
           items: layout.items.map(it => ({
             id: it.id,
@@ -1025,7 +1043,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         };
         zip.file('layout.json', JSON.stringify(layoutData));
 
-        // 5. 生成 ZIP 并保存
         const zipBlob = await zip.generateAsync({ type: 'uint8array' });
         await writeFile(path, zipBlob);
       }
@@ -1040,69 +1057,56 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         filters: [{ name: 'Aurora Comparison', extensions: ['aurora'] }]
       });
       if (path && typeof path === 'string') {
-        // 首先尝试以文本方式读取，检测是否为旧格式 JSON
         let isZipFormat = false;
         try {
           const textContent = await readTextFile(path);
           const parsed = JSON.parse(textContent);
-          // 如果能解析且有 version 字段，说明是旧格式
           if (parsed.version && parsed.items) {
-            // 处理旧格式 (v1.0)
             await loadLegacySession(parsed as ComparisonSession);
             return;
           }
         } catch {
-          // 不是纯文本 JSON，可能是 ZIP 格式
           isZipFormat = true;
         }
 
         if (isZipFormat) {
-          // 读取 ZIP 格式
           const zipBytes = await readFile(path);
           const zip = await JSZip.loadAsync(zipBytes);
 
-          // 读取 manifest
           const manifestFile = zip.file('manifest.json');
           if (!manifestFile) {
             throw new Error('Invalid .aurora file: manifest.json not found');
           }
           const manifest: ComparisonSessionManifest = JSON.parse(await manifestFile.async('string'));
 
-          // 读取 viewport
           const viewportFile = zip.file('viewport.json');
           let viewport: ComparisonSessionViewport | null = null;
           if (viewportFile) {
             viewport = JSON.parse(await viewportFile.async('string'));
           }
 
-          // 读取 layout
           const layoutFile = zip.file('layout.json');
           if (!layoutFile) {
             throw new Error('Invalid .aurora file: layout.json not found');
           }
           const layoutData: ComparisonSessionLayout = JSON.parse(await layoutFile.async('string'));
 
-          // 设置会话名称
           if (manifest.sessionName) {
             setSessionName(manifest.sessionName);
             onSessionNameChange?.(manifest.sessionName);
           }
 
-          // 加载时自适应窗口，不使用保存的视图状态
-          // 重置标记以触发自动缩放
           autoZoomAppliedRef.current = false;
           userInteractedRef.current = false;
 
-          // 处理图片数据
           const newManuals: Record<string, any> = {};
           const newIds: string[] = [];
           const newZOrder: string[] = [];
           const imageBlobUrls: Record<string, string> = {};
-          const newSessionFiles: Record<string, FileNode> = {}; // 存储从 ZIP 加载的文件对象
+          const newSessionFiles: Record<string, FileNode> = {};
 
           for (const item of layoutData.items) {
             if (item.imageFileName) {
-              // 从 ZIP 中读取图片
               const imageFile = zip.file(`images/${item.imageFileName}`);
               if (imageFile) {
                 const imageBytes = await imageFile.async('uint8array');
@@ -1115,7 +1119,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 const objectUrl = URL.createObjectURL(blob);
                 imageBlobUrls[item.id] = objectUrl;
 
-                // 创建完整的 FileNode 对象，使图片不依赖外部库
                 newSessionFiles[item.id] = {
                   id: item.id,
                   parentId: null,
@@ -1135,7 +1138,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
               }
             }
 
-            // 恢复所有布局信息（位置、大小、旋转）
             newManuals[item.id] = {
               x: item.x,
               y: item.y,
@@ -1146,17 +1148,18 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             newIds.push(item.id);
           }
 
-          // 更新图片缓存，使用 Blob URL
           Object.entries(imageBlobUrls).forEach(([id, url]) => {
             const img = new Image();
             img.src = url;
             img.onload = () => {
-              imagesCache.current.set(id, { original: img });
+              const w = newSessionFiles[id]?.meta?.width || img.width;
+              const h = newSessionFiles[id]?.meta?.height || img.height;
+              const levels = createMipmapLevels(img, w, h);
+              imagesCache.current.set(id, { original: img, levels });
               setLoadedCount(prev => prev + 1);
             };
           });
 
-          // 设置层级顺序
           if (layoutData.zOrder && Array.isArray(layoutData.zOrder)) {
             const filteredZ = layoutData.zOrder.filter(id => newIds.includes(id));
             const missing = newIds.filter(id => !filteredZ.includes(id));
@@ -1165,15 +1168,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             newZOrder.push(...newIds);
           }
 
-          // 更新所有状态，完整恢复会话
-          setSessionFiles(newSessionFiles);  // 存储临时文件对象
+          setSessionFiles(newSessionFiles);
           setInternalSelectedIds(newIds);
-          setManualLayouts(newManuals);      // 恢复位置、大小、旋转
-          setAnnotations(layoutData.annotations || []);  // 恢复注释
-          setZOrderIds(newZOrder);           // 恢复层级顺序
+          setManualLayouts(newManuals);
+          setAnnotations(layoutData.annotations || []);
+          setZOrderIds(newZOrder);
           initializedRef.current = true;
 
-          // 标记需要执行自适应缩放（在 layout 更新后通过 useEffect 执行）
           shouldAutoFitAfterLoadRef.current = true;
         }
       }
@@ -1182,7 +1183,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   };
 
-  // 加载旧版本 (v1.0) 会话
   const loadLegacySession = async (session: ComparisonSession) => {
     const newManuals: Record<string, any> = {};
     const newIds: string[] = [];
@@ -1213,7 +1213,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const targetId = menuTargetId || (activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null);
     if (!targetId) return;
 
-    // Identify items to remove: if targetId is in selection, remove all selected. Else remove targetId only.
     const idsToRemove = activeImageIds.includes(targetId) ? activeImageIds : [targetId];
 
     setInternalSelectedIds(prev => prev.filter(i => !idsToRemove.includes(i)));
@@ -1243,56 +1242,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setMenuTargetId(null);
   };
 
-  // 平滑动画辅助函数
-  const animateTransform = (targetTransform: { x: number; y: number; scale: number }, duration: number = 400) => {
-    // 取消之前的动画
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
-
-    const startTransform = { ...transform };
-    const startTime = performance.now();
-
-    setIsAnimating(true);
-
-    const animate = (currentTime: number) => {
-      const elapsed = currentTime - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-
-      // 使用 easeInOutCubic 缓动函数
-      const eased = progress < 0.5
-        ? 4 * progress * progress * progress
-        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
-
-      const currentTransform = {
-        x: startTransform.x + (targetTransform.x - startTransform.x) * eased,
-        y: startTransform.y + (targetTransform.y - startTransform.y) * eased,
-        scale: startTransform.scale + (targetTransform.scale - startTransform.scale) * eased
-      };
-
-      setTransform(currentTransform);
-
-      if (progress < 1) {
-        animationFrameRef.current = requestAnimationFrame(animate);
-      } else {
-        setIsAnimating(false);
-        animationFrameRef.current = null;
-      }
-    };
-
-    animationFrameRef.current = requestAnimationFrame(animate);
-  };
-
-  // 清理动画和 Blob URL
   useEffect(() => {
     return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
       }
-      if (wheelAnimationRef.current !== null) {
-        cancelAnimationFrame(wheelAnimationRef.current);
-      }
-      // 清理 sessionFiles 中的 Blob URL，防止内存泄漏
       Object.values(sessionFiles).forEach(file => {
         if (file.path?.startsWith('blob:')) {
           URL.revokeObjectURL(file.path);
@@ -1308,26 +1262,50 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const targetItem = layoutItemMap[targetId];
     if (!targetItem) return;
 
-    // 计算图片的中心点
     const imageCenterX = targetItem.x + targetItem.width / 2;
     const imageCenterY = targetItem.y + targetItem.height / 2;
 
-    // 计算合适的缩放比例，使图片适应容器大小
     const padding = 60;
     const scaleX = (containerSize.width - padding * 2) / targetItem.width;
     const scaleY = (containerSize.height - padding * 2) / targetItem.height;
-    const newScale = Math.min(scaleX, scaleY, 1.2);
+    // 限制最大缩放比例，避免从极小缩放到极大导致的性能问题
+    const newScale = Math.min(scaleX, scaleY, 1.2, 5.0);
 
-    // 计算新的变换，使图片居中显示
     const newX = containerSize.width / 2 - imageCenterX * newScale;
     const newY = containerSize.height / 2 - imageCenterY * newScale;
 
-    // 使用平滑动画过渡
-    animateTransform({
-      x: newX,
-      y: newY,
-      scale: newScale
-    }, 500); // 500ms 动画时长
+    // 如果当前缩放比例与目标缩放比例差距过大，先进行一个中间步骤
+    const currentScale = transform.scale;
+    const scaleRatio = newScale / currentScale;
+
+    if (scaleRatio > 10 || scaleRatio < 0.1) {
+      // 缩放差距过大，使用中间步骤避免卡死
+      const midScale = Math.sqrt(currentScale * newScale);
+      const midX = containerSize.width / 2 - imageCenterX * midScale;
+      const midY = containerSize.height / 2 - imageCenterY * midScale;
+
+      // 先动画到中间状态
+      startAnimation({
+        x: midX,
+        y: midY,
+        scale: midScale
+      });
+
+      // 延迟后再动画到最终状态
+      setTimeout(() => {
+        startAnimation({
+          x: newX,
+          y: newY,
+          scale: newScale
+        });
+      }, 50);
+    } else {
+      startAnimation({
+        x: newX,
+        y: newY,
+        scale: newScale
+      });
+    }
 
     userInteractedRef.current = true;
     setContextMenu(null);
@@ -1335,37 +1313,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const handleReorder = (type: 'top' | 'bottom' | 'up' | 'down') => {
-    // For simplicity, reorder affects the primary target or all selected? 
-    // Implementing "Group Reorder" is complex because they might be interleaved.
-    // Current strategy: Only reorder the specific target (or primary active) to avoid chaos, 
-    // OR iterate all selected. Let's iterate all selected if target is in selection.
-
     const targetId = menuTargetId || (activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null);
     if (!targetId) return;
 
-    const idsToProcess = activeImageIds.includes(targetId) ? [...activeImageIds] : [targetId];
-
-    // Process one by one. For 'top', we should process in original z-order to maintain relative order?
-    // This is getting complicated. Let's stick to simplest: Reorder ONLY the targetId for now, 
-    // or loop them. If we loop 'top', the last one processed ends up on very top.
-
     setZOrderIds(prev => {
       let next = [...prev];
-      idsToProcess.forEach(id => {
-        // Apply same logic as before for single item. 
-        // Note: This nests the logic which is inefficient but functional.
-        // ... (Reusing the previous logic block efficiently is hard without refactoring)
-        // Let's refactor the core move logic into a helper if possible, or just copy-paste with slight mod.
-        // Since we can't easily extract a function in this replace block, we will just process the `targetId` ONLY for now
-        // to prevent bugs, as requested in strict mode. 
-        // TODO: Enhance to group reorder later.
-      });
 
-      // Falling back to single item reorder to ensure stability, as Group Reorder logic was not fully detailed in plan.
       const id = targetId;
       const visible = next.filter(i => layoutItemMap[i]);
       const idx = visible.indexOf(id);
-      if (idx === -1) return prev; // nothing to do
+      if (idx === -1) return prev;
 
       const moveToPos = (pos: number) => {
         const curIdx = next.indexOf(id);
@@ -1445,7 +1402,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setMenuTargetId(null);
   };
 
-
   const handleStartAddAnnotation = () => {
     if (!contextMenu) return;
     const rect = containerRef.current?.getBoundingClientRect();
@@ -1479,29 +1435,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const handleReset = () => {
-    setManualLayouts({}); // Global reset clears manual transforms
+    setManualLayouts({});
     if (layout.totalWidth > 0) {
       const padding = 60;
       const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
       const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
       const initialScale = Math.min(scaleX, scaleY, 1.2);
 
-      setTransform({
+      const newTransform = {
         x: (containerSize.width - layout.totalWidth * initialScale) / 2,
         y: (containerSize.height - layout.totalHeight * initialScale) / 2,
         scale: initialScale
-      });
-      // Consider this a manual interaction to avoid future auto-fit on layout toggles
+      };
+
+      startAnimation(newTransform);
       userInteractedRef.current = true;
       autoZoomAppliedRef.current = true;
     }
   };
 
-  // 只重置画布视图，不重置图片变换
   const resetViewportOnly = () => {
     if (layout.items.length === 0 || containerSize.width === 0) return;
 
-    // 计算所有图片的实际边界框
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     layout.items.forEach(item => {
       minX = Math.min(minX, item.x);
@@ -1520,15 +1475,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const scaleY = (containerSize.height - padding * 2) / contentHeight;
     const initialScale = Math.min(scaleX, scaleY, 1.2);
 
-    // 计算居中位置：让内容边界框居中显示
     const contentCenterX = minX + contentWidth / 2;
     const contentCenterY = minY + contentHeight / 2;
 
-    setTransform({
+    const newTransform = {
       x: containerSize.width / 2 - contentCenterX * initialScale,
       y: containerSize.height / 2 - contentCenterY * initialScale,
       scale: initialScale
-    });
+    };
+
+    startAnimation(newTransform);
     userInteractedRef.current = true;
     autoZoomAppliedRef.current = true;
   };
@@ -1553,20 +1509,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const handleAddImages = (newIds: string[]) => {
-    // Filter out already existing ids
     const existingIds = new Set(internalSelectedIds);
     const uniqueNewIds = newIds.filter(id => !existingIds.has(id));
-    
+
     if (uniqueNewIds.length === 0) return;
 
-    // Add new images to the selection
     setInternalSelectedIds(prev => [...prev, ...uniqueNewIds]);
     setZOrderIds(prev => [...prev, ...uniqueNewIds]);
-    
-    // Mark that we need to auto-fit after images are loaded
+
     shouldAutoFitAfterLoadRef.current = true;
-    
-    // Load images into cache
+
     let loadedImagesCount = 0;
     uniqueNewIds.forEach(id => {
       const file = files[id];
@@ -1574,29 +1526,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const img = new Image();
         img.src = convertFileSrc(file.path);
         img.onload = () => {
-          // Create small canvas for anti-aliasing
-          const smallCanvas = document.createElement('canvas');
-          const scale = 0.25;
-          const w = (file.meta?.width || img.width);
-          const h = (file.meta?.height || img.height);
-          smallCanvas.width = w * scale;
-          smallCanvas.height = h * scale;
-          const sctx = smallCanvas.getContext('2d');
-          if (sctx) {
-            sctx.imageSmoothingEnabled = true;
-            sctx.imageSmoothingQuality = 'high';
-            sctx.drawImage(img, 0, 0, smallCanvas.width, smallCanvas.height);
-          }
-          imagesCache.current.set(file.id, {
-            original: img,
-            small: smallCanvas
-          });
+          const w = file.meta?.width || img.width;
+          const h = file.meta?.height || img.height;
+          const levels = createMipmapLevels(img, w, h);
+          imagesCache.current.set(file.id, { original: img, levels });
           loadedImagesCount++;
           setLoadedCount(prev => prev + 1);
-          
-          // After all new images are loaded, trigger auto-fit
+
           if (loadedImagesCount >= uniqueNewIds.length) {
-            // Reset flags to trigger auto-fit
             userInteractedRef.current = false;
             autoZoomAppliedRef.current = false;
           }
@@ -1635,18 +1572,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose, onCloseTab]);
 
-  // Handle mouse side buttons (Back/Forward) override
-  // We use capture phase to intercept events before TopBar receives them
+  // Handle mouse side buttons
   useEffect(() => {
     const handleMouseUp = (e: MouseEvent) => {
-      // 3: Back button, 4: Forward button
       if (e.button === 3) {
         e.stopImmediatePropagation();
         e.preventDefault();
         if (onCloseTab) onCloseTab();
         else onClose();
       } else if (e.button === 4) {
-        // Block forward navigation
         e.stopImmediatePropagation();
         e.preventDefault();
       }
@@ -1765,14 +1699,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         </div>
       </div>
 
-      {/* Canvas */}
+      {/* Canvas Container */}
       <div
         ref={containerRef}
         className="flex-1 relative cursor-grab active:cursor-grabbing overflow-hidden animate-fade-in"
       >
         <canvas
           ref={canvasRef}
-          className="w-full h-full block"
+          className="block absolute inset-0"
+          style={{ width: '100%', height: '100%' }}
         />
 
         {/* Empty state message */}
@@ -1786,7 +1721,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           </div>
         )}
 
-        {/* Marquee selection overlay (screen-space) */}
+        {/* Marquee selection overlay */}
         {marquee && marquee.active && (
           <div className="absolute pointer-events-none" style={{
             left: Math.min(marquee.startX, marquee.x),
@@ -1799,8 +1734,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }} />
         )}
 
-        {/* 编辑层 Overlay */}
-        {/* 编辑层 Overlay */}
+        {/* Edit Overlay */}
         <EditOverlay
           activeItem={activeImageIds.length > 1 && (transientGroup || groupBounds) ? ({
             id: 'GROUP_SELECTION',
@@ -1818,8 +1752,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           onInteractionStart={() => { isGroupEditingRef.current = true; setTransientGroup(null); }}
           onInteractionEnd={() => { isGroupEditingRef.current = false; computeAndSetGroupBounds(); setTransientGroup(null); }}
           onUpdateItem={(id, updates) => {
-            // 支持群组编辑：当 id === 'GROUP_SELECTION' 且存在多个选中项时，
-            // 将对群组边界的变换（平移 / 缩放 / 旋转）应用到每个成员。
             if (id === 'GROUP_SELECTION' && activeImageIds.length > 1 && (groupBounds || transientGroup)) {
               const oldGroup = transientGroup || groupBounds!;
               const newGroup = {
@@ -1830,19 +1762,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 rotation: updates.rotation !== undefined ? updates.rotation : (oldGroup.rotation || 0)
               };
 
-              // Compute raw deltas
               const rawSX = newGroup.width / Math.max(1e-6, oldGroup.width);
               const rawSY = newGroup.height / Math.max(1e-6, oldGroup.height);
               const rawDR = newGroup.rotation - (oldGroup.rotation || 0);
 
               const oldCenter = { x: oldGroup.x + oldGroup.width / 2, y: oldGroup.y + oldGroup.height / 2 };
               const newCenter = { x: newGroup.x + newGroup.width / 2, y: newGroup.y + newGroup.height / 2 };
-              const dCenter = { x: newCenter.x - oldCenter.x, y: newCenter.y - oldCenter.y };
 
-              // Clamp per-event changes to avoid "飞出" 的行为
               const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
-              // Determine whether edges were effectively fixed by the EditOverlay's computation (helps preserve pivot)
               const eps = 1e-3;
               const leftOld = oldGroup.x;
               const rightOld = oldGroup.x + oldGroup.width;
@@ -1894,10 +1822,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 rotation: (oldGroup.rotation || 0) + dr
               };
 
-              // Update transient so overlay follows immediately
               setTransientGroup({ ...appliedNewGroup } as ComparisonItem);
 
-              // Apply transforms to each member around the oldGroup center
               const rad = dr * Math.PI / 180;
               const cos = Math.cos(rad);
               const sin = Math.sin(rad);
@@ -1940,17 +1866,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
               return;
             } else {
-              // 单项或回退到原来的按项更新逻辑（保持向后兼容）
               const oldItem = layoutItemMap[id];
               if (!oldItem) return;
 
-              // 2. 计算增量
-              // Position
               const dx = (updates.x !== undefined) ? updates.x - oldItem.x : 0;
               const dy = (updates.y !== undefined) ? updates.y - oldItem.y : 0;
-              // Rotation
               const dr = (updates.rotation !== undefined) ? updates.rotation - oldItem.rotation : 0;
-              // Scale (Ratio)
               const rw = (updates.width !== undefined) ? updates.width / oldItem.width : 1;
               const rh = (updates.height !== undefined) ? updates.height / oldItem.height : 1;
 
@@ -1958,9 +1879,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 const next = { ...prev };
                 activeImageIds.forEach(targetId => {
                   const targetOld = layoutItemMap[targetId];
-                  if (!targetOld) return; // Should not happen
+                  if (!targetOld) return;
 
-                  // Base config from previous manual or default layout
                   const base = prev[targetId] || targetOld;
 
                   next[targetId] = {
@@ -1968,7 +1888,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                     x: base.x + dx,
                     y: base.y + dy,
                     rotation: (base.rotation || 0) + dr,
-                    // In-Place Scale: active target gets exact values, others get ratio applied
                     width: base.width * rw,
                     height: base.height * rh
                   };
@@ -1981,7 +1900,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           isDarkMode={isDarkMode}
         />
 
-        {/* 右键菜单 */}
+        {/* Context Menu */}
         {contextMenu && (
           <ComparerContextMenu
             x={contextMenu.x}
@@ -1991,7 +1910,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           />
         )}
 
-        {/* 注释层 */}
+        {/* Annotation Layer */}
         <AnnotationLayer
           annotations={annotations}
           layoutItems={layout.items}
