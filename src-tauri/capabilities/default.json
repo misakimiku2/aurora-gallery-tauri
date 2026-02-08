@@ -22,6 +22,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-unmaximize",
     "core:window:allow-set-title",
+    "core:window:allow-set-always-on-top",
     "dialog:allow-open",
     "dialog:default",
     "fs:default",

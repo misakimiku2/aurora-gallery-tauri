@@ -500,6 +500,7 @@ export const translations = {
       maximize: '最大化',
       restore: '恢复',
       close: '关闭',
+      alwaysOnTop: '始终在前',
       closeConfirmation: {
         title: '关闭确认',
         message: '您确定要关闭极光图库吗？',
@@ -1066,6 +1067,7 @@ export const translations = {
       maximize: 'Maximize',
       restore: 'Restore',
       close: 'Close',
+      alwaysOnTop: 'Always on Top',
       closeConfirmation: {
         title: 'Close Confirmation',
         message: 'Are you sure you want to close Aurora Gallery?',

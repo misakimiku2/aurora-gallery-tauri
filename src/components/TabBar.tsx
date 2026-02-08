@@ -1,6 +1,6 @@
 ﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
-import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan } from 'lucide-react';
+import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
@@ -36,6 +36,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   const tabBarRef = useRef<HTMLDivElement>(null);
   const [showControls, setShowControls] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(false);
 
   useEffect(() => {
     // Only show custom window controls on Linux for Tauri.
@@ -171,6 +172,17 @@ export const TabBar: React.FC<TabBarProps> = ({
     onCloseWindow();
   };
 
+  const handleAlwaysOnTop = async () => {
+    try {
+      const window = getCurrentWindow();
+      const newState = !isAlwaysOnTop;
+      await window.setAlwaysOnTop(newState);
+      setIsAlwaysOnTop(newState);
+    } catch (error) {
+      console.error('Failed to toggle always on top:', error);
+    }
+  };
+
   return (
     <div className="flex items-center bg-gray-200 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 h-[41px] select-none w-full" style={{ WebkitAppRegion: 'drag' } as any}>
       <div
@@ -219,6 +231,17 @@ export const TabBar: React.FC<TabBarProps> = ({
       {/* Window Controls - Only shown on platforms needing custom controls (Linux) and when allowed */}
       {showControls && showWindowControls && (
         <div className="flex items-center h-full px-2 gap-1 shrink-0" style={{ WebkitAppRegion: 'no-drag' } as any}>
+          <button
+            onClick={handleAlwaysOnTop}
+            className={`p-2 rounded transition-all duration-200 ${
+              isAlwaysOnTop
+                ? 'text-gray-700 bg-gray-400/50 dark:text-gray-200 dark:bg-gray-700/50'
+                : 'text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-800'
+            }`}
+            title={t('window.alwaysOnTop')}
+          >
+            <Pin size={14} className={`transition-transform duration-200 ${isAlwaysOnTop ? 'rotate-45 fill-blue-500 text-blue-500' : ''}`} />
+          </button>
           <button
             onClick={handleMinimize}
             className="p-2 text-gray-500 hover:bg-gray-300 dark:hover:bg-gray-800 rounded transition-colors"
