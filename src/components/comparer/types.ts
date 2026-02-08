@@ -1,4 +1,4 @@
-import { FileNode } from '../types';
+// 注意：FileNode 类型定义在 src/types.ts
 
 export interface ComparisonItem extends ImageLayoutInfo {
     rotation: number; // 旋转角度（度）
@@ -36,4 +36,32 @@ export interface ComparisonSession {
     }[];
     annotations: Annotation[];
     zOrder?: string[];
+}
+
+// V2 版本：ZIP 格式存储
+export interface ComparisonSessionManifest {
+    version: '2.0';
+    createdAt: number;
+    sessionName: string;
+}
+
+export interface ComparisonSessionViewport {
+    scale: number;
+    x: number;
+    y: number;
+}
+
+export interface ComparisonSessionLayout {
+    items: {
+        id: string;
+        path: string;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        rotation: number;
+        imageFileName: string; // ZIP 中的图片文件名
+    }[];
+    annotations: Annotation[];
+    zOrder: string[];
 }

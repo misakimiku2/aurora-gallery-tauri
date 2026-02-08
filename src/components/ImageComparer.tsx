@@ -6,9 +6,12 @@ import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types'
 import { EditOverlay } from './comparer/EditOverlay';
 import { AnnotationLayer } from './comparer/AnnotationLayer';
 import { ComparerContextMenu } from './comparer/ComparerContextMenu';
-import { writeTextFile, readTextFile } from '@tauri-apps/plugin-fs';
+import { writeTextFile, readTextFile, writeFile, readFile } from '@tauri-apps/plugin-fs';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { Plus, Save, FolderOpen, Trash2 } from 'lucide-react';
+import JSZip from 'jszip';
+import { ComparisonSessionManifest, ComparisonSessionViewport, ComparisonSessionLayout } from './comparer/types';
+import { invoke } from '@tauri-apps/api/core';
 
 interface ImageComparerProps {
   selectedFileIds: string[];
@@ -85,6 +88,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // 滚轮缩放的目标值，用于平滑过渡
   const wheelTargetRef = useRef<{ x: number; y: number; scale: number } | null>(null);
   const wheelAnimationRef = useRef<number | null>(null);
+  // 标记加载后需要执行自适应缩放
+  const shouldAutoFitAfterLoadRef = useRef(false);
 
   useEffect(() => {
     if (sessionNameProp && sessionNameProp !== sessionName) {
@@ -366,6 +371,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layout.items]);
+
+  // 加载后执行自适应缩放
+  useEffect(() => {
+    if (shouldAutoFitAfterLoadRef.current && layout.totalWidth > 0 && containerSize.width > 0) {
+      shouldAutoFitAfterLoadRef.current = false;
+      resetViewportOnly();
+    }
+  }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
   // Group transform state
 
@@ -915,6 +928,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
+  // 获取文件扩展名
+  const getFileExtension = (filePath: string): string => {
+    const match = filePath.match(/\.([^.]+)$/);
+    return match ? match[1].toLowerCase() : 'png';
+  };
+
   const handleSaveSession = async () => {
     try {
       const path = await save({
@@ -922,8 +941,54 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         defaultPath: `${sessionName}.aurora`
       });
       if (path) {
-        const session: ComparisonSession = {
-          version: '1.0',
+        const zip = new JSZip();
+
+        // 1. 添加 manifest.json
+        const manifest: ComparisonSessionManifest = {
+          version: '2.0',
+          createdAt: Date.now(),
+          sessionName
+        };
+        zip.file('manifest.json', JSON.stringify(manifest));
+
+        // 2. 添加 viewport.json（画布视图状态）
+        const viewport: ComparisonSessionViewport = {
+          scale: transform.scale,
+          x: transform.x,
+          y: transform.y
+        };
+        zip.file('viewport.json', JSON.stringify(viewport));
+
+        // 3. 创建 images 文件夹并添加图片
+        const imagesFolder = zip.folder('images');
+        const imageFileNames: Record<string, string> = {};
+
+        for (let i = 0; i < layout.items.length; i++) {
+          const item = layout.items[i];
+          const file = files[item.id];
+          if (file && file.path) {
+            try {
+              // 使用 Tauri 命令读取图片数据
+              const base64Data = await invoke<string>('read_file_as_base64', { filePath: file.path });
+              if (base64Data) {
+                // 提取纯 base64 部分（去掉 data:image/xxx;base64, 前缀）
+                const base64Content = base64Data.includes(',')
+                  ? base64Data.split(',')[1]
+                  : base64Data;
+                const imageBytes = Uint8Array.from(atob(base64Content), c => c.charCodeAt(0));
+                const ext = getFileExtension(file.path);
+                const fileName = `img_${i}.${ext}`;
+                imageFileNames[item.id] = fileName;
+                imagesFolder?.file(fileName, imageBytes);
+              }
+            } catch (e) {
+              console.warn('Failed to read image:', file.path, e);
+            }
+          }
+        }
+
+        // 4. 添加 layout.json
+        const layoutData: ComparisonSessionLayout = {
           items: layout.items.map(it => ({
             id: it.id,
             path: files[it.id]?.path || '',
@@ -931,12 +996,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             y: it.y,
             width: it.width,
             height: it.height,
-            rotation: it.rotation
+            rotation: it.rotation,
+            imageFileName: imageFileNames[it.id] || ''
           })),
           annotations: annotations,
           zOrder: zOrderIds
         };
-        await writeTextFile(path, JSON.stringify(session));
+        zip.file('layout.json', JSON.stringify(layoutData));
+
+        // 5. 生成 ZIP 并保存
+        const zipBlob = await zip.generateAsync({ type: 'uint8array' });
+        await writeFile(path, zipBlob);
       }
     } catch (err) {
       console.error('Save failed', err);
@@ -949,35 +1019,156 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         filters: [{ name: 'Aurora Comparison', extensions: ['aurora'] }]
       });
       if (path && typeof path === 'string') {
-        const content = await readTextFile(path);
-        const session: ComparisonSession = JSON.parse(content);
-        const newManuals: Record<string, any> = {};
-        const newIds: string[] = [];
-
-        session.items.forEach(it => {
-          if (files[it.id]) {
-            newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
-            newIds.push(it.id);
-          } else {
-            console.warn('Loaded session references missing file', it.id);
+        // 首先尝试以文本方式读取，检测是否为旧格式 JSON
+        let isZipFormat = false;
+        try {
+          const textContent = await readTextFile(path);
+          const parsed = JSON.parse(textContent);
+          // 如果能解析且有 version 字段，说明是旧格式
+          if (parsed.version && parsed.items) {
+            // 处理旧格式 (v1.0)
+            await loadLegacySession(parsed as ComparisonSession);
+            return;
           }
-        });
+        } catch {
+          // 不是纯文本 JSON，可能是 ZIP 格式
+          isZipFormat = true;
+        }
 
-        // 这里的 logic 可能需要根据实际项目情况调整：是否合并当前选择还是替换
-        setInternalSelectedIds(newIds);
-        setManualLayouts(newManuals);
-        setAnnotations(session.annotations || []);
+        if (isZipFormat) {
+          // 读取 ZIP 格式
+          const zipBytes = await readFile(path);
+          const zip = await JSZip.loadAsync(zipBytes);
 
-        if (session.zOrder && Array.isArray(session.zOrder)) {
-          const filteredZ = session.zOrder.filter(id => newIds.includes(id));
-          const missing = newIds.filter(id => !filteredZ.includes(id));
-          setZOrderIds([...filteredZ, ...missing]);
-        } else {
-          setZOrderIds(newIds);
+          // 读取 manifest
+          const manifestFile = zip.file('manifest.json');
+          if (!manifestFile) {
+            throw new Error('Invalid .aurora file: manifest.json not found');
+          }
+          const manifest: ComparisonSessionManifest = JSON.parse(await manifestFile.async('string'));
+
+          // 读取 viewport
+          const viewportFile = zip.file('viewport.json');
+          let viewport: ComparisonSessionViewport | null = null;
+          if (viewportFile) {
+            viewport = JSON.parse(await viewportFile.async('string'));
+          }
+
+          // 读取 layout
+          const layoutFile = zip.file('layout.json');
+          if (!layoutFile) {
+            throw new Error('Invalid .aurora file: layout.json not found');
+          }
+          const layoutData: ComparisonSessionLayout = JSON.parse(await layoutFile.async('string'));
+
+          // 设置会话名称
+          if (manifest.sessionName) {
+            setSessionName(manifest.sessionName);
+            onSessionNameChange?.(manifest.sessionName);
+          }
+
+          // 加载时自适应窗口，不使用保存的视图状态
+          // 重置标记以触发自动缩放
+          autoZoomAppliedRef.current = false;
+          userInteractedRef.current = false;
+
+          // 处理图片数据
+          const newManuals: Record<string, any> = {};
+          const newIds: string[] = [];
+          const newZOrder: string[] = [];
+          const imageBlobUrls: Record<string, string> = {};
+
+          for (const item of layoutData.items) {
+            if (item.imageFileName) {
+              // 从 ZIP 中读取图片
+              const imageFile = zip.file(`images/${item.imageFileName}`);
+              if (imageFile) {
+                const imageBytes = await imageFile.async('uint8array');
+                const ext = getFileExtension(item.imageFileName);
+                const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
+                                 ext === 'png' ? 'image/png' :
+                                 ext === 'gif' ? 'image/gif' :
+                                 ext === 'webp' ? 'image/webp' : 'image/png';
+                const blob = new Blob([imageBytes.buffer as ArrayBuffer], { type: mimeType });
+                const objectUrl = URL.createObjectURL(blob);
+                imageBlobUrls[item.id] = objectUrl;
+
+                // 创建临时的 file 对象用于显示
+                if (!files[item.id]) {
+                  // 如果文件不在当前库中，创建一个临时引用
+                  // 注意：这里我们仍然使用 item.id，但图片数据来自 ZIP
+                }
+              }
+            }
+
+            newManuals[item.id] = {
+              x: item.x,
+              y: item.y,
+              width: item.width,
+              height: item.height,
+              rotation: item.rotation
+            };
+            newIds.push(item.id);
+          }
+
+          // 更新图片缓存，使用 Blob URL
+          Object.entries(imageBlobUrls).forEach(([id, url]) => {
+            const img = new Image();
+            img.src = url;
+            img.onload = () => {
+              imagesCache.current.set(id, { original: img });
+              setLoadedCount(prev => prev + 1);
+            };
+          });
+
+          // 设置层级顺序
+          if (layoutData.zOrder && Array.isArray(layoutData.zOrder)) {
+            const filteredZ = layoutData.zOrder.filter(id => newIds.includes(id));
+            const missing = newIds.filter(id => !filteredZ.includes(id));
+            newZOrder.push(...filteredZ, ...missing);
+          } else {
+            newZOrder.push(...newIds);
+          }
+
+          setInternalSelectedIds(newIds);
+          setManualLayouts(newManuals);
+          setAnnotations(layoutData.annotations || []);
+          setZOrderIds(newZOrder);
+          initializedRef.current = true;
+
+          // 标记需要执行自适应缩放（在 layout 更新后通过 useEffect 执行）
+          shouldAutoFitAfterLoadRef.current = true;
         }
       }
     } catch (err) {
       console.error('Load failed', err);
+    }
+  };
+
+  // 加载旧版本 (v1.0) 会话
+  const loadLegacySession = async (session: ComparisonSession) => {
+    const newManuals: Record<string, any> = {};
+    const newIds: string[] = [];
+
+    session.items.forEach(it => {
+      if (files[it.id]) {
+        newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
+        newIds.push(it.id);
+      } else {
+        console.warn('Loaded session references missing file', it.id);
+      }
+    });
+
+    setInternalSelectedIds(newIds);
+    setManualLayouts(newManuals);
+    setAnnotations(session.annotations || []);
+
+    if (session.zOrder && Array.isArray(session.zOrder)) {
+      const filteredZ = session.zOrder.filter(id => newIds.includes(id));
+      const missing = newIds.filter(id => !filteredZ.includes(id));
+      setZOrderIds([...filteredZ, ...missing]);
+    } else {
+      setZOrderIds(newIds);
     }
   };
 
@@ -1261,6 +1452,42 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       userInteractedRef.current = true;
       autoZoomAppliedRef.current = true;
     }
+  };
+
+  // 只重置画布视图，不重置图片变换
+  const resetViewportOnly = () => {
+    if (layout.items.length === 0 || containerSize.width === 0) return;
+
+    // 计算所有图片的实际边界框
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    layout.items.forEach(item => {
+      minX = Math.min(minX, item.x);
+      minY = Math.min(minY, item.y);
+      maxX = Math.max(maxX, item.x + item.width);
+      maxY = Math.max(maxY, item.y + item.height);
+    });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+
+    if (contentWidth <= 0 || contentHeight <= 0) return;
+
+    const padding = 60;
+    const scaleX = (containerSize.width - padding * 2) / contentWidth;
+    const scaleY = (containerSize.height - padding * 2) / contentHeight;
+    const initialScale = Math.min(scaleX, scaleY, 1.2);
+
+    // 计算居中位置：让内容边界框居中显示
+    const contentCenterX = minX + contentWidth / 2;
+    const contentCenterY = minY + contentHeight / 2;
+
+    setTransform({
+      x: containerSize.width / 2 - contentCenterX * initialScale,
+      y: containerSize.height / 2 - contentCenterY * initialScale,
+      scale: initialScale
+    });
+    userInteractedRef.current = true;
+    autoZoomAppliedRef.current = true;
   };
 
   const selectedMenuOptions = [

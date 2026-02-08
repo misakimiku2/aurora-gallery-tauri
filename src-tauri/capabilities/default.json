@@ -30,6 +30,8 @@
     "fs:allow-read-file",
     "fs:allow-write-text-file",
     "fs:allow-write-file",
+    "fs:read-files",
+    "fs:write-files",
     "fs:allow-copy-file",
     "fs:allow-mkdir",
     "fs:allow-remove",
