@@ -16,6 +16,7 @@ import { Plus, Save, FolderOpen, Trash2 } from 'lucide-react';
 import JSZip from 'jszip';
 import { ComparisonSessionManifest, ComparisonSessionViewport, ComparisonSessionLayout } from './comparer/types';
 import { invoke } from '@tauri-apps/api/core';
+import { useToasts } from '../hooks/useToasts';
 
 interface ImageComparerProps {
   selectedFileIds: string[];
@@ -154,6 +155,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
   const shouldAutoFitAfterLoadRef = useRef(false);
+  // Toast notifications
+  const { toast, showToast } = useToasts();
   // Use internal state if props not provided, otherwise use props
   const [internalReferenceMode, setInternalReferenceMode] = useState(false);
   const isReferenceMode = isReferenceModeProp !== undefined ? isReferenceModeProp : internalReferenceMode;
@@ -969,6 +972,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const originalWindowStateRef = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
   const windowResizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // 保存进入参考模式前的侧边栏状态
+  const sidebarStateBeforeRef = useRef<{ isSidebarVisible: boolean; isMetadataVisible: boolean } | null>(null);
+
   // 右键菜单逻辑
   const handleContextMenu = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1734,14 +1740,59 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setIsReferenceMode(newMode);
     onReferenceModeChangeRef.current?.(newMode);
 
+    // Helper function to animate window resize
+    const animateWindowResize = async (
+      targetWidth: number,
+      targetHeight: number,
+      duration: number = 70
+    ) => {
+      const window = getCurrentWindow();
+      const startSize = await window.innerSize();
+      const startWidth = startSize.width;
+      const startHeight = startSize.height;
+      const startTime = performance.now();
+
+      // ease-out cubic easing function for smooth animation
+      const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
+      return new Promise<void>((resolve) => {
+        const animate = (currentTime: number) => {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+          const easedProgress = easeOutCubic(progress);
+
+          const newWidth = Math.round(startWidth + (targetWidth - startWidth) * easedProgress);
+          const newHeight = Math.round(startHeight + (targetHeight - startHeight) * easedProgress);
+
+          window.setSize(new LogicalSize(newWidth, newHeight));
+
+          if (progress < 1) {
+            requestAnimationFrame(animate);
+          } else {
+            resolve();
+          }
+        };
+
+        requestAnimationFrame(animate);
+      });
+    };
+
     try {
       const window = getCurrentWindow();
       await window.setAlwaysOnTop(newMode);
 
       // Set window min size based on mode
       if (newMode) {
-        // Enter reference mode: set min size to 200x200
+        // Enter reference mode: save current sidebar state
+        const currentLayout = layoutPropRef.current;
+        sidebarStateBeforeRef.current = {
+          isSidebarVisible: currentLayout?.isSidebarVisible ?? false,
+          isMetadataVisible: currentLayout?.isMetadataVisible ?? false
+        };
+
         await setWindowMinSize(200, 200);
+        // Show toast notification
+        showToast('解除窗口大小限制。', 2000);
         // Close side panels after a short delay to avoid re-render issues
         setTimeout(() => {
           const currentLayout = layoutPropRef.current;
@@ -1754,7 +1805,34 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }
         }, 50);
       } else {
-        // Exit reference mode: restore min size to 1280x800
+        // Exit reference mode: get saved sidebar state first
+        const savedState = sidebarStateBeforeRef.current;
+
+        // Check window size and restore if smaller than 1280x800 with animation
+        const currentSize = await window.innerSize();
+        if (currentSize.width < 1280 || currentSize.height < 800) {
+          await animateWindowResize(1280, 800, 70);
+        }
+
+        // Restore sidebar state after animation completes
+        if (savedState) {
+          const currentLayout = layoutPropRef.current;
+          const currentOnLayoutToggle = onLayoutToggleRef.current;
+
+          // Restore sidebar if it was visible before
+          if (savedState.isSidebarVisible && !currentLayout?.isSidebarVisible) {
+            currentOnLayoutToggle?.('sidebar');
+          }
+          // Restore metadata panel if it was visible before
+          if (savedState.isMetadataVisible && !currentLayout?.isMetadataVisible) {
+            currentOnLayoutToggle?.('metadata');
+          }
+          sidebarStateBeforeRef.current = null;
+        }
+
+        // Show toast notification
+        showToast('开启窗口大小限制。', 2000);
+
         await setWindowMinSize(1280, 800);
       }
     } catch (error) {
@@ -1766,6 +1844,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
+        // 优先级1: 如果添加图片窗口打开，关闭它
+        if (isAddImageModalOpen) {
+          setIsAddImageModalOpen(false);
+          return;
+        }
+        // 优先级2: 如果处于参考模式，退出参考模式
+        if (isReferenceMode) {
+          toggleReferenceMode();
+          return;
+        }
+        // 优先级3: 关闭标签页
         if (onCloseTab) onCloseTab();
         else onClose();
       }
@@ -1778,7 +1867,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onCloseTab, toggleReferenceMode]);
+  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode]);
 
   // Handle mouse side buttons
   useEffect(() => {
@@ -1786,6 +1875,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (e.button === 3) {
         e.stopImmediatePropagation();
         e.preventDefault();
+        // 优先级1: 如果添加图片窗口打开，关闭它
+        if (isAddImageModalOpen) {
+          setIsAddImageModalOpen(false);
+          return;
+        }
+        // 优先级2: 如果处于参考模式，退出参考模式
+        if (isReferenceMode) {
+          toggleReferenceMode();
+          return;
+        }
+        // 优先级3: 关闭标签页
         if (onCloseTab) onCloseTab();
         else onClose();
       } else if (e.button === 4) {
@@ -1796,7 +1896,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     window.addEventListener('mouseup', handleMouseUp, { capture: true });
     return () => window.removeEventListener('mouseup', handleMouseUp, { capture: true });
-  }, [onClose, onCloseTab]);
+  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode]);
 
   return (
     <div
@@ -2213,6 +2313,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           onClose={() => setIsAddImageModalOpen(false)}
           t={t}
         />
+      )}
+
+      {/* Toast Notification */}
+      {toast.visible && (
+        <div
+          className={`absolute bottom-20 left-1/2 -translate-x-1/2 bg-black/80 text-white text-sm px-4 py-2 rounded-full shadow-lg backdrop-blur-sm pointer-events-none z-[60] transition-all duration-300 ease-out ${
+            toast.isLeaving
+              ? 'opacity-0 translate-y-2'
+              : 'opacity-100 translate-y-0 animate-fade-in-up'
+          }`}
+        >
+          {toast.msg}
+        </div>
       )}
     </div>
   );

@@ -648,6 +648,17 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         return () => window.removeEventListener('scroll', handleScrollCloseMenus, true);
     }, []);
 
+    // 添加ESC键关闭支持
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                onClose();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     // 默认展开根文件夹并选中第一个
     useEffect(() => {
         if (activeCategory === 'folders' && rootFolders.length > 0) {
