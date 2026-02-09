@@ -2080,6 +2080,13 @@ async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+    window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize { width, height })))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
     save_window_state(&app_handle);
     app_handle.exit(0);
@@ -2267,6 +2274,7 @@ fn main() {
             scan_file,
             hide_window,
             show_window,
+            set_window_min_size,
             exit_app,
             get_dominant_colors,
             color_worker::pause_color_extraction,

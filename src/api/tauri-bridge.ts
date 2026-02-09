@@ -920,6 +920,20 @@ export const showWindow = async (): Promise<void> => {
 };
 
 /**
+ * 设置窗口最小尺寸
+ * @param width 最小宽度
+ * @param height 最小高度
+ */
+export const setWindowMinSize = async (width: number, height: number): Promise<void> => {
+  try {
+    await invoke('set_window_min_size', { width, height });
+  } catch (error) {
+    console.error('Failed to set window min size:', error);
+    throw error;
+  }
+};
+
+/**
  * 退出应用程序
  */
 export const exitApp = async (): Promise<void> => {

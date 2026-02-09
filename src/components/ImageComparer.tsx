@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan } from 'lucide-react';
+import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye } from 'lucide-react';
+import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../types';
+import { setWindowMinSize } from '../api/tauri-bridge';
+import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
@@ -33,6 +36,8 @@ interface ImageComparerProps {
   onSelect?: (id: string) => void;
   sessionName?: string;
   onSessionNameChange?: (name: string) => void;
+  onReferenceModeChange?: (isReferenceMode: boolean) => void;
+  isReferenceMode?: boolean;
 }
 
 interface ImageLayoutInfo {
@@ -116,7 +121,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   canGoBack,
   onSelect,
   sessionName: sessionNameProp,
-  onSessionNameChange
+  onSessionNameChange,
+  onReferenceModeChange,
+  isReferenceMode: isReferenceModeProp
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -147,6 +154,24 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
   const shouldAutoFitAfterLoadRef = useRef(false);
+  // Use internal state if props not provided, otherwise use props
+  const [internalReferenceMode, setInternalReferenceMode] = useState(false);
+  const isReferenceMode = isReferenceModeProp !== undefined ? isReferenceModeProp : internalReferenceMode;
+  const setIsReferenceMode = (value: boolean) => {
+    if (isReferenceModeProp === undefined) {
+      setInternalReferenceMode(value);
+    }
+    onReferenceModeChange?.(value);
+  };
+  // Use ref to store callbacks to avoid re-render issues
+  const layoutPropRef = useRef(layoutProp);
+  const onLayoutToggleRef = useRef(onLayoutToggle);
+  const onReferenceModeChangeRef = useRef(onReferenceModeChange);
+  useEffect(() => {
+    layoutPropRef.current = layoutProp;
+    onLayoutToggleRef.current = onLayoutToggle;
+    onReferenceModeChangeRef.current = onReferenceModeChange;
+  }, [layoutProp, onLayoutToggle, onReferenceModeChange]);
 
   // 多级 Mipmap 缓存
   const imagesCache = useRef<Map<string, MipmapCache>>(new Map());
@@ -940,8 +965,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   };
 
+  // 窗口大小恢复相关
+  const originalWindowStateRef = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
+  const windowResizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // 右键菜单逻辑
-  const handleContextMenu = (e: React.MouseEvent) => {
+  const handleContextMenu = async (e: React.MouseEvent) => {
     e.preventDefault();
 
     const rect = containerRef.current?.getBoundingClientRect();
@@ -972,7 +1001,85 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
 
     setMenuTargetId(targetId);
-    setContextMenu({ x: e.clientX, y: e.clientY });
+
+    let menuX = e.clientX;
+    let menuY = e.clientY;
+
+    if (isReferenceMode && isTauriEnvironment()) {
+      try {
+        const window = getCurrentWindow();
+        const windowSize = await window.innerSize();
+        const windowPos = await window.outerPosition();
+        const MENU_MIN_HEIGHT = 280;
+        const MENU_PADDING = 20;
+
+        if (windowSize.height < MENU_MIN_HEIGHT + MENU_PADDING) {
+          const newHeight = MENU_MIN_HEIGHT + MENU_PADDING;
+          const heightDelta = newHeight - windowSize.height;
+
+          originalWindowStateRef.current = {
+            width: windowSize.width,
+            height: windowSize.height,
+            x: windowPos.x,
+            y: windowPos.y
+          };
+
+          const screenHeight = (window as any).screen?.height || 1080;
+          const spaceBelow = screenHeight - (windowPos.y + windowSize.height);
+
+          let newY = windowPos.y;
+          if (spaceBelow >= heightDelta) {
+            await window.setSize(new LogicalSize(windowSize.width, newHeight));
+          } else if (windowPos.y >= heightDelta) {
+            newY = windowPos.y - heightDelta;
+            await window.setPosition(new LogicalPosition(windowPos.x, newY));
+            await window.setSize(new LogicalSize(windowSize.width, newHeight));
+          } else {
+            const availableBelow = Math.max(0, spaceBelow);
+            const availableAbove = Math.max(0, windowPos.y);
+            const expandBelow = Math.min(availableBelow, heightDelta);
+            const expandAbove = heightDelta - expandBelow;
+            newY = windowPos.y - expandAbove;
+            await window.setPosition(new LogicalPosition(windowPos.x, newY));
+            await window.setSize(new LogicalSize(windowSize.width, newHeight));
+          }
+
+          const relativeMouseY = menuY;
+          const newWindowCenterY = newHeight / 2;
+          const menuOffset = Math.min(50, heightDelta / 2);
+          menuY = Math.max(10, Math.min(newWindowCenterY - menuOffset, newHeight - MENU_MIN_HEIGHT - 10));
+
+          console.log('[ContextMenu] Resizing window from', windowSize.height, 'to', newHeight);
+        }
+      } catch (error) {
+        console.error('Failed to resize window for context menu:', error);
+      }
+    }
+
+    setContextMenu({ x: menuX, y: menuY });
+  };
+
+  const handleCloseContextMenu = () => {
+    setContextMenu(null);
+
+    if (originalWindowStateRef.current && isReferenceMode && isTauriEnvironment()) {
+      if (windowResizeTimeoutRef.current) {
+        clearTimeout(windowResizeTimeoutRef.current);
+      }
+
+      windowResizeTimeoutRef.current = setTimeout(async () => {
+        try {
+          const window = getCurrentWindow();
+          const { width, height, x, y } = originalWindowStateRef.current!;
+          await window.setSize(new LogicalSize(width, height));
+          await window.setPosition(new LogicalPosition(x, y));
+          console.log('[ContextMenu] Restoring window size to', height);
+          originalWindowStateRef.current = null;
+        } catch (error) {
+          console.error('Failed to restore window size:', error);
+        }
+      }, 300);
+    }
   };
 
   const getFileExtension = (filePath: string): string => {
@@ -1243,6 +1350,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setMenuTargetId(null);
   };
 
+  // Cleanup on unmount - only run when component actually unmounts
   useEffect(() => {
     return () => {
       if (animationRef.current) {
@@ -1255,6 +1363,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       });
     };
   }, [sessionFiles]);
+
+  // Handle reference mode cleanup on unmount - separate effect to avoid triggering on sessionFiles changes
+  useEffect(() => {
+    return () => {
+      // Only cleanup if component is actually unmounting and we're still in reference mode
+      onReferenceModeChangeRef.current?.(false);
+      const window = getCurrentWindow();
+      window.setAlwaysOnTop(false);
+      setWindowMinSize(1280, 800);
+    };
+  }, []); // Empty deps - only run on unmount
+
+
 
   const handleViewImage = () => {
     const targetId = menuTargetId || (activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null);
@@ -1490,6 +1611,53 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     autoZoomAppliedRef.current = true;
   };
 
+  const handleViewAll = () => {
+    if (layout.items.length === 0 || containerSize.width === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    layout.items.forEach(item => {
+      const cx = item.x + item.width / 2;
+      const cy = item.y + item.height / 2;
+      const corners = [
+        { x: item.x, y: item.y },
+        { x: item.x + item.width, y: item.y },
+        { x: item.x + item.width, y: item.y + item.height },
+        { x: item.x, y: item.y + item.height }
+      ].map(p => rotatePointAround(p.x, p.y, cx, cy, item.rotation));
+
+      corners.forEach(c => {
+        minX = Math.min(minX, c.x);
+        minY = Math.min(minY, c.y);
+        maxX = Math.max(maxX, c.x);
+        maxY = Math.max(maxY, c.y);
+      });
+    });
+
+    const contentWidth = maxX - minX;
+    const contentHeight = maxY - minY;
+
+    if (contentWidth <= 0 || contentHeight <= 0) return;
+
+    const padding = 60;
+    const scaleX = (containerSize.width - padding * 2) / contentWidth;
+    const scaleY = (containerSize.height - padding * 2) / contentHeight;
+    const newScale = Math.min(scaleX, scaleY, 1.2);
+
+    const contentCenterX = minX + contentWidth / 2;
+    const contentCenterY = minY + contentHeight / 2;
+
+    const newTransform = {
+      x: containerSize.width / 2 - contentCenterX * newScale,
+      y: containerSize.height / 2 - contentCenterY * newScale,
+      scale: newScale
+    };
+
+    startAnimation(newTransform);
+    userInteractedRef.current = true;
+    setContextMenu(null);
+    setMenuTargetId(null);
+  };
+
   const selectedMenuOptions = [
     { label: '查看此图', onClick: handleViewImage, icon: <Maximize size={14} /> },
     { label: '重置变换', onClick: handleResetItem, icon: <RefreshCcw size={14} /> },
@@ -1553,10 +1721,46 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} />, disabled: imageFiles.length === 0 },
     { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
     { divider: true, label: '', onClick: () => { } },
+    { label: '查看全部', onClick: handleViewAll, icon: <Scan size={14} />, disabled: imageFiles.length === 0 },
     { label: '重置窗口', onClick: handleReset, icon: <RefreshCcw size={14} /> },
   ];
 
   const menuOptions = menuTargetId ? selectedMenuOptions : nonSelectedMenuOptions;
+
+  // Reference mode toggle
+  const toggleReferenceMode = useCallback(async () => {
+    const newMode = !isReferenceMode;
+    console.log('[ImageComparer] Toggling reference mode, newMode:', newMode);
+    setIsReferenceMode(newMode);
+    onReferenceModeChangeRef.current?.(newMode);
+
+    try {
+      const window = getCurrentWindow();
+      await window.setAlwaysOnTop(newMode);
+
+      // Set window min size based on mode
+      if (newMode) {
+        // Enter reference mode: set min size to 200x200
+        await setWindowMinSize(200, 200);
+        // Close side panels after a short delay to avoid re-render issues
+        setTimeout(() => {
+          const currentLayout = layoutPropRef.current;
+          const currentOnLayoutToggle = onLayoutToggleRef.current;
+          if (currentLayout?.isSidebarVisible) {
+            currentOnLayoutToggle?.('sidebar');
+          }
+          if (currentLayout?.isMetadataVisible) {
+            currentOnLayoutToggle?.('metadata');
+          }
+        }, 50);
+      } else {
+        // Exit reference mode: restore min size to 1280x800
+        await setWindowMinSize(1280, 800);
+      }
+    } catch (error) {
+      console.error('Failed to toggle reference mode:', error);
+    }
+  }, [isReferenceMode]);
 
   // Keyboard support
   useEffect(() => {
@@ -1568,10 +1772,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (e.key === 'a' || e.key === 'A') {
         setIsSnappingEnabled(prev => !prev);
       }
+      if (e.key === 'r' || e.key === 'R') {
+        toggleReferenceMode();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onCloseTab]);
+  }, [onClose, onCloseTab, toggleReferenceMode]);
 
   // Handle mouse side buttons
   useEffect(() => {
@@ -1601,16 +1808,21 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       onMouseLeave={handleMouseUp}
       onContextMenu={handleContextMenu}
     >
-      {/* Header */}
-      <div className="h-14 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-10 shrink-0">
+      {/* Header - hidden in reference mode */}
+      {!isReferenceMode && (
+      <div
+        className={`bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 transition-transform duration-200 ease-out h-14 relative z-10`}
+      >
         <div className="flex items-center space-x-2">
-          <button
-            onClick={() => onLayoutToggle?.('sidebar')}
-            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
-            title={t('viewer.toggleSidebar')}
-          >
-            <Sidebar size={18} />
-          </button>
+          {!isReferenceMode && (
+            <button
+              onClick={() => onLayoutToggle?.('sidebar')}
+              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+              title={t('viewer.toggleSidebar')}
+            >
+              <Sidebar size={18} />
+            </button>
+          )}
 
           <button
             onClick={() => { onCloseTab ? onCloseTab() : onClose(); }}
@@ -1664,6 +1876,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           </button>
 
           <button
+            onClick={toggleReferenceMode}
+            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isReferenceMode ? 'text-blue-500' : 'text-gray-400'}`}
+            title={`参考模式 (R): ${isReferenceMode ? 'ON' : 'OFF'}`}
+          >
+            <Eye size={18} className={isReferenceMode ? 'text-blue-500' : 'text-gray-400'} />
+          </button>
+
+          <button
             onClick={handleSaveSession}
             disabled={imageFiles.length === 0}
             className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300`}
@@ -1683,6 +1903,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
 
           <button
+            onClick={handleViewAll}
+            disabled={imageFiles.length === 0}
+            className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300 transition-colors`}
+            title="查看全部"
+          >
+            <Scan size={18} />
+          </button>
+
+          <button
             onClick={handleReset}
             className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-colors"
             title="重置画布"
@@ -1690,15 +1919,18 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             <RefreshCcw size={18} />
           </button>
 
-          <button
-            onClick={() => onLayoutToggle?.('metadata')}
-            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isMetadataVisible ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
-            title={t('viewer.toggleMeta')}
-          >
-            <PanelRight size={18} />
-          </button>
+          {!isReferenceMode && (
+            <button
+              onClick={() => onLayoutToggle?.('metadata')}
+              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isMetadataVisible ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+              title={t('viewer.toggleMeta')}
+            >
+              <PanelRight size={18} />
+            </button>
+          )}
         </div>
       </div>
+      )}
 
       {/* Canvas Container */}
       <div
@@ -1906,8 +2138,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           <ComparerContextMenu
             x={contextMenu.x}
             y={contextMenu.y}
-            onClose={() => setContextMenu(null)}
+            onClose={handleCloseContextMenu}
             options={menuOptions}
+            compact={isReferenceMode}
           />
         )}
 
@@ -1942,7 +2175,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
       </div>
 
-      {/* Shortcuts Hint */}
+      {/* Shortcuts Hint - hidden in reference mode */}
+      {!isReferenceMode && (
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
         <div className="flex items-center">
           <Magnet size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
@@ -1963,6 +2197,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
         </div>
       </div>
+      )}
 
       {/* Add Image Modal */}
       {isAddImageModalOpen && (

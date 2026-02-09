@@ -183,6 +183,21 @@ export const App: React.FC = () => {
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
   // State for close confirmation modal
   const [showCloseConfirmation, setShowCloseConfirmation] = useState(false);
+  // State for reference mode - controls TabBar visibility with hover detection
+  const [isReferenceMode, setIsReferenceMode] = useState(false);
+  // State for tracking if user is hovering over the top bar area
+  const [isHoveringTopBar, setIsHoveringTopBar] = useState(false);
+  // Use ref to store the setter to avoid re-renders causing issues
+  const isReferenceModeRef = useRef(setIsReferenceMode);
+  useEffect(() => {
+    isReferenceModeRef.current = setIsReferenceMode;
+  }, []);
+  const handleReferenceModeChange = useCallback((inReferenceMode: boolean) => {
+    isReferenceModeRef.current(inReferenceMode);
+  }, []);
+  const handleTopBarHoverChange = useCallback((isHovering: boolean) => {
+    setIsHoveringTopBar(isHovering);
+  }, []);
 
   // Translation helper
   const t = useCallback((key: string): string => {
@@ -3527,7 +3542,7 @@ export const App: React.FC = () => {
           // Ask user (default behavior)
           setShowCloseConfirmation(true);
         }
-      }} t={t} showWindowControls={!showSplash} />
+      }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
       <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
         <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
           <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} />
@@ -3579,8 +3594,14 @@ export const App: React.FC = () => {
                 customTags={state.customTags}
                 resourceRoot={state.settings.paths.resourceRoot}
                 cachePath={state.settings.paths.cacheRoot}
-                onClose={() => updateTabById(tab.id, { isCompareMode: false })}
-                onCloseTab={() => handleCloseTab({ stopPropagation: () => { } } as any, tab.id)}
+                onClose={() => {
+                  updateTabById(tab.id, { isCompareMode: false });
+                  setIsReferenceMode(false);
+                }}
+                onCloseTab={() => {
+                  handleCloseTab({ stopPropagation: () => { } } as any, tab.id);
+                  setIsReferenceMode(false);
+                }}
                 onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}
                 onLayoutToggle={onLayoutToggle}
                 onNavigateBack={goBack}
@@ -3590,6 +3611,8 @@ export const App: React.FC = () => {
                 layoutProp={state.layout}
                 canGoBack={tab.history.currentIndex > 0}
                 t={t}
+                onReferenceModeChange={handleReferenceModeChange}
+                isReferenceMode={isReferenceMode}
               />
             </div>
           ))}

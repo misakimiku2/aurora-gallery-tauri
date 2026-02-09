@@ -584,7 +584,16 @@ export const translations = {
       totalCount: '总计',
       limitReached: '已达到上限',
       canvasCount: '画布中',
-      confirmAdd: '确认添加'
+      confirmAdd: '确认添加',
+      sortBy: '排序方式',
+      groupBy: '分组方式',
+      sortByName: '按名称',
+      sortByDate: '按时间',
+      sortBySize: '按大小',
+      groupByNone: '无',
+      groupByType: '按类型',
+      groupByDate: '按日期',
+      groupBySize: '按大小'
     },
     pagination: {
       prev: '上一页',
@@ -1175,7 +1184,16 @@ export const translations = {
       totalCount: 'Total',
       limitReached: 'Limit reached',
       canvasCount: 'In canvas',
-      confirmAdd: 'Confirm Add'
+      confirmAdd: 'Confirm Add',
+      sortBy: 'Sort By',
+      groupBy: 'Group By',
+      sortByName: 'By Name',
+      sortByDate: 'By Date',
+      sortBySize: 'By Size',
+      groupByNone: 'None',
+      groupByType: 'By Type',
+      groupByDate: 'By Date',
+      groupBySize: 'By Size'
     },
     pagination: {
       prev: 'Previous',
