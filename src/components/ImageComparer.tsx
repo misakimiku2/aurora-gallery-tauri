@@ -79,7 +79,8 @@ function getBestMipmapLevel(cache: MipmapCache, targetScale: number): HTMLImageE
 // 创建多级 Mipmap
 function createMipmapLevels(img: HTMLImageElement, originalWidth: number, originalHeight: number): MipmapCache['levels'] {
   const levels: MipmapCache['levels'] = [];
-  const scales = [0.5, 0.25, 0.125];
+  // 增加更多中间级别以改善显示质量
+  const scales = [0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0625];
 
   for (const scale of scales) {
     const canvas = document.createElement('canvas');
