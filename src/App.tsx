@@ -2086,6 +2086,25 @@ export const App: React.FC = () => {
 
       updatedTopic.updatedAt = new Date().toISOString();
 
+      // 保存到数据库
+      if (isTauriEnvironment()) {
+        dbUpsertTopic({
+          id: updatedTopic.id,
+          parentId: updatedTopic.parentId,
+          name: updatedTopic.name,
+          description: updatedTopic.description,
+          topicType: updatedTopic.type,
+          coverFileId: updatedTopic.coverFileId,
+          backgroundFileId: updatedTopic.backgroundFileId,
+          coverCrop: updatedTopic.coverCrop,
+          peopleIds: updatedTopic.peopleIds,
+          fileIds: updatedTopic.fileIds,
+          sourceUrl: updatedTopic.sourceUrl,
+          createdAt: updatedTopic.createdAt ? new Date(updatedTopic.createdAt).getTime() : undefined,
+          updatedAt: updatedTopic.updatedAt ? new Date(updatedTopic.updatedAt).getTime() : undefined,
+        }).catch(e => console.error('Failed to update topic in DB:', e));
+      }
+
       return {
         ...current,
         topics: {

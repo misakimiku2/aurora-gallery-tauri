@@ -364,6 +364,45 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     hoverPlayingId, onSetHoverPlayingId
 }) => {
 
+    // 递归获取所有子专题ID（包含嵌套子专题）
+    const getAllDescendantTopicIds = useCallback((topicId: string): string[] => {
+        const result: string[] = [];
+        const directChildren = Object.values(topics).filter(t => t.parentId === topicId);
+        for (const child of directChildren) {
+            result.push(child.id);
+            result.push(...getAllDescendantTopicIds(child.id));
+        }
+        return result;
+    }, [topics]);
+
+    // 计算专题的总人物数量（包含子专题）
+    const getTotalPersonCount = useCallback((topic: Topic): number => {
+        const descendantIds = getAllDescendantTopicIds(topic.id);
+        const allTopicIds = [topic.id, ...descendantIds];
+        const allPeopleIds = new Set<string>();
+        allTopicIds.forEach(id => {
+            const t = topics[id];
+            if (t) {
+                t.peopleIds.forEach(pid => allPeopleIds.add(pid));
+            }
+        });
+        return allPeopleIds.size;
+    }, [topics, getAllDescendantTopicIds]);
+
+    // 计算专题的总文件数量（包含子专题）
+    const getTotalFileCount = useCallback((topic: Topic): number => {
+        const descendantIds = getAllDescendantTopicIds(topic.id);
+        const allTopicIds = [topic.id, ...descendantIds];
+        const allFileIds = new Set<string>();
+        allTopicIds.forEach(id => {
+            const t = topics[id];
+            if (t) {
+                t.fileIds.forEach(fid => allFileIds.add(fid));
+            }
+        });
+        return allFileIds.size;
+    }, [topics, getAllDescendantTopicIds]);
+
     // Selection state for box selection
     const [isSelecting, setIsSelecting] = useState(false);
     const selectionRef = useRef<HTMLDivElement>(null);
@@ -1500,7 +1539,8 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 <div className="relative" style={{ height: totalHeight }}>
                     {visibleLayoutItems.map(({ topic, x, y, width, height }) => {
                         const coverStyle = getCoverStyle(topic);
-                        const personCount = topic.peopleIds.length;
+                        const personCount = getTotalPersonCount(topic);
+                        const fileCount = getTotalFileCount(topic);
                         const subTopicCount = Object.values(topics).filter(t => t.parentId === topic.id).length;
                         const isSelected = selectedTopicIds.includes(topic.id);
 
@@ -1549,7 +1589,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                         <User size={10} className="mr-1" /> {personCount}
                                                     </div>
                                                     <div className="text-xs opacity-70 flex items-center">
-                                                        <Folder size={10} className="mr-1" /> {subTopicCount}
+                                                        <FileImage size={10} className="mr-1" /> {fileCount}
                                                     </div>
                                                 </div>
                                                 {topic.type && topic.type.trim() ? (
@@ -1780,7 +1820,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                     </h4>
                                                     <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
                                                         <span className="flex items-center"><User size={12} className="mr-1" /> {sub.peopleIds.length}</span>
-                                                        <span className="flex items-center"><Folder size={12} className="mr-1" /> {sub.fileIds?.length || 0}</span>
+                                                        <span className="flex items-center"><FileImage size={12} className="mr-1" /> {sub.fileIds?.length || 0}</span>
                                                     </div>
                                                 </div>
                                             </div>
