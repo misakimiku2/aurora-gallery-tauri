@@ -827,6 +827,19 @@ export const copyImageColors = async (srcPath: string, destPath: string): Promis
 };
 
 /**
+ * 复制图片到剪贴板
+ * @param filePath 图片文件路径
+ */
+export const copyImageToClipboard = async (filePath: string): Promise<void> => {
+  try {
+    await invoke('copy_image_to_clipboard', { filePath });
+  } catch (error) {
+    console.error('Failed to copy image to clipboard:', error);
+    throw error;
+  }
+};
+
+/**
  * 移动文件
  * @param srcPath 源文件路径
  * @param destPath 目标文件路径

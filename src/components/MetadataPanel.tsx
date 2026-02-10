@@ -38,10 +38,13 @@ const findImagesDeeply = (
         .slice(0, limit);
 };
 import { createPortal } from 'react-dom';
-import { FileNode, FileType, Person, TabState, Topic } from '../types';
+import { FileNode, FileType, Person, TabState, Topic, AppSettings } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
+import { AIRenameButton } from './AIRenameButton';
+import { AIRenamePreview } from './AIRenamePreview';
+import { useAIRename } from '../hooks/useAIRename';
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
 import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
 
@@ -66,6 +69,7 @@ interface MetadataProps {
   resourceRoot?: string;
   cachePath?: string;
   filesVersion?: number;
+  settings?: AppSettings;
 }
 
 // Image Preview Component for Tauri
@@ -254,9 +258,18 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
+
+  // AI 重命名功能
+  const { isGenerating, previewName, generateName, applyRename, cancelRename } = useAIRename({
+    settings: settings || {} as AppSettings,
+    people: people || {},
+    onUpdate,
+    showToast: (msg) => setToast({ msg, visible: true }),
+    t,
+  });
   
   // Topic Handling
   const selectedTopicCount = selectedTopicIds ? selectedTopicIds.length : 0;
@@ -1777,13 +1790,39 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     return (
         <div ref={panelRef} className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
       <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
-        <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
+        {/* 文件名区域 - 使用相对定位，按钮绝对定位在右下角 */}
+        <div className="relative">
+          <div className={`font-bold text-lg text-gray-800 dark:text-white break-all leading-tight mb-1 ${!isMulti && file && file.type === FileType.IMAGE && settings && !previewName ? 'pr-7' : ''}`}>
             {isMulti ? `${selectedFileIds.length} ${t('meta.items')}` : file?.name}
+          </div>
+          
+          {/* 按钮绝对定位在右下角 */}
+          {!isMulti && file && file.type === FileType.IMAGE && settings && !previewName && (
+            <div className="absolute bottom-0 right-0">
+              <AIRenameButton
+                onClick={() => generateName(file)}
+                isGenerating={isGenerating}
+                t={t}
+              />
+            </div>
+          )}
         </div>
+        
+        {/* 父文件夹名称 */}
         {!isMulti && file && (
             <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
                {files[file.parentId || '']?.name || 'Root'}
             </div>
+        )}
+        
+        {/* AI 重命名预览 - 显示在文件名下方 */}
+        {!isMulti && file && previewName && (
+          <AIRenamePreview
+            previewName={previewName}
+            onApply={() => applyRename(file)}
+            onCancel={cancelRename}
+            t={t}
+          />
         )}
       </div>
 

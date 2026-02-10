@@ -1514,6 +1514,45 @@ async fn copy_image_colors(
 }
 
 #[tauri::command]
+async fn copy_image_to_clipboard(file_path: String) -> Result<(), String> {
+    use arboard::Clipboard;
+    use std::fs;
+    
+    let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err(format!("File does not exist: {}", file_path));
+    }
+    
+    // Read image file bytes
+    let image_bytes = fs::read(&file_path)
+        .map_err(|e| format!("Failed to read image file: {}", e))?;
+    
+    // Try to load image and convert to RGBA
+    let img = image::load_from_memory(&image_bytes)
+        .map_err(|e| format!("Failed to load image: {}", e))?;
+    
+    let rgba_img = img.to_rgba8();
+    let (width, height) = rgba_img.dimensions();
+    let rgba_bytes = rgba_img.into_raw();
+    
+    // Create clipboard and set image
+    // arboard expects RGBA format on all platforms
+    let mut clipboard = Clipboard::new()
+        .map_err(|e| format!("Failed to access clipboard: {}", e))?;
+    
+    let image_data = arboard::ImageData {
+        width: width as usize,
+        height: height as usize,
+        bytes: rgba_bytes.into(),
+    };
+    
+    clipboard.set_image(image_data)
+        .map_err(|e| format!("Failed to copy image to clipboard: {}", e))?;
+    
+    Ok(())
+}
+
+#[tauri::command]
 async fn copy_file(src_path: String, dest_path: String) -> Result<String, String> {
     let src = Path::new(&src_path);
     let mut dest = Path::new(&dest_path);
@@ -2290,7 +2329,8 @@ fn main() {
             db_delete_topic,
             db_upsert_file_metadata,
             db_copy_file_metadata,
-            switch_root_database
+            switch_root_database,
+            copy_image_to_clipboard
         ])
         .setup(|app| {
             // 创建托盘菜单

@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -1513,7 +1513,7 @@ export const App: React.FC = () => {
 
   const {
     handleCopyFiles, handleMoveFiles, handleExternalCopyFiles, handleExternalMoveFiles,
-    handleDropOnFolder, handleBatchRename, handleRenameSubmit, requestDelete,
+    handleDropOnFolder, handleBatchRename, handleAIBatchRename, handleRenameSubmit, requestDelete,
     undoDelete, dismissDelete, handleCreateFolder, deletionTasks
   } = useFileOperations({
     state, setState, activeTab, t, showToast, startTask, updateTask,
@@ -1630,8 +1630,13 @@ export const App: React.FC = () => {
   const handleCopyImageToClipboard = async (fileId: string) => {
     const file = state.files[fileId];
     if (!file || file.type !== FileType.IMAGE) return;
-    // TODO: Implement copyImage for Tauri
-    showToast(t('context.imageCopied'));
+    try {
+      await copyImageToClipboard(file.path);
+      showToast(t('context.imageCopied'));
+    } catch (error) {
+      console.error('Failed to copy image to clipboard:', error);
+      showToast(t('context.imageCopyFailed') || '复制图片失败');
+    }
   };
 
   const handleDropOnTag = (tag: string, sourceIds: string[]) => { /* ... */ };
@@ -2001,12 +2006,33 @@ export const App: React.FC = () => {
       });
 
       if (updated) {
-        // 一锟斤拷锟皆革拷锟斤拷锟斤拷锟斤拷锟絚ount
-        newPeople[personId] = {
+        // 更新人物count和coverFileId
+        const updatedPerson = {
           ...person,
           count: person.count + countIncrease,
           coverFileId: person.coverFileId || fileIds[0]
         };
+        newPeople[personId] = updatedPerson;
+
+        // 保存人物到数据库
+        dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person count in DB", e));
+
+        // 保存更新后的文件元数据（aiData包含人脸信息）
+        fileIds.forEach(fid => {
+          const file = newFiles[fid];
+          if (file && file.aiData) {
+            dbUpsertFileMetadata({
+              fileId: fid,
+              path: file.path,
+              tags: file.tags,
+              description: file.description,
+              sourceUrl: file.sourceUrl,
+              category: file.category,
+              aiData: file.aiData,
+              updatedAt: Date.now()
+            }).catch(err => console.error('Failed to persist file aiData:', err));
+          }
+        });
 
         return { ...prev, files: newFiles, people: newPeople, activeModal: { type: null } };
       }
@@ -4027,6 +4053,7 @@ export const App: React.FC = () => {
             resourceRoot={state.settings.paths.resourceRoot}
             cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
             filesVersion={filesVersion}
+            settings={state.settings}
           />
         </div>
         <TaskProgressModal
@@ -4067,6 +4094,7 @@ export const App: React.FC = () => {
         handleManualAddToTopic={handleManualAddToTopic}
         handleRenameTag={handleRenameTag}
         handleBatchRename={handleBatchRename}
+        handleAIBatchRename={handleAIBatchRename}
         handleRenamePerson={handleRenamePerson}
         handleConfirmDeleteTags={handleConfirmDeleteTags}
         handleDeletePerson={handleDeletePerson}
@@ -4130,6 +4158,7 @@ export const App: React.FC = () => {
         showToast={showToast}
         updateActiveTab={updateActiveTab}
         handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+        handleCopyImageToClipboard={handleCopyImageToClipboard}
       />
     </div>
   );

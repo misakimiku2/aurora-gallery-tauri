@@ -576,6 +576,39 @@ export const useFileOperations = ({
     setState(s => ({ ...s, activeModal: { type: null } }));
   };
 
+  const handleAIBatchRename = async (newNames: Record<string, string>) => {
+    const fileIds = Object.keys(newNames);
+    if (fileIds.length === 0) return;
+
+    const taskId = startTask('move', fileIds, t('tasks.renaming'), false);
+    let current = 0;
+
+    for (const id of fileIds) {
+      const file = state.files[id];
+      const newName = newNames[id];
+      if (!file || !newName || newName === file.name) {
+        current++;
+        continue;
+      }
+
+      try {
+        const sep = file.path.includes('\\') ? '\\' : '/';
+        const parentDir = file.path.substring(0, file.path.lastIndexOf(sep));
+        const newPath = `${parentDir}${sep}${newName}`;
+        await renameFile(file.path, newPath);
+        handleUpdateFile(id, { name: newName, path: newPath });
+      } catch (e) {
+        console.error('Failed to rename file:', file.name, e);
+      }
+      current++;
+      updateTask(taskId, { current });
+    }
+
+    updateTask(taskId, { status: 'completed', current: fileIds.length });
+    setState(s => ({ ...s, activeModal: { type: null } }));
+    showToast(t('context.renamed'));
+  };
+
   const handleRenameSubmit = async (value: string, id: string) => {
     value = value.trim();
     const file = state.files[id];
@@ -1004,6 +1037,7 @@ export const useFileOperations = ({
     handleExternalMoveFiles,
     handleDropOnFolder,
     handleBatchRename,
+    handleAIBatchRename,
     handleRenameSubmit,
     requestDelete,
     undoDelete,

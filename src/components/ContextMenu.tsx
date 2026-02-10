@@ -50,6 +50,7 @@ interface ContextMenuProps {
   showToast: (msg: string) => void;
   updateActiveTab: (updates: Partial<TabState>) => void;
   handleOpenCompareInNewTab: (ids: string[]) => void;
+  handleCopyImageToClipboard: (fileId: string) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -87,7 +88,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handlePasteTags,
   showToast,
   updateActiveTab,
-  handleOpenCompareInNewTab
+  handleOpenCompareInNewTab,
+  handleCopyImageToClipboard
 }) => {
   if (!contextMenu.visible) return null;
 
@@ -150,6 +152,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         })())}
         <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
 
+        {contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && (
+          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyImageToClipboard(contextMenu.targetId!); closeContextMenu(); }}>
+            <Clipboard size={14} className="mr-2 opacity-70" />
+            {t('context.copyImage')}
+          </div>
+        )}
         <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('copy-to-folder', { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] }); closeContextMenu(); }}>
           <Copy size={14} className="mr-2 opacity-70" />
           {t('context.copyTo')}

@@ -18,6 +18,7 @@ import { ConfirmModal as ConfirmModalComp } from './modals/ConfirmModal';
 import { RenameTagModal as RenameTagModalComp } from './modals/RenameTagModal';
 import { RenamePersonModal as RenamePersonModalComp } from './modals/RenamePersonModal';
 import { BatchRenameModal as BatchRenameModalComp } from './modals/BatchRenameModal';
+import { AIBatchRenameModal as AIBatchRenameModalComp } from './modals/AIBatchRenameModal';
 import { AddToPersonModal as AddToPersonModalComp } from './modals/AddToPersonModal';
 import { ClearPersonModal as ClearPersonModalComp } from './modals/ClearPersonModal';
 import { AddToTopicModal as AddToTopicModalComp } from './modals/AddToTopicModal';
@@ -38,6 +39,7 @@ interface AppModalsProps {
   handleManualAddToTopic: (topicId: string) => void | Promise<void>;
   handleRenameTag: (oldTag: string, newName: string) => void | Promise<void>;
   handleBatchRename: (pattern: string, startNum: number) => void | Promise<void>;
+  handleAIBatchRename: (newNames: Record<string, string>) => void | Promise<void>;
   handleRenamePerson: (personId: string, newName: string) => void | Promise<void>;
   handleConfirmDeleteTags: (tags: string[]) => void | Promise<void>;
   handleDeletePerson: (idOrIds: string | string[]) => void | Promise<void>;
@@ -80,6 +82,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleManualAddToTopic,
   handleRenameTag,
   handleBatchRename,
+  handleAIBatchRename,
   handleRenamePerson,
   handleConfirmDeleteTags,
   handleDeletePerson,
@@ -150,11 +153,29 @@ export const AppModals: React.FC<AppModalsProps> = ({
           )}
           
           {state.activeModal.type === 'batch-rename' && (
-            <BatchRenameModalComp 
-              count={activeTab.selectedFileIds.length} 
-              onConfirm={handleBatchRename} 
-              onClose={closeModals} 
-              t={t} 
+            <BatchRenameModalComp
+              key="batch-rename"
+              count={activeTab.selectedFileIds.length}
+              onConfirm={handleBatchRename}
+              onClose={closeModals}
+              onAutoRename={() => setState(s => ({ ...s, activeModal: { type: 'ai-batch-rename' } }))}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'ai-batch-rename' && (
+            <AIBatchRenameModalComp
+              key="ai-batch-rename"
+              files={activeTab.selectedFileIds.map(id => state.files[id]).filter(Boolean)}
+              settings={state.settings}
+              people={state.people}
+              onConfirm={(newNames) => {
+                handleAIBatchRename(newNames);
+                closeModals();
+              }}
+              onClose={closeModals}
+              onBack={() => setState(s => ({ ...s, activeModal: { type: 'batch-rename' } }))}
+              t={t}
             />
           )}
           
