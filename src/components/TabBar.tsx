@@ -1,4 +1,4 @@
-﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
 import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
@@ -335,6 +335,7 @@ export const TabBar: React.FC<TabBarProps> = ({
                   <div
                     key={tab.id}
                     onClick={() => onSwitchTab(tab.id)}
+                    data-no-drag
                     className={`
                         group relative flex items-center min-w-[80px] max-w-[160px] h-9 px-4 rounded-t-lg text-xs cursor-pointer select-none transition-all duration-200
                         ${tab.id === activeTabId

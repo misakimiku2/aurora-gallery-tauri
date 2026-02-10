@@ -3507,7 +3507,8 @@ export const App: React.FC = () => {
     onNewTab: handleNewTab,
     onRefresh: handleRefresh,
     onRequestDelete: requestDelete,
-    selectedFileIds: activeTab.selectedFileIds
+    selectedFileIds: activeTab.selectedFileIds,
+    isReferenceMode
   });
 
   const handleCloseAllTabs = () => { /* ... */ };

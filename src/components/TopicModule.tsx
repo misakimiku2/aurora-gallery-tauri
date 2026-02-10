@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+﻿﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -589,35 +589,63 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         return null; // Should render placeholder
     };
 
-    const getCoverStyle = (topic: Topic): React.CSSProperties | undefined => {
+    // 专题封面图片组件 - 使用 img 标签以获得更好的抗锯齿效果
+    const TopicCoverImage = React.memo(({ topic, className }: { topic: Topic; className?: string }) => {
         const coverUrl = getCoverUrl(topic);
-        if (!coverUrl) return undefined;
-
-        const style: React.CSSProperties = {
-            backgroundImage: `url("${coverUrl}")`,
-            backgroundRepeat: 'no-repeat'
-        };
+        if (!coverUrl) return null;
 
         const crop = topic.coverCrop;
+        
+        // 有裁剪数据时使用绝对定位方式显示裁剪区域
         if (crop && crop.width > 0 && crop.height > 0) {
             const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
             const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
 
-            const sizeW = 10000 / safeWidth;
-            const sizeH = 10000 / safeHeight;
+            // 计算图片需要放大多少倍才能显示裁剪区域
+            // 例如：裁剪区域占原图的 50%，则需要放大 100/50 = 2 倍
+            const scaleW = 100 / safeWidth;
+            const scaleH = 100 / safeHeight;
 
-            const posX = (crop.x / (100 - safeWidth)) * 100;
-            const posY = (crop.y / (100 - safeHeight)) * 100;
+            // 计算裁剪区域中心点的位置（百分比）
+            // crop.x 是裁剪区域左上角的 x 坐标（百分比）
+            // safeWidth 是裁剪区域的宽度（百分比）
+            // 所以中心点 = 左上角 + 宽度/2
+            const centerX = crop.x + safeWidth / 2;
+            const centerY = crop.y + safeHeight / 2;
 
-            style.backgroundSize = `${sizeW}% ${sizeH}%`;
-            style.backgroundPosition = `${posX}% ${posY}%`;
-        } else {
-            style.backgroundSize = 'cover';
-            style.backgroundPosition = 'center';
+            return (
+                <div className={`overflow-hidden ${className || ''}`}>
+                    <img
+                        src={coverUrl}
+                        alt={topic.name}
+                        className="max-w-none pointer-events-none"
+                        decoding="async"
+                        style={{
+                            width: `${scaleW * 100}%`,
+                            height: `${scaleH * 100}%`,
+                            objectFit: 'cover',
+                            objectPosition: `${centerX}% ${centerY}%`,
+                            transform: 'translate(-50%, -50%)',
+                            transformOrigin: 'center center',
+                            position: 'relative',
+                            left: '50%',
+                            top: '50%'
+                        }}
+                    />
+                </div>
+            );
         }
 
-        return style;
-    };
+        // 无裁剪数据时直接使用 object-cover
+        return (
+            <img
+                src={coverUrl}
+                alt={topic.name}
+                className={`w-full h-full object-cover pointer-events-none ${className || ''}`}
+                decoding="async"
+            />
+        );
+    });
 
     const currentTopic = currentTopicId ? topics[currentTopicId] : null;
 
@@ -1538,7 +1566,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                 <div className="relative" style={{ height: totalHeight }}>
                     {visibleLayoutItems.map(({ topic, x, y, width, height }) => {
-                        const coverStyle = getCoverStyle(topic);
+                        const coverUrl = getCoverUrl(topic);
                         const personCount = getTotalPersonCount(topic);
                         const fileCount = getTotalFileCount(topic);
                         const subTopicCount = Object.values(topics).filter(t => t.parentId === topic.id).length;
@@ -1564,12 +1592,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             >
                                 <div className={`absolute inset-0 transform transition-all duration-300 group-hover:shadow-2xl rounded-xl ${isSelected ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                     <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 rounded-xl overflow-hidden border border-gray-100 dark:border-gray-800 shadow-lg">
-                                        {coverStyle ? (
-                                            <div className="w-full h-full overflow-hidden">
-                                                <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/topic:scale-110 origin-center" style={coverStyle} />
+                                        {coverUrl ? (
+                                            <div className="w-full h-full overflow-hidden transition-transform duration-500 group-hover/topic:scale-110 origin-center pointer-events-none">
+                                                <TopicCoverImage topic={topic} className="w-full h-full" />
                                             </div>
                                         ) : (
-                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 pointer-events-none">
                                                 <Layout size={48} className="text-white opacity-50" />
                                             </div>
                                         )}
@@ -1775,7 +1803,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             {sortedSubTopics.length > 0 ? (
                                 <div className="relative w-full transition-all duration-300 ease-out" style={{ height: subTopicsLayout.height }}>
                                     {visibleSubTopics.map(({ topic: sub, x, y, width, height }) => {
-                                        const subCoverStyle = getCoverStyle(sub);
+                                        const subCoverUrl = getCoverUrl(sub);
                                         return (
                                             <div
                                                 key={sub.id}
@@ -1794,12 +1822,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                             >
                                                 <div className={`relative aspect-[3/4] w-full transform transition-transform duration-300 origin-center group-hover:scale-105 rounded-xl ${selectedTopicIds.includes(sub.id) ? 'ring-4 ring-blue-500 ring-offset-0 dark:ring-offset-0 shadow-blue-500/20' : ''}`}>
                                                     <div className="absolute inset-0 rounded-xl overflow-hidden shadow-lg border border-gray-100 dark:border-gray-800 bg-gray-200 dark:bg-gray-800">
-                                                        {subCoverStyle ? (
-                                                            <div className="w-full h-full overflow-hidden">
-                                                                <div className="w-full h-full bg-cover bg-center transition-transform duration-500 group-hover/sub:scale-110 origin-center" style={subCoverStyle} />
+                                                        {subCoverUrl ? (
+                                                            <div className="w-full h-full overflow-hidden transition-transform duration-500 group-hover/sub:scale-110 origin-center pointer-events-none">
+                                                                <TopicCoverImage topic={sub} className="w-full h-full" />
                                                             </div>
                                                         ) : (
-                                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600">
+                                                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 pointer-events-none">
                                                                 <Layout size={32} className="text-white opacity-50" />
                                                             </div>
                                                         )}
@@ -1859,6 +1887,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                 className="group/person flex flex-col items-center gap-2 cursor-pointer"
                                                 title={p.name}
                                                 onClick={(e) => handlePersonClickLocal(p.id, e)}
+                                                onDoubleClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onNavigatePerson && onNavigatePerson(p.id);
+                                                }}
                                                 onContextMenu={(e) => handlePersonContextMenu(e, p.id)}
                                             >
                                                 <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
