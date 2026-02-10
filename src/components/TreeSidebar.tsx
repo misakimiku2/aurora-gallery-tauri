@@ -244,19 +244,19 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
     const clamp = (v: number, minV: number, maxV: number) => Math.max(minV, Math.min(maxV, v));
 
     return (
-      <div 
-         key={person.id} 
-         className="flex flex-col items-center group cursor-pointer"
+      <div
+         key={person.id}
+         className="flex flex-col items-center group cursor-pointer h-full justify-start pt-1"
          onClick={() => onPersonSelect(person.id)}
          onContextMenu={(e) => onContextMenu(e, 'person', person.id)}
          onDoubleClick={(e) => { e.stopPropagation(); onStartRenamePerson(person.id); }}
          title={person.name}
       >
-         <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative">
+         <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative flex-shrink-0">
             {coverFile ? (
                 person.faceBox ? (
-                   <img 
-                     src={coverSrc} 
+                   <img
+                     src={coverSrc}
                      alt={person.name}
                      className="absolute max-w-none"
                      decoding="async"
@@ -272,18 +272,18 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                      }}
                    />
                 ) : (
-                   <img 
-                     src={coverSrc} 
+                   <img
+                     src={coverSrc}
                      alt={person.name}
-                     className="w-full h-full object-cover" 
+                     className="w-full h-full object-cover"
                    />
                 )
             ) : (
               <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={16}/></div>
             )}
          </div>
-         <span className="text-[10px] mt-1 text-gray-600 dark:text-gray-400 truncate w-full text-center group-hover:text-purple-600 dark:group-hover:text-purple-300">{person.name}</span>
-         <span className="text-[9px] text-gray-500 dark:text-gray-500 truncate w-full text-center">{person.count} {t('sidebar.files')}</span>
+         <span className="text-[10px] mt-1.5 text-gray-600 dark:text-gray-400 truncate w-full text-center leading-tight group-hover:text-purple-600 dark:group-hover:text-purple-300">{person.name}</span>
+         <span className="text-[9px] text-gray-500 dark:text-gray-500 truncate w-full text-center leading-tight">{person.count} {t('sidebar.files')}</span>
       </div>
     );
   };
@@ -315,7 +315,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           itemData={{ rows: peopleRows, PersonCard }}
         >
           {({ index, style, data }: any) => (
-            <div style={style} className="grid grid-cols-4 gap-2">
+            <div style={style} className="grid grid-cols-4 gap-1 px-1">
               {data.rows[index].map((person: Person) => (
                 <data.PersonCard key={person.id} person={person} />
               ))}
@@ -338,7 +338,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
       <div style={{ height: totalHeight, position: 'relative' }}>
         <div style={{ height: topHeight }} />
         {slice.map((row, rowIdx) => (
-          <div key={rowIdx} className="grid grid-cols-4 gap-2" style={{ height: rowHeight }}>
+          <div key={rowIdx} className="grid grid-cols-4 gap-1 px-1" style={{ height: rowHeight }}>
             {row.map(person => (
               <PersonCard key={person.id} person={person} />
             ))}
@@ -1385,7 +1385,7 @@ export const Sidebar: React.FC<{
              onToggleSort={handleToggleFolderSort}
           />
 
-          <PeopleSection 
+          <PeopleSection
             people={people}
             files={files}
             onPersonSelect={onPersonSelect}
@@ -1398,7 +1398,7 @@ export const Sidebar: React.FC<{
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
             listHeight={listHeight}
-            rowHeight={72} /* Estimated height for person grid row */
+            rowHeight={88}
             scrollTop={scrollTop}
             bufferRows={bufferRows}
             FixedSizeListComp={FixedSizeListComp}

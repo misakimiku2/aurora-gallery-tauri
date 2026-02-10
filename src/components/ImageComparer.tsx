@@ -708,7 +708,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
 
     ctx.restore();
-  }, [transform, containerSize, isDarkMode, activeImageIds, zOrderIds, layoutItemMap, getVisibleItems]);
+  }, [transform, containerSize, isDarkMode, activeImageIds, zOrderIds, layoutItemMap, getVisibleItems, loadedCount]);
 
   // Canvas 绘制 effect
   useEffect(() => {
@@ -1377,7 +1377,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       onReferenceModeChangeRef.current?.(false);
       const window = getCurrentWindow();
       window.setAlwaysOnTop(false);
-      setWindowMinSize(1280, 800);
+      // Check if window is maximized, only set min size if not maximized
+      window.isMaximized().then(isMaximized => {
+        if (!isMaximized) {
+          setWindowMinSize(1280, 800);
+        }
+      });
     };
   }, []); // Empty deps - only run on unmount
 
@@ -1790,7 +1795,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           isMetadataVisible: currentLayout?.isMetadataVisible ?? false
         };
 
-        await setWindowMinSize(200, 200);
+        // Check if window is maximized, only set min size if not maximized
+        const isMaximized = await window.isMaximized();
+        if (!isMaximized) {
+          await setWindowMinSize(200, 200);
+        }
         // Show toast notification
         showToast('解除窗口大小限制。', 2000);
         // Close side panels after a short delay to avoid re-render issues
@@ -1808,9 +1817,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         // Exit reference mode: get saved sidebar state first
         const savedState = sidebarStateBeforeRef.current;
 
+        // Check if window is maximized
+        const isMaximized = await window.isMaximized();
+
         // Check window size and restore if smaller than 1280x800 with animation
+        // Skip if window is maximized
         const currentSize = await window.innerSize();
-        if (currentSize.width < 1280 || currentSize.height < 800) {
+        if (!isMaximized && (currentSize.width < 1280 || currentSize.height < 800)) {
           await animateWindowResize(1280, 800, 70);
         }
 
@@ -1833,7 +1846,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         // Show toast notification
         showToast('开启窗口大小限制。', 2000);
 
-        await setWindowMinSize(1280, 800);
+        // Only set min size if window is not maximized
+        if (!isMaximized) {
+          await setWindowMinSize(1280, 800);
+        }
       }
     } catch (error) {
       console.error('Failed to toggle reference mode:', error);

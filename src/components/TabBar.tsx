@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
 import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
@@ -44,6 +44,8 @@ export const TabBar: React.FC<TabBarProps> = ({
   const [isHoveringTabBar, setIsHoveringTabBar] = useState(false);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const hideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isDraggingRef = useRef(false);
+  const lastMousePos = useRef({ x: 0, y: 0 });
 
   const isUltraCompact = windowWidth < 260;
 
@@ -216,6 +218,10 @@ export const TabBar: React.FC<TabBarProps> = ({
   };
 
   const handleMouseLeave = () => {
+    // Don't hide tab bar if window is being dragged
+    if (isDraggingRef.current) {
+      return;
+    }
     hideTimeoutRef.current = setTimeout(() => {
       setIsHoveringTabBar(false);
       onHoverChange?.(false);
@@ -231,10 +237,14 @@ export const TabBar: React.FC<TabBarProps> = ({
         return;
       }
       try {
+        // Set dragging flag to prevent tab bar from hiding during drag
+        isDraggingRef.current = true;
         const window = getCurrentWindow();
         await window.startDragging();
       } catch (error) {
         console.error('Failed to start dragging:', error);
+        // Reset dragging flag on error
+        isDraggingRef.current = false;
       }
     }
   };
@@ -247,6 +257,47 @@ export const TabBar: React.FC<TabBarProps> = ({
       }
     };
   }, []);
+
+  // Global mouse move handler to track mouse position
+  useEffect(() => {
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      lastMousePos.current = { x: e.clientX, y: e.clientY };
+    };
+
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    return () => window.removeEventListener('mousemove', handleGlobalMouseMove);
+  }, []);
+
+  // Global mouseup handler to reset dragging flag
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
+        // After drag ends, check if mouse is still over the tab bar element
+        // Use a small delay to ensure the mouse position is updated after window move
+        setTimeout(() => {
+          const tabBarElement = tabBarRef.current?.parentElement;
+          if (tabBarElement) {
+            const rect = tabBarElement.getBoundingClientRect();
+            // Check if mouse is within tab bar bounds (including the hover detection area)
+            const isMouseOverTabBar =
+              rect.left <= lastMousePos.current.x &&
+              rect.right >= lastMousePos.current.x &&
+              rect.top <= lastMousePos.current.y &&
+              rect.bottom + (isReferenceMode ? 4 : 0) >= lastMousePos.current.y;
+
+            if (!isMouseOverTabBar) {
+              setIsHoveringTabBar(false);
+              onHoverChange?.(false);
+            }
+          }
+        }, 50);
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isReferenceMode, onHoverChange]);
 
   const shouldShowTabBar = !isReferenceMode || isHoveringTabBar;
 

@@ -947,6 +947,20 @@ export const setWindowMinSize = async (width: number, height: number): Promise<v
 };
 
 /**
+ * 检查窗口是否处于最大化状态
+ * @returns 是否最大化
+ */
+export const isWindowMaximized = async (): Promise<boolean> => {
+  try {
+    const window = getCurrentWindow();
+    return await window.isMaximized();
+  } catch (error) {
+    console.error('Failed to check window maximized state:', error);
+    return false;
+  }
+};
+
+/**
  * 退出应用程序
  */
 export const exitApp = async (): Promise<void> => {
