@@ -202,12 +202,32 @@ export const useNavigation = (
   }, [setState, state.roots, state.folderSettings, state.settings.defaultLayoutSettings, setGroupBy]);
 
   const handleOpenCompareInNewTab = useCallback((imageIds: string[]) => {
+    // 生成新的画布名称
+    const generateCanvasName = () => {
+      const existingNames = state.tabs
+        .filter(tab => tab.isCompareMode)
+        .map(tab => tab.sessionName)
+        .filter((name): name is string => !!name);
+
+      let maxNum = 0;
+      existingNames.forEach(name => {
+        const match = name.match(/^画布(\d+)$/);
+        if (match) {
+          const num = parseInt(match[1], 10);
+          if (num > maxNum) maxNum = num;
+        }
+      });
+
+      return `画布${String(maxNum + 1).padStart(2, '0')}`;
+    };
+
     const newTab: TabState = {
       ...DUMMY_TAB,
       id: Math.random().toString(36).substr(2, 9),
       folderId: (state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB).folderId,
       selectedFileIds: imageIds,
       isCompareMode: true,
+      sessionName: generateCanvasName(),
       history: {
         stack: [{
           folderId: (state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB).folderId,

@@ -125,12 +125,12 @@ pub async fn color_extraction_worker(
     
     // 2. 启动多个消费者任务：并行处理文件
     // - 优先使用环境变量 AURORA_COLOR_WORKERS
-    // - 否则使用 logical_cores - 1（保留一个用于系统/GUI）
-    // - 对外设置上限以避免过度并发（默认上限 32）
+    // - 否则使用 logical_cores（充分利用所有核心）
+    // - 上限设置为逻辑核心数，充分利用 CPU 性能
     let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
     let env_workers = std::env::var("AURORA_COLOR_WORKERS").ok().and_then(|s| s.parse::<usize>().ok());
-    let default_workers = (logical_cores / 2).max(1);
-    let num_workers = env_workers.unwrap_or(default_workers).min(8); // 将默认上限从32降低到8，减轻后台压力
+    let default_workers = logical_cores.max(4);
+    let num_workers = env_workers.unwrap_or(default_workers).min(logical_cores);
     // 在基准模式下输出配置（方便快速验证）
     if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
         eprintln!("[AURORA_BENCH] logical_cores={} configured_color_workers={}", logical_cores, num_workers);

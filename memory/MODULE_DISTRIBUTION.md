@@ -6,7 +6,7 @@
 
 #### `tauri-bridge.ts` - 核心桥接模块
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 1208 行  
+**行数**: 1283 行  
 **功能分类**:
 
 **文件系统操作**:
@@ -83,7 +83,7 @@ export async function exitApp(): Promise<void>
 
 #### `App.tsx` - 主应用组件
 **位置**: `src/App.tsx`  
-**行数**: 3931 行  
+**行数**: 4248 行  
 
 **概览**:
 - `App.tsx` 仍为大型单体组件，负责绝大多数 UI 状态、视图路由与操作协调。近期改动强调可维护性与性能：把任务管理抽出到 `src/hooks/useTasks.ts`，并精细化拖拽、选择与 AI/色彩搜索逻辑。
@@ -147,27 +147,29 @@ export async function exitApp(): Promise<void>
 
 | 文件 | 行数 | 功能 |
 |------|------|------|
-| `AddToPersonModal.tsx` | 130 行 | 添加文件到人物 |
-| `AddToTopicModal.tsx` | 140 行 | 添加文件到专题 |
-| `AlertModal.tsx` | 27 行 | 警告提示模态框 |
-| `BatchRenameModal.tsx` | 75 行 | 批量重命名（带任务进度） |
-| `ClearPersonModal.tsx` | 182 行 | 清除人物信息确认 |
-| `ConfirmModal.tsx` | 43 行 | 通用确认对话框 |
-| `CreateTopicModal.tsx` | 105 行 | 创建专题模态框 |
-| `CropAvatarModal.tsx` | 548 行 | 头像裁剪模态框 |
-| `ExitConfirmModal.tsx` | 60 行 | 退出确认对话框 |
-| `FolderPickerModal.tsx` | 205 行 | 文件夹选择器 |
-| `RenamePersonModal.tsx` | 45 行 | 重命名人物 |
-| `RenameTagModal.tsx` | 42 行 | 重命名标签 |
-| `RenameTopicModal.tsx` | 117 行 | 重命名专题 |
-| `TagEditor.tsx` | 95 行 | 标签编辑器 |
-| `WelcomeModal.tsx` | 368 行 | 首次使用欢迎向导 |
+| `AddToPersonModal.tsx` | 74 行 | 添加文件到人物 |
+| `AddToTopicModal.tsx` | 81 行 | 添加文件到专题 |
+| `AIBatchRenameModal.tsx` | 381 行 | AI 批量重命名模态框 |
+| `AlertModal.tsx` | 23 行 | 警告提示模态框 |
+| `BatchRenameModal.tsx` | 56 行 | 批量重命名（带任务进度） |
+| `ClearPersonModal.tsx` | 101 行 | 清除人物信息确认 |
+| `ConfirmModal.tsx` | 28 行 | 通用确认对话框 |
+| `CreateTopicModal.tsx` | 72 行 | 创建专题模态框 |
+| `CropAvatarModal.tsx` | 401 行 | 头像裁剪模态框 |
+| `ExitConfirmModal.tsx` | 41 行 | 退出确认对话框 |
+| `FolderPickerModal.tsx` | 161 行 | 文件夹选择器 |
+| `RenamePersonModal.tsx` | 30 行 | 重命名人物 |
+| `RenameTagModal.tsx` | 29 行 | 重命名标签 |
+| `RenameTopicModal.tsx` | 74 行 | 重命名专题 |
+| `TagEditor.tsx` | 56 行 | 标签编辑器 |
+| `WelcomeModal.tsx` | 200 行 | 首次使用欢迎向导 |
+| `AddImageModal.tsx` | 1238 行 | 添加图片到画布（图片对比功能） |
 
 ---
 
 #### `src/components/AppModals.tsx` - 模态框集中渲染组件
 **位置**: `src/components/AppModals.tsx`  
-**行数**: 422 行  
+**行数**: 424 行  
 **功能**: `AppModals.tsx` 作为应用内所有模态框的集中渲染入口，负责：
 - 根据 `state.activeModal.type` 切换渲染不同的业务模态框（alert、add-to-person、add-to-topic、rename-tag、batch-rename、crop-avatar、exit-confirm、clear-person、copy/move 到文件夹的 FolderPicker 等）。
 - 从 `src/components/modals/*` 和顶级 `SettingsModal` / `CloseConfirmationModal` / `WelcomeModal` 等导入具体模态组件并注入回调与数据。
@@ -199,7 +201,7 @@ export async function exitApp(): Promise<void>
 
 #### `src/hooks/useNavigation.ts` - 导航管理 Hook
 **位置**: `src/hooks/useNavigation.ts`  
-**行数**: 240 行  
+**行数**: 260 行  
 **功能**: 管理应用导航历史
 - `navigateTo`: 导航到指定文件夹或视图
 - `goBack`: 返回上一页
@@ -236,19 +238,20 @@ export async function exitApp(): Promise<void>
 | Hook | 位置 | 行数 | 功能 |
 |------|------|------|------|
 | `useAIAnalysis.ts` | `src/hooks/useAIAnalysis.ts` | 609 行 | AI 分析封装（描述、标签、场景识别、OCR、翻译） |
-| `useContextMenu.ts` | `src/hooks/useContextMenu.ts` | 82 行 | 右键菜单管理 |
-| `useFileOperations.ts` | `src/hooks/useFileOperations.ts` | 1015 行 | 文件操作封装 |
-| `useFileSearch.ts` | `src/hooks/useFileSearch.ts` | 182 行 | 搜索逻辑处理 |
-| `useInView.ts` | `src/hooks/useInView.ts` | 23 行 | 视口检测 Hook |
-| `useKeyboardShortcuts.ts` | `src/hooks/useKeyboardShortcuts.ts` | 49 行 | 键盘快捷键管理 |
-| `useMarqueeSelection.ts` | `src/hooks/useMarqueeSelection.ts` | 147 行 | 框选状态管理 |
-| `useToasts.ts` | `src/hooks/useToasts.ts` | 20 行 | Toast 通知管理 |
+| `useAIRename.ts` | `src/hooks/useAIRename.ts` | 103 行 | AI 智能重命名 Hook |
+| `useContextMenu.ts` | `src/hooks/useContextMenu.ts` | 91 行 | 右键菜单管理 |
+| `useFileOperations.ts` | `src/hooks/useFileOperations.ts` | 1049 行 | 文件操作封装 |
+| `useFileSearch.ts` | `src/hooks/useFileSearch.ts` | 184 行 | 搜索逻辑处理 |
+| `useInView.ts` | `src/hooks/useInView.ts` | 37 行 | 视口检测 Hook |
+| `useKeyboardShortcuts.ts` | `src/hooks/useKeyboardShortcuts.ts` | 78 行 | 键盘快捷键管理 |
+| `useMarqueeSelection.ts` | `src/hooks/useMarqueeSelection.ts` | 186 行 | 框选状态管理 |
+| `useToasts.ts` | `src/hooks/useToasts.ts` | 42 行 | Toast 通知管理 |
 
 ---
 
 #### `PersonGrid.tsx` - 人物网格组件
 **位置**: `src/components/PersonGrid.tsx`  
-**行数**: 224 行  
+**行数**: 232 行  
 **功能**: 专门的人物展示和管理组件，从 FileGrid 中分离出来
 
 **主要功能**:
@@ -313,39 +316,41 @@ interface PromptPreset {
 
 | 组件 | 位置 | 行数 | 功能 |
 |------|------|------|------|
-| `ColorPickerPopover.tsx` | `src/components/ColorPickerPopover.tsx` | 321 行 | HSV 颜色选择器，支持预设和吸管工具 |
+| `ColorPickerPopover.tsx` | `src/components/ColorPickerPopover.tsx` | 356 行 | HSV 颜色选择器，支持预设和吸管工具 |
 | `ImageViewer.tsx` | `src/components/ImageViewer.tsx` | 1542 行 | 全屏图片查看，支持缩放、旋转、元数据显示 |
-| `MetadataPanel.tsx` | `src/components/MetadataPanel.tsx` | 2607 行 | 显示文件元数据、AI 分析结果、标签管理 |
-| `TreeSidebar.tsx` | `src/components/TreeSidebar.tsx` | 654 行 | 文件夹树导航，支持展开/折叠 |
-| `TopBar.tsx` | `src/components/TopBar.tsx` | 921 行 | 搜索栏、视图切换、操作按钮 |
-| `TabBar.tsx` | `src/components/TabBar.tsx` | 249 行 | 多标签页管理，支持关闭、拖拽排序 |
-| `TopicModule.tsx` | `src/components/TopicModule.tsx` | 2618 行 | 专题画廊和详情视图 |
-| `TaskProgressModal.tsx` | `src/components/TaskProgressModal.tsx` | 200 行 | 任务进度显示模态框 |
-| `CloseConfirmationModal.tsx` | `src/components/CloseConfirmationModal.tsx` | 80 行 | 关闭确认对话框 |
-| `DragDropOverlay.tsx` | `src/components/DragDropOverlay.tsx` | 150 行 | 拖拽覆盖层 |
-| `SplashScreen.tsx` | `src/components/SplashScreen.tsx` | 100 行 | 启动画面 |
-| `Logo.tsx` | `src/components/Logo.tsx` | 50 行 | Logo 组件 |
-| `FolderIcon.tsx` | `src/components/FolderIcon.tsx` | 60 行 | 文件夹图标 |
-| `ContextMenu.tsx` | `src/components/ContextMenu.tsx` | 180 行 | 右键上下文菜单组件 |
-| `ToastItem.tsx` | `src/components/ToastItem.tsx` | 80 行 | 通知/吐司项组件 |
-| `ImageComparer.tsx` | `src/components/ImageComparer.tsx` | 2600+ 行 | 图片对比组件 |
-| `ImageThumbnail.tsx` | `src/components/ImageThumbnail.tsx` | 150 行 | 图片缩略图组件 |
-| `FileListItem.tsx` | `src/components/FileListItem.tsx` | 520 行 | 文件列表项组件 |
-| `TagsList.tsx` | `src/components/TagsList.tsx` | 470 行 | 标签列表组件 |
-| `GlobalToasts.tsx` | `src/components/GlobalToasts.tsx` | 40 行 | 全局 Toast 容器 |
-| `EmptyFolderPlaceholder.tsx` | `src/components/EmptyFolderPlaceholder.tsx` | 33 行 | 空文件夹占位符 |
-| `InlineRenameInput.tsx` | `src/components/InlineRenameInput.tsx` | 47 行 | 内联重命名输入框 |
-| `Folder3DIcon.tsx` | `src/components/Folder3DIcon.tsx` | 168 行 | 3D 文件夹图标 |
-| `FolderThumbnail.tsx` | `src/components/FolderThumbnail.tsx` | 163 行 | 文件夹缩略图 |
+| `MetadataPanel.tsx` | `src/components/MetadataPanel.tsx` | 2646 行 | 显示文件元数据、AI 分析结果、标签管理 |
+| `TreeSidebar.tsx` | `src/components/TreeSidebar.tsx` | 1511 行 | 文件夹树导航，支持展开/折叠 |
+| `TopBar.tsx` | `src/components/TopBar.tsx` | 1025 行 | 搜索栏、视图切换、操作按钮 |
+| `TabBar.tsx` | `src/components/TabBar.tsx` | 495 行 | 多标签页管理，支持关闭、拖拽排序 |
+| `TopicModule.tsx` | `src/components/TopicModule.tsx` | 2690 行 | 专题画廊和详情视图 |
+| `TaskProgressModal.tsx` | `src/components/TaskProgressModal.tsx` | 87 行 | 任务进度显示模态框 |
+| `CloseConfirmationModal.tsx` | `src/components/CloseConfirmationModal.tsx` | 68 行 | 关闭确认对话框 |
+| `DragDropOverlay.tsx` | `src/components/DragDropOverlay.tsx` | 141 行 | 拖拽覆盖层 |
+| `SplashScreen.tsx` | `src/components/SplashScreen.tsx` | 177 行 | 启动画面 |
+| `Logo.tsx` | `src/components/Logo.tsx` | 59 行 | Logo 组件 |
+| `FolderIcon.tsx` | `src/components/FolderIcon.tsx` | 397 行 | 文件夹图标 |
+| `ContextMenu.tsx` | `src/components/ContextMenu.tsx` | 485 行 | 右键上下文菜单组件 |
+| `ToastItem.tsx` | `src/components/ToastItem.tsx` | 35 行 | 通知/吐司项组件 |
+| `ImageComparer.tsx` | `src/components/ImageComparer.tsx` | 2346 行 | 图片对比组件 |
+| `ImageThumbnail.tsx` | `src/components/ImageThumbnail.tsx` | 155 行 | 图片缩略图组件 |
+| `FileListItem.tsx` | `src/components/FileListItem.tsx` | 407 行 | 文件列表项组件 |
+| `TagsList.tsx` | `src/components/TagsList.tsx` | 376 行 | 标签列表组件 |
+| `GlobalToasts.tsx` | `src/components/GlobalToasts.tsx` | 35 行 | 全局 Toast 容器 |
+| `EmptyFolderPlaceholder.tsx` | `src/components/EmptyFolderPlaceholder.tsx` | 31 行 | 空文件夹占位符 |
+| `InlineRenameInput.tsx` | `src/components/InlineRenameInput.tsx` | 44 行 | 内联重命名输入框 |
+| `Folder3DIcon.tsx` | `src/components/Folder3DIcon.tsx` | 86 行 | 3D 文件夹图标 |
+| `FolderThumbnail.tsx` | `src/components/FolderThumbnail.tsx` | 138 行 | 文件夹缩略图 |
+| `AIRenameButton.tsx` | `src/components/AIRenameButton.tsx` | 38 行 | AI 重命名按钮组件 |
+| `AIRenamePreview.tsx` | `src/components/AIRenamePreview.tsx` | 40 行 | AI 重命名预览组件 |
 
 #### 图片对比组件 (`src/components/comparer/`)
 
 | 组件 | 行数 | 功能 |
 |------|------|------|
-| `AnnotationLayer.tsx` | 390 行 | 标注图层组件 |
-| `ComparerContextMenu.tsx` | 84 行 | 对比视图右键菜单 |
-| `EditOverlay.tsx` | 750 行 | 编辑覆盖层 |
-| `types.ts` | 22 行 | 对比组件类型定义 |
+| `AnnotationLayer.tsx` | 294 行 | 标注图层组件 |
+| `ComparerContextMenu.tsx` | 149 行 | 对比视图右键菜单 |
+| `EditOverlay.tsx` | 554 行 | 编辑覆盖层 |
+| `types.ts` | 67 行 | 对比组件类型定义 |
 
 ---
 
@@ -353,7 +358,7 @@ interface PromptPreset {
 
 #### `aiService.ts` - AI 服务
 **位置**: `src/services/aiService.ts`  
-**行数**: 99 行  
+**行数**: 411 行  
 **功能**: OpenAI/Ollama/LM Studio 集成
 
 **更新**: AI 分析优化
@@ -376,11 +381,11 @@ interface PromptPreset {
 | `debounce.ts` | 72 行 | 防抖函数（搜索/输入节流） |
 | `environment.ts` | 62 行 | 环境检测与 Feature flags |
 | `logger.ts` | 228 行 | 结构化前端日志封装 |
-| `mockFileSystem.ts` | 341 行 | 开发/测试用模拟 FS |
-| `performanceMonitor.ts` | 452 行 | 性能计时与采样工具 |
+| `mockFileSystem.ts` | 342 行 | 开发/测试用模拟 FS |
+| `performanceMonitor.ts` | 501 行 | 性能计时与采样工具 |
 | `textUtils.ts` | 42 行 | 文本处理与规范化函数 |
-| `translations.ts` | 1114 行 | 国际化文案（多语言） |
-| `thumbnailCache.ts` | 56 行 | 缩略图缓存管理 |
+| `translations.ts` | 1247 行 | 国际化文案（多语言） |
+| `thumbnailCache.ts` | 78 行 | 缩略图缓存管理 |
 
 ---
 
@@ -421,6 +426,7 @@ export interface Person {
   description?: string
   descriptor?: number[]  // 人脸特征向量
   faceBox?: { x: number; y: number; w: number; h: number }
+  // 注意：代码中当前没有 updatedAt 字段，但数据库表中有 updated_at 字段
 }
 
 export interface AiData {
@@ -441,10 +447,8 @@ export interface DominantColor {
   hex: string
   rgb: [number, number, number]
   isDark: boolean
-  labL: number
-  labA: number
-  labB: number
-  percentage: number
+  // 注意：代码中当前只有 hex, rgb, isDark 三个字段
+  // LAB 颜色空间字段在数据库中存在，但未在 TypeScript 类型中定义
 }
 
 export interface AppState { 
@@ -487,7 +491,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 ### 1. 主程序 (`src-tauri/src/main.rs`)
 **位置**: `src-tauri/src/main.rs`  
-**行数**: 2440 行  
+**行数**: 2509 行  
 **功能**: Tauri 应用入口，命令处理器
 
 **主要功能**:
@@ -503,7 +507,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `color_db.rs` - 颜色数据库
 **位置**: `src-tauri/src/color_db.rs`  
-**行数**: 871 行  
+**行数**: 1120 行  
 **功能**: 颜色数据存储和管理
 - 颜色索引表管理
 - 颜色搜索功能
@@ -512,7 +516,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `color_extractor.rs` - 颜色提取算法
 **位置**: `src-tauri/src/color_extractor.rs`  
-**行数**: 258 行  
+**行数**: 253 行  
 **功能**: 图像颜色分析算法
 - 主色调提取
 - LAB 颜色空间转换
@@ -520,7 +524,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `color_search.rs` - 颜色搜索
 **位置**: `src-tauri/src/color_search.rs`  
-**行数**: 796 行  
+**行数**: 441 行  
 **功能**: 颜色搜索算法
 - 按颜色搜索图片
 - 按调色板搜索图片
@@ -528,7 +532,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `color_worker.rs` - 颜色处理工作器
 **位置**: `src-tauri/src/color_worker.rs`  
-**行数**: 796 行  
+**行数**: 949 行  
 **功能**: 后台颜色提取任务处理
 - 批量颜色提取
 - 进度事件发送
@@ -556,7 +560,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `mod.rs` - 数据库模块入口
 **位置**: `src-tauri/src/db/mod.rs`  
-**行数**: 150 行  
+**行数**: 142 行  
 **功能**:
 - 管理数据库连接池 (`AppDbPool`)
 - 执行数据库初始化
@@ -569,7 +573,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `file_metadata.rs` - 文件元数据存储
 **位置**: `src-tauri/src/db/file_metadata.rs`  
-**行数**: 87 行  
+**行数**: 230 行  
 **功能**:
 - 图片标签、描述、来源 URL 持久化
 - AI 数据（JSON）存储
@@ -577,12 +581,41 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `file_index.rs` - 文件索引数据库
 **位置**: `src-tauri/src/db/file_index.rs`  
-**行数**: 200 行  
+**行数**: 348 行  
 **功能**:
 - 文件索引表管理
 - 文件路径到 ID 的映射
 - 支持数据库切换
 - 批量索引操作
+
+#### `topics.rs` - 专题数据库操作
+**位置**: `src-tauri/src/db/topics.rs`  
+**行数**: 175 行  
+**功能**:
+- 专题数据的 CRUD 操作
+- 专题层级结构管理（parent_id 支持嵌套）
+- 封面裁剪数据存储（cover_crop）
+- 人物关联（people_ids）和文件关联（file_ids）
+- 专题类型字段（topic_type）
+
+**数据结构**:
+```rust
+pub struct Topic {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub topic_type: Option<String>,  // 在 TypeScript 中映射为 type
+    pub cover_file_id: Option<String>,
+    pub background_file_id: Option<String>,
+    pub cover_crop: Option<CoverCropData>,
+    pub people_ids: Vec<String>,
+    pub file_ids: Vec<String>,
+    pub source_url: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+```
 
 ---
 
@@ -590,7 +623,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `dump_persons.rs` - 人物数据导出工具
 **位置**: `src-tauri/src/bin/dump_persons.rs`  
-**行数**: 45 行  
+**行数**: 40 行  
 **功能**: 导出人物数据到文件
 
 ---
@@ -598,90 +631,94 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 ## 依赖关系图
 
 ```
-App.tsx (3931 行)
+App.tsx (4248 行)
 ├── components/
-│   ├── modals/ (15 个模态框)
-│   │   ├── AddToPersonModal.tsx (130 行)
-│   │   ├── AddToTopicModal.tsx (140 行)
-│   │   ├── AlertModal.tsx (27 行)
-│   │   ├── BatchRenameModal.tsx (75 行)
-│   │   ├── ClearPersonModal.tsx (182 行)
-│   │   ├── ConfirmModal.tsx (43 行)
-│   │   ├── CreateTopicModal.tsx (105 行)
-│   │   ├── CropAvatarModal.tsx (548 行)
-│   │   ├── ExitConfirmModal.tsx (60 行)
-│   │   ├── FolderPickerModal.tsx (205 行)
-│   │   ├── RenamePersonModal.tsx (45 行)
-│   │   ├── RenameTagModal.tsx (42 行)
-│   │   ├── RenameTopicModal.tsx (117 行)
-│   │   ├── TagEditor.tsx (95 行)
-│   │   └── WelcomeModal.tsx (368 行)
+│   ├── modals/ (17 个模态框)
+│   │   ├── AddImageModal.tsx (1238 行)
+│   │   ├── AddToPersonModal.tsx (74 行)
+│   │   ├── AddToTopicModal.tsx (81 行)
+│   │   ├── AIBatchRenameModal.tsx (381 行)
+│   │   ├── AlertModal.tsx (23 行)
+│   │   ├── BatchRenameModal.tsx (56 行)
+│   │   ├── ClearPersonModal.tsx (101 行)
+│   │   ├── ConfirmModal.tsx (28 行)
+│   │   ├── CreateTopicModal.tsx (72 行)
+│   │   ├── CropAvatarModal.tsx (401 行)
+│   │   ├── ExitConfirmModal.tsx (41 行)
+│   │   ├── FolderPickerModal.tsx (161 行)
+│   │   ├── RenamePersonModal.tsx (30 行)
+│   │   ├── RenameTagModal.tsx (29 行)
+│   │   ├── RenameTopicModal.tsx (74 行)
+│   │   ├── TagEditor.tsx (56 行)
+│   │   └── WelcomeModal.tsx (200 行)
 │   ├── comparer/ (3 个组件)
-│   │   ├── AnnotationLayer.tsx (390 行)
-│   │   ├── ComparerContextMenu.tsx (84 行)
-│   │   ├── EditOverlay.tsx (750 行)
-│   │   └── types.ts (22 行)
-│   ├── AppModals.tsx (422 行)
-│   ├── PersonGrid.tsx (224 行)
+│   │   ├── AnnotationLayer.tsx (294 行)
+│   │   ├── ComparerContextMenu.tsx (149 行)
+│   │   ├── EditOverlay.tsx (554 行)
+│   │   └── types.ts (67 行)
+│   ├── AppModals.tsx (424 行)
+│   ├── PersonGrid.tsx (232 行)
 │   ├── FileGrid.tsx (1457 行)
 │   ├── SettingsModal.tsx (1347 行)
 │   ├── ImageViewer.tsx (1542 行)
-│   ├── MetadataPanel.tsx (2607 行)
-│   ├── TreeSidebar.tsx (654 行)
-│   ├── TopBar.tsx (921 行)
-│   ├── TabBar.tsx (249 行)
-│   ├── TopicModule.tsx (2618 行)
-│   ├── TaskProgressModal.tsx (200 行)
-│   ├── ImageComparer.tsx (2600+ 行)
+│   ├── MetadataPanel.tsx (2646 行)
+│   ├── TreeSidebar.tsx (1511 行)
+│   ├── TopBar.tsx (1025 行)
+│   ├── TabBar.tsx (495 行)
+│   ├── TopicModule.tsx (2690 行)
+│   ├── TaskProgressModal.tsx (87 行)
+│   ├── ImageComparer.tsx (2346 行)
 │   └── useLayoutHook.ts (79 行)
 ├── hooks/
 │   ├── useTasks.ts (317 行)
-│   ├── useNavigation.ts (240 行)
+│   ├── useNavigation.ts (260 行)
 │   ├── useAIAnalysis.ts (609 行)
-│   ├── useContextMenu.ts (82 行)
-│   ├── useFileOperations.ts (1015 行)
-│   ├── useFileSearch.ts (182 行)
-│   ├── useInView.ts (23 行)
-│   ├── useKeyboardShortcuts.ts (49 行)
-│   ├── useMarqueeSelection.ts (147 行)
-│   └── useToasts.ts (20 行)
+│   ├── useAIRename.ts (103 行)
+│   ├── useContextMenu.ts (91 行)
+│   ├── useFileOperations.ts (1049 行)
+│   ├── useFileSearch.ts (184 行)
+│   ├── useInView.ts (37 行)
+│   ├── useKeyboardShortcuts.ts (78 行)
+│   ├── useMarqueeSelection.ts (186 行)
+│   └── useToasts.ts (42 行)
 ├── services/
-│   ├── aiService.ts (99 行)
+│   ├── aiService.ts (411 行)
 │   └── faceRecognitionService.ts (86 行)
 ├── api/
-│   └── tauri-bridge.ts (1208 行)
+│   └── tauri-bridge.ts (1283 行)
 ├── workers/
 │   ├── layout.worker.ts (252 行)
-│   └── search.worker.ts (125 行)
+│   └── search.worker.ts (123 行)
 ├── utils/ (多个工具模块)
 │   ├── async.ts (19 行)
 │   ├── debounce.ts (72 行)
 │   ├── environment.ts (62 行)
 │   ├── logger.ts (228 行)
-│   ├── mockFileSystem.ts (341 行)
-│   ├── performanceMonitor.ts (452 行)
+│   ├── mockFileSystem.ts (342 行)
+│   ├── performanceMonitor.ts (501 行)
 │   ├── textUtils.ts (42 行)
-│   ├── translations.ts (1114 行)
-│   └── thumbnailCache.ts (56 行)
-├── types.ts (331 行)
-└── constants.ts (24 行)
+│   ├── translations.ts (1247 行)
+│   └── thumbnailCache.ts (78 行)
+├── types.ts (345 行)
+└── constants.ts (31 行)
 
 Rust Backend
-├── main.rs (2440 行)
+├── main.rs (2509 行)
 ├── thumbnail.rs (529 行)
-├── color_db.rs (871 行)
-├── color_extractor.rs (258 行)
-├── color_search.rs (796 行)
-├── color_worker.rs (796 行)
+├── color_db.rs (1120 行)
+├── color_extractor.rs (253 行)
+├── color_search.rs (441 行)
+├── color_worker.rs (949 行)
 └── db/
-    ├── mod.rs (150 行)
+    ├── mod.rs (142 行)
     ├── persons.rs (118 行)
-    ├── file_metadata.rs (87 行)
-    └── file_index.rs (200 行)
+    ├── file_metadata.rs (230 行)
+    ├── file_index.rs (348 行)
+    └── topics.rs (175 行)
 
 Tools
 └── bin/
-    └── dump_persons.rs (45 行)
+    └── dump_persons.rs (40 行)
 ```
 
 ---
@@ -689,29 +726,32 @@ Tools
 ## 模块复杂度分析
 
 ### 高复杂度模块 (需要关注)
-1. **App.tsx** (3931 行) - 主应用组件，状态管理复杂
-2. **main.rs** (2440 行) - Rust 主程序，命令处理集中
-3. **ImageComparer.tsx** (2600+ 行) - 图片对比组件功能复杂
-4. **color_db.rs** (871 行) - 颜色数据库操作复杂
-5. **color_search.rs** (796 行) - 颜色搜索算法复杂
-6. **color_worker.rs** (796 行) - 后台处理逻辑复杂
-7. **TopicModule.tsx** (2618 行) - 专题管理功能丰富
-8. **MetadataPanel.tsx** (2607 行) - 元数据面板功能丰富
+1. **App.tsx** (4248 行) - 主应用组件，状态管理复杂
+2. **main.rs** (2509 行) - Rust 主程序，命令处理集中
+3. **ImageComparer.tsx** (2346 行) - 图片对比组件功能复杂
+4. **AddImageModal.tsx** (1238 行) - 添加图片模态框，支持多分类浏览和虚拟滚动
+5. **TopicModule.tsx** (2690 行) - 专题管理功能丰富
+6. **MetadataPanel.tsx** (2646 行) - 元数据面板功能丰富
+7. **color_db.rs** (1120 行) - 颜色数据库操作复杂
+8. **color_worker.rs** (949 行) - 后台处理逻辑复杂
+9. **color_search.rs** (441 行) - 颜色搜索算法复杂
 
 ### 中等复杂度模块
 1. **SettingsModal.tsx** (1347 行) - 设置界面功能丰富
 2. **ImageViewer.tsx** (1542 行) - 图片查看器功能完整
 3. **FileGrid.tsx** (1457 行) - 文件显示逻辑复杂
-4. **tauri-bridge.ts** (1208 行) - API 桥接层
-5. **useFileOperations.ts** (1015 行) - 文件操作逻辑复杂
+4. **tauri-bridge.ts** (1283 行) - API 桥接层
+5. **useFileOperations.ts** (1049 行) - 文件操作逻辑复杂
 6. **useAIAnalysis.ts** (609 行) - AI 分析逻辑复杂
-7. **EditOverlay.tsx** (750 行) - 编辑覆盖层功能丰富
-8. **thumbnail.rs** (529 行) - 缩略图生成逻辑
+7. **AIBatchRenameModal.tsx** (381 行) - AI 批量重命名模态框
+8. **EditOverlay.tsx** (554 行) - 编辑覆盖层功能丰富
+9. **thumbnail.rs** (529 行) - 缩略图生成逻辑
+10. **topics.rs** (175 行) - 专题数据库操作
 
 ### 低复杂度模块
-1. **PersonGrid.tsx** (224 行) - 专用组件，职责单一
+1. **PersonGrid.tsx** (232 行) - 专用组件，职责单一
 2. **useLayoutHook.ts** (79 行) - 布局计算 Hook
-3. **constants.ts** (24 行) - 常量定义
+3. **constants.ts** (31 行) - 常量定义
 4. **工具函数** - 各司其职，逻辑简单
 
 ---
@@ -727,7 +767,7 @@ Tools
 
 ---
 
-**文档版本**: 1.3  
-**更新日期**: 2026-02-07  
+**文档版本**: 1.4  
+**更新日期**: 2026-02-11  
 **覆盖范围**: 所有前端和后端模块  
 **详细程度**: 高

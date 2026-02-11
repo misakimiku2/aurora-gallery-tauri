@@ -35,6 +35,7 @@ interface ImageComparerProps {
   canGoBack?: boolean;
   t: (key: string) => string;
   onSelect?: (id: string) => void;
+  onSelectedFileIdsChange?: (ids: string[]) => void;
   sessionName?: string;
   onSessionNameChange?: (name: string) => void;
   onReferenceModeChange?: (isReferenceMode: boolean) => void;
@@ -121,6 +122,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   layoutProp,
   canGoBack,
   onSelect,
+  onSelectedFileIdsChange,
   sessionName: sessionNameProp,
   onSessionNameChange,
   onReferenceModeChange,
@@ -284,11 +286,18 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
   }, [imageFiles]);
 
-  // Initialize internal selection
+  // Initialize internal selection and respond to external changes
   useEffect(() => {
     if (!initializedRef.current) {
+      // 首次初始化
       initializedRef.current = true;
-      const sortedIds = selectedFileIds.slice().sort((idA, idB) => {
+    }
+    // 当 selectedFileIds 变化时，更新内部状态
+    // 使用函数式更新避免依赖 files
+    setInternalSelectedIds(prevIds => {
+      const newIds = selectedFileIds.slice();
+      // 只在有文件信息时排序，否则保持原顺序
+      const sortedIds = newIds.sort((idA, idB) => {
         const a = files[idA];
         const b = files[idB];
         if (!a || !b) return 0;
@@ -296,12 +305,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
         return sizeB - sizeA;
       });
-      setInternalSelectedIds(sortedIds);
-      setZOrderIds(sortedIds);
-      imagesCache.current.clear();
-      setLoadedCount(0);
-    }
-  }, []);
+      return sortedIds;
+    });
+    setZOrderIds(selectedFileIds.slice());
+    imagesCache.current.clear();
+    setLoadedCount(0);
+    // 重置 onReady 状态，允许新的加载完成回调
+    onReadyCalledRef.current = false;
+  }, [selectedFileIds]); // 只监听 selectedFileIds
 
   // Notify parent when all images are loaded
   useEffect(() => {
@@ -872,9 +883,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             }
           }
 
-          if (!isCtrl && !isSelected) {
-            onSelect?.(clickedId);
-          }
+          // 在图片对比模式下，不通知父组件选择变化
+          // 避免改变父组件的 selectedFileIds，从而保持画布中的所有图片
+          // onSelect?.(clickedId);
 
           potentialClearSelectionRef.current = false;
           setMarquee(null);
@@ -949,14 +960,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           } else {
             setActiveImageIds(ids);
           }
-          onSelect?.(ids[ids.length - 1] || '');
+          // 在图片对比模式下，不调用 onSelect，避免改变父组件的 selectedFileIds
+          // onSelect?.(ids[ids.length - 1] || '');
         } else {
           const dx = marquee.x - marquee.startX;
           const dy = marquee.y - marquee.startY;
           const distSq = dx * dx + dy * dy;
           if (distSq < 9 && potentialClearSelectionRef.current) {
             setActiveImageIds([]);
-            onSelect?.('');
+            // 不要调用 onSelect('')，避免清空父组件的 selectedFileIds
+            // 在图片对比模式下，点击空白处只是取消当前选中状态，不应该移除画布中的图片
+            console.log('[ImageComparer] Clearing active selection (not calling onSelect)');
           }
         }
       }
@@ -1001,7 +1015,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (targetId) {
         if (!activeImageIds.includes(targetId)) {
           setActiveImageIds([targetId]);
-          onSelect?.(targetId);
+          // 在图片对比模式下，不调用 onSelect，避免改变父组件的 selectedFileIds
+          // onSelect?.(targetId);
         }
       }
     }
@@ -1205,10 +1220,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }
           const layoutData: ComparisonSessionLayout = JSON.parse(await layoutFile.async('string'));
 
-          if (manifest.sessionName) {
-            setSessionName(manifest.sessionName);
-            onSessionNameChange?.(manifest.sessionName);
-          }
+          // 使用读取的文件名作为 sessionName
+        const fileName = path.split(/[/\\]/).pop()?.replace(/\.aurora$/i, '') || manifest.sessionName || '画布01';
+        setSessionName(fileName);
+        onSessionNameChange?.(fileName);
 
           autoZoomAppliedRef.current = false;
           userInteractedRef.current = false;
@@ -1329,7 +1344,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     const idsToRemove = activeImageIds.includes(targetId) ? activeImageIds : [targetId];
 
-    setInternalSelectedIds(prev => prev.filter(i => !idsToRemove.includes(i)));
+    const updatedIds = internalSelectedIds.filter(i => !idsToRemove.includes(i));
+    setInternalSelectedIds(updatedIds);
     setZOrderIds(prev => prev.filter(i => !idsToRemove.includes(i)));
     setManualLayouts(prev => {
       const next = { ...prev };
@@ -1339,6 +1355,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setActiveImageIds([]);
     setMenuTargetId(null);
     setContextMenu(null);
+
+    // 通知父组件 selectedFileIds 已更改
+    onSelectedFileIdsChange?.(updatedIds);
   };
 
   const handleResetItem = () => {
@@ -1694,8 +1713,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     if (uniqueNewIds.length === 0) return;
 
-    setInternalSelectedIds(prev => [...prev, ...uniqueNewIds]);
+    const updatedIds = [...internalSelectedIds, ...uniqueNewIds];
+    setInternalSelectedIds(updatedIds);
     setZOrderIds(prev => [...prev, ...uniqueNewIds]);
+
+    // 通知父组件 selectedFileIds 已更改，以便右键菜单显示正确的数量
+    onSelectedFileIdsChange?.(updatedIds);
 
     shouldAutoFitAfterLoadRef.current = true;
 

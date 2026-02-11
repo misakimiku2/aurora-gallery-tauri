@@ -106,5 +106,5 @@ def query_colors_db(db_path):
 
 if __name__ == "__main__":
     # 使用用户指定的数据库路径
-    db_path = r"C:\Users\Misaki\AppData\Roaming\com.aurora.gallery\colors.db"
+    db_path = r"E:\图包\.aurora\colors.db"
     query_colors_db(db_path)

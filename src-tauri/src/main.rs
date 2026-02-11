@@ -2273,6 +2273,105 @@ async fn switch_root_database(
     Ok(())
 }
 
+// 获取主色调数据库统计信息
+#[tauri::command]
+async fn get_color_db_stats(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        
+        let total = color_db::get_pending_files_count(&mut conn).unwrap_or(0)
+            + color_db::get_processing_files_count(&mut conn).unwrap_or(0)
+            + color_db::get_extracted_files_count(&mut conn).unwrap_or(0)
+            + color_db::get_error_files_count(&mut conn).unwrap_or(0);
+        
+        let extracted = color_db::get_extracted_files_count(&mut conn).unwrap_or(0);
+        let error = color_db::get_error_files_count(&mut conn).unwrap_or(0);
+        let pending = color_db::get_pending_files_count(&mut conn).unwrap_or(0);
+        let processing = color_db::get_processing_files_count(&mut conn).unwrap_or(0);
+        
+        // 获取数据库文件大小
+        let (db_size, wal_size) = pool.get_db_file_sizes().unwrap_or((0, 0));
+        
+        serde_json::json!({
+            "total": total,
+            "extracted": extracted,
+            "error": error,
+            "pending": pending,
+            "processing": processing,
+            "dbSize": db_size,
+            "walSize": wal_size
+        })
+    }).await.map_err(|e| format!("Failed to get color db stats: {}", e))?;
+    
+    Ok(result)
+}
+
+// 获取错误文件列表
+#[tauri::command]
+async fn get_color_db_error_files(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        // 使用新的清理函数，自动删除不存在的文件记录
+        let error_files = color_db::cleanup_nonexistent_error_files(&mut conn)
+            .unwrap_or_default();
+
+        error_files.into_iter().map(|(path, timestamp)| {
+            serde_json::json!({
+                "path": path,
+                "timestamp": timestamp
+            })
+        }).collect::<Vec<_>>()
+    }).await.map_err(|e| format!("Failed to get error files: {}", e))?;
+
+    Ok(result)
+}
+
+// 重新处理错误文件
+#[tauri::command]
+async fn retry_color_extraction(
+    app: tauri::AppHandle,
+    file_paths: Option<Vec<String>>
+) -> Result<usize, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        
+        // 将错误文件重置为待处理状态
+        let reset_count = if let Some(paths) = file_paths.as_ref() {
+            color_db::reset_error_files_to_pending(&mut conn, Some(paths))
+        } else {
+            color_db::reset_error_files_to_pending(&mut conn, None)
+        };
+        
+        reset_count
+    }).await.map_err(|e| format!("Failed to retry color extraction: {}", e))?;
+    
+    result.map_err(|e| e)
+}
+
+// 从数据库中删除错误文件记录
+#[tauri::command]
+async fn delete_color_db_error_files(
+    app: tauri::AppHandle,
+    file_paths: Vec<String>
+) -> Result<usize, String> {
+    let pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+    
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        
+        // 删除错误文件记录
+        color_db::delete_error_files(&mut conn, &file_paths)
+    }).await.map_err(|e| format!("Failed to delete color db error files: {}", e))?;
+    
+    result.map_err(|e| e)
+}
+
 
 fn main() {
     
@@ -2330,7 +2429,11 @@ fn main() {
             db_upsert_file_metadata,
             db_copy_file_metadata,
             switch_root_database,
-            copy_image_to_clipboard
+            copy_image_to_clipboard,
+            get_color_db_stats,
+            get_color_db_error_files,
+            retry_color_extraction,
+            delete_color_db_error_files
         ])
         .setup(|app| {
             // 创建托盘菜单

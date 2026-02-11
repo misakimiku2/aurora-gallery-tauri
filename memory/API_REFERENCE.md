@@ -232,6 +232,23 @@ async function copyImageColors(
 
 ---
 
+#### `copyImageToClipboard`
+```typescript
+async function copyImageToClipboard(filePath: string): Promise<void>
+```
+
+**描述**: 复制图片到系统剪贴板
+
+**参数**:
+- `filePath`: string - 图片文件路径
+
+**示例**:
+```typescript
+await copyImageToClipboard('/home/user/Pictures/photo.jpg')
+```
+
+---
+
 #### `moveFile`
 ```typescript
 async function moveFile(
@@ -724,7 +741,7 @@ async function dbDeletePerson(id: string): Promise<void>
 async function dbUpdatePersonAvatar(
   personId: string, 
   coverFileId: string, 
-  faceBox: any
+  faceBox: FaceBox | null
 ): Promise<void>
 ```
 
@@ -733,11 +750,48 @@ async function dbUpdatePersonAvatar(
 **参数**:
 - `personId`: string - 人物 ID
 - `coverFileId`: string - 封面文件 ID
-- `faceBox`: any - 人脸位置信息
+- `faceBox`: FaceBox | null - 人脸位置信息
 
 ---
 
-### 6. 窗口管理 API
+### 6. 专题数据库 API
+
+#### `dbGetAllTopics`
+```typescript
+async function dbGetAllTopics(): Promise<Topic[]>
+```
+
+**描述**: 从数据库读取所有专题
+
+**返回**: `Promise<Topic[]>` - 专题数组
+
+---
+
+#### `dbUpsertTopic`
+```typescript
+async function dbUpsertTopic(topic: Topic): Promise<void>
+```
+
+**描述**: 插入或更新专题信息
+
+**参数**:
+- `topic`: Topic - 专题数据
+
+---
+
+#### `dbDeleteTopic`
+```typescript
+async function dbDeleteTopic(id: string): Promise<void>
+```
+
+**描述**: 删除专题记录
+
+**参数**:
+- `id`: string - 专题 ID
+
+---
+
+### 7. 窗口管理 API
 
 #### `hideWindow`
 ```typescript
@@ -757,6 +811,19 @@ async function showWindow(): Promise<void>
 
 ---
 
+#### `setWindowMinSize`
+```typescript
+async function setWindowMinSize(width: number, height: number): Promise<void>
+```
+
+**描述**: 设置窗口最小尺寸
+
+**参数**:
+- `width`: number - 最小宽度
+- `height`: number - 最小高度
+
+---
+
 #### `exitApp`
 ```typescript
 async function exitApp(): Promise<void>
@@ -766,7 +833,7 @@ async function exitApp(): Promise<void>
 
 ---
 
-### 7. 数据库切换 API
+### 8. 数据库切换 API
 
 #### `switchRootDatabase`
 ```typescript
@@ -911,6 +978,18 @@ async fn copy_image_colors(
 
 ---
 
+#### `copy_image_to_clipboard`
+```rust
+#[tauri::command]
+async fn copy_image_to_clipboard(
+    file_path: String
+) -> Result<(), String>
+```
+
+**描述**: 复制图片到系统剪贴板
+
+---
+
 #### `move_file`
 ```rust
 #[tauri::command]
@@ -997,11 +1076,10 @@ async fn get_jxl_preview(path: String) -> Result<String, String>
 #### `get_thumbnail`
 ```rust
 #[tauri::command]
-async fn get_thumbnail(
+pub async fn get_thumbnail(
     file_path: String, 
-    updated_at: String, 
-    resource_root: String
-) -> Result<String, String>
+    cache_root: String
+) -> Result<Option<String>, String>
 ```
 
 **描述**: 获取单个缩略图
@@ -1011,10 +1089,10 @@ async fn get_thumbnail(
 #### `get_thumbnails_batch`
 ```rust
 #[tauri::command]
-async fn get_thumbnails_batch(
+pub async fn get_thumbnails_batch(
     file_paths: Vec<String>,
     cache_root: String,
-    on_event: Channel<ThumbnailEvent>
+    on_event: Channel<ThumbnailBatchResult>
 ) -> Result<(), String>
 ```
 
@@ -1025,7 +1103,7 @@ async fn get_thumbnails_batch(
 #### `save_remote_thumbnail`
 ```rust
 #[tauri::command]
-async fn save_remote_thumbnail(
+pub async fn save_remote_thumbnail(
     file_path: String,
     thumbnail_data: String,  // base64 data URL
     colors: Vec<ColorResult>,
@@ -1040,11 +1118,11 @@ async fn save_remote_thumbnail(
 #### `generate_drag_preview`
 ```rust
 #[tauri::command]
-async fn generate_drag_preview(
+pub async fn generate_drag_preview(
     thumbnail_paths: Vec<String>, 
-    total_count: number, 
+    total_count: usize, 
     cache_root: String
-) -> Result<String, String>
+) -> Result<Option<String>, String>
 ```
 
 **描述**: 生成拖拽预览图
@@ -1180,6 +1258,20 @@ async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String>
 
 ---
 
+#### `set_window_min_size`
+```rust
+#[tauri::command]
+async fn set_window_min_size(
+    app_handle: tauri::AppHandle, 
+    width: f64, 
+    height: f64
+) -> Result<(), String>
+```
+
+**描述**: 设置窗口最小尺寸
+
+---
+
 #### `exit_app`
 ```rust
 #[tauri::command]
@@ -1240,6 +1332,42 @@ fn db_update_person_avatar(
 ```
 
 **描述**: 更新人物头像
+
+---
+
+#### `db_get_all_topics`
+```rust
+#[tauri::command]
+fn db_get_all_topics(pool: tauri::State<AppDbPool>) -> Result<Vec<Topic>, String>
+```
+
+**描述**: 获取所有专题
+
+---
+
+#### `db_upsert_topic`
+```rust
+#[tauri::command]
+fn db_upsert_topic(
+    pool: tauri::State<AppDbPool>, 
+    topic: Topic
+) -> Result<(), String>
+```
+
+**描述**: 插入或更新专题
+
+---
+
+#### `db_delete_topic`
+```rust
+#[tauri::command]
+fn db_delete_topic(
+    pool: tauri::State<AppDbPool>, 
+    id: String
+) -> Result<(), String>
+```
+
+**描述**: 删除专题
 
 ---
 
@@ -1432,10 +1560,10 @@ interface DominantColor {
   hex: string
   rgb: [number, number, number]
   isDark: boolean
-  labL: number      // LAB 颜色空间 L 值
-  labA: number      // LAB 颜色空间 A 值
-  labB: number      // LAB 颜色空间 B 值
-  percentage: number // 颜色占比
+  labL?: number      // LAB 颜色空间 L 值
+  labA?: number      // LAB 颜色空间 A 值
+  labB?: number      // LAB 颜色空间 B 值
+  percentage?: number // 颜色占比
 }
 ```
 
@@ -1483,6 +1611,21 @@ interface Person {
   description?: string
   descriptor?: number[]      // 人脸特征向量
   faceBox?: { x: number; y: number; w: number; h: number }  // 百分比 0-100
+  updatedAt?: number         // 更新时间戳
+}
+```
+
+---
+
+### FaceBox (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FaceBox {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
 }
 ```
 
@@ -1506,6 +1649,8 @@ interface Topic {
   updatedAt?: string
 }
 ```
+
+**注意**: Rust 后端中 `type` 字段序列化为 `topicType` 以避免与 Rust 关键字冲突。
 
 ---
 
@@ -1737,6 +1882,80 @@ type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' 
 
 ---
 
+## Rust 内部数据结构
+
+### FileIndexEntry (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileIndexEntry {
+    pub file_id: String,
+    pub parent_id: Option<String>,
+    pub path: String,
+    pub name: String,
+    pub file_type: String, // "Image", "Folder", "Unknown"
+    pub size: u64,
+    pub created_at: i64,
+    pub modified_at: i64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub format: Option<String>,
+}
+```
+
+### FileMetadata (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileMetadata {
+    pub file_id: String,
+    pub path: String,
+    pub tags: Option<serde_json::Value>,
+    pub description: Option<String>,
+    pub source_url: Option<String>,
+    pub ai_data: Option<serde_json::Value>,
+    pub category: Option<String>,
+    pub updated_at: Option<i64>,
+}
+```
+
+### Person (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Person {
+    pub id: String,
+    pub name: String,
+    pub cover_file_id: String,
+    pub count: i32,
+    pub description: Option<String>,
+    pub face_box: Option<FaceBox>,
+    pub updated_at: Option<i64>,
+}
+```
+
+### Topic (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Topic {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub topic_type: Option<String>,  // 序列化为 topicType
+    pub cover_file_id: Option<String>,
+    pub background_file_id: Option<String>,
+    pub cover_crop: Option<CoverCropData>,
+    pub people_ids: Vec<String>,
+    pub file_ids: Vec<String>,
+    pub source_url: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+```
+
+---
+
 ## 使用示例
 
 ### 完整工作流示例
@@ -1747,7 +1966,10 @@ import {
   readFileAsBase64, 
   pauseColorExtraction,
   getThumbnail,
-  dbUpsertFileMetadata
+  dbUpsertFileMetadata,
+  copyImageToClipboard,
+  dbGetAllTopics,
+  dbUpsertTopic
 } from './api/tauri-bridge'
 
 // 1. 扫描目录
@@ -1787,6 +2009,25 @@ async function saveFileMetadata(fileId: string, path: string, tags: string[], de
     updatedAt: Date.now()
   })
 }
+
+// 5. 复制图片到剪贴板
+async function copyToClipboard(filePath: string) {
+  await copyImageToClipboard(filePath)
+}
+
+// 6. 专题操作
+async function manageTopics() {
+  const topics = await dbGetAllTopics()
+  console.log('所有专题:', topics)
+  
+  await dbUpsertTopic({
+    id: 'topic-1',
+    name: '旅行照片',
+    description: '2024年旅行照片合集',
+    peopleIds: [],
+    fileIds: ['file-1', 'file-2']
+  })
+}
 ```
 
 ---
@@ -1818,7 +2059,7 @@ const [result, error] = await safeOperation(
 
 ---
 
-**文档版本**: 1.1  
-**更新日期**: 2026-02-07  
+**文档版本**: 1.2  
+**更新日期**: 2026-02-11  
 **覆盖范围**: 所有公共 API  
 **详细程度**: 高

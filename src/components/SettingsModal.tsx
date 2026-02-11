@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Image, Eye, Trash, FolderOpen, X } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../types';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile } from '../api/tauri-bridge';
 
 interface SettingsModalProps {
   state: AppState;
@@ -20,6 +21,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   // Use AI connection status from AppState instead of local state
   const connectionStatus = state.aiConnectionStatus;
+
+  // Color database management state
+  const [colorDbStats, setColorDbStats] = useState<ColorDbStats | null>(null);
+  const [errorFiles, setErrorFiles] = useState<ColorDbErrorFile[]>([]);
+  const [showErrorFiles, setShowErrorFiles] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+  const [retrySuccess, setRetrySuccess] = useState<string | null>(null);
+  
+  // Corrupted files management state
+  const [previewFile, setPreviewFile] = useState<ColorDbErrorFile | null>(null);
+  const [previewError, setPreviewError] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
   const [editingPresetName, setEditingPresetName] = useState('');
 
@@ -111,6 +128,209 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     };
   }, [state.settingsCategory, refreshInterval]);
 
+  // 加载主色调数据库统计信息
+  const loadColorDbStats = async () => {
+    setIsLoadingStats(true);
+    try {
+      const stats = await getColorDbStats();
+      if (stats) {
+        setColorDbStats(stats);
+      }
+    } catch (error) {
+      console.error('Failed to load color db stats:', error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
+  // 加载错误文件列表
+  const loadErrorFiles = async () => {
+    try {
+      const files = await getColorDbErrorFiles();
+      setErrorFiles(files);
+    } catch (error) {
+      console.error('Failed to load error files:', error);
+    }
+  };
+
+  // 重新处理错误文件
+  const handleRetryErrors = async (specificFiles?: string[]) => {
+    setIsRetrying(true);
+    setRetrySuccess(null);
+    try {
+      const count = await retryColorExtraction(specificFiles);
+      if (count > 0) {
+        setRetrySuccess(t('settings.colorDbRetrySuccess').replace('{count}', count.toString()));
+        // 3秒后清除成功消息
+        setTimeout(() => setRetrySuccess(null), 3000);
+
+        // 轮询检查处理状态，直到所有文件处理完成
+        const checkProcessingStatus = async () => {
+          const stats = await getColorDbStats();
+          if (stats) {
+            setColorDbStats(stats);
+            // 如果还有 pending 或 processing 状态的文件，继续轮询
+            if (stats.pending > 0 || stats.processing > 0) {
+              setTimeout(checkProcessingStatus, 2000); // 每2秒检查一次
+            } else {
+              // 处理完成，刷新错误文件列表
+              await loadErrorFiles();
+              setIsRetrying(false);
+            }
+          }
+        };
+
+        // 开始轮询
+        setTimeout(checkProcessingStatus, 1000); // 1秒后开始第一次检查
+      } else {
+        setIsRetrying(false);
+      }
+    } catch (error) {
+      console.error('Failed to retry errors:', error);
+      setIsRetrying(false);
+    }
+  };
+
+  // 处理文件选择
+  const toggleFileSelection = (path: string) => {
+    const newSelected = new Set(selectedFiles);
+    if (newSelected.has(path)) {
+      newSelected.delete(path);
+    } else {
+      newSelected.add(path);
+    }
+    setSelectedFiles(newSelected);
+  };
+
+  // 全选/取消全选
+  const toggleSelectAll = () => {
+    if (selectedFiles.size === errorFiles.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(errorFiles.map(f => f.path)));
+    }
+  };
+
+  // 删除选中的文件
+  const handleDeleteSelected = async () => {
+    if (selectedFiles.size === 0) return;
+    
+    const confirmed = window.confirm(t('settings.colorDbDeleteConfirm').replace('{count}', selectedFiles.size.toString()));
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    setDeleteSuccess(null);
+    try {
+      const pathsToDelete = Array.from(selectedFiles);
+      
+      // 1. 删除物理文件
+      let deletedCount = 0;
+      for (const path of pathsToDelete) {
+        try {
+          await deleteFile(path);
+          deletedCount++;
+        } catch (e) {
+          console.error(`Failed to delete file ${path}:`, e);
+        }
+      }
+      
+      // 2. 从数据库中删除记录
+      await deleteColorDbErrorFiles(pathsToDelete);
+      
+      if (deletedCount > 0) {
+        setDeleteSuccess(t('settings.colorDbDeleteSuccess').replace('{count}', deletedCount.toString()));
+        // 刷新数据
+        await loadColorDbStats();
+        await loadErrorFiles();
+        setSelectedFiles(new Set());
+        setTimeout(() => setDeleteSuccess(null), 3000);
+      }
+    } catch (error) {
+      console.error('Failed to delete files:', error);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // 删除单个文件
+  const handleDeleteSingle = async (file: ColorDbErrorFile) => {
+    const confirmed = window.confirm(t('settings.colorDbDeleteSingleConfirm').replace('{name}', file.path.split(/[\\/]/).pop() || ''));
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      // 1. 删除物理文件
+      await deleteFile(file.path);
+      
+      // 2. 从数据库中删除记录
+      await deleteColorDbErrorFiles([file.path]);
+      
+      // 3. 如果正在预览这个文件，关闭预览
+      if (previewFile?.path === file.path) {
+        closePreview();
+      }
+      
+      // 4. 从选中列表中移除
+      const newSelected = new Set(selectedFiles);
+      newSelected.delete(file.path);
+      setSelectedFiles(newSelected);
+      
+      // 刷新数据
+      await loadColorDbStats();
+      await loadErrorFiles();
+      
+      setDeleteSuccess(t('settings.colorDbDeleteSuccess').replace('{count}', '1'));
+      setTimeout(() => setDeleteSuccess(null), 3000);
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+      alert(t('settings.colorDbDeleteFailed'));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // 在文件管理器中打开
+  const openInExplorer = (path: string) => {
+    import('../api/tauri-bridge').then(({ openPath }) => {
+      openPath(path, true);
+    });
+  };
+
+  // 打开预览并重置错误状态
+  const openPreview = (file: ColorDbErrorFile) => {
+    setPreviewFile(file);
+    setPreviewError(false);
+  };
+
+  // 关闭预览
+  const closePreview = () => {
+    setPreviewFile(null);
+    setPreviewError(false);
+  };
+
+  // 当切换到 storage 页面时加载统计信息
+  useEffect(() => {
+    if (state.settingsCategory === 'storage') {
+      loadColorDbStats();
+    }
+  }, [state.settingsCategory]);
+
+  // 组件挂载时，如果在 storage 页面，自动刷新统计信息
+  useEffect(() => {
+    if (state.settingsCategory === 'storage') {
+      loadColorDbStats();
+    }
+  }, []);
+
+  // 格式化文件大小
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
   const handleExportData = () => {
     // 过滤专题信息，只保留基本属性、子专题结构和人物关联，剔除文件关联
     const simplifiedTopics: Record<string, any> = {};
@@ -200,6 +420,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'general' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
                   >
                     <Sliders size={18} className="mr-3"/> {t('settings.catGeneral')}
+                  </button>
+                  <button
+                    onClick={() => onUpdateSettings({ settingsCategory: 'storage' })}
+                    className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'storage' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                  >
+                    <Database size={18} className="mr-3"/> {t('settings.catStorage')}
                   </button>
                   <button
                     onClick={() => onUpdateSettings({ settingsCategory: 'ai' })}
@@ -477,75 +703,449 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         </div>
                      </section>
 
-                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
-                        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Database size={20} className="mr-2 text-blue-500"/> {t('settings.catStorage')}</h3>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.resourceRoot')}</label>
-                                <div className="flex items-center">
-                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
-                                        {state.settings.paths.resourceRoot}
-                                    </div>
-                                    <button 
-                                        onClick={() => onUpdatePath('resource')}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r"
-                                    >
-                                        {t('settings.change')}
-                                    </button>
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
-                                <div className="flex items-center">
-                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
-                                        {state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet')}
-                                    </div>
-                                    <button 
-                                        onClick={() => {
-                                            const cachePath = state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '';
-                                            if (cachePath) {
-                                                import('../api/tauri-bridge').then(({ openPath }) => {
-                                                    openPath(cachePath);
-                                                });
-                                            }
-                                        }}
-                                        disabled={!state.settings.paths.resourceRoot}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
-                                    >
-                                        打开
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
+                 </div>
+              )}
+
+              {state.settingsCategory === 'storage' && (
+                 <div className="space-y-8 animate-fade-in">
+                     <section>
+                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center"><Database size={20} className="mr-2 text-blue-500"/> {t('settings.catStorage')}</h3>
+                         <div className="space-y-4">
+                             <div>
+                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.resourceRoot')}</label>
+                                 <div className="flex items-center">
+                                     <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                                         {state.settings.paths.resourceRoot}
+                                     </div>
+                                     <button 
+                                         onClick={() => onUpdatePath('resource')}
+                                         className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r"
+                                     >
+                                         {t('settings.change')}
+                                     </button>
+                                 </div>
+                             </div>
+                             <div>
+                                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
+                                 <div className="flex items-center">
+                                     <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                                         {state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet')}
+                                     </div>
+                                     <button 
+                                         onClick={() => {
+                                             const cachePath = state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '';
+                                             if (cachePath) {
+                                                 import('../api/tauri-bridge').then(({ openPath }) => {
+                                                     openPath(cachePath);
+                                                 });
+                                             }
+                                         }}
+                                         disabled={!state.settings.paths.resourceRoot}
+                                         className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
+                                     >
+                                         打开
+                                     </button>
+                                 </div>
+                             </div>
+                         </div>
                      </section>
 
                      <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
-                        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Database size={20} className="mr-2 text-blue-500"/> {t('settings.dataBackup')}</h3>
-                        <div className="flex space-x-4">
-                            <button 
-                                onClick={handleExportData}
-                                className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800"
+                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Download size={20} className="mr-2 text-blue-500"/> {t('settings.dataBackup')}</h3>
+                         <div className="flex space-x-4">
+                             <button 
+                                 onClick={handleExportData}
+                                 className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800"
+                             >
+                                 <Download size={16} className="mr-2"/>
+                                 {t('settings.exportTags')}
+                             </button>
+                             <div className="relative">
+                                 <input 
+                                     type="file" 
+                                     id="import-file" 
+                                     name="import-file"
+                                     accept=".json" 
+                                     onChange={handleImportData} 
+                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                 />
+                                 <button 
+                                     className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 pointer-events-none"
+                                 >
+                                     <Upload size={16} className="mr-2"/>
+                                     {t('settings.importTags')}
+                                 </button>
+                             </div>
+                         </div>
+                     </section>
+
+                     {/* 主色调数据库管理 */}
+                     <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+                         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center justify-between">
+                             <div className="flex items-center">
+                                 <Palette size={20} className="mr-2 text-purple-500"/> 
+                                 {t('settings.colorDbTitle')}
+                             </div>
+                             <button
+                                onClick={async () => {
+                                    // 先加载错误文件列表（会触发清理不存在的文件）
+                                    await loadErrorFiles();
+                                    // 然后再加载统计信息
+                                    await loadColorDbStats();
+                                }}
+                                disabled={isLoadingStats}
+                                className="text-sm flex items-center px-3 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-700 dark:text-gray-200"
                             >
-                                <Download size={16} className="mr-2"/>
-                                {t('settings.exportTags')}
+                                <RefreshCw size={14} className={`mr-1 ${isLoadingStats ? 'animate-spin' : ''}`}/>
+                                {t('settings.refresh')}
                             </button>
-                            <div className="relative">
-                                <input 
-                                    type="file" 
-                                    id="import-file" 
-                                    name="import-file"
-                                    accept=".json" 
-                                    onChange={handleImportData} 
-                                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                />
-                                <button 
-                                    className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 pointer-events-none"
-                                >
-                                    <Upload size={16} className="mr-2"/>
-                                    {t('settings.importTags')}
-                                </button>
-                            </div>
-                        </div>
+                         </h3>
+                         
+                         {colorDbStats && (
+                             <div className="space-y-4">
+                                 {/* 统计卡片 */}
+                                 <div className="grid grid-cols-2 gap-3">
+                                     <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
+                                         <div className="text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbTotalRecords')}</div>
+                                         <div className="text-xl font-bold text-gray-800 dark:text-white">{colorDbStats.total.toLocaleString()}</div>
+                                     </div>
+                                     <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
+                                         <div className="text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbFileSize')}</div>
+                                         <div className="text-xl font-bold text-gray-800 dark:text-white">{formatFileSize(colorDbStats.dbSize + colorDbStats.walSize)}</div>
+                                     </div>
+                                 </div>
+                                 
+                                 {/* 状态分布 */}
+                                 <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                                     <div className="flex justify-between items-center mb-3">
+                                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.colorDbStatusDistribution')}</span>
+                                     </div>
+                                     <div className="space-y-2">
+                                         {/* 已提取 */}
+                                         <div className="flex items-center">
+                                             <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbExtracted')}</div>
+                                             <div className="flex-1 mx-2">
+                                                 <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                                                     <div 
+                                                         className="h-full bg-green-500 rounded-full"
+                                                         style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.extracted / colorDbStats.total) * 100 : 0}%` }}
+                                                     />
+                                                 </div>
+                                             </div>
+                                             <div className="w-16 text-right text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                 {colorDbStats.extracted.toLocaleString()}
+                                             </div>
+                                         </div>
+                                         
+                                         {/* 待处理 */}
+                                         <div className="flex items-center">
+                                             <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbPending')}</div>
+                                             <div className="flex-1 mx-2">
+                                                 <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                                                     <div 
+                                                         className="h-full bg-blue-500 rounded-full"
+                                                         style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.pending / colorDbStats.total) * 100 : 0}%` }}
+                                                     />
+                                                 </div>
+                                             </div>
+                                             <div className="w-16 text-right text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                 {colorDbStats.pending.toLocaleString()}
+                                             </div>
+                                         </div>
+                                         
+                                         {/* 处理中 */}
+                                         {colorDbStats.processing > 0 && (
+                                             <div className="flex items-center">
+                                                 <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbProcessing')}</div>
+                                                 <div className="flex-1 mx-2">
+                                                     <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                                                         <div 
+                                                             className="h-full bg-yellow-500 rounded-full"
+                                                             style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.processing / colorDbStats.total) * 100 : 0}%` }}
+                                                         />
+                                                     </div>
+                                                 </div>
+                                                 <div className="w-16 text-right text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                     {colorDbStats.processing.toLocaleString()}
+                                                 </div>
+                                             </div>
+                                         )}
+                                         
+                                         {/* 错误 */}
+                                         <div className="flex items-center">
+                                             <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbErrors')}</div>
+                                             <div className="flex-1 mx-2">
+                                                 <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                                                     <div 
+                                                         className="h-full bg-red-500 rounded-full"
+                                                         style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.error / colorDbStats.total) * 100 : 0}%` }}
+                                                     />
+                                                 </div>
+                                             </div>
+                                             <div className="w-16 text-right text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                 {colorDbStats.error.toLocaleString()}
+                                             </div>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 
+                                 {/* 错误文件管理 */}
+                                 {colorDbStats.error > 0 && (
+                                     <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 border border-red-200 dark:border-red-800">
+                                         <div className="flex items-center justify-between mb-3">
+                                             <div className="flex items-center">
+                                                 <AlertCircle size={18} className="text-red-500 mr-2"/>
+                                                 <span className="text-sm font-medium text-red-700 dark:text-red-400">
+                                                     {t('settings.colorDbHasErrors').replace('{count}', colorDbStats.error.toString())}
+                                                 </span>
+                                             </div>
+                                             <div className="flex items-center space-x-2">
+                                                 <button
+                                                     onClick={() => handleRetryErrors()}
+                                                     disabled={isRetrying}
+                                                     className="text-sm flex items-center px-3 py-1.5 bg-red-100 dark:bg-red-800 hover:bg-red-200 dark:hover:bg-red-700 text-red-700 dark:text-red-300 rounded-lg transition-colors"
+                                                 >
+                                                     <RefreshCw size={14} className={`mr-1 ${isRetrying ? 'animate-spin' : ''}`}/>
+                                                     {t('settings.colorDbRetryAll')}
+                                                 </button>
+                                                 <button
+                                                     onClick={() => {
+                                                         setShowErrorFiles(!showErrorFiles);
+                                                         if (!showErrorFiles) loadErrorFiles();
+                                                     }}
+                                                     className="text-sm flex items-center px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+                                                 >
+                                                     {showErrorFiles ? <ChevronUp size={14} className="mr-1"/> : <ChevronDown size={14} className="mr-1"/>}
+                                                     {showErrorFiles ? t('settings.hide') : t('settings.show')}
+                                                 </button>
+                                             </div>
+                                         </div>
+                                         
+                                         {retrySuccess && (
+                                             <div className="mb-3 p-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-sm rounded">
+                                                 {retrySuccess}
+                                             </div>
+                                         )}
+                                         
+                                         {deleteSuccess && (
+                                            <div className="mb-3 p-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-sm rounded">
+                                                {deleteSuccess}
+                                            </div>
+                                        )}
+                                        
+                                        {/* 错误文件列表 */}
+                                        {showErrorFiles && (
+                                            <div className="mt-3">
+                                                {/* 工具栏 */}
+                                                <div className="flex items-center justify-between mb-3 pb-3 border-b border-red-200 dark:border-red-800">
+                                                    <div className="flex items-center space-x-2">
+                                                        <label className="flex items-center text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedFiles.size === errorFiles.length && errorFiles.length > 0}
+                                                                onChange={toggleSelectAll}
+                                                                className="mr-2 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                                            />
+                                                            {t('settings.selectAll')} ({selectedFiles.size}/{errorFiles.length})
+                                                        </label>
+                                                    </div>
+                                                    <div className="flex items-center space-x-2">
+                                                        {/* 视图切换 */}
+                                                        <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+                                                            <button
+                                                                onClick={() => setViewMode('list')}
+                                                                className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                                                title={t('layout.list')}
+                                                            >
+                                                                <List size={14} />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => setViewMode('grid')}
+                                                                className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                                                title={t('layout.grid')}
+                                                            >
+                                                                <Grid size={14} />
+                                                            </button>
+                                                        </div>
+                                                        {/* 删除选中按钮 */}
+                                                        {selectedFiles.size > 0 && (
+                                                            <button
+                                                                onClick={handleDeleteSelected}
+                                                                disabled={isDeleting}
+                                                                className="text-sm flex items-center px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors"
+                                                            >
+                                                                <Trash size={14} className="mr-1"/>
+                                                                {t('settings.deleteSelected')} ({selectedFiles.size})
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* 文件列表 */}
+                                                {errorFiles.length === 0 ? (
+                                                    <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
+                                                        {t('settings.loading')}
+                                                    </div>
+                                                ) : viewMode === 'grid' ? (
+                                                    /* 网格视图 */
+                                                    <div className="grid grid-cols-4 gap-3 max-h-96 overflow-y-auto p-1">
+                                                        {errorFiles.map((file, index) => (
+                                                            <div 
+                                                                key={index} 
+                                                                className={`relative group rounded-lg border-2 overflow-hidden cursor-pointer transition-all ${
+                                                                    selectedFiles.has(file.path) 
+                                                                        ? 'border-red-500 ring-2 ring-red-500/20' 
+                                                                        : 'border-gray-200 dark:border-gray-700 hover:border-red-300'
+                                                                }`}
+                                                                onClick={() => toggleFileSelection(file.path)}
+                                                            >
+                                                                {/* 缩略图 */}
+                                                                <div className="aspect-square bg-gray-100 dark:bg-gray-800 flex items-center justify-center relative">
+                                                                    <img
+                                                                        src={getAssetUrl(file.path)}
+                                                                        alt=""
+                                                                        className="w-full h-full object-cover absolute inset-0"
+                                                                        onError={(e) => {
+                                                                            (e.target as HTMLImageElement).style.display = 'none';
+                                                                        }}
+                                                                    />
+                                                                    <Image size={24} className="text-gray-400 relative z-10" />
+                                                                </div>
+                                                                
+                                                                {/* 复选框 */}
+                                                                <div className="absolute top-2 left-2 z-20">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={selectedFiles.has(file.path)}
+                                                                        onChange={(e) => {
+                                                                            e.stopPropagation();
+                                                                            toggleFileSelection(file.path);
+                                                                        }}
+                                                                        className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                                                    />
+                                                                </div>
+                                                                
+                                                                {/* 操作按钮 */}
+                                                                <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            openPreview(file);
+                                                                        }}
+                                                                        className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                                                        title={t('settings.preview')}
+                                                                    >
+                                                                        <Eye size={12} className="text-gray-600 dark:text-gray-400" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            openInExplorer(file.path);
+                                                                        }}
+                                                                        className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                                                        title={t('context.openFolder')}
+                                                                    >
+                                                                        <FolderOpen size={12} className="text-gray-600 dark:text-gray-400" />
+                                                                    </button>
+                                                                </div>
+                                                                
+                                                                {/* 文件名 */}
+                                                                <div className="p-2 bg-white dark:bg-gray-800">
+                                                                    <div className="text-xs text-gray-600 dark:text-gray-300 truncate" title={file.path}>
+                                                                        {file.path.split(/[\\/]/).pop()}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    /* 列表视图 */
+                                                    <div className="max-h-60 overflow-y-auto space-y-2">
+                                                        {errorFiles.map((file, index) => (
+                                                            <div key={index} className="flex items-center p-2 bg-white dark:bg-gray-800 rounded border border-red-100 dark:border-red-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedFiles.has(file.path)}
+                                                                    onChange={() => toggleFileSelection(file.path)}
+                                                                    className="mr-3 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                                                />
+                                                                <div className="flex-1 min-w-0 mr-2">
+                                                                    <div className="text-xs text-gray-600 dark:text-gray-300 truncate" title={file.path}>
+                                                                        {file.path.split(/[\\/]/).pop()}
+                                                                    </div>
+                                                                    <div className="text-xs text-gray-400">
+                                                                        {new Date(file.timestamp * 1000).toLocaleString()}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center space-x-1">
+                                                                    <button
+                                                                        onClick={() => openPreview(file)}
+                                                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                                                        title={t('settings.preview')}
+                                                                    >
+                                                                        <Eye size={14}/>
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => openInExplorer(file.path)}
+                                                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                                                        title={t('context.openFolder')}
+                                                                    >
+                                                                        <FolderOpen size={14}/>
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleRetryErrors([file.path])}
+                                                                        disabled={isRetrying}
+                                                                        className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
+                                                                        title={t('settings.colorDbRetrySingle')}
+                                                                    >
+                                                                        <Play size={14}/>
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteSingle(file)}
+                                                                        disabled={isDeleting}
+                                                                        className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
+                                                                        title={t('context.delete')}
+                                                                    >
+                                                                        <Trash size={14}/>
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                     </div>
+                                 )}
+                                 
+                                 {colorDbStats.error === 0 && colorDbStats.total > 0 && (
+                                    <div className={`rounded-lg p-4 border flex items-center ${isRetrying ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800' : 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'}`}>
+                                        {isRetrying ? (
+                                            <>
+                                                <RefreshCw size={18} className="text-yellow-500 mr-2 animate-spin"/>
+                                                <span className="text-sm font-medium text-yellow-700 dark:text-yellow-400">
+                                                    {t('settings.colorDbRetrying')}
+                                                </span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Check size={18} className="text-green-500 mr-2"/>
+                                                <span className="text-sm font-medium text-green-700 dark:text-green-400">
+                                                    {t('settings.colorDbAllGood')}
+                                                </span>
+                                            </>
+                                        )}
+                                    </div>
+                                )}
+                             </div>
+                         )}
+                         
+                         {!colorDbStats && !isLoadingStats && (
+                             <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                                 <Database size={32} className="mx-auto mb-2 opacity-50"/>
+                                 <p className="text-sm">{t('settings.colorDbNoData')}</p>
+                             </div>
+                         )}
                      </section>
                  </div>
               )}
@@ -1342,6 +1942,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               )}
           </div>
       </div>
+      
+      {/* 图片预览模态框 */}
+      {previewFile && (
+          <div 
+              className="fixed inset-0 z-[200] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm"
+              onClick={closePreview}
+          >
+              <div 
+                  className="bg-white dark:bg-gray-800 rounded-xl max-w-4xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
+                  onClick={e => e.stopPropagation()}
+              >
+                  {/* 标题栏 */}
+                  <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+                      <div className="flex-1 min-w-0 mr-4">
+                          <h4 className="text-sm font-medium text-gray-800 dark:text-white truncate">
+                              {previewFile.path.split(/[\\/]/).pop()}
+                          </h4>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                              {new Date(previewFile.timestamp * 1000).toLocaleString()}
+                          </p>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                          <button
+                              onClick={() => openInExplorer(previewFile.path)}
+                              className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                              title={t('context.openFolder')}
+                          >
+                              <FolderOpen size={18}/>
+                          </button>
+                          <button
+                              onClick={() => handleDeleteSingle(previewFile)}
+                              disabled={isDeleting}
+                              className="p-2 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                              title={t('context.delete')}
+                          >
+                              <Trash size={18}/>
+                          </button>
+                          <button
+                              onClick={closePreview}
+                              className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          >
+                              <X size={18}/>
+                          </button>
+                      </div>
+                  </div>
+                  
+                  {/* 图片预览区域 */}
+                  <div className="p-4 bg-gray-100 dark:bg-gray-900 flex items-center justify-center" style={{ minHeight: '300px', maxHeight: '60vh' }}>
+                      {!previewError ? (
+                          <img
+                              src={getAssetUrl(previewFile.path)}
+                              alt=""
+                              className="max-w-full max-h-[50vh] object-contain rounded-lg shadow-lg"
+                              onError={() => {
+                                  setPreviewError(true);
+                              }}
+                          />
+                      ) : (
+                          <div className="text-center">
+                              <Image size={48} className="mx-auto mb-3 text-gray-400 dark:text-gray-600"/>
+                              <p className="text-sm text-gray-500 dark:text-gray-400">
+                                  {t('settings.previewError')}
+                              </p>
+                          </div>
+                      )}
+                  </div>
+                  
+                  {/* 底部信息 */}
+                  <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                      <p className="text-xs text-gray-500 dark:text-gray-400 break-all">
+                          {t('settings.filePath')}: {previewFile.path}
+                      </p>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

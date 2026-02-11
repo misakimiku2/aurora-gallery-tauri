@@ -264,31 +264,27 @@ impl ColorDbPool {
     
     pub fn refresh_cache(&self) -> Result<()> {
         let cached_images = self.load_from_db_internal()?;
-        
+
         let mut cache = self.cache.write().map_err(|e| e.to_string())?;
         *cache = cached_images;
-        // 标记已完成一次初始化（使后续 ensure_cache_initialized 能快速返回）
-        let _ = self.cache_inited.store(true, Ordering::SeqCst);
+        // Note: cache_inited is now set by the caller (ensure_cache_initialized)
+        // to ensure it's only set after successful loading
         Ok(())
     }
 
     // Direct access to cache for high-performance searching
     // Runs the closure `f` with a reference to the cache, avoiding cloning.
     pub fn access_cache<F, R>(&self, f: F) -> Result<R>
-    where F: FnOnce(&[CachedImage]) -> R 
+    where F: FnOnce(&[CachedImage]) -> R
     {
-        // If cache already has entries, run the closure synchronously
-        {
-             let cache = self.cache.read().map_err(|e| e.to_string())?;
-             if !cache.is_empty() {
-                 return Ok(f(&cache));
-             }
+        // Use cache_inited flag to ensure cache is fully initialized
+        // Don't use !cache.is_empty() because partial cache data should not be used for searching
+        if !self.cache_inited.load(Ordering::SeqCst) {
+            return Err("cache_not_ready".to_string());
         }
 
-        // Cache not ready — do NOT synchronously perform a full refresh here (avoid blocking callers).
-        // Caller should either trigger a background preheat via `ensure_cache_initialized(true)`
-        // or fall back to a DB-indexed fast-path.
-        Err("cache_not_ready".to_string())
+        let cache = self.cache.read().map_err(|e| e.to_string())?;
+        Ok(f(&cache))
     }
 
     // Ensure the cache is initialized. If `background` is true this returns immediately and
@@ -300,9 +296,11 @@ impl ColorDbPool {
             return Ok(());
         }
 
-        // Avoid concurrent initializers
-        let already = self.cache_inited.swap(true, Ordering::SeqCst);
-        if already {
+        // Avoid concurrent initializers using a separate atomic flag
+        static INITIALIZING: AtomicBool = AtomicBool::new(false);
+        let was_initializing = INITIALIZING.swap(true, Ordering::SeqCst);
+        if was_initializing {
+            // Another thread is already initializing, return immediately
             return Ok(());
         }
 
@@ -313,16 +311,23 @@ impl ColorDbPool {
                     eprintln!("[ColorDB] background preheat failed: {}", e);
                     // allow retry on next ensure call
                     let _ = pool.cache_inited.store(false, Ordering::SeqCst);
+                } else {
+                    // Only set cache_inited to true after successful loading
+                    let _ = pool.cache_inited.store(true, Ordering::SeqCst);
                 }
+                // Reset initializing flag
+                INITIALIZING.store(false, Ordering::SeqCst);
             });
             Ok(())
         } else {
             // blocking initialization
             let res = self.refresh_cache();
-            if res.is_err() {
-                // clear flag so future attempts can retry
-                let _ = self.cache_inited.store(false, Ordering::SeqCst);
+            if res.is_ok() {
+                // Only set cache_inited to true after successful loading
+                let _ = self.cache_inited.store(true, Ordering::SeqCst);
             }
+            // Reset initializing flag
+            INITIALIZING.store(false, Ordering::SeqCst);
             res
         }
     }
@@ -372,7 +377,7 @@ impl ColorDbPool {
              let colors_json: String = row.get(1)?;
              Ok((file_path, colors_json))
          }).map_err(|e| e.to_string())?;
- 
+
          let mut results = Vec::new();
          for row in rows {
              if let Ok((file_path, colors_json)) = row {
@@ -1117,4 +1122,133 @@ pub fn get_extracted_files_count(
     ).map_err(|e| e.to_string())?;
     
     Ok(count as usize)
+}
+
+// 获取错误文件数量
+pub fn get_error_files_count(
+    conn: &mut Connection
+) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM dominant_colors WHERE status = ?",
+        params!["error"],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+    
+    Ok(count as usize)
+}
+
+// 获取所有错误文件列表
+pub fn get_error_files(
+    conn: &mut Connection
+) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_path, updated_at FROM dominant_colors WHERE status = ? ORDER BY updated_at DESC"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map(params!["error"], |row| {
+        let file_path: String = row.get(0)?;
+        let updated_at: i64 = row.get(1)?;
+        Ok((file_path, updated_at))
+    }).map_err(|e| e.to_string())?;
+    
+    let mut files = Vec::new();
+    for row in rows {
+        if let Ok((path, timestamp)) = row {
+            files.push((path, timestamp));
+        }
+    }
+    
+    Ok(files)
+}
+
+// 将错误文件重置为待处理状态
+pub fn reset_error_files_to_pending(
+    conn: &mut Connection,
+    file_paths: Option<&[String]>
+) -> Result<usize> {
+    let current_ts = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs() as i64;
+    
+    let updated = if let Some(paths) = file_paths {
+        // 重置指定文件
+        let mut total_updated = 0usize;
+        for path in paths {
+            let normalized = path.replace("\\", "/");
+            let count = conn.execute(
+                "UPDATE dominant_colors 
+                 SET status = ?, updated_at = ? 
+                 WHERE file_path = ? AND status = ?",
+                params!["pending", current_ts, &normalized, "error"],
+            ).map_err(|e| e.to_string())?;
+            total_updated += count;
+        }
+        total_updated
+    } else {
+        // 重置所有错误文件
+        conn.execute(
+            "UPDATE dominant_colors 
+             SET status = ?, updated_at = ? 
+             WHERE status = ?",
+            params!["pending", current_ts, "error"],
+        ).map_err(|e| e.to_string())?
+    };
+    
+    eprintln!("Reset {} error files to pending status", updated);
+    Ok(updated)
+}
+
+// 从数据库中删除错误文件记录
+pub fn delete_error_files(
+    conn: &mut Connection,
+    file_paths: &[String]
+) -> Result<usize> {
+    let mut total_deleted = 0usize;
+
+    for path in file_paths {
+        let normalized = path.replace("\\", "/");
+
+        // 删除 dominant_colors 表中的记录
+        let deleted = conn.execute(
+            "DELETE FROM dominant_colors WHERE file_path = ?",
+            params![&normalized],
+        ).map_err(|e| e.to_string())?;
+
+        // 删除 image_color_indices 表中的记录
+        conn.execute(
+            "DELETE FROM image_color_indices WHERE file_path = ?",
+            params![&normalized],
+        ).map_err(|e| e.to_string())?;
+
+        total_deleted += deleted;
+    }
+
+    eprintln!("Deleted {} error file records from database", total_deleted);
+    Ok(total_deleted)
+}
+
+// 清理不存在的错误文件记录，返回实际存在的错误文件列表
+pub fn cleanup_nonexistent_error_files(
+    conn: &mut Connection
+) -> Result<Vec<(String, i64)>> {
+    let error_files = get_error_files(conn)?;
+    let mut existing_files = Vec::new();
+    let mut nonexistent_paths = Vec::new();
+
+    for (path, timestamp) in error_files {
+        if std::path::Path::new(&path).exists() {
+            existing_files.push((path, timestamp));
+        } else {
+            nonexistent_paths.push(path);
+        }
+    }
+
+    // 删除不存在的文件记录
+    if !nonexistent_paths.is_empty() {
+        delete_error_files(conn, &nonexistent_paths)?;
+        eprintln!("Cleaned up {} non-existent error file records", nonexistent_paths.len());
+    }
+
+    Ok(existing_files)
 }

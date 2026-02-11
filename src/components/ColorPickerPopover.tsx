@@ -70,11 +70,11 @@ interface ColorPickerPopoverProps {
   t?: (key: string) => string;
 }
 
-export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({ 
-  initialColor = '#ffffff', 
-  onChange, 
+export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
+  initialColor = '#ffffff',
+  onChange,
   onClose,
-  className 
+  className
 , t
 }) => {
   const [hsv, setHsv] = useState<HSV>(() => {
@@ -82,18 +82,24 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
      return rgbToHsv(rgb);
   });
   const [hex, setHex] = useState<string>(initialColor);
-  
+
+  // Use ref to avoid closure issues with onChange callback
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
   // Update internal state when props change, but prevent loops if needed
   // (In a real app, you might want to debounce)
-  
-  const handleHsvChange = (newHsv: Partial<HSV>) => {
-    const updatedHsv = { ...hsv, ...newHsv };
-    setHsv(updatedHsv);
-    const rgb = hsvToRgb(updatedHsv);
-    const newHex = rgbToHex(rgb);
-    setHex(newHex);
-    onChange(newHex);
-  };
+
+  const handleHsvChange = useCallback((newHsv: Partial<HSV>) => {
+    setHsv(prev => {
+      const updatedHsv = { ...prev, ...newHsv };
+      const rgb = hsvToRgb(updatedHsv);
+      const newHex = rgbToHex(rgb);
+      setHex(newHex);
+      onChangeRef.current(newHex);
+      return updatedHsv;
+    });
+  }, []);
 
   const handleHexChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
@@ -131,45 +137,45 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
       // Prevent background scrolling when mouse is over the picker
       e.preventDefault();
       e.stopPropagation();
-      
+
       const step = 5;
       const direction = e.deltaY > 0 ? 1 : -1;
-      
+
       setHsv(prev => {
         let nextH = prev.h + direction * step;
         if (nextH < 0) nextH += 360;
         if (nextH >= 360) nextH -= 360;
-        
+
         const updatedHsv = { ...prev, h: nextH };
         const rgb = hsvToRgb(updatedHsv);
         const newHex = rgbToHex(rgb);
-        
+
         setHex(newHex);
-        onChange(newHex);
-        
+        onChangeRef.current(newHex);
+
         return updatedHsv;
       });
     };
 
     el.addEventListener('wheel', handleWheel, { passive: false });
     return () => el.removeEventListener('wheel', handleWheel);
-  }, [onChange]);
+  }, []);
 
   const updateSV = useCallback((clientX: number, clientY: number) => {
     if (!svRef.current) return;
     const rect = svRef.current.getBoundingClientRect();
     let x = clientX - rect.left;
     let y = clientY - rect.top;
-    
+
     // Clamp
     x = Math.max(0, Math.min(x, rect.width));
     y = Math.max(0, Math.min(y, rect.height));
-    
+
     const s = (x / rect.width) * 100;
     const v = 100 - (y / rect.height) * 100;
-    
+
     handleHsvChange({ s, v });
-  }, [hsv]); // Dependencies handled by state updater logic actually, but good to be safe
+  }, [handleHsvChange]);
 
   const updateHue = useCallback((clientX: number) => {
     if (!hueRef.current) return;
@@ -178,7 +184,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
     x = Math.max(0, Math.min(x, rect.width));
     const h = (x / rect.width) * 360;
     handleHsvChange({ h });
-  }, [hsv]);
+  }, [handleHsvChange]);
 
   useEffect(() => {
     const handleUp = () => {

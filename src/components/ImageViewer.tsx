@@ -1,13 +1,15 @@
 ﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
-import { FileNode, SlideshowConfig, SearchScope } from '../types';
+import { createPortal } from 'react-dom';
+import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
-  Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette
+  Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette, Clipboard,
+  Scan
 } from 'lucide-react';
 
 
@@ -215,6 +217,10 @@ interface ViewerProps {
   onToggleAISearch: () => void;
   t: (key: string) => string;
   activeTab: any; // Added for open folder availability check
+  // 图片对比功能相关
+  tabs?: TabState[];
+  handleOpenCompareInNewTab?: (imageIds: string[]) => void;
+  handleAddToCompareCanvas?: (tabId: string, imageIds: string[]) => void;
 }
 
 interface ContextMenuState {
@@ -257,7 +263,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   isAISearchEnabled,
   onToggleAISearch,
   t,
-  activeTab
+  activeTab,
+  tabs = [],
+  handleOpenCompareInNewTab,
+  handleAddToCompareCanvas
 }) => {
   // 如果 file 不存在，关闭查看�?
   if (!file) {
@@ -376,6 +385,44 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
   const colorPickerContainerRef = useRef<HTMLDivElement>(null);
+
+  // 图片对比二级菜单状态
+  const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
+  const compareMenuTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const compareMenuItemRef = useRef<HTMLDivElement | null>(null);
+  const [submenuPosition, setSubmenuPosition] = useState({ x: 0, y: 0 });
+
+  // 获取所有图片对比标签页
+  const compareTabs = tabs.filter(tab => tab.isCompareMode);
+  const hasCompareTabs = compareTabs.length > 0;
+
+  // 计算二级菜单位置
+  useEffect(() => {
+    if (compareSubmenuOpen && compareMenuItemRef.current) {
+      const menuItemRect = compareMenuItemRef.current.getBoundingClientRect();
+      const screenWidth = window.innerWidth;
+      const screenHeight = window.innerHeight;
+      
+      // 预估二级菜单尺寸
+      const menuWidth = 200;
+      const menuHeight = compareTabs.length * 36 + 40; // 每个画布项约36px + 新建画布区域
+      
+      let x = menuItemRect.right + 4;
+      let y = menuItemRect.top;
+
+      // 如果超出屏幕右侧，显示在左侧
+      if (x + menuWidth > screenWidth) {
+        x = menuItemRect.left - menuWidth - 4;
+      }
+
+      // 如果超出屏幕底部，向上调整
+      if (y + menuHeight > screenHeight) {
+        y = screenHeight - menuHeight - 10;
+      }
+
+      setSubmenuPosition({ x, y });
+    }
+  }, [compareSubmenuOpen, compareTabs.length]);
 
   // 简化的单图层机制：当前显示的 URL + 正在加载的路径
   const [displayUrl, setDisplayUrl] = useState<string>(() => {
@@ -570,6 +617,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         const menuElement = document.querySelector('.fixed.bg-white[data-testid="viewer-context-menu"]');
         if (!menuElement || !menuElement.contains(e.target as Node)) {
           setContextMenu({ ...contextMenu, visible: false });
+          setCompareSubmenuOpen(false);
         }
       }
     };
@@ -577,6 +625,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const handleWheel = (e: WheelEvent) => {
       if (contextMenu.visible) {
         setContextMenu({ ...contextMenu, visible: false });
+        setCompareSubmenuOpen(false);
       }
     };
 
@@ -589,6 +638,31 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       document.removeEventListener('wheel', handleWheel, true);
     };
   }, [contextMenu]);
+
+  // 清理二级菜单的定时器
+  useEffect(() => {
+    return () => {
+      if (compareMenuTimeoutRef.current) {
+        clearTimeout(compareMenuTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // 打开二级菜单（带延迟关闭保护）
+  const openCompareSubmenu = () => {
+    if (compareMenuTimeoutRef.current) {
+      clearTimeout(compareMenuTimeoutRef.current);
+      compareMenuTimeoutRef.current = null;
+    }
+    setCompareSubmenuOpen(true);
+  };
+
+  // 关闭二级菜单（带延迟）
+  const closeCompareSubmenu = () => {
+    compareMenuTimeoutRef.current = setTimeout(() => {
+      setCompareSubmenuOpen(false);
+    }, 150); // 150ms 延迟，给用户足够时间移动到二级菜单
+  };
 
   useEffect(() => {
     setLocalQuery(searchQuery);
@@ -1392,6 +1466,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
+          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyImage(); setContextMenu({ ...contextMenu, visible: false }); }}>
+            <Clipboard size={14} className="mr-2 opacity-70" /> {t('context.copyImage')}
+          </div>
+
           <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
             <Copy size={14} className="mr-2 opacity-70" /> {t('context.copyTo')}
           </div>
@@ -1404,6 +1482,65 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           <div className="px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
             <Sliders size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
+
+          {/* 图片对比菜单项 - 仅当有图片对比标签页时显示 */}
+          {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === 'image' && (() => {
+            const imageIds = [file.id];
+            const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
+            const itemClass = canCompare ? 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center' : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
+
+            return (
+              <>
+                <div
+                  className={itemClass}
+                  onMouseEnter={openCompareSubmenu}
+                  onMouseLeave={closeCompareSubmenu}
+                  ref={compareMenuItemRef}
+                >
+                  <Scan size={14} className="mr-2 opacity-70" />
+                  <div className="flex-1">{t('context.compareImages')}</div>
+                  <ChevronRight size={14} className="ml-2 opacity-70" />
+                </div>
+                {/* 二级菜单 - 使用 Portal 渲染到 body 避免被父容器裁剪 */}
+                {compareSubmenuOpen && createPortal(
+                  <div
+                    className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 min-w-[200px] z-[9999]"
+                    style={{ left: submenuPosition.x, top: submenuPosition.y }}
+                    onMouseEnter={openCompareSubmenu}
+                    onMouseLeave={closeCompareSubmenu}
+                  >
+                    {/* 现有画布列表 */}
+                    {compareTabs.map(tab => {
+                      const currentCount = tab.selectedFileIds.length;
+                      const maxCount = 24;
+                      const remainingSpace = maxCount - currentCount;
+                      const canAdd = remainingSpace > 0 && imageIds.length <= remainingSpace;
+                      const canvasName = tab.sessionName || `画布${tab.id.slice(0, 4)}`;
+
+                      return (
+                        <div
+                          key={tab.id}
+                          className={canAdd
+                            ? 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between'
+                            : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
+                          }
+                          onClick={canAdd ? () => {
+                            handleAddToCompareCanvas(tab.id, imageIds);
+                            setContextMenu({ ...contextMenu, visible: false });
+                            setCompareSubmenuOpen(false);
+                          } : undefined}
+                        >
+                          <span className="truncate max-w-[120px]">{t('context.addToCanvas').replace('{name}', canvasName)}</span>
+                          <span className="text-xs ml-2">{`${currentCount}/${maxCount}`}</span>
+                        </div>
+                      );
+                    })}
+                  </div>,
+                  document.body
+                )}
+              </>
+            );
+          })()}
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 

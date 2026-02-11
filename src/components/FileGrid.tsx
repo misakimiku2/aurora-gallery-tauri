@@ -754,6 +754,7 @@ interface FileGridProps {
   resourceRoot?: string;
   cachePath?: string;
   onScrollTopChange?: (scrollTop: number) => void;
+  onScroll?: () => void;
   onDragStart?: (ids: string[]) => void;
   onDragEnd?: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
@@ -808,6 +809,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onUpdateFile,
   settings,
   onScrollTopChange,
+  onScroll,
   onDragStart,
   onDragEnd,
   onDropOnFolder,
@@ -990,7 +992,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
             const currentScroll = containerRef.current.scrollTop;
             const targetScroll = targetScrollRef.current; // Use ref to avoid closure trap
-            
+
             // Defense against clamping:
             // If we haven't successfully restored yet, and the current scroll is significantly smaller
             // than the target scroll, it's likely due to container height being insufficient (clamped).
@@ -1002,6 +1004,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
             setScrollTop(currentScroll);
             throttledOnScrollTopChange?.(currentScroll);
+            onScroll?.();
         }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });

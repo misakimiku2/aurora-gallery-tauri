@@ -52,7 +52,7 @@ pub async fn search_by_palette(
 
         for target in &target_labs {
             let delta = 20.0f32;
-            if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT file_path FROM image_color_indices WHERE l BETWEEN ? AND ? AND a BETWEEN ? AND ? AND b BETWEEN ? AND ? LIMIT 1000") {
+            if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT file_path FROM image_color_indices WHERE l BETWEEN ? AND ? AND a BETWEEN ? AND ? AND b BETWEEN ? AND ? LIMIT 10000") {
                 if let Ok(rows) = stmt.query_map(rusqlite::params![target.l - delta, target.l + delta, target.a - delta, target.a + delta, target.b - delta, target.b + delta], |r| r.get::<_, String>(0)) {
                     for r in rows { if let Ok(p) = r { candidate_set.insert(p); } }
                 }
@@ -62,7 +62,7 @@ pub async fn search_by_palette(
         eprintln!("[search_by_palette] DB fast-path candidates={}", candidate_set.len());
 
         let mut scored: Vec<(String, f32)> = Vec::new();
-        for path in candidate_set.into_iter().take(500) {
+        for path in candidate_set.into_iter().take(5000) {
             if let Ok(Some(colors)) = {
                 let mut conn2 = pool.get_connection();
                 color_db::get_colors_by_file_path(&mut conn2, &path)

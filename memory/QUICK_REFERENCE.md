@@ -78,6 +78,16 @@ pending → processing → completed
 - 支持前进/后退导航
 - 自动保存和恢复滚动位置
 
+### 6. AI 智能重命名 (2026-02-11 更新)
+- 使用 `useAIRename` Hook 实现 AI 智能重命名
+- 支持根据图片内容生成语义化文件名
+- 支持批量重命名和预览确认
+
+### 7. 专题管理 (2026-02-11 更新)
+- 新增专题数据库支持
+- 支持创建、编辑、删除专题
+- 支持将图片添加到专题
+
 ## 常用命令速查
 
 ### 前端开发
@@ -146,11 +156,11 @@ npm install
 
 #### 文件系统
 ```typescript
-// 扫描目录 - 返回文件映射（不再包含 roots）
-await scanDirectory(path: string, forceRefresh?: boolean): Promise<Record<string, FileNode>>
+// 扫描目录 - 返回包含 roots 和 files 的对象
+await scanDirectory(path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 
 // 强制完整扫描目录
-await forceRescan(path: string): Promise<Record<string, FileNode>>
+await forceRescan(path: string): Promise<{ roots: string[]; files: Record<string, FileNode> }>
 
 // 扫描单个文件
 await scanFile(filePath: string, parentId?: string | null): Promise<FileNode>
@@ -160,6 +170,7 @@ await renameFile(oldPath: string, newPath: string): Promise<void>
 await deleteFile(path: string): Promise<void>
 await copyFile(srcPath: string, destPath: string): Promise<string>  // 返回实际路径
 await copyImageColors(srcPath: string, destPath: string): Promise<boolean>  // 复制颜色信息
+await copyImageToClipboard(filePath: string): Promise<void>  // 复制图片到剪贴板
 await moveFile(srcPath: string, destPath: string): Promise<void>
 await writeFileFromBytes(filePath: string, bytes: Uint8Array): Promise<void>
 
@@ -185,6 +196,11 @@ await dbUpsertPerson(person: Person): Promise<void>
 await dbDeletePerson(id: string): Promise<void>
 await dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void>
 
+// 专题管理
+await dbGetAllTopics(): Promise<Topic[]>
+await dbUpsertTopic(topic: Topic): Promise<void>
+await dbDeleteTopic(id: string): Promise<void>
+
 // 文件元数据
 await dbUpsertFileMetadata(metadata: FileMetadata): Promise<void>
 await dbCopyFileMetadata(srcPath: string, destPath: string): Promise<void>
@@ -200,6 +216,8 @@ await addPendingFilesToDb(filePaths: string[]): Promise<number>
 ```typescript
 await hideWindow(): Promise<void>
 await showWindow(): Promise<void>
+await setWindowMinSize(width: number, height: number): Promise<void>
+await isWindowMaximized(): Promise<boolean>
 await exitApp(): Promise<void>
 ```
 
@@ -211,7 +229,7 @@ await resumeColorExtraction(): Promise<boolean>
 
 ## Hooks 使用示例
 
-### useNavigation (新增)
+### useNavigation
 ```tsx
 import { useNavigation } from './hooks/useNavigation'
 
@@ -277,6 +295,44 @@ function MyComponent() {
 }
 ```
 
+### useAIRename (新增)
+```tsx
+import { useAIRename } from './hooks/useAIRename'
+
+function MyComponent() {
+  const { isGenerating, previewName, generateName, applyRename, cancelRename } = useAIRename({
+    settings,
+    people,
+    onUpdate: (id, updates) => updateFile(id, updates),
+    showToast: (msg) => toast(msg),
+    t: (key) => translate(key)
+  })
+  
+  // 生成 AI 文件名
+  const handleGenerate = async (file: FileNode) => {
+    await generateName(file)
+  }
+  
+  // 应用重命名
+  const handleApply = async (file: FileNode) => {
+    await applyRename(file)
+  }
+  
+  return (
+    <div>
+      {isGenerating && <span>生成中...</span>}
+      {previewName && (
+        <div>
+          <span>预览: {previewName}</span>
+          <button onClick={() => handleApply(file)}>确认</button>
+          <button onClick={cancelRename}>取消</button>
+        </div>
+      )}
+    </div>
+  )
+}
+```
+
 ### useFileOperations
 ```tsx
 import { useFileOperations } from './hooks/useFileOperations'
@@ -295,7 +351,7 @@ function MyComponent() {
 }
 ```
 
-### useKeyboardShortcuts (新增)
+### useKeyboardShortcuts
 ```tsx
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 
@@ -308,6 +364,42 @@ function MyComponent() {
   })
   
   return <div>...</div>
+}
+```
+
+### useInView (新增)
+```tsx
+import { useInView } from './hooks/useInView'
+
+function MyComponent() {
+  const [ref, isInView, wasInView] = useInView({ threshold: 0.1 })
+  
+  return (
+    <div ref={ref}>
+      {isInView ? '当前可见' : '不可见'}
+      {wasInView && '曾经可见过'}
+    </div>
+  )
+}
+```
+
+### useToasts (新增)
+```tsx
+import { useToasts } from './hooks/useToasts'
+
+function MyComponent() {
+  const { toast, showToast, hideToast } = useToasts()
+  
+  const handleShow = () => {
+    showToast('操作成功！', 2000)  // 显示 2 秒
+  }
+  
+  return (
+    <div>
+      <button onClick={handleShow}>显示 Toast</button>
+      {toast.visible && <div className={toast.isLeaving ? 'leaving' : ''}>{toast.msg}</div>}
+    </div>
+  )
 }
 ```
 
@@ -355,7 +447,7 @@ function PersonView({ people, files, selectedIds, onSelect, onDoubleClick, onCon
 }
 ```
 
-### ImageComparer (新增)
+### ImageComparer
 ```tsx
 import { ImageComparer } from './components/ImageComparer'
 
@@ -372,7 +464,7 @@ function CompareView() {
 }
 ```
 
-### FileListItem (新增)
+### FileListItem
 ```tsx
 import { FileListItem } from './components/FileListItem'
 
@@ -385,6 +477,32 @@ function FileList() {
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}
     />
+  )
+}
+```
+
+### AIRenameButton & AIRenamePreview (新增)
+```tsx
+import { AIRenameButton } from './components/AIRenameButton'
+import { AIRenamePreview } from './components/AIRenamePreview'
+
+function RenameComponent() {
+  return (
+    <div>
+      <AIRenameButton
+        onClick={handleGenerate}
+        isGenerating={isGenerating}
+        t={t}
+      />
+      {previewName && (
+        <AIRenamePreview
+          previewName={previewName}
+          onApply={handleApply}
+          onCancel={handleCancel}
+          t={t}
+        />
+      )}
+    </div>
   )
 }
 ```
@@ -487,6 +605,17 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ## 更新日志
 
+### 2026-02-11 更新
+- 新增 `useAIRename` Hook 用于 AI 智能重命名
+- 新增 `useInView` Hook 用于视口检测
+- 新增 `useToasts` Hook 用于 Toast 通知管理
+- 新增 `AIRenameButton` 和 `AIRenamePreview` 组件
+- 新增 `copyImageToClipboard` API 用于复制图片到剪贴板
+- 新增 `setWindowMinSize` API 用于设置窗口最小尺寸
+- 新增专题数据库 API (`dbGetAllTopics`, `dbUpsertTopic`, `dbDeleteTopic`)
+- 更新 `scanDirectory` API 返回类型为 `{ roots: string[]; files: Record<string, FileNode> }`
+- 新增 `AIBatchRenameModal` 和 `AddImageModal` 模态框
+
 ### 2026-02-07 更新
 - 新增 `useNavigation` Hook 用于导航历史管理
 - 新增 `useKeyboardShortcuts` Hook 用于键盘快捷键
@@ -507,6 +636,6 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ---
 
-**文档版本**: 1.2  
-**更新日期**: 2026-02-07  
+**文档版本**: 1.3  
+**更新日期**: 2026-02-11  
 **维护者**: Aurora Gallery Team

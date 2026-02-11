@@ -23,12 +23,12 @@
 │  │ Entry    │  │          │  │Extractor │  │Worker    │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
 │       │             │             │             │          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                   │
-│  │Thumbnail │  │Color     │  │File      │                   │
-│  │Generator │  │Search    │  │Index     │                   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘                   │
-│       │             │             │                          │
-│       └─────────────┴─────────────┴──────────────────────────┘
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │Thumbnail │  │Color     │  │File      │  │Topic     │   │
+│  │Generator │  │Search    │  │Index     │  │DB        │   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
+│       │             │             │             │          │
+│       └─────────────┴─────────────┴─────────────┴──────────┘
 │                              │                              │
 │                    SQLite 数据库                             │
 │                    文件系统                                   │
@@ -43,28 +43,32 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件 - 3931 行) （以源码为准 · 已同步）
+App (根组件 - 4248 行) （以源码为准 · 已同步）
 ├── TabBar (标签页管理 - 249 行)
 ├── TopBar (工具栏 - 921 行)
 ├── Sidebar (侧边栏)
 │   ├── TreeSidebar (文件树 - 654 行)
 │   └── TaskProgressModal (任务进度 - 200 行)
 ├── MainContent (主内容区)
-│   ├── PersonGrid (人物网格) [新增 - 224 行] （以源码为准 · 已同步）
-│   ├── FileGrid (文件网格) [更新 - 1457 行] （以源码为准 · 已同步）
+│   ├── PersonGrid (人物网格 - 224 行) （以源码为准 · 已同步）
+│   ├── FileGrid (文件网格 - 1457 行) （以源码为准 · 已同步）
 │   ├── ImageViewer (图片查看器 - 1542 行)
-│   ├── ImageComparer (图片对比 - 2600+ 行) [新增]
-│   ├── SequenceViewer (序列查看器)
-│   └── TopicModule (专题模块 - 2618 行)
+│   ├── ImageComparer (图片对比 - 2600+ 行)
+│   ├── TopicModule (专题模块 - 2618 行)
+│   └── TagsList (标签列表 - 470 行)
 ├── MetadataPanel (元数据面板 - 2607 行)
-├── SettingsModal (设置模态框) [增强 - 1347 行] （以源码为准 · 已同步）
+├── SettingsModal (设置模态框 - 1347 行) （以源码为准 · 已同步）
 ├── Modals (模态框集合 - src/components/modals/) [重构]
-│   ├── FolderPickerModal
-│   ├── BatchRenameModal
-│   ├── WelcomeModal
-│   ├── CreateTopicModal [新增]
-│   ├── RenameTopicModal [新增]
+│   ├── FolderPickerModal (文件夹选择)
+│   ├── BatchRenameModal (批量重命名)
+│   ├── AIBatchRenameModal (AI 批量重命名 - 387 行) [新增]
+│   ├── AddImageModal (添加图片 - 1262 行) [新增]
+│   ├── WelcomeModal (欢迎向导)
+│   ├── CreateTopicModal (创建专题)
+│   ├── RenameTopicModal (重命名专题)
 │   └── [其他 10+ 模态框...]
+├── AIRenameButton (AI 重命名按钮 - 38 行) [新增]
+├── AIRenamePreview (AI 重命名预览 - 40 行) [新增]
 └── Toasts (通知)
 ```
 
@@ -84,6 +88,12 @@ const { tasks, startTask, updateTask } = useTasks(t);
 const { navigateTo, goBack, goForward, history } = useNavigation();
 // 支持前进/后退导航，自动保存滚动位置和选中状态
 
+// AI 智能重命名 (extracted to useAIRename.ts) [新增]
+const { isGenerating, previewName, generateName, applyRename, cancelRename } = useAIRename({
+  settings, people, onUpdate, showToast, t
+});
+// 支持根据图片内容生成语义化文件名
+
 // 实时元数据同步
 // - 监听 'metadata-updated' 全局事件以更新 App 状态中的文件元数据。
 // - 用于处理后台扫描、AI 标签生成等异步数据的即时反馈。
@@ -94,9 +104,9 @@ const { navigateTo, goBack, goForward, history } = useNavigation();
 // - useContextMenu: 管理右键菜单的位置/项与交互
 // - useFileSearch: 搜索逻辑（处理 color:/palette: 前缀）
 // - useMarqueeSelection: 框选与范围选择逻辑
-// - useKeyboardShortcuts: 键盘快捷键管理 [新增]
-// - useInView: 视口检测 [新增]
-// - useToasts: Toast 通知管理 [新增]
+// - useKeyboardShortcuts: 键盘快捷键管理
+// - useInView: 视口检测
+// - useToasts: Toast 通知管理
 
 // 文件系统状态
   roots: [],
@@ -110,6 +120,7 @@ const { navigateTo, goBack, goForward, history } = useNavigation();
   
   // 业务状态
   people: {},
+  topics: {},  // [新增] 专题数据
   customTags: [],
   tasks: [],
   
@@ -120,7 +131,7 @@ const { navigateTo, goBack, goForward, history } = useNavigation();
     ai: { 
       provider: 'ollama',
       systemPrompt: '',
-      promptPresets: [], // 新增：系统提示预设
+      promptPresets: [], // 系统提示预设
       currentPresetId: undefined
     }
   }
@@ -136,7 +147,7 @@ const displayFileIds = useMemo(() => {
 }, [state.files, activeTab, state.sortBy, state.sortDirection])
 ```
 
-#### Web Worker 架构 [新增]
+#### Web Worker 架构
 ```typescript
 // 布局计算 Worker
 // src/workers/layout.worker.ts (252 行)
@@ -196,6 +207,24 @@ const aiAnalysis = await analyzeImageWithAI(imagePath, {
 // 结果包含 extractedText 和 translatedText
 ```
 
+**2026-02-11 更新**: 新增 AI 智能重命名功能
+```typescript
+// 单文件重命名
+const newName = await aiService.generateSingleFileName(
+  filePath,
+  currentName,
+  settings,
+  personNames  // 可选的人物名称列表
+);
+
+// 批量重命名
+const results = await aiService.generateFileNames(
+  files,
+  settings,
+  (progress) => console.log(`${progress}%`)  // 进度回调
+);
+```
+
 **支持的 AI 提供商**:
 - OpenAI (GPT-4, GPT-3.5)
 - Ollama (本地 LLM)
@@ -216,9 +245,16 @@ const aiAnalysis = await analyzeImageWithAI(imagePath, {
 **核心功能**:
 ```typescript
 // 文件系统操作
-export const scanDirectory = async (path: string, forceRefresh?: boolean): Promise<Record<string, FileNode>> => { ... }
-export const forceRescan = async (path: string): Promise<Record<string, FileNode>> => { ... }
+export const scanDirectory = async (path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }> => { ... }
+export const forceRescan = async (path: string): Promise<{ roots: string[]; files: Record<string, FileNode> }> => { ... }
 export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => { ... }
+
+// 文件操作
+export const copyImageToClipboard = async (filePath: string): Promise<void> => { ... }  // [新增]
+
+// 窗口管理
+export const setWindowMinSize = async (width: number, height: number): Promise<void> => { ... }  // [新增]
+export const isWindowMaximized = async (): Promise<boolean> => { ... }  // [新增]
 
 // 缩略图
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => { ... }
@@ -236,13 +272,18 @@ export const dbUpsertPerson = async (person: Person): Promise<void> => { ... }
 export const dbCopyFileMetadata = async (srcPath: string, destPath: string): Promise<void> => { ... }
 export const switchRootDatabase = async (newRootPath: string): Promise<void> => { ... }
 export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => { ... }
+
+// 专题数据库操作 [新增]
+export const dbGetAllTopics = async (): Promise<Topic[]> => { ... }
+export const dbUpsertTopic = async (topic: Topic): Promise<void> => { ... }
+export const dbDeleteTopic = async (id: string): Promise<void> => { ... }
 ```
 
 ### 4. 基础设施层 (Infrastructure Layer)
 
 #### Rust 后端架构
 **位置**: `src-tauri/src/`  
-**总行数**: ~6500 行
+**总行数**: ~6700 行
 
 ##### 主程序 (main.rs)
 **行数**: 2440 行（以源码为准 · 已同步）  
@@ -254,14 +295,15 @@ export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> 
 - SQLite 数据库集成
 - 事件驱动的进度通知
 - 缩略图生成（支持 JXL、AVIF 格式）
+- 专题数据库支持 [新增]
 
 ##### 颜色处理模块
 - **color_db.rs** (871 行): 颜色数据存储和管理 （以源码为准 · 已同步）
 - **color_extractor.rs** (258 行): 颜色提取算法
-- **color_search.rs** (796 行): 颜色搜索算法 [新增]
+- **color_search.rs** (796 行): 颜色搜索算法
 - **color_worker.rs** (796 行): 后台颜色处理工作器 （以源码为准 · 已同步）
 
-##### 缩略图模块 [新增]
+##### 缩略图模块
 - **thumbnail.rs** (529 行): 缩略图生成和管理
   - 单文件/批量缩略图生成
   - JXL 格式支持（使用 jxl-oxide）
@@ -272,8 +314,9 @@ export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> 
 ##### 数据库模块
 - **db/mod.rs** (150 行): 数据库模块入口
 - **db/persons.rs** (118 行): 人物数据 CRUD 操作
+- **db/topics.rs** (175 行): 专题数据 CRUD 操作 [新增]
 - **db/file_metadata.rs** (87 行): 文件元数据存储
-- **db/file_index.rs** (200 行): 文件索引数据库 [新增]
+- **db/file_index.rs** (200 行): 文件索引数据库
 - **集成**: Rusqlite 0.30，带 JSON 支持
 
 ## 技术实现细节
@@ -308,7 +351,7 @@ files.par_iter().for_each(|file| {
 });
 ```
 
-#### Web Worker 并发 [新增]
+#### Web Worker 并发
 ```typescript
 // 前端使用 Web Worker 处理计算密集型任务
 // - 布局计算 (layout.worker.ts)
@@ -339,6 +382,26 @@ CREATE TABLE persons (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 专题表 [新增]
+CREATE TABLE topics (
+    id TEXT PRIMARY KEY,
+    parent_id TEXT,
+    name TEXT NOT NULL,
+    description TEXT,
+    topic_type TEXT,
+    cover_file_id TEXT,
+    background_file_id TEXT,
+    cover_crop_x REAL,
+    cover_crop_y REAL,
+    cover_crop_width REAL,
+    cover_crop_height REAL,
+    people_ids TEXT,  -- JSON 数组
+    file_ids TEXT,    -- JSON 数组
+    source_url TEXT,
+    created_at INTEGER,
+    updated_at INTEGER
+);
+
 -- 文件元数据表
 CREATE TABLE file_metadata (
     file_id TEXT PRIMARY KEY,      -- 文件哈希 ID
@@ -351,7 +414,7 @@ CREATE TABLE file_metadata (
 );
 CREATE INDEX idx_file_metadata_path ON file_metadata(path);
 
--- 文件索引表 [新增]
+-- 文件索引表
 CREATE TABLE file_index (
     id TEXT PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
@@ -384,7 +447,7 @@ const THUMBNAIL_CACHE_DIR = `${rootPath}/.Aurora_Cache/thumbnails/`;
 // 颜色数据缓存
 const colorCache = new Map<string, DominantColor[]>();
 
-// 布局缓存 [新增]
+// 布局缓存
 const layoutCache = new Map<string, LayoutResult>();
 // 缓存布局计算结果，避免重复计算
 ```
@@ -396,7 +459,7 @@ const layoutCache = new Map<string, LayoutResult>();
 2. **防抖**: 搜索和过滤操作
 3. **懒加载**: 图片和组件按需加载
 4. **内存管理**: 及时清理不用的资源
-5. **Web Worker**: 布局计算卸载到 Worker 线程 [新增]
+5. **Web Worker**: 布局计算卸载到 Worker 线程
 
 #### 后端优化
 1. **并行处理**: 使用 Rayon 进行 CPU 密集计算
@@ -410,7 +473,7 @@ const layoutCache = new Map<string, LayoutResult>();
 2. **连接池**: 复用数据库连接
 3. **批量操作**: 减少数据库往返
 4. **WAL 模式**: 提高并发性能
-5. **文件索引表**: 加速文件路径查询 [新增]
+5. **文件索引表**: 加速文件路径查询
 
 ### 错误处理策略
 
@@ -534,16 +597,18 @@ Aurora Gallery Tauri 采用现代化的分层架构，结合 React 前端和 Rus
 - SQLite 提供轻量级本地数据存储
 - CIEDE2000 算法确保颜色搜索准确性
 - Web Worker 实现前端计算卸载
+- AI 智能重命名提升用户体验 [新增]
+- 专题管理系统支持图片分类组织 [新增]
 
 **架构优势**:
 - 性能优异: Rust 后端 + 并行处理 + Web Worker
-- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史
+- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史 + AI 智能重命名
 - 开发效率高: 现代化工具链 + 热重载
 - 维护性好: 分层架构 + 类型安全
 - 扩展性强: 插件化设计 + 模块化组件
 
 ---
 
-**文档版本**: 1.1  
-**更新日期**: 2026-02-07  
+**文档版本**: 1.2  
+**更新日期**: 2026-02-11  
 **维护者**: Aurora Gallery Team

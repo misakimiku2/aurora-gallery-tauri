@@ -1006,7 +1006,34 @@ export const App: React.FC = () => {
   // 锟斤拷锟斤拷专锟斤拷锟斤拷图锟斤拷锟斤拷示锟斤拷锟斤拷示锟斤拷专锟斤拷锟斤拷图没锟斤拷锟斤拷拽锟斤拷锟解部锟斤拷锟竭硷拷锟斤拷
   // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷未锟斤拷小锟斤拷锟侥猴拷台锟斤拷锟今弹达拷时锟斤拷锟斤拷示锟斤拷锟斤拷锟斤拷锟节碉拷锟斤拷锟今弹达拷锟斤拷
   const activeTaskCount = state.tasks.filter(t => !t.minimized).length;
-  const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0;
+
+  // 锟斤拷锟斤拷状态锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷锟斤拷示锟斤拷息
+  const [isScrolling, setIsScrolling] = useState(false);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 锟斤拷锟斤拷锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷锟斤拷示
+  const handleScroll = useCallback(() => {
+    setIsScrolling(true);
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    scrollTimeoutRef.current = setTimeout(() => {
+      setIsScrolling(false);
+    }, 150);
+  }, []);
+
+  // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟绞憋拷锟斤拷
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // 锟叫断讹拷锟斤拷锟角凤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷示锟斤拷息锟斤拷模态锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷
+  const isModalOpen = state.activeModal.type !== null || state.isSettingsOpen;
+  const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen;
 
   const {
     isSelecting,
@@ -2568,12 +2595,31 @@ export const App: React.FC = () => {
   }, [state.roots, setState]);
 
   const handleOpenCanvas = useCallback(() => {
+    // 生成新的画布名称
+    const generateCanvasName = () => {
+      const existingNames = state.tabs
+        .filter(tab => tab.isCompareMode)
+        .map(tab => tab.sessionName)
+        .filter((name): name is string => !!name);
+
+      let maxNum = 0;
+      existingNames.forEach(name => {
+        const match = name.match(/^画布(\d+)$/);
+        if (match) {
+          maxNum = Math.max(maxNum, parseInt(match[1], 10));
+        }
+      });
+
+      return `画布${String(maxNum + 1).padStart(2, '0')}`;
+    };
+
     const newTab: TabState = {
       ...DUMMY_TAB,
       id: Math.random().toString(36).substr(2, 9),
       folderId: state.roots[0] || '',
       selectedFileIds: [],
       isCompareMode: true,
+      sessionName: generateCanvasName(),
       history: {
         stack: [{
           folderId: state.roots[0] || '',
@@ -2588,7 +2634,7 @@ export const App: React.FC = () => {
       }
     };
     setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [state.roots, setState]);
+  }, [state.roots, state.tabs, setState]);
 
   /* pushHistory: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
 
@@ -2709,6 +2755,42 @@ export const App: React.FC = () => {
   }, [closeContextMenu, enterFolder, handleOpenInNewTab]);
 
   /* handleOpenCompareInNewTab: delegated to `useNavigation` */
+
+  // 添加图片到现有的图片对比画布
+  const handleAddToCompareCanvas = useCallback((tabId: string, imageIds: string[]) => {
+    const targetTab = state.tabs.find(t => t.id === tabId);
+    if (!targetTab || !targetTab.isCompareMode) return;
+
+    const currentCount = targetTab.selectedFileIds.length;
+    const maxCount = 24;
+    const remainingSpace = maxCount - currentCount;
+
+    if (remainingSpace <= 0) {
+      showToast(t('context.canvasFull') || '画布已满');
+      return;
+    }
+
+    // 只添加能容纳的图片
+    const idsToAdd = imageIds.slice(0, remainingSpace);
+    const actuallyAdded = idsToAdd.length;
+
+    setState(prev => ({
+      ...prev,
+      activeTabId: tabId,
+      tabs: prev.tabs.map(tab =>
+        tab.id === tabId
+          ? { ...tab, selectedFileIds: [...tab.selectedFileIds, ...idsToAdd] }
+          : tab
+      )
+    }));
+
+    // 显示提示
+    if (actuallyAdded < imageIds.length) {
+      showToast(t('context.partiallyAdded')?.replace('{added}', String(actuallyAdded)).replace('{total}', String(imageIds.length)) || `已添加 ${actuallyAdded}/${imageIds.length} 张图片（画布已满）`);
+    } else {
+      showToast(t('context.addedToCanvas') || '已添加到画布');
+    }
+  }, [state.tabs, setState, showToast, t]);
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
     pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -3628,6 +3710,9 @@ export const App: React.FC = () => {
               onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
               t={t}
               activeTab={activeTab}
+              tabs={state.tabs}
+              handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+              handleAddToCompareCanvas={handleAddToCompareCanvas}
             />
           )}
           {state.tabs.map(tab => tab.isCompareMode && (
@@ -3648,10 +3733,14 @@ export const App: React.FC = () => {
                   handleCloseTab({ stopPropagation: () => { } } as any, tab.id);
                   setIsReferenceMode(false);
                 }}
-                onReady={() => updateTabById(tab.id, { selectedFileIds: [] })}
+                onReady={() => {
+                  // 图片加载完成后的回调，不需要清空 selectedFileIds
+                  // 保留此回调用于未来可能的用途
+                }}
                 onLayoutToggle={onLayoutToggle}
                 onNavigateBack={goBack}
                 onSelect={(id) => updateTabById(tab.id, { selectedFileIds: [id] })}
+                onSelectedFileIdsChange={(ids) => updateTabById(tab.id, { selectedFileIds: ids })}
                 sessionName={tab.sessionName}
                 onSessionNameChange={(name) => updateTabById(tab.id, { sessionName: name })}
                 layoutProp={state.layout}
@@ -4032,8 +4121,9 @@ export const App: React.FC = () => {
                     onToggleGroup={toggleGroup}
                     isSelecting={isSelecting}
                     selectionBox={selectionBox}
-                    onScrollTopChange={(scrollTop) => updateActiveTab({ scrollTop })}
+                    onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
                     onConsumeScrollToItem={() => updateActiveTab({ scrollToItemId: undefined })}
+                    onScroll={handleScroll}
                     t={t}
                     onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                     onUpdateFile={handleUpdateFile}
@@ -4146,6 +4236,7 @@ export const App: React.FC = () => {
         contextMenu={contextMenu}
         files={state.files}
         activeTab={activeTab}
+        tabs={state.tabs}
         peopleWithDisplayCounts={peopleWithDisplayCounts}
         aiConnectionStatus={state.aiConnectionStatus}
         displayFileIds={displayFileIds}
@@ -4178,6 +4269,7 @@ export const App: React.FC = () => {
         showToast={showToast}
         updateActiveTab={updateActiveTab}
         handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+        handleAddToCompareCanvas={handleAddToCompareCanvas}
         handleCopyImageToClipboard={handleCopyImageToClipboard}
       />
     </div>

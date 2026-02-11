@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
@@ -739,13 +739,19 @@ export const TopBar: React.FC<TopBarProps> = ({
             name="toolbar-search-input"
             className="bg-transparent border-none focus:outline-none text-sm w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0"
             placeholder={
-              activeTab.viewMode === 'people-overview' 
+              activeTab.viewMode === 'people-overview'
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : isAISearchEnabled 
-                    ? t('settings.aiSmartSearch') 
-                    : t('search.placeholder')
+                  : isAISearchEnabled
+                    ? t('settings.aiSmartSearch')
+                    : activeTab.searchScope === 'file'
+                      ? '搜索文件名...'
+                      : activeTab.searchScope === 'tag'
+                        ? '搜索标签...'
+                        : activeTab.searchScope === 'folder'
+                          ? '搜索文件夹...'
+                          : '搜索...'
             }
             value={
               activeTab.viewMode === 'people-overview' ? (personSearchQuery || '') :
