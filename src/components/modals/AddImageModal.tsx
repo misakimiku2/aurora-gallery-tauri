@@ -601,11 +601,8 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                         const { width, height, x, y } = originalWindowStateRef.current;
                         await window.setSize(new LogicalSize(width, height));
                         await window.setPosition(new LogicalPosition(x, y));
-                        console.log('[AddImageModal] Restored window size to', width, 'x', height);
                         originalWindowStateRef.current = null;
-                    } catch (error) {
-                        console.error('Failed to restore window size:', error);
-                    }
+                    } catch {}
                 }
             };
 

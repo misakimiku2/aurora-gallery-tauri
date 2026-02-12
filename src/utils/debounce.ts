@@ -10,7 +10,7 @@ export function debounce<T extends (...args: any[]) => any>(
   wait: number,
   immediate: boolean = false
 ): ((...args: Parameters<T>) => void) & { cancel: () => void } {
-  let timeout: number | null = null;
+  let timeout: ReturnType<typeof setTimeout> | null = null;
 
   // 创建防抖函数
   const debounced = (...args: Parameters<T>) => {

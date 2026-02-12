@@ -1,4 +1,4 @@
-﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 
 // 辅助函数：深度查找文件夹内的图片
@@ -1899,20 +1899,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         // 这里我们先只是调�?onSearch，传入一种特殊格式�?
                                         // 最好是 "palette:hex1,hex2,hex3"
                                         const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
-                                        console.log('[AtmosphereSearch] Triggering search:', searchQuery);
-                                        console.log('[AtmosphereSearch] File path:', file.path);
-                                        console.log('[AtmosphereSearch] Using top 5 colors (out of', colors.length, '):', atmosphereColors);
                                         onSearch(searchQuery);
-                                    } catch (e) {
-                                        console.error('[AtmosphereSearch] Search failed:', e);
-                                    }
-                                } else {
-                                    console.log('[AtmosphereSearch] Conditions not met:', {
-                                        hasFile: !!file,
-                                        isImage: file?.type === FileType.IMAGE,
-                                        hasPalette: !!file?.meta?.palette,
-                                        paletteLength: file?.meta?.palette?.length || 0
-                                    });
+                                    } catch {}
                                 }
                             }}
                             className="p-1 px-2 flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors text-[10px] text-gray-500 font-medium"
@@ -2076,7 +2064,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 </button>
                             ) : (
                                 <button
-                                    onClick={() => onUpdate(file.id, { aiData: undefined })}
+                                    onClick={() => file && onUpdate(file.id, { aiData: undefined })}
                                     className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
                                     title={t('meta.clearAiData')}
                                     aria-label={t('meta.clearAiData')}

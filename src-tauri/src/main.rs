@@ -343,10 +343,17 @@ async fn get_jxl_preview(path: String) -> Result<String, String> {
                 let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
                 resizer.resize(&src_image.view(), &mut dst_image.view_mut()).map_err(|e| e.to_string())?;
                 
+                let buffer = dst_image.buffer().to_vec();
                 img = if channels == 3 {
-                    DynamicImage::ImageRgb8(image::RgbImage::from_raw(new_width, new_height, dst_image.buffer().to_vec()).unwrap())
+                    match image::RgbImage::from_raw(new_width, new_height, buffer) {
+                        Some(rgb_img) => DynamicImage::ImageRgb8(rgb_img),
+                        None => return Err("Failed to create RGB image from resized buffer".to_string()),
+                    }
                 } else {
-                    DynamicImage::ImageRgba8(image::RgbaImage::from_raw(new_width, new_height, dst_image.buffer().to_vec()).unwrap())
+                    match image::RgbaImage::from_raw(new_width, new_height, buffer) {
+                        Some(rgba_img) => DynamicImage::ImageRgba8(rgba_img),
+                        None => return Err("Failed to create RGBA image from resized buffer".to_string()),
+                    }
                 };
             }
         }
@@ -2445,9 +2452,22 @@ fn main() {
             let app_handle = app.handle().clone();
             
             // 创建托盘图标
+            let tray_icon = app.default_window_icon()
+                .cloned()
+                .ok_or_else(|| {
+                    eprintln!("Warning: No default window icon found, tray icon may not display correctly");
+                    "No default window icon"
+                });
+            
             let tray = TrayIconBuilder::new()
                 .tooltip("Aurora Gallery")
-                .icon(app.default_window_icon().expect("No default window icon").clone())
+                .icon(match tray_icon {
+                    Ok(icon) => icon,
+                    Err(_) => {
+                        // 如果获取失败，尝试继续创建托盘（可能没有图标）
+                        return Ok(());
+                    }
+                })
                 .menu(&menu)
                 .show_menu_on_left_click(false) // 禁用左键点击显示菜单，只有右键才显示
                 .on_menu_event(move |app, event| {

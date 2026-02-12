@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Pipette, Copy, Check } from 'lucide-react';
 
 interface RGB { r: number; g: number; b: number; }
@@ -316,7 +316,6 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                // Use native eyedropper if available
                // @ts-ignore
                if (window.EyeDropper) {
-                   console.log('[ColorPicker] Opening eyedropper');
                    // Create instance and start opening immediately before heavy React state updates
                    // @ts-ignore
                    const eyeDropper = new window.EyeDropper();
@@ -326,11 +325,8 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                    
                    try {
                        const result = await openPromise;
-                       console.log('[ColorPicker] Eyedropper picked color:', result.sRGBHex);
                        onChange(result.sRGBHex); // Directly trigger search
-                   } catch (e) {
-                       console.log('[ColorPicker] Eyedropper canceled:', e);
-                   }
+                   } catch {}
                } else {
                    alert(t ? t('color.pickColor') + ' - Eyedropper not supported' : 'Browser does not support Eyedropper API');
                }
@@ -349,9 +345,7 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200 dark:border-gray-800"
                style={{ backgroundColor: c }}
                onClick={() => {
-                   console.log('[ColorPicker] Preset color selected:', c);
                    handleHexChange({ target: { value: c } } as any);
-                   console.log('[ColorPicker] Closing picker and triggering search');
                    onClose();
                }}
              />

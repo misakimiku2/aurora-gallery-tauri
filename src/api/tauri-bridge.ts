@@ -481,7 +481,6 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
 
     // 如果处理失败且是 AVIF 格式，尝试前端降级生成
     if (!res && filePath.toLowerCase().endsWith('.avif') && !signal?.aborted) {
-      console.log('AVIF detected and backend failed, attempting frontend fall-back generation:', filePath);
       const remoteRes = await generateAvifThumbnailAndColors(filePath, cachePath, onColors);
       performanceMonitor.end(timerId, 'getThumbnail', { success: !!remoteRes, fallback: true });
       return remoteRes;
@@ -694,11 +693,9 @@ export const saveUserData = async (data: any): Promise<boolean> => {
     if (payload.fileMetadata) {
       // never send whole-file metadata via IPC — it's stored in metadata.db
       delete payload.fileMetadata;
-      console.warn('saveUserData: removed fileMetadata from payload before IPC (use metadata DB)');
     }
     if (payload.files) {
       delete payload.files;
-      console.warn('saveUserData: removed files map from payload before IPC');
     }
 
     const result = await invoke<boolean>('save_user_data', { data: payload });
@@ -749,10 +746,8 @@ export const getDefaultPaths = async (): Promise<Record<string, string>> => {
  */
 export const openPath = async (path: string, isFile?: boolean): Promise<void> => {
   try {
-    console.log('tauri-bridge.openPath called:', { path, isFile });
     await invoke('open_path', { path, isFile });
   } catch (error) {
-    console.error('Failed to open path:', error, { path, isFile });
     throw error;
   }
 };
@@ -1093,12 +1088,10 @@ export const startDragToExternal = async (
   onDragEnd?: () => void
 ): Promise<void> => {
   if (!isTauriEnvironment()) {
-    console.warn('startDragToExternal is only available in Tauri environment');
     return;
   }
 
   if (!filePaths || filePaths.length === 0) {
-    console.warn('No files to drag');
     return;
   }
 
@@ -1142,8 +1135,7 @@ export const startDragToExternal = async (
         icon: finalIconPath || filePaths[0], // 使用组合预览图或第一个文件作为图标
         mode: 'copy', // 复制模式
       },
-      (result) => {
-        console.log('Drag result:', result);
+      () => {
         // 拖拽结束后调用回调
         if (onDragEnd) {
           onDragEnd();
@@ -1151,7 +1143,6 @@ export const startDragToExternal = async (
       }
     );
   } catch (error) {
-    console.error('Failed to start drag:', error);
     // 拖拽失败也要调用回调
     if (onDragEnd) {
       onDragEnd();

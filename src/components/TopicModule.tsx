@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -396,7 +396,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const allFileIds = new Set<string>();
         allTopicIds.forEach(id => {
             const t = topics[id];
-            if (t) {
+            if (t && t.fileIds) {
                 t.fileIds.forEach(fid => allFileIds.add(fid));
             }
         });

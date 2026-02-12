@@ -1251,8 +1251,8 @@ export const Sidebar: React.FC<{
       if (folderSortMode === 'name') {
         res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
       } else {
-        const atime = a.meta?.modified || 0;
-        const btime = b.meta?.modified || 0;
+        const atime = Number(a.meta?.modified) || 0;
+        const btime = Number(b.meta?.modified) || 0;
         res = atime - btime;
       }
       return folderSortOrder === 'asc' ? res : -res;
@@ -1283,8 +1283,8 @@ export const Sidebar: React.FC<{
           if (folderSortMode === 'name') {
             res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
           } else {
-            const atime = a.meta?.modified || 0;
-            const btime = b.meta?.modified || 0;
+            const atime = Number(a.meta?.modified) || 0;
+            const btime = Number(b.meta?.modified) || 0;
             res = atime - btime;
           }
           return folderSortOrder === 'asc' ? res : -res;

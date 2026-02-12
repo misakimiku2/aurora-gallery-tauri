@@ -143,10 +143,8 @@ export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStat
     useEffect(() => {
         let isMounted = true;
 
-        // Helper function for logging
-        const eprintln = (msg: string) => {
-            console.log(`[ColorExtraction] ${msg}`);
-        };
+        // Helper function for logging (no-op in production)
+        const eprintln = (..._args: any[]) => {};
 
         const listenProgress = async () => {
             try {

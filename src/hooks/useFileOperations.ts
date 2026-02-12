@@ -71,10 +71,8 @@ export const useFileOperations = ({
 
         try {
           const actualDestPath = await copyFile(fileInfo.sourcePath, fileInfo.newPath);
-          // 尝试复制颜色信息，避免重复提取 — 添加日志以便排查
-          console.log('[CopyFiles] copyImageColors invoked', { src: fileInfo.sourcePath, dest: actualDestPath });
-          const copyColorsResult = await copyImageColors(fileInfo.sourcePath, actualDestPath);
-          console.log('[CopyFiles] copyImageColors result', { src: fileInfo.sourcePath, dest: actualDestPath, result: copyColorsResult });
+          // 尝试复制颜色信息，避免重复提取
+          await copyImageColors(fileInfo.sourcePath, actualDestPath);
           // 复制元数据（标签、描述等）
           await dbCopyFileMetadata(fileInfo.sourcePath, actualDestPath);
 
@@ -633,7 +631,6 @@ export const useFileOperations = ({
       }));
       setState(s => ({ ...s, renamingId: null }));
       const _renameTimer = performanceMonitor.start('rename.optimistic', undefined, true);
-      console.log('[Rename] optimistic update applied', { id, oldPath: prevFileSnapshot.path, newPath });
 
       // 先执行 OS 层重命名；失败则回滚并通知用户
       try {
@@ -644,7 +641,6 @@ export const useFileOperations = ({
         }
       } catch (err) {
         // 回滚乐观更新
-        console.error('[Rename] physical rename failed, rolling back optimistic update', err);
         setState(prev => ({
           ...prev,
           files: {
@@ -665,7 +661,6 @@ export const useFileOperations = ({
 
         try {
           const parentId = prevFileSnapshot.parentId || undefined;
-          console.log('[Rename][bg] initiating targeted refresh (debounced)', { id, parentId });
 
           // Strategy:
           // - If renamed item is a file -> call scanFile(newPath) and merge single node
@@ -676,15 +671,13 @@ export const useFileOperations = ({
           let scanned: any = null;
           try {
             scanned = await scanFile(newPath, parentId);
-          } catch (err) {
-            console.warn('[Rename][bg] scanFile failed, will fallback to handleRefresh', { err, newPath, parentId });
+          } catch {
             scanned = null;
           }
 
           if (scanned) {
             // Merge single-node result into UI (preserve user metadata where possible)
             const nodeId = scanned.id;
-            console.log('[Rename][bg] scanned single node', { nodeId, path: scanned.path });
 
             setState(prev => {
               const files = { ...prev.files };
@@ -707,7 +700,6 @@ export const useFileOperations = ({
               // preserve those children until a full directory scan can confirm changes.
               const prevChildren = prevFileSnapshot.children || [];
               if (prevFileSnapshot.id && prevFileSnapshot.id !== nodeId && prevChildren.length > 0 && (!scanned.children || scanned.children.length === 0)) {
-                console.log('[Rename][bg] preserving previous children on id-change until directory scan', { oldId: prevFileSnapshot.id, newId: nodeId, preserved: prevChildren.length });
                 files[nodeId] = { ...files[nodeId], children: prevChildren };
 
                 // Update child entries to point to the new parent id so they remain navigable
@@ -742,10 +734,7 @@ export const useFileOperations = ({
                       updatedCount++;
                     }
                   });
-
-                  console.log('[Rename][bg] migrated child/descendant paths to new folder path', { oldBase: oldBaseRaw, newBase: newBaseRaw, updatedCount });
-                } catch (err) {
-                  console.warn('[Rename][bg] failed to migrate child paths after rename — children preserved but paths unchanged', { err });
+                } catch {
                   // fallback: at least update parentId so folder navigation still works
                   prevChildren.forEach(childId => {
                     if (files[childId]) files[childId] = { ...files[childId], parentId: nodeId };
@@ -771,7 +760,6 @@ export const useFileOperations = ({
             // Guard to avoid unnecessary work for folders that already include children.
             try {
               if (scanned.type === FileType.FOLDER && (!scanned.children || scanned.children.length === 0)) {
-                console.log('[Rename][bg] scanned folder lacks children — performing folder-level refresh', { nodeId });
 
                 // Mark folder as refreshing so UI shows a loading state instead of empty
                 setState(prev => ({
@@ -844,7 +832,6 @@ export const useFileOperations = ({
                     return;
                   }
                 } else {
-                  console.log('[Rename][bg] folder-level refresh completed (no previous children)', { nodeId });
 
                   const remain = Math.max(0, MIN_VISIBLE_MS - (Date.now() - visibleStart));
                   if (remain > 0) await new Promise(r => setTimeout(r, remain));
@@ -884,17 +871,14 @@ export const useFileOperations = ({
           // fallback: targeted refresh by folderId (may still be large)
           try {
             await handleRefresh(parentId);
-            console.log('[Rename][bg] fallback: handleRefresh completed', { parentId });
             performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: true, fallback: true, elapsed: Date.now() - start });
             return;
-          } catch (err) {
-            console.error('[Rename][bg] fallback handleRefresh failed', err);
+          } catch {
             performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
             showToast('Rename completed — refresh failed');
             return;
           }
-        } catch (e) {
-          console.error('[Rename][bg] targeted refresh failed unexpectedly', e);
+        } catch {
           performanceMonitor.end(_renameTimer, 'rename.optimistic', { success: false });
           showToast('Rename completed — refresh failed');
         }

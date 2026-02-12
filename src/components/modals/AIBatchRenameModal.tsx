@@ -45,7 +45,8 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
           // 使用生成的缩略图，提高图片质量
           let thumbnailUrl: string | undefined;
           try {
-            thumbnailUrl = await getThumbnail(file.path, file.updatedAt, settings.paths.resourceRoot);
+            const thumb = await getThumbnail(file.path, file.updatedAt, settings.paths.resourceRoot);
+            thumbnailUrl = thumb ?? undefined;
           } catch (e) {
             // 如果获取缩略图失败，使用原始路径
             thumbnailUrl = file.path ? `asset://localhost/${file.path}` : undefined;

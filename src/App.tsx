@@ -457,7 +457,6 @@ export const App: React.FC = () => {
               // 标记已加载保存的数据，防止后续 effect 在初始化阶段覆盖它
               savedDataLoadedRef.current = true;
               setSavedDataLoaded(true);
-              console.debug('[Init] Loaded saved user data, folderSettings keys:', Object.keys(savedData.folderSettings || {}));
 
               // 自动检测并连接 AI 提供者（例如 LM Studio），在每次启动时尝试连接
               (async () => {
@@ -599,12 +598,6 @@ export const App: React.FC = () => {
                   };
                   defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
-                  if (savedForRoot) {
-                    console.debug('[Init] Applying saved folder settings to default tab', initialFolder, savedForRoot);
-                  } else {
-                    console.debug('[Init] Applying global default layout settings to default tab', initialFolder, globalLayoutSettings);
-                  }
-
                   // Apply groupBy to component state (outside of setState)
                   setGroupBy(groupBySetting as any);
 
@@ -634,15 +627,12 @@ export const App: React.FC = () => {
                   }
 
                   // 确保恢复颜色提取任务
-                  resumeColorExtraction().catch(err => {
-                    console.warn('Failed to resume color extraction on init:', err);
-                  });
+                  resumeColorExtraction().catch(() => {});
                 }
 
                 // Mark initialization complete (saved-data loading finished/handled)
                 savedDataLoadedRef.current = true;
                 setSavedDataLoaded(true);
-                console.debug('[Init] Initialization complete (roots loaded)');
                 setIsLoading(false);
                 // 锟斤拷目录锟斤拷锟斤拷锟斤拷希锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
                 setTimeout(() => {
@@ -808,11 +798,8 @@ export const App: React.FC = () => {
         try {
           const { getCurrentWindow } = await import('@tauri-apps/api/window');
           const title = (translations as any)[state.settings.language]?.app?.title || 'Aurora Gallery';
-          console.log('Updating window title to:', title, 'for language:', state.settings.language);
           await getCurrentWindow().setTitle(title);
-        } catch (err) {
-          console.error('Failed to update window title:', err);
-        }
+        } catch {}
       }
     };
     updateTitle();
@@ -2941,13 +2928,11 @@ export const App: React.FC = () => {
   // Toggle helpers for sidebars
   const toggleSidebar = () => {
     const next = !state.layout.isSidebarVisible;
-    logInfo('[App] toggleSidebar', { action: 'toggleSidebar', next });
     setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
   };
 
   const toggleMetadata = () => {
     const next = !state.layout.isMetadataVisible;
-    logInfo('[App] toggleMetadata', { action: 'toggleMetadata', next });
     setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
   };
 
@@ -2955,33 +2940,9 @@ export const App: React.FC = () => {
     if (part === 'sidebar') toggleSidebar(); else toggleMetadata();
   };
 
-  // Log layout state changes (sidebar / metadata) for debugging layout issues
+  // Track layout state changes (sidebar / metadata)
   const prevLayoutRef = useRef(state.layout);
   useEffect(() => {
-    const prev = prevLayoutRef.current;
-    if (prev.isSidebarVisible !== state.layout.isSidebarVisible) {
-      logInfo('[App] sidebar.stateChange', { isSidebarVisible: state.layout.isSidebarVisible });
-    }
-    if (prev.isMetadataVisible !== state.layout.isMetadataVisible) {
-      logInfo('[App] metadata.stateChange', { isMetadataVisible: state.layout.isMetadataVisible });
-    }
-
-    // Measure main grid & panels after layout change to help debug layout issues
-    setTimeout(() => {
-      try {
-        const mainEl = document.getElementById('main-content-area') as HTMLElement | null;
-        const mainWidth = mainEl ? mainEl.clientWidth : null;
-        const sidebarEl = document.querySelector('.border-r') as HTMLElement | null; // left sidebar
-        const sidebarWidth = sidebarEl ? sidebarEl.clientWidth : null;
-        const metadataEl = document.querySelector('.metadata-panel-container') as HTMLElement | null; // right panel
-        const metadataWidth = metadataEl ? metadataEl.clientWidth : null;
-
-        logDebug('[App] layout.measure', { mainWidth, sidebarWidth, metadataWidth, isSidebarVisible: state.layout.isSidebarVisible, isMetadataVisible: state.layout.isMetadataVisible });
-      } catch (e) {
-        logDebug('[App] layout.measure.failed', { error: String(e) });
-      }
-    }, 0);
-
     prevLayoutRef.current = state.layout;
   }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible]);
 

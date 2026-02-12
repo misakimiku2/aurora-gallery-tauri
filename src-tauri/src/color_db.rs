@@ -85,7 +85,13 @@ impl ColorDbPool {
         
         let db_path_str = path.to_string_lossy().to_string();
         
-        let db_file_name = path.file_name().unwrap().to_string_lossy();
+        let db_file_name = path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .ok_or_else(|| {
+                let err_msg = format!("Invalid database path: {:?}", path);
+                eprintln!("Error: {}", err_msg);
+                err_msg
+            })?;
         let db_file_name_wal = format!("{}-wal", db_file_name);
         let db_file_name_shm = format!("{}-shm", db_file_name);
         
@@ -808,7 +814,13 @@ impl ColorDbPool {
         eprintln!("Database path from self.db_path: {}", current_db_path);
         
         let db_path = Path::new(&current_db_path);
-        let db_file_name = db_path.file_name().unwrap().to_string_lossy();
+        let db_file_name = db_path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .ok_or_else(|| {
+                let err_msg = format!("Invalid database path: {:?}", db_path);
+                eprintln!("Error: {}", err_msg);
+                err_msg
+            })?;
         let db_file_name_wal = format!("{}-wal", db_file_name);
         let wal_path = db_path.with_file_name(&db_file_name_wal);
         

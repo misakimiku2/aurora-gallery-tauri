@@ -830,12 +830,6 @@ export const FileGrid: React.FC<FileGridProps> = ({
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
 
-  // #region agent log
-  useEffect(() => {
-      // Use console.warn for visibility in terminal
-      console.warn(`FRONTEND_DEBUG: FileGrid effective props: resourceRoot=${effectiveResourceRoot}, cachePath=${effectiveCachePath}`);
-  }, [effectiveResourceRoot, effectiveCachePath]);
-  // #endregion
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
 

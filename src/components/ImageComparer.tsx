@@ -970,7 +970,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             setActiveImageIds([]);
             // 不要调用 onSelect('')，避免清空父组件的 selectedFileIds
             // 在图片对比模式下，点击空白处只是取消当前选中状态，不应该移除画布中的图片
-            console.log('[ImageComparer] Clearing active selection (not calling onSelect)');
           }
         }
       }
@@ -1069,12 +1068,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           const newWindowCenterY = newHeight / 2;
           const menuOffset = Math.min(50, heightDelta / 2);
           menuY = Math.max(10, Math.min(newWindowCenterY - menuOffset, newHeight - MENU_MIN_HEIGHT - 10));
-
-          console.log('[ContextMenu] Resizing window from', windowSize.height, 'to', newHeight);
         }
-      } catch (error) {
-        console.error('Failed to resize window for context menu:', error);
-      }
+      } catch {}
     }
 
     setContextMenu({ x: menuX, y: menuY });
@@ -1094,11 +1089,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           const { width, height, x, y } = originalWindowStateRef.current!;
           await window.setSize(new LogicalSize(width, height));
           await window.setPosition(new LogicalPosition(x, y));
-          console.log('[ContextMenu] Restoring window size to', height);
           originalWindowStateRef.current = null;
-        } catch (error) {
-          console.error('Failed to restore window size:', error);
-        }
+        } catch {}
       }, 300);
     }
   };
@@ -1150,9 +1142,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 imageFileNames[item.id] = fileName;
                 imagesFolder?.file(fileName, imageBytes);
               }
-            } catch (e) {
-              console.warn('Failed to read image:', file.path, e);
-            }
+            } catch {}
           }
         }
 
@@ -1175,9 +1165,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         const zipBlob = await zip.generateAsync({ type: 'uint8array' });
         await writeFile(path, zipBlob);
       }
-    } catch (err) {
-      console.error('Save failed', err);
-    }
+    } catch {}
   };
 
   const handleLoadSession = async () => {
@@ -1307,9 +1295,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           shouldAutoFitAfterLoadRef.current = true;
         }
       }
-    } catch (err) {
-      console.error('Load failed', err);
-    }
+    } catch {}
   };
 
   const loadLegacySession = async (session: ComparisonSession) => {
@@ -1320,8 +1306,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (files[it.id]) {
         newManuals[it.id] = { x: it.x, y: it.y, width: it.width, height: it.height, rotation: it.rotation };
         newIds.push(it.id);
-      } else {
-        console.warn('Loaded session references missing file', it.id);
       }
     });
 
@@ -1764,7 +1748,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // Reference mode toggle
   const toggleReferenceMode = useCallback(async () => {
     const newMode = !isReferenceMode;
-    console.log('[ImageComparer] Toggling reference mode, newMode:', newMode);
     setIsReferenceMode(newMode);
     onReferenceModeChangeRef.current?.(newMode);
 
@@ -1874,9 +1857,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           await setWindowMinSize(1280, 800);
         }
       }
-    } catch (error) {
-      console.error('Failed to toggle reference mode:', error);
-    }
+    } catch {}
   }, [isReferenceMode]);
 
   // Keyboard support
