@@ -90,11 +90,63 @@ pub fn get_image_dimensions(path: &str) -> (u32, u32) {
     }
 
     // Try imageinfo for everything else
-    if let Ok(info) = imageinfo::ImageInfo::from_file(&mut file) {
-        return (info.size.width as u32, info.size.height as u32);
+    // 使用 catch_unwind 捕获可能的 panic，防止扫描线程崩溃
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        imageinfo::ImageInfo::from_file(&mut file)
+    }));
+    
+    match result {
+        Ok(Ok(info)) => (info.size.width as u32, info.size.height as u32),
+        Ok(Err(_)) => (0, 0),
+        Err(_) => {
+            eprintln!("[Warning] imageinfo panicked while processing: {}", path);
+            (0, 0)
+        }
+    }
+}
+
+/// 检测路径是否可能位于HDD（机械硬盘）上
+/// 通过测量小文件的随机读取延迟来判断
+fn is_likely_hdd(path: &str) -> bool {
+    use std::time::Instant;
+
+    // 尝试读取目录下的几个小文件来测量延迟
+    let test_path = Path::new(path);
+    let mut read_times = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(test_path) {
+        let test_files: Vec<_> = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                if let Ok(meta) = e.metadata() {
+                    meta.is_file() && meta.len() < 1024 * 1024 // 小于1MB的文件
+                } else {
+                    false
+                }
+            })
+            .take(5) // 测试前5个文件
+            .collect();
+
+        for entry in test_files {
+            let path = entry.path();
+            let start = Instant::now();
+            let _ = fs::metadata(&path); // 简单的元数据读取
+            let elapsed = start.elapsed();
+            read_times.push(elapsed.as_millis() as f64);
+        }
     }
 
-    (0, 0)
+    if read_times.len() >= 3 {
+        // 计算平均读取时间
+        let avg_time: f64 = read_times.iter().sum::<f64>() / read_times.len() as f64;
+        // 如果平均读取时间超过10ms，很可能是HDD
+        // SSD通常在0.1-1ms，HDD通常在5-15ms
+        log::info!("[HDD Detection] Average read time: {:.2}ms (threshold: 10ms)", avg_time);
+        avg_time > 10.0
+    } else {
+        // 无法确定，默认假设为SSD（使用高并行度）
+        false
+    }
 }
 
 // --- Window State Management ---
@@ -632,9 +684,17 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
 
     // 3. 决定计数策略
     // 如果是强制扫描（首次或手动刷新），提前数准总量以获得平滑进度条
+    // HDD优化：检测是否为HDD并调整并行度
+    let count_parallelism = if is_likely_hdd(&path) {
+        eprintln!("[Scan] Detected HDD for counting, using sequential scanning for better performance");
+        jwalk::Parallelism::Serial
+    } else {
+        jwalk::Parallelism::RayonNewPool(16)
+    };
+
     let total_images = if force {
         jwalk::WalkDir::new(&path)
-            .parallelism(jwalk::Parallelism::RayonNewPool(16))
+            .parallelism(count_parallelism)
             .process_read_dir(|_, _, _, dir_entry_results| {
                 dir_entry_results.retain(|result| {
                     result.as_ref().map(|entry| {
@@ -665,12 +725,21 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     let producer_path = path.clone();
     let cached_index_arc = Arc::new(cached_index_map);
 
+    // HDD优化：检测是否为HDD并调整并行度
+    // 在HDD上，高并行度会导致磁头竞争，降低性能
+    let scan_parallelism = if is_likely_hdd(&producer_path) {
+        eprintln!("[Scan] Detected HDD for scanning, using sequential scanning for better performance");
+        jwalk::Parallelism::Serial
+    } else {
+        jwalk::Parallelism::RayonNewPool(16)
+    };
+
     std::thread::spawn(move || {
         let normalized_root = normalize_path(&producer_path);
         let root_p_local = Path::new(&producer_path);
 
         jwalk::WalkDir::new(&producer_path)
-            .parallelism(jwalk::Parallelism::RayonNewPool(16)) 
+            .parallelism(scan_parallelism) 
             .process_read_dir(|_, _, _, dir_entry_results| {
                 dir_entry_results.retain(|result| {
                     result.as_ref().map(|entry| {
@@ -681,7 +750,6 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
                 });
             })
             .into_iter()
-            .par_bridge()
             .filter_map(|entry_result| {
                 let entry = entry_result.ok()?;
                 let entry_path = entry.path();
@@ -773,10 +841,18 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     // 准备数据库持久化数据，在接收时直接构建，避免二次遍历
     let mut entries_to_save = Vec::with_capacity(total_images + 1);
 
+    let mut received_count = 0;
     while let Ok((id, mut node, p_path)) = rx.recv() {
+        received_count += 1;
         scanned_paths.push(node.path.clone());
         if node.name.contains("棕色") || node.name.contains("素材") {
              println!("[DEBUG] Scanning node check: Name={}, GeneratedID={}, FoundMeta={}", node.name, id, metadata_map.contains_key(&id));
+        }
+
+        // 每500个文件输出一次进度日志
+        if received_count % 500 == 0 {
+            eprintln!("[Scan Progress] Received {} files so far, processed: {}, total expected: {}",
+                     received_count, processed_count, total_images);
         }
 
         if matches!(node.r#type, FileType::Folder) { 
@@ -847,6 +923,22 @@ async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::Ap
     }
 
     sort_children(&mut all_files);
+
+    // 扫描完成后，发送最终进度（确保显示实际数量）
+    let _ = app.emit("scan-progress", ScanProgress {
+        processed: processed_count,
+        total: current_total,
+    });
+
+    // 扫描完成后的日志
+    eprintln!("[Scan Complete] Total received: {}, Total files in map: {}, Expected: {}",
+             received_count, all_files.len(), total_images);
+
+    // 如果接收的文件数量与预期相差较大，输出警告
+    if received_count < total_images.saturating_sub(10) {
+        eprintln!("[Scan Warning] Received fewer files than expected! This may indicate a HDD I/O issue.");
+        eprintln!("[Scan Warning] Consider checking disk health or using SSD for better performance.");
+    }
 
     // 6. 后台增量补全逻辑
     let mut to_process: Vec<String> = Vec::new();
@@ -2387,7 +2479,11 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(
+            tauri_plugin_log::Builder::default()
+                .level(log::LevelFilter::Info)
+                .build()
+        )
         .plugin(tauri_plugin_drag::init())
         .invoke_handler(tauri::generate_handler![
             save_user_data,

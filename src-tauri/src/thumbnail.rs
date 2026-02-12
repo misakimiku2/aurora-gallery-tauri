@@ -54,7 +54,8 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
     let bytes_read = file.read(&mut buffer).unwrap_or(0);
 
     let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-    let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+    let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
+    let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
 
     let jpg_cache_file_path = cache_root.join(format!("{}.jpg", cache_filename));
     let webp_cache_file_path = cache_root.join(format!("{}.webp", cache_filename));
@@ -261,7 +262,8 @@ pub async fn get_thumbnails_batch(
             let bytes_read = file.read(&mut buffer).unwrap_or(0);
 
             let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-            let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+            let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
+            let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
 
             let jpg_cache_file_path = root.join(format!("{}.jpg", cache_filename));
             let webp_cache_file_path = root.join(format!("{}.webp", cache_filename));
@@ -316,7 +318,8 @@ pub async fn save_remote_thumbnail(
         let bytes_read = file.read(&mut buffer).unwrap_or(0);
 
         let cache_key = format!("{}-{}-{:?}", size, modified, &buffer[..bytes_read]);
-        let cache_filename = format!("{:x}", md5::compute(cache_key.as_bytes()))[..24].to_string();
+        let hash_str = format!("{:x}", md5::compute(cache_key.as_bytes()));
+        let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
 
         let root = Path::new(&cache_root);
         if !root.exists() { let _ = fs::create_dir_all(root); }

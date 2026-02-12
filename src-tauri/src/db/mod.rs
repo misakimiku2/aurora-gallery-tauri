@@ -87,7 +87,14 @@ pub fn normalize_path(path: &str) -> String {
 pub fn generate_id(path: &str) -> String {
     let normalized = normalize_path(path);
     let hash = md5::compute(normalized.as_bytes());
-    format!("{:x}", hash)[..9].to_string()
+    let hash_str = format!("{:x}", hash);
+    // 确保至少有9个字符，避免切片越界
+    if hash_str.len() >= 9 {
+        hash_str[..9].to_string()
+    } else {
+        // 如果hash字符串不足9字符，用前导零填充（理论上MD5不会出现这种情况）
+        format!("{:0>9}", hash_str)
+    }
 }
 
 pub fn init_db(conn: &Connection) -> Result<()> {

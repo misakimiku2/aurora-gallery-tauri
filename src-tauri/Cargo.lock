@@ -246,6 +246,7 @@ dependencies = [
  "jpeg-decoder 0.2.6",
  "jwalk",
  "jxl-oxide",
+ "log",
  "md5",
  "num_cpus",
  "palette",

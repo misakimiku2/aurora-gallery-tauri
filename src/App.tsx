@@ -2416,8 +2416,9 @@ export const App: React.FC = () => {
           console.error('Failed to reload topics after switching root:', e);
         }
 
-        // 标记任务完成
-        updateTask(taskId, { current: 100, total: 100, status: 'completed' });
+        // 标记任务完成（使用实际的文件数量）
+        const actualFileCount = Object.values(result.files).filter(f => f.type === FileType.IMAGE).length;
+        updateTask(taskId, { current: actualFileCount, total: actualFileCount, status: 'completed' });
 
         // 稍后移除任务（给用户一点看到 100% 的时间）
         setTimeout(() => {

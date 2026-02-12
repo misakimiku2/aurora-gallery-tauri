@@ -5,7 +5,7 @@ import * as tauriLog from '@tauri-apps/plugin-log';
 
 // Vite 提供的开发模式检测标志
 // NOTE: 强制启用日志（开发阶段），取消基于环境的自动识别
-const IS_DEV = (import.meta as any).env?.DEV ?? true;
+const IS_DEV = true
 /**
  * 日志配置
  */
