@@ -135,7 +135,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
 
   const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const dragStartRef = useRef({ x: 0, y: 0 });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [activeImageIds, setActiveImageIds] = useState<string[]>([]);
   const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
@@ -149,6 +149,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const userInteractedRef = useRef(false);
   const autoZoomAppliedRef = useRef(false);
   const [internalSelectedIds, setInternalSelectedIds] = useState<string[]>(() => selectedFileIds.slice());
+  // 用于区分是外部 selectedFileIds 变化还是内部 activeImageIds 变化
+  const isInternalSelectionChangeRef = useRef(false);
   const [isSnappingEnabled, setIsSnappingEnabled] = useState(true);
   const [sessionName, setSessionName] = useState(sessionNameProp || "画布01");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -291,6 +293,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     if (!initializedRef.current) {
       // 首次初始化
       initializedRef.current = true;
+    }
+    // 如果是内部选择变化导致的 selectedFileIds 更新，不重新初始化
+    if (isInternalSelectionChangeRef.current) {
+      isInternalSelectionChangeRef.current = false;
+      return;
     }
     // 当 selectedFileIds 变化时，更新内部状态
     // 使用函数式更新避免依赖 files
@@ -501,6 +508,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       height: maxY - minY,
       rotation: 0
     });
+  }, [activeImageIds]);
+
+  // 当 activeImageIds 变化时，同步更新父组件的 selectedFileIds
+  // 这样右侧详情面板可以正确显示当前选中的图片详情
+  useEffect(() => {
+    // 标记为内部选择变化，避免触发 selectedFileIds 的 useEffect 重新初始化
+    isInternalSelectionChangeRef.current = true;
+    if (activeImageIds.length === 0) {
+      // 没有选中任何图片，清空 selectedFileIds，显示"选择一个文件以查看详情"
+      onSelectedFileIdsChange?.([]);
+    } else {
+      // 选中了一个或多个图片，更新 selectedFileIds
+      onSelectedFileIdsChange?.(activeImageIds);
+    }
   }, [activeImageIds]);
 
   const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
@@ -898,14 +919,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     else if (e.button === 1) {
       e.preventDefault();
       setIsDragging(true);
-      setDragStart({ x: e.clientX, y: e.clientY });
+      dragStartRef.current = { x: e.clientX, y: e.clientY };
     }
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (isDragging) {
-      const dx = e.clientX - dragStart.x;
-      const dy = e.clientY - dragStart.y;
+      const dx = e.clientX - dragStartRef.current.x;
+      const dy = e.clientY - dragStartRef.current.y;
 
       // 直接更新 transform，不使用动画
       setTransform(prev => ({
@@ -914,7 +935,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         y: prev.y + dy
       }));
 
-      setDragStart({ x: e.clientX, y: e.clientY });
+      dragStartRef.current = { x: e.clientX, y: e.clientY };
     }
 
     if (marquee && marquee.active) {

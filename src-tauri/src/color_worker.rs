@@ -440,7 +440,9 @@ fn consumer_loop(
                 }
 
                 // Throttle CPU: Sleep after processing to avoid continuous 100% usage
-                let sleep_ms = if is_heavy { 200 } else { 20 }; // 增加休眠时间，JXL/AVIF 给 200ms 喘息时间
+                // 优化：减少休眠时间以提高 SSD 环境下的处理速度
+                // 对于普通格式给 1ms 喘息时间，JXL/AVIF 给 10ms
+                let sleep_ms = if is_heavy { 10 } else { 1 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
 
                 // 如果处理失败，更新文件状态为error

@@ -105,12 +105,53 @@ pub fn get_image_dimensions(path: &str) -> (u32, u32) {
     }
 }
 
+use std::sync::Mutex;
+use std::time::{Instant, Duration};
+
+// 全局 HDD 检测结果缓存
+static HDD_CACHE: Mutex<Option<HashMap<String, (bool, Instant)>>> = Mutex::new(None);
+const CACHE_TTL: Duration = Duration::from_secs(300); // 缓存有效期 5 分钟
+
 /// 检测路径是否可能位于HDD（机械硬盘）上
 /// 通过测量小文件的随机读取延迟来判断
+/// 结果会被缓存，避免重复检测
 fn is_likely_hdd(path: &str) -> bool {
-    use std::time::Instant;
+    // 规范化路径作为缓存键
+    let cache_key = normalize_path(path);
+    
+    // 首先检查缓存
+    {
+        let mut cache_guard = HDD_CACHE.lock().unwrap();
+        if cache_guard.is_none() {
+            *cache_guard = Some(HashMap::new());
+        }
+        
+        if let Some(cache) = cache_guard.as_ref() {
+            if let Some((result, timestamp)) = cache.get(&cache_key) {
+                if timestamp.elapsed() < CACHE_TTL {
+                    // 缓存命中且未过期
+                    return *result;
+                }
+            }
+        }
+    }
+    
+    // 缓存未命中，执行检测
+    let result = detect_hdd_internal(path);
+    
+    // 更新缓存
+    {
+        let mut cache_guard = HDD_CACHE.lock().unwrap();
+        if let Some(ref mut cache) = cache_guard.as_mut() {
+            cache.insert(cache_key, (result, Instant::now()));
+        }
+    }
+    
+    result
+}
 
-    // 尝试读取目录下的几个小文件来测量延迟
+/// 内部 HDD 检测逻辑
+fn detect_hdd_internal(path: &str) -> bool {
     let test_path = Path::new(path);
     let mut read_times = Vec::new();
 
@@ -119,32 +160,28 @@ fn is_likely_hdd(path: &str) -> bool {
             .filter_map(|e| e.ok())
             .filter(|e| {
                 if let Ok(meta) = e.metadata() {
-                    meta.is_file() && meta.len() < 1024 * 1024 // 小于1MB的文件
+                    meta.is_file() && meta.len() < 1024 * 1024
                 } else {
                     false
                 }
             })
-            .take(5) // 测试前5个文件
+            .take(5)
             .collect();
 
         for entry in test_files {
             let path = entry.path();
             let start = Instant::now();
-            let _ = fs::metadata(&path); // 简单的元数据读取
+            let _ = fs::metadata(&path);
             let elapsed = start.elapsed();
             read_times.push(elapsed.as_millis() as f64);
         }
     }
 
     if read_times.len() >= 3 {
-        // 计算平均读取时间
         let avg_time: f64 = read_times.iter().sum::<f64>() / read_times.len() as f64;
-        // 如果平均读取时间超过10ms，很可能是HDD
-        // SSD通常在0.1-1ms，HDD通常在5-15ms
         log::info!("[HDD Detection] Average read time: {:.2}ms (threshold: 10ms)", avg_time);
         avg_time > 10.0
     } else {
-        // 无法确定，默认假设为SSD（使用高并行度）
         false
     }
 }
