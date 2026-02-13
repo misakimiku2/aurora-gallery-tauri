@@ -1845,9 +1845,31 @@ export const App: React.FC = () => {
       );
     }
 
-    // Sort people by count descending, same as in PersonGrid
-    // We must match the display order for range selection to work correctly.
-    allPeople.sort((a, b) => b.count - a.count);
+    // Sort people to match PersonGrid display order for correct range selection
+    allPeople.sort((a, b) => {
+      let comparison = 0;
+
+      switch (personSortBy) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name, 'zh-CN');
+          break;
+        case 'count':
+          comparison = a.count - b.count;
+          break;
+        case 'created':
+          // Use coverFileId corresponding file creation time as person's creation time
+          const fileA = state.files[a.coverFileId];
+          const fileB = state.files[b.coverFileId];
+          const dateA = fileA?.meta?.created ? new Date(fileA.meta.created).getTime() : 0;
+          const dateB = fileB?.meta?.created ? new Date(fileB.meta.created).getTime() : 0;
+          comparison = dateA - dateB;
+          break;
+        default:
+          comparison = a.count - b.count;
+      }
+
+      return personSortDirection === 'asc' ? comparison : -comparison;
+    });
 
     const allPersonIds = allPeople.map(person => person.id);
 
@@ -2018,63 +2040,69 @@ export const App: React.FC = () => {
     });
   };
 
-  const handleManualAddPerson = (personId: string) => {
+  const handleManualAddPerson = (personIds: string[]) => {
     const fileIds = activeTab.selectedFileIds;
-    if (fileIds.length === 0) {
+    if (fileIds.length === 0 || personIds.length === 0) {
       setState(s => ({ ...s, activeModal: { type: null } }));
       return;
     }
     setState(prev => {
       const newFiles = { ...prev.files };
       const newPeople = { ...prev.people };
-      const person = newPeople[personId];
-      if (!person) return prev;
+      let anyUpdated = false;
 
-      let updated = false;
-      let countIncrease = 0;
+      // 处理每个人物
+      personIds.forEach(personId => {
+        const person = newPeople[personId];
+        if (!person) return;
 
-      fileIds.forEach(fid => {
-        const file = newFiles[fid];
-        if (file && file.type === FileType.IMAGE) {
-          const currentFaces = file.aiData?.faces || [];
-          if (!currentFaces.some(f => f.personId === personId)) {
-            const newFace: AiFace = {
-              id: Math.random().toString(36).substr(2, 9),
-              personId: personId,
-              name: person.name,
-              confidence: 1.0,
-              box: { x: 0, y: 0, w: 0, h: 0 }
-            };
-            const newAiData = file.aiData ? { ...file.aiData, faces: [...currentFaces, newFace] } : {
-              analyzed: false,
-              analyzedAt: new Date().toISOString(),
-              description: '',
-              tags: [],
-              faces: [newFace],
-              sceneCategory: '',
-              confidence: 1.0,
-              dominantColors: [],
-              objects: []
-            };
-            newFiles[fid] = { ...file, aiData: newAiData };
-            countIncrease++;
-            updated = true;
+        let countIncrease = 0;
+
+        fileIds.forEach(fid => {
+          const file = newFiles[fid];
+          if (file && file.type === FileType.IMAGE) {
+            const currentFaces = file.aiData?.faces || [];
+            if (!currentFaces.some(f => f.personId === personId)) {
+              const newFace: AiFace = {
+                id: Math.random().toString(36).substr(2, 9),
+                personId: personId,
+                name: person.name,
+                confidence: 1.0,
+                box: { x: 0, y: 0, w: 0, h: 0 }
+              };
+              const newAiData = file.aiData ? { ...file.aiData, faces: [...currentFaces, newFace] } : {
+                analyzed: false,
+                analyzedAt: new Date().toISOString(),
+                description: '',
+                tags: [],
+                faces: [newFace],
+                sceneCategory: '',
+                confidence: 1.0,
+                dominantColors: [],
+                objects: []
+              };
+              newFiles[fid] = { ...file, aiData: newAiData };
+              countIncrease++;
+              anyUpdated = true;
+            }
           }
+        });
+
+        if (countIncrease > 0) {
+          // 更新人物count和coverFileId
+          const updatedPerson = {
+            ...person,
+            count: person.count + countIncrease,
+            coverFileId: person.coverFileId || fileIds[0]
+          };
+          newPeople[personId] = updatedPerson;
+
+          // 保存人物到数据库
+          dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person count in DB", e));
         }
       });
 
-      if (updated) {
-        // 更新人物count和coverFileId
-        const updatedPerson = {
-          ...person,
-          count: person.count + countIncrease,
-          coverFileId: person.coverFileId || fileIds[0]
-        };
-        newPeople[personId] = updatedPerson;
-
-        // 保存人物到数据库
-        dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person count in DB", e));
-
+      if (anyUpdated) {
         // 保存更新后的文件元数据（aiData包含人脸信息）
         fileIds.forEach(fid => {
           const file = newFiles[fid];

@@ -35,7 +35,7 @@ interface AppModalsProps {
   t: (key: string) => string;
   activeTab: TabState;
   peopleWithDisplayCounts: Record<string, Person>;
-  handleManualAddPerson: (personId: string) => void | Promise<void>;
+  handleManualAddPerson: (personIds: string[]) => void | Promise<void>;
   handleManualAddToTopic: (topicId: string) => void | Promise<void>;
   handleRenameTag: (oldTag: string, newName: string) => void | Promise<void>;
   handleBatchRename: (pattern: string, startNum: number) => void | Promise<void>;
