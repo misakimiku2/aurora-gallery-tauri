@@ -201,7 +201,10 @@ export const translations = {
       failed: '失败',
       pending: '等待中',
       renamed: '已重命名',
-      backToManualRename: '返回'
+      backToManualRename: '返回',
+      aiNotConfigured: 'AI未配置',
+      pleaseConfigureAI: '请先前往设置配置AI模型',
+      goToSettings: '前往设置'
     },
     drag: {
       releaseToComplete: '松开即可完成操作',
@@ -903,7 +906,10 @@ export const translations = {
       failed: 'Failed',
       pending: 'Pending',
       renamed: 'Renamed',
-      backToManualRename: 'Back'
+      backToManualRename: 'Back',
+      aiNotConfigured: 'AI Not Configured',
+      pleaseConfigureAI: 'Please configure AI model in settings first',
+      goToSettings: 'Go to Settings'
     },
     drag: {
       releaseToComplete: 'Release to complete the operation',

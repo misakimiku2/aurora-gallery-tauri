@@ -187,6 +187,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
               onConfirm={handleBatchRename}
               onClose={closeModals}
               onAutoRename={() => setState(s => ({ ...s, activeModal: { type: 'ai-batch-rename' } }))}
+              aiConnectionStatus={state.aiConnectionStatus}
               t={t}
             />
           )}
@@ -197,12 +198,14 @@ export const AppModals: React.FC<AppModalsProps> = ({
               files={activeTab.selectedFileIds.map(id => state.files[id]).filter(Boolean)}
               settings={state.settings}
               people={state.people}
+              aiConnectionStatus={state.aiConnectionStatus}
               onConfirm={(newNames) => {
                 handleAIBatchRename(newNames);
                 closeModals();
               }}
               onClose={closeModals}
               onBack={() => setState(s => ({ ...s, activeModal: { type: 'batch-rename' } }))}
+              onOpenSettings={() => setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'ai' }))}
               t={t}
             />
           )}

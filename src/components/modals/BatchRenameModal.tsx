@@ -1,22 +1,27 @@
 import React, { useState } from 'react';
 import { Sparkles } from 'lucide-react';
+import { AppState } from '../../types';
 
 interface BatchRenameModalProps {
     count: number;
     onConfirm: (pattern: string, startNum: number) => void;
     onClose: () => void;
     onAutoRename?: () => void;
+    aiConnectionStatus: AppState['aiConnectionStatus'];
     t: (key: string) => string;
 }
 
-export const BatchRenameModal: React.FC<BatchRenameModalProps> = ({ count, onConfirm, onClose, onAutoRename, t }) => {
+export const BatchRenameModal: React.FC<BatchRenameModalProps> = ({ count, onConfirm, onClose, onAutoRename, aiConnectionStatus, t }) => {
     const [pattern, setPattern] = useState('Image_###');
     const [startNum, setStartNum] = useState(1);
+
+    const aiConnected = aiConnectionStatus === 'connected';
+
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-96 animate-zoom-in">
             <div className="flex items-center justify-between mb-1">
                 <h3 className="font-bold text-lg text-gray-900 dark:text-white">{t('context.batchRename')}</h3>
-                {onAutoRename && (
+                {onAutoRename && aiConnected && (
                     <button
                         onClick={onAutoRename}
                         className="flex items-center gap-1 px-2 py-1 text-sm text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 rounded transition-colors"

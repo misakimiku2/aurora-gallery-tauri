@@ -38,13 +38,15 @@ const findImagesDeeply = (
         .slice(0, limit);
 };
 import { createPortal } from 'react-dom';
-import { FileNode, FileType, Person, TabState, Topic, AppSettings } from '../types';
+import { FileNode, FileType, Person, TabState, Topic, AppSettings, AppState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
 import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
 import { AIRenameButton } from './AIRenameButton';
 import { AIRenamePreview } from './AIRenamePreview';
 import { useAIRename } from '../hooks/useAIRename';
+
+
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
 import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
 
@@ -70,6 +72,7 @@ interface MetadataProps {
   cachePath?: string;
   filesVersion?: number;
   settings?: AppSettings;
+  aiConnectionStatus?: AppState['aiConnectionStatus'];
 }
 
 // Image Preview Component for Tauri
@@ -258,7 +261,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
     );
 };
 
-export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings }) => {
+export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus }) => {
   const isMulti = selectedFileIds.length > 1;
   const file = !isMulti && selectedFileIds.length === 1 ? files[selectedFileIds[0]] : null;
 
@@ -1797,7 +1800,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
           </div>
           
           {/* 按钮绝对定位在右下角 */}
-          {!isMulti && file && file.type === FileType.IMAGE && settings && !previewName && (
+          {!isMulti && file && file.type === FileType.IMAGE && settings && aiConnectionStatus === 'connected' && !previewName && (
             <div className="absolute bottom-0 right-0">
               <AIRenameButton
                 onClick={() => generateName(file)}

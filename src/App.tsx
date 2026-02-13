@@ -4247,6 +4247,7 @@ export const App: React.FC = () => {
             cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
             filesVersion={filesVersion}
             settings={state.settings}
+            aiConnectionStatus={state.aiConnectionStatus}
           />
         </div>
         <TaskProgressModal

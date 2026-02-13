@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Sparkles, Loader2, RefreshCw, Check, X, ImageIcon, ArrowLeft } from 'lucide-react';
-import { FileNode, AppSettings, Person } from '../../types';
+import { Sparkles, Loader2, RefreshCw, Check, X, ImageIcon, ArrowLeft, Settings } from 'lucide-react';
+import { FileNode, AppSettings, Person, AppState } from '../../types';
 import { aiService } from '../../services/aiService';
 import { getThumbnail } from '../../api/tauri-bridge';
 
@@ -8,9 +8,11 @@ interface AIBatchRenameModalProps {
   files: FileNode[];
   settings: AppSettings;
   people: Record<string, Person>;
+  aiConnectionStatus: AppState['aiConnectionStatus'];
   onConfirm: (newNames: Record<string, string>) => void;
   onClose: () => void;
   onBack?: () => void;
+  onOpenSettings?: () => void;
   t: (key: string) => string;
 }
 
@@ -25,11 +27,14 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
   files,
   settings,
   people,
+  aiConnectionStatus,
   onConfirm,
   onClose,
   onBack,
+  onOpenSettings,
   t,
 }) => {
+  const aiConnected = aiConnectionStatus === 'connected';
   const [items, setItems] = useState<RenameItem[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -66,7 +71,7 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
   }, [files, settings]);
 
   const handleGenerate = useCallback(async () => {
-    if (isGenerating) return;
+    if (isGenerating || !aiConnected) return;
 
     setIsGenerating(true);
     setProgress(0);
@@ -141,7 +146,7 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
       setIsGenerating(false);
       setProgress(100);
     }
-  }, [items, settings, isGenerating]);
+  }, [items, settings, people, isGenerating, aiConnected]);
 
   const handleApply = useCallback(() => {
     const newNames: Record<string, string> = {};
@@ -282,9 +287,9 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
       </div>
 
       {/* Description */}
-      <div className="px-4 py-2 bg-purple-50 dark:bg-purple-900/20 border-b dark:border-gray-700">
-        <p className="text-sm text-purple-700 dark:text-purple-300">
-          {t('context.aiRenameDesc')}
+      <div className={`px-4 py-2 border-b dark:border-gray-700 ${aiConnected ? 'bg-purple-50 dark:bg-purple-900/20' : 'bg-orange-50 dark:bg-orange-900/20'}`}>
+        <p className={`text-sm ${aiConnected ? 'text-purple-700 dark:text-purple-300' : 'text-orange-700 dark:text-orange-300'}`}>
+          {aiConnected ? t('context.aiRenameDesc') : t('context.pleaseConfigureAI')}
         </p>
       </div>
 
@@ -343,7 +348,19 @@ export const AIBatchRenameModal: React.FC<AIBatchRenameModalProps> = ({
 
         {/* 右侧 - 操作按钮 */}
         <div className="flex gap-2">
-          {!hasGenerated ? (
+          {!aiConnected ? (
+            // AI 未连接时显示前往设置按钮
+            <button
+              onClick={() => {
+                onClose();
+                onOpenSettings?.();
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+            >
+              <Settings className="w-4 h-4" />
+              {t('context.goToSettings')}
+            </button>
+          ) : !hasGenerated ? (
             <button
               onClick={handleGenerate}
               disabled={isGenerating}
