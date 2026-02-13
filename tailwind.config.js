@@ -36,6 +36,7 @@ export default {
         'slideshow-fade-out': 'slideshowFadeOut 0.6s ease-in-out both',
         'slideshow-slide-in': 'slideshowSlideIn 0.6s ease-in-out both',
         'slideshow-slide-out': 'slideshowSlideOut 0.6s ease-in-out both',
+        'shimmer': 'shimmer 1.5s infinite',
       },
       keyframes: {
         zoomIn: {
@@ -87,6 +88,11 @@ export default {
         slideshowSlideOut: {
           '0%': { opacity: '1', transform: 'translateX(0)' },
           '100%': { opacity: '0', transform: 'translateX(-100%)' },
+        },
+        //  shimmer 加载动画
+        shimmer: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(300%)' },
         },
       }
     }

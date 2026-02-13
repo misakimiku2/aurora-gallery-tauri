@@ -43,6 +43,7 @@ import { useContextMenu } from './hooks/useContextMenu';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useToasts } from './hooks/useToasts';
 import { useNavigation } from './hooks/useNavigation';
+import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { GlobalToasts } from './components/GlobalToasts';
 import { asyncPool } from './utils/async';
 
@@ -746,6 +747,40 @@ export const App: React.FC = () => {
   // Use a ref for activeTab to provide stable callbacks
   const activeTabRef = useRef(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+  // 更新检查
+  const {
+    updateInfo,
+    isChecking: isCheckingUpdate,
+    downloadProgress,
+    checkUpdate,
+    startDownload,
+    pauseDownload,
+    resumeDownload,
+    cancelDownload,
+    installUpdate,
+    openDownloadFolder,
+    ignoreVersion,
+    dismissUpdate,
+  } = useUpdateCheck();
+
+  // 当检测到有更新时，显示更新模态框
+  useEffect(() => {
+    if (updateInfo?.hasUpdate && !showWelcome) {
+      setState(s => ({ ...s, activeModal: { type: 'update' } }));
+    }
+  }, [updateInfo, showWelcome]);
+
+  // 监听打开更新弹窗的事件（从设置页面触发）
+  useEffect(() => {
+    const handleOpenUpdateModal = () => {
+      if (updateInfo?.hasUpdate) {
+        setState(s => ({ ...s, activeModal: { type: 'update' } }));
+      }
+    };
+    window.addEventListener('open-update-modal', handleOpenUpdateModal);
+    return () => window.removeEventListener('open-update-modal', handleOpenUpdateModal);
+  }, [updateInfo]);
 
   // Handle Special Search Queries (palette:, color:)
   // Note: Most of this is now handled more robustly via onPerformSearch which calls pushHistory.
@@ -4278,6 +4313,18 @@ export const App: React.FC = () => {
         showCloseConfirmation={showCloseConfirmation}
         setShowCloseConfirmation={setShowCloseConfirmation}
         handleCloseConfirmation={handleCloseConfirmation}
+        updateInfo={updateInfo}
+        downloadProgress={downloadProgress}
+        onStartDownload={startDownload}
+        onPauseDownload={pauseDownload}
+        onResumeDownload={resumeDownload}
+        onCancelDownload={cancelDownload}
+        onInstallUpdate={installUpdate}
+        onOpenDownloadFolder={openDownloadFolder}
+        onIgnoreUpdate={() => updateInfo && ignoreVersion(updateInfo.latestVersion)}
+        onDismissUpdate={dismissUpdate}
+        onCheckUpdate={() => checkUpdate(true)}
+        isCheckingUpdate={isCheckingUpdate}
       />
 
       <ContextMenu

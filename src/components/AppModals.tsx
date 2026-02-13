@@ -1,11 +1,12 @@
 import React from 'react';
-import { 
-  AppState, 
+import { AppState, 
   TabState, 
   Person, 
   Topic, 
   FileNode, 
-  AppSettings 
+  AppSettings,
+  UpdateInfo,
+  DownloadProgress
 } from '../types';
 import { Trash2, FilePlus, Merge, AlertTriangle } from 'lucide-react';
 
@@ -28,6 +29,7 @@ import { ExitConfirmModal as ExitConfirmModalComp } from './modals/ExitConfirmMo
 import { CropAvatarModal as CropAvatarModalComp } from './modals/CropAvatarModal';
 import { CreateTopicModal as CreateTopicModalComp } from './modals/CreateTopicModal';
 import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicModal';
+import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
 
 interface AppModalsProps {
   state: AppState;
@@ -70,6 +72,20 @@ interface AppModalsProps {
   showCloseConfirmation: boolean;
   setShowCloseConfirmation: (val: boolean) => void;
   handleCloseConfirmation: (action: 'minimize' | 'exit', alwaysAsk: boolean) => void | Promise<void>;
+  // Update modal
+  updateInfo: UpdateInfo | null;
+  downloadProgress: DownloadProgress | null;
+  onStartDownload: () => void;
+  onPauseDownload: () => void;
+  onResumeDownload: () => void;
+  onCancelDownload: () => void;
+  onInstallUpdate: () => void;
+  onOpenDownloadFolder: () => void;
+  onIgnoreUpdate: () => void;
+  onDismissUpdate: () => void;
+  // About panel
+  onCheckUpdate: () => void;
+  isCheckingUpdate: boolean;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -108,6 +124,18 @@ export const AppModals: React.FC<AppModalsProps> = ({
   setShowCloseConfirmation,
   handleCloseConfirmation,
   isScanning = false,
+  updateInfo,
+  downloadProgress,
+  onStartDownload,
+  onPauseDownload,
+  onResumeDownload,
+  onCancelDownload,
+  onInstallUpdate,
+  onOpenDownloadFolder,
+  onIgnoreUpdate,
+  onDismissUpdate,
+  onCheckUpdate,
+  isCheckingUpdate,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -380,21 +408,27 @@ export const AppModals: React.FC<AppModalsProps> = ({
 
       {/* Settings Modal */}
       {state.isSettingsOpen && (
-        <SettingsModalComp 
-          state={state} 
-          onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))} 
+        <SettingsModalComp
+          state={state}
+          onClose={() => setState(s => ({ ...s, isSettingsOpen: false }))}
           onUpdateSettings={(updates) => {
             setState(s => ({ ...s, ...updates }));
-          }} 
+          }}
           onUpdateSettingsData={(updates) => {
             setState(s => {
               const newSettings = { ...s.settings, ...updates };
               return { ...s, settings: newSettings };
             });
-          }} 
-          onUpdatePath={handleChangePath} 
-          onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))} 
-          t={t} 
+          }}
+          onUpdatePath={handleChangePath}
+          onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))}
+          t={t}
+          updateInfo={updateInfo}
+          onCheckUpdate={onCheckUpdate}
+          isCheckingUpdate={isCheckingUpdate}
+          downloadProgress={downloadProgress}
+          onInstallUpdate={onInstallUpdate}
+          onOpenDownloadFolder={onOpenDownloadFolder}
         />
       )}
 
@@ -418,6 +452,28 @@ export const AppModals: React.FC<AppModalsProps> = ({
         t={t}
         scanProgress={state.scanProgress || null}
         isScanning={state.isScanning}
+      />
+
+      {/* Update Modal */}
+      <UpdateModalComp
+        isOpen={state.activeModal.type === 'update' && !!updateInfo}
+        updateInfo={updateInfo}
+        downloadProgress={downloadProgress}
+        onClose={() => {
+          onDismissUpdate();
+          closeModals();
+        }}
+        onStartDownload={onStartDownload}
+        onPauseDownload={onPauseDownload}
+        onResumeDownload={onResumeDownload}
+        onCancelDownload={onCancelDownload}
+        onInstall={onInstallUpdate}
+        onOpenFolder={onOpenDownloadFolder}
+        onIgnore={() => {
+          onIgnoreUpdate();
+          closeModals();
+        }}
+        t={t}
       />
     </>
   );

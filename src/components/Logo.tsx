@@ -1,4 +1,4 @@
-﻿
+
 import React from 'react';
 
 export const AuroraLogo = ({ size = 32, className = "", style = {} }: { size?: number, className?: string, style?: React.CSSProperties }) => (
@@ -21,9 +21,13 @@ export const AuroraLogo = ({ size = 32, className = "", style = {} }: { size?: n
         <stop offset="50%" stopColor="#A78BFA" /> {/* Light Purple */}
         <stop offset="100%" stopColor="#F472B6" /> {/* Light Pink */}
       </linearGradient>
+      {/* CSS 阴影效果的 SVG filter */}
+      <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+        <feDropShadow dx="0" dy="4" stdDeviation="12" floodColor="#3B82F6" floodOpacity="0.25"/>
+      </filter>
     </defs>
     
-    {/* Background Container */}
+    {/* Background Container with shadow */}
     <rect 
       x="32" 
       y="32" 
@@ -32,6 +36,7 @@ export const AuroraLogo = ({ size = 32, className = "", style = {} }: { size?: n
       rx="48" 
       fill="url(#aurora-gradient)" 
       className="dark:fill-[url(#aurora-gradient-dark)]"
+      filter="url(#shadow)"
     />
     
     {/* Abstract Aurora Waves */}

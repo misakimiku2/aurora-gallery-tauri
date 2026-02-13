@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
-import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup } from '../types';
+import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import md5 from 'md5';

@@ -291,7 +291,7 @@ export interface TabState {
   scrollTop: number;
 }
 
-export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'performance';
+export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'performance' | 'about';
 
 export interface DragState {
   isDragging: boolean;
@@ -329,7 +329,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'update' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
@@ -351,3 +351,35 @@ declare global {
 export const SUPPORTED_EXTENSIONS = [
   'jpg', 'jpeg', 'tga', 'jft', 'png', 'bmp', 'webp', 'gif', 'psd', 'tif', 'tiff', 'raw', 'arw', 'dng', 'exr', 'hdr', 'avif', 'jxl'
 ];
+
+// 更新检查相关类型
+export type DownloadState = 'idle' | 'preparing' | 'downloading' | 'paused' | 'completed' | 'error';
+
+export interface DownloadProgress {
+  state: DownloadState;
+  progress: number;        // 0.0 - 100.0
+  downloadedBytes: number;
+  totalBytes: number;
+  speedBytesPerSec: number;
+  filePath: string;
+  errorMessage?: string;
+}
+
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string;
+  downloadUrl: string;
+  installerUrl?: string;
+  installerSize?: number;
+  releaseName?: string;
+  releaseNotes: string;
+  publishedAt: string;
+}
+
+export interface UpdateSettings {
+  autoCheck: boolean;
+  checkFrequency: 'startup' | 'daily' | 'weekly';
+  ignoredVersions: string[];
+  lastCheckTime?: number;
+}

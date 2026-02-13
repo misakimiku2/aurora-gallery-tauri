@@ -28,6 +28,8 @@ mod color_worker;
 mod db;
 mod color_search;
 mod thumbnail;
+mod updater;
+mod update_downloader;
 
 use crate::thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
 use crate::color_search::{search_by_palette, search_by_color};
@@ -2508,6 +2510,104 @@ async fn delete_color_db_error_files(
     result.map_err(|e| e)
 }
 
+/// 检查应用更新
+#[tauri::command]
+async fn check_for_updates_command(github_token: Option<String>) -> Result<updater::UpdateCheckResult, String> {
+    let current_version = env!("CARGO_PKG_VERSION");
+    let owner = "misakimiku2";
+    let repo = "aurora-gallery-tauri";
+    
+    // 使用用户提供的 Token（如果有）
+    let token = github_token.as_deref();
+    
+    updater::check_for_updates(current_version, owner, repo, token).await
+}
+
+/// 使用系统默认浏览器打开外部链接
+#[tauri::command]
+async fn open_external_link(url: String) -> Result<(), String> {
+    use std::process::Command;
+    
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .spawn()
+            .map_err(|e| format!("Failed to open link: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open link: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map_err(|e| format!("Failed to open link: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+/// 开始下载更新
+#[tauri::command]
+async fn start_update_download(
+    installer_url: String,
+    version: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.start_download(&installer_url, &version, app_handle).await
+}
+
+/// 暂停下载更新
+#[tauri::command]
+fn pause_update_download() -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.pause_download()
+}
+
+/// 继续下载更新
+#[tauri::command]
+async fn resume_update_download(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.resume_download(app_handle).await
+}
+
+/// 取消下载更新
+#[tauri::command]
+fn cancel_update_download() -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.cancel_download()
+}
+
+/// 获取下载进度
+#[tauri::command]
+fn get_update_download_progress() -> Result<update_downloader::DownloadProgress, String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.get_progress()
+}
+
+/// 安装更新
+#[tauri::command]
+fn install_update() -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.install_update()
+}
+
+/// 打开下载文件夹
+#[tauri::command]
+fn open_update_download_folder() -> Result<(), String> {
+    let downloader = update_downloader::get_downloader();
+    downloader.open_download_folder()
+}
+
 
 fn main() {
     
@@ -2573,7 +2673,16 @@ fn main() {
             get_color_db_stats,
             get_color_db_error_files,
             retry_color_extraction,
-            delete_color_db_error_files
+            delete_color_db_error_files,
+            check_for_updates_command,
+            open_external_link,
+            start_update_download,
+            pause_update_download,
+            resume_update_download,
+            cancel_update_download,
+            get_update_download_progress,
+            install_update,
+            open_update_download_folder
         ])
         .setup(|app| {
             // 创建托盘菜单
