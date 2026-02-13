@@ -229,6 +229,10 @@ export type SortDirection = 'asc' | 'desc';
 export type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry';
 export type GroupByOption = 'none' | 'type' | 'date' | 'size';
 
+// 人物视图专用的排序和分组选项
+export type PersonSortOption = 'name' | 'count' | 'created';
+export type PersonGroupByOption = 'none' | 'name' | 'topic';
+
 export interface FolderSettings {
   layoutMode: LayoutMode;
   sortBy: SortOption;

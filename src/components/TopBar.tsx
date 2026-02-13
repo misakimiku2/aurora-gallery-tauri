@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption } from '../types';
+import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { 
@@ -7,7 +7,7 @@ import {
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
   ArrowDownUp, Calendar, PanelRight, X, Tag, 
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp
+  ChevronUp, Users
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -48,6 +48,13 @@ interface TopBarProps {
   totalResults?: number;
   pageSize?: number;
   onPageChange?: (page: number) => void;
+  // --- People view specific controls ---
+  personSortBy?: PersonSortOption;
+  personSortDirection?: SortDirection;
+  personGroupBy?: PersonGroupByOption;
+  onPersonSortByChange?: (option: PersonSortOption) => void;
+  onPersonSortDirectionChange?: () => void;
+  onPersonGroupByChange?: (option: PersonGroupByOption) => void;
   t: (key: string) => string;
 } 
 
@@ -520,6 +527,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   // Topic view props
   topicLayoutMode,
   onTopicLayoutModeChange,
+  // People view props
+  personSortBy = 'count',
+  personSortDirection = 'desc',
+  personGroupBy = 'none',
+  onPersonSortByChange,
+  onPersonSortDirectionChange,
+  onPersonGroupByChange,
   t
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
@@ -527,6 +541,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [filterMenuOpen, setFilterMenuOpen] = useState(false);
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false);
+  const [personSortMenuOpen, setPersonSortMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   
   // Color Picker State
@@ -797,8 +812,68 @@ export const TopBar: React.FC<TopBarProps> = ({
       {/* Right: Tools & Settings */}
       <div className="flex items-center space-x-2 min-w-fit">
         
-        {/* Sort & Group Menu (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && (
+        {/* People View Sort & Group Menu */}
+        {activeTab.viewMode === 'people-overview' && (
+          <div className="relative">
+             <button 
+               onClick={() => setPersonSortMenuOpen(!personSortMenuOpen)}
+               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${personSortMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               title={t('sort.sortBy')}
+             >
+               <Users size={18} />
+             </button>
+             {personSortMenuOpen && (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setPersonSortMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                    <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('person.sortBy')}</div>
+                    {[
+                      { id: 'name', label: t('sort.name') },
+                      { id: 'count', label: t('person.fileCount') },
+                      { id: 'created', label: t('sort.date') }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => { onPersonSortByChange?.(opt.id as PersonSortOption); }}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      >
+                        {opt.label}
+                        {personSortBy === opt.id && <Check size={14} className="text-blue-500" />}
+                      </button>
+                    ))}
+                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <button
+                      onClick={() => onPersonSortDirectionChange?.()}
+                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      {personSortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
+                      <ArrowDownUp size={14} className={personSortDirection === 'asc' ? 'transform rotate-180' : ''}/>
+                    </button>
+                    
+                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
+                    {[
+                      { id: 'none', label: t('groupBy.none') },
+                      { id: 'name', label: t('person.groupByName') },
+                      { id: 'topic', label: t('person.groupByTopic') }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => onPersonGroupByChange?.(opt.id as PersonGroupByOption)}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      >
+                        {opt.label}
+                        {personGroupBy === opt.id && <Check size={14} className="text-blue-500" />}
+                      </button>
+                    ))}
+                 </div>
+               </>
+             )}
+          </div>
+        )}
+        
+        {/* Sort & Group Menu (hidden on topics view and people view) */}
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
         <div className="relative">
            <button 
              onClick={() => setSortMenuOpen(!sortMenuOpen)}

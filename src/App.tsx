@@ -22,7 +22,7 @@ import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter } from './types';
+import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
 import md5 from 'md5';
@@ -171,6 +171,50 @@ export const App: React.FC = () => {
   const [isCreatingTag, setIsCreatingTag] = useState(false);
   const [tagSearchQuery, setTagSearchQuery] = useState('');
   const [personSearchQuery, setPersonSearchQuery] = useState('');
+  // People view sort and group settings - with localStorage persistence
+  const [personSortBy, setPersonSortBy] = useState<PersonSortOption>(() => {
+    try {
+      const saved = localStorage.getItem('aurora_person_sort_by');
+      return (saved as PersonSortOption) || 'count';
+    } catch (e) {
+      return 'count';
+    }
+  });
+  const [personSortDirection, setPersonSortDirection] = useState<SortDirection>(() => {
+    try {
+      const saved = localStorage.getItem('aurora_person_sort_direction');
+      return (saved as SortDirection) || 'desc';
+    } catch (e) {
+      return 'desc';
+    }
+  });
+  const [personGroupBy, setPersonGroupBy] = useState<PersonGroupByOption>(() => {
+    try {
+      const saved = localStorage.getItem('aurora_person_group_by');
+      return (saved as PersonGroupByOption) || 'none';
+    } catch (e) {
+      return 'none';
+    }
+  });
+
+  // Handlers that persist to localStorage
+  const handlePersonSortByChange = (option: PersonSortOption) => {
+    setPersonSortBy(option);
+    try { localStorage.setItem('aurora_person_sort_by', option); } catch (e) { }
+  };
+
+  const handlePersonSortDirectionChange = () => {
+    setPersonSortDirection(prev => {
+      const newDirection = prev === 'asc' ? 'desc' : 'asc';
+      try { localStorage.setItem('aurora_person_sort_direction', newDirection); } catch (e) { }
+      return newDirection;
+    });
+  };
+
+  const handlePersonGroupByChange = (option: PersonGroupByOption) => {
+    setPersonGroupBy(option);
+    try { localStorage.setItem('aurora_person_group_by', option); } catch (e) { }
+  };
   const lastSelectedTagRef = useRef<string | null>(null);
   const { toast, showToast } = useToasts();
   const [toolbarQuery, setToolbarQuery] = useState('');
@@ -2837,8 +2881,11 @@ export const App: React.FC = () => {
       }).catch(e => console.error('Failed to save topic to DB:', e));
     }
 
-    // 自动跳转到专题概览界面
-    handleNavigateTopics();
+    // 只有创建根专题（parentId === null）时才跳转到专题概览界面
+    // 创建子专题时保留在当前主专题中
+    if (parentId === null) {
+      handleNavigateTopics();
+    }
   }, [t, handleNavigateTopics]);
 
   const handleUpdateTopic = useCallback((topicId: string, updates: Partial<Topic>) => {
@@ -3813,6 +3860,13 @@ export const App: React.FC = () => {
               topicLayoutMode={topicLayoutMode}
               onTopicLayoutModeChange={handleTopicLayoutModeChange}
               hasFolderSettings={activeTab.viewMode === 'browser' ? !!state.folderSettings[activeTab.folderId] : false}
+              // People view sort and group
+              personSortBy={personSortBy}
+              personSortDirection={personSortDirection}
+              personGroupBy={personGroupBy}
+              onPersonSortByChange={handlePersonSortByChange}
+              onPersonSortDirectionChange={handlePersonSortDirectionChange}
+              onPersonGroupByChange={handlePersonGroupByChange}
               t={t}
             />
             {/* ... (Filter UI, same as before) ... */}
@@ -4069,6 +4123,7 @@ export const App: React.FC = () => {
                     onMouseUp={handleMouseUp}
                     onBackgroundContextMenu={(e) => handleContextMenu(e, 'background', '')}
                     people={peopleForOverview}
+                    topics={state.topics}
                     groupedTags={groupedTags}
                     onPersonClick={(pid, e) => handlePersonClick(pid, e)}
                     onPersonContextMenu={(e, pid) => handleContextMenu(e, 'person', pid)}
@@ -4097,6 +4152,9 @@ export const App: React.FC = () => {
                     isDraggingInternal={isDraggingInternal}
                     setIsDraggingInternal={setIsDraggingInternal}
                     setDraggedFilePaths={setDraggedFilePaths}
+                    personSortBy={personSortBy}
+                    personSortDirection={personSortDirection}
+                    personGroupBy={personGroupBy}
                   />
                 )}
               </div>

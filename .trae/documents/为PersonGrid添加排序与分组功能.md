@@ -1,0 +1,27 @@
+## 问题分析
+
+在 `ImageComparer.tsx` 中，中键拖动功能存在漂移问题，窗口越大越明显。
+
+## 根本原因
+
+`dragStart` 状态使用 React 的 `useState` 存储，在 `handleMouseMove` 中通过闭包访问。由于 React 状态更新是异步的，快速移动鼠标时，`dragStart` 可能不是最新的值，导致计算出的 `dx/dy` 出现累积误差。
+
+## 修复方案
+
+将 `dragStart` 从 `useState` 改为 `useRef` 存储：
+
+1. 创建 `dragStartRef` 来存储拖动起始位置
+2. 在 `handleMouseDown` 中设置 `dragStartRef.current`
+3. 在 `handleMouseMove` 中读取 `dragStartRef.current` 计算位移
+4. 保持 `isDragging` 仍为 state（用于触发重渲染）
+
+这样可以确保在鼠标移动事件中总是使用最新的拖动起始位置，避免闭包导致的 stale state 问题。
+
+## 修改位置
+
+* 第 138 行：将 `const [dragStart, setDragStart] = useState({ x: 0, y: 0 });` 改为 `useRef`
+
+* 第 922 行：修改中键按下时的处理
+
+* 第 928-938 行：修改鼠标移动时的处理
+

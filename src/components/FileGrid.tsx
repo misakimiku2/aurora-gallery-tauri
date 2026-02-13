@@ -733,6 +733,7 @@ interface FileGridProps {
   onMouseUp?: (e: React.MouseEvent) => void;
   onBackgroundContextMenu?: (e: React.MouseEvent) => void;
   people?: Record<string, Person>;
+  topics?: Record<string, Topic>;
   groupedTags?: Record<string, string[]>;
   onPersonClick?: (id: string, e: React.MouseEvent) => void;
   onPersonContextMenu?: (e: React.MouseEvent, id: string) => void;
@@ -766,6 +767,10 @@ interface FileGridProps {
   setDraggedFilePaths?: (paths: string[]) => void;
   isVisible?: boolean;
   onConsumeScrollToItem?: () => void;
+  // People view sort and group
+  personSortBy?: import('../types').PersonSortOption;
+  personSortDirection?: import('../types').SortDirection;
+  personGroupBy?: import('../types').PersonGroupByOption;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -790,6 +795,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   onMouseUp,
   onBackgroundContextMenu,
   people,
+  topics,
   groupedTags,
   onPersonClick,
   onPersonContextMenu,
@@ -819,7 +825,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
   setIsDraggingInternal,
   setDraggedFilePaths,
   isVisible = true,
-  onConsumeScrollToItem
+  onConsumeScrollToItem,
+  // People view sort and group
+  personSortBy = 'count',
+  personSortDirection = 'desc',
+  personGroupBy = 'none'
 }) => {
   // #region agent log
   // Removed debug logs
@@ -1306,6 +1316,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               <PersonGrid
                   people={people || {}}
                   files={files}
+                  topics={topics}
                   selectedPersonIds={activeTab.selectedPersonIds}
                   onPersonClick={handlePersonClick}
                   onPersonDoubleClick={handlePersonDoubleClick}
@@ -1314,8 +1325,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   t={t}
                   thumbnailSize={thumbnailSize}
                   containerRect={containerRect}
-                  scrollTop={activeTab.scrollTop}
+                  scrollTop={scrollTop}
                   containerRef={containerRef}
+                  sortBy={personSortBy}
+                  sortDirection={personSortDirection}
+                  groupBy={personGroupBy}
               />
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
               <div className="w-full min-w-0">

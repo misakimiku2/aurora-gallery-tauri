@@ -593,6 +593,12 @@ export const translations = {
       medium: '中 (1-10MB)',
       large: '大 (> 10MB)'
     },
+    person: {
+      sortBy: '人物排序',
+      fileCount: '按文件数',
+      groupByName: '按名称首字母',
+      groupByTopic: '按专题'
+    },
     folderSettings: {
       remember: '记住此文件夹',
       saved: '已保存此文件夹的设置'
@@ -1239,6 +1245,12 @@ export const translations = {
       small: 'Small (< 1MB)',
       medium: 'Medium (1-10MB)',
       large: 'Large (> 10MB)'
+    },
+    person: {
+      sortBy: 'Sort People',
+      fileCount: 'By File Count',
+      groupByName: 'By Name Initial',
+      groupByTopic: 'By Topic'
     },
     folderSettings: {
       remember: 'Remember This Folder',

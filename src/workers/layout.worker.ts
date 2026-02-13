@@ -9,6 +9,12 @@ export interface LayoutItem {
     height: number;
 }
 
+export interface PersonGroup {
+    id: string;
+    title: string;
+    personIds: string[];
+}
+
 export interface LayoutWorkerInput {
     items: string[];
     // We pass aspect ratios directly instead of full file objects to save transfer time
@@ -19,6 +25,9 @@ export interface LayoutWorkerInput {
     viewMode: 'browser' | 'tags-overview' | 'people-overview';
     groupedTags?: Record<string, string[]>;
     searchQuery?: string;
+    // People view grouping
+    groupedPeople?: PersonGroup[];
+    collapsedGroups?: Record<string, boolean>;
 }
 
 export interface LayoutWorkerOutput {
@@ -36,7 +45,9 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
         thumbnailSize,
         viewMode,
         groupedTags,
-        searchQuery
+        searchQuery,
+        groupedPeople,
+        collapsedGroups
     } = e.data;
 
     const layout: LayoutItem[] = [];
@@ -224,26 +235,83 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
         });
         
         totalHeight = y;
-    } else {
-        // Fallback for people-overview - simplified grid
+    } else if (viewMode === 'people-overview') {
+        // People overview layout with grouping support
         const minColWidth = thumbnailSize;
         const cols = Math.max(1, Math.floor((finalAvailableWidth + GAP) / (minColWidth + GAP)));
         const itemWidth = (finalAvailableWidth - (cols - 1) * GAP) / cols;
         const itemHeight = itemWidth + 60; // Extra space for text
+        const HEADER_HEIGHT = 48; // Group header height
+        const GROUP_PADDING = 16;
 
-        items.forEach((id, index) => {
-            const row = Math.floor(index / cols);
-            const col = index % cols;
-            layout.push({
-                id,
-                x: PADDING + col * (itemWidth + GAP),
-                y: PADDING + row * (itemHeight + GAP),
-                width: itemWidth,
-                height: itemHeight
+        if (groupedPeople && groupedPeople.length > 0 && groupedPeople[0].id !== 'all') {
+            // Grouped layout
+            let currentY = PADDING;
+
+            groupedPeople.forEach(group => {
+                const isCollapsed = collapsedGroups?.[group.id];
+
+                // Add group header
+                layout.push({
+                    id: `header:${group.id}`,
+                    x: PADDING,
+                    y: currentY,
+                    width: finalAvailableWidth,
+                    height: HEADER_HEIGHT
+                });
+                currentY += HEADER_HEIGHT;
+
+                if (!isCollapsed) {
+                    // Add items in this group
+                    let colIndex = 0;
+                    let rowIndex = 0;
+
+                    group.personIds.forEach((personId, index) => {
+                        // Only layout visible items (skip if not in items list)
+                        if (!items.includes(personId)) return;
+
+                        const x = PADDING + colIndex * (itemWidth + GAP);
+                        const y = currentY + rowIndex * (itemHeight + GAP);
+
+                        layout.push({
+                            id: personId,
+                            x,
+                            y,
+                            width: itemWidth,
+                            height: itemHeight
+                        });
+
+                        colIndex++;
+                        if (colIndex >= cols) {
+                            colIndex = 0;
+                            rowIndex++;
+                        }
+                    });
+
+                    const rowsInGroup = Math.ceil(group.personIds.filter(id => items.includes(id)).length / cols);
+                    currentY += rowsInGroup * (itemHeight + GAP) + GROUP_PADDING;
+                } else {
+                    currentY += GROUP_PADDING;
+                }
             });
-        });
-        const rows = Math.ceil(items.length / cols);
-        totalHeight = PADDING + rows * (itemHeight + GAP);
+
+            totalHeight = currentY;
+        } else {
+            // Simple grid layout (no grouping)
+            items.forEach((id, index) => {
+                const row = Math.floor(index / cols);
+                const col = index % cols;
+                layout.push({
+                    id,
+                    x: PADDING + col * (itemWidth + GAP),
+                    y: PADDING + row * (itemHeight + GAP),
+                    width: itemWidth,
+                    height: itemHeight
+                });
+            });
+            const rows = Math.ceil(items.length / cols);
+            totalHeight = PADDING + rows * (itemHeight + GAP);
+        }
     }
     
     // Send back results

@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -1762,7 +1762,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         <section>
                             <div className="flex justify-between items-center mb-4">
                                 <h3 className="text-xl font-bold flex items-center dark:text-gray-200">
-                                    <Folder className="mr-2 text-yellow-500" />
+                                    <Layout size={18} className="mr-2 text-pink-500 dark:text-pink-400" />
                                     {t('context.subTopics') || 'Sub Topics'}
                                 </h3>
                                 <div className="flex items-center space-x-3">

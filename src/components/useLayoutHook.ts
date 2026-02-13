@@ -11,6 +11,12 @@ export interface LayoutItem {
   height: number;
 }
 
+export interface PersonGroup {
+    id: string;
+    title: string;
+    personIds: string[];
+}
+
 export const useLayout = (
   items: string[],
   files: Record<string, FileNode>,
@@ -20,7 +26,9 @@ export const useLayout = (
   viewMode: 'browser' | 'tags-overview' | 'people-overview',
   groupedTags?: Record<string, string[]>,
   people?: Record<string, Person>,
-  searchQuery?: string
+  searchQuery?: string,
+  groupedPeople?: PersonGroup[],
+  collapsedGroups?: Record<string, boolean>
 ) => {
   // Compute aspect ratios efficiently (memoized)
   const aspectRatios = useMemo(() => {
@@ -71,9 +79,11 @@ export const useLayout = (
           thumbnailSize,
           viewMode,
           groupedTags,
-          searchQuery
+          searchQuery,
+          groupedPeople,
+          collapsedGroups
       });
-  }, [items, aspectRatios, layoutMode, containerWidth, thumbnailSize, viewMode, groupedTags, searchQuery]);
+  }, [items, aspectRatios, layoutMode, containerWidth, thumbnailSize, viewMode, groupedTags, searchQuery, groupedPeople, collapsedGroups]);
 
   return layoutState;
 };
