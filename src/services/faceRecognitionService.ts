@@ -18,10 +18,10 @@ class FaceRecognitionService {
     console.log('Face recognition models loaded successfully');
   }
 
-  async detectFaces(imageUrl: string) {
+  async detectFaces(imageDataUrl: string) {
     await this.initialize();
 
-    const img = await faceapi.fetchImage(imageUrl);
+    const img = await faceapi.fetchImage(imageDataUrl);
     const detectionResults = await faceapi.detectAllFaces(img)
       .withFaceLandmarks()
       .withFaceDescriptors();
@@ -29,10 +29,10 @@ class FaceRecognitionService {
     return detectionResults;
   }
 
-  async computeFaceDescriptor(imageUrl: string) {
+  async computeFaceDescriptor(imageDataUrl: string) {
     await this.initialize();
 
-    const img = await faceapi.fetchImage(imageUrl);
+    const img = await faceapi.fetchImage(imageDataUrl);
     const detection = await faceapi.detectSingleFace(img)
       .withFaceLandmarks()
       .withFaceDescriptor();
@@ -60,10 +60,10 @@ class FaceRecognitionService {
     return bestMatch;
   }
 
-  async extractFaceFromImage(imageUrl: string, detection: faceapi.FaceDetection) {
+  async extractFaceFromImage(imageDataUrl: string, detection: faceapi.FaceDetection) {
     await this.initialize();
 
-    const img = await faceapi.fetchImage(imageUrl);
+    const img = await faceapi.fetchImage(imageDataUrl);
     const canvas = faceapi.createCanvasFromMedia(img);
     const ctx = canvas.getContext('2d');
 

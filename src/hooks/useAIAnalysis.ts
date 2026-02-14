@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { AppState, FileNode, FileType, AiData, Person, TaskProgress } from '../types';
 import { aiService } from '../services/aiService';
+import { proxyHttpRequest } from '../api/tauri-bridge';
 
 interface UseAIAnalysisProps {
   files: Record<string, FileNode>;
@@ -159,17 +160,21 @@ Please output only the summary text without any prefixes.`;
               messages,
               max_tokens: 500
             };
-            const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
-              body: JSON.stringify(body)
-            });
-            const resData = await res.json();
-            if (resData?.choices?.[0]?.message?.content) {
-              summary = resData.choices[0].message.content.trim();
-              // Strip reasoning/thought blocks
-              summary = summary.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-            }
+            try {
+              const endpoint = aiConfig.openai.endpoint.replace(/\/+$/, '');
+              const responseText = await proxyHttpRequest(
+                `${endpoint}/chat/completions`,
+                'POST',
+                { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
+                JSON.stringify(body)
+              );
+              const resData = JSON.parse(responseText);
+              if (resData?.choices?.[0]?.message?.content) {
+                summary = resData.choices[0].message.content.trim();
+                // Strip reasoning/thought blocks
+                summary = summary.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+              }
+            } catch (e) { console.error('AI summary failed:', e); }
           } else if (provider === 'ollama') {
             const body: any = { model: aiConfig.ollama.model, prompt: storyPrompt, stream: false };
             if (aiConfig.systemPrompt) {
@@ -298,7 +303,7 @@ Please output only the summary text without any prefixes.`;
 
     let promptFields: string[] = [];
     if (aiConfig.autoDescription) {
-      promptFields.push(isChinese ? `- description: string (请简简单描述这张图里的内容。${aiConfig.enhancePersonDescription ? '着重描述图片里的人物行为。并且对人物体型进行说明。' : ''})` : `- description: string (Please briefly describe the content of this image.${aiConfig.enhancePersonDescription ? ' Emphasize describing people\'s actions. Also provide a description of people\'s body types.' : ''})`);
+      promptFields.push(isChinese ? `- description: string (请描述这张图里的内容。${aiConfig.enhancePersonDescription ? '着重描述图片里的人物行为、体型，如果识别出具体人物请提及姓名。' : '如果识别出具体人物请提及姓名。'})` : `- description: string (Please describe the content of this image.${aiConfig.enhancePersonDescription ? ' Emphasize describing people\'s actions, body types, and mention their names if identified.' : ' Mention people\'s names if identified.'})`);
     }
     if (aiConfig.enableOCR) {
       promptFields.push(isChinese ? `- extractedText: string (提取图片中的文字。)` : `- extractedText: string (Extract text from the image.)`);
@@ -400,12 +405,14 @@ Please output only the summary text without any prefixes.`;
             max_tokens: 1000
           };
           try {
-            const res = await fetch(`${aiConfig.openai.endpoint}/chat/completions`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
-              body: JSON.stringify(body)
-            });
-            const resData = await res.json();
+            const endpoint = aiConfig.openai.endpoint.replace(/\/+$/, '');
+            const responseText = await proxyHttpRequest(
+              `${endpoint}/chat/completions`,
+              'POST',
+              { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.openai.apiKey}` },
+              JSON.stringify(body)
+            );
+            const resData = JSON.parse(responseText);
             if (resData?.choices?.[0]?.message?.content) result = parseJSON(resData.choices[0].message.content);
           } catch (e) { console.error('AI analysis failed:', e); }
         } else if (provider === 'ollama') {
@@ -518,7 +525,10 @@ Please output only the summary text without any prefixes.`;
 
           aiData = { ...baseAiData, faces: aiResultData.faces || [] } as AiData;
 
-          aiData.faces.forEach((face) => {
+          // 获取 AI 分析识别出的人物列表
+          const aiRecognizedPeople = Array.isArray(result.people) ? result.people : [];
+
+          aiData.faces.forEach((face, index) => {
             if (face.personId && face.name) {
               const faceDescriptor = faceDescriptors.find(fd => fd.faceId === face.id);
               let faceBox: { x: number; y: number; w: number; h: number } | undefined;
@@ -531,10 +541,20 @@ Please output only the summary text without any prefixes.`;
                   h: Math.round((h / file.meta.height) * 100)
                 };
               }
+
+              // 优先使用 AI 分析识别出的人物名称
+              let personName = face.name;
+              if (face.name === '未知人物' && aiRecognizedPeople.length > 0) {
+                // 如果有 AI 识别的人物，使用第一个人物的名称
+                personName = aiRecognizedPeople[index] || aiRecognizedPeople[0];
+                // 更新 face 的显示名称
+                face.name = personName;
+              }
+
               let person = currentPeople[face.personId];
               if (!person) {
                 if (settings.ai.autoAddPeople) {
-                  currentPeople[face.personId] = { id: face.personId, name: face.name, coverFileId: fileId, count: 1, description: 'Detected by AI face recognition', descriptor: faceDescriptor?.descriptor, faceBox: faceBox };
+                  currentPeople[face.personId] = { id: face.personId, name: personName, coverFileId: fileId, count: 1, description: 'Detected by AI face recognition', descriptor: faceDescriptor?.descriptor, faceBox: faceBox };
                   peopleUpdated = true;
                 }
               } else {

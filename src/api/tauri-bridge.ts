@@ -1508,3 +1508,34 @@ export const openUpdateDownloadFolder = async (): Promise<void> => {
     throw error;
   }
 };
+
+/**
+ * 代理 HTTP 请求（用于绕过 CORS）
+ * @param url 请求 URL
+ * @param method HTTP 方法
+ * @param headers 请求头
+ * @param body 请求体
+ * @returns 响应文本
+ */
+export const proxyHttpRequest = async (
+  url: string,
+  method: string = 'GET',
+  headers: Record<string, string> = {},
+  body?: string
+): Promise<string> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('Proxy HTTP request is only available in Tauri environment');
+  }
+  try {
+    const result = await invoke<string>('proxy_http_request', {
+      url,
+      method,
+      headers,
+      body
+    });
+    return result;
+  } catch (error) {
+    console.error('Proxy HTTP request failed:', error);
+    throw error;
+  }
+};

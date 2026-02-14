@@ -1,9 +1,20 @@
 import { faceRecognitionService } from './faceRecognitionService';
-import { AiData, AiFace, AppSettings, Person } from '../types';
-import { readFileAsBase64 } from '../api/tauri-bridge';
+import { AiData, AiFace, AppSettings, Person, AIModelOption, AI_SERVICE_PRESETS } from '../types';
+import { readFileAsBase64, proxyHttpRequest } from '../api/tauri-bridge';
+
+// 模型列表缓存的 localStorage key
+const MODELS_CACHE_KEY = 'aurora_ai_models_cache';
+const MODELS_CACHE_EXPIRY = 7 * 24 * 60 * 60 * 1000; // 7天
+
+interface ModelsCache {
+  [presetId: string]: {
+    models: AIModelOption[];
+    timestamp: number;
+  };
+}
 
 class AIService {
-  async analyzeImage(imageUrl: string, settings: AppSettings, people: Record<string, Person>) {
+  async analyzeImage(imagePath: string, settings: AppSettings, people: Record<string, Person>) {
     const aiData: Partial<AiData> = {
       analyzed: true,
       analyzedAt: new Date().toISOString(),
@@ -19,18 +30,26 @@ class AIService {
 
     // 如果启用人脸识别
     if (settings.ai.enableFaceRecognition) {
-      const facesWithDescriptors = await this.detectAndRecognizeFaces(imageUrl, settings, people);
-      aiData.faces = facesWithDescriptors.faces;
-      faceDescriptors.push(...facesWithDescriptors.faceDescriptors);
+      try {
+        // 读取图片为 DataURL 用于人脸识别
+        const imageDataUrl = await readFileAsBase64(imagePath);
+        if (imageDataUrl) {
+          const facesWithDescriptors = await this.detectAndRecognizeFaces(imageDataUrl, settings, people);
+          aiData.faces = facesWithDescriptors.faces;
+          faceDescriptors.push(...facesWithDescriptors.faceDescriptors);
+        }
+      } catch (error) {
+        console.error('Error reading image for face recognition:', error);
+      }
     }
 
     return { aiData, faceDescriptors };
   }
 
-  async detectAndRecognizeFaces(imageUrl: string, settings: AppSettings, people: Record<string, Person>) {
+  async detectAndRecognizeFaces(imageDataUrl: string, settings: AppSettings, people: Record<string, Person>) {
     try {
       // 检测人脸
-      const detections = await faceRecognitionService.detectFaces(imageUrl);
+      const detections = await faceRecognitionService.detectFaces(imageDataUrl);
       const faces: AiFace[] = [];
       const faceDescriptors: { faceId: string; descriptor: number[] | undefined }[] = [];
 
@@ -77,9 +96,15 @@ class AIService {
     }
   }
 
-  async updatePersonDescriptor(personId: string, imageUrl: string) {
+  async updatePersonDescriptor(personId: string, imagePath: string) {
     try {
-      const descriptor = await faceRecognitionService.computeFaceDescriptor(imageUrl);
+      // 读取图片为 DataURL 用于人脸识别
+      const imageDataUrl = await readFileAsBase64(imagePath);
+      if (!imageDataUrl) {
+        console.error('Failed to read image for person descriptor:', imagePath);
+        return null;
+      }
+      const descriptor = await faceRecognitionService.computeFaceDescriptor(imageDataUrl);
       if (descriptor) {
         // 更新人物的特征向量
         return Array.from(descriptor);
@@ -116,9 +141,9 @@ class AIService {
         url = `${ep}/models`;
       }
 
-      const res = await fetch(url, { method: 'GET', headers });
-      if (!res.ok) return { status: 'disconnected' };
-      const result = await res.json();
+      // 使用代理请求绕过 CORS
+      const responseText = await proxyHttpRequest(url, 'GET', headers);
+      const result = JSON.parse(responseText);
       return { status: 'connected', result };
     } catch (e) {
       console.error('AI connection check failed:', e);
@@ -305,27 +330,25 @@ class AIService {
   // 调用 OpenAI API
   private async callOpenAI(messages: any[], settings: AppSettings): Promise<string | null> {
     try {
-      const response = await fetch(`${settings.ai.openai.endpoint}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${settings.ai.openai.apiKey}`
-        },
-        body: JSON.stringify({
-          model: settings.ai.openai.model || 'gpt-4o',
-          messages,
-          max_tokens: 100,
-          temperature: 0.7
-        })
+      // 清理 endpoint，移除末尾的斜杠，避免双斜杠问题
+      const endpoint = settings.ai.openai.endpoint.replace(/\/+$/, '');
+      const url = `${endpoint}/chat/completions`;
+      
+      const body = JSON.stringify({
+        model: settings.ai.openai.model || 'gpt-4o',
+        messages,
+        max_tokens: 100,
+        temperature: 0.7
       });
-
-      if (!response.ok) {
-        const error = await response.text();
-        console.error('OpenAI API error:', error);
-        return null;
-      }
-
-      const data = await response.json();
+      
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.ai.openai.apiKey}`
+      };
+      
+      // 使用代理请求绕过 CORS
+      const responseText = await proxyHttpRequest(url, 'POST', headers, body);
+      const data = JSON.parse(responseText);
       return data.choices?.[0]?.message?.content || null;
     } catch (error) {
       console.error('Error calling OpenAI:', error);
@@ -419,6 +442,284 @@ class AIService {
     } catch (error) {
       console.error('Error calling LM Studio:', error);
       return null;
+    }
+  }
+
+  // ==================== 动态获取模型列表 ====================
+
+  /**
+   * 从 API 获取模型列表
+   * @param presetId 预设ID: 'openai' | 'gemini' | 'zhipu' | 'custom'
+   * @param apiKey API Key
+   * @param customEndpoint 自定义端点（用于 custom 预设）
+   * @returns 模型列表和是否从 API 获取成功的标志
+   */
+  async fetchModels(
+    presetId: string,
+    apiKey: string,
+    customEndpoint?: string
+  ): Promise<{ models: AIModelOption[]; fromApi: boolean }> {
+    try {
+      const preset = AI_SERVICE_PRESETS.find(p => p.id === presetId);
+      if (!preset) {
+        throw new Error(`Unknown preset: ${presetId}`);
+      }
+
+      // 构建请求 URL
+      let endpoint = presetId === 'custom' ? customEndpoint : preset.endpoint;
+      if (!endpoint) {
+        throw new Error('Endpoint is required');
+      }
+
+      // 清理 endpoint，移除末尾的斜杠
+      endpoint = endpoint.replace(/\/+$/, '');
+      const url = `${endpoint}/models`;
+
+      const headers: Record<string, string> = {};
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      // 使用代理请求
+      const responseText = await proxyHttpRequest(url, 'GET', headers);
+      const data = JSON.parse(responseText);
+
+      if (!data.data || !Array.isArray(data.data)) {
+        throw new Error('Invalid response format');
+      }
+
+      // 转换为 AIModelOption 格式
+      const models: AIModelOption[] = data.data
+        .map((model: any) => this.parseModelInfo(model, presetId))
+        .filter((model: AIModelOption | null): model is AIModelOption => model !== null);
+
+      // 按推荐程度排序
+      models.sort((a, b) => {
+        if (a.recommended && !b.recommended) return -1;
+        if (!a.recommended && b.recommended) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      // 缓存结果
+      this.cacheModels(presetId, models);
+
+      return { models, fromApi: true };
+    } catch (error) {
+      console.error('Failed to fetch models:', error);
+      // 返回预设的模型列表作为 fallback
+      const preset = AI_SERVICE_PRESETS.find(p => p.id === presetId);
+      const fallbackModels = preset?.models || [];
+      return { models: fallbackModels, fromApi: false };
+    }
+  }
+
+  /**
+   * 解析模型信息，转换为 AIModelOption
+   */
+  private parseModelInfo(model: any, presetId: string): AIModelOption | null {
+    let modelId = model.id || '';
+    
+    // Gemini API 返回的模型 ID 带有 "Models/" 或 "models/" 前缀，需要去掉
+    if (presetId === 'gemini') {
+      // 不区分大小写处理前缀
+      if (modelId.toLowerCase().startsWith('models/')) {
+        modelId = modelId.substring(7); // 去掉 "models/" 前缀
+      }
+    }
+    
+    // 过滤掉非视觉模型（根据模型名称特征）
+    const isVisionModel = this.isVisionModel(modelId, presetId);
+    
+    // 获取模型显示名称
+    const name = this.getModelDisplayName(modelId, presetId);
+    
+    // 判断是否为推荐模型
+    const recommended = this.isRecommendedModel(modelId, presetId);
+
+    return {
+      id: modelId,
+      name,
+      description: this.getModelDescription(modelId, presetId),
+      vision: isVisionModel,
+      recommended
+    };
+  }
+
+  /**
+   * 判断模型是否支持视觉（图像识别）
+   */
+  private isVisionModel(modelId: string, presetId: string): boolean {
+    const id = modelId.toLowerCase();
+    
+    // OpenAI 视觉模型
+    if (presetId === 'openai') {
+      return id.includes('gpt-4') && !id.includes('gpt-4-') || 
+             id.includes('gpt-4o') ||
+             id.includes('vision');
+    }
+    
+    // Gemini 所有模型都支持多模态
+    if (presetId === 'gemini') {
+      return id.startsWith('gemini');
+    }
+    
+    // 智谱 AI 视觉模型
+    if (presetId === 'zhipu') {
+      return id.includes('v') || id.includes('vision') || id.includes('vl');
+    }
+    
+    // 自定义服务商：假设包含 vision、vl、v 的模型支持视觉
+    return id.includes('vision') || id.includes('vl') || /-v\d/i.test(id);
+  }
+
+  /**
+   * 获取模型显示名称
+   */
+  private getModelDisplayName(modelId: string, presetId: string): string {
+    // 预设的友好名称映射
+    const nameMap: Record<string, string> = {
+      'gpt-4o': 'GPT-4o',
+      'gpt-4o-mini': 'GPT-4o Mini',
+      'gpt-4-turbo': 'GPT-4 Turbo',
+      'gpt-4': 'GPT-4',
+      'gpt-3.5-turbo': 'GPT-3.5 Turbo',
+      // Gemini 2.0 系列
+      'gemini-2.0-flash': 'Gemini 2.0 Flash',
+      'gemini-2.0-flash-001': 'Gemini 2.0 Flash 001',
+      'gemini-2.0-flash-lite': 'Gemini 2.0 Flash Lite',
+      'gemini-2.0-flash-lite-001': 'Gemini 2.0 Flash Lite 001',
+      'gemini-2.0-flash-exp-image-generation': 'Gemini 2.0 Flash Exp (图像生成)',
+      'gemini-2.0-pro-exp-02-05': 'Gemini 2.0 Pro',
+      // Gemini 2.5 系列
+      'gemini-2.5-flash': 'Gemini 2.5 Flash',
+      'gemini-2.5-flash-image': 'Gemini 2.5 Flash (图像)',
+      'gemini-2.5-flash-lite': 'Gemini 2.5 Flash Lite',
+      'gemini-2.5-pro': 'Gemini 2.5 Pro',
+      // Gemini 1.5 系列
+      'gemini-1.5-flash': 'Gemini 1.5 Flash',
+      'gemini-1.5-pro': 'Gemini 1.5 Pro',
+      // Gemini 3 系列
+      'gemini-3-flash-preview': 'Gemini 3 Flash Preview',
+      // 其他 Gemini 模型
+      'aqa': 'AQA (问答模型)',
+      'deep-research-pro-preview-12-2025': 'Deep Research Pro Preview (12/2025)',
+      'gemini-2.5-computer-use-preview-10-2025': 'Gemini 2.5 Computer Use Preview (10/2025)',
+      'gemini-2.5-flash-lite-preview-09-2025': 'Gemini 2.5 Flash Lite Preview (09/2025)',
+      'gemini-2.5-flash-native-audio-latest': 'Gemini 2.5 Flash Native Audio',
+      'gemini-2.5-flash-native-audio-preview-09-2025': 'Gemini 2.5 Flash Native Audio Preview (09/2025)',
+      'gemini-2.5-flash-native-audio-preview-12-2025': 'Gemini 2.5 Flash Native Audio Preview (12/2025)',
+      'gemini-2.5-flash-preview-09-2025': 'Gemini 2.5 Flash Preview (09/2025)',
+      'gemini-2.5-flash-preview-tts': 'Gemini 2.5 Flash Preview (TTS)',
+      'gemini-2.5-pro-preview-tts': 'Gemini 2.5 Pro Preview (TTS)',
+      // 智谱 AI
+      'glm-4v': 'GLM-4V',
+      'glm-4': 'GLM-4',
+      'glm-4v-flash': 'GLM-4V Flash',
+      'glm-4v-plus': 'GLM-4V Plus',
+    };
+
+    if (nameMap[modelId]) {
+      return nameMap[modelId];
+    }
+
+    // 格式化模型ID为友好名称
+    return modelId
+      .split('-')
+      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
+  /**
+   * 获取模型描述
+   */
+  private getModelDescription(modelId: string, presetId: string): string {
+    const descriptions: Record<string, string> = {
+      'gpt-4o': '最先进的视觉模型',
+      'gpt-4o-mini': '轻量快速',
+      'gpt-4-turbo': '强大的文本模型',
+      // Gemini 描述
+      'gemini-2.0-flash': '快速多模态',
+      'gemini-2.0-flash-lite': '轻量经济',
+      'gemini-2.0-pro-exp-02-05': '实验性专业版',
+      'gemini-2.5-flash': '新一代快速模型',
+      'gemini-2.5-pro': '新一代专业模型',
+      'gemini-1.5-flash': '稳定版快速模型',
+      'gemini-1.5-pro': '稳定版专业模型',
+      'aqa': '问答专用模型',
+      'glm-4v': '视觉理解模型',
+      'glm-4': '通用大模型',
+      'glm-4v-flash': '轻量视觉模型',
+    };
+
+    return descriptions[modelId] || '';
+  }
+
+  /**
+   * 判断是否为推荐模型
+   */
+  private isRecommendedModel(modelId: string, presetId: string): boolean {
+    const recommendedModels: Record<string, string[]> = {
+      'openai': ['gpt-4o', 'gpt-4o-mini'],
+      'gemini': ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash'],
+      'zhipu': ['glm-4v']
+    };
+
+    return recommendedModels[presetId]?.includes(modelId) || false;
+  }
+
+  /**
+   * 缓存模型列表
+   */
+  private cacheModels(presetId: string, models: AIModelOption[]): void {
+    try {
+      const cache: ModelsCache = JSON.parse(localStorage.getItem(MODELS_CACHE_KEY) || '{}');
+      cache[presetId] = {
+        models,
+        timestamp: Date.now()
+      };
+      localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(cache));
+    } catch (error) {
+      console.error('Failed to cache models:', error);
+    }
+  }
+
+  /**
+   * 获取缓存的模型列表
+   * @param presetId 预设ID
+   * @param maxAge 最大缓存时间（毫秒），默认7天
+   * @returns 缓存的模型列表，如果过期或不存在则返回 null
+   */
+  getCachedModels(presetId: string, maxAge: number = MODELS_CACHE_EXPIRY): AIModelOption[] | null {
+    try {
+      const cache: ModelsCache = JSON.parse(localStorage.getItem(MODELS_CACHE_KEY) || '{}');
+      const cached = cache[presetId];
+      
+      if (!cached) return null;
+      
+      const age = Date.now() - cached.timestamp;
+      if (age > maxAge) return null;
+      
+      return cached.models;
+    } catch (error) {
+      console.error('Failed to get cached models:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 清除模型缓存
+   */
+  clearModelsCache(presetId?: string): void {
+    try {
+      if (presetId) {
+        const cache: ModelsCache = JSON.parse(localStorage.getItem(MODELS_CACHE_KEY) || '{}');
+        delete cache[presetId];
+        localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(cache));
+      } else {
+        localStorage.removeItem(MODELS_CACHE_KEY);
+      }
+    } catch (error) {
+      console.error('Failed to clear models cache:', error);
     }
   }
 }

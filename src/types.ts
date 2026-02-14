@@ -181,6 +181,8 @@ export interface AIConfig {
   systemPrompt?: string;
   promptPresets?: PromptPreset[];
   currentPresetId?: string;
+  // 在线服务商预设
+  onlineServicePreset?: string; // 预设ID: 'openai' | 'gemini' | 'zhipu' | 'custom' 等
 }
 
 export interface AppSettings {
@@ -383,3 +385,214 @@ export interface UpdateSettings {
   ignoredVersions: string[];
   lastCheckTime?: number;
 }
+
+// AI 服务商预设接口
+export interface AIModelOption {
+  id: string;
+  name: string;
+  description: string;
+  vision: boolean;
+  recommended?: boolean;
+}
+
+export interface AIServicePreset {
+  id: string;
+  name: string;
+  description: string;
+  endpoint: string;
+  requiresApiKey: boolean;
+  apiKeyPlaceholder: string;
+  apiKeyHelpUrl?: string;
+  models: AIModelOption[];
+}
+
+// 在线 AI 服务商预设列表 - 2026年2月更新
+export const AI_SERVICE_PRESETS: AIServicePreset[] = [
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    description: 'OpenAI 官方 API',
+    endpoint: 'https://api.openai.com/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHelpUrl: 'https://platform.openai.com/api-keys',
+    models: [
+      { id: 'gpt-5.2', name: 'GPT-5.2', description: '最新旗舰模型，支持视觉', vision: true, recommended: true },
+      { id: 'gpt-5.3-codex-spark', name: 'GPT-5.3 Codex Spark', description: '实时编程专用', vision: false },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '轻量快速，支持视觉', vision: true },
+      { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: '稳定的文本模型', vision: true }
+    ]
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    description: 'Google AI 模型',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'AIza...',
+    apiKeyHelpUrl: 'https://aistudio.google.com/app/apikey',
+    models: [
+      { id: 'gemini-2.5-pro-preview-03-25', name: 'Gemini 2.5 Pro Preview', description: '最强推理能力，2M上下文', vision: true, recommended: true },
+      { id: 'gemini-2.5-flash-preview-04-17', name: 'Gemini 2.5 Flash Preview', description: '极速多模态', vision: true },
+      { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', description: '稳定版快速模型', vision: true },
+      { id: 'gemini-2.0-flash-lite', name: 'Gemini 2.0 Flash Lite', description: '轻量经济', vision: true }
+    ]
+  },
+  {
+    id: 'zhipu',
+    name: '智谱 AI',
+    description: '智谱大模型 - 2026年2月发布GLM-5',
+    endpoint: 'https://open.bigmodel.cn/api/paas/v4',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'your-api-key',
+    apiKeyHelpUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+    models: [
+      { id: 'glm-5', name: 'GLM-5', description: '最新旗舰，编程与Agent能力最强', vision: true, recommended: true },
+      { id: 'glm-4v', name: 'GLM-4V', description: '视觉理解模型', vision: true },
+      { id: 'glm-4', name: 'GLM-4', description: '通用大模型', vision: false },
+      { id: 'glm-4v-flash', name: 'GLM-4V Flash', description: '轻量视觉模型', vision: true }
+    ]
+  },
+  // 国内服务商
+  {
+    id: 'dashscope',
+    name: '阿里云 通义千问',
+    description: '阿里云 DashScope 大模型平台',
+    endpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHelpUrl: 'https://dashscope.console.aliyun.com/apiKey',
+    models: [
+      { id: 'qwen3-max', name: 'Qwen3-Max', description: '万亿参数旗舰模型', vision: true, recommended: true },
+      { id: 'qwen3-max-thinking', name: 'Qwen3-Max-Thinking', description: '推理增强版', vision: true },
+      { id: 'qwen-vl-max', name: 'Qwen-VL Max', description: '视觉理解最强版', vision: true },
+      { id: 'qwen-vl-plus', name: 'Qwen-VL Plus', description: '视觉理解增强版', vision: true },
+      { id: 'qwen-plus', name: 'Qwen Plus', description: '通用大模型', vision: false }
+    ]
+  },
+  {
+    id: 'moonshot',
+    name: '月之暗面 Kimi',
+    description: 'Moonshot AI 大模型',
+    endpoint: 'https://api.moonshot.cn/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHelpUrl: 'https://platform.moonshot.cn/console/api-keys',
+    models: [
+      { id: 'moonshot-v1-8k', name: 'Kimi 8K', description: '8K 上下文', vision: false, recommended: true },
+      { id: 'moonshot-v1-32k', name: 'Kimi 32K', description: '32K 上下文', vision: false },
+      { id: 'moonshot-v1-128k', name: 'Kimi 128K', description: '128K 长文本', vision: false }
+    ]
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动',
+    description: 'SiliconFlow 模型聚合平台',
+    endpoint: 'https://api.siliconflow.cn/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-...',
+    apiKeyHelpUrl: 'https://cloud.siliconflow.cn/account/ak',
+    models: [
+      { id: 'THUDM/glm-5', name: 'GLM-5', description: '智谱最新旗舰', vision: true, recommended: true },
+      { id: 'Qwen/Qwen3-VL-Max', name: 'Qwen3-VL Max', description: '通义千问视觉', vision: true },
+      { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3', description: 'DeepSeek 最强模型', vision: false }
+    ]
+  },
+  // 国际服务商
+  {
+    id: 'anthropic',
+    name: 'Anthropic Claude',
+    description: 'Claude AI 模型 - 2026年2月发布Opus 4.6',
+    endpoint: 'https://api.anthropic.com/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-ant-...',
+    apiKeyHelpUrl: 'https://console.anthropic.com/settings/keys',
+    models: [
+      { id: 'claude-opus-4.6', name: 'Claude Opus 4.6', description: '最强编程与推理', vision: true, recommended: true },
+      { id: 'claude-opus-4', name: 'Claude Opus 4', description: '强大的多模态模型', vision: true },
+      { id: 'claude-sonnet-4', name: 'Claude Sonnet 4', description: '平衡性能与速度', vision: true },
+      { id: 'claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: '稳定版', vision: true }
+    ]
+  },
+  {
+    id: 'xai',
+    name: 'xAI Grok',
+    description: 'xAI Grok 模型',
+    endpoint: 'https://api.x.ai/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'xai-...',
+    apiKeyHelpUrl: 'https://x.ai/api',
+    models: [
+      { id: 'grok-4-vision', name: 'Grok 4 Vision', description: '视觉理解模型', vision: true, recommended: true },
+      { id: 'grok-4', name: 'Grok 4', description: '通用模型', vision: false },
+      { id: 'grok-2-vision-latest', name: 'Grok 2 Vision', description: '稳定版视觉', vision: true }
+    ]
+  },
+  {
+    id: 'azure',
+    name: 'Azure OpenAI',
+    description: '微软 Azure OpenAI 服务',
+    endpoint: 'https://your-resource.openai.azure.com/openai/deployments/your-deployment',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'your-api-key',
+    apiKeyHelpUrl: 'https://portal.azure.com/#blade/HubsExtension/BrowseResource/resourceType/Microsoft.CognitiveServices%2Faccounts',
+    models: [
+      { id: 'gpt-5.2', name: 'GPT-5.2', description: '最新多模态旗舰', vision: true, recommended: true },
+      { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: '轻量视觉模型', vision: true },
+      { id: 'gpt-4', name: 'GPT-4', description: '强大文本模型', vision: false }
+    ]
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: 'OpenRouter 模型聚合平台',
+    endpoint: 'https://openrouter.ai/api/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'sk-or-...',
+    apiKeyHelpUrl: 'https://openrouter.ai/keys',
+    models: [
+      { id: 'anthropic/claude-opus-4.6', name: 'Claude Opus 4.6', description: 'Anthropic 最强', vision: true, recommended: true },
+      { id: 'google/gemini-2.5-pro-preview-03-25', name: 'Gemini 2.5 Pro Preview', description: 'Google 最强', vision: true },
+      { id: 'openai/gpt-5.2', name: 'GPT-5.2', description: 'OpenAI 最新', vision: true },
+      { id: 'thudm/glm-5', name: 'GLM-5', description: '智谱开源', vision: true }
+    ]
+  },
+  {
+    id: 'together',
+    name: 'Together AI',
+    description: 'Together AI 开源模型平台',
+    endpoint: 'https://api.together.xyz/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'your-api-key',
+    apiKeyHelpUrl: 'https://api.together.xyz/settings/api-keys',
+    models: [
+      { id: 'meta-llama/Llama-4-Vision-Instruct', name: 'Llama 4 Vision', description: 'Meta 最新视觉模型', vision: true, recommended: true },
+      { id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', name: 'Llama 3.3 70B', description: 'Meta 大模型', vision: false },
+      { id: 'Qwen/Qwen3-VL-Max', name: 'Qwen3-VL Max', description: '通义千问视觉', vision: true }
+    ]
+  },
+  {
+    id: 'fireworks',
+    name: 'Fireworks AI',
+    description: 'Fireworks AI 快速推理平台',
+    endpoint: 'https://api.fireworks.ai/inference/v1',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'your-api-key',
+    apiKeyHelpUrl: 'https://fireworks.ai/account/api-keys',
+    models: [
+      { id: 'accounts/fireworks/models/llama-4-vision-instruct', name: 'Llama 4 Vision', description: 'Meta 最新视觉模型', vision: true, recommended: true },
+      { id: 'accounts/fireworks/models/qwen3-vl-max', name: 'Qwen3-VL Max', description: '通义千问视觉', vision: true }
+    ]
+  },
+  {
+    id: 'custom',
+    name: '自定义',
+    description: '其他 OpenAI 兼容服务',
+    endpoint: '',
+    requiresApiKey: true,
+    apiKeyPlaceholder: 'your-api-key',
+    models: [
+      { id: 'custom-model', name: '自定义模型', description: '手动输入模型名称', vision: true }
+    ]
+  }
+];

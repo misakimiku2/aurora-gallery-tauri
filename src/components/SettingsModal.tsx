@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode } from 'lucide-react';
-import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress } from '../types';
+import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
@@ -323,12 +323,82 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // 动态模型列表状态
+  const [dynamicModels, setDynamicModels] = useState<Record<string, AIModelOption[]>>({});
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [fetchModelsError, setFetchModelsError] = useState<string | null>(null);
+  const [lastFetchedPresetId, setLastFetchedPresetId] = useState<string | null>(null);
+
+  // 加载缓存的模型列表
+  useEffect(() => {
+    const loadCachedModels = () => {
+      const cached: Record<string, AIModelOption[]> = {};
+      AI_SERVICE_PRESETS.forEach(preset => {
+        if (preset.id !== 'custom') {
+          const models = aiService.getCachedModels(preset.id);
+          if (models && models.length > 0) {
+            cached[preset.id] = models;
+          }
+        }
+      });
+      setDynamicModels(cached);
+    };
+    loadCachedModels();
+  }, []);
+
   // 获取当前的刷新间隔（毫秒�?
   const refreshInterval = state.settings.performance?.refreshInterval || 5000;
 
   // 手动刷新性能数据
   const handleRefreshPerformance = () => {
     setRefreshKey(prev => prev + 1);
+  };
+
+  // 刷新模型列表
+  const handleFetchModels = async () => {
+    const presetId = state.settings.ai.onlineServicePreset;
+    if (!presetId || presetId === 'custom') return;
+
+    const preset = AI_SERVICE_PRESETS.find(p => p.id === presetId);
+    if (!preset) return;
+
+    // 如果没有 API Key，提示用户
+    if (!state.settings.ai.openai.apiKey) {
+      setFetchModelsError(t('settings.apiKeyRequired') || '请先输入 API Key');
+      return;
+    }
+
+    setIsFetchingModels(true);
+    setFetchModelsError(null);
+    setLastFetchedPresetId(null);
+
+    try {
+      const { models, fromApi } = await aiService.fetchModels(
+        presetId,
+        state.settings.ai.openai.apiKey,
+        presetId === 'custom' ? state.settings.ai.openai.endpoint : undefined
+      );
+
+      if (models.length > 0) {
+        setDynamicModels(prev => ({
+          ...prev,
+          [presetId]: models
+        }));
+        // 只有真正从 API 获取成功才显示成功提示
+        if (fromApi) {
+          setLastFetchedPresetId(presetId);
+        } else {
+          setFetchModelsError(t('settings.fetchModelsFailed') || '获取模型列表失败，显示预设模型');
+        }
+      } else {
+        setFetchModelsError(t('settings.fetchModelsEmpty') || '未获取到模型列表');
+      }
+    } catch (error) {
+      console.error('Failed to fetch models:', error);
+      setFetchModelsError(t('settings.fetchModelsFailed') || '获取模型列表失败');
+    } finally {
+      setIsFetchingModels(false);
+    }
   };
 
   // 设置自动刷新定时�?
@@ -1491,6 +1561,120 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-5 border border-gray-200 dark:border-gray-800 space-y-4">
                               {state.settings.ai.provider === 'openai' && (
                                   <>
+                                      {/* 服务商和模型选择 - 左右布局 */}
+                                      <div className="grid grid-cols-2 gap-4">
+                                          {/* 服务商下拉选择 */}
+                                          <div>
+                                              <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">{t('settings.aiService') || 'AI 服务商'}</label>
+                                              <select
+                                                  value={state.settings.ai.onlineServicePreset || ''}
+                                                  onChange={(e) => {
+                                                      const presetId = e.target.value;
+                                                      const preset = AI_SERVICE_PRESETS.find(p => p.id === presetId);
+                                                      if (preset) {
+                                                          // 切换服务商时清除错误状态和成功提示
+                                                          setFetchModelsError(null);
+                                                          setLastFetchedPresetId(null);
+                                                          
+                                                          const newSettings = { 
+                                                              ...state.settings.ai, 
+                                                              onlineServicePreset: presetId,
+                                                              openai: {
+                                                                  ...state.settings.ai.openai,
+                                                                  endpoint: preset.endpoint,
+                                                                  model: preset.models.find(m => m.recommended)?.id || preset.models[0].id
+                                                              }
+                                                          };
+                                                          onUpdateSettingsData({ ai: newSettings });
+                                                      }
+                                                  }}
+                                                  className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                              >
+                                                  {AI_SERVICE_PRESETS.map((preset) => (
+                                                      <option key={preset.id} value={preset.id}>
+                                                          {preset.name}
+                                                      </option>
+                                                  ))}
+                                              </select>
+                                          </div>
+
+                                          {/* 模型下拉选择 */}
+                                          <div>
+                                              <div className="flex items-center justify-between mb-2">
+                                                  <label className="text-xs font-bold text-gray-500 dark:text-gray-400">{t('settings.aiModel')}</label>
+                                                  {state.settings.ai.onlineServicePreset && state.settings.ai.onlineServicePreset !== 'custom' && (
+                                                      <div className="flex items-center gap-2">
+                                                          {dynamicModels[state.settings.ai.onlineServicePreset] && (
+                                                              <button
+                                                                  onClick={() => {
+                                                                      aiService.clearModelsCache(state.settings.ai.onlineServicePreset);
+                                                                      setDynamicModels(prev => {
+                                                                          const newModels = { ...prev };
+                                                                          delete newModels[state.settings.ai.onlineServicePreset!];
+                                                                          return newModels;
+                                                                      });
+                                                                  }}
+                                                                  className="flex items-center gap-1 text-[10px] text-gray-500 hover:text-red-500 transition-colors"
+                                                                  title={t('settings.clearModelsCache') || '清除模型缓存'}
+                                                              >
+                                                                  <Trash2 size={10} />
+                                                                  {t('settings.clearCache') || '清除'}
+                                                              </button>
+                                                          )}
+                                                          <button
+                                                              onClick={handleFetchModels}
+                                                              disabled={isFetchingModels}
+                                                              className="flex items-center gap-1 text-[10px] text-blue-500 hover:text-blue-600 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                                                              title={t('settings.fetchModels') || '获取最新模型列表'}
+                                                          >
+                                                              <RefreshCw size={10} className={isFetchingModels ? 'animate-spin' : ''} />
+                                                              {isFetchingModels ? (t('settings.fetchingModels') || '获取中...') : (t('settings.refreshModels') || '刷新')}
+                                                          </button>
+                                                      </div>
+                                                  )}
+                                              </div>
+                                              {state.settings.ai.onlineServicePreset && state.settings.ai.onlineServicePreset !== 'custom' ? (
+                                                  <>
+                                                      <select
+                                                          value={state.settings.ai.openai.model}
+                                                          onChange={(e) => onUpdateSettingsData({ 
+                                                              ai: { 
+                                                                  ...state.settings.ai, 
+                                                                  openai: { ...state.settings.ai.openai, model: e.target.value } 
+                                                              } 
+                                                          })}
+                                                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                                      >
+                                                          {/* 优先显示动态获取的模型列表 */}
+                                                          {(dynamicModels[state.settings.ai.onlineServicePreset] || 
+                                                            AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.models || []
+                                                          ).map((model) => (
+                                                              <option key={model.id} value={model.id}>
+                                                                  {model.name} {model.recommended ? '(推荐)' : ''}
+                                                              </option>
+                                                          ))}
+                                                      </select>
+                                                      {fetchModelsError && (
+                                                          <div className="text-[10px] text-red-500 mt-1">{fetchModelsError}</div>
+                                                      )}
+                                                      {lastFetchedPresetId === state.settings.ai.onlineServicePreset && !fetchModelsError && (
+                                                          <div className="text-[10px] text-green-600 dark:text-green-400 mt-1">
+                                                              {t('settings.modelsUpdated') || '已获取最新模型列表'}
+                                                          </div>
+                                                      )}
+                                                  </>
+                                              ) : (
+                                                  <input 
+                                                      type="text" 
+                                                      value={state.settings.ai.openai.model}
+                                                      onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, model: e.target.value } } })}
+                                                      className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                                      placeholder="输入模型名称..."
+                                                  />
+                                              )}
+                                          </div>
+                                      </div>
+
                                       <div>
                                           <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-endpoint">{t('settings.endpoint')}</label>
                                           <input 
@@ -1505,27 +1689,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </div>
                                       <div>
                                           <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-api-key">{t('settings.apiKey')}</label>
-                                          <input 
-                                              type="password" 
-                                              id="openai-api-key"
-                                              name="openai-api-key"
-                                              value={state.settings.ai.openai.apiKey}
-                                              onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, apiKey: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
-                                              placeholder="sk-..."
-                                          />
-                                      </div>
-                                      <div>
-                                          <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 mb-1" htmlFor="openai-model">{t('settings.aiModel')}</label>
-                                          <input 
-                                              type="text" 
-                                              id="openai-model"
-                                              name="openai-model"
-                                              value={state.settings.ai.openai.model}
-                                              onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, model: e.target.value } } })}
-                                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
-                                              placeholder="gpt-4o"
-                                          />
+                                          <div className="flex gap-2">
+                                              <input 
+                                                  type="password" 
+                                                  id="openai-api-key"
+                                                  name="openai-api-key"
+                                                  value={state.settings.ai.openai.apiKey}
+                                                  onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, apiKey: e.target.value } } })}
+                                                  className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                                  placeholder={AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.apiKeyPlaceholder || 'sk-...'}
+                                              />
+                                              {AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.apiKeyHelpUrl && (
+                                                  <button
+                                                      onClick={() => openExternalLink(AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.apiKeyHelpUrl || '')}
+                                                      className="px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-xs font-medium transition-colors"
+                                                      title="获取 API Key"
+                                                  >
+                                                      获取 Key
+                                                  </button>
+                                              )}
+                                          </div>
                                       </div>
                                   </>
                               )}

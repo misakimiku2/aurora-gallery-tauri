@@ -2608,6 +2608,48 @@ fn open_update_download_folder() -> Result<(), String> {
     downloader.open_download_folder()
 }
 
+/// 代理 HTTP 请求（用于绕过 CORS）
+#[tauri::command]
+async fn proxy_http_request(
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Option<String>
+) -> Result<String, String> {
+    let client = reqwest::Client::new();
+    
+    let mut request = match method.to_uppercase().as_str() {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        _ => return Err(format!("Unsupported HTTP method: {}", method))
+    };
+    
+    // 添加 headers
+    for (key, value) in headers {
+        request = request.header(&key, value);
+    }
+    
+    // 添加 body
+    if let Some(body_content) = body {
+        request = request.body(body_content);
+    }
+    
+    // 发送请求
+    let response = request.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    
+    // 获取响应文本
+    let status = response.status();
+    let text = response.text().await.map_err(|e| format!("Failed to read response: {}", e))?;
+    
+    if status.is_success() {
+        Ok(text)
+    } else {
+        Err(format!("HTTP {}: {}", status, text))
+    }
+}
+
 
 fn main() {
     
@@ -2682,7 +2724,8 @@ fn main() {
             cancel_update_download,
             get_update_download_progress,
             install_update,
-            open_update_download_folder
+            open_update_download_folder,
+            proxy_http_request
         ])
         .setup(|app| {
             // 创建托盘菜单
