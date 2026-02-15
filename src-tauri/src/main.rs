@@ -2807,11 +2807,38 @@ async fn clip_get_embedding_status(
     embedding_store.has_embedding(&file_id)
 }
 
+use std::sync::atomic::AtomicBool;
+use once_cell::sync::Lazy;
+
+/// 取消标志，用于取消嵌入生成
+static CANCEL_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+
+/// 取消嵌入生成
+#[tauri::command]
+fn clip_cancel_embedding_generation() {
+    CANCEL_GENERATION.store(true, Ordering::SeqCst);
+    log::info!("Embedding generation cancellation requested");
+}
+
+/// 重置取消标志
+fn reset_cancel_flag() {
+    CANCEL_GENERATION.store(false, Ordering::SeqCst);
+}
+
+/// 检查是否应该取消
+fn should_cancel() -> bool {
+    CANCEL_GENERATION.load(Ordering::SeqCst)
+}
+
 /// 批量生成图片的 CLIP 嵌入向量
 #[tauri::command]
 async fn clip_generate_embeddings_batch(
+    app: tauri::AppHandle,
     file_paths: Vec<(String, String)>, // (file_path, file_id) 元组列表
 ) -> Result<serde_json::Value, String> {
+    // 重置取消标志
+    reset_cancel_flag();
+    
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
@@ -2837,16 +2864,45 @@ async fn clip_generate_embeddings_batch(
         .ok_or("Embedding store not available")?;
     
     let total = file_paths.len();
+    let mut processed_count = 0; // 实际处理的文件数（不包括已存在的）
+    let mut skipped_count = 0;   // 已存在的文件数
     let mut success_count = 0;
     let mut failed_count = 0;
     let mut failed_files = Vec::new();
+    let start_time = std::time::Instant::now();
     
     for (index, (file_path, file_id)) in file_paths.iter().enumerate() {
+        // 检查是否应该取消（在循环开始处检查）
+        if should_cancel() {
+            log::info!("Embedding generation cancelled at {}/{}", index, total);
+            // 发送取消事件
+            let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
+                "processed": index,
+                "total": total,
+            }));
+            break;
+        }
+        
         // 检查是否已有嵌入
         if let Ok(true) = embedding_store.has_embedding(file_id) {
-            success_count += 1;
+            skipped_count += 1;
+            // 每个已存在的文件都发送进度（实时更新）
+            let progress = ((index + 1) as f32 / total as f32 * 100.0) as u32;
+            let elapsed_ms = start_time.elapsed().as_millis() as u64;
+            let _ = app.emit("clip-embedding-progress", serde_json::json!({
+                "current": index + 1,
+                "total": total,
+                "progress": progress,
+                "success": success_count,
+                "failed": failed_count,
+                "skipped": skipped_count,
+                "processed": processed_count,
+                "timestamp": elapsed_ms, // 用于计算预估时间
+            }));
             continue;
         }
+        
+        processed_count += 1;
         
         match model.encode_image(file_path) {
             Ok(embedding) => {
@@ -2872,17 +2928,44 @@ async fn clip_generate_embeddings_batch(
             }
         }
         
-        // 每处理 10 个文件记录一次进度
-        if (index + 1) % 10 == 0 {
-            log::info!("CLIP embedding progress: {}/{}", index + 1, total);
+        // 每个文件都发送进度事件（实时更新）
+        let progress = ((index + 1) as f32 / total as f32 * 100.0) as u32;
+        let elapsed_ms = start_time.elapsed().as_millis() as u64;
+        
+        // 每处理 10 个文件记录一次日志（避免日志过多）
+        if processed_count % 10 == 0 || index == total - 1 {
+            log::info!("CLIP embedding progress: {}/{} ({}%), processed: {}, skipped: {}, success: {}, failed: {}", 
+                index + 1, total, progress, processed_count, skipped_count, success_count, failed_count);
         }
+        
+        // 发送进度事件到前端（每个文件都发送，实现实时更新）
+        let _ = app.emit("clip-embedding-progress", serde_json::json!({
+            "current": index + 1,
+            "total": total,
+            "progress": progress,
+            "success": success_count,
+            "failed": failed_count,
+            "skipped": skipped_count,
+            "processed": processed_count,
+            "timestamp": elapsed_ms, // 用于计算预估时间
+        }));
     }
+    
+    // 发送完成事件
+    let was_cancelled = should_cancel();
+    let _ = app.emit("clip-embedding-completed", serde_json::json!({
+        "total": total,
+        "success": success_count,
+        "failed": failed_count,
+        "cancelled": was_cancelled,
+    }));
     
     Ok(serde_json::json!({
         "total": total,
         "success": success_count,
         "failed": failed_count,
         "failed_files": failed_files,
+        "cancelled": was_cancelled,
     }))
 }
 
@@ -3197,6 +3280,7 @@ fn main() {
             clip_delete_model,
             clip_open_model_folder,
             clip_generate_embeddings_batch,
+            clip_cancel_embedding_generation,
             get_all_image_files
         ])
         .setup(|app| {

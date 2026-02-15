@@ -158,6 +158,49 @@ export const clipGetModelStatus = async (modelName: string): Promise<ClipModelSt
    - 添加错误分类处理（模型未加载、服务未初始化等）
    - 提供更友好的错误提示信息
 
+### 2026-02-15 进度显示优化
+
+4. **实时进度更新** ✅
+   - 后端添加 `clip-embedding-progress` 事件，**每个文件处理完成后立即发送进度**（原为每10个文件）
+   - 前端使用 `listenClipEmbeddingProgress` 监听进度事件
+   - 进度条实时更新，显示当前处理数量、总数、成功数和失败数
+   - 添加 `timestamp` 字段用于计算预估剩余时间
+
+5. **取消生成功能** ✅
+   - 后端添加 `clip_cancel_embedding_generation` 命令
+   - 使用原子布尔标志 `CANCEL_GENERATION` 控制取消
+   - 前端添加"取消"按钮，点击后发送取消请求
+   - 后端检查取消标志，优雅地停止生成
+
+6. **进度统计优化** ✅
+   - 分离统计：processed_count（实际处理）、skipped_count（已存在跳过）、success_count（成功）、failed_count（失败）
+   - 进度事件包含 skipped 和 processed 字段
+   - UI 显示已跳过的文件数量（灰色显示"已存在: X"）
+   - 显示实际处理的文件数量
+   - 进度条基于总体进度（包括已跳过的文件）
+   - **生成时隐藏"已生成: X张"，完成后显示最终数量**
+
+7. **预估时间显示** ✅
+   - 根据已处理文件数和已用时间计算处理速率
+   - 实时显示预估剩余时间（如"预计剩余: 5分钟"）
+   - 支持秒、分钟、小时的自动转换显示
+
+8. **状态持久化** ✅
+   - 使用全局单例状态 `globalEmbeddingState` 保存生成进度
+   - 切换设置标签页或关闭设置界面后，重新打开可恢复进度状态
+   - 事件监听器使用单例模式，避免重复监听
+
+### 新增 Tauri 命令
+
+- `get_all_image_files` - 从数据库获取所有图片文件
+- `clip_cancel_embedding_generation` - 取消嵌入向量生成
+
+### 新增事件
+
+- `clip-embedding-progress` - 进度更新事件
+- `clip-embedding-completed` - 生成完成事件
+- `clip-embedding-cancelled` - 生成取消事件
+
 ## 相关文件
 
 - `src-tauri/src/clip/mod.rs`

@@ -3,6 +3,7 @@ import { Channel } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { startDrag as tauriStartDrag } from '@crabnebula/tauri-plugin-drag';
+import { listen } from '@tauri-apps/api/event';
 import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { performanceMonitor } from '../utils/performanceMonitor';
@@ -1850,4 +1851,69 @@ export const getAllImageFiles = async (): Promise<{ id: string; path: string; na
     console.error('Failed to get all image files:', error);
     throw error;
   }
+};
+
+/**
+ * 取消 CLIP 嵌入向量生成
+ */
+export const clipCancelEmbeddingGeneration = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke<void>('clip_cancel_embedding_generation');
+  } catch (error) {
+    console.error('Failed to cancel embedding generation:', error);
+    throw error;
+  }
+};
+
+/**
+ * 监听 CLIP 嵌入向量生成进度事件
+ * @param callback 进度回调函数
+ * @returns 取消监听的函数
+ */
+export const listenClipEmbeddingProgress = (callback: (data: {
+  current: number;
+  total: number;
+  progress: number;
+  success: number;
+  failed: number;
+  skipped?: number;
+  processed?: number;
+  timestamp?: number; // 已用时间（毫秒），用于计算预估时间
+}) => void): Promise<() => void> => {
+  return listen('clip-embedding-progress', (event: any) => {
+    callback(event.payload);
+  });
+};
+
+/**
+ * 监听 CLIP 嵌入向量生成完成事件
+ * @param callback 完成回调函数
+ * @returns 取消监听的函数
+ */
+export const listenClipEmbeddingCompleted = (callback: (data: {
+  total: number;
+  success: number;
+  failed: number;
+  cancelled: boolean;
+}) => void): Promise<() => void> => {
+  return listen('clip-embedding-completed', (event: any) => {
+    callback(event.payload);
+  });
+};
+
+/**
+ * 监听 CLIP 嵌入向量生成取消事件
+ * @param callback 取消回调函数
+ * @returns 取消监听的函数
+ */
+export const listenClipEmbeddingCancelled = (callback: (data: {
+  processed: number;
+  total: number;
+}) => void): Promise<() => void> => {
+  return listen('clip-embedding-cancelled', (event: any) => {
+    callback(event.payload);
+  });
 };

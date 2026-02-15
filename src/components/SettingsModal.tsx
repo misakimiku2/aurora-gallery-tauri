@@ -4,7 +4,7 @@ import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDi
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled } from '../api/tauri-bridge';
 import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
 // 关于面板组件
@@ -231,6 +231,7 @@ interface AIVisionPanelProps {
   t: (key: string) => string;
   settings: ClipSettings;
   onUpdateSettings: (settings: ClipSettings) => void;
+  onShowToast?: (msg: string, duration?: number) => void;
 }
 
 const CLIP_MODELS: ClipModelInfo[] = [
@@ -254,19 +255,162 @@ const CLIP_MODELS: ClipModelInfo[] = [
   },
 ];
 
-const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings }) => {
+// 全局状态，用于在组件卸载后保持生成状态
+const globalEmbeddingState = {
+  isGenerating: false,
+  progress: 0,
+  stats: { current: 0, total: 0, success: 0, failed: 0, skipped: 0, processed: 0 },
+  listeners: [] as ((() => void) | null)[],
+  isInitialized: false,
+  startTime: 0, // 开始时间戳
+  estimatedTimeRemaining: 0, // 预估剩余时间（秒）
+};
+
+// 格式化时间（秒 -> 可读格式）
+const formatEstimatedTime = (seconds: number): string => {
+  if (seconds < 60) {
+    return `${Math.ceil(seconds)}秒`;
+  } else if (seconds < 3600) {
+    return `${Math.ceil(seconds / 60)}分钟`;
+  } else {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.ceil((seconds % 3600) / 60);
+    return `${hours}小时${mins}分钟`;
+  }
+};
+
+const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast }) => {
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [loadingModel, setLoadingModel] = useState<string | null>(null);
   const [embeddingCount, setEmbeddingCount] = useState(0);
-  const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
-  const [generationProgress, setGenerationProgress] = useState(0);
+  const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(globalEmbeddingState.isGenerating);
+  const [generationProgress, setGenerationProgress] = useState(globalEmbeddingState.progress);
+  const [generationStats, setGenerationStats] = useState(globalEmbeddingState.stats);
+  const [estimatedTime, setEstimatedTime] = useState(globalEmbeddingState.estimatedTimeRemaining);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const progressListenersRef = useRef<(() => void)[]>([]);
+  const isMountedRef = useRef(true);
+
+  // 同步状态到全局状态
+  useEffect(() => {
+    globalEmbeddingState.isGenerating = isGeneratingEmbeddings;
+  }, [isGeneratingEmbeddings]);
+
+  useEffect(() => {
+    globalEmbeddingState.progress = generationProgress;
+  }, [generationProgress]);
+
+  useEffect(() => {
+    globalEmbeddingState.stats = generationStats;
+  }, [generationStats]);
+
+  useEffect(() => {
+    globalEmbeddingState.estimatedTimeRemaining = estimatedTime;
+  }, [estimatedTime]);
 
   // 加载模型状态和嵌入数量
   useEffect(() => {
+    isMountedRef.current = true;
     loadModelStatuses();
     loadEmbeddingCount();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
+
+  // 设置进度事件监听 - 使用全局单例模式确保只有一个监听实例
+  useEffect(() => {
+    // 如果全局已经初始化过监听器，只需要同步状态到本地
+    if (globalEmbeddingState.isInitialized) {
+      setIsGeneratingEmbeddings(globalEmbeddingState.isGenerating);
+      setGenerationProgress(globalEmbeddingState.progress);
+      setGenerationStats(globalEmbeddingState.stats);
+      setEstimatedTime(globalEmbeddingState.estimatedTimeRemaining);
+      return;
+    }
+
+    globalEmbeddingState.isInitialized = true;
+
+    // 监听进度事件
+    const setupListeners = async () => {
+      try {
+        const unlistenProgress = await listenClipEmbeddingProgress((data) => {
+          console.log('CLIP progress:', data);
+          globalEmbeddingState.isGenerating = true;
+          globalEmbeddingState.progress = data.progress;
+          globalEmbeddingState.stats = {
+            current: data.current,
+            total: data.total,
+            success: data.success,
+            failed: data.failed,
+            skipped: data.skipped || 0,
+            processed: data.processed || 0,
+          };
+          
+          // 计算预估剩余时间
+          if (data.timestamp && data.current > 0 && data.current < data.total) {
+            const elapsedMs = data.timestamp;
+            const elapsedSeconds = elapsedMs / 1000;
+            const rate = data.current / elapsedSeconds; // 每秒处理的文件数
+            const remainingFiles = data.total - data.current;
+            const estimatedSeconds = remainingFiles / rate;
+            globalEmbeddingState.estimatedTimeRemaining = Math.ceil(estimatedSeconds);
+          }
+          
+          if (isMountedRef.current) {
+            setIsGeneratingEmbeddings(true);
+            setGenerationProgress(data.progress);
+            setGenerationStats(globalEmbeddingState.stats);
+            setEstimatedTime(globalEmbeddingState.estimatedTimeRemaining);
+          }
+        });
+
+        const unlistenCompleted = await listenClipEmbeddingCompleted((data) => {
+          console.log('CLIP completed:', data);
+          globalEmbeddingState.isGenerating = false;
+          globalEmbeddingState.progress = 0;
+          globalEmbeddingState.estimatedTimeRemaining = 0;
+          
+          if (isMountedRef.current) {
+            setIsGeneratingEmbeddings(false);
+            setGenerationProgress(0);
+            setEstimatedTime(0);
+            loadEmbeddingCount();
+            if (data.cancelled) {
+              onShowToast?.(`生成已取消！成功: ${data.success}, 失败: ${data.failed}`, 4000);
+            } else {
+              onShowToast?.(`嵌入向量生成完成！成功: ${data.success}, 失败: ${data.failed}`, 4000);
+            }
+          }
+        });
+
+        const unlistenCancelled = await listenClipEmbeddingCancelled((data) => {
+          console.log('CLIP cancelled:', data);
+          globalEmbeddingState.isGenerating = false;
+          globalEmbeddingState.estimatedTimeRemaining = 0;
+          
+          if (isMountedRef.current) {
+            setIsGeneratingEmbeddings(false);
+            setEstimatedTime(0);
+          }
+        });
+
+        globalEmbeddingState.listeners = [unlistenProgress, unlistenCompleted, unlistenCancelled];
+        progressListenersRef.current = [unlistenProgress, unlistenCompleted, unlistenCancelled];
+      } catch (error) {
+        console.error('Failed to setup progress listeners:', error);
+      }
+    };
+
+    setupListeners();
+
+    // 组件卸载时不清理全局监听器，只清理本地引用
+    return () => {
+      progressListenersRef.current = [];
+    };
+  }, [])
 
   const loadModelStatuses = async () => {
     setIsLoading(true);
@@ -376,33 +520,16 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
     setIsGeneratingEmbeddings(true);
     setGenerationProgress(0);
+    setGenerationStats({ current: 0, total: imageFiles.length, success: 0, failed: 0, skipped: 0, processed: 0 });
 
     try {
-      // 分批处理，每批 50 张
-      const batchSize = 50;
-      const batches = [];
-      for (let i = 0; i < imageFiles.length; i += batchSize) {
-        batches.push(imageFiles.slice(i, i + batchSize));
-      }
-
-      let totalSuccess = 0;
-      let totalFailed = 0;
-
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        const fileTuples: [string, string][] = batch.map(f => [f.path, f.id]);
-
-        const result = await clipGenerateEmbeddingsBatch(fileTuples);
-        totalSuccess += result.success;
-        totalFailed += result.failed;
-
-        setGenerationProgress(Math.round(((i + 1) / batches.length) * 100));
-      }
-
-      await loadEmbeddingCount();
-      onShowToast?.(`嵌入向量生成完成！成功: ${totalSuccess}, 失败: ${totalFailed}`, 4000);
+      // 一次性发送所有文件，后端会分批处理并发送进度事件
+      const fileTuples: [string, string][] = imageFiles.map(f => [f.path, f.id]);
+      await clipGenerateEmbeddingsBatch(fileTuples);
+      // 进度和完成通过事件处理
     } catch (error: any) {
       console.error('Failed to generate embeddings:', error);
+      setIsGeneratingEmbeddings(false);
       // 根据错误类型显示不同的提示
       let errorMsg = '生成嵌入向量失败';
       if (error?.message?.includes('model not loaded') || error?.includes?.('model not loaded')) {
@@ -413,9 +540,21 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         errorMsg += ': ' + (error.message || error);
       }
       onShowToast?.(errorMsg, 4000);
+    }
+  };
+
+  const handleCancelGeneration = async () => {
+    if (!isGeneratingEmbeddings) return;
+    
+    setIsCancelling(true);
+    try {
+      await clipCancelEmbeddingGeneration();
+      onShowToast?.('正在取消生成...', 2000);
+    } catch (error) {
+      console.error('Failed to cancel generation:', error);
+      onShowToast?.('取消生成失败', 3000);
     } finally {
-      setIsGeneratingEmbeddings(false);
-      setGenerationProgress(0);
+      setIsCancelling(false);
     }
   };
 
@@ -576,15 +715,40 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                 为所有图片生成 CLIP 嵌入向量，用于语义搜索
               </div>
             </div>
-            <div className="text-right">
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                已生成: <span className="font-semibold text-green-600">{embeddingCount}</span> 张
+            {!isGeneratingEmbeddings && (
+              <div className="text-right">
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  已生成: <span className="font-semibold text-green-600">{embeddingCount}</span> 张
+                </div>
               </div>
-            </div>
+            )}
           </div>
           
           {isGeneratingEmbeddings ? (
             <div className="mt-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  <span className="font-semibold text-blue-600">{generationStats.current}</span>
+                  <span className="text-gray-400"> / {generationStats.total}</span>
+                  <span className="ml-2 text-xs">
+                    (成功: <span className="text-green-600">{generationStats.success}</span>
+                    {generationStats.failed > 0 && (
+                      <>, 失败: <span className="text-red-600">{generationStats.failed}</span></>
+                    )}
+                    {generationStats.skipped > 0 && (
+                      <>, 已存在: <span className="text-gray-500">{generationStats.skipped}</span></>
+                    )})
+                  </span>
+                </div>
+                <button
+                  onClick={handleCancelGeneration}
+                  disabled={isCancelling}
+                  className="px-3 py-1 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded text-xs font-medium transition-colors flex items-center"
+                >
+                  <XCircle size={14} className="mr-1"/>
+                  {isCancelling ? '取消中...' : '取消'}
+                </button>
+              </div>
               <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                 <div
                   className="h-full bg-blue-500 transition-all duration-300"
@@ -593,6 +757,12 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               </div>
               <p className="text-xs text-gray-500 mt-1">
                 正在生成嵌入向量... {generationProgress}%
+                {generationStats.processed > 0 && (
+                  <span className="ml-2">(实际处理: {generationStats.processed} 张)</span>
+                )}
+                {estimatedTime > 0 && (
+                  <span className="ml-2 text-blue-600">预计剩余: {formatEstimatedTime(estimatedTime)}</span>
+                )}
               </p>
             </div>
           ) : (
@@ -2496,6 +2666,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     t={t}
                     settings={state.settings.clip}
                     onUpdateSettings={(clipSettings) => onUpdateSettingsData({ clip: clipSettings })}
+                    onShowToast={onShowToast}
                   />
               )}
 
