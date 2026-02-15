@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled } from '../api/tauri-bridge';
 import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
 // 关于面板组件
@@ -264,6 +264,8 @@ const globalEmbeddingState = {
   isInitialized: false,
   startTime: 0, // 开始时间戳
   estimatedTimeRemaining: 0, // 预估剩余时间（秒）
+  isPaused: false, // 是否暂停
+  isCancelling: false, // 是否正在取消
 };
 
 // 格式化时间（秒 -> 可读格式）
@@ -288,7 +290,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const [generationProgress, setGenerationProgress] = useState(globalEmbeddingState.progress);
   const [generationStats, setGenerationStats] = useState(globalEmbeddingState.stats);
   const [estimatedTime, setEstimatedTime] = useState(globalEmbeddingState.estimatedTimeRemaining);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(globalEmbeddingState.isCancelling);
+  const [isPaused, setIsPaused] = useState(globalEmbeddingState.isPaused);
   const progressListenersRef = useRef<(() => void)[]>([]);
   const isMountedRef = useRef(true);
 
@@ -309,6 +312,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     globalEmbeddingState.estimatedTimeRemaining = estimatedTime;
   }, [estimatedTime]);
 
+  useEffect(() => {
+    globalEmbeddingState.isPaused = isPaused;
+  }, [isPaused]);
+
+  useEffect(() => {
+    globalEmbeddingState.isCancelling = isCancelling;
+  }, [isCancelling]);
+
   // 加载模型状态和嵌入数量
   useEffect(() => {
     isMountedRef.current = true;
@@ -328,6 +339,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       setGenerationProgress(globalEmbeddingState.progress);
       setGenerationStats(globalEmbeddingState.stats);
       setEstimatedTime(globalEmbeddingState.estimatedTimeRemaining);
+      setIsPaused(globalEmbeddingState.isPaused);
+      setIsCancelling(globalEmbeddingState.isCancelling);
       return;
     }
 
@@ -372,11 +385,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           globalEmbeddingState.isGenerating = false;
           globalEmbeddingState.progress = 0;
           globalEmbeddingState.estimatedTimeRemaining = 0;
+          globalEmbeddingState.isCancelling = false;
+          globalEmbeddingState.isPaused = false;
           
           if (isMountedRef.current) {
             setIsGeneratingEmbeddings(false);
             setGenerationProgress(0);
             setEstimatedTime(0);
+            setIsCancelling(false);
+            setIsPaused(false);
             loadEmbeddingCount();
             if (data.cancelled) {
               onShowToast?.(`生成已取消！成功: ${data.success}, 失败: ${data.failed}`, 4000);
@@ -390,10 +407,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           console.log('CLIP cancelled:', data);
           globalEmbeddingState.isGenerating = false;
           globalEmbeddingState.estimatedTimeRemaining = 0;
+          globalEmbeddingState.isCancelling = false;
+          globalEmbeddingState.isPaused = false;
           
           if (isMountedRef.current) {
             setIsGeneratingEmbeddings(false);
             setEstimatedTime(0);
+            setIsCancelling(false);
+            setIsPaused(false);
           }
         });
 
@@ -553,8 +574,33 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     } catch (error) {
       console.error('Failed to cancel generation:', error);
       onShowToast?.('取消生成失败', 3000);
-    } finally {
       setIsCancelling(false);
+    }
+  };
+
+  const handlePauseGeneration = async () => {
+    if (!isGeneratingEmbeddings) return;
+    
+    try {
+      await clipPauseEmbeddingGeneration();
+      setIsPaused(true);
+      onShowToast?.('生成已暂停', 2000);
+    } catch (error) {
+      console.error('Failed to pause generation:', error);
+      onShowToast?.('暂停生成失败', 3000);
+    }
+  };
+
+  const handleResumeGeneration = async () => {
+    if (!isGeneratingEmbeddings) return;
+    
+    try {
+      await clipResumeEmbeddingGeneration();
+      setIsPaused(false);
+      onShowToast?.('生成已继续', 2000);
+    } catch (error) {
+      console.error('Failed to resume generation:', error);
+      onShowToast?.('继续生成失败', 3000);
     }
   };
 
@@ -728,8 +774,16 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             <div className="mt-3">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-sm text-gray-600 dark:text-gray-400">
-                  <span className="font-semibold text-blue-600">{generationStats.current}</span>
-                  <span className="text-gray-400"> / {generationStats.total}</span>
+                  {isCancelling ? (
+                    <span className="font-semibold text-orange-600">正在取消...</span>
+                  ) : isPaused ? (
+                    <span className="font-semibold text-yellow-600">已暂停</span>
+                  ) : (
+                    <span className="font-semibold text-blue-600">{generationStats.current}</span>
+                  )}
+                  {!isCancelling && (
+                    <span className="text-gray-400"> / {generationStats.total}</span>
+                  )}
                   <span className="ml-2 text-xs">
                     (成功: <span className="text-green-600">{generationStats.success}</span>
                     {generationStats.failed > 0 && (
@@ -740,28 +794,68 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                     )})
                   </span>
                 </div>
-                <button
-                  onClick={handleCancelGeneration}
-                  disabled={isCancelling}
-                  className="px-3 py-1 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded text-xs font-medium transition-colors flex items-center"
-                >
-                  <XCircle size={14} className="mr-1"/>
-                  {isCancelling ? '取消中...' : '取消'}
-                </button>
+                <div className="flex items-center gap-1">
+                  {/* 暂停/继续按钮 - 纯图标样式 */}
+                  {!isCancelling && (
+                    <button
+                      onClick={isPaused ? handleResumeGeneration : handlePauseGeneration}
+                      className={`p-1.5 rounded-md transition-colors ${
+                        isPaused 
+                          ? 'text-green-600 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20' 
+                          : 'text-yellow-600 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20'
+                      }`}
+                      title={isPaused ? '继续生成' : '暂停生成'}
+                    >
+                      {isPaused ? <Play size={16} fill="currentColor"/> : <Pause size={16} fill="currentColor"/>}
+                    </button>
+                  )}
+                  {/* 取消按钮 - 纯图标样式 */}
+                  <button
+                    onClick={handleCancelGeneration}
+                    disabled={isCancelling}
+                    className="p-1.5 text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="取消生成"
+                  >
+                    <XCircle size={16} fill={isCancelling ? "currentColor" : "none"} strokeWidth={isCancelling ? 2.5 : 2}/>
+                  </button>
+                </div>
               </div>
-              <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-blue-500 transition-all duration-300"
-                  style={{ width: `${generationProgress}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                正在生成嵌入向量... {generationProgress}%
-                {generationStats.processed > 0 && (
-                  <span className="ml-2">(实际处理: {generationStats.processed} 张)</span>
+              
+              {/* 进度条 - 取消时显示发射动画 */}
+              <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden relative">
+                {isCancelling ? (
+                  // 取消时的发射动画
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-400 to-transparent animate-shimmer" 
+                       style={{ 
+                         animation: 'shimmer 1.5s infinite',
+                         background: 'linear-gradient(90deg, transparent 0%, rgba(251, 146, 60, 0.8) 50%, transparent 100%)',
+                         backgroundSize: '200% 100%'
+                       }} 
+                  />
+                ) : (
+                  // 正常进度条
+                  <div
+                    className={`h-full transition-all duration-300 ${isPaused ? 'bg-yellow-500' : 'bg-blue-500'}`}
+                    style={{ width: `${generationProgress}%` }}
+                  />
                 )}
-                {estimatedTime > 0 && (
-                  <span className="ml-2 text-blue-600">预计剩余: {formatEstimatedTime(estimatedTime)}</span>
+              </div>
+              
+              <p className="text-xs text-gray-500 mt-1">
+                {isCancelling ? (
+                  <span className="text-orange-600">正在取消生成，请稍候...</span>
+                ) : isPaused ? (
+                  <span className="text-yellow-600">生成已暂停，点击继续按钮恢复</span>
+                ) : (
+                  <>
+                    正在生成嵌入向量... {generationProgress}%
+                    {generationStats.processed > 0 && (
+                      <span className="ml-2">(实际处理: {generationStats.processed} 张)</span>
+                    )}
+                    {estimatedTime > 0 && (
+                      <span className="ml-2 text-blue-600">预计剩余: {formatEstimatedTime(estimatedTime)}</span>
+                    )}
+                  </>
                 )}
               </p>
             </div>

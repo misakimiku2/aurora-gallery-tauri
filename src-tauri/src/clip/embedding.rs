@@ -229,6 +229,11 @@ impl EmbeddingStore {
             params![file_id],
             |row| row.get(0),
         ).map_err(|e| format!("Failed to check embedding: {}", e))?;
+        
+        // 调试日志：记录查询结果
+        if count > 0 {
+            log::debug!("has_embedding: file_id={} found in database", file_id);
+        }
 
         Ok(count > 0)
     }

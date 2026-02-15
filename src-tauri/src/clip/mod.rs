@@ -35,7 +35,7 @@ impl Default for ClipConfig {
         Self {
             model_name: "ViT-B-32".to_string(),
             cache_dir: PathBuf::from(".aurora_cache/clip"),
-            use_gpu: false,
+            use_gpu: true,  // 默认启用 GPU 加速
             embedding_dim: 512,
         }
     }
@@ -108,6 +108,11 @@ impl ClipManager {
     /// 获取模型引用
     pub fn model(&self) -> Option<&ClipModel> {
         self.model.as_ref()
+    }
+
+    /// 获取模型可变引用
+    pub fn model_mut(&mut self) -> Option<&mut ClipModel> {
+        self.model.as_mut()
     }
 
     /// 获取嵌入存储引用

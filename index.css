@@ -221,3 +221,17 @@ input[type=range]::-webkit-slider-runnable-track {
 .animate-dot-pulse-active {
   animation: annotation-dot-pulse-active 2s infinite;
 }
+
+/* ========== Shimmer Animation for Progress Bar ========== */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.5s infinite linear;
+}

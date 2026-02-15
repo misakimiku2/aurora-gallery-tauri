@@ -1869,6 +1869,36 @@ export const clipCancelEmbeddingGeneration = async (): Promise<void> => {
 };
 
 /**
+ * 暂停 CLIP 嵌入向量生成
+ */
+export const clipPauseEmbeddingGeneration = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke<void>('clip_pause_embedding_generation');
+  } catch (error) {
+    console.error('Failed to pause embedding generation:', error);
+    throw error;
+  }
+};
+
+/**
+ * 继续 CLIP 嵌入向量生成
+ */
+export const clipResumeEmbeddingGeneration = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke<void>('clip_resume_embedding_generation');
+  } catch (error) {
+    console.error('Failed to resume embedding generation:', error);
+    throw error;
+  }
+};
+
+/**
  * 监听 CLIP 嵌入向量生成进度事件
  * @param callback 进度回调函数
  * @returns 取消监听的函数

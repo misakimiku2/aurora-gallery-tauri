@@ -2683,9 +2683,9 @@ async fn clip_search_by_text(
         }
     }
     
-    let guard = manager.read().await;
+    let mut guard = manager.write().await;
     
-    let model = guard.model()
+    let model = guard.model_mut()
         .ok_or("CLIP model not available")?;
     
     // 编码文本
@@ -2730,9 +2730,9 @@ async fn clip_search_by_image(
         }
     }
     
-    let guard = manager.read().await;
+    let mut guard = manager.write().await;
     
-    let model = guard.model()
+    let model = guard.model_mut()
         .ok_or("CLIP model not available")?;
     
     // 编码图片
@@ -2762,26 +2762,27 @@ async fn clip_generate_embedding(
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
-    let guard = manager.read().await;
+    let mut guard = manager.write().await;
     
     // 确保模型已加载
     if !guard.is_model_loaded() {
         return Err("CLIP model not loaded".to_string());
     }
     
-    let model = guard.model()
+    let model = guard.model_mut()
         .ok_or("CLIP model not available")?;
     
     // 生成嵌入
     let embedding = model.encode_image(&file_path)?;
     
     // 保存到数据库
+    let config_clone = guard.config().clone();
     if let Some(embedding_store) = guard.embedding_store() {
         let id = file_id.unwrap_or_else(|| generate_id(&file_path));
         let image_embedding = ImageEmbedding {
             file_id: id,
             embedding: embedding.clone(),
-            model_version: guard.config().model_name.clone(),
+            model_version: config_clone.model_name.clone(),
             created_at: chrono::Utc::now().timestamp(),
         };
         
@@ -2812,12 +2813,28 @@ use once_cell::sync::Lazy;
 
 /// 取消标志，用于取消嵌入生成
 static CANCEL_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+/// 暂停标志，用于暂停嵌入生成
+static PAUSE_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
 /// 取消嵌入生成
 #[tauri::command]
 fn clip_cancel_embedding_generation() {
     CANCEL_GENERATION.store(true, Ordering::SeqCst);
     log::info!("Embedding generation cancellation requested");
+}
+
+/// 暂停嵌入生成
+#[tauri::command]
+fn clip_pause_embedding_generation() {
+    PAUSE_GENERATION.store(true, Ordering::SeqCst);
+    log::info!("Embedding generation paused");
+}
+
+/// 继续嵌入生成
+#[tauri::command]
+fn clip_resume_embedding_generation() {
+    PAUSE_GENERATION.store(false, Ordering::SeqCst);
+    log::info!("Embedding generation resumed");
 }
 
 /// 重置取消标志
@@ -2830,7 +2847,17 @@ fn should_cancel() -> bool {
     CANCEL_GENERATION.load(Ordering::SeqCst)
 }
 
-/// 批量生成图片的 CLIP 嵌入向量
+/// 检查是否应该暂停（阻塞等待直到继续）
+async fn check_pause() {
+    while PAUSE_GENERATION.load(Ordering::SeqCst) {
+        if should_cancel() {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// 批量生成图片的 CLIP 嵌入向量 - 使用 GPU 批量推理
 #[tauri::command]
 async fn clip_generate_embeddings_batch(
     app: tauri::AppHandle,
@@ -2856,108 +2883,304 @@ async fn clip_generate_embeddings_batch(
         }
     }
     
-    let guard = manager.read().await;
-    let model = guard.model()
-        .ok_or("CLIP model not available")?;
+    // 获取配置信息（只读）
+    let (using_gpu, batch_size, model_name) = {
+        let guard = manager.read().await;
+        let model = guard.model().ok_or("CLIP model not available")?;
+        let using_gpu = model.is_using_gpu();
+        let batch_size = if using_gpu { 32 } else { 8 };
+        let model_name = guard.config().model_name.clone();
+        (using_gpu, batch_size, model_name)
+    };
     
-    let embedding_store = guard.embedding_store()
-        .ok_or("Embedding store not available")?;
+    log::info!("CLIP batch generation starting with {} ({} files)", 
+        if using_gpu { "GPU acceleration" } else { "CPU fallback" },
+        file_paths.len()
+    );
     
     let total = file_paths.len();
-    let mut processed_count = 0; // 实际处理的文件数（不包括已存在的）
-    let mut skipped_count = 0;   // 已存在的文件数
+    let mut processed_count = 0;
+    let mut skipped_count = 0;
     let mut success_count = 0;
     let mut failed_count = 0;
     let mut failed_files = Vec::new();
     let start_time = std::time::Instant::now();
     
-    for (index, (file_path, file_id)) in file_paths.iter().enumerate() {
-        // 检查是否应该取消（在循环开始处检查）
+    // 第一阶段：过滤已存在的嵌入（只读操作）
+    let mut files_to_process: Vec<(String, String)> = Vec::new();
+    {
+        let guard = manager.read().await;
+        let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+        
+        // 获取数据库中的嵌入数量（用于调试）
+        let db_count = embedding_store.get_embedding_count().unwrap_or(-1);
+        log::info!("Embedding database count before filtering: {}", db_count);
+        
+        // 记录前5个文件的file_id用于调试
+        for (i, (path, id)) in file_paths.iter().take(5).enumerate() {
+            log::debug!("File {}: path={}, file_id={}", i, path, id);
+        }
+        
+        for (index, (file_path, file_id)) in file_paths.iter().enumerate() {
+            if should_cancel() {
+                log::info!("Embedding generation cancelled during filtering at {}/{}", index, total);
+                let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
+                    "processed": index,
+                    "total": total,
+                }));
+                return Ok(serde_json::json!({
+                    "total": total,
+                    "success": 0,
+                    "failed": 0,
+                    "cancelled": true,
+                }));
+            }
+            
+            let has_emb = embedding_store.has_embedding(file_id);
+            match has_emb {
+                Ok(true) => {
+                    skipped_count += 1;
+                    // 每100个记录一个日志，避免日志过多
+                    if index < 5 || index % 100 == 0 {
+                        log::debug!("File {} has existing embedding: file_id={}", index, file_id);
+                    }
+                },
+                Ok(false) => {
+                    files_to_process.push((file_path.clone(), file_id.clone()));
+                    if index < 5 {
+                        log::debug!("File {} needs processing: file_id={}", index, file_id);
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Failed to check embedding for {}: {}", file_id, e);
+                    files_to_process.push((file_path.clone(), file_id.clone()));
+                }
+            }
+            
+            // 过滤阶段：只显示过滤进度，不显示处理进度
+            let elapsed_ms = start_time.elapsed().as_millis() as u64;
+            let _ = app.emit("clip-embedding-progress", serde_json::json!({
+                "current": 0,  // 实际处理数量为0
+                "total": files_to_process.len(),  // 待处理数量
+                "progress": 0,  // 处理进度为0
+                "success": success_count,
+                "failed": failed_count,
+                "skipped": skipped_count,
+                "processed": 0,
+                "timestamp": elapsed_ms,
+                "stage": "filtering",
+                "filtered_count": files_to_process.len(),
+                "total_to_process": files_to_process.len(),
+            }));
+        }
+    }
+    
+    let filtered_count = files_to_process.len();
+    log::info!("Filtered {} existing embeddings, {} files to process (total: {})", skipped_count, filtered_count, total);
+    
+    // 如果没有文件需要处理，记录警告
+    if filtered_count == 0 {
+        log::warn!("No files to process! All {} files were skipped. This might indicate:", total);
+        log::warn!("  1. All files already have embeddings");
+        log::warn!("  2. file_id mismatch between file_index and embeddings.db");
+        log::warn!("  3. Database connectivity issues");
+    }
+    
+    // 第二阶段：批量处理（需要可变引用）
+    let batches: Vec<_> = files_to_process.chunks(batch_size).collect();
+    let total_batches = batches.len();
+    
+    log::info!("Starting batch processing: {} batches, batch_size={}", total_batches, batch_size);
+    
+    for (batch_idx, batch) in batches.iter().enumerate() {
         if should_cancel() {
-            log::info!("Embedding generation cancelled at {}/{}", index, total);
-            // 发送取消事件
+            log::info!("Embedding generation cancelled at batch {}/{}", batch_idx, total_batches);
             let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
-                "processed": index,
+                "processed": processed_count + skipped_count,
                 "total": total,
             }));
             break;
         }
         
-        // 检查是否已有嵌入
-        if let Ok(true) = embedding_store.has_embedding(file_id) {
-            skipped_count += 1;
-            // 每个已存在的文件都发送进度（实时更新）
-            let progress = ((index + 1) as f32 / total as f32 * 100.0) as u32;
-            let elapsed_ms = start_time.elapsed().as_millis() as u64;
-            let _ = app.emit("clip-embedding-progress", serde_json::json!({
-                "current": index + 1,
-                "total": total,
-                "progress": progress,
-                "success": success_count,
-                "failed": failed_count,
-                "skipped": skipped_count,
-                "processed": processed_count,
-                "timestamp": elapsed_ms, // 用于计算预估时间
-            }));
+        // 检查暂停状态
+        check_pause().await;
+        
+        let batch_start = std::time::Instant::now();
+        let batch_paths: Vec<String> = batch.iter().map(|(path, _)| path.clone()).collect();
+        let batch_file_ids: Vec<String> = batch.iter().map(|(_, id)| id.clone()).collect();
+        
+        log::info!("Processing batch {}/{}: {} files", batch_idx + 1, total_batches, batch.len());
+        
+        // 检查 batch_paths 是否为空
+        if batch_paths.is_empty() {
+            log::warn!("Batch {} has empty paths, skipping", batch_idx + 1);
             continue;
         }
         
-        processed_count += 1;
+        log::info!("Batch {} first file: {}", batch_idx + 1, batch_paths.first().unwrap_or(&"N/A".to_string()));
         
-        match model.encode_image(file_path) {
-            Ok(embedding) => {
-                let image_embedding = ImageEmbedding {
-                    file_id: file_id.clone(),
-                    embedding,
-                    model_version: guard.config().model_name.clone(),
-                    created_at: chrono::Utc::now().timestamp(),
+        // 获取可变锁进行推理
+        log::info!("Batch {}: acquiring model lock...", batch_idx + 1);
+        let embeddings_result = {
+            let mut guard = manager.write().await;
+            log::info!("Batch {}: got model lock", batch_idx + 1);
+            let model = guard.model_mut().ok_or("CLIP model not available")?;
+            log::info!("Batch {}: calling encode_images_batch with {} paths...", batch_idx + 1, batch_paths.len());
+            model.encode_images_batch(&batch_paths)
+        };
+        log::info!("Batch {}: encode_images_batch returned", batch_idx + 1);
+        
+        match embeddings_result {
+            Ok(embeddings) => {
+                // 保存嵌入向量（只读锁）
+                let save_result = {
+                    let guard = manager.read().await;
+                    let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+                    
+                    let mut batch_embeddings = Vec::with_capacity(batch.len());
+                    for (file_id, embedding) in batch_file_ids.iter().zip(embeddings.iter()) {
+                        let image_embedding = ImageEmbedding {
+                            file_id: file_id.clone(),
+                            embedding: embedding.clone(),
+                            model_version: model_name.clone(),
+                            created_at: chrono::Utc::now().timestamp(),
+                        };
+                        batch_embeddings.push(image_embedding);
+                    }
+                    
+                    embedding_store.save_embeddings_batch(&batch_embeddings)
                 };
                 
-                if let Err(e) = embedding_store.save_embedding(&image_embedding) {
-                    log::error!("Failed to save embedding for {}: {}", file_id, e);
-                    failed_count += 1;
-                    failed_files.push(file_path.clone());
-                } else {
-                    success_count += 1;
+                match save_result {
+                    Ok(_) => success_count += batch.len(),
+                    Err(e) => {
+                        log::error!("Failed to save batch embeddings: {}", e);
+                        // 尝试逐个保存
+                        for (i, (file_path, file_id)) in batch.iter().enumerate() {
+                            if i < embeddings.len() {
+                                let save_single_result = {
+                                    let guard = manager.read().await;
+                                    let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+                                    let image_embedding = ImageEmbedding {
+                                        file_id: file_id.clone(),
+                                        embedding: embeddings[i].clone(),
+                                        model_version: model_name.clone(),
+                                        created_at: chrono::Utc::now().timestamp(),
+                                    };
+                                    embedding_store.save_embedding(&image_embedding)
+                                };
+                                
+                                if let Err(e) = save_single_result {
+                                    log::error!("Failed to save embedding for {}: {}", file_id, e);
+                                    failed_count += 1;
+                                    failed_files.push(file_path.clone());
+                                } else {
+                                    success_count += 1;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             Err(e) => {
-                log::error!("Failed to encode image {}: {}", file_path, e);
-                failed_count += 1;
-                failed_files.push(file_path.clone());
+                log::error!("Failed to encode batch {}: {}", batch_idx, e);
+                // 批量失败，尝试逐个处理
+                for (file_path, file_id) in batch.iter() {
+                    let single_result = {
+                        let mut guard = manager.write().await;
+                        let model = guard.model_mut().ok_or("CLIP model not available")?;
+                        model.encode_image(file_path)
+                    };
+                    
+                    match single_result {
+                        Ok(embedding) => {
+                            let save_result = {
+                                let guard = manager.read().await;
+                                let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+                                let image_embedding = ImageEmbedding {
+                                    file_id: file_id.clone(),
+                                    embedding,
+                                    model_version: model_name.clone(),
+                                    created_at: chrono::Utc::now().timestamp(),
+                                };
+                                embedding_store.save_embedding(&image_embedding)
+                            };
+                            
+                            if let Err(e) = save_result {
+                                log::error!("Failed to save embedding for {}: {}", file_id, e);
+                                failed_count += 1;
+                                failed_files.push(file_path.clone());
+                            } else {
+                                success_count += 1;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to encode image {}: {}", file_path, e);
+                            failed_count += 1;
+                            failed_files.push(file_path.clone());
+                        }
+                    }
+                }
             }
         }
         
-        // 每个文件都发送进度事件（实时更新）
-        let progress = ((index + 1) as f32 / total as f32 * 100.0) as u32;
+        processed_count += batch.len();
+        let batch_elapsed = batch_start.elapsed().as_millis();
+        
+        // 进度基于实际处理的文件数：processed_count / filtered_count
+        let progress = if filtered_count > 0 {
+            (processed_count as f32 / filtered_count as f32 * 100.0) as u32
+        } else {
+            100
+        };
+        
         let elapsed_ms = start_time.elapsed().as_millis() as u64;
         
-        // 每处理 10 个文件记录一次日志（避免日志过多）
-        if processed_count % 10 == 0 || index == total - 1 {
-            log::info!("CLIP embedding progress: {}/{} ({}%), processed: {}, skipped: {}, success: {}, failed: {}", 
-                index + 1, total, progress, processed_count, skipped_count, success_count, failed_count);
+        if batch_idx % 5 == 0 || batch_idx == total_batches - 1 {
+            let throughput = if batch_elapsed > 0 {
+                (batch.len() as f64 / batch_elapsed as f64 * 1000.0) as u32
+            } else {
+                0
+            };
+            log::info!("CLIP batch {}/{} completed: {}/{} files ({}%), throughput: {} files/sec, batch_time: {}ms", 
+                batch_idx + 1, total_batches, processed_count, filtered_count, progress, throughput, batch_elapsed);
         }
         
-        // 发送进度事件到前端（每个文件都发送，实现实时更新）
         let _ = app.emit("clip-embedding-progress", serde_json::json!({
-            "current": index + 1,
-            "total": total,
-            "progress": progress,
+            "current": processed_count,  // 实际处理完成的数量
+            "total": filtered_count,     // 待处理的总数量
+            "progress": progress,        // 基于实际处理的进度百分比
             "success": success_count,
             "failed": failed_count,
             "skipped": skipped_count,
             "processed": processed_count,
-            "timestamp": elapsed_ms, // 用于计算预估时间
+            "timestamp": elapsed_ms,
+            "stage": "processing",
+            "batch": batch_idx + 1,
+            "total_batches": total_batches,
+            "filtered_count": filtered_count,
         }));
     }
     
-    // 发送完成事件
     let was_cancelled = should_cancel();
+    let total_elapsed = start_time.elapsed();
+    let throughput = if total_elapsed.as_secs() > 0 {
+        (success_count as f64 / total_elapsed.as_secs_f64()) as u32
+    } else {
+        0
+    };
+    
+    log::info!("CLIP embedding generation completed: {} success, {} failed, {} skipped, throughput: {} files/sec, total time: {:?}",
+        success_count, failed_count, skipped_count, throughput, total_elapsed);
+    
     let _ = app.emit("clip-embedding-completed", serde_json::json!({
         "total": total,
         "success": success_count,
         "failed": failed_count,
+        "skipped": skipped_count,
         "cancelled": was_cancelled,
+        "throughput": throughput,
+        "elapsed_secs": total_elapsed.as_secs(),
     }));
     
     Ok(serde_json::json!({
@@ -2966,6 +3189,8 @@ async fn clip_generate_embeddings_batch(
         "failed": failed_count,
         "failed_files": failed_files,
         "cancelled": was_cancelled,
+        "throughput": throughput,
+        "elapsed_secs": total_elapsed.as_secs(),
     }))
 }
 
@@ -3281,6 +3506,8 @@ fn main() {
             clip_open_model_folder,
             clip_generate_embeddings_batch,
             clip_cancel_embedding_generation,
+            clip_pause_embedding_generation,
+            clip_resume_embedding_generation,
             get_all_image_files
         ])
         .setup(|app| {
