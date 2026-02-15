@@ -2815,6 +2815,8 @@ use once_cell::sync::Lazy;
 static CANCEL_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 /// 暂停标志，用于暂停嵌入生成
 static PAUSE_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
+/// 正在生成标志，用于防止任务重叠
+static IS_GENERATING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 
 /// 取消嵌入生成
 #[tauri::command]
@@ -2857,17 +2859,50 @@ async fn check_pause() {
     }
 }
 
+#[tauri::command]
+async fn clip_update_config(use_gpu: bool) -> Result<(), String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+
+    let mut guard = manager.write().await;
+    guard.update_config(use_gpu).await.map_err(|e| format!("Failed to update CLIP config: {}", e))
+}
+
 /// 批量生成图片的 CLIP 嵌入向量 - 使用 GPU 批量推理
 #[tauri::command]
 async fn clip_generate_embeddings_batch(
     app: tauri::AppHandle,
     file_paths: Vec<(String, String)>, // (file_path, file_id) 元组列表
+    use_gpu: bool,
 ) -> Result<serde_json::Value, String> {
-    // 重置取消标志
+    // 防止并发运行
+    if IS_GENERATING.swap(true, Ordering::SeqCst) {
+        log::warn!("An embedding generation task is already running.");
+        return Err("已经有一个任务正在运行，请等待或取消后再试。".to_string());
+    }
+
+    // 使用 RAII 确保在退出时重置标志
+    struct GenerationGuard;
+    impl Drop for GenerationGuard {
+        fn drop(&mut self) {
+            IS_GENERATING.store(false, Ordering::SeqCst);
+            log::info!("Global generating flag reset.");
+        }
+    }
+    let _gen_guard = GenerationGuard;
+
+    // 重置取消标志和暂停标志
     reset_cancel_flag();
+    PAUSE_GENERATION.store(false, Ordering::SeqCst);
     
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
+
+    // 同步 GPU 配置
+    {
+        let mut guard = manager.write().await;
+        guard.update_config(use_gpu).await.map_err(|e| format!("Failed to update CLIP config: {}", e))?;
+    }
     
     // 检查并加载模型
     {
@@ -2899,80 +2934,62 @@ async fn clip_generate_embeddings_batch(
     );
     
     let total = file_paths.len();
+    let mut processed_skipped_count = 0;
     let mut processed_count = 0;
-    let mut skipped_count = 0;
     let mut success_count = 0;
     let mut failed_count = 0;
+    let mut skipped_count = 0;
     let mut failed_files = Vec::new();
     let start_time = std::time::Instant::now();
     
-    // 第一阶段：过滤已存在的嵌入（只读操作）
+    // 第一阶段：过滤已存在的嵌入 (优化持锁粒度)
     let mut files_to_process: Vec<(String, String)> = Vec::new();
-    {
-        let guard = manager.read().await;
-        let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
-        
-        // 获取数据库中的嵌入数量（用于调试）
-        let db_count = embedding_store.get_embedding_count().unwrap_or(-1);
-        log::info!("Embedding database count before filtering: {}", db_count);
-        
-        // 记录前5个文件的file_id用于调试
-        for (i, (path, id)) in file_paths.iter().take(5).enumerate() {
-            log::debug!("File {}: path={}, file_id={}", i, path, id);
-        }
-        
-        for (index, (file_path, file_id)) in file_paths.iter().enumerate() {
-            if should_cancel() {
-                log::info!("Embedding generation cancelled during filtering at {}/{}", index, total);
-                let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
-                    "processed": index,
-                    "total": total,
-                }));
-                return Ok(serde_json::json!({
-                    "total": total,
-                    "success": 0,
-                    "failed": 0,
-                    "cancelled": true,
-                }));
-            }
-            
-            let has_emb = embedding_store.has_embedding(file_id);
-            match has_emb {
-                Ok(true) => {
-                    skipped_count += 1;
-                    // 每100个记录一个日志，避免日志过多
-                    if index < 5 || index % 100 == 0 {
-                        log::debug!("File {} has existing embedding: file_id={}", index, file_id);
-                    }
-                },
-                Ok(false) => {
-                    files_to_process.push((file_path.clone(), file_id.clone()));
-                    if index < 5 {
-                        log::debug!("File {} needs processing: file_id={}", index, file_id);
-                    }
-                },
-                Err(e) => {
-                    log::warn!("Failed to check embedding for {}: {}", file_id, e);
-                    files_to_process.push((file_path.clone(), file_id.clone()));
-                }
-            }
-            
-            // 过滤阶段：只显示过滤进度，不显示处理进度
-            let elapsed_ms = start_time.elapsed().as_millis() as u64;
-            let _ = app.emit("clip-embedding-progress", serde_json::json!({
-                "current": 0,  // 实际处理数量为0
-                "total": files_to_process.len(),  // 待处理数量
-                "progress": 0,  // 处理进度为0
-                "success": success_count,
-                "failed": failed_count,
-                "skipped": skipped_count,
-                "processed": 0,
-                "timestamp": elapsed_ms,
-                "stage": "filtering",
-                "filtered_count": files_to_process.len(),
-                "total_to_process": files_to_process.len(),
+    
+    for chunk in file_paths.chunks(100) {
+        if should_cancel() {
+            log::info!("Embedding generation cancelled during filtering phase.");
+            let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
+                "processed": processed_skipped_count,
+                "total": total,
+            }));
+            return Ok(serde_json::json!({
+                "total": total,
+                "success": 0,
+                "failed": 0,
+                "cancelled": true,
             }));
         }
+
+        {
+            let guard = manager.read().await;
+            let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+            
+            for (file_path, file_id) in chunk {
+                match embedding_store.has_embedding(file_id) {
+                    Ok(true) => {
+                        skipped_count += 1;
+                    },
+                    _ => {
+                        files_to_process.push((file_path.clone(), file_id.clone()));
+                    }
+                }
+            }
+        }
+        
+        processed_skipped_count += chunk.len();
+        
+        let elapsed_ms = start_time.elapsed().as_millis() as u64;
+        let _ = app.emit("clip-embedding-progress", serde_json::json!({
+            "current": 0,
+            "total": total,
+            "progress": (processed_skipped_count as f32 / total as f32 * 5.0) as u32, // 过滤阶段占用前 5% 进度条
+            "success": 0,
+            "failed": 0,
+            "skipped": skipped_count,
+            "processed": 0,
+            "timestamp": elapsed_ms,
+            "stage": "filtering"
+        }));
     }
     
     let filtered_count = files_to_process.len();
@@ -3127,9 +3144,9 @@ async fn clip_generate_embeddings_batch(
         processed_count += batch.len();
         let batch_elapsed = batch_start.elapsed().as_millis();
         
-        // 进度基于实际处理的文件数：processed_count / filtered_count
+        // 进度基于实际处理的文件数：5% (过滤) + 95% (处理)
         let progress = if filtered_count > 0 {
-            (processed_count as f32 / filtered_count as f32 * 100.0) as u32
+            5 + (processed_count as f32 / filtered_count as f32 * 95.0) as u32
         } else {
             100
         };
@@ -3243,7 +3260,6 @@ async fn clip_get_embedding_count() -> Result<i64, String> {
 #[tauri::command]
 async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, String> {
     use crate::clip::model::ModelInfo;
-    use std::path::Path;
     
     let model_info = match model_name.as_str() {
         "ViT-B-32" => ModelInfo::vit_b_32(),
@@ -3251,20 +3267,28 @@ async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, 
         _ => return Err(format!("Unknown model: {}", model_name)),
     };
     
+    // 模型子目录名称
+    let model_subdir = match model_name.as_str() {
+        "ViT-B-32" => "vit-b-32",
+        "ViT-L-14" => "vit-l-14",
+        _ => "unknown",
+    };
+    
     // 获取缓存目录
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
     let cache_dir = &guard.config().cache_dir;
+    let model_cache_dir = cache_dir.join(model_subdir);
     
     // 检查模型文件是否存在
-    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
-    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
+    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("vision_model.onnx");
+    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_model.onnx");
     let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
     
-    let image_path = cache_dir.join(image_model_file);
-    let text_path = cache_dir.join(text_model_file);
-    let tokenizer_path = cache_dir.join(tokenizer_file);
+    let image_path = model_cache_dir.join(image_model_file);
+    let text_path = model_cache_dir.join(text_model_file);
+    let tokenizer_path = model_cache_dir.join(tokenizer_file);
     
     let image_exists = image_path.exists();
     let text_exists = text_path.exists();
@@ -3290,9 +3314,20 @@ async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, 
         }
     }
     
+    let is_gpu_active = if let Some(model) = guard.model() {
+        if model.model_name() == model_info.name {
+            model.is_using_gpu()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
     Ok(serde_json::json!({
         "model_name": model_info.name,
         "is_downloaded": is_downloaded,
+        "is_gpu_active": is_gpu_active,
         "embedding_dim": model_info.embedding_dim,
         "image_size": model_info.image_size,
         "downloaded_size": downloaded_size,
@@ -3307,12 +3342,12 @@ async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, 
 /// 删除 CLIP 模型文件
 #[tauri::command]
 async fn clip_delete_model(model_name: String) -> Result<(), String> {
-    use crate::clip::model::ModelInfo;
     use std::fs;
     
-    let model_info = match model_name.as_str() {
-        "ViT-B-32" => ModelInfo::vit_b_32(),
-        "ViT-L-14" => ModelInfo::vit_l_14(),
+    // 模型子目录名称
+    let model_subdir = match model_name.as_str() {
+        "ViT-B-32" => "vit-b-32",
+        "ViT-L-14" => "vit-l-14",
         _ => return Err(format!("Unknown model: {}", model_name)),
     };
     
@@ -3321,24 +3356,13 @@ async fn clip_delete_model(model_name: String) -> Result<(), String> {
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
     let cache_dir = &guard.config().cache_dir;
+    let model_cache_dir = cache_dir.join(model_subdir);
     
-    // 删除模型文件
-    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
-    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
-    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
-    
-    let image_path = cache_dir.join(image_model_file);
-    let text_path = cache_dir.join(text_model_file);
-    let tokenizer_path = cache_dir.join(tokenizer_file);
-    
-    if image_path.exists() {
-        fs::remove_file(&image_path).map_err(|e| format!("Failed to delete image model: {}", e))?;
-    }
-    if text_path.exists() {
-        fs::remove_file(&text_path).map_err(|e| format!("Failed to delete text model: {}", e))?;
-    }
-    if tokenizer_path.exists() {
-        fs::remove_file(&tokenizer_path).map_err(|e| format!("Failed to delete tokenizer: {}", e))?;
+    // 直接删除整个模型子目录
+    drop(guard);
+    if model_cache_dir.exists() {
+        fs::remove_dir_all(&model_cache_dir)
+            .map_err(|e| format!("Failed to delete model directory: {}", e))?;
     }
     
     log::info!("Deleted CLIP model files for: {}", model_name);
@@ -3508,6 +3532,7 @@ fn main() {
             clip_cancel_embedding_generation,
             clip_pause_embedding_generation,
             clip_resume_embedding_generation,
+            clip_update_config,
             get_all_image_files
         ])
         .setup(|app| {

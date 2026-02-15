@@ -19,28 +19,13 @@ impl ImagePreprocessor {
         Self { target_size }
     }
 
-    /// 预处理图像
-    /// 将图像调整为 target_size x target_size，并归一化到 [0, 1] 范围
-    /// 返回 NCHW 格式的浮点数组 [1, 3, H, W]
     pub fn preprocess(&self, image_path: &str) -> Result<Vec<f32>, String> {
         // 使用 image 库加载图像
         let img = image::open(image_path)
             .map_err(|e| format!("Failed to open image {}: {}", image_path, e))?;
         
-        // 如果图像尺寸过大，先进行快速下采样以提高性能
-        let (width, height) = (img.width(), img.height());
-        let max_dimension = 1024u32; // 最大维度限制
-        let img = if width > max_dimension || height > max_dimension {
-            let scale = max_dimension as f32 / width.max(height) as f32;
-            let new_width = (width as f32 * scale) as u32;
-            let new_height = (height as f32 * scale) as u32;
-            // 使用快速的 Triangle 滤波器进行下采样
-            img.resize(new_width, new_height, image::imageops::FilterType::Triangle)
-        } else {
-            img
-        };
-        
-        // 转换为 RGB8
+        // 直接转换为 RGB8
+        // fast_image_resize 处理从大图到小图的缩放非常高效，无需中间步骤
         let rgb_img = img.to_rgb8();
         let (width, height) = rgb_img.dimensions();
         
@@ -50,7 +35,7 @@ impl ImagePreprocessor {
             // 如果尺寸已经正确，直接转换
             rgb_img
         } else {
-            // 使用 fast_image_resize 进行缩放
+            // 使用 fast_image_resize 进行一步缩放
             let src_image = fr::Image::from_vec_u8(
                 NonZeroU32::new(width).ok_or("Invalid width")?,
                 NonZeroU32::new(height).ok_or("Invalid height")?,
@@ -64,7 +49,7 @@ impl ImagePreprocessor {
                 fr::PixelType::U8x3,
             );
             
-            // 使用快速的 resize 算法
+            // 使用 Hamming 算法进行高质量且快速的缩放
             let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
             resizer.resize(&src_image.view(), &mut dst_image.view_mut())
                 .map_err(|e| format!("Failed to resize image: {}", e))?;
@@ -74,40 +59,50 @@ impl ImagePreprocessor {
                 .ok_or("Failed to create resized RGB image")?
         };
         
-        // 提取像素并归一化
+        // 提取像素并归一化 - 优化后的平整化操作并保持 NCHW 布局
         // CLIP 使用 ImageNet 归一化: mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]
         let mean = [0.48145466f32, 0.4578275f32, 0.40821073f32];
         let std = [0.26862954f32, 0.26130258f32, 0.27577711f32];
         
-        let mut tensor = vec![0.0f32; 3 * self.target_size * self.target_size];
+        let size = self.target_size;
+        let mut tensor = vec![0.0f32; 3 * size * size];
         
-        for (i, pixel) in resized.pixels().enumerate() {
-            let x = i % self.target_size;
-            let y = i / self.target_size;
-            
-            // NCHW 格式: [batch=0, channel, y, x]
-            // R channel
-            tensor[0 * self.target_size * self.target_size + y * self.target_size + x] = 
-                (pixel[0] as f32 / 255.0 - mean[0]) / std[0];
-            // G channel
-            tensor[1 * self.target_size * self.target_size + y * self.target_size + x] = 
-                (pixel[1] as f32 / 255.0 - mean[1]) / std[1];
-            // B channel
-            tensor[2 * self.target_size * self.target_size + y * self.target_size + x] = 
-                (pixel[2] as f32 / 255.0 - mean[2]) / std[2];
+        let raw_pixels = resized.as_raw();
+        let pixel_count = size * size;
+        
+        // 分离通道进行归一化 (NCHW 布局要求 C, H, W 分离)
+        // 并在循环中进行基础算术优化
+        for i in 0..pixel_count {
+            let base_idx = i * 3;
+            if base_idx + 2 < raw_pixels.len() {
+                // R
+                tensor[0 * pixel_count + i] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
+                // G
+                tensor[1 * pixel_count + i] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
+                // B
+                tensor[2 * pixel_count + i] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+            }
         }
         
         Ok(tensor)
     }
     
-    /// 批量预处理图像 - 使用多线程并行处理
-    pub fn preprocess_batch(&self, image_paths: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    /// 批量预处理图像 - 使用多线程并行处理，并支持限制线程数以降低 CPU 占用
+    pub fn preprocess_batch(&self, image_paths: &[String], num_threads: usize) -> Result<Vec<Vec<f32>>, String> {
         use rayon::prelude::*;
         
-        image_paths
-            .par_iter() // 并行处理
-            .map(|path| self.preprocess(path))
-            .collect::<Result<Vec<_>, _>>()
+        // 创建一个限制线程数的专门线程池，避免抢占主线程池导致 UI 卡顿
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .map_err(|e| format!("Failed to create thread pool: {}", e))?;
+        
+        pool.install(|| {
+            image_paths
+                .par_iter()
+                .map(|path| self.preprocess(path))
+                .collect::<Result<Vec<_>, _>>()
+        })
     }
 
     /// 获取目标尺寸

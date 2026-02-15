@@ -1658,6 +1658,22 @@ export const clipLoadModel = async (): Promise<void> => {
 };
 
 /**
+ * 更新 CLIP 配置（如 GPU 加速）
+ * @param useGpu 是否启用 GPU 加速
+ */
+export const clipUpdateConfig = async (useGpu: boolean): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke('clip_update_config', { useGpu });
+  } catch (error) {
+    console.error('Failed to update CLIP config:', error);
+    throw error;
+  }
+};
+
+/**
  * 卸载 CLIP 模型（释放内存）
  */
 export const clipUnloadModel = async (): Promise<void> => {
@@ -1739,6 +1755,7 @@ export const clipGetStats = async (): Promise<ClipStats> => {
 export interface ClipModelStatus {
   model_name: string;
   is_downloaded: boolean;
+  is_gpu_active: boolean;
   embedding_dim: number;
   image_size: number;
   downloaded_size: number;
@@ -1759,6 +1776,7 @@ export const clipGetModelStatus = async (modelName: string): Promise<ClipModelSt
     return {
       model_name: modelName,
       is_downloaded: false,
+      is_gpu_active: false,
       embedding_dim: 512,
       image_size: 224,
       downloaded_size: 0,
@@ -1808,10 +1826,12 @@ export interface ClipBatchEmbeddingResult {
 /**
  * 批量生成图片的 CLIP 嵌入向量
  * @param files 文件列表，每个元素为 [file_path, file_id] 元组
+ * @param useGpu 是否启用 GPU 加速
  * @returns 处理结果
  */
 export const clipGenerateEmbeddingsBatch = async (
-  files: [string, string][]
+  files: [string, string][],
+  useGpu: boolean
 ): Promise<ClipBatchEmbeddingResult> => {
   if (!isTauriEnvironment()) {
     return {
@@ -1824,6 +1844,7 @@ export const clipGenerateEmbeddingsBatch = async (
   try {
     const result = await invoke<ClipBatchEmbeddingResult>('clip_generate_embeddings_batch', {
       filePaths: files,
+      useGpu,
     });
     return result;
   } catch (error) {
@@ -1944,6 +1965,23 @@ export const listenClipEmbeddingCancelled = (callback: (data: {
   total: number;
 }) => void): Promise<() => void> => {
   return listen('clip-embedding-cancelled', (event: any) => {
+    callback(event.payload);
+  });
+};
+
+/**
+ * 监听 CLIP 模型下载进度事件
+ * @param callback 下载进度回调函数
+ * @returns 取消监听的函数
+ */
+export const listenClipDownloadProgress = (callback: (data: {
+  current_file: number;
+  total_files: number;
+  downloaded: number;
+  total: number;
+  progress: number;
+}) => void): Promise<() => void> => {
+  return listen('clip-download-progress', (event: any) => {
     callback(event.payload);
   });
 };

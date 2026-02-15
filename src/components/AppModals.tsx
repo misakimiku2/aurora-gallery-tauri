@@ -1,9 +1,10 @@
 import React from 'react';
-import { AppState, 
-  TabState, 
-  Person, 
-  Topic, 
-  FileNode, 
+import {
+  AppState,
+  TabState,
+  Person,
+  Topic,
+  FileNode,
   AppSettings,
   UpdateInfo,
   DownloadProgress
@@ -30,6 +31,7 @@ import { CropAvatarModal as CropAvatarModalComp } from './modals/CropAvatarModal
 import { CreateTopicModal as CreateTopicModalComp } from './modals/CreateTopicModal';
 import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicModal';
 import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
+import { clipUpdateConfig } from '../api/tauri-bridge';
 
 interface AppModalsProps {
   state: AppState;
@@ -145,41 +147,41 @@ export const AppModals: React.FC<AppModalsProps> = ({
       {state.activeModal.type && (
         <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
           {state.activeModal.type === 'alert' && state.activeModal.data && (
-            <AlertModalComp 
-              message={state.activeModal.data.message} 
-              onClose={closeModals} 
-              t={t} 
+            <AlertModalComp
+              message={state.activeModal.data.message}
+              onClose={closeModals}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'add-to-person' && (
-            <AddToPersonModalComp 
-              people={peopleWithDisplayCounts} 
-              files={state.files} 
-              onConfirm={handleManualAddPerson} 
-              onClose={closeModals} 
-              t={t} 
+            <AddToPersonModalComp
+              people={peopleWithDisplayCounts}
+              files={state.files}
+              onConfirm={handleManualAddPerson}
+              onClose={closeModals}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'add-to-topic' && (
-            <AddToTopicModalComp 
-              topics={state.topics} 
-              onConfirm={handleManualAddToTopic} 
-              onClose={closeModals} 
-              t={t} 
+            <AddToTopicModalComp
+              topics={state.topics}
+              onConfirm={handleManualAddToTopic}
+              onClose={closeModals}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'rename-tag' && state.activeModal.data && (
-            <RenameTagModalComp 
-              initialTag={state.activeModal.data.tag} 
-              onConfirm={handleRenameTag} 
-              onClose={closeModals} 
-              t={t} 
+            <RenameTagModalComp
+              initialTag={state.activeModal.data.tag}
+              onConfirm={handleRenameTag}
+              onClose={closeModals}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'batch-rename' && (
             <BatchRenameModalComp
               key="batch-rename"
@@ -209,13 +211,13 @@ export const AppModals: React.FC<AppModalsProps> = ({
               t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'rename-person' && state.activeModal.data && (
-            <RenamePersonModalComp 
-              initialName={peopleWithDisplayCounts[state.activeModal.data.personId]?.name || ''} 
-              onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)} 
-              onClose={closeModals} 
-              t={t} 
+            <RenamePersonModalComp
+              initialName={peopleWithDisplayCounts[state.activeModal.data.personId]?.name || ''}
+              onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)}
+              onClose={closeModals}
+              t={t}
             />
           )}
 
@@ -241,129 +243,129 @@ export const AppModals: React.FC<AppModalsProps> = ({
               t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-delete-tag' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('context.deleteTagConfirmTitle')} 
-              message={t('context.deleteTagConfirmMsg')} 
-              confirmText={t('context.deleteTagConfirmBtn')} 
-              confirmIcon={Trash2} 
-              onClose={closeModals} 
-              onConfirm={() => { 
-                handleConfirmDeleteTags(state.activeModal.data.tags); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('context.deleteTagConfirmTitle')}
+              message={t('context.deleteTagConfirmMsg')}
+              confirmText={t('context.deleteTagConfirmBtn')}
+              confirmIcon={Trash2}
+              onClose={closeModals}
+              onConfirm={() => {
+                handleConfirmDeleteTags(state.activeModal.data.tags);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-delete-person' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('context.deletePersonConfirmTitle')} 
-              message={t('context.deletePersonConfirmMsg')} 
-              subMessage={typeof state.activeModal.data.personId === 'string' ? peopleWithDisplayCounts[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`} 
-              confirmText={t('settings.confirm')} 
-              confirmIcon={Trash2} 
-              onClose={closeModals} 
-              onConfirm={() => { 
-                handleDeletePerson(state.activeModal.data.personId); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('context.deletePersonConfirmTitle')}
+              message={t('context.deletePersonConfirmMsg')}
+              subMessage={typeof state.activeModal.data.personId === 'string' ? peopleWithDisplayCounts[state.activeModal.data.personId]?.name : `${state.activeModal.data.personId.length}`}
+              confirmText={t('settings.confirm')}
+              confirmIcon={Trash2}
+              onClose={closeModals}
+              onConfirm={() => {
+                handleDeletePerson(state.activeModal.data.personId);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'edit-tags' && state.activeModal.data && (
-            <TagEditorComp 
-              file={state.files[state.activeModal.data.fileId]} 
-              files={state.files} 
-              onUpdate={handleUpdateFile} 
-              onClose={closeModals} 
-              t={t} 
+            <TagEditorComp
+              file={state.files[state.activeModal.data.fileId]}
+              files={state.files}
+              onUpdate={handleUpdateFile}
+              onClose={closeModals}
+              t={t}
             />
           )}
-          
+
           {(state.activeModal.type === 'copy-to-folder' || state.activeModal.type === 'move-to-folder') && (
-            <FolderPickerModalComp 
-              type={state.activeModal.type} 
-              files={state.files} 
-              roots={state.roots} 
-              selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds} 
-              onClose={closeModals} 
-              onConfirm={(targetId: string) => { 
-                const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds; 
-                if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId); 
-                else handleMoveFiles(fileIds, targetId); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <FolderPickerModalComp
+              type={state.activeModal.type}
+              files={state.files}
+              roots={state.roots}
+              selectedFileIds={state.activeModal.data?.fileIds || activeTab.selectedFileIds}
+              onClose={closeModals}
+              onConfirm={(targetId: string) => {
+                const fileIds = state.activeModal.data?.fileIds || activeTab.selectedFileIds;
+                if (state.activeModal.type === 'copy-to-folder') handleCopyFiles(fileIds, targetId);
+                else handleMoveFiles(fileIds, targetId);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-rename-file' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('settings.collisionTitle')} 
-              message={t('settings.fileCollisionMsg')} 
-              subMessage={`"${state.activeModal.data.desiredName}"`} 
-              confirmText={t('settings.renameAuto')} 
-              confirmIcon={FilePlus} 
-              onClose={closeModals} 
-              onConfirm={() => { 
-                handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('settings.collisionTitle')}
+              message={t('settings.fileCollisionMsg')}
+              subMessage={`"${state.activeModal.data.desiredName}"`}
+              confirmText={t('settings.renameAuto')}
+              confirmIcon={FilePlus}
+              onClose={closeModals}
+              onConfirm={() => {
+                handleResolveFileCollision(state.activeModal.data.sourceId, state.activeModal.data.desiredName);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-merge-folder' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('settings.collisionTitle')} 
-              message={t('settings.folderCollisionMsg')} 
-              subMessage={t('settings.mergeDesc')} 
-              confirmText={t('settings.mergeFolder')} 
-              confirmIcon={Merge} 
-              onClose={closeModals} 
-              onConfirm={() => { 
-                handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('settings.collisionTitle')}
+              message={t('settings.folderCollisionMsg')}
+              subMessage={t('settings.mergeDesc')}
+              confirmText={t('settings.mergeFolder')}
+              confirmIcon={Merge}
+              onClose={closeModals}
+              onConfirm={() => {
+                handleResolveFolderMerge(state.activeModal.data.sourceId, state.activeModal.data.targetId);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-extension-change' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('settings.extensionChangeTitle')} 
-              message={t('settings.extensionChangeMsg')} 
-              subMessage={t('settings.extensionChangeConfirm')} 
-              confirmText={t('settings.confirm')} 
-              confirmIcon={AlertTriangle} 
-              onClose={closeModals} 
-              onConfirm={() => { 
-                handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('settings.extensionChangeTitle')}
+              message={t('settings.extensionChangeMsg')}
+              subMessage={t('settings.extensionChangeConfirm')}
+              confirmText={t('settings.confirm')}
+              confirmIcon={AlertTriangle}
+              onClose={closeModals}
+              onConfirm={() => {
+                handleResolveExtensionChange(state.activeModal.data.sourceId, state.activeModal.data.desiredName);
+                closeModals();
+              }}
+              t={t}
             />
           )}
-          
+
           {state.activeModal.type === 'confirm-overwrite-file' && state.activeModal.data && (
-            <ConfirmModalComp 
-              title={t('settings.collisionTitle')} 
-              message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())} 
-              subMessage={state.activeModal.data.files.slice(0, 5).join(', ') + (state.activeModal.data.files.length > 5 ? `...` : '')} 
-              confirmText={t('settings.confirm')} 
-              confirmIcon={AlertTriangle} 
-              onClose={() => { 
-                state.activeModal.data.onCancel?.(); 
-                closeModals(); 
-              }} 
-              onConfirm={() => { 
-                state.activeModal.data.onConfirm?.(); 
-                closeModals(); 
-              }} 
-              t={t} 
+            <ConfirmModalComp
+              title={t('settings.collisionTitle')}
+              message={state.activeModal.data.files.length === 1 ? t('settings.fileOverwriteMsg') : t('settings.filesOverwriteMsg').replace('%count%', state.activeModal.data.files.length.toString())}
+              subMessage={state.activeModal.data.files.slice(0, 5).join(', ') + (state.activeModal.data.files.length > 5 ? `...` : '')}
+              confirmText={t('settings.confirm')}
+              confirmIcon={AlertTriangle}
+              onClose={() => {
+                state.activeModal.data.onCancel?.();
+                closeModals();
+              }}
+              onConfirm={() => {
+                state.activeModal.data.onConfirm?.();
+                closeModals();
+              }}
+              t={t}
             />
           )}
 
@@ -418,6 +420,11 @@ export const AppModals: React.FC<AppModalsProps> = ({
             setState(s => ({ ...s, ...updates }));
           }}
           onUpdateSettingsData={(updates) => {
+            if (updates.clip && updates.clip.useGpu !== undefined) {
+              clipUpdateConfig(updates.clip.useGpu).catch(err => {
+                console.error('Failed to sync GPU config to backend:', err);
+              });
+            }
             setState(s => {
               const newSettings = { ...s.settings, ...updates };
               return { ...s, settings: newSettings };

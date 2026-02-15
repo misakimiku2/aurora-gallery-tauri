@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 use once_cell::sync::OnceCell;
 use ort::session::Session;
-use ort::value::{Tensor, Value};
+use ort::value::Tensor;
 use ort::ep::ExecutionProvider;
 
 use super::ClipConfig;
@@ -26,6 +26,7 @@ pub struct ClipModel {
     vision_session: Option<Session>,
     text_session: Option<Session>,
     model_info: ModelInfo,
+    is_gpu_active: bool,
 }
 
 /// 模型文件信息
@@ -79,11 +80,32 @@ impl ClipModel {
             "ViT-L-14" => ModelInfo::vit_l_14(),
             _ => return Err(format!("Unsupported model: {}", config.model_name)),
         };
+        
+        // 模型子目录名称
+        let model_subdir = match config.model_name.as_str() {
+            "ViT-B-32" => "vit-b-32",
+            "ViT-L-14" => "vit-l-14",
+            _ => "unknown",
+        };
 
         // 确保模型文件存在
-        let image_model_path = Self::ensure_model_file(&model_info.image_model_url, &config.cache_dir).await?;
-        let text_model_path = Self::ensure_model_file(&model_info.text_model_url, &config.cache_dir).await?;
-        let _tokenizer_path = Self::ensure_model_file(&model_info.tokenizer_url, &config.cache_dir).await?;
+        let image_model_path = Self::ensure_model_file(
+            &model_info.image_model_url, 
+            &config.cache_dir,
+            model_subdir,
+        ).await?;
+        
+        let text_model_path = Self::ensure_model_file(
+            &model_info.text_model_url, 
+            &config.cache_dir,
+            model_subdir,
+        ).await?;
+        
+        let _tokenizer_path = Self::ensure_model_file(
+            &model_info.tokenizer_url, 
+            &config.cache_dir,
+            model_subdir,
+        ).await?;
 
         let image_preprocessor = ImagePreprocessor::new(model_info.image_size);
         let text_preprocessor = TextPreprocessor::new();
@@ -91,14 +113,14 @@ impl ClipModel {
         log::info!("CLIP model files ready: {}", config.model_name);
         
         // 初始化 ONNX Runtime 会话
-        let (vision_session, text_session) = Self::init_sessions(
+        let (vision_session, text_session, is_gpu_active) = Self::init_sessions(
             &image_model_path,
             &text_model_path,
             config.use_gpu,
         ).map_err(|e| format!("Failed to initialize ONNX sessions: {}", e))?;
 
         log::info!("CLIP model loaded successfully with {} acceleration", 
-            if config.use_gpu { "GPU (CUDA)" } else { "CPU" });
+            if is_gpu_active { "GPU (CUDA)" } else { "CPU" });
         
         // 标记模型为已加载
         let state = MODEL_STATE.get_or_init(|| {
@@ -120,6 +142,7 @@ impl ClipModel {
             vision_session: Some(vision_session),
             text_session: Some(text_session),
             model_info,
+            is_gpu_active,
         })
     }
 
@@ -159,11 +182,13 @@ impl ClipModel {
         vision_model_path: &PathBuf,
         text_model_path: &PathBuf,
         use_gpu: bool,
-    ) -> Result<(Session, Session), Box<dyn std::error::Error>> {
+    ) -> Result<(Session, Session, bool), Box<dyn std::error::Error>> {
         // 构建 SessionBuilder
         let builder = Session::builder()?;
         
         // 配置执行提供程序
+        let mut actual_gpu_active = false;
+        
         let builder = if use_gpu {
             // 先检查 CUDA 是否可用
             log::info!("Checking CUDA availability...");
@@ -171,22 +196,19 @@ impl ClipModel {
             
             if !cuda_available {
                 log::error!("❌ CUDA is not available on this system!");
-                log::warn!("Please ensure:");
-                log::warn!("  1. NVIDIA GPU driver is installed (525.60.13+)");
-                log::warn!("  2. CUDA 12.x is installed and in PATH");
-                log::warn!("  3. cuDNN 9.x is installed");
                 log::warn!("Falling back to CPU...");
                 Session::builder()?
             } else {
-                // 尝试使用 CUDA - 配置更多选项以提高兼容性
+                // 尝试使用 CUDA
                 log::info!("Attempting to enable CUDA Execution Provider...");
                 
                 let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
-                    .with_device_id(0);  // 使用第一个 GPU
+                    .with_device_id(0);
                 
                 match builder.with_execution_providers([cuda_provider.build()]) {
                     Ok(b) => {
                         log::info!("✅ CUDA Execution Provider enabled successfully!");
+                        actual_gpu_active = true;
                         b
                     }
                     Err(e) => {
@@ -208,14 +230,25 @@ impl ClipModel {
         // 加载文本模型
         let text_session = builder.commit_from_file(text_model_path)?;
         log::info!("Text model loaded: {:?}", text_model_path);
-
-        Ok((vision_session, text_session))
+        
+        Ok((vision_session, text_session, actual_gpu_active))
     }
 
     /// 确保模型文件存在，如果不存在则下载
-    async fn ensure_model_file(url: &str, cache_dir: &PathBuf) -> Result<PathBuf, String> {
+    async fn ensure_model_file(
+        url: &str, 
+        cache_dir: &PathBuf,
+        model_subdir: &str,
+    ) -> Result<PathBuf, String> {
         let file_name = url.split('/').last().ok_or("Invalid URL")?;
-        let file_path = cache_dir.join(file_name);
+        let model_cache_dir = cache_dir.join(model_subdir);
+        
+        // 确保模型子目录存在
+        tokio::fs::create_dir_all(&model_cache_dir)
+            .await
+            .map_err(|e| format!("Failed to create model directory: {}", e))?;
+            
+        let file_path = model_cache_dir.join(file_name);
 
         if file_path.exists() {
             log::debug!("Model file already exists: {:?}", file_path);
@@ -231,7 +264,7 @@ impl ClipModel {
 
         if !response.status().is_success() {
             return Err(format!("Failed to download {}: HTTP {}. Please download the model manually and place it in {:?}", 
-                url, response.status(), cache_dir));
+                url, response.status(), model_cache_dir));
         }
 
         let bytes = response.bytes()
@@ -254,13 +287,22 @@ impl ClipModel {
             _ => return Err(format!("Unknown model: {}", model_name)),
         };
         
+        // 模型子目录名称
+        let model_subdir = match model_name {
+            "ViT-B-32" => "vit-b-32",
+            "ViT-L-14" => "vit-l-14",
+            _ => "unknown",
+        };
+        
+        let model_cache_dir = cache_dir.join(model_subdir);
+        
         let image_file = model_info.image_model_url.split('/').last().unwrap_or("vision_model.onnx");
         let text_file = model_info.text_model_url.split('/').last().unwrap_or("text_model.onnx");
         let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
         
-        let image_path = cache_dir.join(image_file);
-        let text_path = cache_dir.join(text_file);
-        let tokenizer_path = cache_dir.join(tokenizer_file);
+        let image_path = model_cache_dir.join(image_file);
+        let text_path = model_cache_dir.join(text_file);
+        let tokenizer_path = model_cache_dir.join(tokenizer_file);
         
         Ok(image_path.exists() && text_path.exists() && tokenizer_path.exists())
     }
@@ -382,11 +424,11 @@ impl ClipModel {
         let batch_size = image_paths.len();
         let image_size = self.model_info.image_size;
 
-        // 使用多线程批量预处理所有图像
-        log::info!("Preprocessing {} images using fast_image_resize + rayon...", batch_size);
+        // 使用多线程批量预处理所有图像 - 限制线程数为 4 以降低 CPU 占用感
+        log::info!("Preprocessing {} images using ndarray + rayon (4 threads)...", batch_size);
         let preprocess_start = std::time::Instant::now();
         
-        let tensors = self.image_preprocessor.preprocess_batch(image_paths)
+        let tensors = self.image_preprocessor.preprocess_batch(image_paths, 4)
             .map_err(|e| format!("Failed to preprocess batch: {}", e))?;
         
         let preprocess_elapsed = preprocess_start.elapsed().as_millis();
@@ -442,9 +484,14 @@ impl ClipModel {
         self.config.embedding_dim
     }
 
-    /// 检查是否使用 GPU
+    /// 检查是否真正使用了 GPU 加速
     pub fn is_using_gpu(&self) -> bool {
-        self.config.use_gpu
+        self.is_gpu_active
+    }
+
+    /// 获取模型名称
+    pub fn model_name(&self) -> &str {
+        &self.model_info.name
     }
 }
 

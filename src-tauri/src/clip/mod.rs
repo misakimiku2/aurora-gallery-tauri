@@ -44,7 +44,7 @@ impl Default for ClipConfig {
 /// CLIP 管理器
 pub struct ClipManager {
     config: ClipConfig,
-    model: Option<ClipModel>,
+    pub model: Option<ClipModel>,
     embedding_store: Option<EmbeddingStore>,
     is_initialized: bool,
 }
@@ -123,6 +123,26 @@ impl ClipManager {
     /// 获取配置
     pub fn config(&self) -> &ClipConfig {
         &self.config
+    }
+
+    /// 更新配置
+    /// 如果配置发生关键变化（如 use_gpu），且模型已加载，则自动重载模型
+    pub async fn update_config(&mut self, use_gpu: bool) -> Result<(), String> {
+        let changed = self.config.use_gpu != use_gpu;
+        
+        if changed {
+            log::info!("CLIP config changed: use_gpu = {}", use_gpu);
+            self.config.use_gpu = use_gpu;
+            
+            // 如果模型已经加载，则需要重载以应用新配置
+            if self.is_model_loaded() {
+                log::info!("Reloading CLIP model to apply new hardware acceleration settings...");
+                self.unload_model();
+                self.load_model().await?;
+            }
+        }
+        
+        Ok(())
     }
 }
 
