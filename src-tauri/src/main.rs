@@ -31,6 +31,9 @@ mod thumbnail;
 mod updater;
 mod update_downloader;
 
+// 导入 CLIP 模块
+mod clip;
+
 use crate::thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
 use crate::color_search::{search_by_palette, search_by_color};
 
@@ -2650,6 +2653,461 @@ async fn proxy_http_request(
     }
 }
 
+// ==================== CLIP 相关命令 ====================
+
+use crate::clip::search::{SearchResult, SearchOptions};
+use crate::clip::embedding::ImageEmbedding;
+
+/// 使用文本搜索图片（自然语言搜索）
+#[tauri::command]
+async fn clip_search_by_text(
+    text: String,
+    top_k: Option<usize>,
+    min_score: Option<f32>,
+) -> Result<Vec<SearchResult>, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    // 检查并加载模型
+    {
+        let guard = manager.read().await;
+        if !guard.is_model_loaded() {
+            // 释放读锁，准备加载模型
+            drop(guard);
+            
+            let mut guard = manager.write().await;
+            if !guard.is_model_loaded() {
+                log::info!("CLIP model not loaded, loading now...");
+                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            }
+        }
+    }
+    
+    let guard = manager.read().await;
+    
+    let model = guard.model()
+        .ok_or("CLIP model not available")?;
+    
+    // 编码文本
+    let text_embedding = model.encode_text(&text)?;
+    
+    // 获取嵌入存储
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    // 执行搜索
+    let searcher = clip::search::SimilaritySearcher::new(embedding_store.clone());
+    let options = SearchOptions {
+        top_k: top_k.unwrap_or(50),
+        min_score: min_score.unwrap_or(0.0),
+        include_score: true,
+    };
+    
+    searcher.search(&text_embedding, &options)
+}
+
+/// 使用图片搜索相似图片（以图搜图）
+#[tauri::command]
+async fn clip_search_by_image(
+    image_path: String,
+    top_k: Option<usize>,
+    min_score: Option<f32>,
+) -> Result<Vec<SearchResult>, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    // 检查并加载模型
+    {
+        let guard = manager.read().await;
+        if !guard.is_model_loaded() {
+            drop(guard);
+            
+            let mut guard = manager.write().await;
+            if !guard.is_model_loaded() {
+                log::info!("CLIP model not loaded, loading now...");
+                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            }
+        }
+    }
+    
+    let guard = manager.read().await;
+    
+    let model = guard.model()
+        .ok_or("CLIP model not available")?;
+    
+    // 编码图片
+    let image_embedding = model.encode_image(&image_path)?;
+    
+    // 获取嵌入存储
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    // 执行搜索
+    let searcher = clip::search::SimilaritySearcher::new(embedding_store.clone());
+    let options = SearchOptions {
+        top_k: top_k.unwrap_or(50),
+        min_score: min_score.unwrap_or(0.0),
+        include_score: true,
+    };
+    
+    searcher.search(&image_embedding, &options)
+}
+
+/// 为指定图片生成嵌入向量
+#[tauri::command]
+async fn clip_generate_embedding(
+    file_path: String,
+    file_id: Option<String>,
+) -> Result<Vec<f32>, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    
+    // 确保模型已加载
+    if !guard.is_model_loaded() {
+        return Err("CLIP model not loaded".to_string());
+    }
+    
+    let model = guard.model()
+        .ok_or("CLIP model not available")?;
+    
+    // 生成嵌入
+    let embedding = model.encode_image(&file_path)?;
+    
+    // 保存到数据库
+    if let Some(embedding_store) = guard.embedding_store() {
+        let id = file_id.unwrap_or_else(|| generate_id(&file_path));
+        let image_embedding = ImageEmbedding {
+            file_id: id,
+            embedding: embedding.clone(),
+            model_version: guard.config().model_name.clone(),
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        
+        embedding_store.save_embedding(&image_embedding)?;
+    }
+    
+    Ok(embedding)
+}
+
+/// 获取指定文件的嵌入状态
+#[tauri::command]
+async fn clip_get_embedding_status(
+    file_id: String,
+) -> Result<bool, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    embedding_store.has_embedding(&file_id)
+}
+
+/// 批量生成图片的 CLIP 嵌入向量
+#[tauri::command]
+async fn clip_generate_embeddings_batch(
+    file_paths: Vec<(String, String)>, // (file_path, file_id) 元组列表
+) -> Result<serde_json::Value, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    // 检查并加载模型
+    {
+        let guard = manager.read().await;
+        if !guard.is_model_loaded() {
+            drop(guard);
+            
+            let mut guard = manager.write().await;
+            if !guard.is_model_loaded() {
+                log::info!("CLIP model not loaded, loading now...");
+                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            }
+        }
+    }
+    
+    let guard = manager.read().await;
+    let model = guard.model()
+        .ok_or("CLIP model not available")?;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    let total = file_paths.len();
+    let mut success_count = 0;
+    let mut failed_count = 0;
+    let mut failed_files = Vec::new();
+    
+    for (index, (file_path, file_id)) in file_paths.iter().enumerate() {
+        // 检查是否已有嵌入
+        if let Ok(true) = embedding_store.has_embedding(file_id) {
+            success_count += 1;
+            continue;
+        }
+        
+        match model.encode_image(file_path) {
+            Ok(embedding) => {
+                let image_embedding = ImageEmbedding {
+                    file_id: file_id.clone(),
+                    embedding,
+                    model_version: guard.config().model_name.clone(),
+                    created_at: chrono::Utc::now().timestamp(),
+                };
+                
+                if let Err(e) = embedding_store.save_embedding(&image_embedding) {
+                    log::error!("Failed to save embedding for {}: {}", file_id, e);
+                    failed_count += 1;
+                    failed_files.push(file_path.clone());
+                } else {
+                    success_count += 1;
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to encode image {}: {}", file_path, e);
+                failed_count += 1;
+                failed_files.push(file_path.clone());
+            }
+        }
+        
+        // 每处理 10 个文件记录一次进度
+        if (index + 1) % 10 == 0 {
+            log::info!("CLIP embedding progress: {}/{}", index + 1, total);
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "total": total,
+        "success": success_count,
+        "failed": failed_count,
+        "failed_files": failed_files,
+    }))
+}
+
+/// 加载 CLIP 模型
+#[tauri::command]
+async fn clip_load_model() -> Result<(), String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let mut guard = manager.write().await;
+    guard.load_model().await
+}
+
+/// 卸载 CLIP 模型（释放内存）
+#[tauri::command]
+async fn clip_unload_model() -> Result<(), String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let mut guard = manager.write().await;
+    guard.unload_model();
+    Ok(())
+}
+
+/// 检查 CLIP 模型是否已加载
+#[tauri::command]
+async fn clip_is_model_loaded() -> Result<bool, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    Ok(guard.is_model_loaded())
+}
+
+/// 获取嵌入向量数量
+#[tauri::command]
+async fn clip_get_embedding_count() -> Result<i64, String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    embedding_store.get_embedding_count()
+}
+
+/// 获取 CLIP 模型下载状态
+#[tauri::command]
+async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, String> {
+    use crate::clip::model::ModelInfo;
+    use std::path::Path;
+    
+    let model_info = match model_name.as_str() {
+        "ViT-B-32" => ModelInfo::vit_b_32(),
+        "ViT-L-14" => ModelInfo::vit_l_14(),
+        _ => return Err(format!("Unknown model: {}", model_name)),
+    };
+    
+    // 获取缓存目录
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    let guard = manager.read().await;
+    let cache_dir = &guard.config().cache_dir;
+    
+    // 检查模型文件是否存在
+    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
+    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
+    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
+    
+    let image_path = cache_dir.join(image_model_file);
+    let text_path = cache_dir.join(text_model_file);
+    let tokenizer_path = cache_dir.join(tokenizer_file);
+    
+    let image_exists = image_path.exists();
+    let text_exists = text_path.exists();
+    let tokenizer_exists = tokenizer_path.exists();
+    
+    let is_downloaded = image_exists && text_exists && tokenizer_exists;
+    
+    // 计算已下载大小
+    let mut downloaded_size: u64 = 0;
+    if image_exists {
+        if let Ok(metadata) = std::fs::metadata(&image_path) {
+            downloaded_size += metadata.len();
+        }
+    }
+    if text_exists {
+        if let Ok(metadata) = std::fs::metadata(&text_path) {
+            downloaded_size += metadata.len();
+        }
+    }
+    if tokenizer_exists {
+        if let Ok(metadata) = std::fs::metadata(&tokenizer_path) {
+            downloaded_size += metadata.len();
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "model_name": model_info.name,
+        "is_downloaded": is_downloaded,
+        "embedding_dim": model_info.embedding_dim,
+        "image_size": model_info.image_size,
+        "downloaded_size": downloaded_size,
+        "files": {
+            "image_encoder": image_exists,
+            "text_encoder": text_exists,
+            "tokenizer": tokenizer_exists,
+        }
+    }))
+}
+
+/// 删除 CLIP 模型文件
+#[tauri::command]
+async fn clip_delete_model(model_name: String) -> Result<(), String> {
+    use crate::clip::model::ModelInfo;
+    use std::fs;
+    
+    let model_info = match model_name.as_str() {
+        "ViT-B-32" => ModelInfo::vit_b_32(),
+        "ViT-L-14" => ModelInfo::vit_l_14(),
+        _ => return Err(format!("Unknown model: {}", model_name)),
+    };
+    
+    // 获取缓存目录
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    let guard = manager.read().await;
+    let cache_dir = &guard.config().cache_dir;
+    
+    // 删除模型文件
+    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
+    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
+    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
+    
+    let image_path = cache_dir.join(image_model_file);
+    let text_path = cache_dir.join(text_model_file);
+    let tokenizer_path = cache_dir.join(tokenizer_file);
+    
+    if image_path.exists() {
+        fs::remove_file(&image_path).map_err(|e| format!("Failed to delete image model: {}", e))?;
+    }
+    if text_path.exists() {
+        fs::remove_file(&text_path).map_err(|e| format!("Failed to delete text model: {}", e))?;
+    }
+    if tokenizer_path.exists() {
+        fs::remove_file(&tokenizer_path).map_err(|e| format!("Failed to delete tokenizer: {}", e))?;
+    }
+    
+    log::info!("Deleted CLIP model files for: {}", model_name);
+    Ok(())
+}
+
+/// 打开 CLIP 模型目录
+#[tauri::command]
+async fn clip_open_model_folder() -> Result<(), String> {
+    let manager = clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    let guard = manager.read().await;
+    let cache_dir = &guard.config().cache_dir;
+    
+    // 确保目录存在
+    if !cache_dir.exists() {
+        std::fs::create_dir_all(cache_dir)
+            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    }
+    
+    // 使用系统默认程序打开目录
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(cache_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(cache_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(cache_dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+    
+    Ok(())
+}
+
+/// 获取所有图片文件（用于 CLIP 嵌入向量生成）
+/// 从数据库 file_index 表中查询所有 file_type = "Image" 的文件
+#[tauri::command]
+async fn get_all_image_files(app: tauri::AppHandle) -> Result<Vec<serde_json::Value>, String> {
+    // 尝试获取 AppDbPool（不是 Arc<AppDbPool>）
+    let pool = app.state::<db::AppDbPool>().inner().clone();
+    
+    let files = tokio::task::spawn_blocking(move || {
+        let conn = pool.get_connection();
+        db::file_index::get_all_image_files(&conn)
+            .map_err(|e| format!("Database error: {}", e))
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))??;
+    
+    // 转换为 JSON 格式
+    let result: Vec<serde_json::Value> = files.into_iter()
+        .map(|entry| {
+            serde_json::json!({
+                "id": entry.file_id,
+                "path": entry.path,
+                "name": entry.name,
+                "format": entry.format,
+            })
+        })
+        .collect();
+    
+    Ok(result)
+}
 
 fn main() {
     
@@ -2725,7 +3183,21 @@ fn main() {
             get_update_download_progress,
             install_update,
             open_update_download_folder,
-            proxy_http_request
+            proxy_http_request,
+            // CLIP 相关命令
+            clip_search_by_text,
+            clip_search_by_image,
+            clip_generate_embedding,
+            clip_get_embedding_status,
+            clip_load_model,
+            clip_unload_model,
+            clip_is_model_loaded,
+            clip_get_embedding_count,
+            clip_get_model_status,
+            clip_delete_model,
+            clip_open_model_folder,
+            clip_generate_embeddings_batch,
+            get_all_image_files
         ])
         .setup(|app| {
             // 创建托盘菜单
@@ -2870,6 +3342,22 @@ fn main() {
                     }
                 })
             };
+            
+            // 初始化 CLIP 管理器
+            let clip_cache_root = cache_root.clone().unwrap_or_else(|| {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .unwrap_or_else(|_| ".".to_string());
+                Path::new(&home).join(".aurora_cache")
+            });
+            
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = clip::init_clip_manager(clip_cache_root).await {
+                    eprintln!("Failed to initialize CLIP manager: {}", e);
+                } else {
+                    log::info!("CLIP manager initialized successfully");
+                }
+            });
             
             tauri::async_runtime::spawn(async move {
                 color_worker::color_extraction_worker(

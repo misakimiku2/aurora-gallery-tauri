@@ -432,6 +432,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           downloadProgress={downloadProgress}
           onInstallUpdate={onInstallUpdate}
           onOpenDownloadFolder={onOpenDownloadFolder}
+          onShowToast={showToast}
         />
       )}
 

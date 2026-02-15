@@ -185,6 +185,36 @@ export interface AIConfig {
   onlineServicePreset?: string; // 预设ID: 'openai' | 'gemini' | 'zhipu' | 'custom' 等
 }
 
+// ==================== CLIP 模型设置 ====================
+
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14';
+export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
+
+export interface ClipModelInfo {
+  name: ClipModelName;
+  displayName: string;
+  description: string;
+  size: number; // 字节
+  sizeDisplay: string;
+  embeddingDim: number;
+  isRecommended: boolean;
+}
+
+export interface ClipSettings {
+  // 模型配置
+  modelName: ClipModelName;
+  useGpu: boolean;
+  
+  // 下载状态
+  downloadStatus: ClipDownloadStatus;
+  downloadProgress: number; // 0-100
+  downloadError?: string;
+  
+  // 模型信息
+  modelVersion: string;
+  downloadedAt?: number; // 时间戳
+}
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   language: 'zh' | 'en';
@@ -197,6 +227,7 @@ export interface AppSettings {
   };
   search: SearchSettings;
   ai: AIConfig;
+  clip: ClipSettings;
   performance: {
     refreshInterval: number; // 毫秒
   };
@@ -293,7 +324,7 @@ export interface TabState {
   scrollTop: number;
 }
 
-export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'performance' | 'about';
+export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about';
 
 export interface DragState {
   isDragging: boolean;
@@ -384,6 +415,58 @@ export interface UpdateSettings {
   checkFrequency: 'startup' | 'daily' | 'weekly';
   ignoredVersions: string[];
   lastCheckTime?: number;
+}
+
+// ==================== CLIP 相关类型 ====================
+
+/// CLIP 搜索结果项
+export interface ClipSearchResult {
+  /// 文件 ID
+  file_id: string;
+  /// 相似度分数 (0.0 - 1.0)
+  score: number;
+  /// 排名
+  rank: number;
+}
+
+/// CLIP 搜索选项
+export interface ClipSearchOptions {
+  /// 返回结果数量
+  top_k?: number;
+  /// 最小相似度阈值
+  min_score?: number;
+}
+
+/// CLIP 模型配置
+export interface ClipConfig {
+  /// 模型名称
+  model_name: string;
+  /// 是否使用 GPU
+  use_gpu: boolean;
+  /// 向量维度
+  embedding_dim: number;
+}
+
+/// CLIP 嵌入状态
+export interface ClipEmbeddingStatus {
+  /// 文件 ID
+  file_id: string;
+  /// 是否已有嵌入
+  has_embedding: boolean;
+  /// 模型版本（如果有）
+  model_version?: string;
+  /// 创建时间（如果有）
+  created_at?: number;
+}
+
+/// CLIP 统计信息
+export interface ClipStats {
+  /// 嵌入向量总数
+  embedding_count: number;
+  /// 模型是否已加载
+  is_model_loaded: boolean;
+  /// 当前模型名称
+  current_model?: string;
 }
 
 // AI 服务商预设接口

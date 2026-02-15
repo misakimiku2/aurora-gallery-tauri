@@ -4,7 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open } from '@tauri-apps/plugin-dialog';
 import { startDrag as tauriStartDrag } from '@crabnebula/tauri-plugin-drag';
 import { FileNode, FileType, DominantColor } from '../types';
-import { isTauriEnvironment } from '../utils/environment';
+import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { performanceMonitor } from '../utils/performanceMonitor';
 
 /**
@@ -1536,6 +1536,318 @@ export const proxyHttpRequest = async (
     return result;
   } catch (error) {
     console.error('Proxy HTTP request failed:', error);
+    throw error;
+  }
+};
+
+// ==================== CLIP 相关 API ====================
+
+import { ClipSearchResult, ClipSearchOptions, ClipStats } from '../types';
+
+/**
+ * 使用自然语言文本搜索图片
+ * @param text 搜索文本
+ * @param options 搜索选项
+ * @returns 搜索结果列表
+ */
+export const clipSearchByText = async (
+  text: string,
+  options?: ClipSearchOptions
+): Promise<ClipSearchResult[]> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('CLIP search is only available in Tauri environment');
+  }
+  try {
+    const results = await invoke<ClipSearchResult[]>('clip_search_by_text', {
+      text,
+      topK: options?.top_k ?? 50,
+      minScore: options?.min_score ?? 0.0,
+    });
+    return results;
+  } catch (error) {
+    console.error('CLIP text search failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * 使用图片搜索相似图片（以图搜图）
+ * @param imagePath 图片路径
+ * @param options 搜索选项
+ * @returns 搜索结果列表
+ */
+export const clipSearchByImage = async (
+  imagePath: string,
+  options?: ClipSearchOptions
+): Promise<ClipSearchResult[]> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('CLIP search is only available in Tauri environment');
+  }
+  try {
+    const results = await invoke<ClipSearchResult[]>('clip_search_by_image', {
+      imagePath,
+      topK: options?.top_k ?? 50,
+      minScore: options?.min_score ?? 0.0,
+    });
+    return results;
+  } catch (error) {
+    console.error('CLIP image search failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * 为指定图片生成 CLIP 嵌入向量
+ * @param filePath 图片路径
+ * @param fileId 文件 ID（可选）
+ * @returns 嵌入向量
+ */
+export const clipGenerateEmbedding = async (
+  filePath: string,
+  fileId?: string
+): Promise<number[]> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('CLIP embedding is only available in Tauri environment');
+  }
+  try {
+    const embedding = await invoke<number[]>('clip_generate_embedding', {
+      filePath,
+      fileId,
+    });
+    return embedding;
+  } catch (error) {
+    console.error('CLIP embedding generation failed:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取指定文件的 CLIP 嵌入状态
+ * @param fileId 文件 ID
+ * @returns 是否已有嵌入
+ */
+export const clipGetEmbeddingStatus = async (fileId: string): Promise<boolean> => {
+  if (!isTauriEnvironment()) {
+    return false;
+  }
+  try {
+    const hasEmbedding = await invoke<boolean>('clip_get_embedding_status', {
+      fileId,
+    });
+    return hasEmbedding;
+  } catch (error) {
+    console.error('Failed to get CLIP embedding status:', error);
+    return false;
+  }
+};
+
+/**
+ * 加载 CLIP 模型
+ */
+export const clipLoadModel = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    throw new Error('CLIP is only available in Tauri environment');
+  }
+  try {
+    await invoke('clip_load_model');
+  } catch (error) {
+    console.error('Failed to load CLIP model:', error);
+    throw error;
+  }
+};
+
+/**
+ * 卸载 CLIP 模型（释放内存）
+ */
+export const clipUnloadModel = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke('clip_unload_model');
+  } catch (error) {
+    console.error('Failed to unload CLIP model:', error);
+  }
+};
+
+/**
+ * 检查 CLIP 模型是否已加载
+ * @returns 是否已加载
+ */
+export const clipIsModelLoaded = async (): Promise<boolean> => {
+  if (!isTauriEnvironment()) {
+    return false;
+  }
+  try {
+    const isLoaded = await invoke<boolean>('clip_is_model_loaded');
+    return isLoaded;
+  } catch (error) {
+    console.error('Failed to check CLIP model status:', error);
+    return false;
+  }
+};
+
+/**
+ * 获取 CLIP 嵌入向量数量
+ * @returns 嵌入向量总数
+ */
+export const clipGetEmbeddingCount = async (): Promise<number> => {
+  if (!isTauriEnvironment()) {
+    return 0;
+  }
+  try {
+    const count = await invoke<number>('clip_get_embedding_count');
+    return count;
+  } catch (error) {
+    console.error('Failed to get CLIP embedding count:', error);
+    return 0;
+  }
+};
+
+/**
+ * 获取 CLIP 统计信息
+ * @returns CLIP 统计信息
+ */
+export const clipGetStats = async (): Promise<ClipStats> => {
+  if (!isTauriEnvironment()) {
+    return {
+      embedding_count: 0,
+      is_model_loaded: false,
+    };
+  }
+  try {
+    const [count, isLoaded] = await Promise.all([
+      clipGetEmbeddingCount(),
+      clipIsModelLoaded(),
+    ]);
+    return {
+      embedding_count: count,
+      is_model_loaded: isLoaded,
+    };
+  } catch (error) {
+    console.error('Failed to get CLIP stats:', error);
+    return {
+      embedding_count: 0,
+      is_model_loaded: false,
+    };
+  }
+};
+
+// ==================== CLIP 模型管理 API ====================
+
+export interface ClipModelStatus {
+  model_name: string;
+  is_downloaded: boolean;
+  embedding_dim: number;
+  image_size: number;
+  downloaded_size: number;
+  files: {
+    image_encoder: boolean;
+    text_encoder: boolean;
+    tokenizer: boolean;
+  };
+}
+
+/**
+ * 获取 CLIP 模型下载状态
+ * @param modelName 模型名称
+ * @returns 模型状态
+ */
+export const clipGetModelStatus = async (modelName: string): Promise<ClipModelStatus> => {
+  if (!isTauriEnvironment()) {
+    return {
+      model_name: modelName,
+      is_downloaded: false,
+      embedding_dim: 512,
+      image_size: 224,
+      downloaded_size: 0,
+      files: {
+        image_encoder: false,
+        text_encoder: false,
+        tokenizer: false,
+      },
+    };
+  }
+  try {
+    const status = await invoke<ClipModelStatus>('clip_get_model_status', {
+      modelName,
+    });
+    return status;
+  } catch (error) {
+    console.error('Failed to get CLIP model status:', error);
+    throw error;
+  }
+};
+
+/**
+ * 删除 CLIP 模型文件
+ * @param modelName 模型名称
+ */
+export const clipDeleteModel = async (modelName: string): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke('clip_delete_model', {
+      modelName,
+    });
+  } catch (error) {
+    console.error('Failed to delete CLIP model:', error);
+    throw error;
+  }
+};
+
+export interface ClipBatchEmbeddingResult {
+  total: number;
+  success: number;
+  failed: number;
+  failed_files: string[];
+}
+
+/**
+ * 批量生成图片的 CLIP 嵌入向量
+ * @param files 文件列表，每个元素为 [file_path, file_id] 元组
+ * @returns 处理结果
+ */
+export const clipGenerateEmbeddingsBatch = async (
+  files: [string, string][]
+): Promise<ClipBatchEmbeddingResult> => {
+  if (!isTauriEnvironment()) {
+    return {
+      total: files.length,
+      success: 0,
+      failed: files.length,
+      failed_files: files.map(f => f[0]),
+    };
+  }
+  try {
+    const result = await invoke<ClipBatchEmbeddingResult>('clip_generate_embeddings_batch', {
+      filePaths: files,
+    });
+    return result;
+  } catch (error) {
+    console.error('Failed to generate embeddings batch:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取所有图片文件（从数据库查询）
+ * 用于 CLIP 嵌入向量生成
+ * @returns 图片文件列表，每个文件包含 id, path, name, format
+ */
+export const getAllImageFiles = async (): Promise<{ id: string; path: string; name: string; format?: string }[]> => {
+  // 确保在 Tauri 环境中运行
+  const isTauri = await detectTauriEnvironmentAsync();
+  if (!isTauri) {
+    console.warn('getAllImageFiles: Not in Tauri environment');
+    throw new Error('此功能需要在 Tauri 应用环境中运行');
+  }
+  try {
+    const result = await invoke<{ id: string; path: string; name: string; format?: string }[]>('get_all_image_files');
+    return result;
+  } catch (error) {
+    console.error('Failed to get all image files:', error);
     throw error;
   }
 };

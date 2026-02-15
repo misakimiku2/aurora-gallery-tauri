@@ -7,7 +7,7 @@ import {
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
   ArrowDownUp, Calendar, PanelRight, X, Tag, 
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp, Users
+  ChevronUp, Users, Sparkles, Image as ImageIcon
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -56,6 +56,10 @@ interface TopBarProps {
   onPersonSortDirectionChange?: () => void;
   onPersonGroupByChange?: (option: PersonGroupByOption) => void;
   t: (key: string) => string;
+  // --- CLIP Search ---
+  isClipSearchEnabled?: boolean;
+  onToggleClipSearch?: () => void;
+  onClipSearch?: (query: string) => Promise<void>;
 } 
 
 const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { current: number, total: number, pageSize: number, onPageChange: (page: number) => void, t: any }) => {
@@ -534,7 +538,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   onPersonSortByChange,
   onPersonSortDirectionChange,
   onPersonGroupByChange,
-  t
+  t,
+  // CLIP Search
+  isClipSearchEnabled = false,
+  onToggleClipSearch,
+  onClipSearch
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -548,6 +556,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
   const [isColorSearching, setIsColorSearching] = useState(false);
   const colorPickerContainerRef = useRef<HTMLDivElement>(null);
+  
+  // CLIP Search State
+  const [isClipSearching, setIsClipSearching] = useState(false);
 
   useEffect(() => {
     if (!isColorPickerOpen) return;
@@ -675,11 +686,13 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
-            : isAISearchEnabled 
-              ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
-              : activeTab.searchQuery 
-                ? 'border-blue-500 shadow-sm' 
-                : 'border-transparent'
+            : isClipSearchEnabled
+              ? 'border-green-500 shadow-sm shadow-green-500/20'
+              : isAISearchEnabled 
+                ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
+                : activeTab.searchQuery 
+                  ? 'border-blue-500 shadow-sm' 
+                  : 'border-transparent'
         }`}>
           
           {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
@@ -740,6 +753,23 @@ export const TopBar: React.FC<TopBarProps> = ({
              )}
           </div>
           
+          {/* CLIP Search Button */}
+          {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
+            <div className="relative flex-shrink-0">
+              {isClipSearching ? (
+                <Loader2 size={16} className="mr-2 flex-shrink-0 text-green-500 animate-spin" />
+              ) : (
+                <button
+                  onClick={() => onToggleClipSearch && onToggleClipSearch()}
+                  className={`mr-2 flex-shrink-0 cursor-pointer hover:text-green-500 transition-colors ${isClipSearchEnabled ? 'text-green-500' : 'text-gray-400'} flex items-center`}
+                  title={isClipSearchEnabled ? 'CLIP 语义搜索已启用' : '启用 CLIP 语义搜索'}
+                >
+                  <Sparkles size={16} />
+                </button>
+              )}
+            </div>
+          )}
+          
           {isColorSearchQuery && (
             <div 
                 className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
@@ -758,15 +788,17 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : isAISearchEnabled
-                    ? t('settings.aiSmartSearch')
-                    : activeTab.searchScope === 'file'
-                      ? '搜索文件名...'
-                      : activeTab.searchScope === 'tag'
-                        ? '搜索标签...'
-                        : activeTab.searchScope === 'folder'
-                          ? '搜索文件夹...'
-                          : '搜索...'
+                  : isClipSearchEnabled
+                    ? '输入自然语言描述，如：夕阳下的海滩、穿红色衣服的人...'
+                    : isAISearchEnabled
+                      ? t('settings.aiSmartSearch')
+                      : activeTab.searchScope === 'file'
+                        ? '搜索文件名...'
+                        : activeTab.searchScope === 'tag'
+                          ? '搜索标签...'
+                          : activeTab.searchScope === 'folder'
+                            ? '搜索文件夹...'
+                            : '搜索...'
             }
             value={
               activeTab.viewMode === 'people-overview' ? (personSearchQuery || '') :

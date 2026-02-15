@@ -143,6 +143,37 @@ pub fn get_all_entries(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     Ok(entries)
 }
 
+/// 获取所有图片文件（file_type = "Image"）
+/// 用于 CLIP 嵌入向量生成
+pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format 
+         FROM file_index 
+         WHERE file_type = 'Image'"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: row.get(1)?,
+            path: row.get(2)?,
+            name: row.get(3)?,
+            file_type: row.get(4)?,
+            size: row.get(5)?,
+            created_at: row.get(6)?,
+            modified_at: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+            format: row.get(10)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
 /// Lightweight query that only selects the minimal columns needed for UI-first-paint
 /// (used to demonstrate/measure a fast-start strategy). Returns `FileIndexEntry` with
 /// non-essential fields left empty to keep the shape consistent.

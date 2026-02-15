@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles } from '../api/tauri-bridge';
+import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
 // 关于面板组件
 interface AboutPanelProps {
@@ -225,6 +226,505 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
   );
 };
 
+// AI视觉面板组件
+interface AIVisionPanelProps {
+  t: (key: string) => string;
+  settings: ClipSettings;
+  onUpdateSettings: (settings: ClipSettings) => void;
+}
+
+const CLIP_MODELS: ClipModelInfo[] = [
+  {
+    name: 'ViT-B-32',
+    displayName: 'ViT-B/32',
+    description: '推荐 - 平衡速度和准确度',
+    size: 300 * 1024 * 1024, // 300MB
+    sizeDisplay: '300 MB',
+    embeddingDim: 512,
+    isRecommended: true,
+  },
+  {
+    name: 'ViT-L-14',
+    displayName: 'ViT-L/14',
+    description: '高精度 - 更好的语义理解',
+    size: 800 * 1024 * 1024, // 800MB
+    sizeDisplay: '800 MB',
+    embeddingDim: 768,
+    isRecommended: false,
+  },
+];
+
+const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings }) => {
+  const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [loadingModel, setLoadingModel] = useState<string | null>(null);
+  const [embeddingCount, setEmbeddingCount] = useState(0);
+  const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
+
+  // 加载模型状态和嵌入数量
+  useEffect(() => {
+    loadModelStatuses();
+    loadEmbeddingCount();
+  }, []);
+
+  const loadModelStatuses = async () => {
+    setIsLoading(true);
+    try {
+      const statuses: Record<string, ClipModelStatus> = {};
+      for (const model of CLIP_MODELS) {
+        const status = await clipGetModelStatus(model.name);
+        statuses[model.name] = status;
+      }
+      setModelStatuses(statuses);
+    } catch (error) {
+      console.error('Failed to load model statuses:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDownload = async (modelName: ClipModelName) => {
+    setLoadingModel(modelName);
+    onUpdateSettings({
+      ...settings,
+      modelName,
+      downloadStatus: 'downloading',
+      downloadProgress: 0,
+    });
+
+    try {
+      // 加载模型（会自动下载）
+      await clipLoadModel();
+      
+      onUpdateSettings({
+        ...settings,
+        modelName,
+        downloadStatus: 'completed',
+        downloadProgress: 100,
+        downloadedAt: Date.now(),
+      });
+      
+      // 刷新状态
+      await loadModelStatuses();
+    } catch (error) {
+      console.error('Failed to download model:', error);
+      onUpdateSettings({
+        ...settings,
+        downloadStatus: 'error',
+        downloadError: String(error),
+      });
+    } finally {
+      setLoadingModel(null);
+    }
+  };
+
+  const handleDelete = async (modelName: ClipModelName) => {
+    if (!confirm(`确定要删除 ${modelName} 模型吗？`)) return;
+    
+    try {
+      await clipDeleteModel(modelName);
+      await loadModelStatuses();
+      
+      // 如果删除的是当前选中的模型，重置设置
+      if (settings.modelName === modelName) {
+        onUpdateSettings({
+          ...settings,
+          downloadStatus: 'not_started',
+          downloadProgress: 0,
+        });
+      }
+    } catch (error) {
+      console.error('Failed to delete model:', error);
+      alert('删除模型失败: ' + error);
+    }
+  };
+
+  const loadEmbeddingCount = async () => {
+    try {
+      const count = await clipGetEmbeddingCount();
+      setEmbeddingCount(count);
+    } catch (error) {
+      console.error('Failed to load embedding count:', error);
+    }
+  };
+
+  const handleGenerateEmbeddings = async () => {
+    // 从数据库获取文件列表
+    let imageFiles: { id: string; path: string; name: string; format?: string }[] = [];
+    try {
+      imageFiles = await getAllImageFiles();
+    } catch (error: any) {
+      console.error('Failed to get image files from database:', error);
+      // 根据错误类型显示不同的提示
+      const toastFn = onShowToast;
+      if (error?.message?.includes('需要在 Tauri 应用环境中运行')) {
+        toastFn?.('请在 Tauri 应用中使用此功能（而非浏览器）', 4000);
+      } else {
+        toastFn?.('获取图片文件列表失败，请确保已扫描目录', 3000);
+      }
+      return;
+    }
+
+    if (imageFiles.length === 0) {
+      onShowToast?.('没有找到图片文件，请先扫描目录', 3000);
+      return;
+    }
+
+    const confirmed = confirm(`将为 ${imageFiles.length} 张图片生成 CLIP 嵌入向量，这可能需要一些时间。是否继续？`);
+    if (!confirmed) return;
+
+    setIsGeneratingEmbeddings(true);
+    setGenerationProgress(0);
+
+    try {
+      // 分批处理，每批 50 张
+      const batchSize = 50;
+      const batches = [];
+      for (let i = 0; i < imageFiles.length; i += batchSize) {
+        batches.push(imageFiles.slice(i, i + batchSize));
+      }
+
+      let totalSuccess = 0;
+      let totalFailed = 0;
+
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const fileTuples: [string, string][] = batch.map(f => [f.path, f.id]);
+
+        const result = await clipGenerateEmbeddingsBatch(fileTuples);
+        totalSuccess += result.success;
+        totalFailed += result.failed;
+
+        setGenerationProgress(Math.round(((i + 1) / batches.length) * 100));
+      }
+
+      await loadEmbeddingCount();
+      onShowToast?.(`嵌入向量生成完成！成功: ${totalSuccess}, 失败: ${totalFailed}`, 4000);
+    } catch (error: any) {
+      console.error('Failed to generate embeddings:', error);
+      // 根据错误类型显示不同的提示
+      let errorMsg = '生成嵌入向量失败';
+      if (error?.message?.includes('model not loaded') || error?.includes?.('model not loaded')) {
+        errorMsg = 'CLIP 模型未加载，请先下载模型';
+      } else if (error?.message?.includes('not initialized') || error?.includes?.('not initialized')) {
+        errorMsg = 'CLIP 服务未初始化，请重启应用';
+      } else if (error?.message || typeof error === 'string') {
+        errorMsg += ': ' + (error.message || error);
+      }
+      onShowToast?.(errorMsg, 4000);
+    } finally {
+      setIsGeneratingEmbeddings(false);
+      setGenerationProgress(0);
+    }
+  };
+
+  const formatBytes = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  return (
+    <div className="space-y-8 animate-fade-in">
+      {/* 标题 */}
+      <section>
+        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center">
+          <Sparkles size={20} className="mr-2 text-green-500"/>
+          AI视觉
+        </h3>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+          CLIP 模型可以实现自然语言图片搜索和以图搜图功能。选择适合您需求的模型进行下载。
+        </p>
+      </section>
+
+      {/* 模型列表 */}
+      <section className="space-y-4">
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center">
+          <Download size={16} className="mr-2"/>
+          可用模型
+        </h4>
+        
+        {CLIP_MODELS.map((model) => {
+          const status = modelStatuses[model.name];
+          const isDownloaded = status?.is_downloaded ?? false;
+          const isLoadingModel = loadingModel === model.name;
+          
+          return (
+            <div
+              key={model.name}
+              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${
+                settings.modelName === model.name
+                  ? 'border-green-500 ring-2 ring-green-500/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
+              }`}
+            >
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h5 className="font-semibold text-gray-800 dark:text-white">
+                      {model.displayName}
+                    </h5>
+                    {model.isRecommended && (
+                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
+                        推荐
+                      </span>
+                    )}
+                    {isDownloaded && (
+                      <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-full flex items-center">
+                        <Check size={12} className="mr-1"/>
+                        已下载
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                    {model.description}
+                  </p>
+                  <div className="flex items-center gap-4 text-xs text-gray-400">
+                    <span className="flex items-center">
+                      <HardDrive size={12} className="mr-1"/>
+                      {model.sizeDisplay}
+                    </span>
+                    <span className="flex items-center">
+                      <Activity size={12} className="mr-1"/>
+                      {model.embeddingDim} 维向量
+                    </span>
+                    {isDownloaded && status && (
+                      <span className="flex items-center text-green-500">
+                        <Check size={12} className="mr-1"/>
+                        已下载 {formatBytes(status.downloaded_size)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 ml-4">
+                  {isDownloaded ? (
+                    <>
+                      <button
+                        onClick={() => onUpdateSettings({ ...settings, modelName: model.name })}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                          settings.modelName === model.name
+                            ? 'bg-green-500 text-white'
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                        }`}
+                      >
+                        {settings.modelName === model.name ? '使用中' : '使用'}
+                      </button>
+                      <button
+                        onClick={() => handleDelete(model.name)}
+                        className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                        title="删除模型"
+                      >
+                        <Trash size={18}/>
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleDownload(model.name)}
+                      disabled={isLoadingModel}
+                      className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                    >
+                      {isLoadingModel ? (
+                        <>
+                          <RefreshCw size={16} className="mr-2 animate-spin"/>
+                          下载中...
+                        </>
+                      ) : (
+                        <>
+                          <Download size={16} className="mr-2"/>
+                          下载
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+              </div>
+              
+              {/* 下载进度条 */}
+              {isLoadingModel && (
+                <div className="mt-4">
+                  <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-green-500 transition-all duration-300"
+                      style={{ width: `${settings.downloadProgress}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    正在下载模型文件... {settings.downloadProgress}%
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      {/* 嵌入向量生成 */}
+      <section>
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4 flex items-center">
+          <Brain size={16} className="mr-2"/>
+          嵌入向量生成
+        </h4>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="font-medium text-gray-800 dark:text-white">生成图片嵌入向量</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                为所有图片生成 CLIP 嵌入向量，用于语义搜索
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-sm text-gray-600 dark:text-gray-400">
+                已生成: <span className="font-semibold text-green-600">{embeddingCount}</span> 张
+              </div>
+            </div>
+          </div>
+          
+          {isGeneratingEmbeddings ? (
+            <div className="mt-3">
+              <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 transition-all duration-300"
+                  style={{ width: `${generationProgress}%` }}
+                />
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                正在生成嵌入向量... {generationProgress}%
+              </p>
+            </div>
+          ) : (
+            <button
+              onClick={handleGenerateEmbeddings}
+              disabled={isGeneratingEmbeddings}
+              className="mt-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+            >
+              <Brain size={16} className="mr-2"/>
+              开始生成
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* 高级选项 */}
+      <section>
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4 flex items-center">
+          <Cpu size={16} className="mr-2"/>
+          高级选项
+        </h4>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <label className="flex items-center justify-between cursor-pointer">
+            <div>
+              <div className="font-medium text-gray-800 dark:text-white">启用 GPU 加速</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                使用 CUDA/TensorRT 加速模型推理（需要 NVIDIA 显卡）
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.useGpu}
+              onChange={(e) => onUpdateSettings({ ...settings, useGpu: e.target.checked })}
+              className="w-5 h-5 text-green-500 rounded focus:ring-green-500"
+            />
+          </label>
+        </div>
+      </section>
+
+      {/* 下载错误提示 */}
+      {settings.downloadStatus === 'error' && settings.downloadError && (
+        <section className="bg-red-50 dark:bg-red-900/20 rounded-xl p-4 border border-red-100 dark:border-red-800">
+          <h4 className="text-sm font-semibold text-red-800 dark:text-red-300 mb-2 flex items-center">
+            <AlertCircle size={16} className="mr-2"/>
+            下载失败
+          </h4>
+          <p className="text-sm text-red-700 dark:text-red-400 mb-3">
+            {settings.downloadError}
+          </p>
+          <div className="text-sm text-red-700 dark:text-red-400 space-y-2">
+            <p className="font-medium">手动下载步骤：</p>
+            <ol className="list-decimal list-inside space-y-1 ml-2">
+              <li>访问 Hugging Face 或其他模型仓库</li>
+              <li>搜索 "CLIP ONNX" 或 "clip-vit-base-patch32"</li>
+              <li>下载以下文件：
+                <ul className="list-disc list-inside ml-4 mt-1 text-xs">
+                  <li>image_encoder.onnx（图像编码器）</li>
+                  <li>text_encoder.onnx（文本编码器）</li>
+                  <li>tokenizer.json（分词器）</li>
+                </ul>
+              </li>
+              <li>将文件放置在应用的缓存目录中</li>
+            </ol>
+          </div>
+        </section>
+      )}
+
+      {/* 模型目录和操作 */}
+      <section className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center">
+          <FolderOpen size={16} className="mr-2"/>
+          模型目录
+        </h4>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          模型文件保存在应用缓存目录中。您可以打开目录查看或手动管理模型文件。
+        </p>
+        <button
+          onClick={async () => {
+            try {
+              // 调用后端命令打开模型目录
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('clip_open_model_folder');
+            } catch (error) {
+              console.error('Failed to open model folder:', error);
+              alert('打开目录失败: ' + error);
+            }
+          }}
+          className="px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center"
+        >
+          <FolderOpen size={16} className="mr-2"/>
+          打开模型目录
+        </button>
+      </section>
+
+      {/* 使用说明 */}
+      <section className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-800">
+        <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2 flex items-center">
+          <Info size={16} className="mr-2"/>
+          如何使用 CLIP 搜索
+        </h4>
+        <div className="text-sm text-blue-700 dark:text-blue-400 space-y-2">
+          <p className="font-medium">1. 启用 CLIP 搜索：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>返回主界面，点击顶部搜索框右侧的 ✨ 图标</li>
+            <li>搜索框边框会变成绿色，表示 CLIP 语义搜索已启用</li>
+          </ul>
+          
+          <p className="font-medium mt-3">2. 自然语言搜索：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>在搜索框中输入自然语言描述，如："夕阳下的海滩"、"穿红色衣服的人"</li>
+            <li>按回车或点击搜索按钮</li>
+            <li>系统会返回语义相似的图片</li>
+          </ul>
+          
+          <p className="font-medium mt-3">3. 以图搜图：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>右键点击图片，选择"搜索相似图片"</li>
+            <li>系统会找到视觉上相似的图片</li>
+          </ul>
+          
+          <p className="font-medium mt-3">4. 提示：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>ViT-B/32 速度更快，适合大多数用户</li>
+            <li>ViT-L/14 准确度更高，但需要更多内存</li>
+            <li>首次使用时会自动加载模型，可能需要几秒钟</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  );
+};
+
 interface SettingsModalProps {
   state: AppState;
   onClose: () => void;
@@ -240,9 +740,11 @@ interface SettingsModalProps {
   downloadProgress?: DownloadProgress | null;
   onInstallUpdate?: () => void;
   onOpenDownloadFolder?: () => void;
+  // Toast notification
+  onShowToast?: (msg: string, duration?: number) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast }) => {
   // ... (keep existing state and checkConnection logic)
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
@@ -729,6 +1231,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'ai' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
                   >
                     <Brain size={18} className="mr-3"/> {t('settings.catAi')}
+                  </button>
+                  <button
+                    onClick={() => onUpdateSettings({ settingsCategory: 'aiVision' })}
+                    className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'aiVision' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                  >
+                    <Sparkles size={18} className="mr-3"/> AI视觉
                   </button>
                   <button
                     onClick={() => onUpdateSettings({ settingsCategory: 'performance' })}
@@ -1981,6 +2489,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
                       </section>
                   </div>
+              )}
+
+              {state.settingsCategory === 'aiVision' && (
+                  <AIVisionPanel 
+                    t={t}
+                    settings={state.settings.clip}
+                    onUpdateSettings={(clipSettings) => onUpdateSettingsData({ clip: clipSettings })}
+                  />
               )}
 
               {state.settingsCategory === 'performance' && (

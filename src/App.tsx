@@ -102,6 +102,13 @@ export const App: React.FC = () => {
         targetLanguage: 'zh',
         confidenceThreshold: 0.6
       },
+      clip: {
+        modelName: 'ViT-B-32',
+        useGpu: false,
+        downloadStatus: 'not_started',
+        downloadProgress: 0,
+        modelVersion: '1.0.0',
+      },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
     },
     // Scan progress (onboarding)
@@ -220,6 +227,8 @@ export const App: React.FC = () => {
   const { toast, showToast } = useToasts();
   const [toolbarQuery, setToolbarQuery] = useState('');
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
+  // CLIP search state
+  const [isClipSearchEnabled, setIsClipSearchEnabled] = useState(false);
   // Topic layout mode: controlled by TopBar when viewing topics overview
   const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
   const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) { } };
@@ -3240,6 +3249,66 @@ export const App: React.FC = () => {
   // 锟芥换 App.tsx 锟叫碉拷 onPerformSearch
   const onPerformSearch = async (query: string) => {
 
+    // 0. CLIP 语义搜索
+    if (isClipSearchEnabled && query.trim()) {
+      const taskId = startTask('ai', [], '正在使用 CLIP 搜索...', false);
+      
+      try {
+        // 导入 CLIP 搜索 API
+        const { clipSearchByText } = await import('./api/tauri-bridge');
+        const results = await clipSearchByText(query.trim(), { top_k: 50 });
+        
+        if (results && results.length > 0) {
+          // 提取文件 ID 列表
+          const fileIds = results.map(r => r.file_id);
+          
+          // 转换为文件路径
+          const validPaths: string[] = [];
+          const missingPaths: string[] = [];
+          const newFilesMap: Record<string, FileNode> = {};
+          
+          // 从 state.files 中查找对应的文件路径
+          const allFiles = Object.values(state.files);
+          const idMap = new Map<string, string>();
+          allFiles.forEach(f => {
+            if (f.id) idMap.set(f.id, f.path);
+          });
+          
+          results.forEach(result => {
+            const filePath = idMap.get(result.file_id);
+            if (filePath) {
+              validPaths.push(filePath);
+            } else {
+              missingPaths.push(result.file_id);
+            }
+          });
+          
+          const aiFilter: AiSearchFilter = {
+            keywords: [query.trim()],
+            colors: [],
+            people: [],
+            originalQuery: `clip:${query.trim()}`,
+            filePaths: validPaths
+          };
+          
+          pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+          
+          if (validPaths.length === 0) {
+            showToast('未找到匹配的图片，请先为图片生成 CLIP 嵌入向量');
+          }
+        } else {
+          showToast('未找到匹配的图片');
+        }
+      } catch (e) {
+        console.error("CLIP search failed", e);
+        showToast("CLIP 搜索失败: " + e);
+      } finally {
+        updateTask(taskId, { current: 1, status: 'completed' });
+        setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+      }
+      return;
+    }
+
     // 1. 锟斤拷色锟斤拷锟斤拷锟竭硷拷
     if (query.startsWith('color:')) {
       let hex = query.replace('color:', '').trim();
@@ -3931,6 +4000,9 @@ export const App: React.FC = () => {
               onPersonSortDirectionChange={handlePersonSortDirectionChange}
               onPersonGroupByChange={handlePersonGroupByChange}
               t={t}
+              // CLIP Search
+              isClipSearchEnabled={isClipSearchEnabled}
+              onToggleClipSearch={() => setIsClipSearchEnabled(!isClipSearchEnabled)}
             />
             {/* ... (Filter UI, same as before) ... */}
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
