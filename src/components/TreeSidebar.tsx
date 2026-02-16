@@ -13,9 +13,10 @@ const FixedSizeListComp: any = (() => {
 })();
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person } from '../types';
-import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc, Scan } from 'lucide-react';
+import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc, Scan, Download } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
+import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
@@ -1109,6 +1110,41 @@ export const Sidebar: React.FC<{
     onPauseResume(taskId, taskType);
   };
 
+  // 模型下载进度状态
+  const [modelDownloads, setModelDownloads] = useState<ModelDownloadInfo[]>([]);
+  
+  // 订阅模型下载进度
+  useEffect(() => {
+    // 初始化时获取当前活跃的下载
+    const activeDownloads = getActiveDownloads();
+    setModelDownloads(activeDownloads);
+    
+    // 订阅下载进度变化
+    const unsubscribe = subscribeToModelDownload((modelName, info) => {
+      setModelDownloads(prev => {
+        const filtered = prev.filter(d => d.modelName !== modelName);
+        if (info.status === 'downloading') {
+          return [...filtered, info];
+        } else if (info.status === 'completed' || info.status === 'error') {
+          // 完成后短暂显示，然后移除
+          return [...filtered, info];
+        }
+        return filtered;
+      });
+      
+      // 如果是完成或错误状态，3秒后移除
+      if (info.status === 'completed' || info.status === 'error') {
+        setTimeout(() => {
+          setModelDownloads(prev => prev.filter(d => d.modelName !== modelName));
+        }, 3000);
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   // Memoize expanded ids as a Set to keep stable reference for TreeNode children
   const expandedSet = useMemo(() => new Set(expandedIds || []), [ (expandedIds || []).join('|') ]);
 
@@ -1480,6 +1516,45 @@ export const Sidebar: React.FC<{
                  })}
              </div>
           </div>
+      )}
+
+      {/* 模型下载进度显示 */}
+      {modelDownloads.length > 0 && (
+        <div className="p-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+          {modelDownloads.map((download) => (
+            <div key={download.modelName} className="mb-2 last:mb-0">
+              <div className="flex items-center justify-between text-xs mb-1">
+                <div className="flex items-center text-gray-700 dark:text-gray-300">
+                  <Download size={12} className="mr-1.5 text-green-500" />
+                  <span className="font-medium">{download.displayName}</span>
+                </div>
+                <span className="text-gray-500 dark:text-gray-400">
+                  {download.status === 'completed' ? (
+                    '完成'
+                  ) : download.status === 'error' ? (
+                    '失败'
+                  ) : (
+                    `${download.progress}%`
+                  )}
+                </span>
+              </div>
+              {download.status === 'downloading' && (
+                <>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-green-500 rounded-full transition-all duration-300" 
+                      style={{ width: `${download.progress}%` }}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                    <span className="truncate max-w-[70%]">{download.fileName}</span>
+                    <span>{(download.downloaded / 1024 / 1024).toFixed(1)} MB / {(download.total / 1024 / 1024).toFixed(1)} MB</span>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
       )}
 
       <div className="p-2 border-t border-gray-200 dark:border-gray-800">

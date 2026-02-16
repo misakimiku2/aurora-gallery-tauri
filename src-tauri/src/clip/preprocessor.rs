@@ -21,21 +21,22 @@ impl ImagePreprocessor {
 
     pub fn preprocess(&self, image_path: &str) -> Result<Vec<f32>, String> {
         // 使用 image 库加载图像
+        let load_start = std::time::Instant::now();
         let img = image::open(image_path)
             .map_err(|e| format!("Failed to open image {}: {}", image_path, e))?;
+        let load_elapsed = load_start.elapsed().as_millis();
         
         // 直接转换为 RGB8
-        // fast_image_resize 处理从大图到小图的缩放非常高效，无需中间步骤
         let rgb_img = img.to_rgb8();
         let (width, height) = rgb_img.dimensions();
         
-        // 使用 fast_image_resize 进行高性能缩放
         let target_size_u32 = self.target_size as u32;
+        let resize_start = std::time::Instant::now();
         let resized = if width == target_size_u32 && height == target_size_u32 {
-            // 如果尺寸已经正确，直接转换
             rgb_img
         } else {
-            // 使用 fast_image_resize 进行一步缩放
+            // 使用 fast_image_resize 进行高性能缩放
+            // Box 滤波器是最快的算法，适合大幅缩小
             let src_image = fr::Image::from_vec_u8(
                 NonZeroU32::new(width).ok_or("Invalid width")?,
                 NonZeroU32::new(height).ok_or("Invalid height")?,
@@ -49,18 +50,22 @@ impl ImagePreprocessor {
                 fr::PixelType::U8x3,
             );
             
-            // 使用 Hamming 算法进行高质量且快速的缩放
-            let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+            // 使用 Box 滤波器进行快速缩放（最适合大幅缩小）
+            let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Box));
             resizer.resize(&src_image.view(), &mut dst_image.view_mut())
                 .map_err(|e| format!("Failed to resize image: {}", e))?;
             
-            // 转换回 RgbImage
             image::RgbImage::from_raw(target_size_u32, target_size_u32, dst_image.buffer().to_vec())
                 .ok_or("Failed to create resized RGB image")?
         };
+        let resize_elapsed = resize_start.elapsed().as_millis();
         
-        // 提取像素并归一化 - 优化后的平整化操作并保持 NCHW 布局
-        // CLIP 使用 ImageNet 归一化: mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]
+        if load_elapsed > 50 || resize_elapsed > 10 {
+            log::debug!("[Preprocess] {}x{} -> 224x224: load={}ms, resize={}ms", 
+                width, height, load_elapsed, resize_elapsed);
+        }
+        
+        // 提取像素并归一化
         let mean = [0.48145466f32, 0.4578275f32, 0.40821073f32];
         let std = [0.26862954f32, 0.26130258f32, 0.27577711f32];
         
@@ -70,16 +75,11 @@ impl ImagePreprocessor {
         let raw_pixels = resized.as_raw();
         let pixel_count = size * size;
         
-        // 分离通道进行归一化 (NCHW 布局要求 C, H, W 分离)
-        // 并在循环中进行基础算术优化
         for i in 0..pixel_count {
             let base_idx = i * 3;
             if base_idx + 2 < raw_pixels.len() {
-                // R
                 tensor[0 * pixel_count + i] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
-                // G
                 tensor[1 * pixel_count + i] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
-                // B
                 tensor[2 * pixel_count + i] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
             }
         }

@@ -3256,11 +3256,16 @@ export const App: React.FC = () => {
       try {
         // 导入 CLIP 搜索 API
         const { clipSearchByText } = await import('./api/tauri-bridge');
-        const results = await clipSearchByText(query.trim(), { top_k: 50 });
+        const modelName = state.settings.clip.modelName;
+        console.log('[CLIP Search] Starting search:', { query: query.trim(), modelName });
+        
+        const results = await clipSearchByText(query.trim(), { top_k: 50 }, modelName);
+        console.log('[CLIP Search] Results:', results);
         
         if (results && results.length > 0) {
           // 提取文件 ID 列表
           const fileIds = results.map(r => r.file_id);
+          console.log('[CLIP Search] File IDs:', fileIds);
           
           // 转换为文件路径
           const validPaths: string[] = [];
@@ -3273,6 +3278,8 @@ export const App: React.FC = () => {
           allFiles.forEach(f => {
             if (f.id) idMap.set(f.id, f.path);
           });
+          
+          console.log('[CLIP Search] ID map size:', idMap.size);
           
           results.forEach(result => {
             const filePath = idMap.get(result.file_id);
@@ -3294,10 +3301,10 @@ export const App: React.FC = () => {
           pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
           
           if (validPaths.length === 0) {
-            showToast('未找到匹配的图片，请先为图片生成 CLIP 嵌入向量');
+            showToast(`未找到 ${modelName} 模型的嵌入向量，请使用该模型重新生成嵌入或切换到已有嵌入的模型`);
           }
         } else {
-          showToast('未找到匹配的图片');
+          showToast(`未找到 ${modelName} 模型的嵌入向量，请先为图片生成 CLIP 嵌入向量`);
         }
       } catch (e) {
         console.error("CLIP search failed", e);

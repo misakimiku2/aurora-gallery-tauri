@@ -1553,7 +1553,8 @@ import { ClipSearchResult, ClipSearchOptions, ClipStats } from '../types';
  */
 export const clipSearchByText = async (
   text: string,
-  options?: ClipSearchOptions
+  options?: ClipSearchOptions,
+  modelName?: string
 ): Promise<ClipSearchResult[]> => {
   if (!isTauriEnvironment()) {
     throw new Error('CLIP search is only available in Tauri environment');
@@ -1563,6 +1564,7 @@ export const clipSearchByText = async (
       text,
       topK: options?.top_k ?? 50,
       minScore: options?.min_score ?? 0.0,
+      modelName,
     });
     return results;
   } catch (error) {
@@ -1579,7 +1581,8 @@ export const clipSearchByText = async (
  */
 export const clipSearchByImage = async (
   imagePath: string,
-  options?: ClipSearchOptions
+  options?: ClipSearchOptions,
+  modelName?: string
 ): Promise<ClipSearchResult[]> => {
   if (!isTauriEnvironment()) {
     throw new Error('CLIP search is only available in Tauri environment');
@@ -1589,6 +1592,7 @@ export const clipSearchByImage = async (
       imagePath,
       topK: options?.top_k ?? 50,
       minScore: options?.min_score ?? 0.0,
+      modelName,
     });
     return results;
   } catch (error) {
@@ -1644,13 +1648,14 @@ export const clipGetEmbeddingStatus = async (fileId: string): Promise<boolean> =
 
 /**
  * 加载 CLIP 模型
+ * @param modelName 模型名称 (ViT-B-32 或 ViT-L-14)
  */
-export const clipLoadModel = async (): Promise<void> => {
+export const clipLoadModel = async (modelName: string): Promise<void> => {
   if (!isTauriEnvironment()) {
     throw new Error('CLIP is only available in Tauri environment');
   }
   try {
-    await invoke('clip_load_model');
+    await invoke('clip_load_model', { modelName });
   } catch (error) {
     console.error('Failed to load CLIP model:', error);
     throw error;
@@ -1831,7 +1836,8 @@ export interface ClipBatchEmbeddingResult {
  */
 export const clipGenerateEmbeddingsBatch = async (
   files: [string, string][],
-  useGpu: boolean
+  useGpu: boolean,
+  modelName?: string
 ): Promise<ClipBatchEmbeddingResult> => {
   if (!isTauriEnvironment()) {
     return {
@@ -1845,6 +1851,7 @@ export const clipGenerateEmbeddingsBatch = async (
     const result = await invoke<ClipBatchEmbeddingResult>('clip_generate_embeddings_batch', {
       filePaths: files,
       useGpu,
+      modelName,
     });
     return result;
   } catch (error) {
@@ -1969,19 +1976,25 @@ export const listenClipEmbeddingCancelled = (callback: (data: {
   });
 };
 
-/**
- * 监听 CLIP 模型下载进度事件
- * @param callback 下载进度回调函数
- * @returns 取消监听的函数
- */
-export const listenClipDownloadProgress = (callback: (data: {
-  current_file: number;
+// ==================== CLIP 模型下载进度 API ====================
+
+export interface ClipModelDownloadProgress {
+  file_name: string;
+  file_index: number;
   total_files: number;
   downloaded: number;
   total: number;
-  progress: number;
-}) => void): Promise<() => void> => {
-  return listen('clip-download-progress', (event: any) => {
+  progress: number;  // 当前文件进度 (0-100)
+  overall_progress: number;  // 总体进度 (0-100)
+}
+
+/**
+ * 监听 CLIP 模型下载进度事件
+ * @param callback 进度回调函数
+ * @returns 取消监听的函数
+ */
+export const listenClipModelDownloadProgress = (callback: (data: ClipModelDownloadProgress) => void): Promise<() => void> => {
+  return listen('clip-model-download-progress', (event: any) => {
     callback(event.payload);
   });
 };

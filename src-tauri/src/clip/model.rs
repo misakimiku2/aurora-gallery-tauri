@@ -2,13 +2,23 @@
 //! 支持 ONNX 格式的 CLIP 模型，使用 ONNX Runtime 进行 GPU 加速推理
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use once_cell::sync::OnceCell;
 use ort::session::Session;
 use ort::value::Tensor;
 use ort::ep::ExecutionProvider;
+use tauri::Emitter;
+use reqwest::Client;
 
 use super::ClipConfig;
 use super::preprocessor::{ImagePreprocessor, TextPreprocessor};
+
+/// 下载超时时间（秒）
+const DOWNLOAD_TIMEOUT_SECS: u64 = 300; // 5分钟
+/// 连接超时时间（秒）
+const CONNECT_TIMEOUT_SECS: u64 = 30; // 30秒
+/// 重试次数
+const MAX_RETRY_COUNT: u32 = 3;
 
 /// 全局模型状态
 static MODEL_STATE: OnceCell<std::sync::Mutex<ModelState>> = OnceCell::new();
@@ -73,42 +83,48 @@ impl ModelInfo {
 }
 
 impl ClipModel {
+    /// 获取模型专属缓存目录
+    fn get_model_cache_dir(cache_dir: &PathBuf, model_name: &str) -> PathBuf {
+        cache_dir.join(model_name)
+    }
+
     /// 加载 CLIP 模型
-    pub async fn load(config: &ClipConfig) -> Result<Self, String> {
+    pub async fn load(config: &ClipConfig, app_handle: &tauri::AppHandle) -> Result<Self, String> {
         let model_info = match config.model_name.as_str() {
             "ViT-B-32" => ModelInfo::vit_b_32(),
             "ViT-L-14" => ModelInfo::vit_l_14(),
             _ => return Err(format!("Unsupported model: {}", config.model_name)),
         };
-        
-        // 模型子目录名称
-        let model_subdir = match config.model_name.as_str() {
-            "ViT-B-32" => "vit-b-32",
-            "ViT-L-14" => "vit-l-14",
-            _ => "unknown",
-        };
 
-        // 确保模型文件存在
-        let image_model_path = Self::ensure_model_file(
-            &model_info.image_model_url, 
-            &config.cache_dir,
-            model_subdir,
-        ).await?;
+        // 获取模型专属缓存目录
+        let model_cache_dir = Self::get_model_cache_dir(&config.cache_dir, &model_info.name);
         
-        let text_model_path = Self::ensure_model_file(
-            &model_info.text_model_url, 
-            &config.cache_dir,
-            model_subdir,
-        ).await?;
-        
-        let _tokenizer_path = Self::ensure_model_file(
-            &model_info.tokenizer_url, 
-            &config.cache_dir,
-            model_subdir,
-        ).await?;
+        // 确保模型目录存在
+        if !model_cache_dir.exists() {
+            tokio::fs::create_dir_all(&model_cache_dir)
+                .await
+                .map_err(|e| format!("Failed to create model cache directory: {}", e))?;
+        }
+
+        // 定义模型文件列表和总文件数
+        let model_files = [
+            &model_info.image_model_url,
+            &model_info.text_model_url,
+            &model_info.tokenizer_url,
+        ];
+        let total_files = model_files.len();
+
+        // 确保模型文件存在（使用模型专属目录），传递进度信息
+        let image_model_path = Self::ensure_model_file(&model_info.image_model_url, &model_cache_dir, app_handle, 0, total_files).await?;
+        let text_model_path = Self::ensure_model_file(&model_info.text_model_url, &model_cache_dir, app_handle, 1, total_files).await?;
+        let tokenizer_path = Self::ensure_model_file(&model_info.tokenizer_url, &model_cache_dir, app_handle, 2, total_files).await?;
 
         let image_preprocessor = ImagePreprocessor::new(model_info.image_size);
-        let text_preprocessor = TextPreprocessor::new();
+        let mut text_preprocessor = TextPreprocessor::new();
+        
+        // 加载 tokenizer
+        text_preprocessor.load_tokenizer(&tokenizer_path)
+            .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
 
         log::info!("CLIP model files ready: {}", config.model_name);
         
@@ -191,30 +207,73 @@ impl ClipModel {
         
         let builder = if use_gpu {
             // 先检查 CUDA 是否可用
-            log::info!("Checking CUDA availability...");
+            log::info!("Checking GPU acceleration options...");
             let cuda_available = Self::check_cuda_available();
             
-            if !cuda_available {
-                log::error!("❌ CUDA is not available on this system!");
-                log::warn!("Falling back to CPU...");
-                Session::builder()?
-            } else {
-                // 尝试使用 CUDA
-                log::info!("Attempting to enable CUDA Execution Provider...");
-                
-                let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
+            // 首先尝试 DirectML（Windows 上更稳定）
+            #[cfg(target_os = "windows")]
+            {
+                log::info!("Attempting to enable DirectML Execution Provider...");
+                let dml_provider = ort::execution_providers::DirectMLExecutionProvider::default()
                     .with_device_id(0);
                 
-                match builder.with_execution_providers([cuda_provider.build()]) {
+                match builder.clone().with_execution_providers([dml_provider.build()]) {
                     Ok(b) => {
-                        log::info!("✅ CUDA Execution Provider enabled successfully!");
+                        log::info!("✅ DirectML Execution Provider enabled successfully!");
                         actual_gpu_active = true;
                         b
                     }
                     Err(e) => {
-                        log::error!("❌ Failed to enable CUDA: {}", e);
-                        log::warn!("Falling back to CPU...");
-                        Session::builder()?
+                        log::warn!("DirectML failed: {}, trying CUDA...", e);
+                        if cuda_available {
+                            let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
+                                .with_device_id(0)
+                                .with_arena_extend_strategy(ort::execution_providers::ArenaExtendStrategy::SameAsRequested);
+                            
+                            match builder.with_execution_providers([cuda_provider.build()]) {
+                                Ok(b) => {
+                                    log::info!("✅ CUDA Execution Provider enabled successfully!");
+                                    actual_gpu_active = true;
+                                    b
+                                }
+                                Err(e2) => {
+                                    log::error!("❌ Both DirectML and CUDA failed: {}", e2);
+                                    log::warn!("Falling back to CPU...");
+                                    Session::builder()?
+                                }
+                            }
+                        } else {
+                            log::warn!("CUDA not available, falling back to CPU...");
+                            Session::builder()?
+                        }
+                    }
+                }
+            }
+            
+            #[cfg(not(target_os = "windows"))]
+            {
+                if !cuda_available {
+                    log::error!("❌ CUDA is not available on this system!");
+                    log::warn!("Falling back to CPU...");
+                    Session::builder()?
+                } else {
+                    log::info!("Attempting to enable CUDA Execution Provider...");
+                    
+                    let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
+                        .with_device_id(0)
+                        .with_arena_extend_strategy(ort::execution_providers::ArenaExtendStrategy::SameAsRequested);
+                    
+                    match builder.with_execution_providers([cuda_provider.build()]) {
+                        Ok(b) => {
+                            log::info!("✅ CUDA Execution Provider enabled successfully!");
+                            actual_gpu_active = true;
+                            b
+                        }
+                        Err(e) => {
+                            log::error!("❌ Failed to enable CUDA: {}", e);
+                            log::warn!("Falling back to CPU...");
+                            Session::builder()?
+                        }
                     }
                 }
             }
@@ -234,49 +293,163 @@ impl ClipModel {
         Ok((vision_session, text_session, actual_gpu_active))
     }
 
-    /// 确保模型文件存在，如果不存在则下载
+    /// 确保模型文件存在，如果不存在则下载（支持进度事件和重试）
     async fn ensure_model_file(
         url: &str, 
         cache_dir: &PathBuf,
-        model_subdir: &str,
+        app_handle: &tauri::AppHandle,
+        file_index: usize,
+        total_files: usize,
     ) -> Result<PathBuf, String> {
         let file_name = url.split('/').last().ok_or("Invalid URL")?;
-        let model_cache_dir = cache_dir.join(model_subdir);
-        
-        // 确保模型子目录存在
-        tokio::fs::create_dir_all(&model_cache_dir)
-            .await
-            .map_err(|e| format!("Failed to create model directory: {}", e))?;
-            
-        let file_path = model_cache_dir.join(file_name);
+        let file_path = cache_dir.join(file_name);
 
         if file_path.exists() {
             log::debug!("Model file already exists: {:?}", file_path);
             return Ok(file_path);
         }
 
-        log::info!("Downloading model file from {} to {:?}", url, file_path);
+        // 创建带超时的 HTTP 客户端
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+            .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+        // 重试逻辑
+        let mut last_error = String::new();
+        for attempt in 1..=MAX_RETRY_COUNT {
+            log::info!("Downloading model file from {} to {:?} (attempt {}/{})", url, file_path, attempt, MAX_RETRY_COUNT);
+            
+            // 发送开始下载进度（0%）
+            let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
+                "file_name": file_name,
+                "file_index": file_index,
+                "total_files": total_files,
+                "downloaded": 0,
+                "total": 0,
+                "progress": 0,
+                "overall_progress": (file_index * 100) / total_files,
+            }));
+            
+            match Self::download_file_with_client(&client, url, &file_path, app_handle, file_index, total_files, file_name).await {
+                Ok(()) => {
+                    log::info!("Downloaded model file: {:?}", file_path);
+                    return Ok(file_path);
+                }
+                Err(e) => {
+                    last_error = e;
+                    log::warn!("Download attempt {}/{} failed: {}", attempt, MAX_RETRY_COUNT, last_error);
+                    
+                    // 如果不是最后一次尝试，等待后重试
+                    if attempt < MAX_RETRY_COUNT {
+                        let delay = Duration::from_secs(2 * attempt as u64); // 递增延迟
+                        log::info!("Waiting {:?} before retry...", delay);
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+            }
+        }
         
-        // 下载文件
-        let response = reqwest::get(url)
+        Err(format!("Failed to download after {} attempts: {}", MAX_RETRY_COUNT, last_error))
+    }
+    
+    /// 使用客户端下载文件
+    async fn download_file_with_client(
+        client: &Client,
+        url: &str,
+        file_path: &PathBuf,
+        app_handle: &tauri::AppHandle,
+        file_index: usize,
+        total_files: usize,
+        file_name: &str,
+    ) -> Result<(), String> {
+        // 使用流式下载以支持进度反馈
+        let response = client.get(url)
+            .send()
             .await
-            .map_err(|e| format!("Failed to download {}: {}", url, e))?;
+            .map_err(|e| {
+                if e.is_timeout() {
+                    format!("Connection timeout: {}", e)
+                } else if e.is_connect() {
+                    format!("Connection error: {}", e)
+                } else {
+                    format!("Failed to download {}: {}", url, e)
+                }
+            })?;
 
         if !response.status().is_success() {
-            return Err(format!("Failed to download {}: HTTP {}. Please download the model manually and place it in {:?}", 
-                url, response.status(), model_cache_dir));
+            return Err(format!("HTTP {}: {}", response.status(), url));
         }
 
-        let bytes = response.bytes()
+        // 获取总大小
+        let total_size = response.content_length().unwrap_or(0);
+        
+        // 使用流式下载
+        let mut stream = response.bytes_stream();
+        let mut downloaded: u64 = 0;
+        let mut file = tokio::fs::File::create(file_path)
             .await
-            .map_err(|e| format!("Failed to read response bytes: {}", e))?;
-
-        tokio::fs::write(&file_path, bytes)
+            .map_err(|e| format!("Failed to create file: {}", e))?;
+        
+        use futures_util::StreamExt;
+        
+        // 用于限制事件发送频率（每100ms最多一次）
+        let mut last_emit_time = Instant::now();
+        
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.map_err(|e| format!("Failed to download chunk: {}", e))?;
+            let chunk_size = chunk.len() as u64;
+            
+            tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
+                .await
+                .map_err(|e| format!("Failed to write file chunk: {}", e))?;
+            
+            downloaded += chunk_size;
+            
+            // 限制事件发送频率，每100ms最多一次
+            if last_emit_time.elapsed() >= Duration::from_millis(100) {
+                let file_progress = if total_size > 0 {
+                    (downloaded as f64 / total_size as f64) * 100.0
+                } else {
+                    0.0
+                };
+                
+                // 计算总体进度：已完成文件的100% + 当前文件的进度
+                let overall_progress = ((file_index as f64 * 100.0) + file_progress) / total_files as f64;
+                
+                let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
+                    "file_name": file_name,
+                    "file_index": file_index,
+                    "total_files": total_files,
+                    "downloaded": downloaded,
+                    "total": total_size,
+                    "progress": file_progress as u32,
+                    "overall_progress": overall_progress as u32,
+                }));
+                
+                last_emit_time = Instant::now();
+            }
+        }
+        
+        // 确保文件写入完成
+        tokio::io::AsyncWriteExt::flush(&mut file)
             .await
-            .map_err(|e| format!("Failed to write file: {}", e))?;
-
-        log::info!("Downloaded model file: {:?}", file_path);
-        Ok(file_path)
+            .map_err(|e| format!("Failed to flush file: {}", e))?;
+        
+        // 发送完成进度（100%）
+        let overall_progress = ((file_index + 1) * 100) / total_files;
+        let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
+            "file_name": file_name,
+            "file_index": file_index,
+            "total_files": total_files,
+            "downloaded": total_size,
+            "total": total_size,
+            "progress": 100,
+            "overall_progress": overall_progress,
+        }));
+        
+        Ok(())
     }
     
     /// 检查模型文件是否存在于本地
@@ -287,14 +460,8 @@ impl ClipModel {
             _ => return Err(format!("Unknown model: {}", model_name)),
         };
         
-        // 模型子目录名称
-        let model_subdir = match model_name {
-            "ViT-B-32" => "vit-b-32",
-            "ViT-L-14" => "vit-l-14",
-            _ => "unknown",
-        };
-        
-        let model_cache_dir = cache_dir.join(model_subdir);
+        // 使用模型专属子目录
+        let model_cache_dir = cache_dir.join(model_name);
         
         let image_file = model_info.image_model_url.split('/').last().unwrap_or("vision_model.onnx");
         let text_file = model_info.text_model_url.split('/').last().unwrap_or("text_model.onnx");
@@ -355,7 +522,7 @@ impl ClipModel {
             .ok_or("Text model not loaded")?;
 
         // 预处理文本
-        let (input_ids, attention_mask) = self.text_preprocessor.preprocess(text)
+        let (input_ids, _attention_mask) = self.text_preprocessor.preprocess(text)
             .map_err(|e| format!("Failed to preprocess text: {}", e))?;
 
         // 创建输入 Tensors - 使用 (shape, data) 元组格式
@@ -364,17 +531,9 @@ impl ClipModel {
         let input_ids_tensor = Tensor::from_array((input_ids_shape, input_ids_data.into_boxed_slice()))
             .map_err(|e| format!("Failed to create input_ids tensor: {}", e))?;
 
-        let attention_mask_shape: Vec<i64> = vec![1, attention_mask.len() as i64];
-        let attention_mask_data: Vec<i64> = attention_mask.into_iter().map(|x| x as i64).collect();
-        let attention_mask_tensor = Tensor::from_array((attention_mask_shape, attention_mask_data.into_boxed_slice()))
-            .map_err(|e| format!("Failed to create attention_mask tensor: {}", e))?;
-
         // 执行推理 - session.run 需要可变引用
-        let inputs: Vec<(&str, Tensor<i64>)> = vec![
-            ("input_ids", input_ids_tensor),
-            ("attention_mask", attention_mask_tensor),
-        ];
-        let outputs = session.run(inputs)
+        // 只传递 input_ids，因为 attention_mask 不是这个模型的有效输入
+        let outputs = session.run(vec![("input_ids", input_ids_tensor)])
             .map_err(|e| format!("Failed to run inference: {}", e))?;
 
         // 提取嵌入向量
@@ -416,6 +575,8 @@ impl ClipModel {
 
     /// GPU 批量推理
     fn encode_images_batch_gpu(&mut self, image_paths: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        log::info!("[CLIP Batch] GPU active: {}, model: {}, batch_size: {}", 
+            self.is_gpu_active, self.model_info.name, image_paths.len());
         log::info!("encode_images_batch_gpu started: {} images", image_paths.len());
         
         let session = self.vision_session.as_mut()
@@ -424,11 +585,13 @@ impl ClipModel {
         let batch_size = image_paths.len();
         let image_size = self.model_info.image_size;
 
-        // 使用多线程批量预处理所有图像 - 限制线程数为 4 以降低 CPU 占用感
-        log::info!("Preprocessing {} images using ndarray + rayon (4 threads)...", batch_size);
+        // 使用多线程批量预处理所有图像
+        // 根据 CPU 核心数动态调整线程数，但至少使用 8 个线程
+        let num_threads = std::cmp::max(8, num_cpus::get() / 2);
+        log::info!("Preprocessing {} images using rayon ({} threads)...", batch_size, num_threads);
         let preprocess_start = std::time::Instant::now();
         
-        let tensors = self.image_preprocessor.preprocess_batch(image_paths, 4)
+        let tensors = self.image_preprocessor.preprocess_batch(image_paths, num_threads)
             .map_err(|e| format!("Failed to preprocess batch: {}", e))?;
         
         let preprocess_elapsed = preprocess_start.elapsed().as_millis();
@@ -449,10 +612,12 @@ impl ClipModel {
 
         // 执行批量推理 - session.run 需要可变引用
         log::info!("Running ONNX inference...");
+        let inference_start = std::time::Instant::now();
         let inputs: Vec<(&str, Tensor<f32>)> = vec![("pixel_values", input_tensor)];
         let outputs = session.run(inputs)
             .map_err(|e| format!("Failed to run batch inference: {}", e))?;
-        log::info!("ONNX inference completed");
+        let inference_elapsed = inference_start.elapsed().as_millis();
+        log::info!("ONNX inference completed in {}ms", inference_elapsed);
 
         // 提取嵌入向量
         let (shape, embeddings_data): (&ort::tensor::Shape, &[f32]) = outputs["image_embeds"]

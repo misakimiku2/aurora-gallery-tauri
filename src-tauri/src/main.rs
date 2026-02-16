@@ -2664,21 +2664,42 @@ async fn clip_search_by_text(
     text: String,
     top_k: Option<usize>,
     min_score: Option<f32>,
+    model_name: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<SearchResult>, String> {
+    log::info!("[CLIP Search] Starting text search: '{}' with model: {:?}", text, model_name);
+    
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
+    
+    let requested_model = model_name.unwrap_or_else(|| "ViT-B-32".to_string());
+    log::info!("[CLIP Search] Requested model: {}", requested_model);
     
     // 检查并加载模型
     {
         let guard = manager.read().await;
-        if !guard.is_model_loaded() {
-            // 释放读锁，准备加载模型
+        let current_model = guard.get_model_name();
+        let is_loaded = guard.is_model_loaded();
+        
+        log::info!("[CLIP Search] Current model: {}, is_loaded: {}", current_model, is_loaded);
+        
+        if !is_loaded || current_model != requested_model {
             drop(guard);
             
             let mut guard = manager.write().await;
-            if !guard.is_model_loaded() {
-                log::info!("CLIP model not loaded, loading now...");
-                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            let current_model = guard.get_model_name();
+            let is_loaded = guard.is_model_loaded();
+            
+            if !is_loaded || current_model != requested_model {
+                log::info!("[CLIP Search] Loading model: {} (current: {}, loaded: {})", 
+                    requested_model, current_model, is_loaded);
+                
+                if is_loaded {
+                    guard.unload_model();
+                }
+                
+                guard.set_model_name(&requested_model);
+                guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
     }
@@ -2689,11 +2710,17 @@ async fn clip_search_by_text(
         .ok_or("CLIP model not available")?;
     
     // 编码文本
+    log::info!("[CLIP Search] Encoding text...");
     let text_embedding = model.encode_text(&text)?;
+    log::info!("[CLIP Search] Text embedding dimension: {}", text_embedding.len());
     
     // 获取嵌入存储
     let embedding_store = guard.embedding_store()
         .ok_or("Embedding store not available")?;
+    
+    // 检查嵌入数量
+    let all_count = embedding_store.get_embedding_count().unwrap_or(0);
+    log::info!("[CLIP Search] Total embeddings in store: {}", all_count);
     
     // 执行搜索
     let searcher = clip::search::SimilaritySearcher::new(embedding_store.clone());
@@ -2703,7 +2730,10 @@ async fn clip_search_by_text(
         include_score: true,
     };
     
-    searcher.search(&text_embedding, &options)
+    let results = searcher.search(&text_embedding, &options, Some(&requested_model))?;
+    log::info!("[CLIP Search] Search returned {} results", results.len());
+    
+    Ok(results)
 }
 
 /// 使用图片搜索相似图片（以图搜图）
@@ -2712,20 +2742,37 @@ async fn clip_search_by_image(
     image_path: String,
     top_k: Option<usize>,
     min_score: Option<f32>,
+    model_name: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<SearchResult>, String> {
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
+    let requested_model = model_name.unwrap_or_else(|| "ViT-B-32".to_string());
+    
     // 检查并加载模型
     {
         let guard = manager.read().await;
-        if !guard.is_model_loaded() {
+        let current_model = guard.get_model_name();
+        let is_loaded = guard.is_model_loaded();
+        
+        if !is_loaded || current_model != requested_model {
             drop(guard);
             
             let mut guard = manager.write().await;
-            if !guard.is_model_loaded() {
-                log::info!("CLIP model not loaded, loading now...");
-                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            let current_model = guard.get_model_name();
+            let is_loaded = guard.is_model_loaded();
+            
+            if !is_loaded || current_model != requested_model {
+                log::info!("Loading model: {} (current: {}, loaded: {})", 
+                    requested_model, current_model, is_loaded);
+                
+                if is_loaded {
+                    guard.unload_model();
+                }
+                
+                guard.set_model_name(&requested_model);
+                guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
     }
@@ -2750,7 +2797,7 @@ async fn clip_search_by_image(
         include_score: true,
     };
     
-    searcher.search(&image_embedding, &options)
+    searcher.search(&image_embedding, &options, Some(&requested_model))
 }
 
 /// 为指定图片生成嵌入向量
@@ -2860,12 +2907,12 @@ async fn check_pause() {
 }
 
 #[tauri::command]
-async fn clip_update_config(use_gpu: bool) -> Result<(), String> {
+async fn clip_update_config(use_gpu: bool, app: tauri::AppHandle) -> Result<(), String> {
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
 
     let mut guard = manager.write().await;
-    guard.update_config(use_gpu).await.map_err(|e| format!("Failed to update CLIP config: {}", e))
+    guard.update_config(use_gpu, Some(&app)).await.map_err(|e| format!("Failed to update CLIP config: {}", e))
 }
 
 /// 批量生成图片的 CLIP 嵌入向量 - 使用 GPU 批量推理
@@ -2874,6 +2921,7 @@ async fn clip_generate_embeddings_batch(
     app: tauri::AppHandle,
     file_paths: Vec<(String, String)>, // (file_path, file_id) 元组列表
     use_gpu: bool,
+    model_name: Option<String>,
 ) -> Result<serde_json::Value, String> {
     // 防止并发运行
     if IS_GENERATING.swap(true, Ordering::SeqCst) {
@@ -2895,25 +2943,43 @@ async fn clip_generate_embeddings_batch(
     reset_cancel_flag();
     PAUSE_GENERATION.store(false, Ordering::SeqCst);
     
+    let requested_model = model_name.unwrap_or_else(|| "ViT-B-32".to_string());
+    log::info!("[Embedding Gen] Requested model: {}", requested_model);
+    
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
 
     // 同步 GPU 配置
     {
         let mut guard = manager.write().await;
-        guard.update_config(use_gpu).await.map_err(|e| format!("Failed to update CLIP config: {}", e))?;
+        guard.update_config(use_gpu, Some(&app)).await.map_err(|e| format!("Failed to update CLIP config: {}", e))?;
     }
     
-    // 检查并加载模型
+    // 检查并加载模型（确保加载正确的模型）
     {
         let guard = manager.read().await;
-        if !guard.is_model_loaded() {
+        let current_model = guard.get_model_name();
+        let is_loaded = guard.is_model_loaded();
+        
+        log::info!("[Embedding Gen] Current model: {}, is_loaded: {}", current_model, is_loaded);
+        
+        if !is_loaded || current_model != requested_model {
             drop(guard);
             
             let mut guard = manager.write().await;
-            if !guard.is_model_loaded() {
-                log::info!("CLIP model not loaded, loading now...");
-                guard.load_model().await.map_err(|e| format!("Failed to load model: {}", e))?;
+            let current_model = guard.get_model_name();
+            let is_loaded = guard.is_model_loaded();
+            
+            if !is_loaded || current_model != requested_model {
+                log::info!("[Embedding Gen] Loading model: {} (current: {}, loaded: {})", 
+                    requested_model, current_model, is_loaded);
+                
+                if is_loaded {
+                    guard.unload_model();
+                }
+                
+                guard.set_model_name(&requested_model);
+                guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
     }
@@ -2923,9 +2989,30 @@ async fn clip_generate_embeddings_batch(
         let guard = manager.read().await;
         let model = guard.model().ok_or("CLIP model not available")?;
         let using_gpu = model.is_using_gpu();
-        let batch_size = if using_gpu { 32 } else { 8 };
-        let model_name = guard.config().model_name.clone();
-        (using_gpu, batch_size, model_name)
+        let current_model_name = guard.config().model_name.clone();
+        
+        log::info!("[CLIP Batch] Raw model name from config: '{}'", current_model_name);
+        log::info!("[CLIP Batch] Model name bytes: {:?}", current_model_name.as_bytes());
+        
+        // 根据模型类型动态调整批处理大小
+        // RTX 5070 Ti 有 16GB 显存，可以使用更大的批次
+        let batch_size = match current_model_name.as_str() {
+            "ViT-L-14" => {
+                log::info!("[CLIP Batch] Matched ViT-L-14, GPU: {}", using_gpu);
+                if using_gpu { 32 } else { 4 }  // 增加到 32
+            },
+            "ViT-B-32" => {
+                log::info!("[CLIP Batch] Matched ViT-B-32, GPU: {}", using_gpu);
+                if using_gpu { 64 } else { 8 }  // 增加到 64
+            },
+            other => {
+                log::warn!("[CLIP Batch] Unknown model name '{}', using default batch size", other);
+                if using_gpu { 32 } else { 8 }
+            },
+        };
+        log::info!("[CLIP Batch] Final: Model: {}, GPU: {}, batch_size: {}", 
+            current_model_name, using_gpu, batch_size);
+        (using_gpu, batch_size, current_model_name)
     };
     
     log::info!("CLIP batch generation starting with {} ({} files)", 
@@ -3213,12 +3300,22 @@ async fn clip_generate_embeddings_batch(
 
 /// 加载 CLIP 模型
 #[tauri::command]
-async fn clip_load_model() -> Result<(), String> {
+async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Result<(), String> {
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
     let mut guard = manager.write().await;
-    guard.load_model().await
+    
+    // 如果模型已加载，先卸载它
+    if guard.is_model_loaded() {
+        log::info!("Unloading current model to switch to: {}", model_name);
+        guard.unload_model();
+    }
+    
+    // 更新配置中的模型名称
+    guard.set_model_name(model_name);
+    
+    guard.load_model(&app).await
 }
 
 /// 卸载 CLIP 模型（释放内存）
@@ -3267,23 +3364,18 @@ async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, 
         _ => return Err(format!("Unknown model: {}", model_name)),
     };
     
-    // 模型子目录名称
-    let model_subdir = match model_name.as_str() {
-        "ViT-B-32" => "vit-b-32",
-        "ViT-L-14" => "vit-l-14",
-        _ => "unknown",
-    };
-    
     // 获取缓存目录
     let manager = clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
     let cache_dir = &guard.config().cache_dir;
-    let model_cache_dir = cache_dir.join(model_subdir);
+    
+    // 使用模型专属子目录
+    let model_cache_dir = cache_dir.join(&model_name);
     
     // 检查模型文件是否存在
-    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("vision_model.onnx");
-    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_model.onnx");
+    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
+    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
     let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
     
     let image_path = model_cache_dir.join(image_model_file);
@@ -3342,12 +3434,12 @@ async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, 
 /// 删除 CLIP 模型文件
 #[tauri::command]
 async fn clip_delete_model(model_name: String) -> Result<(), String> {
+    use crate::clip::model::ModelInfo;
     use std::fs;
     
-    // 模型子目录名称
-    let model_subdir = match model_name.as_str() {
-        "ViT-B-32" => "vit-b-32",
-        "ViT-L-14" => "vit-l-14",
+    let model_info = match model_name.as_str() {
+        "ViT-B-32" => ModelInfo::vit_b_32(),
+        "ViT-L-14" => ModelInfo::vit_l_14(),
         _ => return Err(format!("Unknown model: {}", model_name)),
     };
     
@@ -3356,13 +3448,32 @@ async fn clip_delete_model(model_name: String) -> Result<(), String> {
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
     let cache_dir = &guard.config().cache_dir;
-    let model_cache_dir = cache_dir.join(model_subdir);
     
-    // 直接删除整个模型子目录
-    drop(guard);
+    // 使用模型专属子目录
+    let model_cache_dir = cache_dir.join(&model_name);
+    
+    // 删除模型文件
+    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
+    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
+    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
+    
+    let image_path = model_cache_dir.join(image_model_file);
+    let text_path = model_cache_dir.join(text_model_file);
+    let tokenizer_path = model_cache_dir.join(tokenizer_file);
+    
+    if image_path.exists() {
+        fs::remove_file(&image_path).map_err(|e| format!("Failed to delete image model: {}", e))?;
+    }
+    if text_path.exists() {
+        fs::remove_file(&text_path).map_err(|e| format!("Failed to delete text model: {}", e))?;
+    }
+    if tokenizer_path.exists() {
+        fs::remove_file(&tokenizer_path).map_err(|e| format!("Failed to delete tokenizer: {}", e))?;
+    }
+    
+    // 如果模型目录为空，删除目录本身
     if model_cache_dir.exists() {
-        fs::remove_dir_all(&model_cache_dir)
-            .map_err(|e| format!("Failed to delete model directory: {}", e))?;
+        let _ = fs::remove_dir(&model_cache_dir);
     }
     
     log::info!("Deleted CLIP model files for: {}", model_name);
@@ -3451,6 +3562,10 @@ fn main() {
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                ])
                 .build()
         )
         .plugin(tauri_plugin_drag::init())

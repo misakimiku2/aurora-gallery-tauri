@@ -44,7 +44,7 @@ impl Default for ClipConfig {
 /// CLIP 管理器
 pub struct ClipManager {
     config: ClipConfig,
-    pub model: Option<ClipModel>,
+    model: Option<ClipModel>,
     embedding_store: Option<EmbeddingStore>,
     is_initialized: bool,
 }
@@ -80,12 +80,12 @@ impl ClipManager {
     }
 
     /// 加载 CLIP 模型
-    pub async fn load_model(&mut self) -> Result<(), String> {
+    pub async fn load_model(&mut self, app_handle: &tauri::AppHandle) -> Result<(), String> {
         if self.model.is_some() {
             return Ok(());
         }
 
-        let model = ClipModel::load(&self.config).await?;
+        let model = ClipModel::load(&self.config, app_handle).await?;
         self.model = Some(model);
         
         log::info!("CLIP model loaded successfully: {}", self.config.model_name);
@@ -125,9 +125,19 @@ impl ClipManager {
         &self.config
     }
 
+    /// 获取当前模型名称
+    pub fn get_model_name(&self) -> String {
+        self.config.model_name.clone()
+    }
+
+    /// 更新模型名称
+    pub fn set_model_name(&mut self, model_name: impl Into<String>) {
+        self.config.model_name = model_name.into();
+    }
+
     /// 更新配置
     /// 如果配置发生关键变化（如 use_gpu），且模型已加载，则自动重载模型
-    pub async fn update_config(&mut self, use_gpu: bool) -> Result<(), String> {
+    pub async fn update_config(&mut self, use_gpu: bool, app_handle: Option<&tauri::AppHandle>) -> Result<(), String> {
         let changed = self.config.use_gpu != use_gpu;
         
         if changed {
@@ -138,7 +148,12 @@ impl ClipManager {
             if self.is_model_loaded() {
                 log::info!("Reloading CLIP model to apply new hardware acceleration settings...");
                 self.unload_model();
-                self.load_model().await?;
+                if let Some(handle) = app_handle {
+                    self.load_model(handle).await?;
+                } else {
+                    // 如果没有提供 app_handle，创建一个临时的
+                    return Err("AppHandle is required for loading model".to_string());
+                }
             }
         }
         

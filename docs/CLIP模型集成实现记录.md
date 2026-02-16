@@ -117,12 +117,12 @@ export interface ClipModelStatus {
 
 ## 已知问题
 
-### 1. CUDA 版本兼容性
-- **当前状态**: `ort` crate 官方支持 CUDA 12.x，但用户安装的是 CUDA 13.1
-- **结果**: 目前测试可以正常工作，但可能存在潜在兼容性问题
-- **建议**: 如需最佳稳定性，建议安装 CUDA 12.x 版本
+### 1. ~~CUDA 版本兼容性~~ ✅ 已解决
+- **原问题**: `ort` crate 官方支持 CUDA 12.x，CUDA 13.x 可能不兼容
+- **解决方案**: 使用 DirectML 替代 CUDA，不依赖特定 CUDA 版本
+- **结果**: Windows 上默认使用 DirectML，兼容性最佳
 
-### 3. GPU 集成与性能优化方案 (2026-02-15 突破性进展) 🚀
+### 2. GPU 集成与性能优化方案 (2026-02-15 突破性进展) 🚀
 
 本次会话实现了从“CPU 缓慢预处理”到“高性能 GPU 加速推理”的全面飞跃：
 
@@ -147,16 +147,26 @@ export interface ClipModelStatus {
 ## 系统要求
 
 ### GPU 加速要求
+
+#### Windows（推荐 DirectML）
+- **DirectML**: Windows 10 1903+ 或 Windows 11（默认启用）
+- **GPU**: 支持 DirectX 12 的 GPU（NVIDIA、AMD、Intel 均可）
+- **驱动**: 最新显卡驱动
+- **优势**: 不依赖 CUDA 版本，兼容性最佳
+
+#### NVIDIA CUDA（备选方案）
 - **NVIDIA 驱动**: 525.60.13 或更高版本
-- **CUDA**: 12.x（推荐）或 13.x（测试可用）
+- **CUDA**: 12.x（推荐）
 - **cuDNN**: 9.x
 - **环境变量**: 
   - `CUDA_PATH` 指向 CUDA 安装目录
   - `PATH` 包含 `%CUDA_PATH%\bin`
+- **注意**: CUDA 13.x 可能存在兼容性问题，建议使用 DirectML
 
 ### 已解决问题 ✓
 - ~~模型推理实现~~ - 已实现真正的 ONNX Runtime 推理
 - ~~嵌入向量生成~~ - 已从数据库读取文件列表
+- ~~CUDA 版本兼容性~~ - 已通过 DirectML 解决
 
 ## 使用流程
 
@@ -333,12 +343,14 @@ export interface ClipModelStatus {
 - `clip_pause_embedding_generation` - 暂停嵌入向量生成
 - `clip_resume_embedding_generation` - 继续嵌入向量生成
 - `clip_update_config` - 动态更新 CLIP 硬件加速配置
+- `clip_load_model` - 加载 CLIP 模型（支持模型名称参数）
 
 ### 新增事件
 
 - `clip-embedding-progress` - 进度更新事件
 - `clip-embedding-completed` - 生成完成事件
 - `clip-embedding-cancelled` - 生成取消事件
+- `clip-model-download-progress` - 模型下载进度事件
 
 ## 相关文件
 
@@ -355,5 +367,177 @@ export interface ClipModelStatus {
 - `src/api/tauri-bridge.ts` - CLIP API 桥接
 - `src/components/SettingsModal.tsx` - AI视觉设置面板
 - `src/components/TopBar.tsx` - CLIP 搜索按钮
+- `src/components/TreeSidebar.tsx` - 侧边栏（显示模型下载进度）
 - `src/types.ts` - CLIP 类型定义
 - `src/App.tsx` - CLIP 搜索状态管理
+- `src/utils/modelDownloadState.ts` - 全局模型下载状态管理
+
+### 2026-02-16 模型下载功能完善
+
+23. **模型下载进度显示** ✅
+   - 后端添加 `clip-model-download-progress` 事件，实时发送下载进度
+   - 实现流式下载，每 100ms 发送一次进度更新
+   - 计算总体进度（3个文件：vision_model.onnx, text_model.onnx, tokenizer.json）
+   - 显示当前下载文件名、已下载大小、总大小
+
+24. **全局状态管理** ✅
+   - 创建 `src/utils/modelDownloadState.ts` 全局状态管理模块
+   - 支持在设置界面切换栏目时保持下载进度
+   - 支持在 TreeSidebar 设置按钮上方显示下载进度
+   - 下载完成后 3 秒自动清理状态
+
+25. **多模型支持** ✅
+   - 修改 `clip_load_model` 命令，支持传入模型名称参数
+   - 支持 ViT-B/32 和 ViT-L/14 两个模型独立下载
+   - 模型文件存储在各自的子目录中（ViT-B-32/ 和 ViT-L-14/）
+
+26. **下载稳定性优化** ✅
+   - 添加 HTTP 连接超时（30秒）和下载超时（5分钟）
+   - 实现重试机制（最多3次，递增延迟）
+   - 区分不同类型的错误（超时、连接错误、HTTP错误）
+   - 使用 `reqwest::Client` 替代 `reqwest::get` 进行下载
+
+27. **UI 样式统一** ✅
+   - 模型下载进度条使用绿色主题（与软件整体风格一致）
+   - TreeSidebar 中显示模型名称、进度百分比、文件名和大小
+   - 设置界面中显示详细的下载进度信息
+
+### 2026-02-16 Tokenizer 加载和推理输入修复
+
+28. **Tokenizer 加载问题修复** ✅
+   - **问题**：`model.rs` 中 tokenizer.json 文件被下载但没有加载到 `TextPreprocessor` 中
+   - **修复**：在 `model.rs:122-127` 添加了 tokenizer 加载逻辑，将 tokenizer 正确加载到 `text_preprocessor`
+   - **文件修改**：`src-tauri/src/clip/model.rs`
+
+29. **ONNX 推理输入问题修复** ✅
+   - **问题**：Xenova/CLIP ONNX 模型只接受 `input_ids` 作为输入，但代码传递了 `attention_mask`，导致错误 "Invalid input name: attention_mask"
+   - **修复**：在 `model.rs:493` 中，移除了 `attention_mask` 输入，只传递 `input_ids`
+   - **文件修改**：`src-tauri/src/clip/model.rs`
+
+30. **模型切换功能修复** ⏸️
+   - **问题**：在 `SettingsModal.tsx` 中，点击"使用"按钮切换模型时，只更新了 `settings.modelName` 但没有调用 `clipLoadModel` 重新加载模型
+   - **修复尝试**：添加了 `handleSelectModel` 函数，点击"使用"时会：
+     - 更新设置中的模型名称
+     - 调用 `clipLoadModel` 真正加载新模型
+     - 刷新模型状态
+     - 显示 Toast 提示
+   - **文件修改**：`src/components/SettingsModal.tsx`
+
+31. **模型卸载逻辑优化** ✅
+   - **问题**：当模型已加载时，切换模型不会先卸载旧模型
+   - **修复**：在 `main.rs:3224-3228` 中，`clip_load_model` 函数添加了检查逻辑：如果模型已加载，先卸载它
+   - **文件修改**：`src-tauri/src/main.rs`
+
+### 2026-02-16 模型切换与搜索问题修复 ✅
+
+32. **模型切换问题修复** ✅
+   - **问题**：用户选择 ViT-L/14 后，搜索时自动加载的是 ViT-B/32
+   - **根本原因**：前后端模型名称状态不同步
+     - 前端 `settings.clip.modelName` 被持久化到 `user_data.json`
+     - 后端 `ClipConfig.model_name` 是内存中的值，应用重启后会重置为默认值 `ViT-B-32`
+   - **修复**：
+     - 修改 `clip_search_by_text` 和 `clip_search_by_image` 命令，添加 `model_name` 参数
+     - 前端在调用搜索时传递 `settings.clip.modelName`
+     - 后端在加载模型前检查是否需要切换模型
+   - **文件修改**：
+     - `src-tauri/src/main.rs` - 搜索命令添加 `model_name` 参数
+     - `src/api/tauri-bridge.ts` - API 函数添加 `modelName` 参数
+     - `src/App.tsx` - 搜索调用传递模型名称
+
+33. **搜索结果相同问题修复** ✅
+   - **问题**：不同搜索词返回完全相同的结果
+   - **根本原因**：搜索时使用 `get_all_embeddings()` 获取所有嵌入，没有按模型版本过滤
+     - 如果当前模型是 ViT-B-32（512维），但数据库中存储的是 ViT-L-14 的嵌入（768维）
+     - 所有相似度计算都会返回 `0.0`（维度不匹配）
+     - 导致所有图片相似度相同，返回结果顺序固定
+   - **修复**：
+     - 修改 `SimilaritySearcher::search` 方法，添加 `model_version` 参数
+     - 使用 `get_embeddings_by_model()` 按模型版本过滤嵌入
+     - 添加日志显示可用模型版本
+   - **文件修改**：
+     - `src-tauri/src/clip/search.rs` - 搜索方法添加模型版本过滤
+     - `src-tauri/src/clip/mod.rs` - 添加 `get_model_name()` 方法
+
+34. **嵌入生成使用错误模型修复** ✅
+   - **问题**：嵌入生成时加载的是默认模型，而非用户选择的模型
+   - **根本原因**：`clip_generate_embeddings_batch` 没有接收 `model_name` 参数
+   - **修复**：
+     - 添加 `model_name` 参数到 `clip_generate_embeddings_batch` 命令
+     - 前端传递 `settings.modelName`
+     - 后端在加载模型前检查是否需要切换
+   - **文件修改**：
+     - `src-tauri/src/main.rs` - 嵌入生成命令添加 `model_name` 参数
+     - `src/api/tauri-bridge.ts` - API 函数添加 `modelName` 参数
+     - `src/components/SettingsModal.tsx` - 调用时传递模型名称
+
+35. **预处理性能优化** ✅
+   - **问题**：预处理每张图片需要 2.5 秒（debug 模式）
+   - **优化**：
+     - 使用 `Box` 滤波器直接一步缩放到 224px（Box 是最快的缩放算法）
+     - 移除两阶段缩放策略，减少内存分配和复制
+   - **注意**：Debug 模式性能比 Release 慢 10-100 倍，请使用 Release 版本测试
+   - **文件修改**：`src-tauri/src/clip/preprocessor.rs`
+
+36. **日志增强** ✅
+   - 添加 `[CLIP Search]` 前缀的搜索日志
+   - 添加 `[Search]` 前缀的搜索器日志
+   - 添加 `[EmbeddingStore]` 前缀的嵌入存储日志
+   - 添加 `[Embedding Gen]` 前缀的嵌入生成日志
+   - 当找不到当前模型的嵌入时，显示可用模型列表
+
+### 2026-02-17 DirectML GPU 加速实现（重大突破）🚀
+
+37. **CUDA 版本兼容性问题诊断** ✅
+   - **问题**：CUDA 13.1 与 ONNX Runtime 不兼容
+   - **现象**：
+     - 日志显示 `CUDA Execution Provider enabled successfully!`
+     - 但 GPU 利用率仅 15-20%，ONNX 推理 32 张图片需要 4.5 秒
+     - 实际推理静默回退到 CPU
+   - **诊断方法**：
+     - 添加详细日志显示模型名称、GPU 状态、batch_size
+     - 使用 `nvidia-smi -l 1` 监控 GPU 利用率
+     - 对比预处理时间和 ONNX 推理时间
+
+38. **DirectML 替代方案实现** ✅
+   - **方案**：使用 DirectML 替代 CUDA 作为 GPU 加速方案
+   - **优势**：
+     - DirectML 基于 DirectX 12，不依赖特定 CUDA 版本
+     - 兼容所有 Windows GPU（NVIDIA、AMD、Intel）
+     - RTX 5070 Ti 完全兼容
+   - **修改文件**：
+     - `src-tauri/Cargo.toml` - 添加 `directml` feature
+     - `src-tauri/src/clip/model.rs` - 优先尝试 DirectML，失败后回退到 CUDA
+
+39. **批处理大小优化** ✅
+   - **修改**：根据模型类型动态调整 batch_size
+     - ViT-L-14: GPU 模式 8 → **32**
+     - ViT-B-32: GPU 模式 32 → **64**
+   - **原因**：更大的 batch_size 可以更好地利用 GPU 并行能力
+   - **文件修改**：`src-tauri/src/main.rs`
+
+40. **预处理线程数优化** ✅
+   - **修改**：预处理线程数从固定 4 个改为动态调整
+     - 使用 CPU 核心数的一半，至少 8 个线程
+   - **效果**：预处理速度从 75-115ms/张 降到 **5-33ms/张**
+   - **文件修改**：`src-tauri/src/clip/model.rs`
+
+41. **日志文件输出功能** ✅
+   - **修改**：添加日志文件输出，方便 release 模式调试
+   - **日志位置**：`%APPDATA%\com.aurora.gallery\logs\`
+   - **文件修改**：`src-tauri/src/main.rs`
+
+42. **性能提升结果** ✅
+   - **GPU 利用率**：15-20% → **50-60%**
+   - **ONNX 推理时间**：4500ms/32张 → **305ms/32张**（提升 15 倍）
+   - **吞吐量**：2-4 张/秒 → **23 张/秒**（提升 6-10 倍）
+   - **4614 张图片处理时间**：预计 25 分钟 → **2-3 分钟**（提升 10 倍）
+
+### 关键经验总结
+
+1. **模型版本一致性**：生成嵌入和搜索必须使用相同的模型，否则维度不匹配会导致搜索失败
+2. **前后端状态同步**：前端持久化的设置需要传递给后端，不能依赖后端的默认值
+3. **Debug vs Release 性能**：Rust debug 模式性能极差，性能测试必须使用 release 模式
+4. **224px 输入尺寸**：CLIP 标准输入尺寸，模型设计时确定，足以识别语义特征
+5. **DirectML vs CUDA**：Windows 上 DirectML 比 CUDA 更稳定，不依赖特定 CUDA 版本
+6. **GPU 利用率诊断**：使用 `nvidia-smi -l 1` 监控 GPU 利用率，确认 GPU 是否真正工作
+7. **批处理大小影响**：更大的 batch_size 可以更好地利用 GPU 并行能力，但需要根据显存大小调整

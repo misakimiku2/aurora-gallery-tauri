@@ -167,6 +167,8 @@ impl EmbeddingStore {
 
     /// 获取指定模型版本的所有嵌入
     pub fn get_embeddings_by_model(&self, model_version: &str) -> Result<Vec<ImageEmbedding>, String> {
+        log::info!("[EmbeddingStore] Getting embeddings for model: '{}'", model_version);
+        
         let conn = self.get_connection()?;
         
         let mut stmt = conn.prepare(
@@ -185,8 +187,11 @@ impl EmbeddingStore {
             })
         }).map_err(|e| format!("Failed to query embeddings: {}", e))?;
 
-        embeddings.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| format!("Failed to collect embeddings: {}", e))
+        let result = embeddings.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to collect embeddings: {}", e))?;
+        
+        log::info!("[EmbeddingStore] Found {} embeddings for model '{}'", result.len(), model_version);
+        Ok(result)
     }
 
     /// 删除嵌入

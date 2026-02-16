@@ -4,7 +4,8 @@ import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDi
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
+import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
 // 关于面板组件
@@ -284,7 +285,26 @@ const formatEstimatedTime = (seconds: number): string => {
 const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast }) => {
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>({});
   const [isLoading, setIsLoading] = useState(false);
-  const [loadingModel, setLoadingModel] = useState<string | null>(null);
+  // 模型下载进度状态 - 从全局状态初始化
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, { fileName: string; progress: number; downloaded: number; total: number }>>(() => {
+    // 从全局状态初始化
+    const activeDownloads = getActiveDownloads();
+    const initial: Record<string, { fileName: string; progress: number; downloaded: number; total: number }> = {};
+    activeDownloads.forEach(d => {
+      initial[d.modelName] = {
+        fileName: d.fileName,
+        progress: d.progress,
+        downloaded: d.downloaded,
+        total: d.total,
+      };
+    });
+    return initial;
+  });
+  // loadingModel 也从全局状态初始化
+  const [loadingModel, setLoadingModel] = useState<string | null>(() => {
+    const activeDownloads = getActiveDownloads();
+    return activeDownloads.length > 0 ? activeDownloads[0].modelName : null;
+  });
   const [embeddingCount, setEmbeddingCount] = useState(0);
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(globalEmbeddingState.isGenerating);
   const [generationProgress, setGenerationProgress] = useState(globalEmbeddingState.progress);
@@ -293,7 +313,10 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const [isCancelling, setIsCancelling] = useState(globalEmbeddingState.isCancelling);
   const [isPaused, setIsPaused] = useState(globalEmbeddingState.isPaused);
   const progressListenersRef = useRef<(() => void)[]>([]);
+  const downloadListenerRef = useRef<(() => void) | null>(null);
   const isMountedRef = useRef(true);
+  // 全局下载状态订阅
+  const downloadUnsubscribeRef = useRef<(() => void) | null>(null);
 
   // 同步状态到全局状态
   useEffect(() => {
@@ -319,6 +342,34 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   useEffect(() => {
     globalEmbeddingState.isCancelling = isCancelling;
   }, [isCancelling]);
+
+  // 订阅全局模型下载状态，保持进度在切换标签页时不丢失
+  useEffect(() => {
+    // 订阅全局下载状态变化
+    const unsubscribe = subscribeToModelDownload((modelName, info) => {
+      setDownloadProgress(prev => ({
+        ...prev,
+        [modelName]: {
+          fileName: info.fileName,
+          progress: info.progress,
+          downloaded: info.downloaded,
+          total: info.total,
+        }
+      }));
+      
+      // 如果正在下载，更新 loadingModel 状态
+      if (info.status === 'downloading') {
+        setLoadingModel(modelName as ClipModelName);
+      } else if (info.status === 'completed' || info.status === 'error') {
+        // 下载完成或出错时，如果当前是这个模型，清除 loadingModel
+        setLoadingModel(prev => prev === modelName ? null : prev);
+      }
+    });
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   // 加载模型状态和嵌入数量
   useEffect(() => {
@@ -456,6 +507,10 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   const handleDownload = async (modelName: ClipModelName) => {
     setLoadingModel(modelName);
+    
+    // 清理之前的下载进度
+    setDownloadProgress(prev => ({ ...prev, [modelName]: { fileName: '', progress: 0, downloaded: 0, total: 0 } }));
+    
     onUpdateSettings({
       ...settings,
       modelName,
@@ -463,9 +518,21 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       downloadProgress: 0,
     });
 
+    // 设置下载进度监听
+    if (downloadListenerRef.current) {
+      downloadListenerRef.current();
+      downloadListenerRef.current = null;
+    }
+    
     try {
+      // 获取模型显示名称
+      const modelDisplayName = CLIP_MODELS.find(m => m.name === modelName)?.displayName || modelName;
+      
+      // 设置当前正在下载的模型，启动全局 Tauri 事件监听
+      setCurrentDownloadingModel(modelName, modelDisplayName);
+      
       // 加载模型（会自动下载）
-      await clipLoadModel();
+      await clipLoadModel(modelName);
 
       onUpdateSettings({
         ...settings,
@@ -474,6 +541,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         downloadProgress: 100,
         downloadedAt: Date.now(),
       });
+
+      // 标记下载完成
+      completeModelDownload(modelName);
 
       // 刷新状态
       await loadModelStatuses();
@@ -484,8 +554,13 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         downloadStatus: 'error',
         downloadError: String(error),
       });
+      
+      // 标记下载错误
+      errorModelDownload(modelName, String(error));
     } finally {
       setLoadingModel(null);
+      // 注意：不再清理 Tauri 监听，因为全局监听器需要保持运行
+      // 全局监听器会在组件挂载时自动复用
     }
   };
 
@@ -516,6 +591,24 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       setEmbeddingCount(count);
     } catch (error) {
       console.error('Failed to load embedding count:', error);
+    }
+  };
+
+  const handleSelectModel = async (modelName: ClipModelName) => {
+    if (settings.modelName === modelName) return;
+    
+    onUpdateSettings({ ...settings, modelName });
+    
+    try {
+      setIsLoading(true);
+      await clipLoadModel(modelName);
+      await loadModelStatuses();
+      onShowToast?.(`已切换到 ${modelName} 模型`, 3000);
+    } catch (error) {
+      console.error('Failed to load model:', error);
+      onShowToast?.(`加载模型失败: ${error}`, 4000);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -551,7 +644,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     try {
       // 一次性发送所有文件，后端会分批处理并发送进度事件
       const fileTuples: [string, string][] = imageFiles.map(f => [f.path, f.id]);
-      await clipGenerateEmbeddingsBatch(fileTuples, settings.useGpu);
+      await clipGenerateEmbeddingsBatch(fileTuples, settings.useGpu, settings.modelName);
       // 进度和完成通过事件处理
     } catch (error: any) {
       console.error('Failed to generate embeddings:', error);
@@ -699,11 +792,12 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   {isDownloaded ? (
                     <>
                       <button
-                        onClick={() => onUpdateSettings({ ...settings, modelName: model.name })}
+                        onClick={() => handleSelectModel(model.name)}
+                        disabled={isLoading}
                         className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name
                           ? 'bg-green-500 text-white'
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                          }`}
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
                         {settings.modelName === model.name ? '使用中' : '使用'}
                       </button>
@@ -743,11 +837,19 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-green-500 transition-all duration-300"
-                      style={{ width: `${settings.downloadProgress}%` }}
+                      style={{ width: `${downloadProgress[model.name]?.progress ?? 0}%` }}
                     />
                   </div>
                   <p className="text-xs text-gray-500 mt-1">
-                    正在下载模型文件... {settings.downloadProgress}%
+                    {downloadProgress[model.name]?.fileName ? (
+                      <>
+                        正在下载: {downloadProgress[model.name].fileName} 
+                        ({(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB / 
+                        {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB)
+                      </>
+                    ) : (
+                      <>正在下载模型文件...</>
+                    )}
                   </p>
                 </div>
               )}

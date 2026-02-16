@@ -66,12 +66,43 @@ impl SimilaritySearcher {
         &self,
         query_embedding: &[f32],
         options: &SearchOptions,
+        model_version: Option<&str>,
     ) -> Result<Vec<SearchResult>, String> {
-        // 获取所有嵌入
-        let embeddings = self.embedding_store.get_all_embeddings()?;
+        log::info!("[Search] Searching with model_version: {:?}", model_version);
         
-        // 执行搜索
+        let embeddings = if let Some(model) = model_version {
+            let result = self.embedding_store.get_embeddings_by_model(model)?;
+            log::info!("[Search] Found {} embeddings for model '{}'", result.len(), model);
+            
+            if result.is_empty() {
+                let all = self.embedding_store.get_all_embeddings()?;
+                if !all.is_empty() {
+                    let available_models: std::collections::HashSet<String> = all
+                        .iter()
+                        .map(|e| e.model_version.clone())
+                        .collect();
+                    log::warn!(
+                        "[Search] No embeddings found for model '{}'. Available models: {:?}",
+                        model,
+                        available_models
+                    );
+                }
+            }
+            result
+        } else {
+            let result = self.embedding_store.get_all_embeddings()?;
+            log::info!("[Search] Found {} total embeddings", result.len());
+            result
+        };
+        
+        log::info!("[Search] Query embedding dimension: {}", query_embedding.len());
+        
+        if !embeddings.is_empty() {
+            log::info!("[Search] First embedding dimension: {}", embeddings[0].embedding.len());
+        }
+        
         let results = self.search_in_candidates(query_embedding, &embeddings, options);
+        log::info!("[Search] search_in_candidates returned {} results", results.len());
         
         Ok(results)
     }
@@ -318,10 +349,9 @@ impl HybridSearcher {
         &self,
         query_embedding: &[f32],
         options: &SearchOptions,
+        model_version: Option<&str>,
     ) -> Result<Vec<SearchResult>, String> {
-        // 目前仅使用 CLIP 搜索
-        // 未来可以在这里组合多种搜索结果
-        self.clip_searcher.search(query_embedding, options)
+        self.clip_searcher.search(query_embedding, options, model_version)
     }
 
     /// 加权混合搜索结果
