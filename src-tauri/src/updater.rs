@@ -384,11 +384,25 @@ async fn check_github_fallback(
         return Err("No releases found (404)".to_string());
     }
     
+    if !status.is_success() {
+        return Err(format!("HTTP error: {}", status));
+    }
+
+    // 获取 HTML 内容
+    let html = response
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
     // 从最终 URL 中提取版本号（GitHub 会重定向到 /releases/tag/vX.X.X）
     let url_str = final_url.as_str();
-    if let Some(version) = extract_version_from_url(url_str) {
+    let version = extract_version_from_url(url_str)
+        .or_else(|| extract_version_from_html(&html));
+    
+    if let Some(version) = version {
         let latest_version = format!("v{}", version);
-        log::info!("Extracted version from URL: {}", latest_version);
+        log::info!("Extracted version: {}", latest_version);
+        
         let current = SemVer::parse(current_version);
         let latest = SemVer::parse(&latest_version);
 
@@ -396,59 +410,34 @@ async fn check_github_fallback(
             (Some(current), Some(latest)) => latest > current,
             _ => latest_version != current_version,
         };
+
+        // 尝试从 HTML 中提取更多信息
+        let published_at = extract_published_at_from_html(&html).unwrap_or_default();
+        let release_name = extract_release_name_from_html(&html).unwrap_or_default();
+        let release_notes = extract_release_notes_from_html(&html).unwrap_or_default();
+        let (installer_url, installer_size) = extract_installer_from_html(&html)
+            .map(|(url, size)| (Some(url), Some(size)))
+            .unwrap_or((None, None));
+
+        log::info!("Extracted from HTML - published_at: {}, release_name: {}, has_installer: {}", 
+            published_at, release_name, installer_url.is_some());
 
         return Ok(UpdateCheckResult {
             has_update,
             current_version: current_version.to_string(),
             latest_version: latest_version.clone(),
             download_url: format!("https://github.com/{}/{}/releases/tag/{}", owner, repo, latest_version),
-            installer_url: None,
-            installer_size: None,
-            release_name: String::new(),
-            release_notes: String::new(),
-            published_at: String::new(),
+            installer_url,
+            installer_size,
+            release_name,
+            release_notes,
+            published_at,
             error: None,
         });
     }
 
-    // 如果无法从 URL 提取，尝试从页面内容解析
-    if !status.is_success() {
-        return Err(format!("HTTP error: {}", status));
-    }
-
-    let html = response
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
-
-    // 从 HTML 中提取版本号
-    if let Some(version) = extract_version_from_html(&html) {
-        let latest_version = format!("v{}", version);
-        log::info!("Extracted version from HTML: {}", latest_version);
-        let current = SemVer::parse(current_version);
-        let latest = SemVer::parse(&latest_version);
-
-        let has_update = match (current, latest) {
-            (Some(current), Some(latest)) => latest > current,
-            _ => latest_version != current_version,
-        };
-
-        Ok(UpdateCheckResult {
-            has_update,
-            current_version: current_version.to_string(),
-            latest_version: latest_version.clone(),
-            download_url: format!("https://github.com/{}/{}/releases/tag/{}", owner, repo, latest_version),
-            installer_url: None,
-            installer_size: None,
-            release_name: String::new(),
-            release_notes: String::new(),
-            published_at: String::new(),
-            error: None,
-        })
-    } else {
-        log::error!("Could not extract version from HTML, status: {}", status);
-        Err("Could not extract version from release page".to_string())
-    }
+    log::error!("Could not extract version from HTML, status: {}", status);
+    Err("Could not extract version from release page".to_string())
 }
 
 /// 从 URL 中提取版本号
@@ -540,6 +529,123 @@ fn extract_version_from_html(html: &str) -> Option<String> {
             let version = &html[start..start + end];
             if !version.is_empty() {
                 return Some(version.to_string());
+            }
+        }
+    }
+    
+    None
+}
+
+/// 从 HTML 中提取发布日期
+fn extract_published_at_from_html(html: &str) -> Option<String> {
+    if let Some(start) = html.find("<relative-time datetime=\"") {
+        let start = start + 25;
+        if let Some(end) = html[start..].find("\"") {
+            let datetime = &html[start..start + end];
+            if !datetime.is_empty() {
+                return Some(datetime.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 从 HTML 中提取 release notes
+fn extract_release_notes_from_html(html: &str) -> Option<String> {
+    if let Some(start) = html.find("<div class=\"markdown-body\">") {
+        let start = start + 27;
+        if let Some(end) = html[start..].find("</div>") {
+            let notes = &html[start..start + end];
+            let cleaned = notes
+                .replace("<br>", "\n")
+                .replace("<br/>", "\n")
+                .replace("<br />", "\n")
+                .replace("</p>", "\n")
+                .replace("<p>", "")
+                .replace("<li>", "• ")
+                .replace("</li>", "\n")
+                .replace("<ul>", "")
+                .replace("</ul>", "")
+                .replace("<ol>", "")
+                .replace("</ol>", "")
+                .replace("<strong>", "")
+                .replace("</strong>", "")
+                .replace("<em>", "")
+                .replace("</em>", "")
+                .replace("<code>", "`")
+                .replace("</code>", "`")
+                .trim()
+                .to_string();
+            if !cleaned.is_empty() {
+                return Some(cleaned);
+            }
+        }
+    }
+    None
+}
+
+/// 从 HTML 中提取 Windows 安装程序链接
+fn extract_installer_from_html(html: &str) -> Option<(String, u64)> {
+    if let Some(assets_start) = html.find("<div class=\"Box Box--condensed mt-3\"") {
+        let assets_section = &html[assets_start..];
+        
+        let patterns = ["x64-setup.exe", "_setup.exe", "-setup.exe", ".exe"];
+        
+        for pattern in patterns.iter() {
+            let search = format!(".exe\"");
+            if let Some(pos) = assets_section.find(&search) {
+                let before = &assets_section[..pos + 4];
+                if let Some(href_start) = before.rfind("href=\"") {
+                    let href_start = href_start + 6;
+                    let remaining = &assets_section[href_start..];
+                    if let Some(href_end) = remaining.find("\"") {
+                        let url = &remaining[..href_end];
+                        if url.contains("github.com") && url.ends_with(".exe") {
+                            let name_lower = url.to_lowercase();
+                            if pattern == &".exe" || name_lower.contains(&pattern.to_lowercase()) {
+                                if pattern != &".exe" || name_lower.contains("setup") || name_lower.contains("install") {
+                                    return Some((url.to_string(), 0));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+/// 从 HTML 中提取 release name（版本标题）
+fn extract_release_name_from_html(html: &str) -> Option<String> {
+    // 模式 1: 查找 <h1 data-view-component="true" class="d-inline mr-3">标题</h1>
+    // 这是 GitHub releases 页面标题的正确结构
+    if let Some(start) = html.find("class=\"d-inline mr-3\"") {
+        let section = &html[start..];
+        if let Some(content_start) = section.find(">") {
+            let content_start = content_start + 1;
+            if let Some(content_end) = section[content_start..].find("</h1>") {
+                let title = &section[content_start..content_start + content_end];
+                let cleaned = title.trim().to_string();
+                if !cleaned.is_empty() && !cleaned.contains("Search") && !cleaned.contains("code, repositories") && !cleaned.contains("Choose a tag") {
+                    return Some(cleaned);
+                }
+            }
+        }
+    }
+    
+    // 模式 2: 查找 h1 标签中包含 data-view-component
+    if let Some(start) = html.find("<h1 data-view-component") {
+        let section = &html[start..];
+        if let Some(content_start) = section.find(">") {
+            let content_start = content_start + 1;
+            if let Some(content_end) = section[content_start..].find("</h1>") {
+                let title = &section[content_start..content_start + content_end];
+                let cleaned = title.trim().to_string();
+                if !cleaned.is_empty() && !cleaned.contains("Search") && !cleaned.contains("code, repositories") && !cleaned.contains("Choose a tag") {
+                    return Some(cleaned);
+                }
             }
         }
     }

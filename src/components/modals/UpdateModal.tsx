@@ -30,15 +30,21 @@ interface UpdateModalProps {
 }
 
 const formatDate = (dateString: string, t: (key: string) => string): string => {
+  if (!dateString || dateString.trim() === '') {
+    return t('settings.about.dateUnknown');
+  }
   try {
     const date = new Date(dateString);
+    if (isNaN(date.getTime())) {
+      return t('settings.about.dateUnknown');
+    }
     return date.toLocaleDateString(t('locale') || 'zh-CN', {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
     });
   } catch {
-    return dateString;
+    return t('settings.about.dateUnknown');
   }
 };
 

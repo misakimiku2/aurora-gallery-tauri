@@ -235,6 +235,16 @@ Upgrade-Insecure-Requests: 1
 **原因:** 仓库设置为私有，API 无法访问
 **解决方案:** 将仓库设置为公开
 
+### 问题 6: VPN/代理导致更新检查异常
+**现象:** 更新窗口显示错误的版本标题（如 "Search code, repositories..." 或 "Choose a tag to compare"）
+**原因:** 
+- VPN/代理可能修改了请求头或响应内容
+- GitHub 可能对 VPN 出口 IP 有不同的响应策略
+- 网页抓取备用方案在 VPN 环境下可能获取到错误的页面内容
+**解决方案:** 
+- 关闭 VPN 后更新检查正常工作
+- 建议用户在更新检查时暂时关闭 VPN
+
 ---
 
 ## 当前状态
@@ -249,8 +259,8 @@ Upgrade-Insecure-Requests: 1
 ✅ 仓库已公开，无需 Token 即可检查更新
 
 ### 待解决问题
-❌ 备用方案（网页抓取）在特定网络环境下返回 404
-❌ 需要进一步调查 GitHub 页面访问限制的原因
+⚠️ 备用方案（网页抓取）在使用 VPN/代理时可能返回错误内容或 404
+⚠️ HTML 解析依赖 GitHub 页面结构，未来可能需要更新解析逻辑
 
 ### 临时解决方案
 - 当所有方案都失败时，返回"暂无发布版本"而不是报错
@@ -283,6 +293,20 @@ Upgrade-Insecure-Requests: 1
 
 ## 更新日志
 
+### 2026-02-19
+- ✅ 修复更新日期显示 "Invalid date" 问题
+  - 前端 `formatDate` 函数添加空字符串和无效日期检查
+  - 添加翻译键 `settings.about.dateUnknown`
+- ✅ 改进网页抓取备用方案，从 HTML 提取更多信息
+  - 添加 `extract_published_at_from_html` 函数提取发布日期
+  - 添加 `extract_release_notes_from_html` 函数提取更新说明
+  - 添加 `extract_installer_from_html` 函数提取安装程序链接
+  - 添加 `extract_release_name_from_html` 函数提取版本标题
+- ✅ 修复 HTML 解析逻辑，使用正确的 GitHub 页面结构
+  - 使用 `class="d-inline mr-3"` 定位版本标题元素
+  - 添加对 "Choose a tag" 等错误内容的过滤
+- ✅ 记录 VPN/代理导致更新检查异常的问题
+
 ### 2026-02-13
 - ✅ 仓库已设置为公开，移除 GitHub Token 相关代码
 - ✅ 更新实现文档
@@ -291,4 +315,4 @@ Upgrade-Insecure-Requests: 1
 
 ## 备注
 
-仓库已公开，更新检查功能无需 Token 即可正常工作。公开仓库的 API 速率限制（每小时 60 次）对于更新检查场景已经足够。备用方案（网页抓取）在特定网络环境下可能仍然存在问题，建议后续考虑添加代理支持。
+仓库已公开，更新检查功能无需 Token 即可正常工作。公开仓库的 API 速率限制（每小时 60 次）对于更新检查场景已经足够。备用方案（网页抓取）在使用 VPN/代理时可能返回错误内容，建议用户在更新检查时暂时关闭 VPN。HTML 解析依赖 GitHub 页面结构，未来 GitHub 页面更新时可能需要调整解析逻辑。
