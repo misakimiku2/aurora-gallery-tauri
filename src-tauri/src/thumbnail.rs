@@ -81,7 +81,7 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
 
     if is_jxl_file {
         use std::sync::atomic::Ordering;
-        use crate::{ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
+        use crate::image_utils::{ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
         while ACTIVE_HEAVY_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_HEAVY_DECODES {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -205,7 +205,7 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
 
     if is_jxl_file {
         use std::sync::atomic::Ordering;
-        use crate::ACTIVE_HEAVY_DECODES;
+        use crate::image_utils::ACTIVE_HEAVY_DECODES;
         ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
     }
 

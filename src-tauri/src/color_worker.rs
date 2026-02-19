@@ -16,7 +16,7 @@ use tokio::task;
 
 use crate::color_db::{self, ColorDbPool};
 use crate::color_extractor;
-use crate::{is_jxl, ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
+use crate::image_utils::{is_jxl, ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
 
 // 全局暂停状态
 static IS_PAUSED: AtomicBool = AtomicBool::new(false);
