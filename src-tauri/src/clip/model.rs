@@ -136,7 +136,7 @@ impl ClipModel {
         ).map_err(|e| format!("Failed to initialize ONNX sessions: {}", e))?;
 
         log::info!("CLIP model loaded successfully with {} acceleration", 
-            if is_gpu_active { "GPU (CUDA)" } else { "CPU" });
+            if is_gpu_active { "GPU (DirectML)" } else { "CPU" });
         
         // 标记模型为已加载
         let state = MODEL_STATE.get_or_init(|| {
@@ -162,55 +162,16 @@ impl ClipModel {
         })
     }
 
-    /// 检查 CUDA 是否可用
-    fn check_cuda_available() -> bool {
-        // 检查 CUDA 环境变量
-        let cuda_path = std::env::var("CUDA_PATH").ok();
-        let cuda_path_v12 = std::env::var("CUDA_PATH_V12_0").ok()
-            .or_else(|| std::env::var("CUDA_PATH_V12_1").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_2").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_3").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_4").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_5").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_6").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_7").ok())
-            .or_else(|| std::env::var("CUDA_PATH_V12_8").ok());
-        
-        log::info!("CUDA_PATH: {:?}", cuda_path);
-        log::info!("CUDA_PATH_V12_x: {:?}", cuda_path_v12);
-        
-        // 检查 PATH 中是否有 CUDA 的 bin 目录
-        if let Ok(path) = std::env::var("PATH") {
-            let has_cuda_in_path = path.to_lowercase().contains("cuda");
-            log::info!("CUDA in PATH: {}", has_cuda_in_path);
-        }
-        
-        // 检查 CUDA EP 是否可用
-        let cuda_ep = ort::execution_providers::CUDAExecutionProvider::default();
-        let is_available = cuda_ep.is_available().unwrap_or(false);
-        log::info!("CUDA Execution Provider available: {}", is_available);
-        
-        is_available
-    }
-
     /// 初始化 ONNX Runtime 会话
     fn init_sessions(
         vision_model_path: &PathBuf,
         text_model_path: &PathBuf,
         use_gpu: bool,
     ) -> Result<(Session, Session, bool), Box<dyn std::error::Error>> {
-        // 构建 SessionBuilder
         let builder = Session::builder()?;
-        
-        // 配置执行提供程序
         let mut actual_gpu_active = false;
         
         let builder = if use_gpu {
-            // 先检查 CUDA 是否可用
-            log::info!("Checking GPU acceleration options...");
-            let cuda_available = Self::check_cuda_available();
-            
-            // 首先尝试 DirectML（Windows 上更稳定）
             #[cfg(target_os = "windows")]
             {
                 log::info!("Attempting to enable DirectML Execution Provider...");
@@ -219,74 +180,30 @@ impl ClipModel {
                 
                 match builder.clone().with_execution_providers([dml_provider.build()]) {
                     Ok(b) => {
-                        log::info!("✅ DirectML Execution Provider enabled successfully!");
+                        log::info!("DirectML Execution Provider enabled successfully!");
                         actual_gpu_active = true;
                         b
                     }
                     Err(e) => {
-                        log::warn!("DirectML failed: {}, trying CUDA...", e);
-                        if cuda_available {
-                            let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
-                                .with_device_id(0)
-                                .with_arena_extend_strategy(ort::execution_providers::ArenaExtendStrategy::SameAsRequested);
-                            
-                            match builder.with_execution_providers([cuda_provider.build()]) {
-                                Ok(b) => {
-                                    log::info!("✅ CUDA Execution Provider enabled successfully!");
-                                    actual_gpu_active = true;
-                                    b
-                                }
-                                Err(e2) => {
-                                    log::error!("❌ Both DirectML and CUDA failed: {}", e2);
-                                    log::warn!("Falling back to CPU...");
-                                    Session::builder()?
-                                }
-                            }
-                        } else {
-                            log::warn!("CUDA not available, falling back to CPU...");
-                            Session::builder()?
-                        }
+                        log::warn!("DirectML failed: {}, falling back to CPU...", e);
+                        Session::builder()?
                     }
                 }
             }
             
             #[cfg(not(target_os = "windows"))]
             {
-                if !cuda_available {
-                    log::error!("❌ CUDA is not available on this system!");
-                    log::warn!("Falling back to CPU...");
-                    Session::builder()?
-                } else {
-                    log::info!("Attempting to enable CUDA Execution Provider...");
-                    
-                    let cuda_provider = ort::execution_providers::CUDAExecutionProvider::default()
-                        .with_device_id(0)
-                        .with_arena_extend_strategy(ort::execution_providers::ArenaExtendStrategy::SameAsRequested);
-                    
-                    match builder.with_execution_providers([cuda_provider.build()]) {
-                        Ok(b) => {
-                            log::info!("✅ CUDA Execution Provider enabled successfully!");
-                            actual_gpu_active = true;
-                            b
-                        }
-                        Err(e) => {
-                            log::error!("❌ Failed to enable CUDA: {}", e);
-                            log::warn!("Falling back to CPU...");
-                            Session::builder()?
-                        }
-                    }
-                }
+                log::info!("GPU acceleration only supported on Windows (DirectML), using CPU");
+                builder
             }
         } else {
             log::info!("GPU acceleration disabled, using CPU");
             builder
         };
 
-        // 加载视觉模型
         let vision_session = builder.clone().commit_from_file(vision_model_path)?;
         log::info!("Vision model loaded: {:?}", vision_model_path);
 
-        // 加载文本模型
         let text_session = builder.commit_from_file(text_model_path)?;
         log::info!("Text model loaded: {:?}", text_model_path);
         
@@ -364,7 +281,6 @@ impl ClipModel {
         total_files: usize,
         file_name: &str,
     ) -> Result<(), String> {
-        // 使用流式下载以支持进度反馈
         let response = client.get(url)
             .send()
             .await
@@ -382,10 +298,8 @@ impl ClipModel {
             return Err(format!("HTTP {}: {}", response.status(), url));
         }
 
-        // 获取总大小
         let total_size = response.content_length().unwrap_or(0);
         
-        // 使用流式下载
         let mut stream = response.bytes_stream();
         let mut downloaded: u64 = 0;
         let mut file = tokio::fs::File::create(file_path)
@@ -394,8 +308,9 @@ impl ClipModel {
         
         use futures_util::StreamExt;
         
-        // 用于限制事件发送频率（每100ms最多一次）
+        let download_start = Instant::now();
         let mut last_emit_time = Instant::now();
+        let mut last_downloaded: u64 = 0;
         
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result.map_err(|e| format!("Failed to download chunk: {}", e))?;
@@ -407,7 +322,6 @@ impl ClipModel {
             
             downloaded += chunk_size;
             
-            // 限制事件发送频率，每100ms最多一次
             if last_emit_time.elapsed() >= Duration::from_millis(100) {
                 let file_progress = if total_size > 0 {
                     (downloaded as f64 / total_size as f64) * 100.0
@@ -415,8 +329,14 @@ impl ClipModel {
                     0.0
                 };
                 
-                // 计算总体进度：已完成文件的100% + 当前文件的进度
                 let overall_progress = ((file_index as f64 * 100.0) + file_progress) / total_files as f64;
+                
+                let elapsed_secs = download_start.elapsed().as_secs_f64();
+                let speed = if elapsed_secs > 0.0 {
+                    (downloaded as f64 / elapsed_secs) as u64
+                } else {
+                    0
+                };
                 
                 let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
                     "file_name": file_name,
@@ -426,18 +346,18 @@ impl ClipModel {
                     "total": total_size,
                     "progress": file_progress as u32,
                     "overall_progress": overall_progress as u32,
+                    "speed": speed,
                 }));
                 
                 last_emit_time = Instant::now();
+                last_downloaded = downloaded;
             }
         }
         
-        // 确保文件写入完成
         tokio::io::AsyncWriteExt::flush(&mut file)
             .await
             .map_err(|e| format!("Failed to flush file: {}", e))?;
         
-        // 发送完成进度（100%）
         let overall_progress = ((file_index + 1) * 100) / total_files;
         let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
             "file_name": file_name,
@@ -447,6 +367,7 @@ impl ClipModel {
             "total": total_size,
             "progress": 100,
             "overall_progress": overall_progress,
+            "speed": 0,
         }));
         
         Ok(())

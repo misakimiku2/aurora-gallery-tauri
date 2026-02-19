@@ -119,8 +119,8 @@ export interface ClipModelStatus {
 
 ### 1. ~~CUDA 版本兼容性~~ ✅ 已解决
 - **原问题**: `ort` crate 官方支持 CUDA 12.x，CUDA 13.x 可能不兼容
-- **解决方案**: 使用 DirectML 替代 CUDA，不依赖特定 CUDA 版本
-- **结果**: Windows 上默认使用 DirectML，兼容性最佳
+- **解决方案**: 移除 CUDA 支持，仅使用 DirectML（Windows）和 CPU（其他平台）
+- **结果**: 简化了依赖，提高了兼容性
 
 ### 2. GPU 集成与性能优化方案 (2026-02-15 突破性进展) 🚀
 
@@ -130,9 +130,9 @@ export interface ClipModelStatus {
 - **ONNX Runtime (ort) 集成**: 彻底放弃简单的 Python 转发，改用原生 Rust 后端推理。
 - **动态加速切换 (Hot-Reloading)**: 实现模型热重载。切换 GPU 开关时，后端自动通过 `unload_model` -> `load_model` 重新分配 Execution Providers，无需重启软件。
 - **智能批处理**:
-    - **GPU 模式**: 采用 `batch_size = 32`。实测 RTX 5070 Ti 性能达 **100-300 张/秒**。
+    - **GPU 模式 (DirectML)**: 采用 `batch_size = 32`。实测 RTX 5070 Ti 性能达 **100-300 张/秒**。
     - **CPU 模式**: 采用 `batch_size = 8` 并配合多线程处理。
-    - **自动回退**: 当 CUDA 不满足条件时自动降级至 CPU 推理，确保稳定性。
+    - **自动回退**: 当 DirectML 不满足条件时自动降级至 CPU 推理，确保稳定性。
 
 #### B. 图像预处理性能质变
 - **并行流水线**: 使用 `rayon` 库实现多线程图像加载与变换，处理 1024px 图片仅需毫秒。
@@ -148,25 +148,19 @@ export interface ClipModelStatus {
 
 ### GPU 加速要求
 
-#### Windows（推荐 DirectML）
+#### Windows（DirectML）
 - **DirectML**: Windows 10 1903+ 或 Windows 11（默认启用）
 - **GPU**: 支持 DirectX 12 的 GPU（NVIDIA、AMD、Intel 均可）
 - **驱动**: 最新显卡驱动
 - **优势**: 不依赖 CUDA 版本，兼容性最佳
 
-#### NVIDIA CUDA（备选方案）
-- **NVIDIA 驱动**: 525.60.13 或更高版本
-- **CUDA**: 12.x（推荐）
-- **cuDNN**: 9.x
-- **环境变量**: 
-  - `CUDA_PATH` 指向 CUDA 安装目录
-  - `PATH` 包含 `%CUDA_PATH%\bin`
-- **注意**: CUDA 13.x 可能存在兼容性问题，建议使用 DirectML
+#### 非 Windows 平台
+- 仅支持 CPU 推理
 
 ### 已解决问题 ✓
 - ~~模型推理实现~~ - 已实现真正的 ONNX Runtime 推理
 - ~~嵌入向量生成~~ - 已从数据库读取文件列表
-- ~~CUDA 版本兼容性~~ - 已通过 DirectML 解决
+- ~~CUDA 版本兼容性~~ - 已移除 CUDA，改用 DirectML
 
 ## 使用流程
 
@@ -355,9 +349,9 @@ export interface ClipModelStatus {
 ## 相关文件
 
 ### 后端 (Rust)
-- `src-tauri/Cargo.toml` - 依赖配置（ort cuda 特性）
+- `src-tauri/Cargo.toml` - 依赖配置（ort directml 特性）
 - `src-tauri/src/clip/mod.rs` - CLIP 管理器，默认启用 GPU
-- `src-tauri/src/clip/model.rs` - ONNX Runtime 推理实现
+- `src-tauri/src/clip/model.rs` - ONNX Runtime 推理实现（DirectML）
 - `src-tauri/src/clip/preprocessor.rs` - 图像和文本预处理
 - `src-tauri/src/clip/embedding.rs` - 嵌入向量存储
 - `src-tauri/src/clip/search.rs` - 向量搜索
@@ -538,6 +532,56 @@ export interface ClipModelStatus {
 2. **前后端状态同步**：前端持久化的设置需要传递给后端，不能依赖后端的默认值
 3. **Debug vs Release 性能**：Rust debug 模式性能极差，性能测试必须使用 release 模式
 4. **224px 输入尺寸**：CLIP 标准输入尺寸，模型设计时确定，足以识别语义特征
-5. **DirectML vs CUDA**：Windows 上 DirectML 比 CUDA 更稳定，不依赖特定 CUDA 版本
+5. **DirectML 优势**：Windows 上 DirectML 兼容所有支持 DirectX 12 的 GPU，不依赖特定 CUDA 版本
 6. **GPU 利用率诊断**：使用 `nvidia-smi -l 1` 监控 GPU 利用率，确认 GPU 是否真正工作
 7. **批处理大小影响**：更大的 batch_size 可以更好地利用 GPU 并行能力，但需要根据显存大小调整
+
+### 2026-02-20 CUDA 移除与下载体验优化
+
+43. **移除 CUDA 支持** ✅
+   - **背景**：CUDA 版本兼容性问题复杂，DirectML 已能满足 Windows 用户需求
+   - **修改**：
+     - `Cargo.toml` 移除 `cuda` feature，仅保留 `directml`
+     - `model.rs` 删除 `check_cuda_available()` 函数
+     - 简化 `init_sessions()` 函数，移除 CUDA 回退逻辑
+     - Windows 平台仅使用 DirectML，非 Windows 平台使用 CPU
+   - **优势**：减少依赖复杂度，提高兼容性
+
+44. **下载速度显示** ✅
+   - **后端**：在下载进度事件中添加 `speed` 字段，计算实时下载速度
+   - **前端**：
+     - 添加 `formatSpeed()` 函数格式化速度显示
+     - SettingsModal 和 TreeSidebar 显示下载速度（如 "2.5 MB/s"）
+   - **文件修改**：
+     - `src-tauri/src/clip/model.rs`
+     - `src/api/tauri-bridge.ts`
+     - `src/utils/modelDownloadState.ts`
+     - `src/components/SettingsModal.tsx`
+     - `src/components/TreeSidebar.tsx`
+
+45. **多文件独立进度条** ✅
+   - **问题**：原来所有文件共用一个进度条，文件切换时进度会重置
+   - **修改**：
+     - 数据结构添加 `fileIndex` 和 `totalFiles` 字段
+     - 显示总体进度：`X / 3 个文件`
+     - 每个文件有独立的进度条，显示当前文件进度百分比
+     - 进度条在文件下载完成后保持 100%，切换到下一个文件时重新开始
+   - **文件修改**：
+     - `src/utils/modelDownloadState.ts`
+     - `src/components/SettingsModal.tsx`
+     - `src/components/TreeSidebar.tsx`
+
+46. **模型大小显示更新** ✅
+   - **ViT-B/32**: 300 MB → **580 MB**（实际下载大小）
+   - **ViT-L/14**: 800 MB → **1.6 GB**（实际下载大小）
+   - **文件修改**：`src/components/SettingsModal.tsx`
+
+47. **"开始生成"按钮禁用逻辑修复** ✅
+   - **问题**：即使模型未下载，也可以点击"开始生成"按钮
+   - **修复**：添加条件检查，只有当前选中的模型已下载时才能点击
+   - **文件修改**：`src/components/SettingsModal.tsx`
+
+48. **GPU 加速说明文字更新** ✅
+   - **修改前**："使用 CUDA/TensorRT 加速模型推理（需要 NVIDIA 显卡）"
+   - **修改后**："使用 DirectML 加速模型推理（需要支持 DirectX 12 的显卡）"
+   - **文件修改**：`src/components/SettingsModal.tsx`

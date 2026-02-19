@@ -1518,7 +1518,6 @@ export const Sidebar: React.FC<{
           </div>
       )}
 
-      {/* 模型下载进度显示 */}
       {modelDownloads.length > 0 && (
         <div className="p-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
           {modelDownloads.map((download) => (
@@ -1534,7 +1533,7 @@ export const Sidebar: React.FC<{
                   ) : download.status === 'error' ? (
                     '失败'
                   ) : (
-                    `${download.progress}%`
+                    `${download.fileIndex + 1}/${download.totalFiles} 文件`
                   )}
                 </span>
               </div>
@@ -1547,8 +1546,13 @@ export const Sidebar: React.FC<{
                     />
                   </div>
                   <div className="flex justify-between text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-                    <span className="truncate max-w-[70%]">{download.fileName}</span>
-                    <span>{(download.downloaded / 1024 / 1024).toFixed(1)} MB / {(download.total / 1024 / 1024).toFixed(1)} MB</span>
+                    <span className="truncate max-w-[45%]">{download.fileName}</span>
+                    <span className="flex items-center gap-1 shrink-0">
+                      {download.progress}%
+                      {download.speed > 0 && (
+                        <span className="text-green-600">({download.speed < 1024 ? `${download.speed} B/s` : download.speed < 1024 * 1024 ? `${(download.speed / 1024).toFixed(1)} KB/s` : `${(download.speed / 1024 / 1024).toFixed(1)} MB/s`})</span>
+                      )}
+                    </span>
                   </div>
                 </>
               )}

@@ -1984,8 +1984,9 @@ export interface ClipModelDownloadProgress {
   total_files: number;
   downloaded: number;
   total: number;
-  progress: number;  // 当前文件进度 (0-100)
-  overall_progress: number;  // 总体进度 (0-100)
+  progress: number;
+  overall_progress: number;
+  speed: number;
 }
 
 /**

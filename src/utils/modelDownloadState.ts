@@ -7,9 +7,12 @@ export interface ModelDownloadInfo {
   modelName: string;
   displayName: string;
   fileName: string;
-  progress: number;  // 总体进度 0-100
+  fileIndex: number;
+  totalFiles: number;
+  progress: number;
   downloaded: number;
   total: number;
+  speed: number;
   status: 'downloading' | 'completed' | 'error' | 'idle';
   errorMessage?: string;
 }
@@ -44,9 +47,12 @@ async function startGlobalListener() {
         modelName,
         displayName,
         fileName: data.file_name,
-        progress: data.overall_progress,
+        fileIndex: data.file_index,
+        totalFiles: data.total_files,
+        progress: data.progress,
         downloaded: data.downloaded,
         total: data.total,
+        speed: data.speed,
         status: 'downloading',
       };
       
@@ -76,9 +82,12 @@ export function updateModelDownloadProgress(
   modelName: string,
   displayName: string,
   fileName: string,
+  fileIndex: number,
+  totalFiles: number,
   progress: number,
   downloaded: number,
   total: number,
+  speed: number,
   status: ModelDownloadInfo['status'] = 'downloading',
   errorMessage?: string
 ): void {
@@ -86,9 +95,12 @@ export function updateModelDownloadProgress(
     modelName,
     displayName,
     fileName,
+    fileIndex,
+    totalFiles,
     progress,
     downloaded,
     total,
+    speed,
     status,
     errorMessage,
   };
@@ -126,9 +138,12 @@ export function completeModelDownload(modelName: string): void {
           modelName,
           displayName: '',
           fileName: '',
+          fileIndex: 0,
+          totalFiles: 0,
           progress: 0,
           downloaded: 0,
           total: 0,
+          speed: 0,
           status: 'idle',
         });
       });

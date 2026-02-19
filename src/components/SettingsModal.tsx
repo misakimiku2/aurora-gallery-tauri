@@ -240,8 +240,8 @@ const CLIP_MODELS: ClipModelInfo[] = [
     name: 'ViT-B-32',
     displayName: 'ViT-B/32',
     description: '推荐 - 平衡速度和准确度',
-    size: 300 * 1024 * 1024, // 300MB
-    sizeDisplay: '300 MB',
+    size: 580 * 1024 * 1024,
+    sizeDisplay: '580 MB',
     embeddingDim: 512,
     isRecommended: true,
   },
@@ -249,8 +249,8 @@ const CLIP_MODELS: ClipModelInfo[] = [
     name: 'ViT-L-14',
     displayName: 'ViT-L/14',
     description: '高精度 - 更好的语义理解',
-    size: 800 * 1024 * 1024, // 800MB
-    sizeDisplay: '800 MB',
+    size: 1600 * 1024 * 1024,
+    sizeDisplay: '1.6 GB',
     embeddingDim: 768,
     isRecommended: false,
   },
@@ -282,20 +282,27 @@ const formatEstimatedTime = (seconds: number): string => {
   }
 };
 
+const formatSpeed = (bytesPerSecond: number): string => {
+  if (bytesPerSecond < 1024) return `${bytesPerSecond} B/s`;
+  if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
+};
+
 const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast }) => {
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>({});
   const [isLoading, setIsLoading] = useState(false);
-  // 模型下载进度状态 - 从全局状态初始化
-  const [downloadProgress, setDownloadProgress] = useState<Record<string, { fileName: string; progress: number; downloaded: number; total: number }>>(() => {
-    // 从全局状态初始化
+  const [downloadProgress, setDownloadProgress] = useState<Record<string, { fileName: string; fileIndex: number; totalFiles: number; progress: number; downloaded: number; total: number; speed: number }>>(() => {
     const activeDownloads = getActiveDownloads();
-    const initial: Record<string, { fileName: string; progress: number; downloaded: number; total: number }> = {};
+    const initial: Record<string, { fileName: string; fileIndex: number; totalFiles: number; progress: number; downloaded: number; total: number; speed: number }> = {};
     activeDownloads.forEach(d => {
       initial[d.modelName] = {
         fileName: d.fileName,
+        fileIndex: d.fileIndex,
+        totalFiles: d.totalFiles,
         progress: d.progress,
         downloaded: d.downloaded,
         total: d.total,
+        speed: d.speed,
       };
     });
     return initial;
@@ -345,15 +352,17 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   // 订阅全局模型下载状态，保持进度在切换标签页时不丢失
   useEffect(() => {
-    // 订阅全局下载状态变化
     const unsubscribe = subscribeToModelDownload((modelName, info) => {
       setDownloadProgress(prev => ({
         ...prev,
         [modelName]: {
           fileName: info.fileName,
+          fileIndex: info.fileIndex,
+          totalFiles: info.totalFiles,
           progress: info.progress,
           downloaded: info.downloaded,
           total: info.total,
+          speed: info.speed,
         }
       }));
       
@@ -509,7 +518,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     setLoadingModel(modelName);
     
     // 清理之前的下载进度
-    setDownloadProgress(prev => ({ ...prev, [modelName]: { fileName: '', progress: 0, downloaded: 0, total: 0 } }));
+    setDownloadProgress(prev => ({ ...prev, [modelName]: { fileName: '', fileIndex: 0, totalFiles: 3, progress: 0, downloaded: 0, total: 0, speed: 0 } }));
     
     onUpdateSettings({
       ...settings,
@@ -831,26 +840,43 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                 </div>
               </div>
 
-              {/* 下载进度条 */}
               {isLoadingModel && (
-                <div className="mt-4">
-                  <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-green-500 transition-all duration-300"
-                      style={{ width: `${downloadProgress[model.name]?.progress ?? 0}%` }}
-                    />
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                    <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? 3} 个文件</span>
+                    <span className="text-green-600 font-medium">
+                      {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? 3) * 100)}%
+                    </span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {downloadProgress[model.name]?.fileName ? (
-                      <>
-                        正在下载: {downloadProgress[model.name].fileName} 
-                        ({(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB / 
-                        {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB)
-                      </>
-                    ) : (
-                      <>正在下载模型文件...</>
-                    )}
-                  </p>
+                  {downloadProgress[model.name]?.fileName && (
+                    <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between text-xs mb-1">
+                        <span className="text-gray-700 dark:text-gray-300 truncate max-w-[60%]">
+                          {downloadProgress[model.name].fileName}
+                        </span>
+                        <span className="text-gray-500">
+                          {downloadProgress[model.name].progress}%
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-green-500 transition-all duration-300"
+                          style={{ width: `${downloadProgress[model.name].progress}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
+                        <span>
+                          {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB / 
+                          {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
+                        </span>
+                        {downloadProgress[model.name].speed > 0 && (
+                          <span className="text-green-600">
+                            {formatSpeed(downloadProgress[model.name].speed)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -972,7 +998,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           ) : (
             <button
               onClick={handleGenerateEmbeddings}
-              disabled={isGeneratingEmbeddings}
+              disabled={isGeneratingEmbeddings || !(modelStatuses[settings.modelName]?.is_downloaded ?? false)}
               className="mt-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
             >
               <Brain size={16} className="mr-2" />
@@ -993,7 +1019,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             <div>
               <div className="font-medium text-gray-800 dark:text-white">启用 GPU 加速</div>
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                使用 CUDA/TensorRT 加速模型推理（需要 NVIDIA 显卡）
+                使用 DirectML 加速模型推理（需要支持 DirectX 12 的显卡）
               </div>
             </div>
             <input
