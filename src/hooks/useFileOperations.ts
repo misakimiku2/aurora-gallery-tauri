@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   copyFile, moveFile, scanFile, scanDirectory, writeFileFromBytes,
@@ -10,6 +10,7 @@ import { info as logInfo, debug as logDebug } from '../utils/logger';
 import { asyncPool } from '../utils/async';
 import { FileNode, FileType, TabState, DeletionTask, AppState } from '../types';
 import { isTauriEnvironment } from '../utils/environment';
+import md5 from 'md5';
 
 interface UseFileOperationsProps {
   state: AppState;
@@ -24,6 +25,23 @@ interface UseFileOperationsProps {
   displayFileIds: string[];
 }
 
+const normalizePath = (path: string): string => {
+  let normalized = path.replace(/\\/g, '/');
+  if (normalized.startsWith('/') && normalized.length > 2 && normalized.charAt(2) === ':') {
+    normalized = normalized.substring(1);
+  }
+  if (normalized.length > 1 && normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+};
+
+const generateFileId = (path: string): string => {
+  const normalized = normalizePath(path);
+  const hash = md5(normalized);
+  return hash.substring(0, 9);
+};
+
 export const useFileOperations = ({
   state,
   setState,
@@ -37,11 +55,18 @@ export const useFileOperations = ({
   displayFileIds
 }: UseFileOperationsProps) => {
   const [deletionTasks, setDeletionTasks] = useState<DeletionTask[]>([]);
+  const stateRef = useRef(state);
+  
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const handleCopyFiles = async (fileIds: string[], targetFolderId: string) => {
     const copyTimer = performanceMonitor.start('handleCopyFiles');
     logInfo('[CopyFiles] Starting copy operation', { fileIds, targetFolderId });
-    const targetFolder = state.files[targetFolderId];
+
+    const currentState = stateRef.current;
+    const targetFolder = currentState.files[targetFolderId];
 
     if (!targetFolder || !targetFolder.path) {
       console.error('[CopyFiles] Invalid target folder or path');
@@ -52,36 +77,110 @@ export const useFileOperations = ({
     const taskId = startTask('copy', fileIds, t('tasks.copying'), false);
     const separator = targetFolder.path.includes('/') ? '/' : '\\';
     let copiedCount = 0;
-    const scannedFilesMap = new Map<string, any>();
+    let failedCount = 0;
+    const scannedFilesMap = new Map<string, { scannedFile: FileNode; originalFile: FileNode }>();
+    const failedFiles: string[] = [];
+
     const filePathsMap = new Map<string, { sourcePath: string; newPath: string; filename: string; originalFile: FileNode }>();
 
-    try {
-      for (const id of fileIds) {
-        const file = state.files[id];
-        if (file && file.path) {
-          const filename = file.name;
-          const newPath = `${targetFolder.path}${separator}${filename}`;
-          filePathsMap.set(id, { sourcePath: file.path, newPath, filename, originalFile: file });
-        }
+    for (const id of fileIds) {
+      const file = currentState.files[id];
+      if (file && file.path) {
+        const filename = file.name;
+        const newPath = `${targetFolder.path}${separator}${filename}`;
+        filePathsMap.set(id, { sourcePath: file.path, newPath, filename, originalFile: file });
       }
+    }
 
+    try {
       await asyncPool(10, fileIds, async (id) => {
         const fileInfo = filePathsMap.get(id);
         if (!fileInfo) return;
 
         try {
           const actualDestPath = await copyFile(fileInfo.sourcePath, fileInfo.newPath);
-          // 尝试复制颜色信息，避免重复提取
-          await copyImageColors(fileInfo.sourcePath, actualDestPath);
-          // 复制元数据（标签、描述等）
-          await dbCopyFileMetadata(fileInfo.sourcePath, actualDestPath);
-
-          const scannedFile = await scanFile(actualDestPath, targetFolderId);
-          scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
+          
           copiedCount++;
-          updateTask(taskId, { current: copiedCount });
+          updateTask(taskId, { current: copiedCount, currentFile: fileInfo.filename });
+
+          try {
+            await dbCopyFileMetadata(fileInfo.sourcePath, actualDestPath);
+          } catch (e) {
+            console.warn('[CopyFiles] Failed to copy metadata (non-critical):', e);
+          }
+
+          let scannedFile;
+          const isFolder = fileInfo.originalFile.type === FileType.FOLDER;
+          
+          if (isFolder) {
+            try {
+              const scanResult = await scanDirectory(actualDestPath, false);
+              
+              const folderId = generateFileId(actualDestPath);
+              const folderNode = scanResult.files[folderId];
+              
+              if (folderNode) {
+                scannedFile = {
+                  ...folderNode,
+                  parentId: targetFolderId,
+                };
+                
+                setState(prev => {
+                  const newFiles = { ...prev.files };
+                  Object.entries(scanResult.files).forEach(([fileId, file]) => {
+                    if (fileId !== folderId) {
+                      newFiles[fileId] = file;
+                    }
+                  });
+                  newFiles[folderId] = scannedFile!;
+                  return { ...prev, files: newFiles };
+                });
+              } else {
+                scannedFile = {
+                  id: folderId,
+                  parentId: targetFolderId,
+                  name: fileInfo.filename,
+                  type: FileType.FOLDER,
+                  path: actualDestPath,
+                  children: [],
+                  tags: [],
+                };
+              }
+            } catch (e) {
+              console.warn('[CopyFiles] scanDirectory failed, using fallback:', e);
+              scannedFile = {
+                id: generateFileId(actualDestPath),
+                parentId: targetFolderId,
+                name: fileInfo.filename,
+                type: FileType.FOLDER,
+                path: actualDestPath,
+                children: [],
+                tags: [],
+              };
+            }
+          } else {
+            try {
+              scannedFile = await scanFile(actualDestPath, targetFolderId);
+            } catch (e) {
+              console.warn('[CopyFiles] scanFile failed, using fallback:', e);
+              scannedFile = {
+                id: generateFileId(actualDestPath),
+                parentId: targetFolderId,
+                name: fileInfo.filename,
+                type: fileInfo.originalFile.type,
+                path: actualDestPath,
+                size: fileInfo.originalFile.size,
+                tags: fileInfo.originalFile.tags || [],
+                meta: fileInfo.originalFile.meta,
+              };
+            }
+          }
+          
+          scannedFilesMap.set(id, { scannedFile, originalFile: fileInfo.originalFile });
         } catch (error) {
-          console.error('[CopyFiles] Error processing file ID', id, error);
+          console.error('[CopyFiles] Error processing file:', fileInfo.filename, error);
+          failedCount++;
+          failedFiles.push(fileInfo.filename);
         }
       });
 
@@ -89,7 +188,8 @@ export const useFileOperations = ({
         setState(prev => {
           const newFiles = { ...prev.files };
           const updatedTargetFolder = { ...newFiles[targetFolderId] };
-          updatedTargetFolder.children = [...(updatedTargetFolder.children || [])];
+          const oldChildren = updatedTargetFolder.children || [];
+          updatedTargetFolder.children = [...oldChildren];
 
           scannedFilesMap.forEach(({ scannedFile }) => {
             const existingFile = prev.files[scannedFile.id];
@@ -118,8 +218,19 @@ export const useFileOperations = ({
         });
       }
 
-      showToast(t('context.copied'));
-      updateTask(taskId, { current: fileIds.length, status: 'completed' });
+      if (failedCount > 0) {
+        showToast(`${t('context.copied')} (${copiedCount}), ${failedCount} failed`);
+      } else {
+        showToast(t('context.copied'));
+      }
+      
+      setState(prev => {
+        const updatedTasks = prev.tasks.map(t => 
+          t.id === taskId ? { ...t, current: fileIds.length, status: 'completed' as const } : t
+        );
+        return { ...prev, tasks: updatedTasks };
+      });
+      
       setTimeout(() => {
         setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) }));
       }, 1000);
@@ -127,7 +238,8 @@ export const useFileOperations = ({
       performanceMonitor.end(copyTimer, 'handleCopyFiles', {
         success: true,
         fileCount: fileIds.length,
-        copiedCount: copiedCount
+        copiedCount: copiedCount,
+        failedCount
       });
     } catch (e) {
       console.error('[CopyFiles] Error during copy operation:', e);
@@ -148,7 +260,8 @@ export const useFileOperations = ({
       return;
     }
 
-    const targetFolder = state.files[targetFolderId];
+    const currentState = stateRef.current;
+    const targetFolder = currentState.files[targetFolderId];
     if (!targetFolder || !targetFolder.path) {
       performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: false, fileCount: fileIds.length });
       return;
@@ -158,6 +271,8 @@ export const useFileOperations = ({
     const separator = targetFolder.path.includes('/') ? '/' : '\\';
     const sourceParentIds = new Set<string>();
     let movedCount = 0;
+    let failedCount = 0;
+    const failedFiles: string[] = [];
 
     const filePathsMap = new Map<string, {
       sourcePath: string;
@@ -169,7 +284,7 @@ export const useFileOperations = ({
 
     try {
       for (const id of fileIds) {
-        const file = state.files[id];
+        const file = currentState.files[id];
         if (file && file.path) {
           filePathsMap.set(id, {
             sourcePath: file.path,
@@ -219,8 +334,12 @@ export const useFileOperations = ({
         try {
           await moveFile(fileInfo.sourcePath, fileInfo.newPath);
           movedCount++;
-          updateTask(taskId, { current: movedCount });
-        } catch (error) { console.error(error); }
+          updateTask(taskId, { current: movedCount, currentFile: fileInfo.filename });
+        } catch (error) {
+          console.error('[MoveFiles] Error moving file:', fileInfo.filename, error);
+          failedCount++;
+          failedFiles.push(fileInfo.filename);
+        }
       });
 
       setState(prev => {
@@ -233,6 +352,8 @@ export const useFileOperations = ({
           const fileInfo = filePathsMap.get(id);
           const file = newFiles[id];
           if (!fileInfo || !file) continue;
+          
+          if (failedFiles.includes(fileInfo.filename)) continue;
 
           if (fileInfo.parentId) {
             sourceParentIds.add(fileInfo.parentId);
@@ -271,10 +392,19 @@ export const useFileOperations = ({
         return { ...prev, files: newFiles };
       });
 
-      showToast(t('context.moved'));
-      updateTask(taskId, { current: fileIds.length, status: 'completed' });
+      if (failedCount > 0) {
+        showToast(`${t('context.moved')} (${movedCount}), ${failedCount} failed`);
+      } else {
+        showToast(t('context.moved'));
+      }
+      setState(prev => {
+        const updatedTasks = prev.tasks.map(t => 
+          t.id === taskId ? { ...t, current: fileIds.length, status: 'completed' as const } : t
+        );
+        return { ...prev, tasks: updatedTasks };
+      });
       setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
-      performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: true, fileCount: fileIds.length, movedCount });
+      performanceMonitor.end(moveTimer, 'handleMoveFiles', { success: true, fileCount: fileIds.length, movedCount, failedCount });
     } catch (e) {
       console.error('[MoveFiles] Error:', e);
       showToast("Move failed");

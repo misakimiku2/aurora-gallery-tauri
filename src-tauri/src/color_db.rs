@@ -484,58 +484,47 @@ impl ColorDbPool {
 
         let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-        // 1. 处理单个文件 (直接 SQL 复制)
         let count = tx.execute(
             "INSERT OR REPLACE INTO dominant_colors (file_path, colors, created_at, updated_at, status)
              SELECT ?1, colors, ?2, ?3, status
              FROM dominant_colors
              WHERE file_path = ?4 AND status = 'extracted'",
-             params![&dest_normalized, current_ts, current_ts, &src_normalized],
+            params![&dest_normalized, current_ts, current_ts, &src_normalized],
         ).map_err(|e| e.to_string())?;
 
         let mut copied = count > 0;
 
-        // 2. 处理目录 (批量 SQL 复制)
-        // INSERT INTO ... SELECT path_replace(...)
         let src_dir_prefix = if src_normalized.ends_with('/') { src_normalized.clone() } else { format!("{}/", src_normalized) };
         let dest_dir_prefix = if dest_normalized.ends_with('/') { dest_normalized.clone() } else { format!("{}/", dest_normalized) };
         let src_dir_pattern = format!("{}%", src_dir_prefix);
-        let path_offset = (src_dir_prefix.len() + 1) as i32;
+        let path_offset = (src_dir_prefix.chars().count() + 1) as i32;
 
         let count_dir = tx.execute(
             "INSERT OR REPLACE INTO dominant_colors (file_path, colors, created_at, updated_at, status)
              SELECT ?1 || SUBSTR(file_path, ?2), colors, ?3, ?4, status
              FROM dominant_colors
              WHERE file_path LIKE ?5 AND status = 'extracted'",
-             params![
-                 &dest_dir_prefix, 
-                 path_offset, 
-                 current_ts, 
-                 current_ts, 
-                 &src_dir_pattern
-             ],
+            params![
+                &dest_dir_prefix, 
+                path_offset, 
+                current_ts, 
+                current_ts, 
+                &src_dir_pattern
+            ],
         ).map_err(|e| e.to_string())?;
 
         if count_dir > 0 {
             copied = true;
         }
 
-        // 3. 同时复制 image_color_indices (用于搜索优化)
-        // 这一步比较复杂，因为 indices 表没有存 colors JSON，而是拆解的数据。
-        // 最好的办法是重新生成，但为了性能，我们可以直接基于新路径复制。
-        // 只要 dominant_colors 复制了，内存缓存加载时会重建索引（或者我们可以延迟构建）。
-        // 但为了搜索一致性，最好也复制 indices。
-        
-        // 单文件索引复制
         tx.execute(
-            "INSERT INTO image_color_indices (file_path, l, a, b)
+            "INSERT OR REPLACE INTO image_color_indices (file_path, l, a, b)
              SELECT ?1, l, a, b FROM image_color_indices WHERE file_path = ?2",
             params![&dest_normalized, &src_normalized]
         ).map_err(|e| e.to_string())?;
 
-        // 目录索引复制
         tx.execute(
-            "INSERT INTO image_color_indices (file_path, l, a, b)
+            "INSERT OR REPLACE INTO image_color_indices (file_path, l, a, b)
              SELECT ?1 || SUBSTR(file_path, ?2), l, a, b 
              FROM image_color_indices 
              WHERE file_path LIKE ?3",
@@ -548,7 +537,6 @@ impl ColorDbPool {
 
         tx.commit().map_err(|e| e.to_string())?;
 
-        // 3. 更新内存缓存 (仅针对已提取的)
         if copied {
             if let Ok(mut cache) = self.cache.write() {
                 // 读取刚才复制的数据来更新缓存... 
@@ -973,17 +961,14 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     let mut added_count = 0usize;
     
     for path in file_paths {
-        // Normalize incoming path to forward slashes to keep DB consistent
         let normalized = path.replace("\\", "/");
-        // 使用 INSERT OR IGNORE 来避免重复
-        // 已存在的文件（无论是 pending、processing 还是 extracted）都会被忽略
         let result = tx.execute(
             "INSERT OR IGNORE INTO dominant_colors 
              (file_path, colors, created_at, updated_at, status) 
              VALUES (?, ?, ?, ?, ?)",
             params![
                 &normalized,
-                "[]", // 空颜色数组
+                "[]",
                 current_ts,
                 current_ts,
                 "pending"
@@ -997,14 +982,8 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     
     tx.commit().map_err(|e| e.to_string())?;
     
-    if added_count > 0 {
-        eprintln!("Added {} new files to pending queue (out of {} requested)", added_count, file_paths.len());
-    }
-    
     Ok(added_count)
 }
-
-
 
 
 
@@ -1014,7 +993,6 @@ pub fn get_colors_by_file_path(
     conn: &mut Connection, 
     file_path: &str
 ) -> Result<Option<Vec<ColorResult>>> {
-    // Normalize query path to forward slashes
     let normalized = file_path.replace("\\", "/");
     let mut stmt = conn.prepare(
         "SELECT colors FROM dominant_colors WHERE file_path = ? AND status = ?"

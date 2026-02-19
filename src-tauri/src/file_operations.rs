@@ -368,56 +368,96 @@ pub async fn db_copy_file_metadata(src_path: String, dest_path: String, app: tau
     let dest_p = Path::new(&dest_path);
     let is_dir = dest_p.is_dir();
     let app_db = app.state::<AppDbPool>();
-    let conn = app_db.get_connection();
+    
+    let src_normalized = normalize_path(&src_path);
+    let dest_normalized = normalize_path(&dest_path);
 
-    if is_dir {
-        let _ = db::file_metadata::copy_metadata_dir(&conn, &src_path, &dest_path);
-    } else {
-        let old_id = generate_id(&src_path);
-        let new_id = generate_id(&dest_path);
-        let _ = db::file_metadata::copy_metadata(&conn, &old_id, &new_id, &dest_path);
+    {
+        let conn = app_db.get_connection();
+
+        if is_dir {
+            let _ = db::file_metadata::copy_metadata_dir(&conn, &src_path, &dest_path);
+        } else {
+            let old_id = generate_id(&src_path);
+            let new_id = generate_id(&dest_path);
+            let _ = db::file_metadata::copy_metadata(&conn, &old_id, &new_id, &dest_path);
+        }
     }
 
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner();
     let _ = color_db.copy_colors(&src_path, &dest_path);
-
-    let src_normalized = normalize_path(&src_path);
-    let dest_normalized = normalize_path(&dest_path);
     
-    let mut conn_mut = app_db.get_connection();
-    
-    if is_dir {
-        let _ = db::file_index::delete_entries_by_path(&conn_mut, &dest_normalized);
-    } else {
-        if let Ok(md) = fs::metadata(dest_p) {
-            let new_id = generate_id(&dest_normalized);
-            let file_name = dest_p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
-            let ext = dest_p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+    {
+        let mut conn_mut = app_db.get_connection();
+        
+        if is_dir {
+            let _ = db::file_index::delete_entries_by_path(&conn_mut, &dest_normalized);
             
-            let mut width = None;
-            let mut height = None;
-            let mut format = None;
-
-            let all_entries = db::file_index::get_entries_under_path(&conn_mut, &src_normalized).unwrap_or_default();
-            if let Some(src_entry) = all_entries.iter().find(|e| e.path == src_normalized) {
-                width = src_entry.width;
-                height = src_entry.height;
-                format = src_entry.format.clone();
+            let src_dir_prefix = if src_normalized.ends_with('/') { src_normalized.clone() } else { format!("{}/", src_normalized) };
+            let dest_dir_prefix = if dest_normalized.ends_with('/') { dest_normalized.clone() } else { format!("{}/", dest_normalized) };
+            
+            if let Ok(all_entries) = db::file_index::get_entries_under_path(&conn_mut, &src_normalized) {
+                let new_entries: Vec<db::file_index::FileIndexEntry> = all_entries
+                    .iter()
+                    .filter_map(|entry| {
+                        if entry.path.starts_with(&src_dir_prefix) {
+                            let relative_path = &entry.path[src_dir_prefix.len()..];
+                            let new_path = format!("{}{}", dest_dir_prefix, relative_path);
+                            
+                            Some(db::file_index::FileIndexEntry {
+                                file_id: generate_id(&new_path),
+                                parent_id: Some(generate_id(&normalize_path(Path::new(&new_path).parent().and_then(|p| p.to_str()).unwrap_or("")))),
+                                path: new_path,
+                                name: entry.name.clone(),
+                                file_type: entry.file_type.clone(),
+                                size: entry.size,
+                                width: entry.width,
+                                height: entry.height,
+                                format: entry.format.clone(),
+                                created_at: entry.created_at,
+                                modified_at: entry.modified_at,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                
+                if !new_entries.is_empty() {
+                    let _ = db::file_index::batch_upsert(&mut conn_mut, &new_entries);
+                }
             }
+        } else {
+            if let Ok(md) = fs::metadata(dest_p) {
+                let new_id = generate_id(&dest_normalized);
+                let file_name = dest_p.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                let ext = dest_p.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()).unwrap_or_default();
+                
+                let mut width = None;
+                let mut height = None;
+                let mut format = None;
 
-            let new_entry = db::file_index::FileIndexEntry {
-                file_id: new_id,
-                parent_id: dest_p.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))),
-                path: dest_normalized,
-                name: file_name,
-                file_type: "Image".to_string(),
-                size: md.len(),
-                width, height, format: format.or(Some(ext)),
-                created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
-                modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
-            };
-            
-            let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
+                let all_entries = db::file_index::get_entries_under_path(&conn_mut, &src_normalized).unwrap_or_default();
+                if let Some(src_entry) = all_entries.iter().find(|e| e.path == src_normalized) {
+                    width = src_entry.width;
+                    height = src_entry.height;
+                    format = src_entry.format.clone();
+                }
+
+                let new_entry = db::file_index::FileIndexEntry {
+                    file_id: new_id,
+                    parent_id: Some(dest_p.parent().map(|p| generate_id(&normalize_path(p.to_str().unwrap_or("")))).unwrap_or_default()),
+                    path: dest_normalized,
+                    name: file_name,
+                    file_type: "Image".to_string(),
+                    size: md.len(),
+                    width, height, format: format.or(Some(ext)),
+                    created_at: md.created().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                    modified_at: md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).unwrap_or(0),
+                };
+                
+                let _ = db::file_index::batch_upsert(&mut conn_mut, &[new_entry]);
+            }
         }
     }
 
