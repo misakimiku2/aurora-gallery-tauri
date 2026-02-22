@@ -11,12 +11,35 @@ use std::num::NonZeroU32;
 pub struct ImagePreprocessor {
     /// 目标图像尺寸 (通常是 224x224)
     target_size: usize,
+    /// 归一化均值 (RGB 通道)
+    mean: [f32; 3],
+    /// 归一化标准差 (RGB 通道)
+    std: [f32; 3],
 }
 
 impl ImagePreprocessor {
     /// 创建新的图像预处理器
-    pub fn new(target_size: usize) -> Self {
-        Self { target_size }
+    /// 
+    /// # 参数
+    /// - `target_size`: 目标图像尺寸
+    /// - `mean`: RGB 通道归一化均值
+    /// - `std`: RGB 通道归一化标准差
+    pub fn new(target_size: usize, mean: [f32; 3], std: [f32; 3]) -> Self {
+        Self { target_size, mean, std }
+    }
+
+    /// 创建指定目标尺寸的预处理器 (使用默认 CLIP 归一化参数)
+    pub fn with_size(target_size: usize) -> Self {
+        Self::default_clip(target_size)
+    }
+
+    /// 创建默认的 CLIP 图像预处理器 (使用标准 CLIP 归一化参数)
+    pub fn default_clip(target_size: usize) -> Self {
+        Self {
+            target_size,
+            mean: [0.48145466f32, 0.4578275f32, 0.40821073f32],
+            std: [0.26862954f32, 0.26130258f32, 0.27577711f32],
+        }
     }
 
     pub fn preprocess(&self, image_path: &str) -> Result<Vec<f32>, String> {
@@ -65,9 +88,9 @@ impl ImagePreprocessor {
                 width, height, load_elapsed, resize_elapsed);
         }
         
-        // 提取像素并归一化
-        let mean = [0.48145466f32, 0.4578275f32, 0.40821073f32];
-        let std = [0.26862954f32, 0.26130258f32, 0.27577711f32];
+        // 提取像素并归一化 (使用实例的归一化参数)
+        let mean = self.mean;
+        let std = self.std;
         
         let size = self.target_size;
         let mut tensor = vec![0.0f32; 3 * size * size];
@@ -122,11 +145,16 @@ pub struct TextPreprocessor {
 
 impl TextPreprocessor {
     /// 创建新的文本预处理器
-    pub fn new() -> Self {
+    pub fn new(max_length: usize) -> Self {
         Self { 
-            max_length: 77,
+            max_length,
             tokenizer: None,
         }
+    }
+
+    /// 创建默认的 CLIP 文本预处理器 (max_length = 77)
+    pub fn default_clip() -> Self {
+        Self::new(77)
     }
 
     /// 从文件加载 tokenizer

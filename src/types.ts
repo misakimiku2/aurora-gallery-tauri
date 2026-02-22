@@ -187,7 +187,7 @@ export interface AIConfig {
 
 // ==================== CLIP 模型设置 ====================
 
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14';
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 export interface ClipModelInfo {

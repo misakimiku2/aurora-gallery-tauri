@@ -1,6 +1,7 @@
 //! CLIP (Contrastive Language-Image Pre-training) 模块
 //! 提供自然语言图片搜索和以图搜图功能
 
+pub mod models;
 pub mod model;
 pub mod preprocessor;
 pub mod embedding;

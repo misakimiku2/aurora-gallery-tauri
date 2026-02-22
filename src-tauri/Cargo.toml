@@ -50,11 +50,12 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 once_cell = "1.19"
 futures-util = "0.3"
 bytes = "1"
+sha2 = "0.10"
 
 # CLIP Model Support (ONNX Runtime with DirectML)
 ort = { version = "2.0.0-rc.9", features = ["directml", "ndarray"] }
 ndarray = { version = "0.15", features = ["rayon"] }
-tokenizers = { version = "0.15", default-features = false, features = ["onig"] }
+tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
 
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem

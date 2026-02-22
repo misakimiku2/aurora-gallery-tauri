@@ -5,7 +5,7 @@ import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
 import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
-import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel } from '../utils/modelDownloadState';
+import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
 // 关于面板组件
@@ -254,6 +254,15 @@ const CLIP_MODELS: ClipModelInfo[] = [
     embeddingDim: 768,
     isRecommended: false,
   },
+  {
+    name: 'SigLIP2-So400M',
+    displayName: 'SigLIP 2 So400M',
+    description: '多语言支持 - 支持中文搜索',
+    size: 1200 * 1024 * 1024,
+    sizeDisplay: '1.2 GB',
+    embeddingDim: 1152,
+    isRecommended: false,
+  },
 ];
 
 // 全局状态，用于在组件卸载后保持生成状态
@@ -289,7 +298,11 @@ const formatSpeed = (bytesPerSecond: number): string => {
 };
 
 const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast }) => {
-  const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>({});
+  // 从全局缓存初始化模型状态
+  const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>(() => {
+    const cached = getCachedModelStatuses();
+    return cached || {};
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<Record<string, { fileName: string; fileIndex: number; totalFiles: number; progress: number; downloaded: number; total: number; speed: number }>>(() => {
     const activeDownloads = getActiveDownloads();
@@ -313,6 +326,13 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     return activeDownloads.length > 0 ? activeDownloads[0].modelName : null;
   });
   const [embeddingCount, setEmbeddingCount] = useState(0);
+  // 添加延迟显示加载状态，避免闪烁
+  const [showLoadingDelay, setShowLoadingDelay] = useState(false);
+  // 跟踪模型损坏状态 - 从全局状态初始化
+  const [corruptedModels, setCorruptedModels] = useState<Set<string>>(() => {
+    const corrupted = getCorruptedModels();
+    return new Set(corrupted);
+  });
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(globalEmbeddingState.isGenerating);
   const [generationProgress, setGenerationProgress] = useState(globalEmbeddingState.progress);
   const [generationStats, setGenerationStats] = useState(globalEmbeddingState.stats);
@@ -324,6 +344,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const isMountedRef = useRef(true);
   // 全局下载状态订阅
   const downloadUnsubscribeRef = useRef<(() => void) | null>(null);
+  // 防止重复加载
+  const isLoadingRef = useRef(false);
 
   // 同步状态到全局状态
   useEffect(() => {
@@ -383,7 +405,28 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   // 加载模型状态和嵌入数量
   useEffect(() => {
     isMountedRef.current = true;
-    loadModelStatuses();
+    
+    // 清除过期的下载错误状态（如果错误是之前的，现在应该清除）
+    if (settings.downloadStatus === 'error') {
+      console.log('[AIVision] Clearing stale download error status');
+      onUpdateSettings({
+        ...settings,
+        downloadStatus: 'not_started',
+        downloadError: undefined,
+      });
+    }
+    
+    // 检查是否有有效的缓存，如果有则跳过加载
+    const cached = getCachedModelStatuses();
+    if (cached) {
+      console.log('[AIVision] Using cached model statuses');
+      setModelStatuses(cached);
+      // 仍然调用加载函数以刷新最新状态，但不显示加载状态
+      loadModelStatuses(true);
+    } else {
+      loadModelStatuses(false);
+    }
+    
     loadEmbeddingCount();
 
     return () => {
@@ -393,8 +436,22 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   // 当 GPU 设置变更时，刷新模型状态以显示“GPU 已激活”标签
   useEffect(() => {
-    loadModelStatuses();
+    loadModelStatuses(false);
   }, [settings.useGpu]);
+  
+  // 延迟显示加载状态，避免闪烁
+  useEffect(() => {
+    if (isLoading) {
+      const timer = setTimeout(() => {
+        if (isMountedRef.current) {
+          setShowLoadingDelay(true);
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    } else {
+      setShowLoadingDelay(false);
+    }
+  }, [isLoading]);
 
   // 设置进度事件监听 - 使用全局单例模式确保只有一个监听实例
   useEffect(() => {
@@ -498,19 +555,57 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     };
   }, [])
 
-  const loadModelStatuses = async () => {
-    setIsLoading(true);
+  const loadModelStatuses = async (silent: boolean = false) => {
+    // 防止重复加载
+    if (isLoadingRef.current) {
+      console.log('[AIVision] Already loading, skipping...');
+      return;
+    }
+    
+    console.log('[AIVision] Loading model statuses..., isMounted:', isMountedRef.current, 'silent:', silent);
+    isLoadingRef.current = true;
+    // 静默模式下不显示加载状态
+    if (!silent) {
+      setIsLoading(true);
+    }
+    
     try {
       const statuses: Record<string, ClipModelStatus> = {};
       for (const model of CLIP_MODELS) {
+        if (!isMountedRef.current) {
+          console.log('[AIVision] Component unmounted, aborting');
+          return;
+        }
+        console.log(`[AIVision] Fetching status for ${model.name}...`);
         const status = await clipGetModelStatus(model.name);
+        console.log(`[AIVision] Status for ${model.name}:`, status);
         statuses[model.name] = status;
       }
-      setModelStatuses(statuses);
+      console.log('[AIVision] All statuses loaded:', statuses);
+      if (isMountedRef.current) {
+        setModelStatuses(statuses);
+        // 保存到全局缓存
+        setCachedModelStatuses(statuses);
+        
+        // 如果所有模型都已下载且没有错误，清除下载错误状态
+        const allDownloaded = CLIP_MODELS.every(model => statuses[model.name]?.is_downloaded);
+        if (allDownloaded && settings.downloadStatus === 'error') {
+          console.log('[AIVision] All models downloaded, clearing error status');
+          onUpdateSettings({
+            ...settings,
+            downloadStatus: 'completed',
+            downloadError: undefined,
+          });
+        }
+      }
     } catch (error) {
-      console.error('Failed to load model statuses:', error);
+      console.error('[AIVision] Failed to load model statuses:', error);
     } finally {
-      setIsLoading(false);
+      console.log('[AIVision] Setting isLoading to false, isMounted:', isMountedRef.current);
+      isLoadingRef.current = false;
+      if (isMountedRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -594,6 +689,48 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     }
   };
 
+  // 修复损坏的模型（删除并重新下载）
+  const handleRepairModel = async (modelName: ClipModelName) => {
+    try {
+      setIsLoading(true);
+      onShowToast?.(`正在修复 ${modelName} 模型...`, 3000);
+
+      // 1. 删除模型
+      await clipDeleteModel(modelName);
+
+      // 2. 从损坏列表中移除
+      setCorruptedModels(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(modelName);
+        return newSet;
+      });
+      // 同步更新全局状态
+      markModelAsNormal(modelName);
+
+      // 3. 如果当前正在使用这个模型，清除选择
+      if (settings.modelName === modelName) {
+        onUpdateSettings({
+          ...settings,
+          downloadStatus: 'not_started',
+          downloadProgress: 0,
+        });
+      }
+
+      // 4. 刷新状态
+      await loadModelStatuses();
+
+      // 5. 开始下载
+      onShowToast?.(`开始重新下载 ${modelName} 模型`, 3000);
+      await handleDownload(modelName);
+
+    } catch (error) {
+      console.error('Failed to repair model:', error);
+      onShowToast?.(`修复模型失败: ${error}`, 4000);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const loadEmbeddingCount = async () => {
     try {
       const count = await clipGetEmbeddingCount();
@@ -611,11 +748,52 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     try {
       setIsLoading(true);
       await clipLoadModel(modelName);
+      // 加载成功，从损坏列表中移除
+      setCorruptedModels(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(modelName);
+        return newSet;
+      });
+      // 同步更新全局状态
+      markModelAsNormal(modelName);
       await loadModelStatuses();
       onShowToast?.(`已切换到 ${modelName} 模型`, 3000);
     } catch (error) {
       console.error('Failed to load model:', error);
-      onShowToast?.(`加载模型失败: ${error}`, 4000);
+      const errorMsg = String(error);
+      
+      // 检测是否是文件损坏导致的错误
+      const isCorrupt = errorMsg.includes('模型文件可能已损坏') || 
+        errorMsg.includes('Protobuf parsing failed') ||
+        errorMsg.includes('Invalid protobuf') ||
+        errorMsg.includes('ModelWrapper');
+      
+      // 检测是否是网络/下载相关的错误
+      const isNetworkError = errorMsg.includes('network') ||
+        errorMsg.includes('timeout') ||
+        errorMsg.includes('connection') ||
+        errorMsg.includes('download') ||
+        errorMsg.includes('HTTP') ||
+        errorMsg.includes('请求');
+      
+      if (isCorrupt) {
+        // 标记模型为损坏状态
+        setCorruptedModels(prev => new Set(prev).add(modelName));
+        // 同步更新全局状态
+        markModelAsCorrupted(modelName);
+        onShowToast?.(`模型文件可能已损坏，请点击"修复"按钮重新下载`, 4000);
+      } else if (isNetworkError) {
+        // 网络错误，设置下载错误状态以显示手动下载提示
+        onUpdateSettings({
+          ...settings,
+          modelName,
+          downloadStatus: 'error',
+          downloadError: errorMsg,
+        });
+        onShowToast?.(`加载模型失败: ${error}`, 4000);
+      } else {
+        onShowToast?.(`加载模型失败: ${error}`, 4000);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -743,13 +921,21 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           const status = modelStatuses[model.name];
           const isDownloaded = status?.is_downloaded ?? false;
           const isLoadingModel = loadingModel === model.name;
+          // 检查全局缓存中是否有该模型的状态
+          const cachedStatus = getCachedModelStatus(model.name);
+          // 只有在真正加载中且该模型状态未知且全局缓存也没有时才显示加载中
+          const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
+          // 检查模型是否标记为损坏
+          const isCorrupted = corruptedModels.has(model.name);
 
           return (
             <div
               key={model.name}
-              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name
+              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted
                 ? 'border-green-500 ring-2 ring-green-500/20'
-                : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
+                : isCorrupted
+                  ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
+                  : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
                 }`}
             >
               <div className="flex items-start justify-between">
@@ -763,13 +949,19 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         推荐
                       </span>
                     )}
-                    {isDownloaded && (
+                    {isCorrupted && (
+                      <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs rounded-full flex items-center">
+                        <AlertCircle size={12} className="mr-1" />
+                        文件损坏
+                      </span>
+                    )}
+                    {isDownloaded && !isCorrupted && (
                       <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-full flex items-center">
                         <Check size={12} className="mr-1" />
                         已下载
                       </span>
                     )}
-                    {isDownloaded && status?.is_gpu_active && (
+                    {isDownloaded && status?.is_gpu_active && !isCorrupted && (
                       <span className="ml-2 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
                         <Zap size={12} className="mr-1" />
                         GPU 已激活
@@ -798,7 +990,22 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                 </div>
 
                 <div className="flex items-center gap-2 ml-4">
-                  {isDownloaded ? (
+                  {isStatusLoading ? (
+                    <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-400 rounded-lg text-sm font-medium flex items-center">
+                      <RefreshCw size={16} className="mr-2 animate-spin" />
+                      加载中...
+                    </div>
+                  ) : isCorrupted ? (
+                    // 模型损坏时显示修复按钮
+                    <button
+                      onClick={() => handleRepairModel(model.name)}
+                      disabled={isLoading}
+                      className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                    >
+                      <RefreshCw size={16} className="mr-2" />
+                      修复
+                    </button>
+                  ) : isDownloaded ? (
                     <>
                       <button
                         onClick={() => handleSelectModel(model.name)}
@@ -869,11 +1076,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                           {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB / 
                           {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
                         </span>
-                        {downloadProgress[model.name].speed > 0 && (
-                          <span className="text-green-600">
-                            {formatSpeed(downloadProgress[model.name].speed)}
-                          </span>
-                        )}
+                        <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
+                          {formatSpeed(downloadProgress[model.name].speed)}
+                        </span>
                       </div>
                     </div>
                   )}

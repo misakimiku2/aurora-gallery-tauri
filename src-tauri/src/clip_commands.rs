@@ -649,13 +649,10 @@ pub async fn clip_get_embedding_count() -> Result<i64, String> {
 
 #[tauri::command]
 pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, String> {
-    use crate::clip::model::ModelInfo;
+    use crate::clip::models::get_model_spec;
     
-    let model_info = match model_name.as_str() {
-        "ViT-B-32" => ModelInfo::vit_b_32(),
-        "ViT-L-14" => ModelInfo::vit_l_14(),
-        _ => return Err(format!("Unknown model: {}", model_name)),
-    };
+    let model_spec = get_model_spec(&model_name)
+        .ok_or_else(|| format!("Unknown model: {}", model_name))?;
     
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
@@ -664,39 +661,27 @@ pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Val
     
     let model_cache_dir = cache_dir.join(&model_name);
     
-    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
-    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
-    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
-    
-    let image_path = model_cache_dir.join(image_model_file);
-    let text_path = model_cache_dir.join(text_model_file);
-    let tokenizer_path = model_cache_dir.join(tokenizer_file);
-    
-    let image_exists = image_path.exists();
-    let text_exists = text_path.exists();
-    let tokenizer_exists = tokenizer_path.exists();
-    
-    let is_downloaded = image_exists && text_exists && tokenizer_exists;
-    
+    // 获取模型文件列表
+    let model_files = model_spec.model_files();
+    let mut files_status = serde_json::Map::new();
+    let mut is_downloaded = true;
     let mut downloaded_size: u64 = 0;
-    if image_exists {
-        if let Ok(metadata) = std::fs::metadata(&image_path) {
-            downloaded_size += metadata.len();
+    
+    for model_file in &model_files {
+        let file_path = model_cache_dir.join(&model_file.name);
+        let exists = file_path.exists();
+        if !exists {
+            is_downloaded = false;
+        } else {
+            if let Ok(metadata) = std::fs::metadata(&file_path) {
+                downloaded_size += metadata.len();
+            }
         }
-    }
-    if text_exists {
-        if let Ok(metadata) = std::fs::metadata(&text_path) {
-            downloaded_size += metadata.len();
-        }
-    }
-    if tokenizer_exists {
-        if let Ok(metadata) = std::fs::metadata(&tokenizer_path) {
-            downloaded_size += metadata.len();
-        }
+        files_status.insert(model_file.name.clone(), serde_json::json!(exists));
     }
     
     let is_gpu_active = if let Some(model) = guard.model() {
-        if model.model_name() == model_info.name {
+        if model.model_name() == model_spec.name() {
             model.is_using_gpu()
         } else {
             false
@@ -706,30 +691,25 @@ pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Val
     };
 
     Ok(serde_json::json!({
-        "model_name": model_info.name,
+        "model_name": model_spec.name(),
+        "display_name": model_spec.display_name(),
+        "description": model_spec.description(),
         "is_downloaded": is_downloaded,
         "is_gpu_active": is_gpu_active,
-        "embedding_dim": model_info.embedding_dim,
-        "image_size": model_info.image_size,
+        "embedding_dim": model_spec.embedding_dim(),
+        "image_size": model_spec.image_size(),
         "downloaded_size": downloaded_size,
-        "files": {
-            "image_encoder": image_exists,
-            "text_encoder": text_exists,
-            "tokenizer": tokenizer_exists,
-        }
+        "files": files_status
     }))
 }
 
 #[tauri::command]
 pub async fn clip_delete_model(model_name: String) -> Result<(), String> {
-    use crate::clip::model::ModelInfo;
+    use crate::clip::models::get_model_spec;
     use std::fs;
     
-    let model_info = match model_name.as_str() {
-        "ViT-B-32" => ModelInfo::vit_b_32(),
-        "ViT-L-14" => ModelInfo::vit_l_14(),
-        _ => return Err(format!("Unknown model: {}", model_name)),
-    };
+    let model_spec = get_model_spec(&model_name)
+        .ok_or_else(|| format!("Unknown model: {}", model_name))?;
     
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
@@ -738,24 +718,16 @@ pub async fn clip_delete_model(model_name: String) -> Result<(), String> {
     
     let model_cache_dir = cache_dir.join(&model_name);
     
-    let image_model_file = model_info.image_model_url.split('/').last().unwrap_or("image_encoder.onnx");
-    let text_model_file = model_info.text_model_url.split('/').last().unwrap_or("text_encoder.onnx");
-    let tokenizer_file = model_info.tokenizer_url.split('/').last().unwrap_or("tokenizer.json");
-    
-    let image_path = model_cache_dir.join(image_model_file);
-    let text_path = model_cache_dir.join(text_model_file);
-    let tokenizer_path = model_cache_dir.join(tokenizer_file);
-    
-    if image_path.exists() {
-        fs::remove_file(&image_path).map_err(|e| format!("Failed to delete image model: {}", e))?;
-    }
-    if text_path.exists() {
-        fs::remove_file(&text_path).map_err(|e| format!("Failed to delete text model: {}", e))?;
-    }
-    if tokenizer_path.exists() {
-        fs::remove_file(&tokenizer_path).map_err(|e| format!("Failed to delete tokenizer: {}", e))?;
+    // 删除所有模型文件
+    let model_files = model_spec.model_files();
+    for model_file in model_files {
+        let file_path = model_cache_dir.join(&model_file.name);
+        if file_path.exists() {
+            fs::remove_file(&file_path).map_err(|e| format!("Failed to delete {}: {}", model_file.name, e))?;
+        }
     }
     
+    // 尝试删除模型目录（如果为空）
     if model_cache_dir.exists() {
         let _ = fs::remove_dir(&model_cache_dir);
     }

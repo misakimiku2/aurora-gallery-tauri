@@ -11,7 +11,7 @@
 ### 1. AI视觉设置面板
 - **位置**: 设置 → AI视觉
 - **功能**:
-  - 下载和管理 CLIP 模型 (ViT-B/32 和 ViT-L/14)
+  - 下载和管理视觉语言模型 (ViT-B/32、ViT-L/14、SigLIP 2 So400M)
   - 显示模型下载状态
   - 打开模型存放目录
   - 批量生成图片嵌入向量
@@ -27,15 +27,22 @@
   - Vision 编码器: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/onnx/vision_model.onnx`
   - Text 编码器: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/onnx/text_model.onnx`
   - Tokenizer: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/tokenizer.json`
+- **SigLIP 2 So400M** (多语言支持):
+  - 模型文件: `https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx`
+  - 模型权重: `https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx_data`
+  - Tokenizer: `https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/tokenizer.json`
+  - Tokenizer 配置: `https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/tokenizer_config.json`
+  - 特殊 Token: `https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/special_tokens_map.json`
 
 ### 3. 语义搜索功能
 - **启用方式**: 点击搜索框右侧的 ✨ 图标
 - **搜索模式**: 自然语言描述搜索
 - **示例查询**: "夕阳下的海滩"、"戴眼镜的少女"
 - **自动加载**: 搜索时自动加载模型（如果未加载）
+- **多语言支持**: SigLIP 2 模型支持中文等非英语语言搜索
 
 ### 4. 嵌入向量生成
-- **批量生成**: 为所有图片生成 CLIP 嵌入向量
+- **批量生成**: 为所有图片生成嵌入向量
 - **分批处理**: 每批 50 张图片，避免内存溢出
 - **增量更新**: 跳过已生成嵌入的图片
 - **进度显示**: 显示生成进度百分比
@@ -46,12 +53,16 @@
 ```
 src-tauri/src/
 ├── clip/
-│   ├── mod.rs          # CLIP 管理器
-│   ├── model.rs        # 模型加载和推理
-│   ├── preprocessor.rs # 图像和文本预处理
-│   ├── embedding.rs    # 嵌入向量存储
-│   └── search.rs       # 向量搜索
-└── main.rs             # Tauri 命令注册
+│   ├── mod.rs              # CLIP 管理器
+│   ├── model.rs            # 模型加载和推理
+│   ├── preprocessor.rs     # 图像和文本预处理
+│   ├── embedding.rs        # 嵌入向量存储
+│   ├── search.rs           # 向量搜索
+│   └── models/             # 模型定义目录
+│       ├── mod.rs          # ModelSpec trait 和模型注册表
+│       ├── clip_vit.rs     # CLIP ViT 系列模型
+│       └── siglip2.rs      # SigLIP 2 系列模型
+└── main.rs                 # Tauri 命令注册
 ```
 
 ### 前端 (TypeScript/React)
@@ -72,7 +83,7 @@ src/
 ```typescript
 export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about';
 
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14';
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 export interface ClipSettings {
@@ -115,6 +126,46 @@ export interface ClipModelStatus {
 }
 ```
 
+### 4. 模型规格定义 (models/mod.rs)
+```rust
+/// 模型规格 trait - 所有视觉语言模型必须实现
+pub trait ModelSpec: Send + Sync {
+    fn name(&self) -> &str;              // 模型唯一标识符
+    fn display_name(&self) -> &str;      // 显示名称
+    fn description(&self) -> &str;       // 模型描述
+    fn embedding_dim(&self) -> usize;    // 嵌入向量维度
+    fn image_size(&self) -> usize;       // 输入图像尺寸
+    fn image_mean(&self) -> [f32; 3];    // 图像归一化均值
+    fn image_std(&self) -> [f32; 3];     // 图像归一化标准差
+    fn max_text_length(&self) -> usize;  // 文本最大长度
+    fn model_files(&self) -> Vec<ModelFile>;  // 模型文件下载地址
+    fn vision_input_name(&self) -> &str; // ONNX 视觉模型输入名称
+    fn vision_output_name(&self) -> &str;// ONNX 视觉模型输出名称
+    fn text_input_name(&self) -> &str;   // ONNX 文本模型输入名称
+    fn text_output_name(&self) -> &str;  // ONNX 文本模型输出名称
+}
+
+/// 模型文件信息
+pub struct ModelFile {
+    pub name: String,
+    pub url: String,
+    pub size_hint: Option<u64>,
+}
+```
+
+## 模型参数对比
+
+| 特性 | CLIP ViT-B/32 | CLIP ViT-L/14 | SigLIP 2 So400M |
+|------|---------------|---------------|-----------------|
+| 图像尺寸 | 224x224 | 224x224 | 384x384 |
+| Patch Size | 32 | 14 | 14 |
+| 嵌入维度 | 512 | 768 | 1152 |
+| 多语言 | ❌ 仅英文 | ❌ 仅英文 | ✅ 多语言 |
+| 模型大小 | ~580 MB | ~1.6 GB | ~1.2 GB |
+| 归一化均值 | [0.481, 0.458, 0.408] | [0.481, 0.458, 0.408] | [0.5, 0.5, 0.5] |
+| 归一化标准差 | [0.269, 0.261, 0.276] | [0.269, 0.261, 0.276] | [0.5, 0.5, 0.5] |
+| 最大文本长度 | 77 | 77 | 64 |
+
 ## 已知问题
 
 ### 1. ~~CUDA 版本兼容性~~ ✅ 已解决
@@ -124,7 +175,7 @@ export interface ClipModelStatus {
 
 ### 2. GPU 集成与性能优化方案 (2026-02-15 突破性进展) 🚀
 
-本次会话实现了从“CPU 缓慢预处理”到“高性能 GPU 加速推理”的全面飞跃：
+本次会话实现了从"CPU 缓慢预处理"到"高性能 GPU 加速推理"的全面飞跃：
 
 #### A. 核心推理引擎优化
 - **ONNX Runtime (ort) 集成**: 彻底放弃简单的 Python 转发，改用原生 Rust 后端推理。
@@ -166,7 +217,7 @@ export interface ClipModelStatus {
 
 ### 首次使用 CLIP 搜索
 1. 打开 **设置** → **AI视觉**
-2. 下载 CLIP 模型（推荐 ViT-B/32）
+2. 下载模型（推荐 ViT-B/32 或 SigLIP 2 So400M）
 3. 点击 **"开始生成"** 按钮生成嵌入向量
 4. 等待处理完成
 5. 返回主界面，点击搜索框右侧的 **✨ 图标**
@@ -176,6 +227,11 @@ export interface ClipModelStatus {
 1. 点击搜索框右侧的 **✨ 图标** 启用 CLIP 搜索
 2. 输入搜索词，按回车搜索
 3. 系统会自动加载模型（首次搜索可能需要几秒钟）
+
+### 使用中文搜索
+1. 在设置中选择 **SigLIP 2 So400M** 模型
+2. 下载模型并生成嵌入向量
+3. 使用中文描述进行搜索（如"夕阳下的海滩"）
 
 ## 修复记录
 
@@ -320,17 +376,17 @@ export interface ClipModelStatus {
 ### 2026-02-15 GPU 加速与并发稳定性优化
 
 20. **并发冲突与死锁修复** ✅
-   - **全局生成锁**: 引入 `IS_GENERATING` 原子标志位，通过原子交换操作防止多个生成任务同时运行，解决了“取消后重启”导致的旧任务复活问题。
+   - **全局生成锁**: 引入 `IS_GENERATING` 原子标志位，通过原子交换操作防止多个生成任务同时运行，解决了"取消后重启"导致的旧任务复活问题。
    - **持锁粒度优化**: 将过滤阶段（第一阶段）的大锁拆分为 100 个文件一组的短时间锁。在过滤间隙自动释放读锁，允许 UI 查询和配置更新指令正常执行，彻底消除了系统挂起。
    - **RAII 安全重置**: 实现 `GenerationGuard` (RAII)，确保在任何退出路径（成功、取消或崩溃）下都能 100% 重置生成状态标志。
 
 21. **GPU 状态实时反馈** ✅
-   - **真实物理状态跟踪**: `ClipModel` 及其后端命令现在返回 `is_gpu_active` 字段，该字段反映了 ONNX Runtime 实际加载 CUDA 成功后的真实物理状态，而非仅仅是用户的“配置意向”。
-   - **响应式 UI 刷新**: 在 `SettingsModal` 中添加副作用监听。当用户切换硬件加速开关并热重载完成后，前端会立即重新获取模型状态，实现在 1-2 秒内自动显示“GPU 已激活”标签，无需手动刷新。
+   - **真实物理状态跟踪**: `ClipModel` 及其后端命令现在返回 `is_gpu_active` 字段，该字段反映了 ONNX Runtime 实际加载 CUDA 成功后的真实物理状态，而非仅仅是用户的"配置意向"。
+   - **响应式 UI 刷新**: 在 `SettingsModal` 中添加副作用监听。当用户切换硬件加速开关并热重载完成后，前端会立即重新获取模型状态，实现在 1-2 秒内自动显示"GPU 已激活"标签，无需手动刷新。
 
 22. **配置动态同步 (Hot-Reload)** ✅
    - 实现 `clip_update_config` 指令。
-   - `ClipManager` 支持在任务暂停或处于空闲状态时动态卸载并重新加载模型以应用新的硬件加速设置，实现了“无需重启应用即可切换硬件加速”的流畅体验。
+   - `ClipManager` 支持在任务暂停或处于空闲状态时动态卸载并重新加载模型以应用新的硬件加速设置，实现了"无需重启应用即可切换硬件加速"的流畅体验。
 
 - `get_all_image_files` - 从数据库获取所有图片文件
 - `clip_cancel_embedding_generation` - 取消嵌入向量生成
@@ -349,12 +405,15 @@ export interface ClipModelStatus {
 ## 相关文件
 
 ### 后端 (Rust)
-- `src-tauri/Cargo.toml` - 依赖配置（ort directml 特性）
+- `src-tauri/Cargo.toml` - 依赖配置（ort directml 特性，tokenizers 0.21）
 - `src-tauri/src/clip/mod.rs` - CLIP 管理器，默认启用 GPU
 - `src-tauri/src/clip/model.rs` - ONNX Runtime 推理实现（DirectML）
 - `src-tauri/src/clip/preprocessor.rs` - 图像和文本预处理
 - `src-tauri/src/clip/embedding.rs` - 嵌入向量存储
 - `src-tauri/src/clip/search.rs` - 向量搜索
+- `src-tauri/src/clip/models/mod.rs` - ModelSpec trait 和模型注册表
+- `src-tauri/src/clip/models/clip_vit.rs` - CLIP ViT 系列模型
+- `src-tauri/src/clip/models/siglip2.rs` - SigLIP 2 系列模型
 - `src-tauri/src/main.rs` - Tauri 命令注册
 
 ### 前端 (TypeScript/React)
@@ -585,3 +644,181 @@ export interface ClipModelStatus {
    - **修改前**："使用 CUDA/TensorRT 加速模型推理（需要 NVIDIA 显卡）"
    - **修改后**："使用 DirectML 加速模型推理（需要支持 DirectX 12 的显卡）"
    - **文件修改**：`src/components/SettingsModal.tsx`
+
+49. **下载速度计算优化** ✅
+   - **问题**：原速度计算基于平均速度，下载停滞时速度不会变为 0；且速度显示会闪烁消失
+   - **修复**：
+     - 使用 `tokio::time::timeout` 包装流读取，即使下载停滞也能定期发送进度更新
+     - 分离速度计算间隔（500ms）和进度发送间隔（200ms）
+     - 使用独立变量 `current_speed` 保存当前速度，避免闪烁
+     - 前端始终显示速度，速度为 0 时显示灰色文字
+   - **文件修改**：
+     - `src-tauri/src/clip/model.rs`
+     - `src/components/SettingsModal.tsx`
+     - `src/components/TreeSidebar.tsx`
+
+50. **模型状态"加载中..."占位符问题修复** ✅
+   - **问题**：切换设置栏目或关闭再打开设置窗口时，所有模型（包括正在下载的、已下载的）都一直显示"加载中..."占位符
+   - **原因**：
+     - 组件重新挂载时 `modelStatuses` 状态被重置为空对象
+     - `isLoading` 被设为 `true`，显示逻辑 `isLoading && !status` 一直为 `true`
+     - 之前的修复（#51）使用了组件级锁 `isLoadingRef`，但组件卸载再挂载时锁被重置
+   - **修复**：
+     - 添加全局状态缓存 `globalModelStatusState`，在 `modelDownloadState.ts` 中实现
+     - 组件初始化时从全局缓存读取模型状态，避免状态丢失
+     - 添加 `showLoadingDelay` 状态，使用 300ms 延迟显示加载状态，避免闪烁
+     - 修改显示逻辑为 `showLoadingDelay && !status && !cachedStatus`，只有真正需要加载时才显示"加载中"
+     - `loadModelStatuses` 函数添加 `silent` 参数，支持静默刷新不显示加载状态
+   - **文件修改**：
+     - `src/utils/modelDownloadState.ts` - 添加全局状态缓存
+     - `src/components/SettingsModal.tsx` - 使用全局缓存并优化显示逻辑
+
+53. **模型文件完整性校验机制** ✅
+   - **问题**：下载过程中网络中断或出错会导致模型文件损坏，但系统只检查文件存在性，不会自动重新下载损坏的文件
+   - **现象**：加载模型时提示 `Failed to load tokenizer: data did not match any variant of untagged enum ModelWrapper`
+   - **修复**：
+     - 在 `ModelFile` 结构中添加 `expected_size` 和 `expected_hash` 字段，用于存储预期文件大小和 SHA256 哈希值
+     - 在 `ClipModel` 中实现 `verify_file` 函数，支持文件大小和 SHA256 哈希值校验
+     - 修改 `ensure_model_file` 函数，在检测到文件存在时进行完整性校验
+     - 如果文件校验失败，自动删除损坏的文件并重新下载
+     - 为所有模型文件添加 TODO 注释，预留配置位置
+   - **文件修改**：
+     - `src-tauri/src/clip/models/mod.rs` - 扩展 `ModelFile` 结构，添加完整性校验字段和方法
+     - `src-tauri/src/clip/model.rs` - 实现 `verify_file` 函数，修改 `ensure_model_file` 使用完整性校验
+     - `src-tauri/src/clip/models/clip_vit.rs` - 为 CLIP ViT 模型添加 TODO 注释
+     - `src-tauri/src/clip/models/siglip2.rs` - 为 SigLIP 2 模型添加 TODO 注释
+     - `src-tauri/Cargo.toml` - 添加 `sha2` 依赖用于哈希计算
+   - **待办事项**：需要获取各模型文件的实际大小和 SHA256 哈希值，填入模型配置中
+
+54. **模型文件损坏检测与用户提示** ✅
+   - **问题**：文件大小校验通过，但 ONNX 模型文件实际上已损坏（`Protobuf parsing failed`），导致模型加载失败
+   - **原因**：文件大小校验只能检测文件是否完整下载，但不能检测文件内容是否损坏。网络中断可能导致文件只下载了一部分，但大小正好匹配
+   - **修复**：
+     - 在模型加载失败时，检测错误信息是否包含文件损坏相关的关键词（`Protobuf parsing failed`、`Invalid protobuf`、`corrupt`、`invalid model`、`ModelWrapper`）
+     - 如果检测到文件损坏，向用户显示友好的中文提示：`"模型文件可能已损坏，请点击'修复'按钮重新下载"`
+   - **文件修改**：
+     - `src-tauri/src/clip/model.rs` - 修改 `load` 函数，添加文件损坏检测和用户提示
+
+55. **添加"修复"按钮和优化提示信息显示** ✅
+   - **问题1**：模型文件损坏时，用户需要手动删除再重新下载，操作繁琐
+   - **问题2**：手动下载提示信息（`下载失败 ... 手动下载步骤：...`）在切换模型时也会显示，但其他模型可能是正常使用、正在下载、未下载等状态，不应该显示此提示
+   - **修复**：
+     - 添加 `corruptedModels` 状态（`Set<string>`）跟踪哪些模型已损坏
+     - 当模型加载失败且检测到文件损坏时，将模型加入 `corruptedModels` 集合
+     - 模型损坏时显示：
+       - 红色边框和"文件损坏"标签
+       - "修复"按钮（红色）替代"使用"按钮
+     - 实现 `handleRepairModel` 函数：
+       1. 删除损坏的模型文件
+       2. 从 `corruptedModels` 中移除
+       3. 如果当前正在使用该模型，清除选择
+       4. 刷新模型状态
+       5. 自动开始重新下载
+     - 优化提示信息显示逻辑：
+       - 只在网络/下载错误时设置 `downloadStatus: 'error'` 并显示手动下载提示
+       - 文件损坏错误只显示 Toast 提示，不显示手动下载步骤
+       - 区分错误类型：文件损坏 vs 网络错误
+   - **文件修改**：
+     - `src/components/SettingsModal.tsx` - 添加损坏状态跟踪、修复按钮和优化提示逻辑
+
+56. **损坏模型状态持久化** ✅
+   - **问题**：`corruptedModels` 状态是组件级别的，当切换设置栏或重新打开软件时，状态被重置，导致已标记为损坏的模型又显示为"使用中"
+   - **修复**：
+     - 在 `modelDownloadState.ts` 中添加全局损坏模型状态管理
+     - 添加 `globalCorruptedModelsState` 全局状态对象
+     - 实现全局状态管理函数：
+       - `markModelAsCorrupted(modelName)` - 标记模型为损坏
+       - `markModelAsNormal(modelName)` - 标记模型为正常
+       - `getCorruptedModels()` - 获取所有损坏的模型
+       - `isModelCorrupted(modelName)` - 检查模型是否损坏
+     - 组件初始化时从全局状态读取损坏模型列表
+     - 标记损坏/正常时同步更新全局状态
+   - **文件修改**：
+     - `src/utils/modelDownloadState.ts` - 添加全局损坏模型状态管理
+     - `src/components/SettingsModal.tsx` - 使用全局损坏状态
+
+57. **下载错误提示清除逻辑修复** ✅
+   - **问题**：`settings.downloadStatus` 和 `settings.downloadError` 在下载失败后没有被清除，导致错误提示一直显示在页面上，即使模型已经下载完成
+   - **修复**：
+     - 组件挂载时自动清除过期的下载错误状态
+     - 加载模型状态成功后，如果所有模型都已下载，自动清除错误状态
+   - **文件修改**：
+     - `src/components/SettingsModal.tsx` - 添加错误状态清除逻辑
+
+### 2026-02-22 SigLIP 2 模型集成（多语言支持）🚀
+
+58. **模块化模型架构重构** ✅
+   - **背景**：原有代码将所有模型参数硬编码在 `model.rs` 中，难以扩展新模型
+   - **目标**：采用模块化架构，便于添加更多视觉语言模型
+   - **实现**：
+     - 创建 `src-tauri/src/clip/models/` 目录
+     - 定义 `ModelSpec` trait，所有模型实现此 trait
+     - 创建 `models/mod.rs` - 模型注册表和 trait 定义
+     - 创建 `models/clip_vit.rs` - CLIP ViT-B/32 和 ViT-L/14 模型
+     - 创建 `models/siglip2.rs` - SigLIP 2 So400M 模型
+   - **优势**：
+     - 添加新模型只需创建新模块并实现 `ModelSpec` trait
+     - 模型参数集中管理，便于维护
+     - 支持不同模型的差异化配置
+
+59. **SigLIP 2 模型支持** ✅
+   - **背景**：OpenAI CLIP 模型仅支持英文搜索，无法满足中文用户需求
+   - **模型选择**：Google SigLIP 2 So400M
+     - 2025 年发布的最新多语言视觉语言编码器
+     - 原生支持中文等多语言搜索
+     - 更大的输入尺寸（384x384）和嵌入维度（1152）
+   - **实现**：
+     - 添加 `SigLIP2So400M` 结构体，实现 `ModelSpec` trait
+     - 配置 SigLIP 2 专用参数：
+       - 图像尺寸: 384x384
+       - 嵌入维度: 1152
+       - 归一化参数: mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]
+       - 最大文本长度: 64
+     - 配置模型文件下载地址（hf-mirror.com 国内镜像）
+   - **文件修改**：
+     - `src-tauri/src/clip/models/siglip2.rs` - 新增
+     - `src-tauri/src/clip/models/mod.rs` - 注册 SigLIP 2 模型
+
+60. **预处理器重构支持多模型** ✅
+   - **问题**：原有预处理器使用硬编码的 CLIP 参数，无法支持 SigLIP 2 的不同参数
+   - **修复**：
+     - `ImagePreprocessor` 支持动态归一化参数（mean, std）
+     - `ImagePreprocessor` 支持动态目标尺寸
+     - `TextPreprocessor` 支持动态最大文本长度
+     - 模型加载时根据 `ModelSpec` 创建对应的预处理器
+   - **文件修改**：
+     - `src-tauri/src/clip/preprocessor.rs` - 重构支持动态参数
+     - `src-tauri/src/clip/model.rs` - 使用 ModelSpec 创建预处理器
+
+61. **模型加载逻辑重构** ✅
+   - **问题**：原有 `ClipModel::load()` 使用硬编码的 `ModelInfo` 结构
+   - **修复**：
+     - 删除 `ModelInfo` 结构体
+     - 使用 `Arc<dyn ModelSpec>` 替代 `ModelInfo`
+     - 通过 `get_model_spec()` 函数获取模型规格
+     - 支持动态加载不同架构的模型
+   - **文件修改**：
+     - `src-tauri/src/clip/model.rs` - 重构模型加载逻辑
+
+62. **tokenizers 版本升级** ✅
+   - **问题**：SigLIP 2 的 tokenizer.json 格式与 tokenizers 0.15 不兼容
+   - **错误信息**：`data did not match any variant of untagged enum ModelWrapper`
+   - **原因**：SigLIP 2 tokenizer 包含新字段（`ignore_merges`、`byte_fallback: true`）
+   - **修复**：升级 tokenizers crate 从 0.15 → 0.21
+   - **文件修改**：
+     - `src-tauri/Cargo.toml` - 升级 tokenizers 版本
+
+63. **前端类型定义更新** ✅
+   - **修改**：扩展 `ClipModelName` 类型添加 `'SigLIP2-So400M'`
+   - **修改**：在 `CLIP_MODELS` 数组中添加 SigLIP 2 模型信息
+   - **文件修改**：
+     - `src/types.ts` - 添加 SigLIP 2 类型
+     - `src/components/SettingsModal.tsx` - 添加 SigLIP 2 模型选项
+
+### SigLIP 2 关键经验总结
+
+1. **模块化架构优势**：添加新模型只需实现 trait，无需修改核心逻辑
+2. **tokenizer 版本兼容性**：新模型可能需要更新的 tokenizers 版本
+3. **归一化参数差异**：不同模型使用不同的归一化参数，必须正确配置
+4. **多语言支持**：SigLIP 2 原生支持多语言，无需额外处理
+5. **模型文件结构差异**：SigLIP 2 使用单一 ONNX 模型（model.onnx + model.onnx_data），而 CLIP 使用分离的 vision_model.onnx 和 text_model.onnx

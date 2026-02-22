@@ -1549,9 +1549,9 @@ export const Sidebar: React.FC<{
                     <span className="truncate max-w-[45%]">{download.fileName}</span>
                     <span className="flex items-center gap-1 shrink-0">
                       {download.progress}%
-                      {download.speed > 0 && (
-                        <span className="text-green-600">({download.speed < 1024 ? `${download.speed} B/s` : download.speed < 1024 * 1024 ? `${(download.speed / 1024).toFixed(1)} KB/s` : `${(download.speed / 1024 / 1024).toFixed(1)} MB/s`})</span>
-                      )}
+                      <span className={download.speed > 0 ? "text-green-600" : "text-gray-400"}>
+                        ({download.speed < 1024 ? `${download.speed} B/s` : download.speed < 1024 * 1024 ? `${(download.speed / 1024).toFixed(1)} KB/s` : `${(download.speed / 1024 / 1024).toFixed(1)} MB/s`})
+                      </span>
                     </span>
                   </div>
                 </>

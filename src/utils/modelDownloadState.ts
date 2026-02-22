@@ -1,7 +1,7 @@
 // 全局模型下载状态管理
 // 用于在设置界面关闭后仍然保持下载进度
 
-import { listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
+import { listenClipModelDownloadProgress, ClipModelDownloadProgress, ClipModelStatus } from '../api/tauri-bridge';
 
 export interface ModelDownloadInfo {
   modelName: string;
@@ -203,4 +203,141 @@ export function subscribeToModelDownload(
 // 清理下载状态
 export function clearModelDownload(modelName: string): void {
   delete globalModelDownloadState.downloads[modelName];
+}
+
+// ==================== 全局模型状态缓存 ====================
+// 用于在组件重新挂载时保持模型状态，避免"加载中..."一直显示
+
+export interface ModelStatusCache {
+  statuses: Record<string, ClipModelStatus>;
+  isLoaded: boolean;
+  lastLoadTime: number;
+}
+
+export const globalModelStatusState: ModelStatusCache = {
+  statuses: {},
+  isLoaded: false,
+  lastLoadTime: 0,
+};
+
+// 缓存过期时间（5分钟）
+const CACHE_EXPIRY_MS = 5 * 60 * 1000;
+
+/**
+ * 获取缓存的模型状态
+ * @returns 如果缓存有效则返回状态对象，否则返回 null
+ */
+export function getCachedModelStatuses(): Record<string, ClipModelStatus> | null {
+  if (!globalModelStatusState.isLoaded) {
+    return null;
+  }
+  
+  const now = Date.now();
+  if (now - globalModelStatusState.lastLoadTime > CACHE_EXPIRY_MS) {
+    // 缓存已过期
+    globalModelStatusState.isLoaded = false;
+    return null;
+  }
+  
+  return globalModelStatusState.statuses;
+}
+
+/**
+ * 设置模型状态缓存
+ * @param statuses 模型状态对象
+ */
+export function setCachedModelStatuses(statuses: Record<string, ClipModelStatus>): void {
+  globalModelStatusState.statuses = statuses;
+  globalModelStatusState.isLoaded = true;
+  globalModelStatusState.lastLoadTime = Date.now();
+}
+
+/**
+ * 清除模型状态缓存
+ */
+export function clearCachedModelStatuses(): void {
+  globalModelStatusState.statuses = {};
+  globalModelStatusState.isLoaded = false;
+  globalModelStatusState.lastLoadTime = 0;
+}
+
+/**
+ * 获取单个模型的缓存状态
+ * @param modelName 模型名称
+ * @returns 模型状态或 undefined
+ */
+export function getCachedModelStatus(modelName: string): ClipModelStatus | undefined {
+  if (!globalModelStatusState.isLoaded) {
+    return undefined;
+  }
+  
+  const now = Date.now();
+  if (now - globalModelStatusState.lastLoadTime > CACHE_EXPIRY_MS) {
+    return undefined;
+  }
+  
+  return globalModelStatusState.statuses[modelName];
+}
+
+/**
+ * 检查缓存是否有效
+ */
+export function isModelStatusCacheValid(): boolean {
+  if (!globalModelStatusState.isLoaded) {
+    return false;
+  }
+  
+  const now = Date.now();
+  return now - globalModelStatusState.lastLoadTime <= CACHE_EXPIRY_MS;
+}
+
+// ==================== 全局损坏模型状态 ====================
+// 用于在组件重新挂载时保持损坏模型状态
+
+interface CorruptedModelsState {
+  models: Set<string>;
+}
+
+const globalCorruptedModelsState: CorruptedModelsState = {
+  models: new Set(),
+};
+
+/**
+ * 将模型标记为损坏
+ * @param modelName 模型名称
+ */
+export function markModelAsCorrupted(modelName: string): void {
+  globalCorruptedModelsState.models.add(modelName);
+}
+
+/**
+ * 将模型标记为正常（从损坏列表中移除）
+ * @param modelName 模型名称
+ */
+export function markModelAsNormal(modelName: string): void {
+  globalCorruptedModelsState.models.delete(modelName);
+}
+
+/**
+ * 获取所有损坏的模型
+ * @returns 损坏模型名称的数组
+ */
+export function getCorruptedModels(): string[] {
+  return Array.from(globalCorruptedModelsState.models);
+}
+
+/**
+ * 检查模型是否已损坏
+ * @param modelName 模型名称
+ * @returns 是否损坏
+ */
+export function isModelCorrupted(modelName: string): boolean {
+  return globalCorruptedModelsState.models.has(modelName);
+}
+
+/**
+ * 清除所有损坏模型状态
+ */
+export function clearCorruptedModels(): void {
+  globalCorruptedModelsState.models.clear();
 }
