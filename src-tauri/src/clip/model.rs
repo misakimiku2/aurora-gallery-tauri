@@ -15,6 +15,13 @@ use super::ClipConfig;
 use super::preprocessor::{ImagePreprocessor, TextPreprocessor};
 use super::models::{ModelSpec, get_model_spec};
 
+/// 推理结果，包含 Embedding 或标签
+#[derive(Clone)]
+pub struct InferenceResult {
+    pub embedding: Vec<f32>,
+    pub tags: Option<Vec<(String, f32)>>,
+}
+
 /// 下载超时时间（秒）
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300; // 5分钟
 /// 连接超时时间（秒）
@@ -39,6 +46,55 @@ pub struct ClipModel {
     text_session: Option<Arc<std::sync::Mutex<Session>>>,
     model_spec: Arc<dyn ModelSpec>,
     is_gpu_active: bool,
+    label_mapper: Option<LabelMapper>,
+}
+
+/// 标签映射器，将索引转换为可读标签
+struct LabelMapper {
+    /// 标签列表（按索引排序）
+    tags: Vec<String>,
+    /// 通用概率阈值
+    threshold: f32,
+}
+
+impl LabelMapper {
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        let file = std::fs::File::open(path)
+            .map_err(|e| format!("Failed to open tags file: {}", e))?;
+        let mut rdr = csv::Reader::from_reader(file);
+        
+        let mut tags = Vec::new();
+        // CSV 格式通常为: id,name,category,count
+        for result in rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+            if record.len() >= 2 {
+                // 将下划线替换为空格，如 "long_hair" -> "long hair"
+                // 这样更符合自然语言搜索习惯，且 UI 展示更美观
+                let tag_name = record[1].replace('_', " ").trim().to_string();
+                tags.push(tag_name);
+            }
+        }
+        
+        log::info!("Loaded {} tags from {:?}", tags.len(), path);
+        Ok(Self {
+            tags,
+            threshold: 0.35, // WD14 默认推荐阈值
+        })
+    }
+
+    pub fn map_probs(&self, probs: &[f32]) -> Vec<(String, f32)> {
+        let mut results = Vec::new();
+        for (i, &prob) in probs.iter().enumerate() {
+            if prob >= self.threshold {
+                if let Some(tag) = self.tags.get(i) {
+                    results.push((tag.clone(), prob));
+                }
+            }
+        }
+        // 按概率降序排序
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
 }
 
 impl ClipModel {
@@ -78,14 +134,17 @@ impl ClipModel {
             model_spec.image_size(),
             model_spec.image_mean(),
             model_spec.image_std(),
+            model_spec.image_tensor_format(),
         );
         let mut text_preprocessor = TextPreprocessor::new(model_spec.max_text_length());
         
-        // 加载 tokenizer
-        let tokenizer_path = downloaded_paths.get("tokenizer.json")
-            .ok_or("tokenizer.json not found in model files")?;
-        text_preprocessor.load_tokenizer(tokenizer_path)
-            .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+        // 如果模型支持文本输入，加载 tokenizer
+        if model_spec.max_text_length() > 0 {
+            let tokenizer_path = downloaded_paths.get("tokenizer.json")
+                .ok_or("tokenizer.json not found in model files, but required for text encoding")?;
+            text_preprocessor.load_tokenizer(tokenizer_path)
+                .map_err(|e| format!("Failed to load tokenizer: {}", e))?;
+        }
 
         log::info!("CLIP model files ready: {}", config.model_name);
         
@@ -128,6 +187,16 @@ impl ClipModel {
             s.model_name = config.model_name.clone();
         }
 
+        // 加载标签映射器（如果是 Tagger）
+        let mut label_mapper = None;
+        if model_spec.is_tagger() {
+            if let Some(tags_file_name) = model_spec.tags_file() {
+                if let Some(tags_path) = downloaded_paths.get(tags_file_name) {
+                    label_mapper = Some(LabelMapper::load(tags_path)?);
+                }
+            }
+        }
+
         Ok(Self {
             config: config.clone(),
             image_preprocessor,
@@ -136,6 +205,7 @@ impl ClipModel {
             text_session: Some(text_session),
             model_spec,
             is_gpu_active,
+            label_mapper,
         })
     }
 
@@ -499,7 +569,7 @@ impl ClipModel {
     }
 
     /// 编码图像 - 使用 ONNX Runtime GPU 推理
-    pub fn encode_image(&mut self, image_path: &str) -> Result<Vec<f32>, String> {
+    pub fn encode_image(&mut self, image_path: &str) -> Result<InferenceResult, String> {
         // 检查文件是否存在
         if !std::path::Path::new(image_path).exists() {
             return Err(format!("Image file not found: {}", image_path));
@@ -518,7 +588,10 @@ impl ClipModel {
 
         // 创建输入 Tensor - 使用 (shape, data) 元组格式
         let image_size = self.model_spec.image_size();
-        let input_shape: Vec<i64> = vec![1, 3, image_size as i64, image_size as i64];
+        let input_shape: Vec<i64> = match self.model_spec.image_tensor_format() {
+            crate::clip::models::ImageTensorFormat::Nchw => vec![1, 3, image_size as i64, image_size as i64],
+            crate::clip::models::ImageTensorFormat::Nhwc => vec![1, image_size as i64, image_size as i64, 3],
+        };
         let input_tensor = Tensor::from_array((input_shape, tensor_data.into_boxed_slice()))
             .map_err(|e| format!("Failed to create input tensor: {}", e))?;
 
@@ -526,13 +599,9 @@ impl ClipModel {
         let requires_text = session.inputs().iter().any(|i| i.name() == self.model_spec.text_input_name());
         let outputs = if requires_text {
             // 统一模型（如 SigLIP2）需要同时提供视觉和文本输入。
-            // 虚拟 input_ids 必须使用模型正常的文本序列长度，而不是固定的 [1, 1]！
-            // 若只提供 1 个 token，图像嵌入在异常短的文本上下文中计算，
-            // 会偏离文本嵌入的语义空间，导致搜索精度下降。
             let dummy_text_len = self.model_spec.dummy_text_input_length();
             let text_shape = vec![1i64, dummy_text_len as i64];
             let text_data = vec![0i64; dummy_text_len]; // 全部用 0（padding token）填充
-            log::debug!("[CLIP Debug] 为图像编码提供虚拟 input_ids，长度: {}", dummy_text_len);
             let input_ids_tensor = ort::value::Tensor::from_array((text_shape, text_data.into_boxed_slice()))
                 .map_err(|e| format!("Failed to create dummy input_ids tensor: {}", e))?;
                 
@@ -548,25 +617,33 @@ impl ClipModel {
                 .map_err(|e| format!("Failed to run inference: {}", e))?
         };
 
-        // 提取嵌入向量 - try_extract_tensor 返回 (Shape, &[f32])
-        // 诊断：记录实际可用的输出节点名称
-        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
-        log::info!("[CLIP Debug] Available output nodes: {:?}", available_outputs);
-        log::info!("[CLIP Debug] Expected vision output node: {}", self.model_spec.vision_output_name());
-        
-        let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.vision_output_name()]
+        // 提取嵌入向量
+        let output_node = self.model_spec.vision_output_name();
+        let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs.get(output_node)
+            .ok_or_else(|| format!("Output node '{}' not found. Available: {:?}", output_node, outputs.keys().collect::<Vec<_>>()))?
             .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract embedding from '{}': {:?}. Available: {:?}", 
-                self.model_spec.vision_output_name(), e, available_outputs))?;
+            .map_err(|e| format!("Failed to extract embedding from '{}': {:?}", output_node, e))?;
 
         // 转换为 Vec<f32> 并归一化
-        let mut vec: Vec<f32> = embedding_data.iter().copied().collect();
-        let raw_norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-        log::info!("[CLIP Debug] Image output shape: {:?}, raw norm: {:.4}, first 5: {:?}", _shape, raw_norm, vec.iter().take(5).collect::<Vec<_>>());
-        
-        normalize_vector(&mut vec);
+        let mut embedding: Vec<f32> = embedding_data.iter().copied().collect();
+        normalize_vector(&mut embedding);
 
-        Ok(vec)
+        // 如果是 Tagger，提取标签
+        let mut tags = None;
+        if self.model_spec.is_tagger() {
+            if let Some(mapper) = &self.label_mapper {
+                let tagger_node = self.model_spec.tagger_output_name();
+                if let Some(tag_output) = outputs.get(tagger_node) {
+                    let (_shape, prob_data): (&ort::tensor::Shape, &[f32]) = tag_output
+                        .try_extract_tensor::<f32>()
+                        .map_err(|e| format!("Failed to extract tags from '{}': {:?}", tagger_node, e))?;
+                    
+                    tags = Some(mapper.map_probs(prob_data));
+                }
+            }
+        }
+
+        Ok(InferenceResult { embedding, tags })
     }
 
     /// 编码文本 - 使用 ONNX Runtime GPU 推理
@@ -605,12 +682,15 @@ impl ClipModel {
         let outputs = if requires_vision {
             // 统一模型（如 SigLIP2）需要同时提供视觉和文本输入。
             // 虚拟 pixel_values 必须使用模型要求的正确尺寸！
-            // 如果使用错误的尺寸（如 16x16），Vision Transformer 的 Patch 嵌入层
-            // 会产生维度不匹配，导致输出 NaN/inf，使所有搜索词的结果完全相同。
             let (n, c, h, w) = self.model_spec.dummy_vision_input_shape()
                 .unwrap_or((1, 3, self.model_spec.image_size(), self.model_spec.image_size()));
+            
+            let vision_shape: Vec<i64> = match self.model_spec.image_tensor_format() {
+                crate::clip::models::ImageTensorFormat::Nchw => vec![n as i64, c as i64, h as i64, w as i64],
+                crate::clip::models::ImageTensorFormat::Nhwc => vec![n as i64, h as i64, w as i64, c as i64],
+            };
+            
             let vision_data_size = n * c * h * w;
-            let vision_shape = vec![n as i64, c as i64, h as i64, w as i64];
             let vision_data = vec![0.0f32; vision_data_size];
             log::debug!("[CLIP Debug] 为文本编码提供虚拟 pixel_values，形状: {:?}", vision_shape);
             let pixel_values_tensor = ort::value::Tensor::from_array((vision_shape, vision_data.into_boxed_slice()))
@@ -646,10 +726,12 @@ impl ClipModel {
         log::info!("[CLIP Debug] Text - Available output nodes: {:?}", available_outputs);
         log::info!("[CLIP Debug] Text - Expected text output node: {}", self.model_spec.text_output_name());
         
-        let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.text_output_name()]
+        let output_node = self.model_spec.text_output_name();
+        let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs.get(output_node)
+            .ok_or_else(|| format!("Text output node '{}' not found. Available: {:?}", output_node, outputs.keys().collect::<Vec<_>>()))?
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("Failed to extract embedding from '{}': {:?}. Available: {:?}", 
-                self.model_spec.text_output_name(), e, available_outputs))?;
+                output_node, e, available_outputs))?;
 
         // 转换为 Vec<f32> 并归一化
         let mut vec: Vec<f32> = embedding_data.iter().copied().collect();
@@ -662,7 +744,7 @@ impl ClipModel {
     }
 
     /// 批量编码图像 - 使用 GPU 批量推理
-    pub fn encode_images_batch(&mut self, image_paths: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    pub fn encode_images_batch(&mut self, image_paths: &[String]) -> Result<Vec<InferenceResult>, String> {
         log::info!("encode_images_batch called with {} images", image_paths.len());
         
         if image_paths.is_empty() {
@@ -670,7 +752,7 @@ impl ClipModel {
             return Ok(Vec::new());
         }
 
-        // 对于小批量，使用串行处理（避免 GPU 启动开销）
+        // 对于小批量，使用串行处理
         if image_paths.len() <= 4 {
             log::info!("Small batch ({}), using serial processing", image_paths.len());
             let mut results = Vec::with_capacity(image_paths.len());
@@ -687,7 +769,7 @@ impl ClipModel {
     }
 
     /// GPU 批量推理
-    fn encode_images_batch_gpu(&mut self, image_paths: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    fn encode_images_batch_gpu(&mut self, image_paths: &[String]) -> Result<Vec<InferenceResult>, String> {
         log::info!("[CLIP Batch] GPU active: {}, model: {}, batch_size: {}", 
             self.is_gpu_active, self.model_spec.name(), image_paths.len());
         log::info!("encode_images_batch_gpu started: {} images", image_paths.len());
@@ -721,9 +803,12 @@ impl ClipModel {
             batch_data.extend(tensor);
         }
 
-        // 创建批次输入 Tensor: [batch_size, 3, image_size, image_size]
-        log::info!("Creating input tensor with shape [{}, 3, {}, {}]", batch_size, image_size, image_size);
-        let input_shape: Vec<i64> = vec![batch_size as i64, 3, image_size as i64, image_size as i64];
+        // 创建批次输入 Tensor
+        let input_shape: Vec<i64> = match self.model_spec.image_tensor_format() {
+            crate::clip::models::ImageTensorFormat::Nchw => vec![batch_size as i64, 3, image_size as i64, image_size as i64],
+            crate::clip::models::ImageTensorFormat::Nhwc => vec![batch_size as i64, image_size as i64, image_size as i64, 3],
+        };
+        log::info!("Creating input tensor with shape {:?}", input_shape);
         let input_tensor = Tensor::from_array((input_shape, batch_data.into_boxed_slice()))
             .map_err(|e| format!("Failed to create batch input tensor: {}", e))?;
 
@@ -759,34 +844,54 @@ impl ClipModel {
         log::info!("ONNX inference completed in {}ms", inference_elapsed);
 
         // 提取嵌入向量
-        // 诊断：记录实际可用的输出节点名称
-        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
-        log::info!("[CLIP Debug] Batch - Available output nodes: {:?}", available_outputs);
-        log::info!("[CLIP Debug] Batch - Expected vision output node: {}", self.model_spec.vision_output_name());
-        
-        let (shape, embeddings_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.vision_output_name()]
+        let output_node = self.model_spec.vision_output_name();
+        let (emb_shape, embeddings_data): (&ort::tensor::Shape, &[f32]) = outputs.get(output_node)
+            .ok_or_else(|| format!("Batch vision output node '{}' not found. Available: {:?}", output_node, outputs.keys().collect::<Vec<_>>()))?
             .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract batch embeddings from '{}': {:?}. Available: {:?}", 
-                self.model_spec.vision_output_name(), e, available_outputs))?;
-
-        // 转换为 Vec<Vec<f32>> 并归一化
+            .map_err(|e| format!("Failed to extract batch embeddings from '{}': {:?}", output_node, e))?;
+ 
         let embedding_dim = self.model_spec.embedding_dim();
-        let actual_batch_size = shape[0] as usize;
+        let actual_batch_size = if emb_shape.is_empty() {
+             return Err(format!("Empty embedding shape for node '{}'", output_node));
+        } else {
+             emb_shape[0] as usize
+        };
+
+        // 如果是 Tagger，提取标签
+        let mut all_tags: Option<Vec<Vec<(String, f32)>>> = None;
+        if self.model_spec.is_tagger() {
+            if let Some(mapper) = &self.label_mapper {
+                let tagger_node = self.model_spec.tagger_output_name();
+                if let Some(tag_output) = outputs.get(tagger_node) {
+                    let (tag_shape, prob_data): (&ort::tensor::Shape, &[f32]) = tag_output
+                        .try_extract_tensor::<f32>()
+                        .map_err(|e| format!("Failed to extract batch tags: {:?}", e))?;
+                    
+                    let tag_count = tag_shape[1] as usize;
+                    let mut batch_tags = Vec::with_capacity(actual_batch_size);
+                    for i in 0..actual_batch_size {
+                        let start = i * tag_count;
+                        let end = start + tag_count;
+                        if end <= prob_data.len() {
+                            batch_tags.push(mapper.map_probs(&prob_data[start..end]));
+                        }
+                    }
+                    all_tags = Some(batch_tags);
+                }
+            }
+        }
+
         let mut results = Vec::with_capacity(actual_batch_size);
-        
-        // 将扁平化的张量转换为每行一个向量的格式
-        let flat_embeddings: Vec<f32> = embeddings_data.iter().copied().collect();
+        let flat_embeddings: &[f32] = embeddings_data;
         for i in 0..actual_batch_size {
             let start = i * embedding_dim;
             let end = start + embedding_dim;
             if end <= flat_embeddings.len() {
-                let mut vec = flat_embeddings[start..end].to_vec();
-                if i == 0 {
-                    let raw_norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
-                    log::info!("[CLIP Debug] Batch Image[0] raw norm: {:.4}, first 5: {:?}", raw_norm, vec.iter().take(5).collect::<Vec<_>>());
-                }
-                normalize_vector(&mut vec);
-                results.push(vec);
+                let mut embedding = flat_embeddings[start..end].to_vec();
+                normalize_vector(&mut embedding);
+                
+                let tags = all_tags.as_ref().and_then(|t| t.get(i).cloned());
+                results.push(InferenceResult { embedding, tags });
             }
         }
 

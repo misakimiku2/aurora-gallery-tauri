@@ -187,7 +187,7 @@ export interface AIConfig {
 
 // ==================== CLIP 模型设置 ====================
 
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M';
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 export interface ClipModelInfo {
@@ -201,18 +201,16 @@ export interface ClipModelInfo {
 }
 
 export interface ClipSettings {
-  // 模型配置
+  enabled: boolean;
   modelName: ClipModelName;
   useGpu: boolean;
-  
-  // 下载状态
+
   downloadStatus: ClipDownloadStatus;
-  downloadProgress: number; // 0-100
+  downloadProgress: number;
   downloadError?: string;
-  
-  // 模型信息
+
   modelVersion: string;
-  downloadedAt?: number; // 时间戳
+  downloadedAt?: number;
 }
 
 export interface AppSettings {

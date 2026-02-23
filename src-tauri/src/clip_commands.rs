@@ -1,6 +1,7 @@
 use crate::clip::embedding::ImageEmbedding;
 use crate::clip::search::{SearchOptions, SearchResult};
-use crate::db::{self, generate_id};
+use crate::db::{self, generate_id, AppDbPool};
+use crate::db::file_metadata::{FileMetadata, upsert_file_metadata, get_metadata_by_id};
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
@@ -136,7 +137,8 @@ pub async fn clip_search_by_image(
     let model = guard.model_mut()
         .ok_or("CLIP model not available")?;
     
-    let image_embedding = model.encode_image(&image_path)?;
+    let inference_result = model.encode_image(&image_path)?;
+    let image_embedding = inference_result.embedding;
     
     let embedding_store = guard.embedding_store()
         .ok_or("Embedding store not available")?;
@@ -155,6 +157,7 @@ pub async fn clip_search_by_image(
 pub async fn clip_generate_embedding(
     file_path: String,
     file_id: Option<String>,
+    app: tauri::AppHandle,
 ) -> Result<Vec<f32>, String> {
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
@@ -168,11 +171,18 @@ pub async fn clip_generate_embedding(
     let model = guard.model_mut()
         .ok_or("CLIP model not available")?;
     
-    let embedding = model.encode_image(&file_path)?;
+    let inference_result = model.encode_image(&file_path)?;
+    let embedding = inference_result.embedding;
     
     let config_clone = guard.config().clone();
     if let Some(embedding_store) = guard.embedding_store() {
         let id = file_id.unwrap_or_else(|| generate_id(&file_path));
+        
+        // 保存标签（如果是 Tagger）
+        if let Some(tags) = &inference_result.tags {
+            save_tags_to_metadata(&id, &file_path, tags, &app)?;
+        }
+
         let image_embedding = ImageEmbedding {
             file_id: id,
             embedding: embedding.clone(),
@@ -320,6 +330,12 @@ pub async fn clip_generate_embeddings_batch(
                 log::info!("[CLIP Batch] Matched ViT-B-32, GPU: {}", using_gpu);
                 if using_gpu { 64 } else { 8 }
             },
+            "WD-EVA02-Large-Tagger-V3" => {
+                log::info!("[CLIP Batch] Matched WD-EVA02-Large-Tagger-V3 (High-Res), GPU: {}", using_gpu);
+                // 根据用户要求恢复批次为 32。注意：该模型原生导出可能只支持 batch=1，
+                // 如果批量推理报错，系统会自动回退到串行处理。
+                if using_gpu { 32 } else { 4 }
+            },
             other => {
                 log::warn!("[CLIP Batch] Unknown model name '{}', using default batch size", other);
                 if using_gpu { 32 } else { 8 }
@@ -452,10 +468,15 @@ pub async fn clip_generate_embeddings_batch(
                     let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
                     
                     let mut batch_embeddings = Vec::with_capacity(batch.len());
-                    for (file_id, embedding) in batch_file_ids.iter().zip(embeddings.iter()) {
+                    for (i, ((_path, file_id), result)) in batch.iter().zip(embeddings.iter()).enumerate() {
+                        // 保存标签（如果是 Tagger）
+                        if let Some(tags) = &result.tags {
+                            let _ = save_tags_to_metadata(file_id, _path, tags, &app);
+                        }
+
                         let image_embedding = ImageEmbedding {
                             file_id: file_id.clone(),
-                            embedding: embedding.clone(),
+                            embedding: result.embedding.clone(),
                             model_version: model_name.clone(),
                             created_at: chrono::Utc::now().timestamp(),
                         };
@@ -476,7 +497,7 @@ pub async fn clip_generate_embeddings_batch(
                                     let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
                                     let image_embedding = ImageEmbedding {
                                         file_id: file_id.clone(),
-                                        embedding: embeddings[i].clone(),
+                                        embedding: embeddings[i].embedding.clone(),
                                         model_version: model_name.clone(),
                                         created_at: chrono::Utc::now().timestamp(),
                                     };
@@ -505,13 +526,19 @@ pub async fn clip_generate_embeddings_batch(
                     };
                     
                     match single_result {
-                        Ok(embedding) => {
+                        Ok(result) => {
                             let save_result = {
                                 let guard = manager.read().await;
                                 let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
+                                
+                                // 保存标签（如果是 Tagger）
+                                if let Some(tags) = &result.tags {
+                                    let _ = save_tags_to_metadata(file_id, file_path, tags, &app);
+                                }
+
                                 let image_embedding = ImageEmbedding {
                                     file_id: file_id.clone(),
-                                    embedding,
+                                    embedding: result.embedding,
                                     model_version: model_name.clone(),
                                     created_at: chrono::Utc::now().timestamp(),
                                 };
@@ -849,4 +876,47 @@ pub async fn clip_get_embedding_stats() -> Result<serde_json::Value, String> {
         "model_name": model_name,
         "root_path": root_path,
     }))
+}
+
+/// 将识别到的标签保存到文件元数据数据库中
+fn save_tags_to_metadata(
+    file_id: &str,
+    file_path: &str,
+    tags: &[(String, f32)],
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    let pool = app.state::<AppDbPool>();
+    let pool_inner = pool.inner().clone();
+    
+    let file_id = file_id.to_string();
+    let file_path = db::normalize_path(file_path);
+    // 只保留标签名称
+    let tag_names: Vec<String> = tags.iter().map(|(name, _prob)| name.clone()).collect();
+    
+    tokio::task::spawn_blocking(move || {
+        let conn = pool_inner.get_connection();
+        
+        // 获取现有元数据，保留其他字段
+        let mut metadata = match get_metadata_by_id(&conn, &file_id) {
+            Ok(Some(m)) => m,
+            _ => FileMetadata {
+                file_id: file_id.clone(),
+                path: file_path,
+                tags: None,
+                description: None,
+                source_url: None,
+                ai_data: None,
+                category: None,
+                updated_at: Some(chrono::Utc::now().timestamp()),
+            },
+        };
+
+        // 更新标签 - 转换为 JSON 数组
+        metadata.tags = Some(serde_json::to_value(tag_names).unwrap_or_default());
+        metadata.updated_at = Some(chrono::Utc::now().timestamp());
+
+        upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
+    });
+
+    Ok(())
 }

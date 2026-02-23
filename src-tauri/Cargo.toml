@@ -56,6 +56,7 @@ sha2 = "0.10"
 ort = { version = "2.0.0-rc.9", features = ["directml", "ndarray"] }
 ndarray = { version = "0.15", features = ["rayon"] }
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
+csv = "1.4.0"
 
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem

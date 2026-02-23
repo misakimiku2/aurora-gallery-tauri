@@ -233,6 +233,8 @@ interface AIVisionPanelProps {
   settings: ClipSettings;
   onUpdateSettings: (settings: ClipSettings) => void;
   onShowToast?: (msg: string, duration?: number) => void;
+  onEnabledChange?: (enabled: boolean) => void;
+  clipLoading?: boolean;
 }
 
 const CLIP_MODELS: ClipModelInfo[] = [
@@ -262,6 +264,15 @@ const CLIP_MODELS: ClipModelInfo[] = [
     sizeDisplay: '4.3 GB',
     embeddingDim: 1152,
     isRecommended: false,
+  },
+  {
+    name: 'WD-EVA02-Large-Tagger-V3',
+    displayName: 'WD-EVA02-Large-Tagger-V3',
+    description: '动漫/插画增强 - 自动标记标签 & 高质量二次元 Embedding',
+    size: 1400 * 1024 * 1024,
+    sizeDisplay: '1.4 GB',
+    embeddingDim: 1024,
+    isRecommended: true,
   },
 ];
 
@@ -297,7 +308,7 @@ const formatSpeed = (bytesPerSecond: number): string => {
   return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
 };
 
-const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast }) => {
+const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, clipLoading }) => {
   // 从全局缓存初始化模型状态
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>(() => {
     const cached = getCachedModelStatuses();
@@ -905,18 +916,60 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* 标题 */}
       <section>
         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center">
           <Sparkles size={20} className="mr-2 text-green-500" />
           AI视觉
         </h3>
+      </section>
+
+      <section>
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="font-medium text-gray-800 dark:text-white">启用 AI 视觉功能</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                {clipLoading
+                  ? (settings.enabled ? '正在加载模型...' : '正在卸载模型...')
+                  : '开启后可使用自然语言搜索图片，关闭后可释放内存'}
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                if (clipLoading) return;
+                if (onEnabledChange) {
+                  onEnabledChange(!settings.enabled);
+                } else {
+                  onUpdateSettings({ ...settings, enabled: !settings.enabled });
+                }
+              }}
+              disabled={clipLoading}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${clipLoading
+                ? 'opacity-70 cursor-wait'
+                : ''
+                } ${settings.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+            >
+              {clipLoading ? (
+                <span className="absolute inset-0 flex items-center justify-center">
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                </span>
+              ) : (
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              )}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section>
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
           CLIP 模型可以实现自然语言图片搜索和以图搜图功能。选择适合您需求的模型进行下载。
         </p>
       </section>
 
-      {/* 模型列表 */}
       <section className="space-y-4">
         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex items-center">
           <Download size={16} className="mr-2" />
@@ -927,17 +980,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           const status = modelStatuses[model.name];
           const isDownloaded = status?.is_downloaded ?? false;
           const isLoadingModel = loadingModel === model.name;
-          // 检查全局缓存中是否有该模型的状态
           const cachedStatus = getCachedModelStatus(model.name);
-          // 只有在真正加载中且该模型状态未知且全局缓存也没有时才显示加载中
           const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
-          // 检查模型是否标记为损坏
           const isCorrupted = corruptedModels.has(model.name);
+          const isDisabled = !settings.enabled || clipLoading;
 
           return (
             <div
               key={model.name}
-              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted
+              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted && settings.enabled && !clipLoading
                 ? 'border-green-500 ring-2 ring-green-500/20'
                 : isCorrupted
                   ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
@@ -967,7 +1018,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         已下载
                       </span>
                     )}
-                    {isDownloaded && status?.is_gpu_active && !isCorrupted && (
+                    {isDownloaded && status?.is_gpu_active && !isCorrupted && settings.enabled && !clipLoading && (
                       <span className="ml-2 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
                         <Zap size={12} className="mr-1" />
                         GPU 已激活
@@ -1002,10 +1053,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       加载中...
                     </div>
                   ) : isCorrupted ? (
-                    // 模型损坏时显示修复按钮
                     <button
                       onClick={() => handleRepairModel(model.name)}
-                      disabled={isLoading}
+                      disabled={isLoading || isDisabled}
                       className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
                     >
                       <RefreshCw size={16} className="mr-2" />
@@ -1015,18 +1065,19 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                     <>
                       <button
                         onClick={() => handleSelectModel(model.name)}
-                        disabled={isLoading}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name
+                        disabled={isLoading || isDisabled}
+                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name && settings.enabled && !clipLoading
                           ? 'bg-green-500 text-white'
                           : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                           } disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
-                        {settings.modelName === model.name ? '使用中' : '使用'}
+                        {settings.modelName === model.name && settings.enabled && !clipLoading ? '使用中' : '使用'}
                       </button>
                       <button
                         onClick={() => handleDelete(model.name)}
-                        className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                        title="删除模型"
+                        disabled={isDisabled}
+                        className={`p-2 rounded-lg transition-colors ${isDisabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
+                        title={clipLoading ? '模型正在加载中' : isDisabled ? '需要先启用 AI 视觉功能' : '删除模型'}
                       >
                         <Trash size={18} />
                       </button>
@@ -1034,7 +1085,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   ) : (
                     <button
                       onClick={() => handleDownload(model.name)}
-                      disabled={isLoadingModel}
+                      disabled={isLoadingModel || isDisabled}
                       className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
                     >
                       {isLoadingModel ? (
@@ -1056,9 +1107,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               {isLoadingModel && (
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                    <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? 3} 个文件</span>
+                    <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)} 个文件</span>
                     <span className="text-green-600 font-medium">
-                      {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? 3) * 100)}%
+                      {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)) * 100)}%
                     </span>
                   </div>
                   {downloadProgress[model.name]?.fileName && (
@@ -1219,7 +1270,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           ) : (
             <button
               onClick={handleGenerateEmbeddings}
-              disabled={isGeneratingEmbeddings || !(modelStatuses[settings.modelName]?.is_downloaded ?? false)}
+              disabled={isGeneratingEmbeddings || !(modelStatuses[settings.modelName]?.is_downloaded ?? false) || !settings.enabled}
               className="mt-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
             >
               <Brain size={16} className="mr-2" />
@@ -1236,20 +1287,21 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           高级选项
         </h4>
         <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-          <label className="flex items-center justify-between cursor-pointer">
+          <div className={`flex items-center justify-between ${settings.enabled ? '' : 'opacity-50'}`}>
             <div>
               <div className="font-medium text-gray-800 dark:text-white">启用 GPU 加速</div>
               <div className="text-xs text-gray-500 dark:text-gray-400">
                 使用 DirectML 加速模型推理（需要支持 DirectX 12 的显卡）
               </div>
             </div>
-            <input
-              type="checkbox"
-              checked={settings.useGpu}
-              onChange={(e) => onUpdateSettings({ ...settings, useGpu: e.target.checked })}
-              className="w-5 h-5 text-green-500 rounded focus:ring-green-500"
-            />
-          </label>
+            <button
+              onClick={() => settings.enabled && onUpdateSettings({ ...settings, useGpu: !settings.useGpu })}
+              disabled={!settings.enabled}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${settings.useGpu ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'} ${!settings.enabled ? 'cursor-not-allowed' : ''}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.useGpu ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
         </div>
       </section>
 
@@ -1354,18 +1406,18 @@ interface SettingsModalProps {
   onUpdatePath: (type: 'resource') => void;
   t: (key: string) => string;
   onUpdateAIConnectionStatus: (status: 'checking' | 'connected' | 'disconnected') => void;
-  // About panel props
+  onClipEnabledChange?: (enabled: boolean) => void;
+  clipLoading?: boolean;
   updateInfo?: UpdateInfo | null;
   onCheckUpdate?: () => void;
   isCheckingUpdate?: boolean;
   downloadProgress?: DownloadProgress | null;
   onInstallUpdate?: () => void;
   onOpenDownloadFolder?: () => void;
-  // Toast notification
   onShowToast?: (msg: string, duration?: number) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast }) => {
   // ... (keep existing state and checkConnection logic)
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
@@ -3110,6 +3162,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               settings={state.settings.clip}
               onUpdateSettings={(clipSettings) => onUpdateSettingsData({ clip: clipSettings })}
               onShowToast={onShowToast}
+              onEnabledChange={onClipEnabledChange}
+              clipLoading={clipLoading}
             />
           )}
 

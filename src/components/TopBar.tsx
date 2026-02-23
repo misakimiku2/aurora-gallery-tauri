@@ -60,6 +60,8 @@ interface TopBarProps {
   isClipSearchEnabled?: boolean;
   onToggleClipSearch?: () => void;
   onClipSearch?: (query: string) => Promise<void>;
+  clipEnabled?: boolean;
+  onOpenClipSettings?: () => void;
 } 
 
 const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { current: number, total: number, pageSize: number, onPageChange: (page: number) => void, t: any }) => {
@@ -542,7 +544,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   // CLIP Search
   isClipSearchEnabled = false,
   onToggleClipSearch,
-  onClipSearch
+  onClipSearch,
+  clipEnabled = true,
+  onOpenClipSettings
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -686,7 +690,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
-            : isClipSearchEnabled
+            : isClipSearchEnabled && clipEnabled
               ? 'border-green-500 shadow-sm shadow-green-500/20'
               : isAISearchEnabled 
                 ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
@@ -753,23 +757,6 @@ export const TopBar: React.FC<TopBarProps> = ({
              )}
           </div>
           
-          {/* CLIP Search Button */}
-          {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
-            <div className="relative flex-shrink-0">
-              {isClipSearching ? (
-                <Loader2 size={16} className="mr-2 flex-shrink-0 text-green-500 animate-spin" />
-              ) : (
-                <button
-                  onClick={() => onToggleClipSearch && onToggleClipSearch()}
-                  className={`mr-2 flex-shrink-0 cursor-pointer hover:text-green-500 transition-colors ${isClipSearchEnabled ? 'text-green-500' : 'text-gray-400'} flex items-center`}
-                  title={isClipSearchEnabled ? 'CLIP 语义搜索已启用' : '启用 CLIP 语义搜索'}
-                >
-                  <Sparkles size={16} />
-                </button>
-              )}
-            </div>
-          )}
-          
           {isColorSearchQuery && (
             <div 
                 className="w-4 h-4 rounded-full border border-gray-300 dark:border-gray-700 mr-2 flex-shrink-0 shadow-sm"
@@ -788,7 +775,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : isClipSearchEnabled
+                  : isClipSearchEnabled && clipEnabled
                     ? '输入自然语言描述，如：夕阳下的海滩、穿红色衣服的人...'
                     : isAISearchEnabled
                       ? t('settings.aiSmartSearch')
@@ -836,7 +823,33 @@ export const TopBar: React.FC<TopBarProps> = ({
                   <X size={14} />
                 </button>
              )}
-              {/* AI 搜索模式切换按钮已移除（保留 props 与逻辑）*/}
+             
+             {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
+               <button
+                 onClick={() => {
+                   if (!clipEnabled) {
+                     onOpenClipSettings && onOpenClipSettings();
+                   } else {
+                     onToggleClipSearch && onToggleClipSearch();
+                   }
+                 }}
+                 disabled={isClipSearching}
+                 className={`flex-shrink-0 cursor-pointer transition-colors flex items-center ${
+                   !clipEnabled 
+                     ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500' 
+                     : isClipSearchEnabled 
+                       ? 'text-green-500 hover:text-green-600' 
+                       : 'text-gray-400 hover:text-green-500'
+                 }`}
+                 title={!clipEnabled ? '需要开启AI视觉功能' : isClipSearchEnabled ? 'CLIP 语义搜索已启用' : '启用 CLIP 语义搜索'}
+               >
+                 {isClipSearching ? (
+                   <Loader2 size={16} className="animate-spin" />
+                 ) : (
+                   <Sparkles size={16} />
+                 )}
+               </button>
+             )}
           </div>
         </div>
       </div>

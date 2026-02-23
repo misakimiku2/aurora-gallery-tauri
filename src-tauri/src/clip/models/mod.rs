@@ -8,9 +8,11 @@ pub use clip_vit::{ClipVitB32, ClipVitL14};
 
 // 模型模块
 pub mod siglip2;
+pub mod wd14;
 
 // 重新导出模型规格
 pub use siglip2::SigLIP2So400M;
+pub use wd14::WdEva02LargeV3;
 
 /// 模型文件信息
 #[derive(Debug, Clone)]
@@ -99,6 +101,21 @@ pub trait ModelSpec: Send + Sync {
     /// 文本编码器输出节点名称
     fn text_output_name(&self) -> &str;
 
+    /// 是否为索引/标签标注模型（如 WD14）
+    fn is_tagger(&self) -> bool {
+        false
+    }
+
+    /// 标签推理输出节点名称（仅当 is_tagger 为 true 时有效）
+    fn tagger_output_name(&self) -> &str {
+        "output"
+    }
+
+    /// 标签列表文件名（仅当 is_tagger 为 true 时有效）
+    fn tags_file(&self) -> Option<&str> {
+        None
+    }
+
     /// 编码文本时，提供给统一模型（同时含视觉+文本输入）的虚拟视觉张量形状。
     /// 返回 (batch, channels, height, width)。
     /// - 对于统一模型（如 SigLIP2），应返回 Some((1, 3, image_size, image_size))。
@@ -127,6 +144,20 @@ pub trait ModelSpec: Send + Sync {
     fn sigmoid_temperature(&self) -> f32 {
         0.07 // 默认值
     }
+
+    /// 图像张量格式
+    fn image_tensor_format(&self) -> ImageTensorFormat {
+        ImageTensorFormat::Nchw // 默认使用 NCHW
+    }
+}
+
+/// 图像张量布局格式
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ImageTensorFormat {
+    /// NCHW (Batch, Channels, Height, Width) - 标准 CLIP 格式
+    Nchw,
+    /// NHWC (Batch, Height, Width, Channels) - 部分模型（如 WD14 Tagger）使用
+    Nhwc,
 }
 
 /// 相似度计算类型
@@ -152,6 +183,9 @@ fn get_registry() -> ModelRegistry {
 
     // SigLIP 2 模型
     registry.push(Arc::new(SigLIP2So400M));
+
+    // WD14 Tagger 模型
+    registry.push(Arc::new(WdEva02LargeV3));
 
     registry
 }

@@ -103,6 +103,7 @@ export const App: React.FC = () => {
         confidenceThreshold: 0.6
       },
       clip: {
+        enabled: true,
         modelName: 'ViT-B-32',
         useGpu: false,
         downloadStatus: 'not_started',
@@ -229,6 +230,8 @@ export const App: React.FC = () => {
   const [groupBy, setGroupBy] = useState<GroupByOption>('none');
   // CLIP search state
   const [isClipSearchEnabled, setIsClipSearchEnabled] = useState(false);
+  // CLIP loading state (for enable/disable toggle)
+  const [clipLoading, setClipLoading] = useState(false);
   // Topic layout mode: controlled by TopBar when viewing topics overview
   const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
   const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) { } };
@@ -2404,6 +2407,58 @@ export const App: React.FC = () => {
 
   const toggleSettings = useCallback(() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen })), []);
 
+  const openClipSettings = useCallback(() => {
+    setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'aiVision' }));
+  }, []);
+
+  const handleClipEnabledChange = useCallback(async (enabled: boolean) => {
+    const { clipLoadModel, clipUnloadModel } = await import('./api/tauri-bridge');
+    
+    // Immediately update the state
+    setState(s => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        clip: {
+          ...s.settings.clip,
+          enabled
+        }
+      }
+    }));
+    
+    // Set loading state
+    setClipLoading(true);
+    
+    if (!enabled) {
+      setIsClipSearchEnabled(false);
+      try {
+        await clipUnloadModel();
+      } catch (err) {
+        console.error('Failed to unload CLIP model:', err);
+      }
+    } else {
+      const modelName = state.settings.clip.modelName;
+      try {
+        await clipLoadModel(modelName);
+      } catch (err) {
+        console.error('Failed to load CLIP model:', err);
+        // Revert state on error
+        setState(s => ({
+          ...s,
+          settings: {
+            ...s.settings,
+            clip: {
+              ...s.settings.clip,
+              enabled: false
+            }
+          }
+        }));
+      }
+    }
+    
+    setClipLoading(false);
+  }, [state.settings.clip.modelName]);
+
   const handleChangePath = async (type: 'resource' | 'cache') => {
     try {
       const selectedPath = await openDirectory();
@@ -4028,6 +4083,8 @@ export const App: React.FC = () => {
               // CLIP Search
               isClipSearchEnabled={isClipSearchEnabled}
               onToggleClipSearch={() => setIsClipSearchEnabled(!isClipSearchEnabled)}
+              clipEnabled={state.settings.clip.enabled}
+              onOpenClipSettings={openClipSettings}
             />
             {/* ... (Filter UI, same as before) ... */}
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
@@ -4400,6 +4457,8 @@ export const App: React.FC = () => {
         handleSaveAvatarCrop={handleSaveAvatarCrop}
         handleExitConfirm={handleExitConfirm}
         handleClearPersonInfo={handleClearPersonInfo}
+        handleClipEnabledChange={handleClipEnabledChange}
+        clipLoading={clipLoading}
         showToast={showToast}
         rememberExitChoice={rememberExitChoice}
         setRememberExitChoice={setRememberExitChoice}

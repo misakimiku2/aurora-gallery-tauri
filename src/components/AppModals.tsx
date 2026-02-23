@@ -58,6 +58,8 @@ interface AppModalsProps {
   handleSaveAvatarCrop: (personId: string, box: any) => void | Promise<void>;
   handleExitConfirm: (action: 'minimize' | 'exit') => void | Promise<void>;
   handleClearPersonInfo: (fileIds: string[], personIds?: string[]) => void | Promise<void>;
+  handleClipEnabledChange: (enabled: boolean) => void | Promise<void>;
+  clipLoading: boolean;
   showToast: (msg: string) => void;
   rememberExitChoice: boolean;
   setRememberExitChoice: (val: boolean) => void;
@@ -115,6 +117,8 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleSaveAvatarCrop,
   handleExitConfirm,
   handleClearPersonInfo,
+  handleClipEnabledChange,
+  clipLoading,
   showToast,
   rememberExitChoice,
   setRememberExitChoice,
@@ -432,6 +436,8 @@ export const AppModals: React.FC<AppModalsProps> = ({
           }}
           onUpdatePath={handleChangePath}
           onUpdateAIConnectionStatus={(status) => setState(s => ({ ...s, aiConnectionStatus: status }))}
+          onClipEnabledChange={handleClipEnabledChange}
+          clipLoading={clipLoading}
           t={t}
           updateInfo={updateInfo}
           onCheckUpdate={onCheckUpdate}

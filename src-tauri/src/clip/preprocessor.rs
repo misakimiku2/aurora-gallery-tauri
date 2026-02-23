@@ -15,6 +15,8 @@ pub struct ImagePreprocessor {
     mean: [f32; 3],
     /// 归一化标准差 (RGB 通道)
     std: [f32; 3],
+    /// 图像张量布局格式
+    tensor_format: crate::clip::models::ImageTensorFormat,
 }
 
 impl ImagePreprocessor {
@@ -24,8 +26,14 @@ impl ImagePreprocessor {
     /// - `target_size`: 目标图像尺寸
     /// - `mean`: RGB 通道归一化均值
     /// - `std`: RGB 通道归一化标准差
-    pub fn new(target_size: usize, mean: [f32; 3], std: [f32; 3]) -> Self {
-        Self { target_size, mean, std }
+    /// - `tensor_format`: 张量布局格式
+    pub fn new(
+        target_size: usize, 
+        mean: [f32; 3], 
+        std: [f32; 3],
+        tensor_format: crate::clip::models::ImageTensorFormat
+    ) -> Self {
+        Self { target_size, mean, std, tensor_format }
     }
 
     /// 创建指定目标尺寸的预处理器 (使用默认 CLIP 归一化参数)
@@ -39,6 +47,7 @@ impl ImagePreprocessor {
             target_size,
             mean: [0.48145466f32, 0.4578275f32, 0.40821073f32],
             std: [0.26862954f32, 0.26130258f32, 0.27577711f32],
+            tensor_format: crate::clip::models::ImageTensorFormat::Nchw,
         }
     }
 
@@ -98,12 +107,28 @@ impl ImagePreprocessor {
         let raw_pixels = resized.as_raw();
         let pixel_count = size * size;
         
-        for i in 0..pixel_count {
-            let base_idx = i * 3;
-            if base_idx + 2 < raw_pixels.len() {
-                tensor[0 * pixel_count + i] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
-                tensor[1 * pixel_count + i] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
-                tensor[2 * pixel_count + i] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+        match self.tensor_format {
+            crate::clip::models::ImageTensorFormat::Nchw => {
+                // CLIP 标准格式: [R, R, R..., G, G, G..., B, B, B...]
+                for i in 0..pixel_count {
+                    let base_idx = i * 3;
+                    if base_idx + 2 < raw_pixels.len() {
+                        tensor[0 * pixel_count + i] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
+                        tensor[1 * pixel_count + i] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
+                        tensor[2 * pixel_count + i] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+                    }
+                }
+            },
+            crate::clip::models::ImageTensorFormat::Nhwc => {
+                // WD14 / TensorFlow 格式: [R, G, B, R, G, B...]
+                for i in 0..pixel_count {
+                    let base_idx = i * 3;
+                    if base_idx + 2 < raw_pixels.len() {
+                        tensor[i * 3 + 0] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
+                        tensor[i * 3 + 1] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
+                        tensor[i * 3 + 2] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+                    }
+                }
             }
         }
         
