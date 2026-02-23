@@ -1727,6 +1727,75 @@ export const clipGetEmbeddingCount = async (): Promise<number> => {
 };
 
 /**
+ * 获取指定模型的嵌入向量数量
+ * @param modelName 模型名称
+ * @returns 该模型的嵌入向量数量
+ */
+export const clipGetEmbeddingCountByModel = async (modelName: string): Promise<number> => {
+  if (!isTauriEnvironment()) {
+    return 0;
+  }
+  try {
+    const count = await invoke<number>('clip_get_embedding_count_by_model', { modelName });
+    return count;
+  } catch (error) {
+    console.error('Failed to get CLIP embedding count by model:', error);
+    return 0;
+  }
+};
+
+/**
+ * 获取所有模型版本及其嵌入数量
+ * @returns 模型版本和嵌入数量的列表
+ */
+export const clipGetModelVersions = async (): Promise<Array<[string, number]>> => {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const versions = await invoke<Array<[string, number]>>('clip_get_model_versions');
+    return versions;
+  } catch (error) {
+    console.error('Failed to get model versions:', error);
+    return [];
+  }
+};
+
+/**
+ * 嵌入向量统计信息
+ */
+export interface ClipEmbeddingStats {
+  total_count: number;
+  model_name: string;
+  root_path: string;
+}
+
+/**
+ * 获取嵌入向量统计信息（包括根目录路径）
+ * @returns 嵌入向量统计信息
+ */
+export const clipGetEmbeddingStats = async (): Promise<ClipEmbeddingStats> => {
+  if (!isTauriEnvironment()) {
+    return {
+      total_count: 0,
+      model_name: '',
+      root_path: '',
+    };
+  }
+  try {
+    const stats = await invoke<ClipEmbeddingStats>('clip_get_embedding_stats');
+    return stats;
+  } catch (error) {
+    console.error('Failed to get embedding stats:', error);
+    return {
+      total_count: 0,
+      model_name: '',
+      root_path: '',
+    };
+  }
+};
+
+/**
  * 获取 CLIP 统计信息
  * @returns CLIP 统计信息
  */

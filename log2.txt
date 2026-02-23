@@ -1,138 +1,49 @@
-[2026-02-16][16:24:15][aurora_gallery][INFO] CLIP manager initialized successfully
-[2026-02-16][16:24:15][aurora_gallery::updater][INFO] Checking for updates...
-[2026-02-16][16:24:22][aurora_gallery][INFO] [Embedding Gen] Requested model: ViT-L-14
-[2026-02-16][16:24:22][aurora_gallery][INFO] [Embedding Gen] Current model: ViT-B-32, is_loaded: false
-[2026-02-16][16:24:22][aurora_gallery][INFO] [Embedding Gen] Loading model: ViT-L-14 (current: ViT-B-32, loaded: false)
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] CLIP model files ready: ViT-L-14
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] Checking CUDA availability...
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] CUDA_PATH: Some("C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.1")
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] CUDA_PATH_V12_x: None
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] CUDA in PATH: true
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] CUDA Execution Provider available: true
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] Attempting to enable CUDA Execution Provider...
-[2026-02-16][16:24:22][aurora_gallery::clip::model][INFO] ✅ CUDA Execution Provider enabled successfully!
-[2026-02-16][16:24:23][tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared
-[2026-02-16][16:24:23][tao::platform_impl::platform::event_loop::runner][WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
-[2026-02-16][16:24:23][aurora_gallery::clip::model][INFO] Vision model loaded: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\ViT-L-14\\vision_model.onnx"
-[2026-02-16][16:24:24][aurora_gallery::clip::model][INFO] Text model loaded: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\ViT-L-14\\text_model.onnx"
-[2026-02-16][16:24:24][aurora_gallery::clip::model][INFO] CLIP model loaded successfully with GPU (CUDA) acceleration
-[2026-02-16][16:24:24][aurora_gallery::clip][INFO] CLIP model loaded successfully: ViT-L-14
-[2026-02-16][16:24:24][aurora_gallery][INFO] [CLIP Batch] Raw model name from config: 'ViT-L-14'
-[2026-02-16][16:24:24][aurora_gallery][INFO] [CLIP Batch] Model name bytes: [86, 105, 84, 45, 76, 45, 49, 52]
-[2026-02-16][16:24:24][aurora_gallery][INFO] [CLIP Batch] Matched ViT-L-14, GPU: true
-[2026-02-16][16:24:24][aurora_gallery][INFO] [CLIP Batch] Final: Model: ViT-L-14, GPU: true, batch_size: 8
-[2026-02-16][16:24:24][aurora_gallery][INFO] CLIP batch generation starting with GPU acceleration (4998 files)
-[2026-02-16][16:24:26][aurora_gallery][INFO] Filtered 0 existing embeddings, 4998 files to process (total: 4998)
-[2026-02-16][16:24:26][aurora_gallery][INFO] Starting batch processing: 625 batches, batch_size=8
-[2026-02-16][16:24:26][aurora_gallery][INFO] Processing batch 1/625: 8 files
-[2026-02-16][16:24:26][aurora_gallery][INFO] Batch 1 first file: E:/资源/@GV V.369 Jang Joo (장주)/2e63dba3c160dfe5e73301104aec76dd356848240.jpg
-[2026-02-16][16:24:26][aurora_gallery][INFO] Batch 1: acquiring model lock...
-[2026-02-16][16:24:26][aurora_gallery][INFO] Batch 1: got model lock
-[2026-02-16][16:24:26][aurora_gallery][INFO] Batch 1: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:26][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:26][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:26][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:26][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:26][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:27][aurora_gallery::clip::model][INFO] Preprocessing completed in 357ms (avg 44.62ms per image)
-[2026-02-16][16:24:27][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:27][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] ONNX inference completed in 1366ms
-[2026-02-16][16:24:28][aurora_gallery][INFO] Batch 1: encode_images_batch returned
-[2026-02-16][16:24:28][aurora_gallery][INFO] CLIP batch 1/625 completed: 8/4998 files (5%), throughput: 4 files/sec, batch_time: 1736ms
-[2026-02-16][16:24:28][aurora_gallery][INFO] Processing batch 2/625: 8 files
-[2026-02-16][16:24:28][aurora_gallery][INFO] Batch 2 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-002.JPG
-[2026-02-16][16:24:28][aurora_gallery][INFO] Batch 2: acquiring model lock...
-[2026-02-16][16:24:28][aurora_gallery][INFO] Batch 2: got model lock
-[2026-02-16][16:24:28][aurora_gallery][INFO] Batch 2: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:28][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:29][aurora_gallery::clip::model][INFO] Preprocessing completed in 925ms (avg 115.62ms per image)
-[2026-02-16][16:24:29][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:29][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] ONNX inference completed in 1437ms
-[2026-02-16][16:24:31][aurora_gallery][INFO] Batch 2: encode_images_batch returned
-[2026-02-16][16:24:31][aurora_gallery][INFO] Processing batch 3/625: 8 files
-[2026-02-16][16:24:31][aurora_gallery][INFO] Batch 3 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-010.JPG
-[2026-02-16][16:24:31][aurora_gallery][INFO] Batch 3: acquiring model lock...
-[2026-02-16][16:24:31][aurora_gallery][INFO] Batch 3: got model lock
-[2026-02-16][16:24:31][aurora_gallery][INFO] Batch 3: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] Preprocessing completed in 809ms (avg 101.12ms per image)
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:31][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] ONNX inference completed in 1397ms
-[2026-02-16][16:24:33][aurora_gallery][INFO] Batch 3: encode_images_batch returned
-[2026-02-16][16:24:33][aurora_gallery][INFO] Processing batch 4/625: 8 files
-[2026-02-16][16:24:33][aurora_gallery][INFO] Batch 4 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-018.JPG
-[2026-02-16][16:24:33][aurora_gallery][INFO] Batch 4: acquiring model lock...
-[2026-02-16][16:24:33][aurora_gallery][INFO] Batch 4: got model lock
-[2026-02-16][16:24:33][aurora_gallery][INFO] Batch 4: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:33][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:34][aurora_gallery::clip::model][INFO] Preprocessing completed in 764ms (avg 95.50ms per image)
-[2026-02-16][16:24:34][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:34][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] ONNX inference completed in 1436ms
-[2026-02-16][16:24:35][aurora_gallery][INFO] Batch 4: encode_images_batch returned
-[2026-02-16][16:24:35][aurora_gallery][INFO] Processing batch 5/625: 8 files
-[2026-02-16][16:24:35][aurora_gallery][INFO] Batch 5 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-026.JPG
-[2026-02-16][16:24:35][aurora_gallery][INFO] Batch 5: acquiring model lock...
-[2026-02-16][16:24:35][aurora_gallery][INFO] Batch 5: got model lock
-[2026-02-16][16:24:35][aurora_gallery][INFO] Batch 5: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:35][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:36][aurora_gallery::clip::model][INFO] Preprocessing completed in 669ms (avg 83.62ms per image)
-[2026-02-16][16:24:36][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:36][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] ONNX inference completed in 1459ms
-[2026-02-16][16:24:37][aurora_gallery][INFO] Batch 5: encode_images_batch returned
-[2026-02-16][16:24:37][aurora_gallery][INFO] Processing batch 6/625: 8 files
-[2026-02-16][16:24:37][aurora_gallery][INFO] Batch 6 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-034.JPG
-[2026-02-16][16:24:37][aurora_gallery][INFO] Batch 6: acquiring model lock...
-[2026-02-16][16:24:37][aurora_gallery][INFO] Batch 6: got model lock
-[2026-02-16][16:24:37][aurora_gallery][INFO] Batch 6: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:37][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:38][aurora_gallery::clip::model][INFO] Preprocessing completed in 817ms (avg 102.12ms per image)
-[2026-02-16][16:24:38][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:38][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:38][aurora_gallery][INFO] Embedding generation paused
-[2026-02-16][16:24:39][aurora_gallery::clip::model][INFO] ONNX inference completed in 1333ms
-[2026-02-16][16:24:39][aurora_gallery][INFO] Batch 6: encode_images_batch returned
-[2026-02-16][16:24:39][aurora_gallery][INFO] CLIP batch 6/625 completed: 48/4998 files (5%), throughput: 3 files/sec, batch_time: 2161ms
-[2026-02-16][16:24:43][aurora_gallery][INFO] Embedding generation cancellation requested
-[2026-02-16][16:24:43][aurora_gallery][INFO] Processing batch 7/625: 8 files
-[2026-02-16][16:24:43][aurora_gallery][INFO] Batch 7 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-042.JPG
-[2026-02-16][16:24:43][aurora_gallery][INFO] Batch 7: acquiring model lock...
-[2026-02-16][16:24:43][aurora_gallery][INFO] Batch 7: got model lock
-[2026-02-16][16:24:43][aurora_gallery][INFO] Batch 7: calling encode_images_batch with 8 paths...
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] encode_images_batch called with 8 images
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] Large batch (8), using GPU batch processing
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: ViT-L-14, batch_size: 8
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 8 images
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] Preprocessing 8 images using ndarray + rayon (4 threads)...
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] Preprocessing completed in 588ms (avg 73.50ms per image)
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] Creating input tensor with shape [8, 3, 224, 224]
-[2026-02-16][16:24:43][aurora_gallery::clip::model][INFO] Running ONNX inference...
-[2026-02-16][16:24:45][aurora_gallery::clip::model][INFO] ONNX inference completed in 1371ms
-[2026-02-16][16:24:45][aurora_gallery][INFO] Batch 7: encode_images_batch returned
-[2026-02-16][16:24:45][aurora_gallery][INFO] Embedding generation cancelled at batch 7/625
-[2026-02-16][16:24:45][aurora_gallery][INFO] CLIP embedding generation completed: 56 success, 0 failed, 0 skipped, throughput: 2 files/sec, total time: 20.7927058s
-[2026-02-16][16:24:45][aurora_gallery][INFO] Global generating flag reset.
+[2026-02-22][09:08:59][aurora_gallery::clip::model][INFO] CLIP model files ready: SigLIP2-So400M
+[2026-02-22][09:08:59][aurora_gallery::clip::model][INFO] Attempting to enable DirectML Execution Provider...
+[2026-02-22][09:08:59][aurora_gallery::clip::model][INFO] DirectML Execution Provider enabled successfully!
+[2026-02-22][09:08:59][aurora_gallery::clip::model][INFO] Using unified model file: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\model.onnx"
+[2026-02-22][09:09:04][aurora_gallery::clip::model][INFO] Unified model loaded for both vision and text
+[2026-02-22][09:09:04][aurora_gallery::clip::model][INFO] CLIP model loaded successfully with GPU (DirectML) acceleration
+[2026-02-22][09:09:04][aurora_gallery::clip][INFO] CLIP model loaded successfully: SigLIP2-So400M
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][INFO] [Embedding Gen] Current model: SigLIP2-So400M, is_loaded: true
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][INFO] [CLIP Batch] Raw model name from config: 'SigLIP2-So400M'
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][INFO] [CLIP Batch] Model name bytes: [83, 105, 103, 76, 73, 80, 50, 45, 83, 111, 52, 48, 48, 77]
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][WARN] [CLIP Batch] Unknown model name 'SigLIP2-So400M', using default batch size
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][INFO] [CLIP Batch] Final: Model: SigLIP2-So400M, GPU: true, batch_size: 32
+[2026-02-22][09:09:51][aurora_gallery::clip_commands][INFO] CLIP batch generation starting with GPU acceleration (5722 files)
+[2026-02-22][09:09:53][tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared
+[2026-02-22][09:09:53][tao::platform_impl::platform::event_loop::runner][WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Filtered 0 existing embeddings, 5722 files to process (total: 5722)
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Starting batch processing: 179 batches, batch_size=32
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Processing batch 1/179: 32 files
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Batch 1 first file: E:/资源/SSW/20150417H1240_WFhkM.jpg
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Batch 1: acquiring model lock...
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Batch 1: got model lock
+[2026-02-22][09:09:53][aurora_gallery::clip_commands][INFO] Batch 1: calling encode_images_batch with 32 paths...
+[2026-02-22][09:09:53][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][09:09:53][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][09:09:53][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][09:09:53][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][09:09:53][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][09:09:55][aurora_gallery::clip::model][INFO] Preprocessing completed in 1499ms (avg 46.84ms per image)
+[2026-02-22][09:09:55][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][09:09:55][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][INFO] Batch 1: encode_images_batch returned
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode batch 0: Failed to run batch inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/SSW/20150417H1240_WFhkM.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/SSW/20190204151345_t2fks.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/2e63dba3c160dfe5e73301104aec76dd356848240.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/3D00B0A3D58EC63C2BBB64E5F493352D.png: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/731439C68168DDA369D3661DD4D66D0C.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/894C12C52A18BA7C3ADED2116222F9EC.png: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/902434f84cbbae71e1cb2ce845cbd7d71955897084.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+
+[2026-02-22][09:09:55][aurora_gallery::clip_commands][ERROR] Failed to encode image E:/资源/@GV V.369 Jang Joo (장주)/9F0C7F800255B95A9A1C0653F42FF2E0.jpg: Failed to run inference: Non-zero status code returned while running Shape node. Name:'/text_model/embeddings/Shape' Status Message: D:\a\ort-artifacts\ort-artifacts\onnxruntime\include\onnxruntime\core/framework/op_kernel_context.h:42 onnxruntime::OpKernelContext::Input Missing Input: input_ids
+（以下内容省略....）

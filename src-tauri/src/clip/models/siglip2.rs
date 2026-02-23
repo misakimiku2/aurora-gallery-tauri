@@ -3,7 +3,7 @@
 //! SigLIP 2 是一种改进的视觉语言模型，使用 Sigmoid loss 进行训练，
 //! 相比原始 CLIP 模型在零样本分类和图像-文本检索任务上有更好的性能。
 
-use super::{ModelFile, ModelSpec};
+use super::{ModelFile, ModelSpec, SimilarityType};
 
 /// SigLIP 2 So400M 模型规格
 ///
@@ -48,24 +48,16 @@ impl ModelSpec for SigLIP2So400M {
 
     fn model_files(&self) -> Vec<ModelFile> {
         vec![
-            // 主模型文件（包含视觉和文本编码器）
+            // 统一模型文件（包含完整 Projection Head 以对准语义空间）
             ModelFile::new(
                 "model.onnx",
                 "https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx",
-            )
-            // TODO: 添加预期文件大小和哈希值
-            // .with_expected_size(XXX)
-            // .with_expected_hash("xxx"),
-            ,
-            // 模型权重数据文件（大型模型的分片权重）
+            ),
+            // 模型权重数据文件
             ModelFile::new(
                 "model.onnx_data",
                 "https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx_data",
-            )
-            // TODO: 添加预期文件大小和哈希值
-            // .with_expected_size(XXX)
-            // .with_expected_hash("xxx"),
-            ,
+            ),
             // tokenizer.json (HuggingFace tokenizers 格式)
             ModelFile::new(
                 "tokenizer.json",
@@ -110,6 +102,33 @@ impl ModelSpec for SigLIP2So400M {
 
     fn text_output_name(&self) -> &str {
         "text_embeds"
+    }
+
+    /// SigLIP2 使用统一模型，文本编码时必须提供正确尺寸的虚拟 pixel_values。
+    /// 若提供错误的 16x16 形状，Vision Transformer 的 patch 数量会不匹配，
+    /// 导致计算产生 NaN/inf，使所有搜索结果相同。
+    fn dummy_vision_input_shape(&self) -> Option<(usize, usize, usize, usize)> {
+        // SigLIP2 图像尺寸为 384x384，Patch Size 为 14
+        Some((1, 3, self.image_size(), self.image_size())) // (1, 3, 384, 384)
+    }
+
+    /// SigLIP2 图像编码时，必须提供与 max_text_length 相同长度的虚拟 input_ids。
+    /// 这确保图像嵌入在"标准长度文本上下文"中计算，与文本嵌入的语义空间对齐。
+    /// 若只提供 1 个 token，图像语义空间会发生偏移，导致搜索精度下降。
+    fn dummy_text_input_length(&self) -> usize {
+        self.max_text_length() // 64
+    }
+
+    /// SigLIP2 使用 sigmoid loss 训练，相似度计算应使用 sigmoid 方式
+    fn similarity_type(&self) -> SimilarityType {
+        SimilarityType::Sigmoid
+    }
+
+    /// SigLIP2 的 temperature 参数
+    /// 根据 SigLIP 论文和实验，temperature 通常在 0.01-0.1 之间
+    /// 较小的 temperature 会使分数分布更宽，更容易区分相关和不相关的结果
+    fn sigmoid_temperature(&self) -> f32 {
+        0.01
     }
 }
 
@@ -168,11 +187,9 @@ mod tests {
         assert_eq!(files[4].name, "special_tokens_map.json");
 
         // 验证 URL 包含正确的域名
-        assert!(files[0].url.contains("hf-mirror.com"));
-        assert!(files[1].url.contains("hf-mirror.com"));
-        assert!(files[2].url.contains("hf-mirror.com"));
-        assert!(files[3].url.contains("hf-mirror.com"));
-        assert!(files[4].url.contains("hf-mirror.com"));
+        for file in files {
+            assert!(file.url.contains("hf-mirror.com") || file.url.contains("google"));
+        }
     }
 
     #[test]

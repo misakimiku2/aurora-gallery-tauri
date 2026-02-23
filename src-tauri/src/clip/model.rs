@@ -35,16 +35,16 @@ pub struct ClipModel {
     config: ClipConfig,
     image_preprocessor: ImagePreprocessor,
     text_preprocessor: TextPreprocessor,
-    vision_session: Option<Session>,
-    text_session: Option<Session>,
+    vision_session: Option<Arc<std::sync::Mutex<Session>>>,
+    text_session: Option<Arc<std::sync::Mutex<Session>>>,
     model_spec: Arc<dyn ModelSpec>,
     is_gpu_active: bool,
 }
 
 impl ClipModel {
     /// 获取模型专属缓存目录
-    fn get_model_cache_dir(cache_dir: &PathBuf, model_name: &str) -> PathBuf {
-        cache_dir.join(model_name)
+    fn get_model_cache_dir(model_cache_dir: &PathBuf, model_name: &str) -> PathBuf {
+        model_cache_dir.join(model_name)
     }
 
     /// 加载 CLIP 模型
@@ -53,7 +53,7 @@ impl ClipModel {
             .ok_or_else(|| format!("Unsupported model: {}", config.model_name))?;
 
         // 获取模型专属缓存目录
-        let model_cache_dir = Self::get_model_cache_dir(&config.cache_dir, model_spec.name());
+        let model_cache_dir = Self::get_model_cache_dir(&config.model_cache_dir, model_spec.name());
         
         // 确保模型目录存在
         if !model_cache_dir.exists() {
@@ -144,7 +144,7 @@ impl ClipModel {
         downloaded_paths: &std::collections::HashMap<String, PathBuf>,
         _model_spec: &dyn ModelSpec,
         use_gpu: bool,
-    ) -> Result<(Session, Session, bool), Box<dyn std::error::Error>> {
+    ) -> Result<(Arc<std::sync::Mutex<Session>>, Arc<std::sync::Mutex<Session>>, bool), Box<dyn std::error::Error>> {
         let builder = Session::builder()?;
         let mut actual_gpu_active = false;
         
@@ -182,12 +182,18 @@ impl ClipModel {
         // 如果存在 model.onnx，则使用它同时作为 vision 和 text 模型
         if let Some(model_path) = downloaded_paths.get("model.onnx") {
             log::info!("Using unified model file: {:?}", model_path);
-            // 对于单一模型文件，vision 和 text 使用同一个 session
-            // 需要创建两个独立的 session，因为 Session 不支持 Clone
-            let vision_session = Session::builder()?.commit_from_file(model_path)?;
-            let text_session = builder.commit_from_file(model_path)?;
-            log::info!("Unified model loaded for both vision and text");
-            return Ok((vision_session, text_session, actual_gpu_active));
+            // 对于单一模型文件，vision 和 text 优化为共享同一个 Session 实例（节省 VRAM）
+            // 由于 Session::run 可能需要 &mut self，使用 Mutex 包装以满足共享可变性
+            let unified_session = Arc::new(std::sync::Mutex::new(builder.commit_from_file(model_path)?));
+            log::info!("Unified model loaded successfully (Session shared + Mutex protected)");
+            
+            // 获取锁以记录 IO 信息
+            {
+                let session = unified_session.lock().map_err(|e| format!("Failed to lock session: {}", e))?;
+                log::info!("[CLIP Model] Unified Session Inputs: {:?}", session.inputs().iter().map(|i| i.name()).collect::<Vec<_>>());
+                log::info!("[CLIP Model] Unified Session Outputs: {:?}", session.outputs().iter().map(|o| o.name()).collect::<Vec<_>>());
+            }
+            return Ok((unified_session.clone(), unified_session, actual_gpu_active));
         }
 
         // 使用分离的 vision_model.onnx 和 text_model.onnx（CLIP 模型）
@@ -196,11 +202,21 @@ impl ClipModel {
         let text_model_path = downloaded_paths.get("text_model.onnx")
             .ok_or("text_model.onnx not found in model files")?;
 
-        let vision_session = builder.clone().commit_from_file(vision_model_path)?;
+        let vision_session = Arc::new(std::sync::Mutex::new(builder.clone().commit_from_file(vision_model_path)?));
         log::info!("Vision model loaded: {:?}", vision_model_path);
 
-        let text_session = builder.commit_from_file(text_model_path)?;
+        let text_session = Arc::new(std::sync::Mutex::new(builder.commit_from_file(text_model_path)?));
         log::info!("Text model loaded: {:?}", text_model_path);
+        
+        {
+            let s_vision = vision_session.lock().map_err(|e| format!("Failed to lock vision session: {}", e))?;
+            log::info!("[CLIP Model] Vision Session Inputs: {:?}", s_vision.inputs().iter().map(|i| i.name()).collect::<Vec<_>>());
+            log::info!("[CLIP Model] Vision Session Outputs: {:?}", s_vision.outputs().iter().map(|o| o.name()).collect::<Vec<_>>());
+            
+            let s_text = text_session.lock().map_err(|e| format!("Failed to lock text session: {}", e))?;
+            log::info!("[CLIP Model] Text Session Inputs: {:?}", s_text.inputs().iter().map(|i| i.name()).collect::<Vec<_>>());
+            log::info!("[CLIP Model] Text Session Outputs: {:?}", s_text.outputs().iter().map(|o| o.name()).collect::<Vec<_>>());
+        }
         
         Ok((vision_session, text_session, actual_gpu_active))
     }
@@ -463,17 +479,17 @@ impl ClipModel {
     }
     
     /// 检查模型文件是否存在于本地
-    pub fn check_local_model_files(cache_dir: &PathBuf, model_name: &str) -> Result<bool, String> {
+    pub fn check_local_model_files(model_cache_dir: &PathBuf, model_name: &str) -> Result<bool, String> {
         let model_spec = get_model_spec(model_name)
             .ok_or_else(|| format!("Unknown model: {}", model_name))?;
         
         // 使用模型专属子目录
-        let model_cache_dir = cache_dir.join(model_name);
+        let model_dir = model_cache_dir.join(model_name);
         
         // 检查所有模型文件是否存在
         let model_files = model_spec.model_files();
         for model_file in model_files {
-            let file_path = model_cache_dir.join(&model_file.name);
+            let file_path = model_dir.join(&model_file.name);
             if !file_path.exists() {
                 return Ok(false);
             }
@@ -489,9 +505,12 @@ impl ClipModel {
             return Err(format!("Image file not found: {}", image_path));
         }
 
-        // 获取会话 - 需要可变引用
-        let session = self.vision_session.as_mut()
-            .ok_or("Vision model not loaded")?;
+        // 获取会话锁
+        let mut session_guard = self.vision_session.as_ref()
+            .ok_or("Vision model not loaded")?
+            .lock()
+            .map_err(|e| format!("Failed to lock vision session: {}", e))?;
+        let session = &mut *session_guard;
 
         // 预处理图像为 NCHW 格式张量
         let tensor_data = self.image_preprocessor.preprocess(image_path)
@@ -504,16 +523,47 @@ impl ClipModel {
             .map_err(|e| format!("Failed to create input tensor: {}", e))?;
 
         // 执行推理 - session.run 需要可变引用
-        let outputs = session.run(vec![(self.model_spec.vision_input_name(), input_tensor)])
-            .map_err(|e| format!("Failed to run inference: {}", e))?;
+        let requires_text = session.inputs().iter().any(|i| i.name() == self.model_spec.text_input_name());
+        let outputs = if requires_text {
+            // 统一模型（如 SigLIP2）需要同时提供视觉和文本输入。
+            // 虚拟 input_ids 必须使用模型正常的文本序列长度，而不是固定的 [1, 1]！
+            // 若只提供 1 个 token，图像嵌入在异常短的文本上下文中计算，
+            // 会偏离文本嵌入的语义空间，导致搜索精度下降。
+            let dummy_text_len = self.model_spec.dummy_text_input_length();
+            let text_shape = vec![1i64, dummy_text_len as i64];
+            let text_data = vec![0i64; dummy_text_len]; // 全部用 0（padding token）填充
+            log::debug!("[CLIP Debug] 为图像编码提供虚拟 input_ids，长度: {}", dummy_text_len);
+            let input_ids_tensor = ort::value::Tensor::from_array((text_shape, text_data.into_boxed_slice()))
+                .map_err(|e| format!("Failed to create dummy input_ids tensor: {}", e))?;
+                
+            let inputs_dict = ort::inputs![
+                self.model_spec.vision_input_name() => input_tensor,
+                self.model_spec.text_input_name() => input_ids_tensor,
+            ];
+            
+            session.run(inputs_dict)
+                .map_err(|e| format!("Failed to run inference: {}", e))?
+        } else {
+            session.run(vec![(self.model_spec.vision_input_name(), input_tensor)])
+                .map_err(|e| format!("Failed to run inference: {}", e))?
+        };
 
         // 提取嵌入向量 - try_extract_tensor 返回 (Shape, &[f32])
+        // 诊断：记录实际可用的输出节点名称
+        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
+        log::info!("[CLIP Debug] Available output nodes: {:?}", available_outputs);
+        log::info!("[CLIP Debug] Expected vision output node: {}", self.model_spec.vision_output_name());
+        
         let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.vision_output_name()]
             .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract embedding: {}", e))?;
+            .map_err(|e| format!("Failed to extract embedding from '{}': {:?}. Available: {:?}", 
+                self.model_spec.vision_output_name(), e, available_outputs))?;
 
         // 转换为 Vec<f32> 并归一化
         let mut vec: Vec<f32> = embedding_data.iter().copied().collect();
+        let raw_norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+        log::info!("[CLIP Debug] Image output shape: {:?}, raw norm: {:.4}, first 5: {:?}", _shape, raw_norm, vec.iter().take(5).collect::<Vec<_>>());
+        
         normalize_vector(&mut vec);
 
         Ok(vec)
@@ -526,9 +576,12 @@ impl ClipModel {
             return Err("Empty text provided".to_string());
         }
 
-        // 获取会话 - 需要可变引用
-        let session = self.text_session.as_mut()
-            .ok_or("Text model not loaded")?;
+        // 获取会话锁
+        let mut session_guard = self.text_session.as_ref()
+            .ok_or("Text model not loaded")?
+            .lock()
+            .map_err(|e| format!("Failed to lock text session: {}", e))?;
+        let session = &mut *session_guard;
 
         // 预处理文本
         let (input_ids, _attention_mask) = self.text_preprocessor.preprocess(text)
@@ -540,18 +593,69 @@ impl ClipModel {
         let input_ids_tensor = Tensor::from_array((input_ids_shape, input_ids_data.into_boxed_slice()))
             .map_err(|e| format!("Failed to create input_ids tensor: {}", e))?;
 
+        let attention_mask_shape: Vec<i64> = vec![1, _attention_mask.len() as i64];
+        let attention_mask_data: Vec<i64> = _attention_mask.into_iter().map(|x| x as i64).collect();
+        let attention_mask_tensor = Tensor::from_array((attention_mask_shape, attention_mask_data.into_boxed_slice()))
+            .map_err(|e| format!("Failed to create attention_mask tensor: {}", e))?;
+
         // 执行推理 - session.run 需要可变引用
-        // 只传递 input_ids，因为 attention_mask 不是这个模型的有效输入
-        let outputs = session.run(vec![(self.model_spec.text_input_name(), input_ids_tensor)])
-            .map_err(|e| format!("Failed to run inference: {}", e))?;
+        let requires_vision = session.inputs().iter().any(|i| i.name() == self.model_spec.vision_input_name());
+        let has_attention_mask = session.inputs().iter().any(|i| i.name() == "attention_mask");
+
+        let outputs = if requires_vision {
+            // 统一模型（如 SigLIP2）需要同时提供视觉和文本输入。
+            // 虚拟 pixel_values 必须使用模型要求的正确尺寸！
+            // 如果使用错误的尺寸（如 16x16），Vision Transformer 的 Patch 嵌入层
+            // 会产生维度不匹配，导致输出 NaN/inf，使所有搜索词的结果完全相同。
+            let (n, c, h, w) = self.model_spec.dummy_vision_input_shape()
+                .unwrap_or((1, 3, self.model_spec.image_size(), self.model_spec.image_size()));
+            let vision_data_size = n * c * h * w;
+            let vision_shape = vec![n as i64, c as i64, h as i64, w as i64];
+            let vision_data = vec![0.0f32; vision_data_size];
+            log::debug!("[CLIP Debug] 为文本编码提供虚拟 pixel_values，形状: {:?}", vision_shape);
+            let pixel_values_tensor = ort::value::Tensor::from_array((vision_shape, vision_data.into_boxed_slice()))
+                .map_err(|e| format!("Failed to create dummy pixel_values tensor: {}", e))?;
+                
+            let mut inputs: Vec<(&str, ort::value::Value)> = vec![
+                (self.model_spec.text_input_name(), input_ids_tensor.into()),
+                (self.model_spec.vision_input_name(), pixel_values_tensor.into()),
+            ];
+
+            if has_attention_mask {
+                inputs.push(("attention_mask", attention_mask_tensor.into()));
+            }
+            
+            session.run(inputs)
+                .map_err(|e| format!("Failed to run inference: {}", e))?
+        } else {
+            let mut inputs: Vec<(&str, ort::value::Value)> = vec![
+                (self.model_spec.text_input_name(), input_ids_tensor.into()),
+            ];
+            
+            if has_attention_mask {
+                inputs.push(("attention_mask", attention_mask_tensor.into()));
+            }
+
+            session.run(inputs)
+                .map_err(|e| format!("Failed to run inference: {}", e))?
+        };
 
         // 提取嵌入向量
+        // 诊断：记录实际可用的输出节点名称
+        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
+        log::info!("[CLIP Debug] Text - Available output nodes: {:?}", available_outputs);
+        log::info!("[CLIP Debug] Text - Expected text output node: {}", self.model_spec.text_output_name());
+        
         let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.text_output_name()]
             .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract embedding: {}", e))?;
+            .map_err(|e| format!("Failed to extract embedding from '{}': {:?}. Available: {:?}", 
+                self.model_spec.text_output_name(), e, available_outputs))?;
 
         // 转换为 Vec<f32> 并归一化
         let mut vec: Vec<f32> = embedding_data.iter().copied().collect();
+        let raw_norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+        log::info!("[CLIP Debug] Text output shape: {:?}, raw norm: {:.4}, first 5: {:?}", _shape, raw_norm, vec.iter().take(5).collect::<Vec<_>>());
+        
         normalize_vector(&mut vec);
 
         Ok(vec)
@@ -588,8 +692,12 @@ impl ClipModel {
             self.is_gpu_active, self.model_spec.name(), image_paths.len());
         log::info!("encode_images_batch_gpu started: {} images", image_paths.len());
         
-        let session = self.vision_session.as_mut()
-            .ok_or("Vision model not loaded")?;
+        // 获取会话锁
+        let mut session_guard = self.vision_session.as_ref()
+            .ok_or("Vision model not loaded")?
+            .lock()
+            .map_err(|e| format!("Failed to lock vision session: {}", e))?;
+        let session = &mut *session_guard;
 
         let batch_size = image_paths.len();
         let image_size = self.model_spec.image_size();
@@ -622,16 +730,44 @@ impl ClipModel {
         // 执行批量推理 - session.run 需要可变引用
         log::info!("Running ONNX inference...");
         let inference_start = std::time::Instant::now();
-        let inputs: Vec<(&str, Tensor<f32>)> = vec![(self.model_spec.vision_input_name(), input_tensor)];
-        let outputs = session.run(inputs)
-            .map_err(|e| format!("Failed to run batch inference: {}", e))?;
+        
+        let requires_text = session.inputs().iter().any(|i| i.name() == self.model_spec.text_input_name());
+        let outputs = if requires_text {
+            // 统一模型（如 SigLIP2）需要同时提供视觉和文本输入。
+            // 批量推理时 pixel_values 的 batch 是 N，文本 batch 固定为 1（ONNX 广播）。
+            // 虚拟 input_ids 必须使用模型正常的文本长度（如 64），而不是 [1, 1]。
+            let dummy_text_len = self.model_spec.dummy_text_input_length();
+            log::info!("统一模型批量推理：提供虚拟 input_ids，形状 [1, {}]", dummy_text_len);
+            let text_shape = vec![1i64, dummy_text_len as i64];
+            let text_data = vec![0i64; dummy_text_len]; // 全部用 0（padding token）填充
+            let input_ids_tensor = ort::value::Tensor::from_array((text_shape, text_data.into_boxed_slice()))
+                .map_err(|e| format!("Failed to create dummy input_ids tensor: {}", e))?;
+                
+            let inputs_dict = ort::inputs![
+                self.model_spec.vision_input_name() => input_tensor,
+                self.model_spec.text_input_name() => input_ids_tensor,
+            ];
+            
+            session.run(inputs_dict)
+                .map_err(|e| format!("Failed to run batch inference: {}", e))?
+        } else {
+            let inputs: Vec<(&str, ort::value::Tensor<f32>)> = vec![(self.model_spec.vision_input_name(), input_tensor)];
+            session.run(inputs)
+                .map_err(|e| format!("Failed to run batch inference: {}", e))?
+        };
         let inference_elapsed = inference_start.elapsed().as_millis();
         log::info!("ONNX inference completed in {}ms", inference_elapsed);
 
         // 提取嵌入向量
+        // 诊断：记录实际可用的输出节点名称
+        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
+        log::info!("[CLIP Debug] Batch - Available output nodes: {:?}", available_outputs);
+        log::info!("[CLIP Debug] Batch - Expected vision output node: {}", self.model_spec.vision_output_name());
+        
         let (shape, embeddings_data): (&ort::tensor::Shape, &[f32]) = outputs[self.model_spec.vision_output_name()]
             .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract batch embeddings: {}", e))?;
+            .map_err(|e| format!("Failed to extract batch embeddings from '{}': {:?}. Available: {:?}", 
+                self.model_spec.vision_output_name(), e, available_outputs))?;
 
         // 转换为 Vec<Vec<f32>> 并归一化
         let embedding_dim = self.model_spec.embedding_dim();
@@ -645,6 +781,10 @@ impl ClipModel {
             let end = start + embedding_dim;
             if end <= flat_embeddings.len() {
                 let mut vec = flat_embeddings[start..end].to_vec();
+                if i == 0 {
+                    let raw_norm = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+                    log::info!("[CLIP Debug] Batch Image[0] raw norm: {:.4}, first 5: {:?}", raw_norm, vec.iter().take(5).collect::<Vec<_>>());
+                }
                 normalize_vector(&mut vec);
                 results.push(vec);
             }
@@ -687,6 +827,22 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
     
     a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
+}
+
+/// 计算 SigLIP 风格的相似度分数
+/// SigLIP 使用 sigmoid loss，相似度 = sigmoid(dot_product / temperature)
+/// temperature 默认为 0.07，但 SigLIP2 可能使用不同的值
+pub fn siglip_similarity(a: &[f32], b: &[f32], temperature: f32) -> f32 {
+    if a.len() != b.len() {
+        return 0.0;
+    }
+    
+    // 计算点积（对于归一化向量，点积等于余弦相似度）
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    
+    // 应用 sigmoid 函数
+    let logit = dot_product / temperature;
+    1.0 / (1.0 + (-logit).exp())
 }
 
 /// 计算向量与查询向量的相似度并排序

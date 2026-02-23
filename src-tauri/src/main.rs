@@ -121,7 +121,10 @@ fn main() {
             clip_commands::clip_unload_model,
             clip_commands::clip_is_model_loaded,
             clip_commands::clip_get_embedding_count,
+            clip_commands::clip_get_embedding_count_by_model,
+            clip_commands::clip_get_model_versions,
             clip_commands::clip_get_model_status,
+            clip_commands::clip_get_embedding_stats,
             clip_commands::clip_delete_model,
             clip_commands::clip_open_model_folder,
             clip_commands::clip_generate_embeddings_batch,
@@ -259,8 +262,37 @@ fn main() {
                 Path::new(&home).join(".aurora_cache")
             });
             
+            // 获取初始根目录用于 CLIP 初始化
+            let clip_root_path = {
+                let app_data_dir = app.handle().path().app_data_dir()
+                    .expect("Failed to get app data directory");
+                let config_path = app_data_dir.join("user_data.json");
+                
+                if config_path.exists() {
+                    if let Ok(json_str) = fs::read_to_string(&config_path) {
+                        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                            if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
+                                if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
+                                    Path::new(first_root).to_path_buf()
+                                } else {
+                                    app_data_dir.clone()
+                                }
+                            } else {
+                                app_data_dir.clone()
+                            }
+                        } else {
+                            app_data_dir.clone()
+                        }
+                    } else {
+                        app_data_dir.clone()
+                    }
+                } else {
+                    app_data_dir.clone()
+                }
+            };
+            
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = clip::init_clip_manager(clip_cache_root).await {
+                if let Err(e) = clip::init_clip_manager(clip_root_path, clip_cache_root).await {
                     eprintln!("Failed to initialize CLIP manager: {}", e);
                 } else {
                     log::info!("CLIP manager initialized successfully");

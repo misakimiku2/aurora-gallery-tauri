@@ -98,6 +98,44 @@ pub trait ModelSpec: Send + Sync {
 
     /// 文本编码器输出节点名称
     fn text_output_name(&self) -> &str;
+
+    /// 编码文本时，提供给统一模型（同时含视觉+文本输入）的虚拟视觉张量形状。
+    /// 返回 (batch, channels, height, width)。
+    /// - 对于统一模型（如 SigLIP2），应返回 Some((1, 3, image_size, image_size))。
+    /// - 对于分离式文本模型（如 CLIP ViT），返回 None，表示无需视觉输入。
+    fn dummy_vision_input_shape(&self) -> Option<(usize, usize, usize, usize)> {
+        None
+    }
+
+    /// 编码图像时，提供给统一模型（同时含视觉+文本输入）的虚拟文本 token 序列长度。
+    /// - 对于统一模型（如 SigLIP2），应返回与 max_text_length() 相同的值，确保
+    ///   图像嵌入在正确长度的文本语义空间中计算，与文本嵌入的空间保持对齐。
+    /// - 对于分离式视觉模型，返回 1（最小有效值）。
+    fn dummy_text_input_length(&self) -> usize {
+        1 // 默认：最短占位（适用于分离式视觉模型）
+    }
+
+    /// 相似度计算方式
+    /// - CLIP 风格：使用余弦相似度，分数范围 [-1, 1]
+    /// - SigLIP 风格：使用 sigmoid 相似度，分数范围 [0, 1]
+    fn similarity_type(&self) -> SimilarityType {
+        SimilarityType::Cosine
+    }
+
+    /// SigLIP 风格的 temperature 参数
+    /// 仅当 similarity_type 为 Sigmoid 时使用
+    fn sigmoid_temperature(&self) -> f32 {
+        0.07 // 默认值
+    }
+}
+
+/// 相似度计算类型
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimilarityType {
+    /// CLIP 风格：余弦相似度
+    Cosine,
+    /// SigLIP 风格：sigmoid 相似度
+    Sigmoid,
 }
 
 /// 模型注册表类型别名

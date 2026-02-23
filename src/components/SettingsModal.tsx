@@ -4,7 +4,7 @@ import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDi
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
 
@@ -258,8 +258,8 @@ const CLIP_MODELS: ClipModelInfo[] = [
     name: 'SigLIP2-So400M',
     displayName: 'SigLIP 2 So400M',
     description: '多语言支持 - 支持中文搜索',
-    size: 1200 * 1024 * 1024,
-    sizeDisplay: '1.2 GB',
+    size: 4400 * 1024 * 1024,
+    sizeDisplay: '4.3 GB',
     embeddingDim: 1152,
     isRecommended: false,
   },
@@ -326,6 +326,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     return activeDownloads.length > 0 ? activeDownloads[0].modelName : null;
   });
   const [embeddingCount, setEmbeddingCount] = useState(0);
+  const [embeddingRootPath, setEmbeddingRootPath] = useState('');
+  const [embeddingModelName, setEmbeddingModelName] = useState('');
   // 添加延迟显示加载状态，避免闪烁
   const [showLoadingDelay, setShowLoadingDelay] = useState(false);
   // 跟踪模型损坏状态 - 从全局状态初始化
@@ -387,7 +389,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           speed: info.speed,
         }
       }));
-      
+
       // 如果正在下载，更新 loadingModel 状态
       if (info.status === 'downloading') {
         setLoadingModel(modelName as ClipModelName);
@@ -396,7 +398,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         setLoadingModel(prev => prev === modelName ? null : prev);
       }
     });
-    
+
     return () => {
       unsubscribe();
     };
@@ -405,7 +407,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   // 加载模型状态和嵌入数量
   useEffect(() => {
     isMountedRef.current = true;
-    
+
     // 清除过期的下载错误状态（如果错误是之前的，现在应该清除）
     if (settings.downloadStatus === 'error') {
       console.log('[AIVision] Clearing stale download error status');
@@ -415,7 +417,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         downloadError: undefined,
       });
     }
-    
+
     // 检查是否有有效的缓存，如果有则跳过加载
     const cached = getCachedModelStatuses();
     if (cached) {
@@ -426,7 +428,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     } else {
       loadModelStatuses(false);
     }
-    
+
     loadEmbeddingCount();
 
     return () => {
@@ -438,7 +440,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   useEffect(() => {
     loadModelStatuses(false);
   }, [settings.useGpu]);
-  
+
   // 延迟显示加载状态，避免闪烁
   useEffect(() => {
     if (isLoading) {
@@ -561,14 +563,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       console.log('[AIVision] Already loading, skipping...');
       return;
     }
-    
+
     console.log('[AIVision] Loading model statuses..., isMounted:', isMountedRef.current, 'silent:', silent);
     isLoadingRef.current = true;
     // 静默模式下不显示加载状态
     if (!silent) {
       setIsLoading(true);
     }
-    
+
     try {
       const statuses: Record<string, ClipModelStatus> = {};
       for (const model of CLIP_MODELS) {
@@ -586,7 +588,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         setModelStatuses(statuses);
         // 保存到全局缓存
         setCachedModelStatuses(statuses);
-        
+
         // 如果所有模型都已下载且没有错误，清除下载错误状态
         const allDownloaded = CLIP_MODELS.every(model => statuses[model.name]?.is_downloaded);
         if (allDownloaded && settings.downloadStatus === 'error') {
@@ -611,10 +613,10 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   const handleDownload = async (modelName: ClipModelName) => {
     setLoadingModel(modelName);
-    
+
     // 清理之前的下载进度
     setDownloadProgress(prev => ({ ...prev, [modelName]: { fileName: '', fileIndex: 0, totalFiles: 3, progress: 0, downloaded: 0, total: 0, speed: 0 } }));
-    
+
     onUpdateSettings({
       ...settings,
       modelName,
@@ -627,14 +629,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       downloadListenerRef.current();
       downloadListenerRef.current = null;
     }
-    
+
     try {
       // 获取模型显示名称
       const modelDisplayName = CLIP_MODELS.find(m => m.name === modelName)?.displayName || modelName;
-      
+
       // 设置当前正在下载的模型，启动全局 Tauri 事件监听
       setCurrentDownloadingModel(modelName, modelDisplayName);
-      
+
       // 加载模型（会自动下载）
       await clipLoadModel(modelName);
 
@@ -658,7 +660,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         downloadStatus: 'error',
         downloadError: String(error),
       });
-      
+
       // 标记下载错误
       errorModelDownload(modelName, String(error));
     } finally {
@@ -733,8 +735,10 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   const loadEmbeddingCount = async () => {
     try {
-      const count = await clipGetEmbeddingCount();
-      setEmbeddingCount(count);
+      const stats = await clipGetEmbeddingStats();
+      setEmbeddingCount(stats.total_count);
+      setEmbeddingRootPath(stats.root_path);
+      setEmbeddingModelName(stats.model_name);
     } catch (error) {
       console.error('Failed to load embedding count:', error);
     }
@@ -742,9 +746,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   const handleSelectModel = async (modelName: ClipModelName) => {
     if (settings.modelName === modelName) return;
-    
+
     onUpdateSettings({ ...settings, modelName });
-    
+
     try {
       setIsLoading(true);
       await clipLoadModel(modelName);
@@ -757,17 +761,19 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       // 同步更新全局状态
       markModelAsNormal(modelName);
       await loadModelStatuses();
+      // 刷新嵌入向量统计信息
+      await loadEmbeddingCount();
       onShowToast?.(`已切换到 ${modelName} 模型`, 3000);
     } catch (error) {
       console.error('Failed to load model:', error);
       const errorMsg = String(error);
-      
+
       // 检测是否是文件损坏导致的错误
-      const isCorrupt = errorMsg.includes('模型文件可能已损坏') || 
+      const isCorrupt = errorMsg.includes('模型文件可能已损坏') ||
         errorMsg.includes('Protobuf parsing failed') ||
         errorMsg.includes('Invalid protobuf') ||
         errorMsg.includes('ModelWrapper');
-      
+
       // 检测是否是网络/下载相关的错误
       const isNetworkError = errorMsg.includes('network') ||
         errorMsg.includes('timeout') ||
@@ -775,7 +781,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         errorMsg.includes('download') ||
         errorMsg.includes('HTTP') ||
         errorMsg.includes('请求');
-      
+
       if (isCorrupt) {
         // 标记模型为损坏状态
         setCorruptedModels(prev => new Set(prev).add(modelName));
@@ -1073,7 +1079,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       </div>
                       <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
                         <span>
-                          {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB / 
+                          {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB /
                           {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
                         </span>
                         <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
@@ -1108,6 +1114,16 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                 <div className="text-sm text-gray-600 dark:text-gray-400">
                   已生成: <span className="font-semibold text-green-600">{embeddingCount}</span> 张
                 </div>
+                {embeddingModelName && (
+                  <div className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    模型: {embeddingModelName}
+                  </div>
+                )}
+                {embeddingRootPath && (
+                  <div className="text-xs text-gray-400 dark:text-gray-500 mt-1 max-w-[200px] truncate" title={embeddingRootPath}>
+                    目录: {embeddingRootPath.split(/[\\/]/).pop()}
+                  </div>
+                )}
               </div>
             )}
           </div>

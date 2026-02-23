@@ -57,14 +57,11 @@ pub async fn clip_search_by_text(
             let is_loaded = guard.is_model_loaded();
             
             if !is_loaded || current_model != requested_model {
-                log::info!("[CLIP Search] Loading model: {} (current: {}, loaded: {})", 
+                log::info!("[CLIP Search] Switching to model: {} (current: {}, loaded: {})", 
                     requested_model, current_model, is_loaded);
                 
-                if is_loaded {
-                    guard.unload_model();
-                }
-                
-                guard.set_model_name(&requested_model);
+                // 使用 switch_model 切换模型和嵌入数据库
+                guard.switch_model(&requested_model)?;
                 guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
@@ -124,14 +121,11 @@ pub async fn clip_search_by_image(
             let is_loaded = guard.is_model_loaded();
             
             if !is_loaded || current_model != requested_model {
-                log::info!("Loading model: {} (current: {}, loaded: {})", 
+                log::info!("Switching to model: {} (current: {}, loaded: {})", 
                     requested_model, current_model, is_loaded);
                 
-                if is_loaded {
-                    guard.unload_model();
-                }
-                
-                guard.set_model_name(&requested_model);
+                // 使用 switch_model 切换模型和嵌入数据库
+                guard.switch_model(&requested_model)?;
                 guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
@@ -246,14 +240,28 @@ pub async fn clip_generate_embeddings_batch(
         return Err("已经有一个任务正在运行，请等待或取消后再试。".to_string());
     }
 
-    struct GenerationGuard;
+    struct GenerationGuard {
+        app: Option<tauri::AppHandle>,
+        cancelled: bool,
+    }
     impl Drop for GenerationGuard {
         fn drop(&mut self) {
             IS_GENERATING.store(false, Ordering::SeqCst);
             log::info!("Global generating flag reset.");
+            
+            // 如果任务被取消，确保发送取消事件
+            if self.cancelled {
+                if let Some(app) = &self.app {
+                    let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
+                        "processed": 0,
+                        "total": 0,
+                    }));
+                    log::info!("Sent clip-embedding-cancelled event from GenerationGuard");
+                }
+            }
         }
     }
-    let _gen_guard = GenerationGuard;
+    let mut _gen_guard = GenerationGuard { app: Some(app.clone()), cancelled: false };
 
     reset_cancel_flag();
     PAUSE_GENERATION.store(false, Ordering::SeqCst);
@@ -284,14 +292,11 @@ pub async fn clip_generate_embeddings_batch(
             let is_loaded = guard.is_model_loaded();
             
             if !is_loaded || current_model != requested_model {
-                log::info!("[Embedding Gen] Loading model: {} (current: {}, loaded: {})", 
+                log::info!("[Embedding Gen] Switching to model: {} (current: {}, loaded: {})", 
                     requested_model, current_model, is_loaded);
                 
-                if is_loaded {
-                    guard.unload_model();
-                }
-                
-                guard.set_model_name(&requested_model);
+                // 使用 switch_model 切换模型和嵌入数据库
+                guard.switch_model(&requested_model)?;
                 guard.load_model(&app).await.map_err(|e| format!("Failed to load model: {}", e))?;
             }
         }
@@ -344,6 +349,7 @@ pub async fn clip_generate_embeddings_batch(
     for chunk in file_paths.chunks(100) {
         if should_cancel() {
             log::info!("Embedding generation cancelled during filtering phase.");
+            _gen_guard.cancelled = true;
             let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
                 "processed": processed_skipped_count,
                 "total": total,
@@ -361,7 +367,7 @@ pub async fn clip_generate_embeddings_batch(
             let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
             
             for (file_path, file_id) in chunk {
-                match embedding_store.has_embedding(file_id) {
+                match embedding_store.has_embedding_for_model(file_id, &model_name) {
                     Ok(true) => {
                         skipped_count += 1;
                     },
@@ -406,6 +412,7 @@ pub async fn clip_generate_embeddings_batch(
     for (batch_idx, batch) in batches.iter().enumerate() {
         if should_cancel() {
             log::info!("Embedding generation cancelled at batch {}/{}", batch_idx, total_batches);
+            _gen_guard.cancelled = true;
             let _ = app.emit("clip-embedding-cancelled", serde_json::json!({
                 "processed": processed_count + skipped_count,
                 "total": total,
@@ -605,13 +612,10 @@ pub async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Resul
     
     let mut guard = manager.write().await;
     
-    if guard.is_model_loaded() {
-        log::info!("Unloading current model to switch to: {}", model_name);
-        guard.unload_model();
-    }
+    // 使用 switch_model 切换模型和嵌入数据库
+    guard.switch_model(&model_name)?;
     
-    guard.set_model_name(model_name);
-    
+    // 加载模型
     guard.load_model(&app).await
 }
 
@@ -648,6 +652,32 @@ pub async fn clip_get_embedding_count() -> Result<i64, String> {
 }
 
 #[tauri::command]
+pub async fn clip_get_embedding_count_by_model(model_name: String) -> Result<i64, String> {
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    embedding_store.get_embedding_count_by_model(&model_name)
+}
+
+#[tauri::command]
+pub async fn clip_get_model_versions() -> Result<Vec<(String, i64)>, String> {
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    embedding_store.get_model_versions()
+}
+
+#[tauri::command]
 pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Value, String> {
     use crate::clip::models::get_model_spec;
     
@@ -657,9 +687,9 @@ pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Val
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
-    let cache_dir = &guard.config().cache_dir;
+    let model_cache_dir = &guard.config().model_cache_dir;
     
-    let model_cache_dir = cache_dir.join(&model_name);
+    let model_dir = model_cache_dir.join(&model_name);
     
     // 获取模型文件列表
     let model_files = model_spec.model_files();
@@ -668,7 +698,7 @@ pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Val
     let mut downloaded_size: u64 = 0;
     
     for model_file in &model_files {
-        let file_path = model_cache_dir.join(&model_file.name);
+        let file_path = model_dir.join(&model_file.name);
         let exists = file_path.exists();
         if !exists {
             is_downloaded = false;
@@ -714,22 +744,22 @@ pub async fn clip_delete_model(model_name: String) -> Result<(), String> {
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
-    let cache_dir = &guard.config().cache_dir;
+    let model_cache_dir = &guard.config().model_cache_dir;
     
-    let model_cache_dir = cache_dir.join(&model_name);
+    let model_dir = model_cache_dir.join(&model_name);
     
     // 删除所有模型文件
     let model_files = model_spec.model_files();
     for model_file in model_files {
-        let file_path = model_cache_dir.join(&model_file.name);
+        let file_path = model_dir.join(&model_file.name);
         if file_path.exists() {
             fs::remove_file(&file_path).map_err(|e| format!("Failed to delete {}: {}", model_file.name, e))?;
         }
     }
     
     // 尝试删除模型目录（如果为空）
-    if model_cache_dir.exists() {
-        let _ = fs::remove_dir(&model_cache_dir);
+    if model_dir.exists() {
+        let _ = fs::remove_dir(&model_dir);
     }
     
     log::info!("Deleted CLIP model files for: {}", model_name);
@@ -741,17 +771,17 @@ pub async fn clip_open_model_folder() -> Result<(), String> {
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     let guard = manager.read().await;
-    let cache_dir = &guard.config().cache_dir;
+    let model_cache_dir = &guard.config().model_cache_dir;
     
-    if !cache_dir.exists() {
-        std::fs::create_dir_all(cache_dir)
-            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+    if !model_cache_dir.exists() {
+        std::fs::create_dir_all(model_cache_dir)
+            .map_err(|e| format!("Failed to create model cache directory: {}", e))?;
     }
     
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("explorer")
-            .arg(cache_dir)
+            .arg(model_cache_dir)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
@@ -759,7 +789,7 @@ pub async fn clip_open_model_folder() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
-            .arg(cache_dir)
+            .arg(model_cache_dir)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
@@ -767,7 +797,7 @@ pub async fn clip_open_model_folder() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         std::process::Command::new("xdg-open")
-            .arg(cache_dir)
+            .arg(model_cache_dir)
             .spawn()
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
@@ -799,4 +829,24 @@ pub async fn get_all_image_files(app: tauri::AppHandle) -> Result<Vec<serde_json
         .collect();
     
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn clip_get_embedding_stats() -> Result<serde_json::Value, String> {
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let guard = manager.read().await;
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    let total_count = embedding_store.get_embedding_count()?;
+    let root_path = guard.config().root_path.to_string_lossy().to_string();
+    let model_name = guard.get_model_name();
+    
+    Ok(serde_json::json!({
+        "total_count": total_count,
+        "model_name": model_name,
+        "root_path": root_path,
+    }))
 }

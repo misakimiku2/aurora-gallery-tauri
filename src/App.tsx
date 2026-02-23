@@ -681,7 +681,7 @@ export const App: React.FC = () => {
                   }
 
                   // 确保恢复颜色提取任务
-                  resumeColorExtraction().catch(() => {});
+                  resumeColorExtraction().catch(() => { });
                 }
 
                 // Mark initialization complete (saved-data loading finished/handled)
@@ -887,7 +887,7 @@ export const App: React.FC = () => {
           const { getCurrentWindow } = await import('@tauri-apps/api/window');
           const title = (translations as any)[state.settings.language]?.app?.title || 'Aurora Gallery';
           await getCurrentWindow().setTitle(title);
-        } catch {}
+        } catch { }
       }
     };
     updateTitle();
@@ -3252,35 +3252,35 @@ export const App: React.FC = () => {
     // 0. CLIP 语义搜索
     if (isClipSearchEnabled && query.trim()) {
       const taskId = startTask('ai', [], '正在使用 CLIP 搜索...', false);
-      
+
       try {
         // 导入 CLIP 搜索 API
         const { clipSearchByText } = await import('./api/tauri-bridge');
         const modelName = state.settings.clip.modelName;
         console.log('[CLIP Search] Starting search:', { query: query.trim(), modelName });
-        
-        const results = await clipSearchByText(query.trim(), { top_k: 50 }, modelName);
+
+        const results = await clipSearchByText(query.trim(), { top_k: 50, min_score: 0.100 }, modelName);
         console.log('[CLIP Search] Results:', results);
-        
+
         if (results && results.length > 0) {
           // 提取文件 ID 列表
           const fileIds = results.map(r => r.file_id);
           console.log('[CLIP Search] File IDs:', fileIds);
-          
+
           // 转换为文件路径
           const validPaths: string[] = [];
           const missingPaths: string[] = [];
           const newFilesMap: Record<string, FileNode> = {};
-          
+
           // 从 state.files 中查找对应的文件路径
           const allFiles = Object.values(state.files);
           const idMap = new Map<string, string>();
           allFiles.forEach(f => {
             if (f.id) idMap.set(f.id, f.path);
           });
-          
+
           console.log('[CLIP Search] ID map size:', idMap.size);
-          
+
           results.forEach(result => {
             const filePath = idMap.get(result.file_id);
             if (filePath) {
@@ -3289,7 +3289,7 @@ export const App: React.FC = () => {
               missingPaths.push(result.file_id);
             }
           });
-          
+
           const aiFilter: AiSearchFilter = {
             keywords: [query.trim()],
             colors: [],
@@ -3297,14 +3297,32 @@ export const App: React.FC = () => {
             originalQuery: `clip:${query.trim()}`,
             filePaths: validPaths
           };
-          
+
           pushHistory(activeTab.folderId, null, 'browser', query, activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
-          
-          if (validPaths.length === 0) {
-            showToast(`未找到 ${modelName} 模型的嵌入向量，请使用该模型重新生成嵌入或切换到已有嵌入的模型`);
+
+          if (validPaths.length === 0 && results.length > 0) {
+            showToast(`未在当前图库路径中找到匹配的文件，这可能是由于索引尚未同步。`);
           }
         } else {
-          showToast(`未找到 ${modelName} 模型的嵌入向量，请先为图片生成 CLIP 嵌入向量`);
+          // 检查是否是因为真的没有嵌入数据，还是仅仅只是没搜到
+          try {
+            const { clipGetEmbeddingCountByModel, clipGetModelVersions } = await import('./api/tauri-bridge');
+            const count = await clipGetEmbeddingCountByModel(modelName);
+            if (count > 0) {
+              showToast(`未找到与 "${query}" 相关的匹配项（相似度低于阈值）。`);
+            } else {
+              // 检查是否有其他模型的嵌入
+              const versions = await clipGetModelVersions();
+              if (versions.length > 0) {
+                const versionList = versions.map(([name, cnt]) => `${name}(${cnt}张)`).join(', ');
+                showToast(`当前模型 ${modelName} 无嵌入向量。可用模型: ${versionList}。请前往设置切换模型或生成嵌入向量。`);
+              } else {
+                showToast(`图库中尚未生成 ${modelName} 的嵌入向量信息，请前往设置进行生成。`);
+              }
+            }
+          } catch (e) {
+            showToast(`未找到匹配项。`);
+          }
         }
       } catch (e) {
         console.error("CLIP search failed", e);

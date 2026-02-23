@@ -1,0 +1,829 @@
+=== get_db_file_sizes completed ===
+[2026-02-22][16:43:29][aurora_gallery][INFO] CLIP manager initialized successfully
+[2026-02-22][16:43:29][aurora_gallery::updater][INFO] Checking for updates...
+[2026-02-22][16:43:30][aurora_gallery::updater][WARN] GitHub API latest failed: GitHub API rate limit exceeded. Please try again later., trying list...
+[2026-02-22][16:43:31][aurora_gallery::updater][WARN] GitHub API list failed: GitHub API rate limit exceeded. Please try again later., trying fallback...
+[2026-02-22][16:43:33][aurora_gallery::updater][INFO] GitHub fallback response status: 200 OK, final URL: https://github.com/misakimiku2/aurora-gallery-tauri/releases/tag/v1.0.0
+[2026-02-22][16:43:34][aurora_gallery::updater][INFO] Extracted version: v1.0.0
+[2026-02-22][16:43:34][aurora_gallery::updater][INFO] Extracted from HTML - published_at: 2026-02-13 08:55:08 UTC, release_name: Aurora Gallery v1.0.0 - 首次发布, has_installer: false
+[2026-02-22][16:43:42][aurora_gallery::clip_commands][INFO] [Embedding Gen] Requested model: SigLIP2-So400M
+[2026-02-22][16:43:42][aurora_gallery::clip_commands][INFO] [Embedding Gen] Current model: ViT-B-32, is_loaded: false
+[2026-02-22][16:43:42][aurora_gallery::clip_commands][INFO] [Embedding Gen] Loading model: SigLIP2-So400M (current: ViT-B-32, loaded: false)
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] Model file verified: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\model.onnx"
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] Model file verified: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\model.onnx_data"
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] Model file verified: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\tokenizer.json"
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] Model file verified: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\tokenizer_config.json"
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] Model file verified: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\special_tokens_map.json"
+[2026-02-22][16:43:42][aurora_gallery::clip::model][INFO] CLIP model files ready: SigLIP2-So400M
+[2026-02-22][16:43:43][aurora_gallery::clip::model][INFO] Attempting to enable DirectML Execution Provider...
+[2026-02-22][16:43:43][aurora_gallery::clip::model][INFO] DirectML Execution Provider enabled successfully!
+[2026-02-22][16:43:43][aurora_gallery::clip::model][INFO] Using unified model file: "C:\\Users\\Misaki\\AppData\\Local\\Aurora\\Cache\\clip\\SigLIP2-So400M\\model.onnx"
+[2026-02-22][16:43:43][tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared
+[2026-02-22][16:43:43][tao::platform_impl::platform::event_loop::runner][WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
+[2026-02-22][16:43:45][aurora_gallery::clip::model][INFO] Unified model loaded successfully (Session shared + Mutex protected)
+[2026-02-22][16:43:45][aurora_gallery::clip::model][INFO] [CLIP Model] Unified Session Inputs: ["input_ids", "pixel_values"]
+[2026-02-22][16:43:45][aurora_gallery::clip::model][INFO] [CLIP Model] Unified Session Outputs: ["logits_per_image", "logits_per_text", "text_embeds", "image_embeds"]
+[2026-02-22][16:43:45][aurora_gallery::clip::model][INFO] CLIP model loaded successfully with GPU (DirectML) acceleration
+[2026-02-22][16:43:45][aurora_gallery::clip][INFO] CLIP model loaded successfully: SigLIP2-So400M
+[2026-02-22][16:43:45][aurora_gallery::clip_commands][INFO] [CLIP Batch] Raw model name from config: 'SigLIP2-So400M'
+[2026-02-22][16:43:45][aurora_gallery::clip_commands][INFO] [CLIP Batch] Model name bytes: [83, 105, 103, 76, 73, 80, 50, 45, 83, 111, 52, 48, 48, 77]
+[2026-02-22][16:43:45][aurora_gallery::clip_commands][WARN] [CLIP Batch] Unknown model name 'SigLIP2-So400M', using default batch size
+[2026-02-22][16:43:45][aurora_gallery::clip_commands][INFO] [CLIP Batch] Final: Model: SigLIP2-So400M, GPU: true, batch_size: 32
+[2026-02-22][16:43:45][aurora_gallery::clip_commands][INFO] CLIP batch generation starting with GPU acceleration (5722 files)
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Filtered 32 existing embeddings, 5690 files to process (total: 5722)
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Starting batch processing: 178 batches, batch_size=32
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Processing batch 1/178: 32 files
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Batch 1 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-024.JPG
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Batch 1: acquiring model lock...
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Batch 1: got model lock
+[2026-02-22][16:43:47][aurora_gallery::clip_commands][INFO] Batch 1: calling encode_images_batch with 32 paths...
+[2026-02-22][16:43:47][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:43:47][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:43:47][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:43:47][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:43:47][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:43:49][aurora_gallery::clip::model][INFO] Preprocessing completed in 1778ms (avg 55.56ms per image)
+[2026-02-22][16:43:49][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:43:49][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:43:49][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] ONNX inference completed in 3176ms
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.015201136, -0.02010388, 0.025547499, 0.017120898, -0.012000356]
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Batch 1: encode_images_batch returned
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] CLIP batch 1/178 completed: 32/5690 files (5%), throughput: 6 files/sec, batch_time: 4974ms
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Processing batch 2/178: 32 files
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Batch 2 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-056.JPG
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Batch 2: acquiring model lock...
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Batch 2: got model lock
+[2026-02-22][16:43:52][aurora_gallery::clip_commands][INFO] Batch 2: calling encode_images_batch with 32 paths...
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:43:52][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:43:54][aurora_gallery::clip::model][INFO] Preprocessing completed in 1679ms (avg 52.47ms per image)
+[2026-02-22][16:43:54][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:43:54][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:43:54][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] ONNX inference completed in 1924ms
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.013012558, -0.035235263, 0.018033374, 0.019164493, -0.002460609]
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Batch 2: encode_images_batch returned
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Processing batch 3/178: 32 files
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Batch 3 first file: E:/资源/@GV V.369 Jang Joo (장주)/AGV-V.369-Jang-Joo-AnhFree.com-088.JPG
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Batch 3: acquiring model lock...
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Batch 3: got model lock
+[2026-02-22][16:43:56][aurora_gallery::clip_commands][INFO] Batch 3: calling encode_images_batch with 32 paths...
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:43:56][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:43:57][aurora_gallery::clip::model][INFO] Preprocessing completed in 1252ms (avg 39.12ms per image)
+[2026-02-22][16:43:57][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:43:57][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:43:57][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] ONNX inference completed in 1958ms
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.012300927, -0.0058639687, 0.010717532, 0.007776133, 0.0250996]
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Batch 3: encode_images_batch returned
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Processing batch 4/178: 32 files
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Batch 4 first file: E:/资源/@GV V.369 Jang Joo (장주)/爱米斯_001.jpg
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Batch 4: acquiring model lock...
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Batch 4: got model lock
+[2026-02-22][16:43:59][aurora_gallery::clip_commands][INFO] Batch 4: calling encode_images_batch with 32 paths...
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Preprocessing completed in 141ms (avg 4.41ms per image)
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:43:59][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] ONNX inference completed in 1948ms
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0003521122, -0.026502563, -0.020223495, 0.013426519, 0.011439611]
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Batch 4: encode_images_batch returned
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Processing batch 5/178: 32 files
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Batch 5 first file: E:/资源/AW/024_b02r3s_segment_3.gif
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Batch 5: acquiring model lock...
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Batch 5: got model lock
+[2026-02-22][16:44:01][aurora_gallery::clip_commands][INFO] Batch 5: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Preprocessing completed in 21ms (avg 0.66ms per image)
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:01][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] ONNX inference completed in 1948ms
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.015737893, 0.029678842, 0.019174878, 0.009614173, -0.006107321]
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Batch 5: encode_images_batch returned
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Processing batch 6/178: 32 files
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Batch 6 first file: E:/资源/AW/056_e03r1h.gif
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Batch 6: acquiring model lock...
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Batch 6: got model lock
+[2026-02-22][16:44:03][aurora_gallery::clip_commands][INFO] Batch 6: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Preprocessing completed in 26ms (avg 0.81ms per image)
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:03][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] ONNX inference completed in 1932ms
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.005845691, 0.007156134, -0.008609728, 0.00953104, 0.010118636]
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Batch 6: encode_images_batch returned
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] CLIP batch 6/178 completed: 192/5690 files (8%), throughput: 16 files/sec, batch_time: 1976ms
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Processing batch 7/178: 32 files
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Batch 7 first file: E:/资源/AW/088_f02r6s_segment_3.gif
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Batch 7: acquiring model lock...
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Batch 7: got model lock
+[2026-02-22][16:44:05][aurora_gallery::clip_commands][INFO] Batch 7: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Preprocessing completed in 19ms (avg 0.59ms per image)
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:05][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] ONNX inference completed in 1949ms
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.008924963, 0.008885555, 0.020534832, 0.020525813, -0.0069837146]
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Batch 7: encode_images_batch returned
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Processing batch 8/178: 32 files
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Batch 8 first file: E:/资源/AW/120_h06r3s_segment_4.gif
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Batch 8: acquiring model lock...
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Batch 8: got model lock
+[2026-02-22][16:44:07][aurora_gallery::clip_commands][INFO] Batch 8: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Preprocessing completed in 25ms (avg 0.78ms per image)
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:07][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] ONNX inference completed in 1938ms
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.019644346, 0.010842075, 0.018634384, 0.014294672, -0.0017785376]
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Batch 8: encode_images_batch returned
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Processing batch 9/178: 32 files
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Batch 9 first file: E:/资源/AW/152_x07r1_segment_1.gif
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Batch 9: acquiring model lock...
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Batch 9: got model lock
+[2026-02-22][16:44:09][aurora_gallery::clip_commands][INFO] Batch 9: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Preprocessing completed in 139ms (avg 4.34ms per image)
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:09][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] ONNX inference completed in 1965ms
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0056510908, 0.009703794, 0.001509723, 0.004956033, 0.0006955317]
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Batch 9: encode_images_batch returned
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Processing batch 10/178: 32 files
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Batch 10 first file: E:/资源/AW/184_3.png
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Batch 10: acquiring model lock...
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Batch 10: got model lock
+[2026-02-22][16:44:11][aurora_gallery::clip_commands][INFO] Batch 10: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:11][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:12][aurora_gallery::clip::model][INFO] Preprocessing completed in 143ms (avg 4.47ms per image)
+[2026-02-22][16:44:12][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:12][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:12][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] ONNX inference completed in 1949ms
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0067184223, 0.012773584, 0.00025500942, 0.0050045587, 0.021299237]
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Batch 10: encode_images_batch returned
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Processing batch 11/178: 32 files
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Batch 11 first file: E:/资源/AW/216_4.png
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Batch 11: acquiring model lock...
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Batch 11: got model lock
+[2026-02-22][16:44:14][aurora_gallery::clip_commands][INFO] Batch 11: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Preprocessing completed in 131ms (avg 4.09ms per image)
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:14][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] ONNX inference completed in 1995ms
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0040788185, 0.0029863804, 0.017457895, -0.0036446608, 0.033030275]
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Batch 11: encode_images_batch returned
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] CLIP batch 11/178 completed: 352/5690 files (10%), throughput: 14 files/sec, batch_time: 2144ms
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Processing batch 12/178: 32 files
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Batch 12 first file: E:/资源/AW/248_7.png
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Batch 12: acquiring model lock...
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Batch 12: got model lock
+[2026-02-22][16:44:16][aurora_gallery::clip_commands][INFO] Batch 12: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Preprocessing completed in 141ms (avg 4.41ms per image)
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:16][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] ONNX inference completed in 1947ms
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.00023986778, 0.013031343, 0.007968159, 0.011843692, 0.020039199]
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Batch 12: encode_images_batch returned
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Processing batch 13/178: 32 files
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Batch 13 first file: E:/资源/AW/280_5.png
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Batch 13: acquiring model lock...
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Batch 13: got model lock
+[2026-02-22][16:44:18][aurora_gallery::clip_commands][INFO] Batch 13: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Preprocessing completed in 148ms (avg 4.62ms per image)
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:18][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] ONNX inference completed in 1970ms
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.011500107, 0.013555178, 0.012660232, 0.011256379, 0.0028026756]
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Batch 13: encode_images_batch returned
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Processing batch 14/178: 32 files
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Batch 14 first file: E:/资源/AW/312_7.png
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Batch 14: acquiring model lock...
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Batch 14: got model lock
+[2026-02-22][16:44:20][aurora_gallery::clip_commands][INFO] Batch 14: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Preprocessing completed in 143ms (avg 4.47ms per image)
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:20][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] ONNX inference completed in 1943ms
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.010764729, 0.0076961876, 0.002679002, 0.0065818806, -0.020460354]
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Batch 14: encode_images_batch returned
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Processing batch 15/178: 32 files
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Batch 15 first file: E:/资源/AW/344_10.png
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Batch 15: acquiring model lock...
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Batch 15: got model lock
+[2026-02-22][16:44:22][aurora_gallery::clip_commands][INFO] Batch 15: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Preprocessing completed in 136ms (avg 4.25ms per image)
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:22][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] ONNX inference completed in 1864ms
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.014623289, 0.0008941235, 0.006342731, 0.0083373645, 0.027804036]
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Batch 15: encode_images_batch returned
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Processing batch 16/178: 32 files
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Batch 16 first file: E:/资源/AW/376_3.png
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Batch 16: acquiring model lock...
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Batch 16: got model lock
+[2026-02-22][16:44:24][aurora_gallery::clip_commands][INFO] Batch 16: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Preprocessing completed in 151ms (avg 4.72ms per image)
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:24][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] ONNX inference completed in 1863ms
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0024944914, 0.00049111777, 0.011353254, 0.010635181, 0.024423713]
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Batch 16: encode_images_batch returned
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] CLIP batch 16/178 completed: 512/5690 files (13%), throughput: 15 files/sec, batch_time: 2036ms
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Processing batch 17/178: 32 files
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Batch 17 first file: E:/资源/AW/408_4.png
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Batch 17: acquiring model lock...
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Batch 17: got model lock
+[2026-02-22][16:44:26][aurora_gallery::clip_commands][INFO] Batch 17: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Preprocessing completed in 157ms (avg 4.91ms per image)
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:26][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] ONNX inference completed in 1854ms
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.020549065, -0.0060842982, 0.0022799606, 0.022907505, 0.02185533]
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Batch 17: encode_images_batch returned
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Processing batch 18/178: 32 files
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Batch 18 first file: E:/资源/AW/440_6.png
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Batch 18: acquiring model lock...
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Batch 18: got model lock
+[2026-02-22][16:44:28][aurora_gallery::clip_commands][INFO] Batch 18: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Preprocessing completed in 138ms (avg 4.31ms per image)
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:28][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] ONNX inference completed in 1862ms
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.012406753, 0.01347038, 0.00043684576, 0.010934498, 0.02368049]
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Batch 18: encode_images_batch returned
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Processing batch 19/178: 32 files
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Batch 19 first file: E:/资源/AW/472_12.png
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Batch 19: acquiring model lock...
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Batch 19: got model lock
+[2026-02-22][16:44:30][aurora_gallery::clip_commands][INFO] Batch 19: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Preprocessing completed in 126ms (avg 3.94ms per image)
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:30][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] ONNX inference completed in 1859ms
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0232217, -0.003736458, 0.007533107, -0.00972431, 0.037790664]
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Batch 19: encode_images_batch returned
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Processing batch 20/178: 32 files
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Batch 20 first file: E:/资源/AW/504_5.png
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Batch 20: acquiring model lock...
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Batch 20: got model lock
+[2026-02-22][16:44:32][aurora_gallery::clip_commands][INFO] Batch 20: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Preprocessing completed in 147ms (avg 4.59ms per image)
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:32][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] ONNX inference completed in 1873ms
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.008879113, -0.0027580862, 0.014052335, 0.030193474, -0.011300854]
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Batch 20: encode_images_batch returned
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Processing batch 21/178: 32 files
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Batch 21 first file: E:/资源/AW/536_4.png
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Batch 21: acquiring model lock...
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Batch 21: got model lock
+[2026-02-22][16:44:34][aurora_gallery::clip_commands][INFO] Batch 21: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Preprocessing completed in 196ms (avg 6.12ms per image)
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:34][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] ONNX inference completed in 1852ms
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0023195092, 0.017948093, 0.023022475, 0.013642208, 0.03281766]
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Batch 21: encode_images_batch returned
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] CLIP batch 21/178 completed: 672/5690 files (16%), throughput: 15 files/sec, batch_time: 2069ms
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Processing batch 22/178: 32 files
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Batch 22 first file: E:/资源/AW/568_6.png
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Batch 22: acquiring model lock...
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Batch 22: got model lock
+[2026-02-22][16:44:36][aurora_gallery::clip_commands][INFO] Batch 22: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Preprocessing completed in 137ms (avg 4.28ms per image)
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:36][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] ONNX inference completed in 1873ms
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0036170625, 0.007013954, 0.013251819, 0.016252844, 0.023901507]
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Batch 22: encode_images_batch returned
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Processing batch 23/178: 32 files
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Batch 23 first file: E:/资源/AW/600_3.png
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Batch 23: acquiring model lock...
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Batch 23: got model lock
+[2026-02-22][16:44:38][aurora_gallery::clip_commands][INFO] Batch 23: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Preprocessing completed in 145ms (avg 4.53ms per image)
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:38][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] ONNX inference completed in 1853ms
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.011809408, 0.0072810324, 0.012037908, 0.023196066, 0.007617346]
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Batch 23: encode_images_batch returned
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Processing batch 24/178: 32 files
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Batch 24 first file: E:/资源/AW/632_10.png
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Batch 24: acquiring model lock...
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Batch 24: got model lock
+[2026-02-22][16:44:40][aurora_gallery::clip_commands][INFO] Batch 24: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Preprocessing completed in 149ms (avg 4.66ms per image)
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:40][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] ONNX inference completed in 1863ms
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0022859753, 0.010324884, -0.011188486, 0.015008294, 0.011149655]
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Batch 24: encode_images_batch returned
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Processing batch 25/178: 32 files
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Batch 25 first file: E:/资源/AW/664_4.png
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Batch 25: acquiring model lock...
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Batch 25: got model lock
+[2026-02-22][16:44:42][aurora_gallery::clip_commands][INFO] Batch 25: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:42][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:43][aurora_gallery::clip::model][INFO] Preprocessing completed in 149ms (avg 4.66ms per image)
+[2026-02-22][16:44:43][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:43][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:43][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] ONNX inference completed in 1834ms
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.013582409, 0.014318539, -0.014082922, 0.025916642, 0.022266548]
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Batch 25: encode_images_batch returned
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Processing batch 26/178: 32 files
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Batch 26 first file: E:/资源/AW/696_3.png
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Batch 26: acquiring model lock...
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Batch 26: got model lock
+[2026-02-22][16:44:44][aurora_gallery::clip_commands][INFO] Batch 26: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:44][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:45][aurora_gallery::clip::model][INFO] Preprocessing completed in 140ms (avg 4.38ms per image)
+[2026-02-22][16:44:45][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:45][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:45][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] ONNX inference completed in 1843ms
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.008371261, -0.0052638454, 0.017481014, -0.00014600168, 0.0069230045]
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Batch 26: encode_images_batch returned
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] CLIP batch 26/178 completed: 832/5690 files (18%), throughput: 15 files/sec, batch_time: 2005ms
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Processing batch 27/178: 32 files
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Batch 27 first file: E:/资源/AW/728_5.png
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Batch 27: acquiring model lock...
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Batch 27: got model lock
+[2026-02-22][16:44:46][aurora_gallery::clip_commands][INFO] Batch 27: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:46][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:47][aurora_gallery::clip::model][INFO] Preprocessing completed in 180ms (avg 5.62ms per image)
+[2026-02-22][16:44:47][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:47][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:47][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] ONNX inference completed in 1837ms
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.01008955, 0.002339859, 0.010613204, 0.021293769, 0.026651086]
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Batch 27: encode_images_batch returned
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Processing batch 28/178: 32 files
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Batch 28 first file: E:/资源/AW/760_16.png
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Batch 28: acquiring model lock...
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Batch 28: got model lock
+[2026-02-22][16:44:48][aurora_gallery::clip_commands][INFO] Batch 28: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:48][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:49][aurora_gallery::clip::model][INFO] Preprocessing completed in 146ms (avg 4.56ms per image)
+[2026-02-22][16:44:49][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:49][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:49][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] ONNX inference completed in 1846ms
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.018730734, 0.018161094, 0.0068394886, 0.02132352, -0.004731875]
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Batch 28: encode_images_batch returned
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Processing batch 29/178: 32 files
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Batch 29 first file: E:/资源/AW/792_6.png
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Batch 29: acquiring model lock...
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Batch 29: got model lock
+[2026-02-22][16:44:50][aurora_gallery::clip_commands][INFO] Batch 29: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:50][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:51][aurora_gallery::clip::model][INFO] Preprocessing completed in 131ms (avg 4.09ms per image)
+[2026-02-22][16:44:51][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:51][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:51][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] ONNX inference completed in 1837ms
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.01674405, -0.00019500837, 0.03372813, 0.023384845, 0.032991983]
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Batch 29: encode_images_batch returned
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Processing batch 30/178: 32 files
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Batch 30 first file: E:/资源/AW/824_4.png
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Batch 30: acquiring model lock...
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Batch 30: got model lock
+[2026-02-22][16:44:52][aurora_gallery::clip_commands][INFO] Batch 30: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:52][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:53][aurora_gallery::clip::model][INFO] Preprocessing completed in 641ms (avg 20.03ms per image)
+[2026-02-22][16:44:53][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:53][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:53][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] ONNX inference completed in 1829ms
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.00027098562, 0.017395854, -0.0014336355, 0.015975785, 0.014223593]
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Batch 30: encode_images_batch returned
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Processing batch 31/178: 32 files
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Batch 31 first file: E:/资源/BBBW/edc92545bea94b4eaa0cbf573d52ae671955897084_copy2.jpg
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Batch 31: acquiring model lock...
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Batch 31: got model lock
+[2026-02-22][16:44:55][aurora_gallery::clip_commands][INFO] Batch 31: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Preprocessing completed in 385ms (avg 12.03ms per image)
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:55][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] ONNX inference completed in 1842ms
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.008401581, 0.008069106, 0.0143515505, 0.0019262132, -0.020409508]
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Batch 31: encode_images_batch returned
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] CLIP batch 31/178 completed: 992/5690 files (21%), throughput: 14 files/sec, batch_time: 2248ms
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Processing batch 32/178: 32 files
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Batch 32 first file: E:/资源/ksx/G90D1EiXQAA2M89.jpg
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Batch 32: acquiring model lock...
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Batch 32: got model lock
+[2026-02-22][16:44:57][aurora_gallery::clip_commands][INFO] Batch 32: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:44:57][aurora_gallery::clip::model][INFO] Preprocessing completed in 326ms (avg 10.19ms per image)
+[2026-02-22][16:44:58][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:44:58][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:44:58][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] ONNX inference completed in 1862ms
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0110912165, -0.0028842594, -0.028623413, -0.013174112, 0.014136818]
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Batch 32: encode_images_batch returned
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Processing batch 33/178: 32 files
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Batch 33 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.10.30 - 20.02.38.85.png
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Batch 33: acquiring model lock...
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Batch 33: got model lock
+[2026-02-22][16:44:59][aurora_gallery::clip_commands][INFO] Batch 33: calling encode_images_batch with 32 paths...
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:44:59][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:00][aurora_gallery::clip::model][INFO] Preprocessing completed in 345ms (avg 10.78ms per image)
+[2026-02-22][16:45:00][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:00][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:00][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] ONNX inference completed in 1861ms
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0030182435, -0.033015355, -0.04518991, 0.022458557, 0.005536349]
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Batch 33: encode_images_batch returned
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Processing batch 34/178: 32 files
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Batch 34 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.20 - 22.48.31.48.png
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Batch 34: acquiring model lock...
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Batch 34: got model lock
+[2026-02-22][16:45:02][aurora_gallery::clip_commands][INFO] Batch 34: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Preprocessing completed in 338ms (avg 10.56ms per image)
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:02][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] ONNX inference completed in 1861ms
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.019639265, -0.037690684, 0.00042320986, 0.005533239, 0.01772117]
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Batch 34: encode_images_batch returned
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Processing batch 35/178: 32 files
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Batch 35 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.20 - 23.40.14.19.png
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Batch 35: acquiring model lock...
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Batch 35: got model lock
+[2026-02-22][16:45:04][aurora_gallery::clip_commands][INFO] Batch 35: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Preprocessing completed in 323ms (avg 10.09ms per image)
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:04][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] ONNX inference completed in 1850ms
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.023592103, -0.003861859, -0.015797524, -0.010396423, 0.008001206]
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Batch 35: encode_images_batch returned
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Processing batch 36/178: 32 files
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Batch 36 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.21 - 00.24.02.71.png
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Batch 36: acquiring model lock...
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Batch 36: got model lock
+[2026-02-22][16:45:06][aurora_gallery::clip_commands][INFO] Batch 36: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Preprocessing completed in 279ms (avg 8.72ms per image)
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:06][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] ONNX inference completed in 1863ms
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.022298621, -0.0024315943, -0.006543477, 0.008528599, 0.02412897]
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Batch 36: encode_images_batch returned
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] CLIP batch 36/178 completed: 1152/5690 files (24%), throughput: 14 files/sec, batch_time: 2165ms
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Processing batch 37/178: 32 files
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Batch 37 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.21 - 01.15.13.07.png
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Batch 37: acquiring model lock...
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Batch 37: got model lock
+[2026-02-22][16:45:08][aurora_gallery::clip_commands][INFO] Batch 37: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:08][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:09][aurora_gallery::clip::model][INFO] Preprocessing completed in 355ms (avg 11.09ms per image)
+[2026-02-22][16:45:09][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:09][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:09][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] ONNX inference completed in 1862ms
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0013167761, -0.0029130182, 0.0063981535, 0.012347299, 0.010752543]
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Batch 37: encode_images_batch returned
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Processing batch 38/178: 32 files
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Batch 38 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.21 - 01.50.56.04.png
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Batch 38: acquiring model lock...
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Batch 38: got model lock
+[2026-02-22][16:45:10][aurora_gallery::clip_commands][INFO] Batch 38: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:10][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:11][aurora_gallery::clip::model][INFO] Preprocessing completed in 331ms (avg 10.34ms per image)
+[2026-02-22][16:45:11][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:11][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:11][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] ONNX inference completed in 1860ms
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.011617031, -0.011789436, -0.023542615, 0.019001083, 0.0060590114]
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Batch 38: encode_images_batch returned
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Processing batch 39/178: 32 files
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Batch 39 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.21 - 02.14.27.72.png
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Batch 39: acquiring model lock...
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Batch 39: got model lock
+[2026-02-22][16:45:13][aurora_gallery::clip_commands][INFO] Batch 39: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Preprocessing completed in 401ms (avg 12.53ms per image)
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:13][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] ONNX inference completed in 1835ms
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0048413943, -0.014269819, 0.0043715555, 0.022759954, 0.015327756]
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Batch 39: encode_images_batch returned
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Processing batch 40/178: 32 files
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Batch 40 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.11.21 - 02.50.16.62.png
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Batch 40: acquiring model lock...
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Batch 40: got model lock
+[2026-02-22][16:45:15][aurora_gallery::clip_commands][INFO] Batch 40: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Preprocessing completed in 393ms (avg 12.28ms per image)
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:15][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] ONNX inference completed in 1850ms
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.020145096, -0.009121218, -0.011528235, 0.02067305, 0.022827603]
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Batch 40: encode_images_batch returned
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Processing batch 41/178: 32 files
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Batch 41 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.12.25 - 17.04.23.17.png
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Batch 41: acquiring model lock...
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Batch 41: got model lock
+[2026-02-22][16:45:17][aurora_gallery::clip_commands][INFO] Batch 41: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Preprocessing completed in 324ms (avg 10.12ms per image)
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:17][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] ONNX inference completed in 1836ms
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.0099425735, 0.0074904235, -0.008450457, 0.01826854, 0.0063914936]
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Batch 41: encode_images_batch returned
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] CLIP batch 41/178 completed: 1312/5690 files (26%), throughput: 14 files/sec, batch_time: 2181ms
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Processing batch 42/178: 32 files
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Batch 42 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.12.25 - 18.10.02.96.png
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Batch 42: acquiring model lock...
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Batch 42: got model lock
+[2026-02-22][16:45:19][aurora_gallery::clip_commands][INFO] Batch 42: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:19][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:20][aurora_gallery::clip::model][INFO] Preprocessing completed in 335ms (avg 10.47ms per image)
+[2026-02-22][16:45:20][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:20][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:20][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] ONNX inference completed in 1950ms
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.004680971, 0.0048912987, -0.010584022, 0.013987854, -0.003035115]
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Batch 42: encode_images_batch returned
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Processing batch 43/178: 32 files
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Batch 43 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.12.25 - 19.08.09.90.png
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Batch 43: acquiring model lock...
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Batch 43: got model lock
+[2026-02-22][16:45:22][aurora_gallery::clip_commands][INFO] Batch 43: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Preprocessing completed in 339ms (avg 10.59ms per image)
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:22][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] ONNX inference completed in 1933ms
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.018737653, -0.008789551, 0.009297163, 0.02022672, 0.003917352]
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Batch 43: encode_images_batch returned
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Processing batch 44/178: 32 files
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Batch 44 first file: E:/资源/ksx/Wuthering Waves Screenshot 2025.12.26 - 02.09.42.84.png
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Batch 44: acquiring model lock...
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Batch 44: got model lock
+[2026-02-22][16:45:24][aurora_gallery::clip_commands][INFO] Batch 44: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Preprocessing completed in 352ms (avg 11.00ms per image)
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:24][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] ONNX inference completed in 1944ms
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.006017241, -0.032852896, 0.007573944, 0.024131622, -0.0005417041]
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Batch 44: encode_images_batch returned
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Processing batch 45/178: 32 files
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Batch 45 first file: E:/资源/ksx/Wuthering Waves Screenshot 2026.01.01 - 03.18.04.62.png
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Batch 45: acquiring model lock...
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Batch 45: got model lock
+[2026-02-22][16:45:26][aurora_gallery::clip_commands][INFO] Batch 45: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:26][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:27][aurora_gallery::clip::model][INFO] Preprocessing completed in 234ms (avg 7.31ms per image)
+[2026-02-22][16:45:27][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:27][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:27][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:28][aurora_gallery::clip::model][INFO] ONNX inference completed in 1981ms
+[2026-02-22][16:45:28][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [-0.013219881, -0.007963053, 0.0058443476, 0.028739661, -0.001239843]
+[2026-02-22][16:45:28][aurora_gallery::clip_commands][INFO] Batch 45: encode_images_batch returned
+[2026-02-22][16:45:29][aurora_gallery::clip_commands][INFO] Processing batch 46/178: 32 files
+[2026-02-22][16:45:29][aurora_gallery::clip_commands][INFO] Batch 46 first file: E:/资源/tam/006_0001_1_6.png
+[2026-02-22][16:45:29][aurora_gallery::clip_commands][INFO] Batch 46: acquiring model lock...
+[2026-02-22][16:45:29][aurora_gallery::clip_commands][INFO] Batch 46: got model lock
+[2026-02-22][16:45:29][aurora_gallery::clip_commands][INFO] Batch 46: calling encode_images_batch with 32 paths...
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] encode_images_batch called with 32 images
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Large batch (32), using GPU batch processing
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] [CLIP Batch] GPU active: true, model: SigLIP2-So400M, batch_size: 32
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] encode_images_batch_gpu started: 32 images
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Preprocessing 32 images using rayon (8 threads)...
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Preprocessing completed in 113ms (avg 3.53ms per image)
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Creating input tensor with shape [32, 3, 384, 384]
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Running ONNX inference...
+[2026-02-22][16:45:29][aurora_gallery::clip::model][INFO] Unified model detected, providing dummy text input with minimal shape [1, 1]
+[2026-02-22][16:45:30][tao::platform_impl::platform::event_loop::runner][WARN] NewEvents emitted without explicit RedrawEventsCleared
+[2026-02-22][16:45:30][tao::platform_impl::platform::event_loop::runner][WARN] RedrawEventsCleared emitted without explicit MainEventsCleared
+[2026-02-22][16:45:30][aurora_gallery::clip_commands][INFO] Embedding generation paused
+[2026-02-22][16:45:31][aurora_gallery::clip::model][INFO] ONNX inference completed in 1958ms
+[2026-02-22][16:45:31][aurora_gallery::clip::model][INFO] [CLIP Debug] Batch Image[0] raw norm: 1.0000, first 5: [0.0013545303, 0.0086267255, -0.008713251, 0.02580809, 0.008680419]
+[2026-02-22][16:45:31][aurora_gallery::clip_commands][INFO] Batch 46: encode_images_batch returned
+[2026-02-22][16:45:31][aurora_gallery::clip_commands][INFO] CLIP batch 46/178 completed: 1472/5690 files (29%), throughput: 15 files/sec, batch_time: 2090ms

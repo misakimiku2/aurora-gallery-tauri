@@ -23,8 +23,10 @@ static CLIP_MANAGER: OnceCell<Arc<RwLock<ClipManager>>> = OnceCell::new();
 pub struct ClipConfig {
     /// 模型名称
     pub model_name: String,
-    /// 模型缓存目录
-    pub cache_dir: PathBuf,
+    /// 根目录路径（嵌入数据库存储位置）
+    pub root_path: PathBuf,
+    /// 模型缓存目录（模型文件存储位置）
+    pub model_cache_dir: PathBuf,
     /// 是否使用 GPU
     pub use_gpu: bool,
     /// 向量维度 (ViT-B/32 = 512, ViT-L/14 = 768)
@@ -35,8 +37,9 @@ impl Default for ClipConfig {
     fn default() -> Self {
         Self {
             model_name: "ViT-B-32".to_string(),
-            cache_dir: PathBuf::from(".aurora_cache/clip"),
-            use_gpu: true,  // 默认启用 GPU 加速
+            root_path: PathBuf::from("."),
+            model_cache_dir: PathBuf::from(".aurora_cache/clip"),
+            use_gpu: true,
             embedding_dim: 512,
         }
     }
@@ -67,16 +70,54 @@ impl ClipManager {
             return Ok(());
         }
 
-        // 确保缓存目录存在
-        tokio::fs::create_dir_all(&self.config.cache_dir)
+        // 确保模型缓存目录存在
+        tokio::fs::create_dir_all(&self.config.model_cache_dir)
             .await
-            .map_err(|e| format!("Failed to create cache directory: {}", e))?;
+            .map_err(|e| format!("Failed to create model cache directory: {}", e))?;
 
-        // 初始化嵌入存储
-        let embedding_store = EmbeddingStore::new(&self.config.cache_dir)?;
+        // 初始化嵌入存储（使用当前模型名称）
+        let embedding_store = EmbeddingStore::new(&self.config.root_path, &self.config.model_name)?;
         self.embedding_store = Some(embedding_store);
 
         self.is_initialized = true;
+        Ok(())
+    }
+
+    /// 切换根目录
+    /// 卸载当前模型并重新初始化嵌入存储
+    pub async fn switch_root(&mut self, new_root_path: PathBuf) -> Result<(), String> {
+        log::info!("[CLIP] Switching root from {:?} to {:?}", self.config.root_path, new_root_path);
+        
+        // 卸载当前模型
+        self.unload_model();
+        
+        // 更新根目录配置
+        self.config.root_path = new_root_path.clone();
+        
+        // 重新初始化嵌入存储（使用当前模型名称）
+        let embedding_store = EmbeddingStore::new(&new_root_path, &self.config.model_name)?;
+        self.embedding_store = Some(embedding_store);
+        
+        log::info!("[CLIP] Successfully switched to root: {:?}", new_root_path);
+        Ok(())
+    }
+
+    /// 切换模型
+    /// 切换嵌入数据库到新模型对应的数据库文件
+    pub fn switch_model(&mut self, new_model_name: &str) -> Result<(), String> {
+        log::info!("[CLIP] Switching model from '{}' to '{}'", self.config.model_name, new_model_name);
+        
+        // 卸载当前模型
+        self.unload_model();
+        
+        // 更新模型名称
+        self.config.model_name = new_model_name.to_string();
+        
+        // 切换到新模型的嵌入数据库
+        let embedding_store = EmbeddingStore::new(&self.config.root_path, new_model_name)?;
+        self.embedding_store = Some(embedding_store);
+        
+        log::info!("[CLIP] Successfully switched to model: {}", new_model_name);
         Ok(())
     }
 
@@ -168,9 +209,10 @@ pub async fn get_clip_manager() -> Option<Arc<RwLock<ClipManager>>> {
 }
 
 /// 初始化全局 CLIP 管理器
-pub async fn init_clip_manager(cache_root: PathBuf) -> Result<Arc<RwLock<ClipManager>>, String> {
+pub async fn init_clip_manager(root_path: PathBuf, cache_root: PathBuf) -> Result<Arc<RwLock<ClipManager>>, String> {
     let config = ClipConfig {
-        cache_dir: cache_root.join("clip"),
+        root_path,
+        model_cache_dir: cache_root.join("clip"),
         ..Default::default()
     };
 

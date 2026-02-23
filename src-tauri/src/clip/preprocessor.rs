@@ -73,7 +73,7 @@ impl ImagePreprocessor {
                 fr::PixelType::U8x3,
             );
             
-            // 使用 Box 滤波器进行快速缩放（最适合大幅缩小）
+            // 使用 Box 滤波器进行快速缩放
             let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Box));
             resizer.resize(&src_image.view(), &mut dst_image.view_mut())
                 .map_err(|e| format!("Failed to resize image: {}", e))?;
@@ -84,8 +84,8 @@ impl ImagePreprocessor {
         let resize_elapsed = resize_start.elapsed().as_millis();
         
         if load_elapsed > 50 || resize_elapsed > 10 {
-            log::debug!("[Preprocess] {}x{} -> 224x224: load={}ms, resize={}ms", 
-                width, height, load_elapsed, resize_elapsed);
+            log::debug!("[Preprocess] {}x{} -> {}x{}: load={}ms, resize={}ms", 
+                width, height, self.target_size, self.target_size, load_elapsed, resize_elapsed);
         }
         
         // 提取像素并归一化 (使用实例的归一化参数)
@@ -169,12 +169,17 @@ impl TextPreprocessor {
     /// 预处理文本
     /// 返回 (input_ids, attention_mask)
     pub fn preprocess(&self, text: &str) -> Result<(Vec<i64>, Vec<i64>), String> {
+        // 记录分词器加载状态 - 诊断搜索失效的关键
+        if self.tokenizer.is_some() {
+            log::info!("[CLIP Preprocess] Using loaded tokenizer (Vocab size: {})", self.tokenizer.as_ref().unwrap().get_vocab_size(true));
+        } else {
+            log::warn!("[CLIP Preprocess] FALLBACK TOKENIZER IN USE! This will cause semantic search failure.");
+        }
+
         // 如果没有加载 tokenizer，使用简化的占位符实现
-        // 这在模型尚未完全初始化时作为回退
         let tokenizer = match &self.tokenizer {
             Some(t) => t,
             None => {
-                // 回退到简单的字符编码
                 return self.fallback_preprocess(text);
             }
         };
@@ -245,7 +250,7 @@ impl Clone for TextPreprocessor {
     fn clone(&self) -> Self {
         Self {
             max_length: self.max_length,
-            tokenizer: None, // Tokenizer 不实现 Clone，所以克隆时设为 None
+            tokenizer: self.tokenizer.clone(), 
         }
     }
 }

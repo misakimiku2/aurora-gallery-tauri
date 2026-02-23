@@ -1,0 +1,542 @@
+cargo : warning: unused variable: `to
+ken`
+???? ?:1 ??: 1
++ cargo check --tests --bin aurora-ga
+llery --message-format=short 2>&1  ..
+.
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpe 
+   cified: (warning: unused variabl  
+  e: `token`:String) [], RemoteExc   
+ eption
+    + FullyQualifiedErrorId : Native 
+   CommandError
+ 
+   --> src\updater.rs:182:17
+    |
+182 | ...let Some(token) = github_t..
+.
+    |             ^^^^^ help: if this
+ is intentional, prefix it with an un
+derscore: `_token`
+    |
+    = note: `#[warn(unused_variables)
+]` (part of `#[warn(unused)]`) on by 
+default
+
+warning: fields `id` and `started` ar
+e never read
+  --> src\color_worker.rs:45:5
+   |
+44 | struct BatchState {
+   |        ---------- fields in this
+ struct
+45 |     id: u64,
+   |     ^^
+...
+48 |     started: bool,
+   |     ^^^^^^^
+   |
+   = note: `BatchState` has derived i
+mpls for the traits `Clone` and `Debu
+g`, but these are intentionally ignor
+ed during dead code analysis
+   = note: `#[warn(dead_code)]` (part
+ of `#[warn(unused)]`) on by default
+
+warning: function `save_and_pause_col
+or_extraction` is never used
+  --> src\color_worker.rs:60:14
+   |
+60 | ...fn save_and_pause_color_extra
+ction() ...
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^
+
+warning: function `shutdown_color_ext
+raction` is never used
+  --> src\color_worker.rs:67:14
+   |
+67 | ...fn shutdown_color_extraction(
+) ...
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `process_single_fil
+e` is never used
+   --> src\color_worker.rs:908:10
+    |
+908 | ...fn process_single_file(poo..
+.
+    |       ^^^^^^^^^^^^^^^^^^^
+
+warning: function `get_all_metadata` 
+is never used
+  --> src\db\file_metadata.rs:69:8
+   |
+69 | pub fn get_all_metadata(conn: ..
+.
+   |        ^^^^^^^^^^^^^^^^
+
+warning: function `get_all_entries` i
+s never used
+   --> src\db\file_index.rs:121:8
+    |
+121 | pub fn get_all_entries(conn: ..
+.
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `get_minimal_entrie
+s_under_path` is never used
+   --> src\db\file_index.rs:180:8
+    |
+180 | ...fn get_minimal_entries_under
+_path(co...
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^
+
+warning: function `delete_entries_by_
+ids` is never used
+   --> src\db\file_index.rs:268:8
+    |
+268 | ...fn delete_entries_by_ids(co.
+..
+    |       ^^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `BatchResult` is neve
+r constructed
+  --> src\thumbnail.rs:17:12
+   |
+17 | pub struct BatchResult {
+   |            ^^^^^^^^^^^
+
+warning: field `content_type` is neve
+r read
+  --> src\updater.rs:10:9
+   |
+ 6 | pub struct GithubReleaseAsset {
+   |            ------------------ fi
+eld in this struct
+...
+10 |     pub content_type: String,
+   |         ^^^^^^^^^^^^
+   |
+   = note: `GithubReleaseAsset` has d
+erived impls for the traits `Clone` a
+nd `Debug`, but these are intentional
+ly ignored during dead code analysis
+
+warning: function `verify_github_toke
+n` is never used
+   --> src\updater.rs:110:10
+    |
+110 | ...fn verify_github_token(git..
+.
+    |       ^^^^^^^^^^^^^^^^^^^
+
+warning: function `check_repo_exists`
+ is never used
+   --> src\updater.rs:140:10
+    |
+140 | async fn check_repo_exists(ow..
+.
+    |          ^^^^^^^^^^^^^^^^^
+
+warning: associated function `new` is
+ never used
+  --> src\update_downloader.rs:46:8
+   |
+45 | impl DownloadProgress {
+   | --------------------- associated
+ function in this implementation
+46 |     fn new(state: DownloadStat..
+.
+   |        ^^^
+
+warning: field `embedding_dim` is nev
+er read
+  --> src\clip\mod.rs:31:9
+   |
+23 | pub struct ClipConfig {
+   |            ---------- field in t
+his struct
+...
+31 |     pub embedding_dim: usize,
+   |         ^^^^^^^^^^^^^
+   |
+   = note: `ClipConfig` has derived i
+mpls for the traits `Clone` and `Debu
+g`, but these are intentionally ignor
+ed during dead code analysis
+
+warning: function `is_clip_available`
+ is never used
+   --> src\clip\mod.rs:193:8
+    |
+193 | pub fn is_clip_available() ->..
+.
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: field `size_hint` is never r
+ead
+  --> src\clip\models\mod.rs:23:9
+   |
+17 | pub struct ModelFile {
+   |            --------- field in th
+is struct
+...
+23 |     pub size_hint: Option<u64>,
+   |         ^^^^^^^^^
+   |
+   = note: `ModelFile` has derived im
+pls for the traits `Clone` and `Debug
+`, but these are intentionally ignore
+d during dead code analysis
+
+warning: methods `with_size_hint`, `w
+ith_expected_size`, and `with_expecte
+d_hash` are never used
+  --> src\clip\models\mod.rs:43:12
+   |
+30 | impl ModelFile {
+   | -------------- methods in this i
+mplementation
+...
+43 |     pub fn with_size_hint(mut se
+...
+   |            ^^^^^^^^^^^^^^
+...
+49 |     pub fn with_expected_size(mu
+...
+   |            ^^^^^^^^^^^^^^^^^^
+...
+55 |     pub fn with_expected_hash(mu
+...
+   |            ^^^^^^^^^^^^^^^^^^
+
+warning: function `get_all_models` is
+ never used
+   --> src\clip\models\mod.rs:138:8
+    |
+138 | pub fn get_all_models() -> Ve..
+.
+    |        ^^^^^^^^^^^^^^
+
+warning: function `is_model_registere
+d` is never used
+   --> src\clip\models\mod.rs:149:8
+    |
+149 | pub fn is_model_registered(na..
+.
+    |        ^^^^^^^^^^^^^^^^^^^
+
+warning: field `config` is never read
+  --> src\clip\model.rs:35:5
+   |
+34 | pub struct ClipModel {
+   |            --------- field in th
+is struct
+35 |     config: ClipConfig,
+   |     ^^^^^^
+
+warning: associated items `check_loca
+l_model_files` and `embedding_dim` ar
+e never used
+   --> src\clip\model.rs:466:12
+    |
+ 44 | impl ClipModel {
+    | -------------- associated items
+ in this implementation
+...
+466 |     pub fn check_local_model_fi
+les(ca...
+    |            ^^^^^^^^^^^^^^^^^^^^
+^^^
+...
+725 |     pub fn embedding_dim(&self)
+ -> us...
+    |            ^^^^^^^^^^^^^
+
+warning: function `rank_by_similarity
+` is never used
+   --> src\clip\model.rs:761:8
+    |
+761 | pub fn rank_by_similarity(que..
+.
+    |        ^^^^^^^^^^^^^^^^^^
+
+warning: associated items `with_size`
+, `default_clip`, and `target_size` a
+re never used
+   --> src\clip\preprocessor.rs:32:12
+    |
+ 20 | impl ImagePreprocessor {
+    | ---------------------- associat
+ed items in this implementation
+...
+ 32 |     pub fn with_size(target_s..
+.
+    |            ^^^^^^^^^
+...
+ 37 |     pub fn default_clip(targe..
+.
+    |            ^^^^^^^^^^^^
+...
+132 |     pub fn target_size(&self)..
+.
+    |            ^^^^^^^^^^^
+
+warning: static `TOKENIZER` is never 
+used
+   --> src\clip\preprocessor.rs:138:8
+    |
+138 | static TOKENIZER: OnceCell<st..
+.
+    |        ^^^^^^^^^
+
+warning: associated functions `defaul
+t_clip`, `set_global_tokenizer`, and 
+`get_global_tokenizer` are never used
+   --> src\clip\preprocessor.rs:156:1
+2
+    |
+146 | impl TextPreprocessor {
+    | --------------------- associate
+d functions in this implementation
+...
+156 |     pub fn default_clip() -> Se
+lf {
+    |            ^^^^^^^^^^^^
+...
+232 |     pub fn set_global_tokenizer
+(to...
+    |            ^^^^^^^^^^^^^^^^^^^^
+...
+237 |     pub fn get_global_tokenizer
+() ...
+    |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `get_embedding`, `de
+lete_embedding`, `delete_embeddings_b
+atch`, `get_missing_embeddings`, and 
+`cleanup_old_versions` are never used
+   --> src\clip\embedding.rs:118:12
+    |
+ 27 | impl EmbeddingStore {
+    | ------------------- methods in 
+this implementation
+...
+118 |     pub fn get_embedding(&self,
+ file_...
+    |            ^^^^^^^^^^^^^
+...
+198 |     pub fn delete_embedding(&se
+lf, fi...
+    |            ^^^^^^^^^^^^^^^^
+...
+210 |     pub fn delete_embeddings_ba
+tch(&s...
+    |            ^^^^^^^^^^^^^^^^^^^^
+^^^
+...
+260 |     pub fn get_missing_embeddin
+gs(&se...
+    |            ^^^^^^^^^^^^^^^^^^^^
+^^
+...
+301 |     pub fn cleanup_old_versions
+(&self...
+    |            ^^^^^^^^^^^^^^^^^^^^
+
+warning: struct `EmbeddingCache` is n
+ever constructed
+   --> src\clip\embedding.rs:332:12
+    |
+332 | pub struct EmbeddingCache {
+    |            ^^^^^^^^^^^^^^
+
+warning: multiple associated items ar
+e never used
+   --> src\clip\embedding.rs:339:12
+    |
+337 | impl EmbeddingCache {
+    | ------------------- associated 
+items in this implementation
+338 |     /// ?????????
+339 |     pub fn new(max_size: usiz..
+.
+    |            ^^^
+...
+347 |     pub fn get(&self, file_id..
+.
+    |            ^^^
+...
+352 |     pub fn set(&mut self, fil..
+.
+    |            ^^^
+...
+363 |     pub fn set_batch(&mut sel..
+.
+    |            ^^^^^^^^^
+...
+370 |     pub fn clear(&mut self) {
+    |            ^^^^^
+...
+375 |     pub fn len(&self) -> usize 
+{
+    |            ^^^
+...
+380 |     pub fn is_empty(&self) ->..
+.
+    |            ^^^^^^^^
+
+warning: enum `SearchQuery` is never 
+used
+  --> src\clip\search.rs:23:10
+   |
+23 | pub enum SearchQuery {
+   |          ^^^^^^^^^^^
+
+warning: field `include_score` is nev
+er read
+  --> src\clip\search.rs:40:9
+   |
+34 | pub struct SearchOptions {
+   |            ------------- field i
+n this struct
+...
+40 |     pub include_score: bool,
+   |         ^^^^^^^^^^^^^
+   |
+   = note: `SearchOptions` has derive
+d impls for the traits `Clone` and `D
+ebug`, but these are intentionally ig
+nored during dead code analysis
+
+warning: methods `search_batch`, `sea
+rch_similar_exclude_self`, and `embed
+ding_store` are never used
+   --> src\clip\search.rs:167:12
+    |
+ 58 | impl SimilaritySearcher {
+    | ----------------------- methods
+ in this implementation
+...
+167 |     pub fn search_batch(
+    |            ^^^^^^^^^^^^
+...
+186 |     pub fn search_similar_exclu
+de_self(
+    |            ^^^^^^^^^^^^^^^^^^^^
+^^^^^^^
+...
+209 |     pub fn embedding_store(&sel
+f) -> &Emb...
+    |            ^^^^^^^^^^^^^^^
+
+warning: struct `VectorIndex` is neve
+r constructed
+   --> src\clip\search.rs:245:12
+    |
+245 | pub struct VectorIndex {
+    |            ^^^^^^^^^^^
+
+warning: multiple associated items ar
+e never used
+   --> src\clip\search.rs:254:12
+    |
+252 | impl VectorIndex {
+    | ---------------- associated ite
+ms in this implementation
+253 |     /// ????????????
+254 |     pub fn new(dim: usize) ->..
+.
+    |            ^^^
+...
+262 |     pub fn from_embeddings(em..
+.
+    |            ^^^^^^^^^^^^^^^
+...
+277 |     pub fn add(&mut self, fil..
+.
+    |            ^^^
+...
+282 |     pub fn add_batch(&mut sel..
+.
+    |            ^^^^^^^^^
+...
+289 |     pub fn search(&self, quer..
+.
+    |            ^^^^^^
+...
+317 |     pub fn len(&self) -> usize 
+{
+    |            ^^^
+...
+322 |     pub fn is_empty(&self) ->..
+.
+    |            ^^^^^^^^
+...
+327 |     pub fn clear(&mut self) {
+    |            ^^^^^
+
+warning: struct `HybridSearcher` is n
+ever constructed
+   --> src\clip\search.rs:333:12
+    |
+333 | pub struct HybridSearcher {
+    |            ^^^^^^^^^^^^^^
+
+warning: associated items `new`, `sea
+rch`, and `merge_results` are never u
+sed
+   --> src\clip\search.rs:339:12
+    |
+337 | impl HybridSearcher {
+    | ------------------- associated 
+items in this implementation
+338 |     /// ??????????????339 |    
+ pub fn new(clip_searcher:...
+    |            ^^^
+...
+348 |     pub fn search(
+    |            ^^^^^^
+...
+358 |     pub fn merge_results(
+    |            ^^^^^^^^^^^^^
+
+    Checking aurora-gallery v1.0.0 (C
+:\Users\Misaki\Desktop\git\aurora-gal
+lery-tauri\src-tauri)
+warning: `aurora-gallery` (bin "auror
+a-gallery") generated 36 warnings (ru
+n `cargo fix --bin "aurora-gallery" -
+p aurora-gallery` to apply 1 suggesti
+on)
+src\bin\dump_persons.rs:7:9: warning:
+ variable does not need to be mutable
+src\bin\dump_persons.rs:37:13: warnin
+g: unused variable: `updated`: help: 
+if this is intentional, prefix it wit
+h an underscore: `_updated`
+warning: `aurora-gallery` (bin "dump_
+persons" test) generated 2 warnings (
+run `cargo fix --bin "dump_persons" -
+p aurora-gallery --tests` to apply 2 
+suggestions)
+src\clip\search.rs:417:9: error[E0425
+]: cannot find value `add` in this sc
+ope: not found in this scope
+src\clip\search.rs:418:9: error[E0425
+]: cannot find value `add` in this sc
+ope: not found in this scope
+src\updater.rs:182:17: warning: unuse
+d variable: `token`: help: if this is
+ intentional, prefix it with an under
+score: `_token`
+warning: `aurora-gallery` (bin "auror
+a-gallery" test) generated 1 warning
+error: could not compile `aurora-gall
+ery` (bin "aurora-gallery" test) due 
+to 2 previous errors; 1 warning emitt
+ed

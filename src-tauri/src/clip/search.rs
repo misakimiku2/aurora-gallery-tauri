@@ -5,7 +5,8 @@ use std::cmp::Ordering;
 use serde::{Serialize, Deserialize};
 
 use super::embedding::{EmbeddingStore, ImageEmbedding};
-use super::model::cosine_similarity;
+use super::model::{cosine_similarity, siglip_similarity};
+use super::models::{get_model_spec, SimilarityType};
 
 /// 搜索结果项
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,6 +71,18 @@ impl SimilaritySearcher {
     ) -> Result<Vec<SearchResult>, String> {
         log::info!("[Search] Searching with model_version: {:?}", model_version);
         
+        // 获取模型的相似度计算类型
+        let (similarity_type, temperature) = if let Some(model_name) = model_version {
+            if let Some(spec) = get_model_spec(model_name) {
+                (spec.similarity_type(), spec.sigmoid_temperature())
+            } else {
+                (SimilarityType::Cosine, 0.07)
+            }
+        } else {
+            (SimilarityType::Cosine, 0.07)
+        };
+        log::info!("[Search] Using similarity type: {:?}, temperature: {}", similarity_type, temperature);
+        
         let embeddings = if let Some(model) = model_version {
             let result = self.embedding_store.get_embeddings_by_model(model)?;
             log::info!("[Search] Found {} embeddings for model '{}'", result.len(), model);
@@ -101,7 +114,7 @@ impl SimilaritySearcher {
             log::info!("[Search] First embedding dimension: {}", embeddings[0].embedding.len());
         }
         
-        let results = self.search_in_candidates(query_embedding, &embeddings, options);
+        let results = self.search_in_candidates(query_embedding, &embeddings, options, similarity_type, temperature);
         log::info!("[Search] search_in_candidates returned {} results", results.len());
         
         Ok(results)
@@ -113,12 +126,37 @@ impl SimilaritySearcher {
         query_embedding: &[f32],
         candidates: &[ImageEmbedding],
         options: &SearchOptions,
+        similarity_type: SimilarityType,
+        temperature: f32,
     ) -> Vec<SearchResult> {
         // 使用优先队列找到 top-k
         let mut heap: BinaryHeap<SearchItem> = BinaryHeap::new();
+        
+        // 诊断：检查查询嵌入的统计信息
+        let query_norm: f32 = query_embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let query_mean: f32 = query_embedding.iter().sum::<f32>() / query_embedding.len() as f32;
+        log::info!("[Search] Query embedding: norm={:.4}, mean={:.6}, first 5={:?}", 
+            query_norm, query_mean, query_embedding.iter().take(5).collect::<Vec<_>>());
+        
+        // 诊断：检查候选嵌入的统计信息
+        if !candidates.is_empty() {
+            let first = &candidates[0].embedding;
+            let first_norm: f32 = first.iter().map(|x| x * x).sum::<f32>().sqrt();
+            let first_mean: f32 = first.iter().sum::<f32>() / first.len() as f32;
+            log::info!("[Search] First candidate embedding: norm={:.4}, mean={:.6}, first 5={:?}", 
+                first_norm, first_mean, first.iter().take(5).collect::<Vec<_>>());
+        }
 
         for candidate in candidates {
-            let score = cosine_similarity(query_embedding, &candidate.embedding);
+            // 根据模型类型选择相似度计算方式
+            let score = match similarity_type {
+                SimilarityType::Sigmoid => {
+                    siglip_similarity(query_embedding, &candidate.embedding, temperature)
+                }
+                SimilarityType::Cosine => {
+                    cosine_similarity(query_embedding, &candidate.embedding)
+                }
+            };
             
             // 过滤低相似度结果
             if score < options.min_score {
@@ -155,6 +193,17 @@ impl SimilaritySearcher {
         // 按分数降序排序
         results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(Ordering::Equal));
         
+        // 输出分数分布信息，便于诊断合理阈値
+        if !results.is_empty() {
+            let max_score = results[0].score;
+            let min_score_val = results.last().map(|r| r.score).unwrap_or(0.0);
+            let top5: Vec<f32> = results.iter().take(5).map(|r| r.score).collect();
+            log::info!("[Search] 分数分布: 最高={:.4}, 最低={:.4}, 前5名={:?}", 
+                max_score, min_score_val, top5);
+        } else {
+            log::info!("[Search] 搜索结果为空，请模型 min_score 阈値设置是否过高（当前 min_score={:.3}）", options.min_score);
+        }
+        
         // 更新排名
         for (i, result) in results.iter_mut().enumerate() {
             result.rank = i + 1;
@@ -171,10 +220,17 @@ impl SimilaritySearcher {
     ) -> Result<Vec<(String, Vec<SearchResult>)>, String> {
         let embeddings = self.embedding_store.get_all_embeddings()?;
         
+        // 批量搜索默认使用余弦相似度
         let results: Vec<(String, Vec<SearchResult>)> = query_embeddings
             .iter()
             .map(|(id, embedding)| {
-                let search_results = self.search_in_candidates(embedding, &embeddings, options);
+                let search_results = self.search_in_candidates(
+                    embedding, 
+                    &embeddings, 
+                    options, 
+                    SimilarityType::Cosine, 
+                    0.07
+                );
                 (id.clone(), search_results)
             })
             .collect();
@@ -199,8 +255,21 @@ impl SimilaritySearcher {
             .filter(|e| e.file_id != file_id)
             .collect();
 
+        // 根据 embedding 的 model_version 确定相似度类型
+        let (similarity_type, temperature) = if let Some(spec) = get_model_spec(&query_embedding.model_version) {
+            (spec.similarity_type(), spec.sigmoid_temperature())
+        } else {
+            (SimilarityType::Cosine, 0.07)
+        };
+
         // 执行搜索
-        let results = self.search_in_candidates(&query_embedding.embedding, &candidates, options);
+        let results = self.search_in_candidates(
+            &query_embedding.embedding, 
+            &candidates, 
+            options, 
+            similarity_type, 
+            temperature
+        );
 
         Ok(results)
     }
@@ -414,8 +483,8 @@ mod tests {
         let mut index = VectorIndex::new(3);
         
         index.add("file1".to_string(), vec![1.0, 0.0, 0.0]);
-        add.add("file2".to_string(), vec![0.0, 1.0, 0.0]);
-        add.add("file3".to_string(), vec![0.0, 0.0, 1.0]);
+        index.add("file2".to_string(), vec![0.0, 1.0, 0.0]);
+        index.add("file3".to_string(), vec![0.0, 0.0, 1.0]);
 
         let results = index.search(&[1.0, 0.0, 0.0], 2);
         

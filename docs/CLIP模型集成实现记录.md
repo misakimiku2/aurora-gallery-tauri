@@ -815,10 +815,124 @@ pub struct ModelFile {
      - `src/types.ts` - 添加 SigLIP 2 类型
      - `src/components/SettingsModal.tsx` - 添加 SigLIP 2 模型选项
 
+64. **Unified 模型输入缺失修复** ✅
+    - **问题**：SigLIP 2 的 `model.onnx` 是合并模型。ONNX Runtime 检测到输入包含 `input_ids` 和 `pixel_values`，不传其中之一会报错。
+    - **修复**：在 `model.rs` 中引入动态检查并自动补齐极小尺寸的虚拟占位张量（如 `[1,1]`），确保计算图能正常启动。
+
+65. **DirectML 控制流回退与性能优化** ✅
+    - **问题**：合并模型包含 `If` 节点，DirectML 不支持控制流节点加速，导致全图强制回退到 CPU 执行，处理 32 张图需 30s。
+    - **终极方案**：切换到 HuggingFace 提供的**分离版模型** (`vision_model.onnx` 和 `text_model.onnx`)。
+    - **结果**：分离模型无控制逻辑，DirectML 满血加速，处理时间缩短至 **2s/批**，GPU 占用率升至 **80-90%**。
+
+66. **分离模型输出节点名称冲突修复** ✅
+    - **问题**：分离模型将输出名从 `image_embeds` 改为了 `pooler_output`，导致代码 panic。
+    - **修复**：更新 `SigLIP2So400M` 规格定义，将输出名重定向至 `pooler_output`。
+
+67. **前端模型规格更新** ✅
+    - **修改**：由于改用分离模型，总体积从 1.2 GB 变更为 **4.3 GB**。同步更新了 `SettingsModal.tsx` 中的显示数值。
+
 ### SigLIP 2 关键经验总结
 
-1. **模块化架构优势**：添加新模型只需实现 trait，无需修改核心逻辑
-2. **tokenizer 版本兼容性**：新模型可能需要更新的 tokenizers 版本
-3. **归一化参数差异**：不同模型使用不同的归一化参数，必须正确配置
-4. **多语言支持**：SigLIP 2 原生支持多语言，无需额外处理
-5. **模型文件结构差异**：SigLIP 2 使用单一 ONNX 模型（model.onnx + model.onnx_data），而 CLIP 使用分离的 vision_model.onnx 和 text_model.onnx
+1. **模块化架构优势**：添加新模型只需实现 trait，无需修改核心逻辑。
+2. **tokenizer 版本兼容性**：新模型可能需要更新的 tokenizers 版本。
+3. **归一化参数差异**：不同模型使用不同的归一化参数，必须正确配置。
+4. **多语言支持**：SigLIP 2 原生支持多语言，无需额外处理。
+5. **DirectML 局限性**：在 Windows 上应优先使用**分离的 ONNX 模型**，避开 `If/Loop` 控制流，以确保 100% GPU 推理。
+6. **输出节点校验**：使用脚本核实 ONNX 实际输出名（如 `pooler_output`），避免硬编码假设。
+
+### 2026-02-23 嵌入向量数据隔离与模型独立存储 🚀
+
+68. **嵌入向量数据隔离架构设计** ✅
+   - **背景问题**：
+     - 原 `file_id` 使用文件路径 MD5 哈希前 9 位，不同根目录下相同路径的文件会有相同 ID
+     - 嵌入向量存储在全局固定位置 `cache_root/clip/embeddings.db`
+     - 切换根目录后，旧目录的嵌入数据会干扰新目录的搜索
+     - 不同模型的嵌入向量互相覆盖，无法同时保存多个模型
+   - **解决方案**：
+     - 根目录隔离：嵌入数据库存储在 `{root_path}/.aurora/embeddings/` 目录
+     - 模型隔离：每个模型有独立的数据库文件 `{model_name}/embeddings.db`
+   - **数据库存储结构**：
+     ```
+     {root_path}/
+     └── .aurora/
+         ├── metadata.db          # 文件元数据
+         ├── colors.db            # 颜色数据
+         └── embeddings/          # 嵌入向量目录
+             ├── ViT-B-32/        # ViT-B/32 模型
+             │   └── embeddings.db
+             ├── ViT-L-14/        # ViT-L/14 模型
+             │   └── embeddings.db
+             └── SigLIP2-So400M/  # SigLIP 2 模型
+                 └── embeddings.db
+     ```
+   - **文件修改**：
+     - `src-tauri/src/clip/mod.rs` - ClipConfig 添加 `root_path` 和 `model_cache_dir` 字段
+     - `src-tauri/src/clip/embedding.rs` - EmbeddingStore 支持模型独立数据库
+
+69. **ClipManager 根目录与模型切换支持** ✅
+   - **新增功能**：
+     - `switch_root()` 方法：切换根目录时重新初始化嵌入存储
+     - `switch_model()` 方法：切换模型时切换到对应的嵌入数据库
+   - **修改逻辑**：
+     - 初始化时传入 `root_path` 参数
+     - 切换模型时自动切换嵌入数据库，无需重新生成
+   - **文件修改**：
+     - `src-tauri/src/clip/mod.rs` - 添加切换方法
+     - `src-tauri/src/main.rs` - 初始化时读取根目录路径
+
+70. **switch_root_database 命令增强** ✅
+   - **修改**：在切换根目录时同步切换 CLIP 嵌入数据库
+   - **文件修改**：
+     - `src-tauri/src/db_commands.rs` - 添加 CLIP 数据库切换
+
+71. **模型切换时嵌入检查修复** ✅
+   - **问题**：切换模型后生成嵌入时，`has_embedding()` 只检查 `file_id`，导致所有文件被跳过
+   - **修复**：
+     - 新增 `has_embedding_for_model(file_id, model_version)` 方法
+     - 修改过滤逻辑使用新方法检查当前模型的嵌入
+   - **文件修改**：
+     - `src-tauri/src/clip/embedding.rs` - 添加 `has_embedding_for_model()` 方法
+     - `src-tauri/src/clip_commands.rs` - 使用新方法过滤
+
+72. **取消功能卡住问题修复** ✅
+   - **问题**：当任务已完成（如所有文件被跳过）时，取消事件不会被发送，前端卡在"正在取消"
+   - **修复**：
+     - 增强 `GenerationGuard` 结构体，添加 `cancelled` 标志和 `app` 句柄
+     - 在 guard 被 drop 时自动发送 `clip-embedding-cancelled` 事件
+   - **文件修改**：
+     - `src-tauri/src/clip_commands.rs` - 增强 GenerationGuard
+
+73. **嵌入统计 API 更新** ✅
+   - **新增命令**：`clip_get_embedding_stats` 返回当前模型的嵌入统计
+   - **返回数据**：
+     - `total_count`: 当前模型的嵌入数量
+     - `model_name`: 当前模型名称
+     - `root_path`: 当前根目录路径
+   - **文件修改**：
+     - `src-tauri/src/clip_commands.rs` - 新增命令
+     - `src-tauri/src/main.rs` - 注册命令
+     - `src/api/tauri-bridge.ts` - 添加 API 接口
+
+74. **前端实时更新优化** ✅
+   - **问题**：切换模型后，嵌入向量统计信息没有实时更新
+   - **修复**：在 `handleSelectModel` 中添加 `loadEmbeddingCount()` 调用
+   - **UI 更新**：
+     - 显示当前模型名称
+     - 显示当前根目录名称
+   - **文件修改**：
+     - `src/components/SettingsModal.tsx` - 切换模型后刷新统计
+
+### 数据隔离架构总结
+
+| 维度 | 隔离方式 | 优势 |
+|------|----------|------|
+| **根目录** | 每个根目录有独立的 `.aurora` 文件夹 | 不同图片库完全隔离 |
+| **模型** | 每个模型有独立的 `embeddings.db` 文件 | 容错性强，可单独备份/删除 |
+| **文件** | 通过 `file_id`（路径哈希）区分 | 快速查找 |
+
+### 关键经验总结
+
+1. **数据隔离重要性**：不同模型、不同根目录的数据必须隔离，避免相互干扰
+2. **模型独立存储**：每个模型的嵌入数据独立存储，避免单一数据库损坏影响所有模型
+3. **切换即切换**：切换模型时自动切换嵌入数据库，用户无需重新生成
+4. **实时状态同步**：前端状态需要与后端操作同步更新，避免显示陈旧数据

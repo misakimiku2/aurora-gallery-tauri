@@ -126,13 +126,19 @@ pub async fn switch_root_database(
     let aurora_dir = root.join(".aurora");
     
     let metadata_db_path = aurora_dir.join("metadata.db");
-    let colors_db_path = aurora_dir.join("colors.db");
-    
     app_db_pool.switch(&metadata_db_path)?;
     
+    let colors_db_path = aurora_dir.join("colors.db");
     color_db_pool.switch(&colors_db_path)?;
     
     let _ = color_db_pool.ensure_cache_initialized_async();
+    
+    // 切换 CLIP 嵌入数据库
+    if let Some(manager) = crate::clip::get_clip_manager().await {
+        let mut guard = manager.write().await;
+        guard.switch_root(root.to_path_buf()).await?;
+        log::info!("CLIP embedding database switched to: {:?}", new_root_path);
+    }
     
     Ok(())
 }
