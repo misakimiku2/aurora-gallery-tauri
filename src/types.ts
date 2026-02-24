@@ -190,6 +190,26 @@ export interface AIConfig {
 export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
+// 模型系列类型
+export type ModelSeries = 'clip' | 'siglip' | 'wd-tagger';
+
+// 模型功能特性
+export interface ModelFeatures {
+  textSearch: boolean;      // 文本搜索
+  imageSearch: boolean;     // 以图搜图
+  autoTagging: boolean;     // 自动标签
+  multilingual: boolean;    // 多语言支持
+  animeOptimized?: boolean; // 二次元优化（可选）
+}
+
+// 系列信息
+export interface ModelSeriesInfo {
+  id: ModelSeries;
+  name: string;
+  description: string;
+  color: string; // 主题色
+}
+
 export interface ClipModelInfo {
   name: ClipModelName;
   displayName: string;
@@ -198,6 +218,9 @@ export interface ClipModelInfo {
   sizeDisplay: string;
   embeddingDim: number;
   isRecommended: boolean;
+  series: ModelSeries; // 所属系列
+  isHighPrecision?: boolean; // 是否为高精度模型
+  features: ModelFeatures; // 功能特性
 }
 
 export interface ClipSettings {
@@ -211,6 +234,10 @@ export interface ClipSettings {
 
   modelVersion: string;
   downloadedAt?: number;
+  
+  minScore: number;        // 相似度阈值 (0.0 - 1.0)
+  maxResults: number;      // 最大返回结果数
+  unlimitedResults: boolean; // 是否无限制结果数
 }
 
 export interface AppSettings {

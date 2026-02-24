@@ -61,7 +61,9 @@ interface TopBarProps {
   onToggleClipSearch?: () => void;
   onClipSearch?: (query: string) => Promise<void>;
   clipEnabled?: boolean;
+  clipModelName?: string;
   onOpenClipSettings?: () => void;
+  showToast?: (message: string) => void;
 } 
 
 const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { current: number, total: number, pageSize: number, onPageChange: (page: number) => void, t: any }) => {
@@ -546,7 +548,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   onToggleClipSearch,
   onClipSearch,
   clipEnabled = true,
-  onOpenClipSettings
+  clipModelName,
+  onOpenClipSettings,
+  showToast
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -690,7 +694,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
-            : isClipSearchEnabled && clipEnabled
+            : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
               ? 'border-green-500 shadow-sm shadow-green-500/20'
               : isAISearchEnabled 
                 ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
@@ -775,7 +779,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 ? '搜索人物'
                 : activeTab.viewMode === 'tags-overview'
                   ? '搜索标签'
-                  : isClipSearchEnabled && clipEnabled
+                  : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
                     ? '输入自然语言描述，如：夕阳下的海滩、穿红色衣服的人...'
                     : isAISearchEnabled
                       ? t('settings.aiSmartSearch')
@@ -829,6 +833,9 @@ export const TopBar: React.FC<TopBarProps> = ({
                  onClick={() => {
                    if (!clipEnabled) {
                      onOpenClipSettings && onOpenClipSettings();
+                   } else if (clipModelName === 'WD-EVA02-Large-Tagger-V3') {
+                     showToast && showToast('WD-EVA02-Large-Tagger-V3模型不支持语义搜索');
+                     onOpenClipSettings && onOpenClipSettings();
                    } else {
                      onToggleClipSearch && onToggleClipSearch();
                    }
@@ -837,11 +844,21 @@ export const TopBar: React.FC<TopBarProps> = ({
                  className={`flex-shrink-0 cursor-pointer transition-colors flex items-center ${
                    !clipEnabled 
                      ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500' 
-                     : isClipSearchEnabled 
-                       ? 'text-green-500 hover:text-green-600' 
-                       : 'text-gray-400 hover:text-green-500'
+                     : clipModelName === 'WD-EVA02-Large-Tagger-V3'
+                       ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500'
+                       : isClipSearchEnabled 
+                         ? 'text-green-500 hover:text-green-600' 
+                         : 'text-gray-400 hover:text-green-500'
                  }`}
-                 title={!clipEnabled ? '需要开启AI视觉功能' : isClipSearchEnabled ? 'CLIP 语义搜索已启用' : '启用 CLIP 语义搜索'}
+                 title={
+                   !clipEnabled 
+                     ? '需要开启AI视觉功能' 
+                     : clipModelName === 'WD-EVA02-Large-Tagger-V3'
+                       ? 'WD-EVA02-Large-Tagger-V3模型不支持语义搜索'
+                       : isClipSearchEnabled 
+                         ? 'CLIP 语义搜索已启用' 
+                         : '启用 CLIP 语义搜索'
+                 }
                >
                  {isClipSearching ? (
                    <Loader2 size={16} className="animate-spin" />

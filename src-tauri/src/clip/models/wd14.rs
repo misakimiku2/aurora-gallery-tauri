@@ -1,6 +1,6 @@
 //! WD14 EVA02 Large Tagger V3 模型规格定义
 //!
-//! 该模型专门用于二次元图像标签识别，并输出 1024 维的嵌入向量。
+//! 该模型专门用于二次元图像标签识别，并输出 10861 维的标签概率向量作为特征。
 
 use super::{ModelFile, ModelSpec, SimilarityType};
 
@@ -17,11 +17,11 @@ impl ModelSpec for WdEva02LargeV3 {
     }
 
     fn description(&self) -> &str {
-        "EVA02 Large 架构的标注模型，专为二次元优化。支持超过 1 万个标签识别，并提供 1024 维 Embedding 用于搜索。"
+        "EVA02 Large 架构的标注模型，专为二次元优化。支持超过 1 万个标签识别，并提供 10861 维标签概率向量用于搜索。"
     }
 
     fn embedding_dim(&self) -> usize {
-        1024
+        10861 // 使用标签概率向量作为特征
     }
 
     fn image_size(&self) -> usize {
@@ -61,7 +61,7 @@ impl ModelSpec for WdEva02LargeV3 {
     }
 
     fn vision_output_name(&self) -> &str {
-        "/core_model/fc_norm/LayerNormalization_output_0" // WD14 多输出模型中 Embedding 节点的真实路径
+        "output" // 使用标签概率输出作为特征向量（更有区分度）
     }
 
     fn text_input_name(&self) -> &str {
@@ -77,7 +77,7 @@ impl ModelSpec for WdEva02LargeV3 {
     }
 
     fn tagger_output_name(&self) -> &str {
-        "output" // 标签概率输出通常是第一个节点
+        "output" // 标签概率输出（与 vision_output_name 相同）
     }
 
     fn tags_file(&self) -> Option<&str> {

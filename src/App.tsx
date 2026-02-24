@@ -109,6 +109,9 @@ export const App: React.FC = () => {
         downloadStatus: 'not_started',
         downloadProgress: 0,
         modelVersion: '1.0.0',
+        minScore: 0.4,
+        maxResults: 200,
+        unlimitedResults: false,
       },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
     },
@@ -1744,6 +1747,83 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSearchSimilarImages = async (fileId: string) => {
+    const file = state.files[fileId];
+    if (!file || file.type !== FileType.IMAGE) return;
+    
+    const taskId = startTask('ai', [], '正在搜索相似图片...', false);
+    
+    try {
+      const { clipSearchByImage } = await import('./api/tauri-bridge');
+      const modelName = state.settings.clip.modelName;
+      const minScore = state.settings.clip.minScore ?? 0.4;
+      const unlimitedResults = state.settings.clip.unlimitedResults ?? false;
+      const maxResults = unlimitedResults ? 999999 : (state.settings.clip.maxResults ?? 200);
+      
+      console.log('[Image Search] Starting search:', { filePath: file.path, modelName, minScore, maxResults, unlimitedResults });
+      
+      const results = await clipSearchByImage(file.path, { top_k: maxResults, min_score: minScore }, modelName);
+      console.log('[Image Search] Results:', results);
+      
+      if (results && results.length > 0) {
+        const validPaths: string[] = [];
+        const allFiles = Object.values(state.files);
+        const idMap = new Map<string, string>();
+        allFiles.forEach(f => {
+          if (f.id) idMap.set(f.id, f.path);
+        });
+        
+        results.forEach(result => {
+          const filePath = idMap.get(result.file_id);
+          if (filePath) {
+            validPaths.push(filePath);
+          }
+        });
+        
+        const aiFilter: AiSearchFilter = {
+          keywords: [],
+          colors: [],
+          people: [],
+          originalQuery: `image:${file.name}`,
+          filePaths: validPaths
+        };
+        
+        pushHistory(activeTab.folderId, null, 'browser', '', activeTab.searchScope, activeTab.activeTags, null, 0, aiFilter);
+        
+        if (validPaths.length === 0) {
+          showToast(`未找到相似图片，请确保已生成嵌入向量。`);
+        } else {
+          showToast(`找到 ${validPaths.length} 张相似图片`);
+        }
+      } else {
+        try {
+          const { clipGetEmbeddingCountByModel } = await import('./api/tauri-bridge');
+          const count = await clipGetEmbeddingCountByModel(modelName);
+          if (count === 0) {
+            showToast(`图库中尚未生成 ${modelName} 的嵌入向量信息，请前往设置进行生成。`);
+          } else {
+            showToast(`未找到相似图片。`);
+          }
+        } catch (e) {
+          showToast(`未找到相似图片。`);
+        }
+      }
+    } catch (e) {
+      console.error("Image search failed", e);
+      const errorMsg = String(e);
+      if (errorMsg.includes('Invalid PNG') || errorMsg.includes('Format error') || errorMsg.includes('Failed to open image')) {
+        showToast(`图片文件可能已损坏，无法读取: ${file.name}`);
+      } else if (errorMsg.includes('not initialized') || errorMsg.includes('not loaded')) {
+        showToast(`模型未加载，请前往设置加载模型。`);
+      } else {
+        showToast("以图搜图失败: " + e);
+      }
+    } finally {
+      updateTask(taskId, { current: 1, status: 'completed' });
+      setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+    }
+  };
+
   const handleDropOnTag = (tag: string, sourceIds: string[]) => { /* ... */ };
   const startRename = (id: string) => setState(s => ({ ...s, renamingId: id }));
   const handleResolveExtensionChange = (id: string, name: string) => handleUpdateFile(id, { name });
@@ -3312,9 +3392,12 @@ export const App: React.FC = () => {
         // 导入 CLIP 搜索 API
         const { clipSearchByText } = await import('./api/tauri-bridge');
         const modelName = state.settings.clip.modelName;
-        console.log('[CLIP Search] Starting search:', { query: query.trim(), modelName });
+        const minScore = state.settings.clip.minScore ?? 0.4;
+        const unlimitedResults = state.settings.clip.unlimitedResults ?? false;
+        const maxResults = unlimitedResults ? 999999 : (state.settings.clip.maxResults ?? 200);
+        console.log('[CLIP Search] Starting search:', { query: query.trim(), modelName, minScore, maxResults, unlimitedResults });
 
-        const results = await clipSearchByText(query.trim(), { top_k: 50, min_score: 0.100 }, modelName);
+        const results = await clipSearchByText(query.trim(), { top_k: maxResults, min_score: minScore }, modelName);
         console.log('[CLIP Search] Results:', results);
 
         if (results && results.length > 0) {
@@ -4084,7 +4167,9 @@ export const App: React.FC = () => {
               isClipSearchEnabled={isClipSearchEnabled}
               onToggleClipSearch={() => setIsClipSearchEnabled(!isClipSearchEnabled)}
               clipEnabled={state.settings.clip.enabled}
+              clipModelName={state.settings.clip.modelName}
               onOpenClipSettings={openClipSettings}
+              showToast={showToast}
             />
             {/* ... (Filter UI, same as before) ... */}
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
@@ -4460,6 +4545,7 @@ export const App: React.FC = () => {
         handleClipEnabledChange={handleClipEnabledChange}
         clipLoading={clipLoading}
         showToast={showToast}
+        onClipSearchDisabled={() => setIsClipSearchEnabled(false)}
         rememberExitChoice={rememberExitChoice}
         setRememberExitChoice={setRememberExitChoice}
         handleChangePath={handleChangePath}
@@ -4492,6 +4578,7 @@ export const App: React.FC = () => {
         peopleWithDisplayCounts={peopleWithDisplayCounts}
         aiConnectionStatus={state.aiConnectionStatus}
         displayFileIds={displayFileIds}
+        clipSettings={state.settings.clip}
         t={t}
         closeContextMenu={closeContextMenu}
         handleOpenInNewTab={handleOpenInNewTab}
@@ -4523,6 +4610,7 @@ export const App: React.FC = () => {
         handleOpenCompareInNewTab={handleOpenCompareInNewTab}
         handleAddToCompareCanvas={handleAddToCompareCanvas}
         handleCopyImageToClipboard={handleCopyImageToClipboard}
+        handleSearchSimilarImages={handleSearchSimilarImages}
       />
     </div>
   );

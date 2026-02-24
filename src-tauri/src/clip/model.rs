@@ -215,7 +215,6 @@ impl ClipModel {
         _model_spec: &dyn ModelSpec,
         use_gpu: bool,
     ) -> Result<(Arc<std::sync::Mutex<Session>>, Arc<std::sync::Mutex<Session>>, bool), Box<dyn std::error::Error>> {
-        let builder = Session::builder()?;
         let mut actual_gpu_active = false;
         
         let builder = if use_gpu {
@@ -225,7 +224,7 @@ impl ClipModel {
                 let dml_provider = ort::execution_providers::DirectMLExecutionProvider::default()
                     .with_device_id(0);
                 
-                match builder.clone().with_execution_providers([dml_provider.build()]) {
+                match Session::builder()?.with_execution_providers([dml_provider.build()]) {
                     Ok(b) => {
                         log::info!("DirectML Execution Provider enabled successfully!");
                         actual_gpu_active = true;
@@ -233,7 +232,10 @@ impl ClipModel {
                     }
                     Err(e) => {
                         log::warn!("DirectML failed: {}, falling back to CPU...", e);
+                        let cpu_threads = num_cpus::get();
+                        log::info!("Configuring CPU session with {} threads", cpu_threads);
                         Session::builder()?
+                            .with_intra_threads(cpu_threads)?
                     }
                 }
             }
@@ -241,11 +243,16 @@ impl ClipModel {
             #[cfg(not(target_os = "windows"))]
             {
                 log::info!("GPU acceleration only supported on Windows (DirectML), using CPU");
-                builder
+                let cpu_threads = num_cpus::get();
+                log::info!("Configuring CPU session with {} threads", cpu_threads);
+                Session::builder()?
+                    .with_intra_threads(cpu_threads)?
             }
         } else {
-            log::info!("GPU acceleration disabled, using CPU");
-            builder
+            let cpu_threads = num_cpus::get();
+            log::info!("GPU acceleration disabled, using CPU with {} threads", cpu_threads);
+            Session::builder()?
+                .with_intra_threads(cpu_threads)?
         };
 
         // 检查是否使用单一模型文件（如 SigLIP 2）
@@ -619,10 +626,22 @@ impl ClipModel {
 
         // 提取嵌入向量
         let output_node = self.model_spec.vision_output_name();
+        
+        // 诊断：记录所有输出节点
+        let available_outputs: Vec<String> = outputs.keys().map(|k| k.to_string()).collect();
+        log::info!("[CLIP Debug] Vision - Available output nodes: {:?}", available_outputs);
+        log::info!("[CLIP Debug] Vision - Expected output node: {}", output_node);
+        
         let (_shape, embedding_data): (&ort::tensor::Shape, &[f32]) = outputs.get(output_node)
             .ok_or_else(|| format!("Output node '{}' not found. Available: {:?}", output_node, outputs.keys().collect::<Vec<_>>()))?
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("Failed to extract embedding from '{}': {:?}", output_node, e))?;
+
+        // 诊断：记录原始嵌入数据
+        let raw_norm: f32 = embedding_data.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let raw_mean: f32 = embedding_data.iter().sum::<f32>() / embedding_data.len() as f32;
+        log::info!("[CLIP Debug] Vision - Raw embedding: shape={:?}, norm={:.4}, mean={:.6}, first 5={:?}", 
+            _shape, raw_norm, raw_mean, embedding_data.iter().take(5).collect::<Vec<_>>());
 
         // 转换为 Vec<f32> 并归一化
         let mut embedding: Vec<f32> = embedding_data.iter().copied().collect();
@@ -753,9 +772,9 @@ impl ClipModel {
         }
 
         // WD14 (Tagger) 模型在 DirectML 上批量推理不稳定，使用流水线串行处理
-        // 在 GPU 推理当前图像时，CPU 同时预处理下一张图像
-        if self.model_spec.is_tagger() {
-            log::info!("Tagger model ({}), using pipelined serial processing for DirectML compatibility", 
+        // 但在 CPU 模式下可以使用批量推理
+        if self.model_spec.is_tagger() && self.is_gpu_active {
+            log::info!("Tagger model ({}) with GPU, using pipelined serial processing for DirectML compatibility", 
                 self.model_spec.name());
             return self.encode_images_pipelined(image_paths);
         }
@@ -772,7 +791,7 @@ impl ClipModel {
         }
 
         // 大批量使用真正的批量推理，带自动降级机制
-        log::info!("Large batch ({}), using GPU batch processing with auto-fallback", image_paths.len());
+        log::info!("Large batch ({}), using batch processing with auto-fallback", image_paths.len());
         self.encode_images_batch_with_fallback(image_paths)
     }
 
@@ -1001,8 +1020,12 @@ impl ClipModel {
         let image_size = self.model_spec.image_size();
 
         // 使用多线程批量预处理所有图像
-        // 根据 CPU 核心数动态调整线程数，但至少使用 8 个线程
-        let num_threads = std::cmp::max(8, num_cpus::get() / 2);
+        // CPU模式使用全部逻辑核心，GPU模式使用一半核心避免抢占资源
+        let num_threads = if self.is_gpu_active {
+            std::cmp::max(4, num_cpus::get() / 2)
+        } else {
+            num_cpus::get()
+        };
         log::info!("Preprocessing {} images using rayon ({} threads)...", batch_size, num_threads);
         let preprocess_start = std::time::Instant::now();
         

@@ -61,6 +61,7 @@ interface AppModalsProps {
   handleClipEnabledChange: (enabled: boolean) => void | Promise<void>;
   clipLoading: boolean;
   showToast: (msg: string) => void;
+  onClipSearchDisabled?: () => void;
   rememberExitChoice: boolean;
   setRememberExitChoice: (val: boolean) => void;
   // Settings specific
@@ -120,6 +121,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleClipEnabledChange,
   clipLoading,
   showToast,
+  onClipSearchDisabled,
   rememberExitChoice,
   setRememberExitChoice,
   handleChangePath,
@@ -446,6 +448,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           onInstallUpdate={onInstallUpdate}
           onOpenDownloadFolder={onOpenDownloadFolder}
           onShowToast={showToast}
+          onClipSearchDisabled={onClipSearchDisabled}
         />
       )}
 

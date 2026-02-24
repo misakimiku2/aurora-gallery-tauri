@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
 import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
-import { ClipSettings, ClipModelInfo, ClipModelName } from '../types';
+import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures } from '../types';
 
 // 关于面板组件
 interface AboutPanelProps {
@@ -234,8 +234,41 @@ interface AIVisionPanelProps {
   onUpdateSettings: (settings: ClipSettings) => void;
   onShowToast?: (msg: string, duration?: number) => void;
   onEnabledChange?: (enabled: boolean) => void;
+  onClipSearchDisabled?: () => void;
   clipLoading?: boolean;
 }
+
+// 模型系列定义
+const MODEL_SERIES: ModelSeriesInfo[] = [
+  {
+    id: 'clip',
+    name: 'CLIP 系列',
+    description: 'OpenAI 开发的经典视觉-语言模型',
+    color: '#3B82F6', // 蓝色
+  },
+  {
+    id: 'siglip',
+    name: 'SigLIP 系列',
+    description: 'Google 开发的多语言视觉模型',
+    color: '#F97316', // 橙色
+  },
+  {
+    id: 'wd-tagger',
+    name: 'WD Tagger 系列',
+    description: '专为动漫和插画优化的标签识别模型',
+    color: '#8B5CF6', // 紫色
+  },
+];
+
+// 功能特性标签配置
+const FEATURE_LABELS: Record<string, { icon: React.ElementType; label: string; color: string }> = {
+  textSearch: { icon: Search, label: '文本搜索', color: 'blue' },
+  imageSearch: { icon: Image, label: '以图搜图', color: 'green' },
+  autoTagging: { icon: Tag, label: '自动标签', color: 'purple' },
+  multilingual: { icon: Globe, label: '多语言', color: 'orange' },
+  highPrecision: { icon: Sparkles, label: '高精度', color: 'yellow' },
+  animeOptimized: { icon: Palette, label: '二次元', color: 'pink' },
+};
 
 const CLIP_MODELS: ClipModelInfo[] = [
   {
@@ -246,6 +279,13 @@ const CLIP_MODELS: ClipModelInfo[] = [
     sizeDisplay: '580 MB',
     embeddingDim: 512,
     isRecommended: true,
+    series: 'clip',
+    features: {
+      textSearch: true,
+      imageSearch: true,
+      autoTagging: false,
+      multilingual: false,
+    },
   },
   {
     name: 'ViT-L-14',
@@ -255,6 +295,14 @@ const CLIP_MODELS: ClipModelInfo[] = [
     sizeDisplay: '1.6 GB',
     embeddingDim: 768,
     isRecommended: false,
+    series: 'clip',
+    isHighPrecision: true, // 高精度标记
+    features: {
+      textSearch: true,
+      imageSearch: true,
+      autoTagging: false,
+      multilingual: false,
+    },
   },
   {
     name: 'SigLIP2-So400M',
@@ -264,6 +312,13 @@ const CLIP_MODELS: ClipModelInfo[] = [
     sizeDisplay: '4.3 GB',
     embeddingDim: 1152,
     isRecommended: false,
+    series: 'siglip',
+    features: {
+      textSearch: true,
+      imageSearch: true,
+      autoTagging: false,
+      multilingual: true,
+    },
   },
   {
     name: 'WD-EVA02-Large-Tagger-V3',
@@ -273,6 +328,14 @@ const CLIP_MODELS: ClipModelInfo[] = [
     sizeDisplay: '1.4 GB',
     embeddingDim: 1024,
     isRecommended: true,
+    series: 'wd-tagger',
+    features: {
+      textSearch: false,
+      imageSearch: true,
+      autoTagging: true,
+      multilingual: false,
+      animeOptimized: true,
+    },
   },
 ];
 
@@ -308,7 +371,10 @@ const formatSpeed = (bytesPerSecond: number): string => {
   return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
 };
 
-const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, clipLoading }) => {
+const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, onClipSearchDisabled, clipLoading }) => {
+  // 当前选中的模型系列
+  const [activeSeries, setActiveSeries] = useState<ModelSeries>('clip');
+
   // 从全局缓存初始化模型状态
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>(() => {
     const cached = getCachedModelStatuses();
@@ -760,6 +826,11 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
     onUpdateSettings({ ...settings, modelName });
 
+    // 如果切换到 WD14 模型，关闭语义搜索
+    if (modelName === 'WD-EVA02-Large-Tagger-V3') {
+      onClipSearchDisabled?.();
+    }
+
     try {
       setIsLoading(true);
       await clipLoadModel(modelName);
@@ -976,174 +1047,260 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           可用模型
         </h4>
 
-        {CLIP_MODELS.map((model) => {
-          const status = modelStatuses[model.name];
-          const isDownloaded = status?.is_downloaded ?? false;
-          const isLoadingModel = loadingModel === model.name;
-          const cachedStatus = getCachedModelStatus(model.name);
-          const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
-          const isCorrupted = corruptedModels.has(model.name);
-          const isDisabled = !settings.enabled || clipLoading;
+        {/* 模型系列标签页 */}
+        <div className="border-b border-gray-200 dark:border-gray-700">
+          <div className="flex">
+            {MODEL_SERIES.map((series) => {
+              const modelCount = CLIP_MODELS.filter(m => m.series === series.id).length;
+              const isActive = activeSeries === series.id;
+              // 检查当前使用的模型是否属于这个系列
+              const currentModelInSeries = CLIP_MODELS.find(m => m.name === settings.modelName)?.series === series.id;
+              return (
+                <button
+                  key={series.id}
+                  onClick={() => setActiveSeries(series.id)}
+                  className={`flex-1 py-3 px-2 text-sm font-medium text-center transition-colors relative ${
+                    isActive
+                      ? 'text-gray-900 dark:text-white'
+                      : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                  }`}
+                >
+                  <span className="flex items-center justify-center gap-1.5">
+                    {series.name}
+                    {currentModelInSeries && settings.enabled && (
+                      <span 
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: series.color }}
+                        title="当前使用的模型在此系列中"
+                      />
+                    )}
+                  </span>
+                  <span className="ml-1.5 text-xs opacity-60">({modelCount})</span>
+                  {isActive && (
+                    <div
+                      className="absolute bottom-0 left-0 right-0 h-0.5"
+                      style={{ backgroundColor: series.color }}
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-          return (
-            <div
-              key={model.name}
-              className={`bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted && settings.enabled && !clipLoading
-                ? 'border-green-500 ring-2 ring-green-500/20'
-                : isCorrupted
-                  ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
-                  : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
-                }`}
-            >
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h5 className="font-semibold text-gray-800 dark:text-white">
-                      {model.displayName}
-                    </h5>
-                    {model.isRecommended && (
-                      <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
-                        推荐
-                      </span>
-                    )}
-                    {isCorrupted && (
-                      <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs rounded-full flex items-center">
-                        <AlertCircle size={12} className="mr-1" />
-                        文件损坏
-                      </span>
-                    )}
-                    {isDownloaded && !isCorrupted && (
-                      <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-full flex items-center">
-                        <Check size={12} className="mr-1" />
-                        已下载
-                      </span>
-                    )}
-                    {isDownloaded && status?.is_gpu_active && !isCorrupted && settings.enabled && !clipLoading && (
-                      <span className="ml-2 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
-                        <Zap size={12} className="mr-1" />
-                        GPU 已激活
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                    {model.description}
-                  </p>
-                  <div className="flex items-center gap-4 text-xs text-gray-400">
-                    <span className="flex items-center">
-                      <HardDrive size={12} className="mr-1" />
-                      {model.sizeDisplay}
-                    </span>
-                    <span className="flex items-center">
-                      <Activity size={12} className="mr-1" />
-                      {model.embeddingDim} 维向量
-                    </span>
-                    {isDownloaded && status && (
-                      <span className="flex items-center text-green-500">
-                        <Check size={12} className="mr-1" />
-                        已下载 {formatBytes(status.downloaded_size)}
-                      </span>
-                    )}
-                  </div>
-                </div>
+        {/* 当前系列的模型列表 */}
+        <div className="space-y-4">
+          {CLIP_MODELS.filter(model => model.series === activeSeries).map((model) => {
+            const status = modelStatuses[model.name];
+            const isDownloaded = status?.is_downloaded ?? false;
+            const isLoadingModel = loadingModel === model.name;
+            const cachedStatus = getCachedModelStatus(model.name);
+            const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
+            const isCorrupted = corruptedModels.has(model.name);
+            const isDisabled = !settings.enabled || clipLoading;
 
-                <div className="flex items-center gap-2 ml-4">
-                  {isStatusLoading ? (
-                    <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-400 rounded-lg text-sm font-medium flex items-center">
-                      <RefreshCw size={16} className="mr-2 animate-spin" />
-                      加载中...
+            // 获取所有功能特性（包括支持和不支持的）
+            const allFeatures = Object.entries(model.features);
+            // 定义功能显示顺序（不包含高精度，高精度作为独立标签显示）
+            const featureOrder = ['textSearch', 'imageSearch', 'autoTagging', 'multilingual', 'animeOptimized'];
+
+            return (
+              <div
+                key={model.name}
+                className={`relative bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted && settings.enabled && !clipLoading
+                  ? 'border-green-500 ring-2 ring-green-500/20'
+                  : isCorrupted
+                    ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
+                  }`}
+              >
+                {/* 高精度标签 - 绝对定位在右下角 */}
+                {model.isHighPrecision && (
+                  <span className="absolute bottom-[20px] right-[20px] inline-flex items-center text-xs text-yellow-600 dark:text-yellow-400">
+                    <Sparkles size={12} className="mr-1" />
+                    高精度
+                  </span>
+                )}
+                {/* 第一行：标题、标签、按钮 */}
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <h5 className="font-semibold text-gray-800 dark:text-white">
+                        {model.displayName}
+                      </h5>
+                      {model.isRecommended && (
+                        <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
+                          推荐
+                        </span>
+                      )}
+                      {isCorrupted && (
+                        <span className="px-2 py-0.5 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-xs rounded-full flex items-center">
+                          <AlertCircle size={12} className="mr-1" />
+                          文件损坏
+                        </span>
+                      )}
+                      {isDownloaded && !isCorrupted && (
+                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-full flex items-center">
+                          <Check size={12} className="mr-1" />
+                          已下载
+                        </span>
+                      )}
+                      {isDownloaded && status?.is_gpu_active && !isCorrupted && settings.enabled && !clipLoading && (
+                        <span className="ml-2 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
+                          <Zap size={12} className="mr-1" />
+                          GPU 已激活
+                        </span>
+                      )}
                     </div>
-                  ) : isCorrupted ? (
-                    <button
-                      onClick={() => handleRepairModel(model.name)}
-                      disabled={isLoading || isDisabled}
-                      className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
-                    >
-                      <RefreshCw size={16} className="mr-2" />
-                      修复
-                    </button>
-                  ) : isDownloaded ? (
-                    <>
-                      <button
-                        onClick={() => handleSelectModel(model.name)}
-                        disabled={isLoading || isDisabled}
-                        className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name && settings.enabled && !clipLoading
-                          ? 'bg-green-500 text-white'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                          } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      >
-                        {settings.modelName === model.name && settings.enabled && !clipLoading ? '使用中' : '使用'}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(model.name)}
-                        disabled={isDisabled}
-                        className={`p-2 rounded-lg transition-colors ${isDisabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
-                        title={clipLoading ? '模型正在加载中' : isDisabled ? '需要先启用 AI 视觉功能' : '删除模型'}
-                      >
-                        <Trash size={18} />
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => handleDownload(model.name)}
-                      disabled={isLoadingModel || isDisabled}
-                      className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
-                    >
-                      {isLoadingModel ? (
-                        <>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                      {model.description}
+                    </p>
+                    <div className="flex items-center gap-4 text-xs text-gray-400">
+                      <span className="flex items-center">
+                        <HardDrive size={12} className="mr-1" />
+                        {model.sizeDisplay}
+                      </span>
+                      <span className="flex items-center">
+                        <Activity size={12} className="mr-1" />
+                        {model.embeddingDim} 维向量
+                      </span>
+                      {isDownloaded && status && (
+                        <span className="flex items-center text-green-500">
+                          <Check size={12} className="mr-1" />
+                          已下载 {formatBytes(status.downloaded_size)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                      {isStatusLoading ? (
+                        <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-400 rounded-lg text-sm font-medium flex items-center">
                           <RefreshCw size={16} className="mr-2 animate-spin" />
-                          下载中...
+                          加载中...
+                        </div>
+                      ) : isCorrupted ? (
+                        <button
+                          onClick={() => handleRepairModel(model.name)}
+                          disabled={isLoading || isDisabled}
+                          className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                        >
+                          <RefreshCw size={16} className="mr-2" />
+                          修复
+                        </button>
+                      ) : isDownloaded ? (
+                        <>
+                          <button
+                            onClick={() => handleSelectModel(model.name)}
+                            disabled={isLoading || isDisabled}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name && settings.enabled && !clipLoading
+                              ? 'bg-green-500 text-white'
+                              : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                          >
+                            {settings.modelName === model.name && settings.enabled && !clipLoading ? '使用中' : '使用'}
+                          </button>
+                          <button
+                            onClick={() => handleDelete(model.name)}
+                            disabled={isDisabled}
+                            className={`p-2 rounded-lg transition-colors ${isDisabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
+                            title={clipLoading ? '模型正在加载中' : isDisabled ? '需要先启用 AI 视觉功能' : '删除模型'}
+                          >
+                            <Trash size={18} />
+                          </button>
                         </>
                       ) : (
-                        <>
-                          <Download size={16} className="mr-2" />
-                          下载
-                        </>
+                        <button
+                          onClick={() => handleDownload(model.name)}
+                          disabled={isLoadingModel || isDisabled}
+                          className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                        >
+                          {isLoadingModel ? (
+                            <>
+                              <RefreshCw size={16} className="mr-2 animate-spin" />
+                              下载中...
+                            </>
+                          ) : (
+                            <>
+                              <Download size={16} className="mr-2" />
+                              下载
+                            </>
+                          )}
+                        </button>
                       )}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {isLoadingModel && (
-                <div className="mt-4 space-y-3">
-                  <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
-                    <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)} 个文件</span>
-                    <span className="text-green-600 font-medium">
-                      {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)) * 100)}%
-                    </span>
-                  </div>
-                  {downloadProgress[model.name]?.fileName && (
-                    <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
-                      <div className="flex items-center justify-between text-xs mb-1">
-                        <span className="text-gray-700 dark:text-gray-300 truncate max-w-[60%]">
-                          {downloadProgress[model.name].fileName}
-                        </span>
-                        <span className="text-gray-500">
-                          {downloadProgress[model.name].progress}%
-                        </span>
-                      </div>
-                      <div className="h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-green-500 transition-all duration-300"
-                          style={{ width: `${downloadProgress[model.name].progress}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
-                        <span>
-                          {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB /
-                          {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
-                        </span>
-                        <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
-                          {formatSpeed(downloadProgress[model.name].speed)}
-                        </span>
-                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
-              )}
-            </div>
-          );
-        })}
+
+                {/* 第二行：功能特性标签 - 使用完整宽度 */}
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">功能特性:</span>
+                  {featureOrder.map((featureKey) => {
+                    const featureEntry = allFeatures.find(([key]) => key === featureKey);
+                    if (!featureEntry) return null;
+                    const [_, enabled] = featureEntry;
+                    const config = FEATURE_LABELS[featureKey];
+                    if (!config) return null;
+                    const IconComponent = config.icon;
+                    return (
+                      <span
+                        key={featureKey}
+                        className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${
+                          enabled
+                            ? `bg-${config.color}-100 dark:bg-${config.color}-900/30 text-${config.color}-600 dark:text-${config.color}-400`
+                            : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
+                        }`}
+                        title={enabled ? '支持' : '不支持'}
+                      >
+                        <IconComponent size={12} className="mr-1" />
+                        {config.label}
+                      </span>
+                    );
+                  })}
+                </div>
+
+                {isLoadingModel && (
+                  <div className="mt-4 space-y-3">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
+                      <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)} 个文件</span>
+                      <span className="text-green-600 font-medium">
+                        {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)) * 100)}%
+                      </span>
+                    </div>
+                    {downloadProgress[model.name]?.fileName && (
+                      <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="text-gray-700 dark:text-gray-300 truncate max-w-[60%]">
+                            {downloadProgress[model.name].fileName}
+                          </span>
+                          <span className="text-gray-500">
+                            {downloadProgress[model.name].progress}%
+                          </span>
+                        </div>
+                        <div className="h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-green-500 transition-all duration-300"
+                            style={{ width: `${downloadProgress[model.name].progress}%` }}
+                          />
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
+                          <span>
+                            {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB /
+                            {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
+                          </span>
+                          <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
+                            {formatSpeed(downloadProgress[model.name].speed)}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       {/* 嵌入向量生成 */}
@@ -1286,7 +1443,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           <Cpu size={16} className="mr-2" />
           高级选项
         </h4>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 space-y-4">
+          {/* GPU 加速 */}
           <div className={`flex items-center justify-between ${settings.enabled ? '' : 'opacity-50'}`}>
             <div>
               <div className="font-medium text-gray-800 dark:text-white">启用 GPU 加速</div>
@@ -1301,6 +1459,80 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             >
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.useGpu ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
+          </div>
+          
+          {/* 相似度阈值 */}
+          <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.minScore') || '相似度阈值'}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {t('settings.clip.minScoreDesc') || '过滤相似度低于此值的结果，值越高结果越精准'}
+                </div>
+              </div>
+              <div className="text-sm font-medium text-blue-600 dark:text-blue-400 min-w-[3rem] text-right">
+                {(settings.minScore ?? 0.4).toFixed(2)}
+              </div>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              value={settings.minScore ?? 0.4}
+              onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, minScore: parseFloat(e.target.value) })}
+              disabled={!settings.enabled}
+              className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+            <div className="flex justify-between text-xs text-gray-400 mt-1">
+              <span>0.00</span>
+              <span>0.50</span>
+              <span>1.00</span>
+            </div>
+          </div>
+          
+          {/* 最大结果数 */}
+          <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.maxResults') || '最大结果数'}</div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {t('settings.clip.maxResultsDesc') || '以图搜图返回的最大结果数量'}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="text-sm font-medium text-blue-600 dark:text-blue-400 min-w-[3rem] text-right">
+                  {settings.unlimitedResults ? (t('settings.clip.unlimited') || '无限制') : (settings.maxResults ?? 200)}
+                </div>
+                <button
+                  onClick={() => settings.enabled && onUpdateSettings({ ...settings, unlimitedResults: !settings.unlimitedResults })}
+                  disabled={!settings.enabled}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.unlimitedResults ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'} ${!settings.enabled ? 'cursor-not-allowed' : ''}`}
+                  title={t('settings.clip.unlimitedToggle') || '无限制'}
+                >
+                  <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.unlimitedResults ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                </button>
+              </div>
+            </div>
+            {!settings.unlimitedResults && (
+              <>
+                <input
+                  type="range"
+                  min="50"
+                  max="1000"
+                  step="50"
+                  value={settings.maxResults ?? 200}
+                  onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, maxResults: parseInt(e.target.value) })}
+                  disabled={!settings.enabled}
+                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>50</span>
+                  <span>500</span>
+                  <span>1000</span>
+                </div>
+              </>
+            )}
           </div>
         </div>
       </section>
@@ -1415,9 +1647,10 @@ interface SettingsModalProps {
   onInstallUpdate?: () => void;
   onOpenDownloadFolder?: () => void;
   onShowToast?: (msg: string, duration?: number) => void;
+  onClipSearchDisabled?: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled }) => {
   // ... (keep existing state and checkConnection logic)
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
@@ -3163,6 +3396,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               onUpdateSettings={(clipSettings) => onUpdateSettingsData({ clip: clipSettings })}
               onShowToast={onShowToast}
               onEnabledChange={onClipEnabledChange}
+              onClipSearchDisabled={onClipSearchDisabled}
               clipLoading={clipLoading}
             />
           )}

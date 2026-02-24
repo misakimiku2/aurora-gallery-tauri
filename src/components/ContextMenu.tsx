@@ -4,9 +4,9 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search
 } from 'lucide-react';
-import { FileType, FileNode, Person, TabState } from '../types';
+import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
 interface ContextMenuProps {
   contextMenu: {
@@ -22,6 +22,7 @@ interface ContextMenuProps {
   peopleWithDisplayCounts: Record<string, Person>;
   aiConnectionStatus: string;
   displayFileIds: string[];
+  clipSettings?: ClipSettings;
   t: (key: string) => string;
   closeContextMenu: () => void;
   handleOpenInNewTab: (id: string) => void;
@@ -53,6 +54,7 @@ interface ContextMenuProps {
   handleOpenCompareInNewTab: (ids: string[]) => void;
   handleAddToCompareCanvas: (tabId: string, imageIds: string[]) => void;
   handleCopyImageToClipboard: (fileId: string) => void;
+  handleSearchSimilarImages?: (imageId: string) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -63,6 +65,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   peopleWithDisplayCounts,
   aiConnectionStatus,
   displayFileIds,
+  clipSettings,
   t,
   closeContextMenu,
   handleOpenInNewTab,
@@ -93,7 +96,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   updateActiveTab,
   handleOpenCompareInNewTab,
   handleAddToCompareCanvas,
-  handleCopyImageToClipboard
+  handleCopyImageToClipboard,
+  handleSearchSimilarImages
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -192,6 +196,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyImageToClipboard(contextMenu.targetId!); closeContextMenu(); }}>
             <Clipboard size={14} className="mr-2 opacity-70" />
             {t('context.copyImage')}
+          </div>
+        )}
+        {contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && clipSettings?.enabled && handleSearchSimilarImages && (
+          <div className="px-4 py-2 hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleSearchSimilarImages(contextMenu.targetId!); closeContextMenu(); }}>
+            <Search size={14} className="mr-2 opacity-70" />
+            {t('context.searchSimilar') || '搜索相似图片'}
           </div>
         )}
         <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('copy-to-folder', { fileIds: activeTab.selectedFileIds.length > 0 ? activeTab.selectedFileIds : contextMenu.targetId ? [contextMenu.targetId] : [] }); closeContextMenu(); }}>

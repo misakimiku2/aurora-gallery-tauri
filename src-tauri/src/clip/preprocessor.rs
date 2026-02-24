@@ -121,13 +121,31 @@ impl ImagePreprocessor {
                 }
             },
             crate::clip::models::ImageTensorFormat::Nhwc => {
-                // WD14 / TensorFlow 格式: [R, G, B, R, G, B...]
-                for i in 0..pixel_count {
-                    let base_idx = i * 3;
-                    if base_idx + 2 < raw_pixels.len() {
-                        tensor[i * 3 + 0] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
-                        tensor[i * 3 + 1] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
-                        tensor[i * 3 + 2] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+                // WD14 / TensorFlow 格式: [B, G, R, B, G, R...]
+                // WD14 使用 BGR 格式，且不归一化（直接使用 0-255 值）
+                // 参考: https://huggingface.co/spaces/SmilingWolf/wd-tagger/blob/main/app.py
+                // image_array = image_array[:, :, ::-1]  # RGB -> BGR
+                // 不归一化，直接使用原始像素值
+                if self.mean == [0.0, 0.0, 0.0] && self.std == [1.0, 1.0, 1.0] {
+                    // WD14 模式: BGR 格式，不归一化
+                    for i in 0..pixel_count {
+                        let base_idx = i * 3;
+                        if base_idx + 2 < raw_pixels.len() {
+                            // RGB -> BGR 顺序
+                            tensor[i * 3 + 0] = raw_pixels[base_idx + 2] as f32; // B
+                            tensor[i * 3 + 1] = raw_pixels[base_idx + 1] as f32; // G
+                            tensor[i * 3 + 2] = raw_pixels[base_idx] as f32;     // R
+                        }
+                    }
+                } else {
+                    // 其他 NHWC 模型: 使用归一化
+                    for i in 0..pixel_count {
+                        let base_idx = i * 3;
+                        if base_idx + 2 < raw_pixels.len() {
+                            tensor[i * 3 + 0] = (raw_pixels[base_idx] as f32 / 255.0 - mean[0]) / std[0];
+                            tensor[i * 3 + 1] = (raw_pixels[base_idx + 1] as f32 / 255.0 - mean[1]) / std[1];
+                            tensor[i * 3 + 2] = (raw_pixels[base_idx + 2] as f32 / 255.0 - mean[2]) / std[2];
+                        }
                     }
                 }
             }

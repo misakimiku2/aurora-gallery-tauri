@@ -140,6 +140,8 @@ pub async fn clip_search_by_image(
     let inference_result = model.encode_image(&image_path)?;
     let image_embedding = inference_result.embedding;
     
+    let query_file_id = generate_id(&image_path);
+    
     let embedding_store = guard.embedding_store()
         .ok_or("Embedding store not available")?;
     
@@ -150,7 +152,17 @@ pub async fn clip_search_by_image(
         include_score: true,
     };
     
-    searcher.search(&image_embedding, &options, Some(&requested_model))
+    let results = if embedding_store.get_embedding(&query_file_id)?.is_some() {
+        log::info!("[CLIP Image Search] Query file {} has embedding in store, excluding self", query_file_id);
+        searcher.search_similar_exclude_self(&query_file_id, &options)?
+    } else {
+        log::info!("[CLIP Image Search] Query file {} not in store, searching directly", query_file_id);
+        searcher.search(&image_embedding, &options, Some(&requested_model))?
+    };
+    
+    log::info!("[CLIP Image Search] Found {} results", results.len());
+    
+    Ok(results)
 }
 
 #[tauri::command]
@@ -324,21 +336,19 @@ pub async fn clip_generate_embeddings_batch(
         let batch_size = match current_model_name.as_str() {
             "ViT-L-14" => {
                 log::info!("[CLIP Batch] Matched ViT-L-14, GPU: {}", using_gpu);
-                if using_gpu { 32 } else { 4 }
+                if using_gpu { 32 } else { 16 }
             },
             "ViT-B-32" => {
                 log::info!("[CLIP Batch] Matched ViT-B-32, GPU: {}", using_gpu);
-                if using_gpu { 64 } else { 8 }
+                if using_gpu { 64 } else { 32 }
             },
             "WD-EVA02-Large-Tagger-V3" => {
                 log::info!("[CLIP Batch] Matched WD-EVA02-Large-Tagger-V3 (High-Res), GPU: {}", using_gpu);
-                // 降低批次大小以避免 DirectML LayerNormalization 错误
-                // 448x448 输入尺寸较大，batch=32 在 DirectML 上不稳定
-                if using_gpu { 16 } else { 4 }
+                if using_gpu { 16 } else { 16 }
             },
             other => {
                 log::warn!("[CLIP Batch] Unknown model name '{}', using default batch size", other);
-                if using_gpu { 32 } else { 8 }
+                if using_gpu { 32 } else { 16 }
             },
         };
         log::info!("[CLIP Batch] Final: Model: {}, GPU: {}, batch_size: {}", 
