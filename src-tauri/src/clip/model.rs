@@ -743,13 +743,21 @@ impl ClipModel {
         Ok(vec)
     }
 
-    /// 批量编码图像 - 使用 GPU 批量推理
+    /// 批量编码图像 - 使用 GPU 批量推理，支持自动降级
     pub fn encode_images_batch(&mut self, image_paths: &[String]) -> Result<Vec<InferenceResult>, String> {
         log::info!("encode_images_batch called with {} images", image_paths.len());
         
         if image_paths.is_empty() {
             log::info!("Empty image_paths, returning empty result");
             return Ok(Vec::new());
+        }
+
+        // WD14 (Tagger) 模型在 DirectML 上批量推理不稳定，使用流水线串行处理
+        // 在 GPU 推理当前图像时，CPU 同时预处理下一张图像
+        if self.model_spec.is_tagger() {
+            log::info!("Tagger model ({}), using pipelined serial processing for DirectML compatibility", 
+                self.model_spec.name());
+            return self.encode_images_pipelined(image_paths);
         }
 
         // 对于小批量，使用串行处理
@@ -763,9 +771,217 @@ impl ClipModel {
             return Ok(results);
         }
 
-        // 大批量使用真正的批量推理
-        log::info!("Large batch ({}), using GPU batch processing", image_paths.len());
-        self.encode_images_batch_gpu(image_paths)
+        // 大批量使用真正的批量推理，带自动降级机制
+        log::info!("Large batch ({}), using GPU batch processing with auto-fallback", image_paths.len());
+        self.encode_images_batch_with_fallback(image_paths)
+    }
+
+    /// 流水线串行处理 - CPU预处理与GPU推理并行
+    /// 在GPU推理当前图像时，CPU同时预处理下一张图像
+    fn encode_images_pipelined(&mut self, image_paths: &[String]) -> Result<Vec<InferenceResult>, String> {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let total = image_paths.len();
+        if total == 0 {
+            return Ok(Vec::new());
+        }
+
+        log::info!("Pipelined processing: {} images", total);
+        let start_time = std::time::Instant::now();
+
+        // 创建通道：预处理线程 -> 推理线程
+        // 使用 Option 来区分正常数据和结束信号
+        let (tx, rx) = mpsc::sync_channel::<Result<(usize, String, Vec<f32>), String>>(2);
+
+        // 预处理线程
+        let preprocess_paths = image_paths.to_vec();
+        let preprocessor = self.image_preprocessor.clone();
+        let preprocess_handle = thread::spawn(move || {
+            for (i, path) in preprocess_paths.iter().enumerate() {
+                match preprocessor.preprocess(path) {
+                    Ok(tensor) => {
+                        if tx.send(Ok((i, path.clone(), tensor))).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to preprocess {}: {}", path, e);
+                        let _ = tx.send(Err(format!("Preprocess failed for {}: {}", path, e)));
+                        break;
+                    }
+                }
+            }
+        });
+
+        // 主线程：GPU推理
+        let mut results: Vec<Option<InferenceResult>> = vec![None; total];
+        let mut processed = 0;
+        let mut preprocess_error: Option<String> = None;
+
+        // 获取会话锁（整个批次共用）
+        let mut session_guard = self.vision_session.as_ref()
+            .ok_or("Vision model not loaded")?
+            .lock()
+            .map_err(|e| format!("Failed to lock vision session: {}", e))?;
+        let session = &mut *session_guard;
+
+        let image_size = self.model_spec.image_size();
+        let input_shape: Vec<i64> = match self.model_spec.image_tensor_format() {
+            crate::clip::models::ImageTensorFormat::Nchw => vec![1, 3, image_size as i64, image_size as i64],
+            crate::clip::models::ImageTensorFormat::Nhwc => vec![1, image_size as i64, image_size as i64, 3],
+        };
+
+        while let Ok(msg) = rx.recv() {
+            match msg {
+                Ok((idx, _path, tensor_data)) => {
+                    // 创建输入 Tensor
+                    let input_tensor = match Tensor::from_array((input_shape.clone(), tensor_data.into_boxed_slice())) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            log::error!("Failed to create input tensor: {}", e);
+                            continue;
+                        }
+                    };
+
+                    // 执行推理
+                    let outputs = match session.run(vec![(self.model_spec.vision_input_name(), input_tensor)]) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            log::error!("Failed to run inference: {}", e);
+                            continue;
+                        }
+                    };
+
+                    // 提取嵌入向量
+                    let output_node = self.model_spec.vision_output_name();
+                    let embedding_data = match outputs.get(output_node) {
+                        Some(output) => match output.try_extract_tensor::<f32>() {
+                            Ok((_shape, data)) => data,
+                            Err(e) => {
+                                log::error!("Failed to extract embedding: {:?}", e);
+                                continue;
+                            }
+                        },
+                        None => {
+                            log::error!("Output node '{}' not found", output_node);
+                            continue;
+                        }
+                    };
+
+                    let mut embedding: Vec<f32> = embedding_data.iter().copied().collect();
+                    normalize_vector(&mut embedding);
+
+                    // 提取标签
+                    let mut tags = None;
+                    if let Some(mapper) = &self.label_mapper {
+                        let tagger_node = self.model_spec.tagger_output_name();
+                        if let Some(tag_output) = outputs.get(tagger_node) {
+                            if let Ok((_shape, prob_data)) = tag_output.try_extract_tensor::<f32>() {
+                                tags = Some(mapper.map_probs(prob_data));
+                            }
+                        }
+                    }
+
+                    results[idx] = Some(InferenceResult { embedding, tags });
+                    processed += 1;
+
+                    if processed % 8 == 0 || processed == total {
+                        log::info!("Pipelined: {}/{} images processed", processed, total);
+                    }
+                }
+                Err(e) => {
+                    preprocess_error = Some(e);
+                    break;
+                }
+            }
+        }
+
+        // 等待预处理线程结束
+        let _ = preprocess_handle.join();
+
+        let elapsed = start_time.elapsed().as_millis();
+        let throughput = if elapsed > 0 { processed as f64 / elapsed as f64 * 1000.0 } else { 0.0 };
+        log::info!("Pipelined processing completed: {}/{} images in {}ms ({:.1} files/sec)", 
+            processed, total, elapsed, throughput);
+
+        // 检查是否有预处理错误
+        if let Some(e) = preprocess_error {
+            return Err(e);
+        }
+
+        // 收集结果（过滤掉 None，保持原始顺序）
+        let final_results: Vec<InferenceResult> = results.into_iter()
+            .filter_map(|r| r)
+            .collect();
+        
+        if final_results.len() != total {
+            return Err(format!("Only {}/{} images were successfully processed", final_results.len(), total));
+        }
+
+        Ok(final_results)
+    }
+
+    /// 带自动降级的批量推理
+    fn encode_images_batch_with_fallback(&mut self, image_paths: &[String]) -> Result<Vec<InferenceResult>, String> {
+        let total_count = image_paths.len();
+        let mut current_batch_size = total_count;
+        let min_batch_size = 4;
+        
+        loop {
+            log::info!("Attempting batch inference with batch_size={}", current_batch_size);
+            
+            match self.encode_images_batch_gpu(&image_paths[..current_batch_size]) {
+                Ok(results) => {
+                    if current_batch_size == total_count {
+                        return Ok(results);
+                    }
+                    
+                    log::info!("Batch {} succeeded, processing remaining {} images", 
+                        current_batch_size, total_count - current_batch_size);
+                    
+                    let mut all_results = results;
+                    let remaining = &image_paths[current_batch_size..];
+                    
+                    for path in remaining {
+                        match self.encode_image(path) {
+                            Ok(result) => all_results.push(result),
+                            Err(e) => {
+                                log::error!("Failed to encode image {}: {}", path, e);
+                                return Err(e);
+                            }
+                        }
+                    }
+                    return Ok(all_results);
+                }
+                Err(e) => {
+                    let is_layer_norm_error = e.contains("LayerNormalization") || 
+                        e.contains("Non-zero status code");
+                    
+                    if is_layer_norm_error && current_batch_size > min_batch_size {
+                        let new_batch_size = current_batch_size / 2;
+                        log::warn!(
+                            "LayerNormalization error at batch_size={}, auto-reducing to {}",
+                            current_batch_size, new_batch_size
+                        );
+                        current_batch_size = new_batch_size;
+                    } else if current_batch_size > min_batch_size {
+                        log::warn!(
+                            "Batch inference failed at batch_size={}, trying smaller batch: {}",
+                            current_batch_size, e
+                        );
+                        current_batch_size = current_batch_size / 2;
+                    } else {
+                        log::warn!("Batch inference failed at min batch_size, falling back to serial processing: {}", e);
+                        let mut results = Vec::with_capacity(total_count);
+                        for path in image_paths {
+                            results.push(self.encode_image(path)?);
+                        }
+                        return Ok(results);
+                    }
+                }
+            }
+        }
     }
 
     /// GPU 批量推理

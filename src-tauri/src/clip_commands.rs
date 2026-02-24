@@ -332,9 +332,9 @@ pub async fn clip_generate_embeddings_batch(
             },
             "WD-EVA02-Large-Tagger-V3" => {
                 log::info!("[CLIP Batch] Matched WD-EVA02-Large-Tagger-V3 (High-Res), GPU: {}", using_gpu);
-                // 根据用户要求恢复批次为 32。注意：该模型原生导出可能只支持 batch=1，
-                // 如果批量推理报错，系统会自动回退到串行处理。
-                if using_gpu { 32 } else { 4 }
+                // 降低批次大小以避免 DirectML LayerNormalization 错误
+                // 448x448 输入尺寸较大，batch=32 在 DirectML 上不稳定
+                if using_gpu { 16 } else { 4 }
             },
             other => {
                 log::warn!("[CLIP Batch] Unknown model name '{}', using default batch size", other);

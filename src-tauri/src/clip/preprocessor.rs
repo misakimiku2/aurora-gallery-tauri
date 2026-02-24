@@ -8,6 +8,7 @@ use fast_image_resize as fr;
 use std::num::NonZeroU32;
 
 /// CLIP 图像预处理器
+#[derive(Clone)]
 pub struct ImagePreprocessor {
     /// 目标图像尺寸 (通常是 224x224)
     target_size: usize,
