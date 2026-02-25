@@ -169,6 +169,9 @@ pub async fn clip_search_by_image(
 pub async fn clip_generate_embedding(
     file_path: String,
     file_id: Option<String>,
+    auto_add_tags: Option<bool>,
+    tag_threshold: Option<f32>,
+    language: Option<String>,
     app: tauri::AppHandle,
 ) -> Result<Vec<f32>, String> {
     let manager = crate::clip::get_clip_manager().await
@@ -190,9 +193,17 @@ pub async fn clip_generate_embedding(
     if let Some(embedding_store) = guard.embedding_store() {
         let id = file_id.unwrap_or_else(|| generate_id(&file_path));
         
-        // 保存标签（如果是 Tagger）
-        if let Some(tags) = &inference_result.tags {
-            save_tags_to_metadata(&id, &file_path, tags, &app)?;
+        // 保存标签（如果是 Tagger 且开启了自动添加标签）
+        let auto_add = auto_add_tags.unwrap_or(false);
+        let threshold = tag_threshold.unwrap_or(0.35);
+        let lang = language.unwrap_or_else(|| "en".to_string());
+        if auto_add {
+            if let Some(tags) = &inference_result.tags {
+                // 翻译标签
+                let translator = crate::clip::model::get_tag_translator();
+                let translated_tags = translator.translate_tags(tags, &lang);
+                save_tags_to_metadata(&id, &file_path, &translated_tags, threshold, &app)?;
+            }
         }
 
         let image_embedding = ImageEmbedding {
@@ -256,6 +267,9 @@ pub async fn clip_generate_embeddings_batch(
     file_paths: Vec<(String, String)>,
     use_gpu: bool,
     model_name: Option<String>,
+    auto_add_tags: Option<bool>,
+    tag_threshold: Option<f32>,
+    language: Option<String>,
 ) -> Result<serde_json::Value, String> {
     if IS_GENERATING.swap(true, Ordering::SeqCst) {
         log::warn!("An embedding generation task is already running.");
@@ -360,6 +374,11 @@ pub async fn clip_generate_embeddings_batch(
         if using_gpu { "GPU acceleration" } else { "CPU fallback" },
         file_paths.len()
     );
+    
+    let auto_add_tags_enabled = auto_add_tags.unwrap_or(false);
+    let tag_threshold_value = tag_threshold.unwrap_or(0.35);
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    log::info!("CLIP batch tag settings: auto_add_tags={}, threshold={}, language={}", auto_add_tags_enabled, tag_threshold_value, lang);
     
     let total = file_paths.len();
     let mut processed_skipped_count = 0;
@@ -479,9 +498,14 @@ pub async fn clip_generate_embeddings_batch(
                     
                     let mut batch_embeddings = Vec::with_capacity(batch.len());
                     for (i, ((_path, file_id), result)) in batch.iter().zip(embeddings.iter()).enumerate() {
-                        // 保存标签（如果是 Tagger）
-                        if let Some(tags) = &result.tags {
-                            let _ = save_tags_to_metadata(file_id, _path, tags, &app);
+                        // 保存标签（如果是 Tagger 且开启了自动添加标签）
+                        if auto_add_tags_enabled {
+                            if let Some(tags) = &result.tags {
+                                // 翻译标签
+                                let translator = crate::clip::model::get_tag_translator();
+                                let translated_tags = translator.translate_tags(tags, &lang);
+                                let _ = save_tags_to_metadata(file_id, _path, &translated_tags, tag_threshold_value, &app);
+                            }
                         }
 
                         let image_embedding = ImageEmbedding {
@@ -541,9 +565,14 @@ pub async fn clip_generate_embeddings_batch(
                                 let guard = manager.read().await;
                                 let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
                                 
-                                // 保存标签（如果是 Tagger）
-                                if let Some(tags) = &result.tags {
-                                    let _ = save_tags_to_metadata(file_id, file_path, tags, &app);
+                                // 保存标签（如果是 Tagger 且开启了自动添加标签）
+                                if auto_add_tags_enabled {
+                                    if let Some(tags) = &result.tags {
+                                        // 翻译标签
+                                        let translator = crate::clip::model::get_tag_translator();
+                                        let translated_tags = translator.translate_tags(tags, &lang);
+                                        let _ = save_tags_to_metadata(file_id, file_path, &translated_tags, tag_threshold_value, &app);
+                                    }
                                 }
 
                                 let image_embedding = ImageEmbedding {
@@ -893,6 +922,7 @@ fn save_tags_to_metadata(
     file_id: &str,
     file_path: &str,
     tags: &[(String, f32)],
+    threshold: f32,
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
     let pool = app.state::<AppDbPool>();
@@ -900,33 +930,195 @@ fn save_tags_to_metadata(
     
     let file_id = file_id.to_string();
     let file_path = db::normalize_path(file_path);
-    // 只保留标签名称
-    let tag_names: Vec<String> = tags.iter().map(|(name, _prob)| name.clone()).collect();
+    // 只保留超过阈值的标签名称
+    let tag_names: Vec<String> = tags
+        .iter()
+        .filter(|(_, prob)| *prob >= threshold)
+        .map(|(name, _prob)| name.clone())
+        .collect();
     
-    tokio::task::spawn_blocking(move || {
-        let conn = pool_inner.get_connection();
-        
-        // 获取现有元数据，保留其他字段
-        let mut metadata = match get_metadata_by_id(&conn, &file_id) {
-            Ok(Some(m)) => m,
-            _ => FileMetadata {
-                file_id: file_id.clone(),
-                path: file_path,
-                tags: None,
-                description: None,
-                source_url: None,
-                ai_data: None,
-                category: None,
-                updated_at: Some(chrono::Utc::now().timestamp()),
-            },
-        };
+    // 同步执行数据库操作，确保在返回前完成
+    let conn = pool_inner.get_connection();
+    
+    // 获取现有元数据，保留其他字段
+    let mut metadata = match get_metadata_by_id(&conn, &file_id) {
+        Ok(Some(m)) => m,
+        _ => FileMetadata {
+            file_id: file_id.clone(),
+            path: file_path,
+            tags: None,
+            description: None,
+            source_url: None,
+            ai_data: None,
+            category: None,
+            updated_at: Some(chrono::Utc::now().timestamp()),
+        },
+    };
 
-        // 更新标签 - 转换为 JSON 数组
-        metadata.tags = Some(serde_json::to_value(tag_names).unwrap_or_default());
-        metadata.updated_at = Some(chrono::Utc::now().timestamp());
+    // 更新标签 - 转换为 JSON 数组
+    metadata.tags = Some(serde_json::to_value(tag_names).unwrap_or_default());
+    metadata.updated_at = Some(chrono::Utc::now().timestamp());
 
-        upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())
-    });
+    upsert_file_metadata(&conn, &metadata).map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+/// 标签映射器，用于将嵌入向量（标签概率）转换为标签
+struct TagMapper {
+    tags: Vec<String>,
+}
+
+impl TagMapper {
+    fn load(tags_path: &std::path::Path) -> Result<Self, String> {
+        let file = std::fs::File::open(tags_path)
+            .map_err(|e| format!("Failed to open tags file: {}", e))?;
+        let mut rdr = csv::Reader::from_reader(file);
+        
+        let mut tags = Vec::new();
+        for result in rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+            if record.len() >= 2 {
+                let tag_name = record[1].replace('_', " ").trim().to_string();
+                tags.push(tag_name);
+            }
+        }
+        
+        log::info!("Loaded {} tags for tag generation", tags.len());
+        Ok(Self { tags })
+    }
+    
+    fn probs_to_tags(&self, probs: &[f32], threshold: f32) -> Vec<(String, f32)> {
+        let mut results = Vec::new();
+        for (i, &prob) in probs.iter().enumerate() {
+            if prob >= threshold {
+                if let Some(tag) = self.tags.get(i) {
+                    results.push((tag.clone(), prob));
+                }
+            }
+        }
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+}
+
+#[tauri::command]
+pub async fn clip_generate_tags_from_embeddings(
+    app: tauri::AppHandle,
+    model_name: Option<String>,
+    threshold: f32,
+    language: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("标签生成仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    // 获取嵌入存储
+    let (embeddings, root_path, model_cache_dir) = {
+        let mut guard = manager.write().await;
+        
+        // 切换到 WD14 模型
+        guard.switch_model(&requested_model)?;
+        
+        let embedding_store = guard.embedding_store()
+            .ok_or("Embedding store not available")?;
+        
+        // 获取所有嵌入向量
+        let embeddings = embedding_store.get_all_embeddings()?;
+        let root_path = guard.config().root_path.clone();
+        let model_cache_dir = guard.config().model_cache_dir.clone();
+        
+        (embeddings, root_path, model_cache_dir)
+    };
+    
+    if embeddings.is_empty() {
+        return Ok(serde_json::json!({
+            "total": 0,
+            "success": 0,
+            "skipped": 0,
+            "message": "没有找到嵌入向量，请先生成嵌入向量"
+        }));
+    }
+    
+    // 加载标签文件
+    let tags_path = model_cache_dir
+        .join(&requested_model)
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
+    }
+    
+    let mapper = TagMapper::load(&tags_path)?;
+    
+    log::info!("开始从 {} 个嵌入向量生成标签，阈值: {}", embeddings.len(), threshold);
+    
+    let mut success_count = 0;
+    let mut skipped_count = 0;
+    let total = embeddings.len();
+    
+    for (idx, embedding) in embeddings.iter().enumerate() {
+        // 发送进度事件
+        if idx % 50 == 0 || idx == total - 1 {
+            let _ = app.emit("clip-tag-generation-progress", serde_json::json!({
+                "current": idx + 1,
+                "total": total,
+                "progress": ((idx + 1) as f64 / total as f64 * 100.0) as u32,
+            }));
+        }
+        
+        // 获取文件路径
+        let file_path = {
+            let pool = app.state::<AppDbPool>();
+            let conn = pool.get_connection();
+            match db::file_index::get_path_by_id(&conn, &embedding.file_id) {
+                Ok(Some(path)) => path,
+                _ => {
+                    skipped_count += 1;
+                    continue;
+                }
+            }
+        };
+        
+        // 将嵌入向量转换为标签
+        let tags = mapper.probs_to_tags(&embedding.embedding, threshold);
+        
+        if tags.is_empty() {
+            skipped_count += 1;
+            continue;
+        }
+        
+        // 翻译标签
+        let translator = crate::clip::model::get_tag_translator();
+        let translated_tags = translator.translate_tags(&tags, &lang);
+        
+        // 保存标签
+        if let Err(e) = save_tags_to_metadata(&embedding.file_id, &file_path, &translated_tags, threshold, &app) {
+            log::error!("Failed to save tags for {}: {}", embedding.file_id, e);
+            skipped_count += 1;
+        } else {
+            success_count += 1;
+        }
+    }
+    
+    // 发送完成事件
+    let _ = app.emit("clip-tag-generation-completed", serde_json::json!({
+        "total": total,
+        "success": success_count,
+        "skipped": skipped_count,
+    }));
+    
+    log::info!("标签生成完成: 总数={}, 成功={}, 跳过={}", total, success_count, skipped_count);
+    
+    Ok(serde_json::json!({
+        "total": total,
+        "success": success_count,
+        "skipped": skipped_count,
+    }))
 }

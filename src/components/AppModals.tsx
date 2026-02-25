@@ -91,6 +91,7 @@ interface AppModalsProps {
   // About panel
   onCheckUpdate: () => void;
   isCheckingUpdate: boolean;
+  onRefreshTags?: () => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -144,6 +145,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onDismissUpdate,
   onCheckUpdate,
   isCheckingUpdate,
+  onRefreshTags,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -449,6 +451,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           onOpenDownloadFolder={onOpenDownloadFolder}
           onShowToast={showToast}
           onClipSearchDisabled={onClipSearchDisabled}
+          onRefresh={onRefreshTags}
         />
       )}
 

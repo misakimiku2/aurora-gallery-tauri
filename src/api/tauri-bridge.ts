@@ -1174,6 +1174,48 @@ export const dbUpsertFileMetadata = async (metadata: {
 };
 
 /**
+ * 获取所有文件元数据
+ * @returns 所有文件元数据列表
+ */
+export const dbGetAllFileMetadata = async (): Promise<Array<{
+  fileId: string;
+  path: string;
+  tags?: string[];
+  description?: string;
+  sourceUrl?: string;
+  category?: string;
+  aiData?: any;
+  updatedAt?: number;
+}>> => {
+  try {
+    const result = await invoke<Array<{
+      fileId: string;
+      path: string;
+      tags?: any;
+      description?: string;
+      sourceUrl?: string;
+      category?: string;
+      aiData?: any;
+      updatedAt?: number;
+    }>>('db_get_all_file_metadata');
+    
+    return result.map(item => ({
+      fileId: item.fileId,
+      path: item.path,
+      tags: item.tags ? (typeof item.tags === 'string' ? JSON.parse(item.tags) : item.tags) : undefined,
+      description: item.description,
+      sourceUrl: item.sourceUrl,
+      category: item.category,
+      aiData: item.aiData,
+      updatedAt: item.updatedAt,
+    }));
+  } catch (error) {
+    console.error('Failed to get all file metadata:', error);
+    throw error;
+  }
+};
+
+/**
  * 复制文件元数据
  * @param srcPath 源文件路径
  * @param destPath 目标文件路径
@@ -1605,11 +1647,17 @@ export const clipSearchByImage = async (
  * 为指定图片生成 CLIP 嵌入向量
  * @param filePath 图片路径
  * @param fileId 文件 ID（可选）
+ * @param autoAddTags 是否自动添加标签（WD14 模型）
+ * @param tagThreshold 标签置信度阈值（WD14 模型）
+ * @param language 标签语言（'zh' 或 'en'）
  * @returns 嵌入向量
  */
 export const clipGenerateEmbedding = async (
   filePath: string,
-  fileId?: string
+  fileId?: string,
+  autoAddTags?: boolean,
+  tagThreshold?: number,
+  language?: string
 ): Promise<number[]> => {
   if (!isTauriEnvironment()) {
     throw new Error('CLIP embedding is only available in Tauri environment');
@@ -1618,6 +1666,9 @@ export const clipGenerateEmbedding = async (
     const embedding = await invoke<number[]>('clip_generate_embedding', {
       filePath,
       fileId,
+      autoAddTags,
+      tagThreshold,
+      language,
     });
     return embedding;
   } catch (error) {
@@ -1901,12 +1952,19 @@ export interface ClipBatchEmbeddingResult {
  * 批量生成图片的 CLIP 嵌入向量
  * @param files 文件列表，每个元素为 [file_path, file_id] 元组
  * @param useGpu 是否启用 GPU 加速
+ * @param modelName 模型名称
+ * @param autoAddTags 是否自动添加标签（WD14 模型）
+ * @param tagThreshold 标签置信度阈值（WD14 模型）
+ * @param language 标签语言（'zh' 或 'en'）
  * @returns 处理结果
  */
 export const clipGenerateEmbeddingsBatch = async (
   files: [string, string][],
   useGpu: boolean,
-  modelName?: string
+  modelName?: string,
+  autoAddTags?: boolean,
+  tagThreshold?: number,
+  language?: string
 ): Promise<ClipBatchEmbeddingResult> => {
   if (!isTauriEnvironment()) {
     return {
@@ -1921,6 +1979,9 @@ export const clipGenerateEmbeddingsBatch = async (
       filePaths: files,
       useGpu,
       modelName,
+      autoAddTags,
+      tagThreshold,
+      language,
     });
     return result;
   } catch (error) {
@@ -1946,6 +2007,37 @@ export const getAllImageFiles = async (): Promise<{ id: string; path: string; na
     return result;
   } catch (error) {
     console.error('Failed to get all image files:', error);
+    throw error;
+  }
+};
+
+/**
+ * 从已有的嵌入向量生成标签（仅 WD14 模型）
+ * @param modelName 模型名称
+ * @param threshold 标签置信度阈值
+ * @param language 标签语言（'zh' 或 'en'）
+ * @returns 处理结果
+ */
+export const clipGenerateTagsFromEmbeddings = async (
+  modelName?: string,
+  threshold?: number,
+  language?: string
+): Promise<{ total: number; success: number; skipped: number }> => {
+  if (!isTauriEnvironment()) {
+    return { total: 0, success: 0, skipped: 0 };
+  }
+  try {
+    const result = await invoke<{ total: number; success: number; skipped: number }>(
+      'clip_generate_tags_from_embeddings',
+      {
+        modelName,
+        threshold: threshold ?? 0.35,
+        language,
+      }
+    );
+    return result;
+  } catch (error) {
+    console.error('Failed to generate tags from embeddings:', error);
     throw error;
   }
 };

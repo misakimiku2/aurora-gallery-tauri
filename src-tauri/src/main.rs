@@ -96,6 +96,7 @@ fn main() {
             db_commands::db_upsert_topic,
             db_commands::db_delete_topic,
             db_commands::db_upsert_file_metadata,
+            db_commands::db_get_all_file_metadata,
             file_operations::db_copy_file_metadata,
             db_commands::switch_root_database,
             file_operations::copy_image_to_clipboard,
@@ -132,6 +133,7 @@ fn main() {
             clip_commands::clip_pause_embedding_generation,
             clip_commands::clip_resume_embedding_generation,
             clip_commands::clip_update_config,
+            clip_commands::clip_generate_tags_from_embeddings,
             clip_commands::get_all_image_files
         ])
         .setup(|app| {

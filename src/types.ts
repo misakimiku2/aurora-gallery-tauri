@@ -238,6 +238,9 @@ export interface ClipSettings {
   minScore: number;        // 相似度阈值 (0.0 - 1.0)
   maxResults: number;      // 最大返回结果数
   unlimitedResults: boolean; // 是否无限制结果数
+  
+  autoAddTags: boolean;    // WD14 模型是否自动添加标签
+  tagThreshold: number;    // WD14 标签置信度阈值 (0.0 - 1.0)
 }
 
 export interface AppSettings {

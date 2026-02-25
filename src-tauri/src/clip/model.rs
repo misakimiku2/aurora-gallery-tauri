@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use once_cell::sync::OnceCell;
 use ort::session::Session;
 use ort::value::Tensor;
@@ -14,6 +15,63 @@ use sha2::{Sha256, Digest};
 use super::ClipConfig;
 use super::preprocessor::{ImagePreprocessor, TextPreprocessor};
 use super::models::{ModelSpec, get_model_spec};
+
+/// 嵌入中文标签翻译文件
+const TAGS_CN_CSV: &str = include_str!("models/Tags-cn_2024_ver-1.0.csv");
+
+/// 标签翻译器，将英文标签翻译为中文
+pub struct TagTranslator {
+    en_to_zh: HashMap<String, String>,
+}
+
+impl TagTranslator {
+    pub fn load() -> Self {
+        let mut en_to_zh = HashMap::new();
+        
+        let mut rdr = csv::Reader::from_reader(TAGS_CN_CSV.as_bytes());
+        for result in rdr.records() {
+            if let Ok(record) = result {
+                if record.len() >= 5 {
+                    // 将下划线替换为空格，与 LabelMapper 保持一致
+                    let en_tag = record[1].replace('_', " ").trim().to_string();
+                    let zh_tag = record[4].trim().to_string();
+                    if !en_tag.is_empty() && !zh_tag.is_empty() {
+                        en_to_zh.insert(en_tag, zh_tag);
+                    }
+                }
+            }
+        }
+        
+        log::info!("Loaded {} Chinese tag translations", en_to_zh.len());
+        Self { en_to_zh }
+    }
+    
+    pub fn translate(&self, tag: &str, language: &str) -> String {
+        if language == "zh" {
+            self.en_to_zh.get(tag).map(|s| s.clone()).unwrap_or_else(|| tag.to_string())
+        } else {
+            tag.to_string()
+        }
+    }
+    
+    pub fn translate_tags(&self, tags: &[(String, f32)], language: &str) -> Vec<(String, f32)> {
+        if language == "zh" {
+            tags.iter()
+                .map(|(tag, prob)| (self.translate(tag, language), *prob))
+                .collect()
+        } else {
+            tags.to_vec()
+        }
+    }
+}
+
+/// 全局标签翻译器
+static TAG_TRANSLATOR: OnceCell<TagTranslator> = OnceCell::new();
+
+/// 获取全局标签翻译器
+pub fn get_tag_translator() -> &'static TagTranslator {
+    TAG_TRANSLATOR.get_or_init(TagTranslator::load)
+}
 
 /// 推理结果，包含 Embedding 或标签
 #[derive(Clone)]
@@ -53,8 +111,6 @@ pub struct ClipModel {
 struct LabelMapper {
     /// 标签列表（按索引排序）
     tags: Vec<String>,
-    /// 通用概率阈值
-    threshold: f32,
 }
 
 impl LabelMapper {
@@ -76,16 +132,13 @@ impl LabelMapper {
         }
         
         log::info!("Loaded {} tags from {:?}", tags.len(), path);
-        Ok(Self {
-            tags,
-            threshold: 0.35, // WD14 默认推荐阈值
-        })
+        Ok(Self { tags })
     }
 
-    pub fn map_probs(&self, probs: &[f32]) -> Vec<(String, f32)> {
+    pub fn map_probs(&self, probs: &[f32], threshold: f32) -> Vec<(String, f32)> {
         let mut results = Vec::new();
         for (i, &prob) in probs.iter().enumerate() {
-            if prob >= self.threshold {
+            if prob >= threshold {
                 if let Some(tag) = self.tags.get(i) {
                     results.push((tag.clone(), prob));
                 }
@@ -657,7 +710,8 @@ impl ClipModel {
                         .try_extract_tensor::<f32>()
                         .map_err(|e| format!("Failed to extract tags from '{}': {:?}", tagger_node, e))?;
                     
-                    tags = Some(mapper.map_probs(prob_data));
+                    // 使用较低阈值返回更多标签，实际过滤在 save_tags_to_metadata 中进行
+                    tags = Some(mapper.map_probs(prob_data, 0.1));
                 }
             }
         }
@@ -897,7 +951,8 @@ impl ClipModel {
                         let tagger_node = self.model_spec.tagger_output_name();
                         if let Some(tag_output) = outputs.get(tagger_node) {
                             if let Ok((_shape, prob_data)) = tag_output.try_extract_tensor::<f32>() {
-                                tags = Some(mapper.map_probs(prob_data));
+                                // 使用较低阈值返回更多标签，实际过滤在 save_tags_to_metadata 中进行
+                                tags = Some(mapper.map_probs(prob_data, 0.1));
                             }
                         }
                     }
@@ -1112,7 +1167,8 @@ impl ClipModel {
                         let start = i * tag_count;
                         let end = start + tag_count;
                         if end <= prob_data.len() {
-                            batch_tags.push(mapper.map_probs(&prob_data[start..end]));
+                            // 使用较低阈值返回更多标签，实际过滤在 save_tags_to_metadata 中进行
+                            batch_tags.push(mapper.map_probs(&prob_data[start..end], 0.1));
                         }
                     }
                     all_tags = Some(batch_tags);

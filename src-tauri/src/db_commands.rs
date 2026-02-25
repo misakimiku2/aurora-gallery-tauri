@@ -116,6 +116,14 @@ pub async fn db_upsert_file_metadata(
 }
 
 #[tauri::command]
+pub async fn db_get_all_file_metadata(
+    pool: tauri::State<'_, AppDbPool>
+) -> Result<Vec<db::file_metadata::FileMetadata>, String> {
+    let conn = pool.get_connection();
+    db::file_metadata::get_all_metadata(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn switch_root_database(
     new_root_path: String,
     app_db_pool: tauri::State<'_, AppDbPool>,

@@ -174,6 +174,21 @@ pub fn get_all_image_files(conn: &Connection) -> Result<Vec<FileIndexEntry>> {
     Ok(entries)
 }
 
+/// 通过 file_id 获取文件路径
+pub fn get_path_by_id(conn: &Connection, file_id: &str) -> Result<Option<String>> {
+    let result = conn.query_row(
+        "SELECT path FROM file_index WHERE file_id = ?1",
+        params![file_id],
+        |row| row.get(0),
+    );
+    
+    match result {
+        Ok(path) => Ok(Some(path)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
 /// Lightweight query that only selects the minimal columns needed for UI-first-paint
 /// (used to demonstrate/measure a fast-start strategy). Returns `FileIndexEntry` with
 /// non-essential fields left empty to keep the shape consistent.

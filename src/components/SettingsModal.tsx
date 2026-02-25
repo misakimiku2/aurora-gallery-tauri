@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag, Tags, Loader2 } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, clipGenerateTagsFromEmbeddings } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures } from '../types';
 
@@ -236,6 +236,8 @@ interface AIVisionPanelProps {
   onEnabledChange?: (enabled: boolean) => void;
   onClipSearchDisabled?: () => void;
   clipLoading?: boolean;
+  onRefresh?: () => void;
+  language?: 'zh' | 'en';
 }
 
 // 模型系列定义
@@ -371,7 +373,7 @@ const formatSpeed = (bytesPerSecond: number): string => {
   return `${(bytesPerSecond / 1024 / 1024).toFixed(1)} MB/s`;
 };
 
-const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, onClipSearchDisabled, clipLoading }) => {
+const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, onClipSearchDisabled, clipLoading, onRefresh, language }) => {
   // 当前选中的模型系列
   const [activeSeries, setActiveSeries] = useState<ModelSeries>('clip');
 
@@ -418,6 +420,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const [estimatedTime, setEstimatedTime] = useState(globalEmbeddingState.estimatedTimeRemaining);
   const [isCancelling, setIsCancelling] = useState(globalEmbeddingState.isCancelling);
   const [isPaused, setIsPaused] = useState(globalEmbeddingState.isPaused);
+  const [isGeneratingTags, setIsGeneratingTags] = useState(false);
+  const [tagGenerationResult, setTagGenerationResult] = useState<{ total: number; success: number; skipped: number } | null>(null);
   const progressListenersRef = useRef<(() => void)[]>([]);
   const downloadListenerRef = useRef<(() => void) | null>(null);
   const isMountedRef = useRef(true);
@@ -919,7 +923,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     try {
       // 一次性发送所有文件，后端会分批处理并发送进度事件
       const fileTuples: [string, string][] = imageFiles.map(f => [f.path, f.id]);
-      await clipGenerateEmbeddingsBatch(fileTuples, settings.useGpu, settings.modelName);
+      await clipGenerateEmbeddingsBatch(
+        fileTuples, 
+        settings.useGpu, 
+        settings.modelName,
+        settings.autoAddTags,
+        settings.tagThreshold,
+        language
+      );
       // 进度和完成通过事件处理
     } catch (error: any) {
       console.error('Failed to generate embeddings:', error);
@@ -974,6 +985,30 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     } catch (error) {
       console.error('Failed to resume generation:', error);
       onShowToast?.('继续生成失败', 3000);
+    }
+  };
+
+  const handleGenerateTagsFromEmbeddings = async () => {
+    if (isGeneratingTags) return;
+    
+    setIsGeneratingTags(true);
+    setTagGenerationResult(null);
+    
+    try {
+      const result = await clipGenerateTagsFromEmbeddings(
+        settings.modelName,
+        settings.tagThreshold,
+        language
+      );
+      setTagGenerationResult(result);
+      onShowToast?.(`标签生成完成: ${result.success}/${result.total}`, 3000);
+      // Refresh file metadata to show new tags
+      onRefresh?.();
+    } catch (error: any) {
+      console.error('Failed to generate tags from embeddings:', error);
+      onShowToast?.(error?.message || '标签生成失败', 3000);
+    } finally {
+      setIsGeneratingTags(false);
     }
   };
 
@@ -1534,6 +1569,94 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               </>
             )}
           </div>
+          
+          {/* WD14 标签设置 - 仅当选择 WD14 模型时显示 */}
+          {settings.modelName === 'WD-EVA02-Large-Tagger-V3' && (
+            <>
+              {/* 自动添加标签 */}
+              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.autoAddTags') || '自动添加标签'}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('settings.clip.autoAddTagsDesc') || '使用 WD14 模型生成嵌入时自动添加识别到的标签'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => settings.enabled && onUpdateSettings({ ...settings, autoAddTags: !settings.autoAddTags })}
+                    disabled={!settings.enabled}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.autoAddTags ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'} ${!settings.enabled ? 'cursor-not-allowed' : ''}`}
+                  >
+                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.autoAddTags ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+              </div>
+              
+              {/* 标签置信度阈值 */}
+              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.tagThreshold') || '标签置信度阈值'}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('settings.clip.tagThresholdDesc') || '只添加置信度高于此值的标签'}
+                    </div>
+                  </div>
+                  <div className="text-sm font-medium text-blue-600 dark:text-blue-400 min-w-[3rem] text-right">
+                    {(settings.tagThreshold ?? 0.35).toFixed(2)}
+                  </div>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="0.9"
+                  step="0.05"
+                  value={settings.tagThreshold ?? 0.35}
+                  onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, tagThreshold: parseFloat(e.target.value) })}
+                  disabled={!settings.enabled}
+                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                />
+                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                  <span>0.10</span>
+                  <span>0.50</span>
+                  <span>0.90</span>
+                </div>
+              </div>
+              
+              {/* 从已有嵌入生成标签 */}
+              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.generateTagsFromEmbeddings') || '从已有嵌入生成标签'}</div>
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
+                      {t('settings.clip.generateTagsFromEmbeddingsDesc') || '使用已有的嵌入向量快速生成标签，无需重新推理'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenerateTagsFromEmbeddings}
+                    disabled={isGeneratingTags || !settings.enabled}
+                    className="px-3 py-1.5 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                  >
+                    {isGeneratingTags ? (
+                      <>
+                        <Loader2 size={14} className="mr-1.5 animate-spin" />
+                        {t('settings.clip.generating') || '生成中...'}
+                      </>
+                    ) : (
+                      <>
+                        <Tags size={14} className="mr-1.5" />
+                        {t('settings.clip.generateTags') || '生成标签'}
+                      </>
+                    )}
+                  </button>
+                </div>
+                {tagGenerationResult && (
+                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                    {t('settings.clip.tagGenerationResult') || '完成'}: {tagGenerationResult.success} / {tagGenerationResult.total} ({t('settings.clip.skipped') || '跳过'}: {tagGenerationResult.skipped})
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </section>
 
@@ -1648,9 +1771,10 @@ interface SettingsModalProps {
   onOpenDownloadFolder?: () => void;
   onShowToast?: (msg: string, duration?: number) => void;
   onClipSearchDisabled?: () => void;
+  onRefresh?: () => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh }) => {
   // ... (keep existing state and checkConnection logic)
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
@@ -3398,6 +3522,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               onEnabledChange={onClipEnabledChange}
               onClipSearchDisabled={onClipSearchDisabled}
               clipLoading={clipLoading}
+              onRefresh={onRefresh}
+              language={state.settings.language}
             />
           )}
 

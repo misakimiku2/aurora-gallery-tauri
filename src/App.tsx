@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -111,7 +111,9 @@ export const App: React.FC = () => {
         modelVersion: '1.0.0',
         minScore: 0.4,
         maxResults: 200,
-        unlimitedResults: false,
+        unlimitedResults: true,
+        autoAddTags: false,
+        tagThreshold: 0.35,
       },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
     },
@@ -1412,6 +1414,33 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleRefreshTags = async () => {
+    try {
+      const allMetadata = await dbGetAllFileMetadata();
+      
+      setState(prev => {
+        const newFiles = { ...prev.files };
+        const newCustomTags = new Set<string>();
+        
+        allMetadata.forEach(meta => {
+          const file = newFiles[meta.fileId];
+          if (file && meta.tags && meta.tags.length > 0) {
+            newFiles[meta.fileId] = { ...file, tags: meta.tags };
+            meta.tags.forEach(tag => newCustomTags.add(tag));
+          }
+        });
+        
+        return { 
+          ...prev, 
+          files: newFiles,
+          customTags: Array.from(newCustomTags)
+        };
+      });
+    } catch (error) {
+      console.error('Failed to refresh tags:', error);
+    }
+  };
+
 
   const handleFileClick = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
@@ -1486,7 +1515,7 @@ export const App: React.FC = () => {
       obj[key] = groups[key].sort((a, b) => a.localeCompare(b, state.settings.language));
       return obj;
     }, {} as Record<string, string[]>);
-  }, [filesVersion, state.settings.language, state.customTags, tagSearchQuery]);
+  }, [filesVersion, state.settings.language, state.customTags, tagSearchQuery, state.files]);
   // Memoized person counts to avoid recalculating every time
   const personCounts = useMemo(() => {
     // 锟斤拷始锟斤拷录锟斤拷员锟斤拷锟斤拷锟斤拷锟斤拷
@@ -1838,11 +1867,30 @@ export const App: React.FC = () => {
     setState(prev => {
       const newFiles = { ...prev.files };
       const newCustomTags = prev.customTags.filter(tag => !tags.includes(tag));
+      const affectedFileIds: string[] = [];
 
       // Update all files that use the deleted tags
-      Object.values(newFiles).forEach(file => {
-        if (file.tags) {
-          file.tags = file.tags.filter(tag => !tags.includes(tag));
+      Object.entries(newFiles).forEach(([id, file]) => {
+        if (file.tags && file.tags.some(tag => tags.includes(tag))) {
+          newFiles[id] = { ...file, tags: file.tags.filter(tag => !tags.includes(tag)) };
+          affectedFileIds.push(id);
+        }
+      });
+
+      // Persist changes to database
+      affectedFileIds.forEach(id => {
+        const file = newFiles[id];
+        if (file) {
+          dbUpsertFileMetadata({
+            fileId: id,
+            path: file.path,
+            tags: file.tags,
+            description: file.description,
+            sourceUrl: file.sourceUrl,
+            category: file.category,
+            aiData: file.aiData,
+            updatedAt: Date.now()
+          }).catch(err => console.error('Failed to persist tag deletion:', err));
         }
       });
 
@@ -4568,6 +4616,7 @@ export const App: React.FC = () => {
         onDismissUpdate={dismissUpdate}
         onCheckUpdate={() => checkUpdate(true)}
         isCheckingUpdate={isCheckingUpdate}
+        onRefreshTags={handleRefreshTags}
       />
 
       <ContextMenu

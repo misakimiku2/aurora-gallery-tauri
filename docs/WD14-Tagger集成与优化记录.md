@@ -179,7 +179,171 @@ WD14 Tagger 在 CPU 上推理慢是模型特性决定的：
 
 **建议**: 如需更快速度，建议开启 GPU 加速或使用更小的模型 (ViT-B-32 / SigLIP 2 So400M)
 
+## 8. 以图搜图功能实现 (2026-02-25)
+
+### 8.1 功能入口
+- **位置**: 图片右键菜单 → 「搜索相似图片」
+- **支持模型**: 所有 CLIP 系列模型（包括 WD14 Tagger）
+
+### 8.2 核心实现
+- 新增 `handleSearchSimilarImages` 函数
+- 调用 `clipSearchByImage` API 进行搜索
+- 搜索结果通过 `aiFilter` 机制展示
+
+### 8.3 排除自身
+- 使用 `search_similar_exclude_self` 方法
+- 如果查询图片在嵌入存储中，排除自身
+- 如果查询图片不在存储中，使用普通搜索
+
+### 8.4 相关文件
+- `src/App.tsx` - 搜索逻辑实现
+- `src/components/ContextMenu.tsx` - 右键菜单项
+- `src-tauri/src/clip_commands.rs` - 后端搜索命令
+
+## 9. WD14 预处理修复 (2026-02-25)
+
+### 9.1 问题现象
+- 所有图片的嵌入向量几乎相同
+- 余弦相似度接近 1.0，无法区分不同图片
+
+### 9.2 根因分析
+1. **颜色通道顺序错误**: WD14 需要 BGR 格式，代码使用 RGB
+2. **归一化错误**: WD14 不需要归一化，直接使用 0-255 像素值
+3. **输出节点选择**: `fc_norm` 输出区分度低，改用标签概率向量
+
+### 9.3 修复措施
+
+#### 9.3.1 预处理修复
+```rust
+// WD14 模式: BGR 格式，不归一化
+if self.mean == [0.0, 0.0, 0.0] && self.std == [1.0, 1.0, 1.0] {
+    for i in 0..pixel_count {
+        let base_idx = i * 3;
+        tensor[i * 3 + 0] = raw_pixels[base_idx + 2] as f32; // B
+        tensor[i * 3 + 1] = raw_pixels[base_idx + 1] as f32; // G
+        tensor[i * 3 + 2] = raw_pixels[base_idx] as f32;     // R
+    }
+}
+```
+
+#### 9.3.2 输出节点更改
+- **原节点**: `/core_model/fc_norm/LayerNormalization_output_0` (1024维)
+- **新节点**: `output` (10861维标签概率向量)
+- **优势**: 标签概率向量有更好的区分度
+
+### 9.4 修复效果
+| 指标 | 修复前 | 修复后 |
+|------|--------|--------|
+| 最高分 | 0.9999 | 0.87 |
+| 最低分 | 0.9999 | 0.36 |
+| 分数差距 | 0.0000 | 0.51 |
+
+### 9.5 修改文件
+- `src-tauri/src/clip/preprocessor.rs` - BGR 转换和归一化修复
+- `src-tauri/src/clip/models/wd14.rs` - 输出节点和嵌入维度更改
+
+### 9.6 注意事项
+- 嵌入维度从 1024 改为 10861
+- **需要重新生成嵌入向量**
+
+## 10. 搜索参数可配置化 (2026-02-25)
+
+### 10.1 新增配置项
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `minScore` | number | 0.4 | 相似度阈值 (0.0 - 1.0) |
+| `maxResults` | number | 200 | 最大返回结果数 |
+| `unlimitedResults` | boolean | true | 是否无限制结果数 |
+
+### 10.2 UI 实现
+- **位置**: 设置 → AI视觉 → 高级选项
+- **相似度阈值**: 滑块 (0.00 - 1.00)
+- **最大结果数**: 滑块 (50 - 1000) + 无限制开关
+- **无限制开关**: 开启时隐藏滑块，返回所有符合阈值的结果
+
+### 10.3 适用范围
+- **以图搜图**: 使用用户配置的参数
+- **文本语义搜索**: 同样使用用户配置的参数
+- **所有 CLIP 模型**: ViT-B/32、ViT-L/14、SigLIP 2、WD14 均生效
+
+### 10.4 修改文件
+- `src/types.ts` - ClipSettings 类型定义
+- `src/App.tsx` - 默认值和搜索逻辑
+- `src/components/SettingsModal.tsx` - 设置 UI
+- `src/utils/translations.ts` - 翻译文本
+
+---
+
+## 11. 从嵌入向量生成标签功能 (2026-02-26)
+
+### 11.1 功能说明
+当使用 WD14 模型生成嵌入向量时，如果当时没有开启"自动添加标签"选项，后续可以通过这个新功能快速生成标签，**无需重新推理**。
+
+### 11.2 技术实现
+- **后端命令**: `clip_generate_tags_from_embeddings`
+- **原理**: WD14 的嵌入向量本身就是 10861 维的标签概率向量，直接从中提取标签即可
+- **优势**: 
+  - 快速：无需重新推理，直接从已有数据提取
+  - 灵活：可以随时调整阈值重新生成
+  - 独立：与嵌入向量生成解耦
+
+### 11.3 相关文件
+- `src-tauri/src/clip_commands.rs` - 后端命令实现
+- `src/api/tauri-bridge.ts` - 前端 API
+- `src/components/SettingsModal.tsx` - UI 按钮
+
+---
+
+## 12. 中文标签翻译功能 (2026-02-26)
+
+### 12.1 功能说明
+当软件语言设置为中文时，自动将 WD14 生成的英文标签翻译成中文。
+
+### 12.2 技术实现
+- **翻译文件**: `Tags-cn_2024_ver-1.0.csv`（10861 条翻译）
+- **嵌入方式**: 使用 `include_str!` 宏嵌入到二进制文件中
+- **翻译器**: `TagTranslator` 结构体，启动时加载映射表
+
+### 12.3 关键代码
+```rust
+// 嵌入翻译文件
+const TAGS_CN_CSV: &str = include_str!("models/Tags-cn_2024_ver-1.0.csv");
+
+// 翻译时将下划线替换为空格（与 LabelMapper 保持一致）
+let en_tag = record[1].replace('_', " ").trim().to_string();
+```
+
+### 12.4 相关文件
+- `src-tauri/src/clip/model.rs` - TagTranslator 实现
+- `src-tauri/src/clip_commands.rs` - 翻译调用
+- `src/components/SettingsModal.tsx` - 传递语言参数
+
+---
+
+## 13. 标签持久化与刷新修复 (2026-02-26)
+
+### 13.1 问题现象
+1. 标签生成后前端界面不显示，重启后才出现
+2. 标签删除后重启恢复
+
+### 13.2 根因分析
+1. **前端刷新问题**: `save_tags_to_metadata` 使用异步数据库操作，刷新时数据还没写入
+2. **字段名不匹配**: 后端使用 camelCase (`fileId`)，前端期望 snake_case (`file_id`)
+3. **删除未持久化**: `handleConfirmDeleteTags` 没有保存到数据库
+
+### 13.3 修复措施
+1. **同步数据库操作**: `save_tags_to_metadata` 改为同步执行
+2. **修复字段映射**: 前端 API 使用 camelCase 匹配后端返回
+3. **删除持久化**: `handleConfirmDeleteTags` 调用 `dbUpsertFileMetadata`
+4. **新增刷新命令**: `db_get_all_file_metadata` 获取所有元数据
+
+### 13.4 修改文件
+- `src-tauri/src/clip_commands.rs` - 同步数据库操作
+- `src-tauri/src/db_commands.rs` - 新增获取所有元数据命令
+- `src/api/tauri-bridge.ts` - 修复字段映射
+- `src/App.tsx` - 删除持久化、新增刷新函数
+
 ---
 *记录时间: 2026-02-23*
-*更新时间: 2026-02-24*
+*更新时间: 2026-02-26*
 *维护者: Antigravity*
