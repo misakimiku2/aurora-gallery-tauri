@@ -1,6 +1,6 @@
 # SigLIP 2 集成问题诊断与修复总结
 
-本记录总结了在集成 SigLIP 2 So400M 模型过程中遇到的主要技术挑战、多次编译中断的原因及其最终解决方案。本会话经历了多次"尝试-失败-回退-重构"的迭代，最终确立了稳定的显存共享架构。
+本记录总结了在集成 SigLIP 2 系列模型过程中遇到的主要技术挑战、多次编译中断的原因及其最终解决方案。本会话经历了多次"尝试-失败-回退-重构"的迭代，最终确立了稳定的显存共享架构。
 
 ## 1. 核心问题现象
 - **搜索失效**：输入关键词（如"穿西装的男人"）返回的结果完全随机，语义空间严重偏移。
@@ -151,28 +151,297 @@
 - **结论**：temperature 不是主要问题
 
 
-## 6. 当前遗留问题与后续攻坚
+## 6. 2026-02-26 会话修复记录（相似度计算公式修正）
 
-### 核心问题：搜索结果语义不正确
-**现象**：
-- 搜索"穿西装的男人"返回无关结果（如裸露女性写真）
-- 搜索"一只狗"返回黑白漫画（无狗）
-- 分数分布太窄（0.74-0.82），差异只有 0.05-0.07
+### 6.1 问题现象
+- 所有搜索结果的相似度分数都是 `1.0`
+- 日志显示：`分数分布: 最高=1.0000, 最低=1.0000, 前5名=[1.0, 1.0, 1.0, 1.0, 1.0]`
+- 无法区分不同相似度的图片
 
-**可能原因**：
-1. **图像嵌入向量本身有问题**：虚拟输入配置可能与训练时不一致
-2. **模型权重问题**：ONNX 转换可能丢失了某些关键参数（如 logit_scale）
-3. **语义空间对齐问题**：统一模型在推理时对虚拟占位符的依赖与训练时不完全一致
+### 6.2 诊断发现
 
-**后续方向**：
-1. 检查 SigLIP 模型的 logit_scale 参数是否在 ONNX 转换时丢失
-2. 尝试使用分离的 vision_model.onnx 和 text_model.onnx
-3. 检查图像预处理是否与训练时一致
-4. 考虑使用其他 CLIP 模型（如 CLIP-ViT-B-32）进行对比测试
+#### 发现 A：Temperature 参数使用方式错误
+**错误实现**：
+```rust
+let logit = dot_product / temperature;  // temperature = 0.01
+score = sigmoid(logit)
+```
 
-### 其他遗留问题
-- **性能调优**：DirectML 在统一模型上的首次推理由于尺寸较大（384x384），初始加载略显迟钝，可考虑预热 (Warmup)
+**问题分析**：
+- temperature = 0.01 时，`logit = dot_product * 100`
+- 对于归一化向量，dot_product 范围是 [-1, 1]
+- 即使 dot_product 只有 0.6，logit 也会是 60，`sigmoid(60) ≈ 1.0`
+- 这导致几乎所有正相似度的分数都接近 1.0
+
+**SigLIP 论文中的正确公式**：
+```
+logits = dot_product * logit_scale + logit_bias
+score = sigmoid(logits)
+```
+其中：
+- `logit_scale = exp(t_prime)`，初始化 `t_prime = log(1/0.07) ≈ 2.66`，所以 `logit_scale ≈ 14.3`
+- `logit_bias` 初始化为 -10，用于平衡正负样本
+
+#### 发现 B：ONNX 模型参数验证
+通过 Python 脚本检查 ONNX 模型，确认：
+- 模型中没有单独的 `logit_scale` 和 `logit_bias` 参数
+- 这些参数在 ONNX 导出时未被包含
+- 需要在推理时手动应用
+
+模型输出节点：
+| 输出节点 | 说明 |
+|---------|------|
+| `logits_per_image` | 已应用 logit_scale/bias 的图像 logits |
+| `logits_per_text` | 已应用 logit_scale/bias 的文本 logits |
+| `image_embeds` | 原始图像嵌入向量（当前使用） |
+| `text_embeds` | 原始文本嵌入向量（当前使用） |
+
+### 6.3 修复方案
+
+#### 修复 1：重构 ModelSpec trait
+**文件**：`src-tauri/src/clip/models/mod.rs`
+
+将原来的 `sigmoid_temperature()` 方法替换为两个新方法：
+```rust
+/// SigLIP 风格的 logit_scale 参数
+/// logit_scale = exp(t_prime)，初始化 t_prime = log(1/0.07) ≈ 2.66
+fn sigmoid_logit_scale(&self) -> f32 {
+    14.285714  // 1/0.07 ≈ 14.285714
+}
+
+/// SigLIP 风格的 logit_bias 参数
+/// 初始化为 -10，用于平衡正负样本
+fn sigmoid_logit_bias(&self) -> f32 {
+    -10.0
+}
+```
+
+#### 修复 2：更新 SigLIP2 模型规格
+**文件**：`src-tauri/src/clip/models/siglip2.rs`
+
+```rust
+fn sigmoid_logit_scale(&self) -> f32 {
+    14.285714
+}
+
+fn sigmoid_logit_bias(&self) -> f32 {
+    -10.0
+}
+```
+
+#### 修复 3：修正相似度计算函数
+**文件**：`src-tauri/src/clip/model.rs`
+
+```rust
+pub fn siglip_similarity(a: &[f32], b: &[f32], logit_scale: f32, logit_bias: f32) -> f32 {
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let logit = dot_product * logit_scale + logit_bias;
+    1.0 / (1.0 + (-logit).exp())
+}
+```
+
+#### 修复 4：更新搜索模块调用
+**文件**：`src-tauri/src/clip/search.rs`
+
+- 更新 `search()` 方法，使用 `logit_scale` 和 `logit_bias`
+- 更新 `search_in_candidates()` 方法签名
+- 更新 `search_similar_exclude_self()` 方法
+- 更新 `search_batch()` 方法
+
+### 6.4 修复效果
+
+**修复前**：
+```
+[Search] 分数分布: 最高=1.0000, 最低=1.0000, 前5名=[1.0, 1.0, 1.0, 1.0, 1.0]
+```
+
+**修复后**：
+```
+[Search] 分数分布: 最高=0.9850, 最低=0.8007, 前5名=[0.98, 0.93, 0.93, 0.92, 0.92]
+```
+
+- ✅ 分数分布正常，能够区分不同相似度
+- ✅ 置信度 0.8 以上的结果视觉上相似
+- ✅ 搜索功能正常工作
+
+### 6.5 计算示例
+
+修复后的计算：
+- `logit = dot_product * 14.285714 + (-10)`
+
+| dot_product | logit | sigmoid(logit) |
+|-------------|-------|----------------|
+| 0.6 | -1.43 | 0.19 |
+| 0.7 | 0.0 | 0.50 |
+| 0.8 | 1.43 | 0.81 |
+| 0.9 | 2.86 | 0.95 |
+
+
+## 7. 2026-02-27 会话记录（SigLIP 2 Base 轻量级模型集成）
+
+### 7.1 需求背景
+SigLIP 2 So400M 模型（400M 参数，约 4.3GB 显存）对用户配置有一定要求，需要添加配置要求更低的轻量级模型选项。
+
+### 7.2 SigLIP 系列模型规格对比
+
+#### SigLIP 2 系列（2025年发布）
+
+| 模型 | 参数量 | 分辨率 | 嵌入维度 | 显存估算 | 特点 |
+|------|--------|--------|----------|----------|------|
+| **ViT-B** | 86M | 224x224 | 768 | ~1.5GB | 最小，适合低配置设备 |
+| **ViT-L** | 303M | 224x224 | 1024 | ~2.5GB | 中等，平衡性能与资源 |
+| **So400M** | 400M | 384x384 | 1152 | ~4.3GB | 当前使用，高精度 |
+| **g** | 1B | 224x224 | - | ~8GB+ | 最大，最高精度 |
+
+### 7.3 实施方案
+
+#### 新增文件
+- **文件**：`src-tauri/src/clip/models/siglip2_base.rs`
+- **内容**：`SigLIP2Base` 结构体，实现 `ModelSpec` trait
+
+#### 关键参数配置
+```rust
+fn name(&self) -> &str { "SigLIP2-Base" }
+fn embedding_dim(&self) -> usize { 768 }
+fn image_size(&self) -> usize { 224 }
+fn max_text_length(&self) -> usize { 64 }
+fn similarity_type(&self) -> SimilarityType { SimilarityType::Sigmoid }
+fn sigmoid_logit_scale(&self) -> f32 { 14.285714 }
+fn sigmoid_logit_bias(&self) -> f32 { -10.0 }
+```
+
+#### 模型文件下载 URL
+```
+# ONNX 模型
+https://hf-mirror.com/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model.onnx
+
+# Tokenizer
+https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer.json
+https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer_config.json
+https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/special_tokens_map.json
+```
+
+### 7.4 向量生成代码兼容性
+
+SigLIP 2 Base 和 So400M 的向量生成代码**完全相同**，都使用相同的 `ModelSpec` trait 接口。
+
+#### 相同的配置（向量生成逻辑一致）
+
+| 配置项 | SigLIP 2 Base | SigLIP 2 So400M |
+|--------|---------------|-----------------|
+| `image_mean` | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] |
+| `image_std` | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] |
+| `max_text_length` | 64 | 64 |
+| `vision_input_name` | "pixel_values" | "pixel_values" |
+| `vision_output_name` | "image_embeds" | "image_embeds" |
+| `text_input_name` | "input_ids" | "input_ids" |
+| `text_output_name` | "text_embeds" | "text_embeds" |
+| `similarity_type` | Sigmoid | Sigmoid |
+| `sigmoid_logit_scale` | 14.285714 | 14.285714 |
+| `sigmoid_logit_bias` | -10.0 | -10.0 |
+
+#### 不同的配置（模型规格差异）
+
+| 配置项 | SigLIP 2 Base | SigLIP 2 So400M |
+|--------|---------------|-----------------|
+| `embedding_dim` | 768 | 1152 |
+| `image_size` | 224 | 384 |
+| `dummy_vision_input_shape` | (1, 3, 224, 224) | (1, 3, 384, 384) |
+
+### 7.5 前端更新
+
+#### 类型定义更新
+**文件**：`src/types.ts`
+```typescript
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
+```
+
+#### 模型配置更新
+**文件**：`src/components/SettingsModal.tsx`
+```typescript
+{
+  name: 'SigLIP2-Base',
+  displayName: 'SigLIP 2 Base (轻量版)',
+  description: '轻量级 - 多语言支持，适合低配置设备',
+  size: 1600 * 1024 * 1024,
+  sizeDisplay: '1.5 GB',
+  embeddingDim: 768,
+  isRecommended: false,
+  series: 'siglip',
+  features: {
+    textSearch: true,
+    imageSearch: true,
+    autoTagging: false,
+    multilingual: true,
+  },
+},
+```
+
+### 7.6 模型文件损坏问题修复
+
+#### 问题现象
+- 模型文件下载不完整（实际 1.5GB，本地只有 785MB）
+- ONNX 加载失败：`Protobuf parsing failed`
+
+#### 修复方案
+
+1. **启用 AI 视觉功能时不自动加载模型**
+   - **文件**：`src/App.tsx`
+   - **修改**：启用时只更新状态，不自动加载模型
+
+2. **模型文件损坏检测**
+   - **文件**：`src/components/SettingsModal.tsx`
+   - **修改**：下载完成后检测模型是否损坏，损坏时标记状态
+
+3. **"重新下载"按钮**
+   - **文件**：`src/components/SettingsModal.tsx`
+   - **修改**：损坏的模型显示橙色"重新下载"按钮，点击后删除损坏文件并重新下载
+
+4. **模型外框显示逻辑优化**
+   - **文件**：`src/components/SettingsModal.tsx`
+   - **修改**：
+     - 绿色外框：只有启用且选中正常模型时显示
+     - 红色外框：只有启用且选中损坏模型时显示
+     - 关闭 AI 视觉功能时，所有模型显示普通灰色边框
+
+### 7.7 修复效果
+
+| 指标 | SigLIP2-So400M | SigLIP2-Base |
+|------|----------------|---------------|
+| 显存占用 | ~4.3GB | ~1.5GB |
+| 模型文件大小 | ~4.3GB | ~1.5GB |
+| 图像分辨率 | 384x384 | 224x224 |
+| 嵌入维度 | 1152 | 768 |
+| 多语言支持 | ✅ | ✅ |
+| 适合设备 | 高配置 | 低配置 |
+
+
+## 8. 总结
+
+经过多次迭代修复，SigLIP 2 系列模型已成功集成：
+
+### 已解决的问题
+1. ✅ 语义空间对齐（Projection Head）
+2. ✅ 分词器 Clone 漏洞
+3. ✅ 预处理性能问题
+4. ✅ 虚拟输入形状匹配
+5. ✅ 显存共享架构
+6. ✅ 相似度计算公式（logit_scale 和 logit_bias）
+7. ✅ 轻量级模型支持（SigLIP 2 Base）
+8. ✅ 模型文件损坏检测和重新下载功能
+9. ✅ AI 视觉功能状态管理优化
+
+### 当前状态
+- 搜索功能正常工作
+- 分数分布合理（0.5-0.98）
+- 置信度阈值 0.8 以上可得到视觉相似的图片
+- 支持低配置设备（SigLIP 2 Base）
+
+### 后续优化方向
+- **性能调优**：DirectML 首次推理预热
+- **参数微调**：根据实际数据集调整 logit_scale 和 logit_bias
+- **更多模型**：添加 SigLIP 2 ViT-L 等中等规格模型
 
 ---
-*记录更新时间：2026-02-23*
-*关联任务：SigLIP 2 搜索精准度修复项目*
+*记录更新时间：2026-02-27*
+*关联任务：SigLIP 2 搜索精准度修复项目、SigLIP 2 Base 轻量级模型集成*

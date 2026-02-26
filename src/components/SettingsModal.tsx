@@ -307,6 +307,22 @@ const CLIP_MODELS: ClipModelInfo[] = [
     },
   },
   {
+    name: 'SigLIP2-Base',
+    displayName: 'SigLIP 2 Base (轻量版)',
+    description: '轻量级 - 多语言支持，适合低配置设备',
+    size: 1600 * 1024 * 1024,
+    sizeDisplay: '1.5 GB',
+    embeddingDim: 768,
+    isRecommended: false,
+    series: 'siglip',
+    features: {
+      textSearch: true,
+      imageSearch: true,
+      autoTagging: false,
+      multilingual: true,
+    },
+  },
+  {
     name: 'SigLIP2-So400M',
     displayName: 'SigLIP 2 So400M',
     description: '多语言支持 - 支持中文搜索',
@@ -721,6 +737,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       // 加载模型（会自动下载）
       await clipLoadModel(modelName);
 
+      // 从损坏列表中移除（下载成功）
+      setCorruptedModels(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(modelName);
+        return newSet;
+      });
+      markModelAsNormal(modelName);
+
       onUpdateSettings({
         ...settings,
         modelName,
@@ -736,14 +760,29 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       await loadModelStatuses();
     } catch (error) {
       console.error('Failed to download model:', error);
+      const errorMsg = String(error);
+      
+      // 检测是否是文件损坏导致的错误
+      const isCorrupt = errorMsg.includes('模型文件可能已损坏') ||
+        errorMsg.includes('Protobuf parsing failed') ||
+        errorMsg.includes('Invalid protobuf') ||
+        errorMsg.includes('ModelWrapper');
+      
+      if (isCorrupt) {
+        // 标记模型为损坏状态
+        setCorruptedModels(prev => new Set(prev).add(modelName));
+        markModelAsCorrupted(modelName);
+        onShowToast?.(`模型文件下载不完整或已损坏，请点击"重新下载"`, 4000);
+      }
+      
       onUpdateSettings({
         ...settings,
         downloadStatus: 'error',
-        downloadError: String(error),
+        downloadError: errorMsg,
       });
 
       // 标记下载错误
-      errorModelDownload(modelName, String(error));
+      errorModelDownload(modelName, errorMsg);
     } finally {
       setLoadingModel(null);
       // 注意：不再清理 Tauri 监听，因为全局监听器需要保持运行
@@ -1132,19 +1171,26 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             const cachedStatus = getCachedModelStatus(model.name);
             const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
             const isCorrupted = corruptedModels.has(model.name);
-            const isDisabled = !settings.enabled || clipLoading;
 
             // 获取所有功能特性（包括支持和不支持的）
             const allFeatures = Object.entries(model.features);
             // 定义功能显示顺序（不包含高精度，高精度作为独立标签显示）
             const featureOrder = ['textSearch', 'imageSearch', 'autoTagging', 'multilingual', 'animeOptimized'];
+            
+            // 只有启用AI视觉功能且当前模型被选中时才显示外框
+            const isSelectedModel = settings.enabled && settings.modelName === model.name;
+            const showGreenBorder = isSelectedModel && !isCorrupted && !clipLoading;
+            const showRedBorder = isSelectedModel && isCorrupted;
+            
+            // 按钮状态：只有启用AI视觉功能且当前模型被选中时才显示"使用中"
+            const isInUse = isSelectedModel && !isCorrupted && !clipLoading;
 
             return (
               <div
                 key={model.name}
-                className={`relative bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${settings.modelName === model.name && !isCorrupted && settings.enabled && !clipLoading
+                className={`relative bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${showGreenBorder
                   ? 'border-green-500 ring-2 ring-green-500/20'
-                  : isCorrupted
+                  : showRedBorder
                     ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
                     : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
                   }`}
@@ -1218,29 +1264,29 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       ) : isCorrupted ? (
                         <button
                           onClick={() => handleRepairModel(model.name)}
-                          disabled={isLoading || isDisabled}
-                          className="px-4 py-2 bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                          disabled={isLoading}
+                          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
                         >
                           <RefreshCw size={16} className="mr-2" />
-                          修复
+                          重新下载
                         </button>
                       ) : isDownloaded ? (
                         <>
                           <button
                             onClick={() => handleSelectModel(model.name)}
-                            disabled={isLoading || isDisabled}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${settings.modelName === model.name && settings.enabled && !clipLoading
+                            disabled={isLoading || clipLoading}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isInUse
                               ? 'bg-green-500 text-white'
                               : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
                               } disabled:opacity-50 disabled:cursor-not-allowed`}
                           >
-                            {settings.modelName === model.name && settings.enabled && !clipLoading ? '使用中' : '使用'}
+                            {isInUse ? '使用中' : '使用'}
                           </button>
                           <button
                             onClick={() => handleDelete(model.name)}
-                            disabled={isDisabled}
-                            className={`p-2 rounded-lg transition-colors ${isDisabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
-                            title={clipLoading ? '模型正在加载中' : isDisabled ? '需要先启用 AI 视觉功能' : '删除模型'}
+                            disabled={clipLoading}
+                            className={`p-2 rounded-lg transition-colors ${clipLoading ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
+                            title={clipLoading ? '模型正在加载中' : '删除模型'}
                           >
                             <Trash size={18} />
                           </button>
@@ -1248,7 +1294,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       ) : (
                         <button
                           onClick={() => handleDownload(model.name)}
-                          disabled={isLoadingModel || isDisabled}
+                          disabled={isLoadingModel || clipLoading}
                           className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
                         >
                           {isLoadingModel ? (

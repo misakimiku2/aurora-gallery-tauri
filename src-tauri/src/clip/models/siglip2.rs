@@ -124,11 +124,18 @@ impl ModelSpec for SigLIP2So400M {
         SimilarityType::Sigmoid
     }
 
-    /// SigLIP2 的 temperature 参数
-    /// 根据 SigLIP 论文和实验，temperature 通常在 0.01-0.1 之间
-    /// 较小的 temperature 会使分数分布更宽，更容易区分相关和不相关的结果
-    fn sigmoid_temperature(&self) -> f32 {
-        0.01
+    /// SigLIP2 的 logit_scale 参数
+    /// 根据 SigLIP 论文，相似度计算公式为：score = sigmoid(dot_product * logit_scale + bias)
+    /// logit_scale = exp(t_prime)，初始化 t_prime = log(1/0.07) ≈ 2.66
+    /// 所以 logit_scale ≈ 14.3
+    fn sigmoid_logit_scale(&self) -> f32 {
+        14.285714
+    }
+
+    /// SigLIP2 的 logit_bias 参数
+    /// 初始化为 -10，用于在训练初期平衡正负样本
+    fn sigmoid_logit_bias(&self) -> f32 {
+        -10.0
     }
 }
 

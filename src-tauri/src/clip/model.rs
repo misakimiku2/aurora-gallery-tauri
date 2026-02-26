@@ -1230,9 +1230,10 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
 }
 
 /// 计算 SigLIP 风格的相似度分数
-/// SigLIP 使用 sigmoid loss，相似度 = sigmoid(dot_product / temperature)
-/// temperature 默认为 0.07，但 SigLIP2 可能使用不同的值
-pub fn siglip_similarity(a: &[f32], b: &[f32], temperature: f32) -> f32 {
+/// SigLIP 使用 sigmoid loss，相似度 = sigmoid(dot_product * logit_scale + logit_bias)
+/// logit_scale = exp(t_prime)，初始化 t_prime = log(1/0.07) ≈ 2.66，所以 logit_scale ≈ 14.3
+/// logit_bias 初始化为 -10，用于平衡正负样本
+pub fn siglip_similarity(a: &[f32], b: &[f32], logit_scale: f32, logit_bias: f32) -> f32 {
     if a.len() != b.len() {
         return 0.0;
     }
@@ -1241,7 +1242,8 @@ pub fn siglip_similarity(a: &[f32], b: &[f32], temperature: f32) -> f32 {
     let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
     
     // 应用 sigmoid 函数
-    let logit = dot_product / temperature;
+    // logit = dot_product * logit_scale + logit_bias
+    let logit = dot_product * logit_scale + logit_bias;
     1.0 / (1.0 + (-logit).exp())
 }
 

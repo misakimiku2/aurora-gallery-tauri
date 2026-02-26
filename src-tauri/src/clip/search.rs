@@ -71,17 +71,17 @@ impl SimilaritySearcher {
     ) -> Result<Vec<SearchResult>, String> {
         log::info!("[Search] Searching with model_version: {:?}", model_version);
         
-        // 获取模型的相似度计算类型
-        let (similarity_type, temperature) = if let Some(model_name) = model_version {
+        // 获取模型的相似度计算类型和参数
+        let (similarity_type, logit_scale, logit_bias) = if let Some(model_name) = model_version {
             if let Some(spec) = get_model_spec(model_name) {
-                (spec.similarity_type(), spec.sigmoid_temperature())
+                (spec.similarity_type(), spec.sigmoid_logit_scale(), spec.sigmoid_logit_bias())
             } else {
-                (SimilarityType::Cosine, 0.07)
+                (SimilarityType::Cosine, 14.285714, -10.0)
             }
         } else {
-            (SimilarityType::Cosine, 0.07)
+            (SimilarityType::Cosine, 14.285714, -10.0)
         };
-        log::info!("[Search] Using similarity type: {:?}, temperature: {}", similarity_type, temperature);
+        log::info!("[Search] Using similarity type: {:?}, logit_scale: {}, logit_bias: {}", similarity_type, logit_scale, logit_bias);
         
         let embeddings = if let Some(model) = model_version {
             let result = self.embedding_store.get_embeddings_by_model(model)?;
@@ -114,7 +114,7 @@ impl SimilaritySearcher {
             log::info!("[Search] First embedding dimension: {}", embeddings[0].embedding.len());
         }
         
-        let results = self.search_in_candidates(query_embedding, &embeddings, options, similarity_type, temperature);
+        let results = self.search_in_candidates(query_embedding, &embeddings, options, similarity_type, logit_scale, logit_bias);
         log::info!("[Search] search_in_candidates returned {} results", results.len());
         
         Ok(results)
@@ -127,7 +127,8 @@ impl SimilaritySearcher {
         candidates: &[ImageEmbedding],
         options: &SearchOptions,
         similarity_type: SimilarityType,
-        temperature: f32,
+        logit_scale: f32,
+        logit_bias: f32,
     ) -> Vec<SearchResult> {
         // 使用优先队列找到 top-k
         let mut heap: BinaryHeap<SearchItem> = BinaryHeap::new();
@@ -147,16 +148,23 @@ impl SimilaritySearcher {
                 first_norm, first_mean, first.iter().take(5).collect::<Vec<_>>());
         }
 
-        for candidate in candidates {
+        for (idx, candidate) in candidates.iter().enumerate() {
             // 根据模型类型选择相似度计算方式
             let score = match similarity_type {
                 SimilarityType::Sigmoid => {
-                    siglip_similarity(query_embedding, &candidate.embedding, temperature)
+                    siglip_similarity(query_embedding, &candidate.embedding, logit_scale, logit_bias)
                 }
                 SimilarityType::Cosine => {
                     cosine_similarity(query_embedding, &candidate.embedding)
                 }
             };
+            
+            // 诊断：记录前几个候选的分数计算详情
+            if idx < 3 {
+                let dot_product: f32 = query_embedding.iter().zip(candidate.embedding.iter()).map(|(x, y)| x * y).sum();
+                log::info!("[Search] Candidate {}: dot_product={:.4}, score={:.4}, similarity_type={:?}", 
+                    idx, dot_product, score, similarity_type);
+            }
             
             // 过滤低相似度结果
             if score < options.min_score {
@@ -229,7 +237,8 @@ impl SimilaritySearcher {
                     &embeddings, 
                     options, 
                     SimilarityType::Cosine, 
-                    0.07
+                    14.285714,
+                    -10.0
                 );
                 (id.clone(), search_results)
             })
@@ -256,10 +265,15 @@ impl SimilaritySearcher {
             .collect();
 
         // 根据 embedding 的 model_version 确定相似度类型
-        let (similarity_type, temperature) = if let Some(spec) = get_model_spec(&query_embedding.model_version) {
-            (spec.similarity_type(), spec.sigmoid_temperature())
+        let (similarity_type, logit_scale, logit_bias) = if let Some(spec) = get_model_spec(&query_embedding.model_version) {
+            let ls = spec.sigmoid_logit_scale();
+            let lb = spec.sigmoid_logit_bias();
+            log::info!("[Search] search_similar_exclude_self: model={}, similarity_type={:?}, logit_scale={}, logit_bias={}", 
+                query_embedding.model_version, spec.similarity_type(), ls, lb);
+            (spec.similarity_type(), ls, lb)
         } else {
-            (SimilarityType::Cosine, 0.07)
+            log::info!("[Search] search_similar_exclude_self: model {} not found, using Cosine", query_embedding.model_version);
+            (SimilarityType::Cosine, 14.285714, -10.0)
         };
 
         // 执行搜索
@@ -268,7 +282,8 @@ impl SimilaritySearcher {
             &candidates, 
             options, 
             similarity_type, 
-            temperature
+            logit_scale,
+            logit_bias
         );
 
         Ok(results)

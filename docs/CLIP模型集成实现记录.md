@@ -3,12 +3,20 @@
 ## 概述
 本文档记录了 Aurora Gallery 中视觉模型集成的实现过程，包括：
 - **CLIP** (Contrastive Language-Image Pre-training) - 支持文本搜索图片
+- **SigLIP 2** - 多语言支持，中文搜索体验更佳
 - **WD14 Tagger** (EVA02-Large) - 支持自动标签识别和以图搜图
 
 ## 实现时间
-2026-02-15 ~ 2026-02-24
+2026-02-15 ~ 2026-02-27
 
 ## 更新记录
+- **2026-02-27**: 新增 SigLIP 2 Base 轻量级模型
+  - 新增 SigLIP 2 Base (86M) 模型，显存占用约 1.5GB
+  - 图像分辨率 224x224，嵌入维度 768
+  - 适合低配置设备使用
+  - 修复启用/禁用 AI 视觉功能时的模型选择状态逻辑
+  - 添加模型文件损坏检测和"重新下载"功能
+  - 优化模型外框显示逻辑（只有启用且选中时才显示）
 - **2026-02-26**: WD14 标签功能增强
   - 新增「从嵌入向量生成标签」功能，无需重新推理
   - 新增中文标签翻译功能，根据软件语言自动翻译
@@ -45,7 +53,7 @@
 - **位置**: 设置 → AI视觉
 - **功能**:
   - CLIP 功能总开关（可卸载模型释放内存）
-  - 下载和管理视觉语言模型 (ViT-B/32、ViT-L/14、SigLIP 2 So400M、WD14 Tagger)
+  - 下载和管理视觉语言模型 (ViT-B/32、ViT-L/14、SigLIP 2 Base、SigLIP 2 So400M、WD14 Tagger)
   - **模型系列分类**: 按系列标签页展示（CLIP系列、SigLIP系列、WD Tagger系列）
   - **模型功能特性**: 显示每个模型支持的功能（文本搜索、以图搜图、自动标签、多语言等）
   - **高精度标识**: ViT-L/14 模型右下角显示高精度标签
@@ -54,6 +62,7 @@
   - 打开模型存放目录
   - 批量生成图片嵌入向量
   - GPU 加速选项（DirectML）
+  - **模型文件损坏检测**: 自动检测损坏的模型文件，显示"重新下载"按钮
 
 ### 2. 模型下载
 - **模型源**: 使用 hf-mirror 国内镜像加速下载
@@ -65,6 +74,11 @@
   - Vision 编码器: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/onnx/vision_model.onnx`
   - Text 编码器: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/onnx/text_model.onnx`
   - Tokenizer: `https://hf-mirror.com/Xenova/clip-vit-large-patch14/resolve/main/tokenizer.json`
+- **SigLIP 2 Base** (轻量级多语言):
+  - 模型文件: `https://hf-mirror.com/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model.onnx`
+  - Tokenizer: `https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer.json`
+  - Tokenizer 配置: `https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer_config.json`
+  - 特殊 Token: `https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/special_tokens_map.json`
 - **SigLIP 2 So400M** (多语言支持):
   - 模型文件: `https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx`
   - 模型权重: `https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx_data`
@@ -117,7 +131,8 @@ src-tauri/src/
 │   └── models/             # 模型定义目录
 │       ├── mod.rs          # ModelSpec trait 和模型注册表
 │       ├── clip_vit.rs     # CLIP ViT 系列模型
-│       ├── siglip2.rs      # SigLIP 2 系列模型
+│       ├── siglip2.rs      # SigLIP 2 So400M 模型
+│       ├── siglip2_base.rs # SigLIP 2 Base 模型
 │       └── wd14.rs         # WD14 Tagger 模型
 └── main.rs                 # Tauri 命令注册
 ```
@@ -139,7 +154,7 @@ src/
 
 ### 1. 类型定义 (types.ts)
 ```typescript
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 // 模型系列类型
@@ -216,17 +231,18 @@ export interface ClipSettings {
 | 系列 | ID | 主题色 | 说明 | 包含模型 |
 |------|-----|--------|------|---------|
 | **CLIP 系列** | `clip` | 蓝色 #3B82F6 | OpenAI 开发的经典视觉-语言模型 | ViT-B/32, ViT-L/14 |
-| **SigLIP 系列** | `siglip` | 橙色 #F97316 | Google 开发的多语言视觉模型 | SigLIP 2 So400M |
+| **SigLIP 系列** | `siglip` | 橙色 #F97316 | Google 开发的多语言视觉模型 | SigLIP 2 Base, SigLIP 2 So400M |
 | **WD Tagger 系列** | `wd-tagger` | 紫色 #8B5CF6 | 专为动漫和插画优化的标签识别模型 | WD-EVA02-Large-Tagger-V3 |
 
 ### 模型功能特性
 
-| 模型 | 文本搜索 | 以图搜图 | 自动标签 | 多语言 | 二次元优化 | 高精度 |
-|------|---------|---------|---------|--------|-----------|--------|
-| **ViT-B/32** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **ViT-L/14** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| **SigLIP 2 So400M** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
-| **WD-EVA02-Large-Tagger-V3** | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ |
+| 模型 | 文本搜索 | 以图搜图 | 自动标签 | 多语言 | 二次元优化 | 高精度 | 轻量级 |
+|------|---------|---------|---------|--------|-----------|--------|--------|
+| **ViT-B/32** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **ViT-L/14** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
+| **SigLIP 2 Base** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ |
+| **SigLIP 2 So400M** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| **WD-EVA02-Large-Tagger-V3** | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 
 ### 高精度模型定义
 
@@ -235,24 +251,35 @@ export interface ClipSettings {
 - **更小的 Patch Size**：14（vs ViT-B/32 的 32），能捕捉更细粒度的特征
 - **更大的模型容量**：1.6GB（vs ViT-B/32 的 580MB）
 
+### 轻量级模型定义
+
+**SigLIP 2 Base** 被标记为轻量级模型，原因：
+- **更小的参数量**：86M（vs So400M 的 400M）
+- **更低的显存占用**：约 1.5GB（vs So400M 的 4.3GB）
+- **更小的图像分辨率**：224x224（vs So400M 的 384x384）
+- **适合低配置设备**：在保持多语言支持的同时降低硬件要求
+
 ## 模型参数对比
 
-| 特性 | CLIP ViT-B/32 | CLIP ViT-L/14 | SigLIP 2 So400M | WD14 Tagger V3 |
-|------|---------------|---------------|-----------------|----------------|
-| 图像尺寸 | 224x224 | 224x224 | 384x384 | 448x448 |
-| Patch Size | 32 | 14 | 14 | 14 |
-| 嵌入维度 | 512 | 768 | 1152 | 10861 (标签概率) |
-| 多语言 | ❌ 仅英文 | ❌ 仅英文 | ✅ 多语言 | ❌ 仅视觉 |
-| 模型大小 | ~580 MB | ~1.6 GB | ~1.2 GB | ~1.2 GB |
-| 归一化均值 | [0.481, 0.458, 0.408] | [0.481, 0.458, 0.408] | [0.5, 0.5, 0.5] | [0, 0, 0] |
-| 归一化标准差 | [0.269, 0.261, 0.276] | [0.269, 0.261, 0.276] | [0.5, 0.5, 0.5] | [1, 1, 1] |
-| 最大文本长度 | 77 | 77 | 64 | 0 (不支持) |
-| 张量格式 | NCHW | NCHW | NCHW | NHWC |
-| 颜色格式 | RGB | RGB | RGB | BGR |
-| 文本搜索 | ✅ | ✅ | ✅ | ❌ |
-| 以图搜图 | ✅ | ✅ | ✅ | ✅ |
-| 自动标签 | ❌ | ❌ | ❌ | ✅ |
-| 适用场景 | 通用 | 高精度 | 多语言 | 二次元 |
+| 特性 | CLIP ViT-B/32 | CLIP ViT-L/14 | SigLIP 2 Base | SigLIP 2 So400M | WD14 Tagger V3 |
+|------|---------------|---------------|---------------|-----------------|----------------|
+| 参数量 | ~87M | ~300M | ~86M | ~400M | ~580M |
+| 图像尺寸 | 224x224 | 224x224 | 224x224 | 384x384 | 448x448 |
+| Patch Size | 32 | 14 | 16 | 14 | 14 |
+| 嵌入维度 | 512 | 768 | 768 | 1152 | 10861 (标签概率) |
+| 多语言 | ❌ 仅英文 | ❌ 仅英文 | ✅ 多语言 | ✅ 多语言 | ❌ 仅视觉 |
+| 模型大小 | ~580 MB | ~1.6 GB | ~1.5 GB | ~4.3 GB | ~1.2 GB |
+| 显存占用 | ~1 GB | ~2 GB | ~1.5 GB | ~4.3 GB | ~2 GB |
+| 归一化均值 | [0.481, 0.458, 0.408] | [0.481, 0.458, 0.408] | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [0, 0, 0] |
+| 归一化标准差 | [0.269, 0.261, 0.276] | [0.269, 0.261, 0.276] | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [1, 1, 1] |
+| 最大文本长度 | 77 | 77 | 64 | 64 | 0 (不支持) |
+| 张量格式 | NCHW | NCHW | NCHW | NCHW | NHWC |
+| 颜色格式 | RGB | RGB | RGB | RGB | BGR |
+| 相似度计算 | Cosine | Cosine | Sigmoid | Sigmoid | Cosine |
+| 文本搜索 | ✅ | ✅ | ✅ | ✅ | ❌ |
+| 以图搜图 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 自动标签 | ❌ | ❌ | ❌ | ❌ | ✅ |
+| 适用场景 | 通用 | 高精度 | 低配置多语言 | 多语言 | 二次元 |
 
 ### 模型选择建议
 
@@ -260,7 +287,8 @@ export interface ClipSettings {
 |------|----------|------|
 | 通用文本搜索 | ViT-B/32 | 速度快、体积小 |
 | 高精度搜索 | ViT-L/14 | 嵌入维度更高 |
-| 中文搜索 | SigLIP 2 So400M | 原生多语言支持 |
+| 中文搜索（低配置） | SigLIP 2 Base | 多语言支持，显存占用低 |
+| 中文搜索（高配置） | SigLIP 2 So400M | 多语言支持，精度更高 |
 | 动漫/二次元 | WD14 Tagger V3 | 专为二次元优化，支持标签识别 |
 
 ## 数据存储架构
@@ -276,7 +304,9 @@ export interface ClipSettings {
         │   └── embeddings.db
         ├── ViT-L-14/        # ViT-L/14 模型
         │   └── embeddings.db
-        ├── SigLIP2-So400M/  # SigLIP 2 模型
+        ├── SigLIP2-Base/    # SigLIP 2 Base 模型
+        │   └── embeddings.db
+        ├── SigLIP2-So400M/  # SigLIP 2 So400M 模型
         │   └── embeddings.db
         └── WD-EVA02-Large-Tagger-V3/  # WD14 Tagger 模型
             └── embeddings.db
@@ -300,21 +330,37 @@ export interface ClipSettings {
 #### 非 Windows 平台
 - 仅支持 CPU 推理
 
+### 显存需求建议
+
+| 模型 | 最低显存 | 推荐显存 |
+|------|---------|---------|
+| ViT-B/32 | 2 GB | 4 GB |
+| ViT-L/14 | 4 GB | 6 GB |
+| SigLIP 2 Base | 2 GB | 4 GB |
+| SigLIP 2 So400M | 6 GB | 8 GB |
+| WD14 Tagger V3 | 4 GB | 6 GB |
+
 ## 使用流程
 
 ### 首次使用 CLIP 搜索
 1. 打开 **设置** → **AI视觉**
 2. 开启"启用 AI 视觉功能"开关
-3. 下载模型（推荐 ViT-B/32 或 SigLIP 2 So400M）
-4. 点击 **"开始生成"** 按钮生成嵌入向量
-5. 等待处理完成
-6. 返回主界面，点击搜索框右侧的 **✨ 图标**
-7. 输入自然语言描述进行搜索
+3. 下载模型（推荐 ViT-B/32 或 SigLIP 2 Base）
+4. 点击 **"使用"** 按钮选择模型
+5. 点击 **"开始生成"** 按钮生成嵌入向量
+6. 等待处理完成
+7. 返回主界面，点击搜索框右侧的 **✨ 图标**
+8. 输入自然语言描述进行搜索
 
 ### 使用中文搜索
-1. 在设置中选择 **SigLIP 2 So400M** 模型
+1. 在设置中选择 **SigLIP 2 Base** 或 **SigLIP 2 So400M** 模型
 2. 下载模型并生成嵌入向量
 3. 使用中文描述进行搜索（如"夕阳下的海滩"）
+
+### 模型文件损坏处理
+1. 如果模型文件下载不完整或损坏，会显示"文件损坏"标签
+2. 点击 **"重新下载"** 按钮重新下载
+3. 下载完成后点击 **"使用"** 按钮加载模型
 
 ## 关键技术实现
 
@@ -340,8 +386,13 @@ export interface ClipSettings {
 
 ### 5. 模型文件完整性校验
 - 支持文件大小和 SHA256 哈希值校验
-- 检测到损坏文件时自动提示修复
-- 修复按钮一键重新下载
+- 检测到损坏文件时自动提示重新下载
+- 重新下载按钮一键修复损坏文件
+
+### 6. AI 视觉功能状态管理
+- 启用时不自动加载模型，用户需要手动选择
+- 禁用时自动卸载模型释放内存
+- 模型选择状态与功能启用状态独立管理
 
 ## 关键经验总结
 
@@ -353,3 +404,4 @@ export interface ClipSettings {
 6. **数据隔离重要性**：不同模型、不同根目录的数据必须隔离，避免相互干扰
 7. **内存管理**：提供用户可控的内存释放机制（CLIP 功能总开关），提升用户体验
 8. **tokenizer 版本兼容性**：新模型可能需要更新的 tokenizers 版本（当前使用 0.21）
+9. **SigLIP 相似度计算**：SigLIP 系列使用 sigmoid 相似度，而非 CLIP 的 cosine 相似度，需要使用正确的 logit_scale 和 logit_bias 参数

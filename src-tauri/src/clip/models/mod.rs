@@ -8,10 +8,12 @@ pub use clip_vit::{ClipVitB32, ClipVitL14};
 
 // 模型模块
 pub mod siglip2;
+pub mod siglip2_base;
 pub mod wd14;
 
 // 重新导出模型规格
 pub use siglip2::SigLIP2So400M;
+pub use siglip2_base::SigLIP2Base;
 pub use wd14::WdEva02LargeV3;
 
 /// 模型文件信息
@@ -139,10 +141,19 @@ pub trait ModelSpec: Send + Sync {
         SimilarityType::Cosine
     }
 
-    /// SigLIP 风格的 temperature 参数
+    /// SigLIP 风格的 logit_scale 参数
     /// 仅当 similarity_type 为 Sigmoid 时使用
-    fn sigmoid_temperature(&self) -> f32 {
-        0.07 // 默认值
+    /// logit_scale = exp(t_prime)，初始化 t_prime = log(1/0.07) ≈ 2.66
+    /// 所以 logit_scale ≈ 14.3
+    fn sigmoid_logit_scale(&self) -> f32 {
+        14.285714 // 1/0.07 ≈ 14.285714
+    }
+
+    /// SigLIP 风格的 logit_bias 参数
+    /// 仅当 similarity_type 为 Sigmoid 时使用
+    /// 初始化为 -10，用于平衡正负样本
+    fn sigmoid_logit_bias(&self) -> f32 {
+        -10.0
     }
 
     /// 图像张量格式
@@ -182,6 +193,7 @@ fn get_registry() -> ModelRegistry {
     registry.push(Arc::new(ClipVitL14));
 
     // SigLIP 2 模型
+    registry.push(Arc::new(SigLIP2Base));
     registry.push(Arc::new(SigLIP2So400M));
 
     // WD14 Tagger 模型

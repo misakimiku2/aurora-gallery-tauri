@@ -2564,28 +2564,11 @@ export const App: React.FC = () => {
       } catch (err) {
         console.error('Failed to unload CLIP model:', err);
       }
-    } else {
-      const modelName = state.settings.clip.modelName;
-      try {
-        await clipLoadModel(modelName);
-      } catch (err) {
-        console.error('Failed to load CLIP model:', err);
-        // Revert state on error
-        setState(s => ({
-          ...s,
-          settings: {
-            ...s.settings,
-            clip: {
-              ...s.settings.clip,
-              enabled: false
-            }
-          }
-        }));
-      }
     }
+    // 启用时不自动加载模型，用户需要手动选择模型
     
     setClipLoading(false);
-  }, [state.settings.clip.modelName]);
+  }, []);
 
   const handleChangePath = async (type: 'resource' | 'cache') => {
     try {
