@@ -308,7 +308,7 @@ const CLIP_MODELS: ClipModelInfo[] = [
   },
   {
     name: 'SigLIP2-Base',
-    displayName: 'SigLIP 2 Base (轻量版)',
+    displayName: 'SigLIP 2 Base',
     description: '轻量级 - 多语言支持，适合低配置设备',
     size: 1600 * 1024 * 1024,
     sizeDisplay: '1.5 GB',
@@ -325,12 +325,13 @@ const CLIP_MODELS: ClipModelInfo[] = [
   {
     name: 'SigLIP2-So400M',
     displayName: 'SigLIP 2 So400M',
-    description: '多语言支持 - 支持中文搜索',
+    description: '高精度多语言支持 - 支持中文搜索',
     size: 4400 * 1024 * 1024,
     sizeDisplay: '4.3 GB',
     embeddingDim: 1152,
     isRecommended: false,
     series: 'siglip',
+    isHighPrecision: true, // 高精度标记
     features: {
       textSearch: true,
       imageSearch: true,
@@ -390,8 +391,19 @@ const formatSpeed = (bytesPerSecond: number): string => {
 };
 
 const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, onClipSearchDisabled, clipLoading, onRefresh, language }) => {
-  // 当前选中的模型系列
-  const [activeSeries, setActiveSeries] = useState<ModelSeries>('clip');
+  // 根据当前使用的模型初始化选中的模型系列
+  // 如果已选择模型，跳转到该模型所在系列；否则默认显示 CLIP 系列
+  const getInitialSeries = (): ModelSeries => {
+    if (settings.modelName) {
+      const currentModel = CLIP_MODELS.find(m => m.name === settings.modelName);
+      if (currentModel) {
+        return currentModel.series;
+      }
+    }
+    return 'clip';
+  };
+
+  const [activeSeries, setActiveSeries] = useState<ModelSeries>(getInitialSeries);
 
   // 从全局缓存初始化模型状态
   const [modelStatuses, setModelStatuses] = useState<Record<string, ClipModelStatus>>(() => {
@@ -507,7 +519,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
     // 清除过期的下载错误状态（如果错误是之前的，现在应该清除）
     if (settings.downloadStatus === 'error') {
-      console.log('[AIVision] Clearing stale download error status');
       onUpdateSettings({
         ...settings,
         downloadStatus: 'not_started',
@@ -518,7 +529,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     // 检查是否有有效的缓存，如果有则跳过加载
     const cached = getCachedModelStatuses();
     if (cached) {
-      console.log('[AIVision] Using cached model statuses');
       setModelStatuses(cached);
       // 仍然调用加载函数以刷新最新状态，但不显示加载状态
       loadModelStatuses(true);
@@ -657,11 +667,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const loadModelStatuses = async (silent: boolean = false) => {
     // 防止重复加载
     if (isLoadingRef.current) {
-      console.log('[AIVision] Already loading, skipping...');
       return;
     }
 
-    console.log('[AIVision] Loading model statuses..., isMounted:', isMountedRef.current, 'silent:', silent);
     isLoadingRef.current = true;
     // 静默模式下不显示加载状态
     if (!silent) {
@@ -672,15 +680,11 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       const statuses: Record<string, ClipModelStatus> = {};
       for (const model of CLIP_MODELS) {
         if (!isMountedRef.current) {
-          console.log('[AIVision] Component unmounted, aborting');
           return;
         }
-        console.log(`[AIVision] Fetching status for ${model.name}...`);
         const status = await clipGetModelStatus(model.name);
-        console.log(`[AIVision] Status for ${model.name}:`, status);
         statuses[model.name] = status;
       }
-      console.log('[AIVision] All statuses loaded:', statuses);
       if (isMountedRef.current) {
         setModelStatuses(statuses);
         // 保存到全局缓存
@@ -689,7 +693,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         // 如果所有模型都已下载且没有错误，清除下载错误状态
         const allDownloaded = CLIP_MODELS.every(model => statuses[model.name]?.is_downloaded);
         if (allDownloaded && settings.downloadStatus === 'error') {
-          console.log('[AIVision] All models downloaded, clearing error status');
           onUpdateSettings({
             ...settings,
             downloadStatus: 'completed',
@@ -698,9 +701,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         }
       }
     } catch (error) {
-      console.error('[AIVision] Failed to load model statuses:', error);
+      console.error('Failed to load model statuses:', error);
     } finally {
-      console.log('[AIVision] Setting isLoading to false, isMounted:', isMountedRef.current);
       isLoadingRef.current = false;
       if (isMountedRef.current) {
         setIsLoading(false);
@@ -931,6 +933,12 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   };
 
   const handleGenerateEmbeddings = async () => {
+    // 检查是否已选择模型
+    if (!settings.modelName) {
+      onShowToast?.('请先选择一个模型', 3000);
+      return;
+    }
+
     // 从数据库获取文件列表
     let imageFiles: { id: string; path: string; name: string; format?: string }[] = [];
     try {
@@ -1029,10 +1037,16 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   const handleGenerateTagsFromEmbeddings = async () => {
     if (isGeneratingTags) return;
-    
+
+    // 检查是否已选择模型
+    if (!settings.modelName) {
+      onShowToast?.('请先选择一个模型', 3000);
+      return;
+    }
+
     setIsGeneratingTags(true);
     setTagGenerationResult(null);
-    
+
     try {
       const result = await clipGenerateTagsFromEmbeddings(
         settings.modelName,
@@ -1205,7 +1219,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                 {/* 第一行：标题、标签、按钮 */}
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
                       <h5 className="font-semibold text-gray-800 dark:text-white">
                         {model.displayName}
                       </h5>
@@ -1220,14 +1234,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                           文件损坏
                         </span>
                       )}
-                      {isDownloaded && !isCorrupted && (
-                        <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-xs rounded-full flex items-center">
-                          <Check size={12} className="mr-1" />
-                          已下载
-                        </span>
-                      )}
                       {isDownloaded && status?.is_gpu_active && !isCorrupted && settings.enabled && !clipLoading && (
-                        <span className="ml-2 px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
+                        <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
                           <Zap size={12} className="mr-1" />
                           GPU 已激活
                         </span>
@@ -1273,8 +1281,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       ) : isDownloaded ? (
                         <>
                           <button
-                            onClick={() => handleSelectModel(model.name)}
-                            disabled={isLoading || clipLoading}
+                            onClick={() => settings.enabled && handleSelectModel(model.name)}
+                            disabled={isLoading || clipLoading || !settings.enabled}
                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isInUse
                               ? 'bg-green-500 text-white'
                               : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
@@ -1284,17 +1292,17 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                           </button>
                           <button
                             onClick={() => handleDelete(model.name)}
-                            disabled={clipLoading}
-                            className={`p-2 rounded-lg transition-colors ${clipLoading ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
-                            title={clipLoading ? '模型正在加载中' : '删除模型'}
+                            disabled={clipLoading || !settings.enabled}
+                            className={`p-2 rounded-lg transition-colors ${clipLoading || !settings.enabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
+                            title={clipLoading ? '模型正在加载中' : !settings.enabled ? '请先启用 AI 视觉功能' : '删除模型'}
                           >
                             <Trash size={18} />
                           </button>
                         </>
                       ) : (
                         <button
-                          onClick={() => handleDownload(model.name)}
-                          disabled={isLoadingModel || clipLoading}
+                          onClick={() => settings.enabled && handleDownload(model.name)}
+                          disabled={isLoadingModel || clipLoading || !settings.enabled}
                           className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
                         >
                           {isLoadingModel ? (
@@ -1395,7 +1403,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             <div>
               <div className="font-medium text-gray-800 dark:text-white">生成图片嵌入向量</div>
               <div className="text-xs text-gray-500 dark:text-gray-400">
-                为所有图片生成 CLIP 嵌入向量，用于语义搜索
+                为所有图片生成嵌入向量，用于语义搜索、以图搜图和标签识别
               </div>
             </div>
             {!isGeneratingEmbeddings && (

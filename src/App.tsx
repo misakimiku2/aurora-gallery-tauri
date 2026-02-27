@@ -2197,6 +2197,65 @@ export const App: React.FC = () => {
     enterPeopleOverview();
   };
 
+  const handleSmartCreatePerson = async (
+    name: string,
+    coverFileId: string,
+    matchedFileIds: string[],
+    faceBox?: { x: number; y: number; w: number; h: number }
+  ) => {
+    const newId = Math.random().toString(36).substr(2, 9);
+    const newPerson: Person = {
+      id: newId,
+      name,
+      coverFileId,
+      count: matchedFileIds.length,
+      description: '',
+      faceBox
+    };
+
+    await dbUpsertPerson(newPerson).catch(e => console.error("Failed to create person in DB", e));
+
+    setState(prev => {
+      const newFiles = { ...prev.files };
+      
+      matchedFileIds.forEach(fid => {
+        const file = newFiles[fid];
+        if (file && file.type === FileType.IMAGE) {
+          const currentFaces = file.aiData?.faces || [];
+          const newFace: AiFace = {
+            id: Math.random().toString(36).substr(2, 9),
+            personId: newId,
+            name: name,
+            confidence: 1.0,
+            box: { x: 0, y: 0, w: 0, h: 0 }
+          };
+          const newAiData = file.aiData 
+            ? { ...file.aiData, faces: [...currentFaces, newFace] }
+            : {
+                analyzed: false,
+                analyzedAt: new Date().toISOString(),
+                description: '',
+                tags: [],
+                faces: [newFace],
+                sceneCategory: '',
+                confidence: 1.0,
+                dominantColors: [],
+                objects: []
+              };
+          newFiles[fid] = { ...file, aiData: newAiData };
+        }
+      });
+
+      return {
+        ...prev,
+        people: { ...prev.people, [newId]: newPerson },
+        files: newFiles
+      };
+    });
+
+    enterPeopleOverview();
+  };
+
   const handleDeletePerson = (personId: string | string[]) => {
     const idsToDelete = typeof personId === 'string' ? [personId] : personId;
     idsToDelete.forEach(id => {
@@ -2520,6 +2579,29 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleOpenCropAvatar = (
+    fileId: string, 
+    personId: string, 
+    fileUrl: string, 
+    initialBox?: { x: number; y: number; w: number; h: number },
+    customFileIds?: string[],
+    smartCreateData?: any
+  ) => {
+    setState(s => ({
+      ...s,
+      activeModal: {
+        type: 'crop-avatar',
+        data: {
+          personId,
+          fileUrl,
+          initialBox,
+          customFileIds,
+          smartCreateData
+        }
+      }
+    }));
+  };
+
   const handleSaveAvatarCrop = (personId: string, box: { x: number, y: number, w: number, h: number, imageId?: string | null }) => {
     const updates: Partial<Person> = { faceBox: box };
 
@@ -2533,6 +2615,24 @@ export const App: React.FC = () => {
     showToast(t('context.saved'));
   };
 
+  const handleSaveAvatarCropForSmartCreate = (box: { x: number, y: number, w: number, h: number, imageId?: string | null }) => {
+    const modalData = state.activeModal.data as any;
+    if (modalData?.smartCreateData) {
+      modalData.smartCreateData.faceBox = box;
+      if (box.imageId) {
+        modalData.smartCreateData.coverFileId = box.imageId;
+      }
+      setState(s => ({ 
+        ...s, 
+        activeModal: { 
+          type: 'smart-create-person',
+          data: modalData.smartCreateData
+        } 
+      }));
+      showToast(t('context.saved'));
+    }
+  };
+
   const toggleSettings = useCallback(() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen })), []);
 
   const openClipSettings = useCallback(() => {
@@ -2540,23 +2640,11 @@ export const App: React.FC = () => {
   }, []);
 
   const handleClipEnabledChange = useCallback(async (enabled: boolean) => {
-    const { clipLoadModel, clipUnloadModel } = await import('./api/tauri-bridge');
-    
-    // Immediately update the state
-    setState(s => ({
-      ...s,
-      settings: {
-        ...s.settings,
-        clip: {
-          ...s.settings.clip,
-          enabled
-        }
-      }
-    }));
-    
+    const { clipUnloadModel } = await import('./api/tauri-bridge');
+
     // Set loading state
     setClipLoading(true);
-    
+
     if (!enabled) {
       setIsClipSearchEnabled(false);
       try {
@@ -2566,7 +2654,22 @@ export const App: React.FC = () => {
       }
     }
     // 启用时不自动加载模型，用户需要手动选择模型
-    
+
+    // Update the state - 切换 enabled 状态时清空 modelName
+    // 确保关闭再开启AI视觉功能后，所有的模型都处于未选择状态
+    setState(s => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        clip: {
+          ...s.settings.clip,
+          enabled,
+          // 无论启用还是禁用，都清空 modelName，确保用户需要手动选择模型
+          modelName: '' as any
+        }
+      }
+    }));
+
     setClipLoading(false);
   }, []);
 
@@ -4600,6 +4703,7 @@ export const App: React.FC = () => {
         onCheckUpdate={() => checkUpdate(true)}
         isCheckingUpdate={isCheckingUpdate}
         onRefreshTags={handleRefreshTags}
+        handleSmartCreatePerson={handleSmartCreatePerson}
       />
 
       <ContextMenu
@@ -4643,6 +4747,7 @@ export const App: React.FC = () => {
         handleAddToCompareCanvas={handleAddToCompareCanvas}
         handleCopyImageToClipboard={handleCopyImageToClipboard}
         handleSearchSimilarImages={handleSearchSimilarImages}
+        openClipSettings={openClipSettings}
       />
     </div>
   );

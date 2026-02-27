@@ -344,6 +344,336 @@ let en_tag = record[1].replace('_', " ").trim().to_string();
 - `src/App.tsx` - 删除持久化、新增刷新函数
 
 ---
+
+## 14. 智能创建人物功能 (2026-02-28)
+
+### 14.1 功能说明
+利用 WD14 Tagger 模型的角色标签（category: 4）自动识别和创建人物，支持：
+- 基于嵌入向量中的角色标签概率识别人物
+- 角色名称自动补全和搜索
+- 相似度阈值可调节
+- 虚拟滚动展示匹配图片
+
+### 14.2 数据源
+- **标签文件**: `tags_info.csv`（模型下载目录中）
+- **角色标签**: category = 4 的标签（如 `hatsune miku`、`hakurei reimu`）
+- **嵌入向量**: WD14 输出 10861 维标签概率向量
+
+### 14.3 后端实现
+
+#### 14.3.1 新增命令
+| 命令 | 说明 |
+|------|------|
+| `clip_get_character_tags` | 获取所有角色标签（category=4） |
+| `clip_search_by_character_tag` | 按角色标签搜索图片 |
+| `clip_get_detected_characters` | 获取已识别的角色列表 |
+
+#### 14.3.2 数据结构
+```rust
+pub struct CharacterTag {
+    pub tag_id: String,
+    pub name: String,
+    pub name_cn: String,
+    pub index: usize,
+}
+
+pub struct DetectedCharacter {
+    pub tag_name: String,
+    pub tag_name_cn: String,
+    pub tag_index: usize,
+    pub file_count: usize,
+    pub max_score: f32,
+    pub sample_file_id: String,
+}
+```
+
+### 14.4 前端实现
+
+#### 14.4.1 新增组件
+- `SmartCreatePersonModal.tsx` - 智能创建人物模态框
+
+#### 14.4.2 功能入口
+- 人物概览界面右键菜单 → 「智能创建人物」
+
+#### 14.4.3 UI 特性
+- 圆形头像预览（可点击裁剪）
+- 角色名称输入（支持自动补全）
+- 已识别角色列表（虚拟滚动）
+- 相似度阈值滑块（0.01 - 0.5）
+- 匹配图片网格（虚拟滚动）
+
+### 14.5 阈值优化
+
+#### 14.5.1 问题发现
+角色标签的嵌入向量值通常很小（如 0.000007），远低于默认阈值 0.4。
+
+#### 14.5.2 解决方案
+- 默认阈值从 0.4 降低到 0.1
+- 滑块范围调整为 0.01 - 0.5
+- 后端自动检测过高阈值并降级
+
+### 14.6 修改文件
+- `src-tauri/src/clip_commands.rs` - 新增 3 个命令
+- `src-tauri/src/main.rs` - 注册新命令
+- `src/types.ts` - 新增类型定义
+- `src/api/tauri-bridge.ts` - 新增 API 函数
+- `src/components/modals/SmartCreatePersonModal.tsx` - 新建模态框组件
+- `src/components/AppModals.tsx` - 集成新模态框
+- `src/components/ContextMenu.tsx` - 添加菜单入口
+- `src/App.tsx` - 添加处理函数
+- `src/utils/translations.ts` - 添加翻译
+
+---
+
+## 15. 智能创建人物功能优化 (2026-02-28)
+
+### 15.1 翻译问题修复
+
+#### 15.1.1 问题现象
+智能创建人物窗口中，UI 文本显示为翻译键而非翻译后的文本。
+
+#### 15.1.2 解决方案
+在 `translations.ts` 中添加 `smartCreate` 命名空间：
+```typescript
+smartCreate: {
+  title: '智能创建人物',
+  preview: '预览匹配图片',
+  characterName: '角色名称',
+  // ... 其他翻译
+}
+```
+
+### 15.2 创建人物时自动关联文件
+
+#### 15.2.1 问题现象
+创建人物后，匹配的图片没有自动关联到该人物的人脸数据中。
+
+#### 15.2.2 解决方案
+修改 `handleSmartCreatePerson` 函数，在创建人物后自动为每个匹配的文件添加人脸关联记录：
+```typescript
+matchedFileIds.forEach(fid => {
+  const file = newFiles[fid];
+  if (file && file.type === FileType.IMAGE) {
+    const newFace: AiFace = {
+      id: Math.random().toString(36).substr(2, 9),
+      personId: newId,
+      name: name,
+      confidence: 1.0,
+      box: { x: 0, y: 0, w: 0, h: 0 }
+    };
+    // 更新文件的 aiData.faces
+  }
+});
+```
+
+### 15.3 头像裁剪功能重构
+
+#### 15.3.1 问题现象
+1. 点击头像进入裁剪窗口后，右侧文件栏为空
+2. 确认裁剪后创建了无名人物，没有正确返回智能创建窗口
+
+#### 15.3.2 解决方案
+将裁剪功能完全集成到 `SmartCreatePersonModal` 组件内部：
+- 移除对外部 `CropAvatarModal` 的依赖
+- 在组件内部实现 `isCropping` 状态切换
+- 裁剪界面使用原图（`convertFileSrc`）而非缩略图
+- 裁剪完成后更新 `coverFaceBox` 状态
+
+#### 15.3.3 裁剪预览实现
+使用 `img` 元素配合 `left/top` 定位显示裁剪区域：
+```tsx
+<img
+  src={coverSrc}
+  style={coverFaceBox ? {
+    width: `${10000 / coverFaceBox.w}%`,
+    height: `${10000 / coverFaceBox.h}%`,
+    left: `${-coverFaceBox.x / coverFaceBox.w * 100}%`,
+    top: `${-coverFaceBox.y / coverFaceBox.h * 100}%`
+  } : undefined}
+/>
+```
+
+### 15.4 角色列表中文翻译
+
+#### 15.4.1 问题现象
+软件语言为中文时，角色列表显示英文名称。
+
+#### 15.4.2 解决方案
+修改后端 `clip_get_detected_characters` 函数：
+1. 新增 `language` 参数
+2. 当语言为 "zh" 时，加载 `Tags-cn_2024_ver-1.0.csv` 文件
+3. 使用中文翻译填充 `tag_name_cn` 字段
+
+```rust
+let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    .join("src")
+    .join("clip")
+    .join("models")
+    .join("Tags-cn_2024_ver-1.0.csv");
+
+// 加载中文翻译映射
+let mut cn_translations: HashMap<String, String> = HashMap::new();
+if lang == "zh" && cn_tags_path.exists() {
+    // 读取 CSV 并填充映射
+}
+
+// 返回结果时使用翻译
+let cn_name = cn_translations.get(&name).cloned().unwrap_or_else(|| name.clone());
+```
+
+### 15.5 修改文件
+- `src/utils/translations.ts` - 添加 smartCreate 翻译命名空间
+- `src/App.tsx` - 修改 handleSmartCreatePerson 函数
+- `src/components/modals/SmartCreatePersonModal.tsx` - 内部实现裁剪功能
+- `src/components/AppModals.tsx` - 移除不需要的 props
+- `src/api/tauri-bridge.ts` - clipGetDetectedCharacters 添加 language 参数
+- `src-tauri/src/clip_commands.rs` - clip_get_detected_characters 添加中文翻译支持
+
+---
+
+## 16. 智能创建人物功能深度优化 (2026-02-28)
+
+### 16.1 角色列表使用缩略图
+
+#### 16.1.1 问题现象
+角色列表头像使用原图加载，导致加载缓慢，且 GIF 图片会播放动画。
+
+#### 16.1.2 解决方案
+1. 新增 `characterThumbnailUrls` 状态存储角色缩略图
+2. 添加 `useEffect` 在加载角色后预加载缩略图
+3. 修改 `CharacterRow` 组件只使用缩略图，不回退到原图
+
+```tsx
+// 只使用缩略图，缩略图加载前显示占位图标
+{sampleFile && thumbnailUrl ? (
+  <img src={thumbnailUrl} ... />
+) : (
+  <User size={16} />  // 占位图标
+)}
+```
+
+#### 16.1.3 缩略图并行加载优化
+将串行加载改为并行批量加载，每批 10 个：
+
+```tsx
+const batchSize = 10;
+for (let i = 0; i < chars.length; i += batchSize) {
+  const batch = chars.slice(i, i + batchSize);
+  const results = await Promise.all(
+    batch.map(async char => ...)
+  );
+  setCharacterThumbnailUrls(prev => ({ ...prev, ...newUrls }));  // 渐进式更新
+}
+```
+
+### 16.2 窗口布局响应式优化
+
+#### 16.2.1 问题现象
+窗口固定大小 `w-[800px] max-h-[90vh]`，角色列表高度固定 `h-48`。
+
+#### 16.2.2 解决方案
+1. 窗口改为响应式：`w-full max-w-4xl h-[85vh]`
+2. 角色列表使用 `flex-1 min-h-0` 自适应高度
+3. 添加 `ResizeObserver` 动态检测列表高度
+4. `react-window` 使用动态 `characterListHeight`
+
+### 16.3 阈值滑块分离
+
+#### 16.3.1 问题现象
+只有一个相似度阈值滑块，同时影响角色列表检测和图片搜索。
+
+#### 16.3.2 解决方案
+分离为两个独立滑块：
+
+| 滑块 | 位置 | 功能 |
+|------|------|------|
+| 角色检测阈值 | 左侧面板 | 控制角色列表检测 |
+| 相似度阈值 | 右侧预览区 | 控制匹配图片搜索 |
+
+#### 16.3.3 防抖机制
+两个滑块都添加 200ms 防抖，避免频繁请求：
+
+```tsx
+const handleThresholdChange = useCallback((newThreshold: number) => {
+  setThreshold(newThreshold);
+  if (debounceTimerRef.current) {
+    clearTimeout(debounceTimerRef.current);
+  }
+  debounceTimerRef.current = setTimeout(async () => {
+    // 执行搜索
+  }, 200);
+}, [selectedCharacter]);
+```
+
+### 16.4 后端阈值降级逻辑移除
+
+#### 16.4.1 问题现象
+后端有降级逻辑：当 `min_score > 0.3` 时强制使用 `0.1`，导致阈值调高后反而检测到更多角色。
+
+#### 16.4.2 解决方案
+移除降级逻辑，让用户完全控制阈值：
+
+```rust
+// 之前
+let effective_min_score = if min_score > 0.3 { 0.1 } else { min_score };
+
+// 之后
+let effective_min_score = min_score;
+```
+
+### 16.5 头像裁剪优化
+
+#### 16.5.1 问题现象
+裁剪后头像显示缩略图而非原图效果。
+
+#### 16.5.2 解决方案
+裁剪后使用原图，未裁剪时使用缩略图：
+
+```tsx
+const coverSrc = coverFile && coverFileId 
+  ? (coverFaceBox 
+      ? coverOriginalSrc           // 裁剪后用原图
+      : thumbnailUrls[coverFileId] || coverOriginalSrc)
+  : null;
+```
+
+#### 16.5.3 选择新角色时重置裁剪框
+```tsx
+const handleSelectCharacter = useCallback(async (char: DetectedCharacter) => {
+  setCoverFileId(char.sample_file_id);
+  setCoverFaceBox(undefined);  // 重置裁剪框
+  // ...
+}, [...]);
+```
+
+### 16.6 头像大小调整
+
+| 位置 | 之前 | 之后 |
+|------|------|------|
+| 主头像 | `w-24 h-24` (96px) | `w-32 h-32` (128px) |
+| 角色列表头像 | `w-7 h-7` (28px) | `w-9 h-9` (36px) |
+| 行高 | `ITEM_HEIGHT = 40` | `ITEM_HEIGHT = 48` |
+
+### 16.7 加载状态优化
+
+#### 16.7.1 问题现象
+加载状态显示文字"加载中..."、"搜索中..."。
+
+#### 16.7.2 解决方案
+使用 CSS 旋转动画替代文字：
+
+```tsx
+<div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-500 
+                border-t-blue-500 dark:border-t-blue-400 
+                rounded-full animate-spin" />
+```
+
+### 16.8 修改文件
+- `src/components/modals/SmartCreatePersonModal.tsx` - 主要优化
+- `src/utils/translations.ts` - 添加 characterThreshold 翻译
+- `src-tauri/src/clip_commands.rs` - 移除阈值降级逻辑
+
+---
 *记录时间: 2026-02-23*
-*更新时间: 2026-02-26*
+*更新时间: 2026-02-28*
 *维护者: Antigravity*

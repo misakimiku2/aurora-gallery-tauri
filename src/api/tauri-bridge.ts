@@ -2160,3 +2160,83 @@ export const listenClipModelDownloadProgress = (callback: (data: ClipModelDownlo
     callback(event.payload);
   });
 };
+
+// ==================== 角色标签相关 API ====================
+
+import { CharacterTag, DetectedCharacter } from '../types';
+
+/**
+ * 获取所有角色标签（WD14 category=4）
+ * @param language 语言（'zh' 或 'en'）
+ * @returns 角色标签列表
+ */
+export const clipGetCharacterTags = async (language?: string): Promise<CharacterTag[]> => {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const tags = await invoke<CharacterTag[]>('clip_get_character_tags', {
+      language,
+    });
+    return tags;
+  } catch (error) {
+    console.error('Failed to get character tags:', error);
+    throw error;
+  }
+};
+
+/**
+ * 按角色标签搜索图片
+ * @param tagIndex 标签索引
+ * @param minScore 最小相似度阈值
+ * @param maxResults 最大返回结果数
+ * @returns 搜索结果列表
+ */
+export const clipSearchByCharacterTag = async (
+  tagIndex: number,
+  minScore: number,
+  maxResults?: number
+): Promise<ClipSearchResult[]> => {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const results = await invoke<ClipSearchResult[]>('clip_search_by_character_tag', {
+      tagIndex,
+      minScore,
+      maxResults,
+    });
+    return results;
+  } catch (error) {
+    console.error('Failed to search by character tag:', error);
+    throw error;
+  }
+};
+
+/**
+ * 获取已检测到的角色列表
+ * @param minScore 最小相似度阈值
+ * @param minCount 最小匹配文件数
+ * @param language 语言 ('zh' | 'en')
+ * @returns 已检测到的角色列表
+ */
+export const clipGetDetectedCharacters = async (
+  minScore: number,
+  minCount?: number,
+  language?: string
+): Promise<DetectedCharacter[]> => {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const characters = await invoke<DetectedCharacter[]>('clip_get_detected_characters', {
+      minScore,
+      minCount: minCount ?? 1,
+      language: language ?? 'en',
+    });
+    return characters;
+  } catch (error) {
+    console.error('Failed to get detected characters:', error);
+    throw error;
+  }
+};

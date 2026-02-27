@@ -31,6 +31,7 @@ import { CropAvatarModal as CropAvatarModalComp } from './modals/CropAvatarModal
 import { CreateTopicModal as CreateTopicModalComp } from './modals/CreateTopicModal';
 import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicModal';
 import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
+import { SmartCreatePersonModal as SmartCreatePersonModalComp } from './modals/SmartCreatePersonModal';
 import { clipUpdateConfig } from '../api/tauri-bridge';
 
 interface AppModalsProps {
@@ -92,6 +93,7 @@ interface AppModalsProps {
   onCheckUpdate: () => void;
   isCheckingUpdate: boolean;
   onRefreshTags?: () => void;
+  handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }) => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -146,6 +148,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onCheckUpdate,
   isCheckingUpdate,
   onRefreshTags,
+  handleSmartCreatePerson,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -411,6 +414,26 @@ export const AppModals: React.FC<AppModalsProps> = ({
                 handleClearPersonInfo(state.activeModal.data.fileIds, personIds);
                 closeModals();
                 showToast(t('context.saved'));
+              }}
+              onClose={closeModals}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'smart-create-person' && handleSmartCreatePerson && (
+            <SmartCreatePersonModalComp
+              files={state.files}
+              resourceRoot={state.settings.paths.resourceRoot}
+              cachePath={state.settings.paths.cacheRoot || ''}
+              language={state.settings.language}
+              clipSettings={{
+                minScore: state.settings.clip.minScore,
+                modelName: state.settings.clip.modelName,
+                enabled: state.settings.clip.enabled
+              }}
+              onConfirm={(name, coverFileId, matchedFileIds, faceBox) => {
+                handleSmartCreatePerson(name, coverFileId, matchedFileIds, faceBox);
+                closeModals();
               }}
               onClose={closeModals}
               t={t}

@@ -55,6 +55,7 @@ interface ContextMenuProps {
   handleAddToCompareCanvas: (tabId: string, imageIds: string[]) => void;
   handleCopyImageToClipboard: (fileId: string) => void;
   handleSearchSimilarImages?: (imageId: string) => void;
+  openClipSettings?: () => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -97,7 +98,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handleOpenCompareInNewTab,
   handleAddToCompareCanvas,
   handleCopyImageToClipboard,
-  handleSearchSimilarImages
+  handleSearchSimilarImages,
+  openClipSettings
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -199,7 +201,17 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           </div>
         )}
         {contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && clipSettings?.enabled && handleSearchSimilarImages && (
-          <div className="px-4 py-2 hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center" onClick={() => { handleSearchSimilarImages(contextMenu.targetId!); closeContextMenu(); }}>
+          <div className="px-4 py-2 hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center" onClick={() => {
+            // 检查是否已选择模型
+            if (!clipSettings?.modelName) {
+              showToast('请先选择视觉模型');
+              openClipSettings?.();
+              closeContextMenu();
+              return;
+            }
+            handleSearchSimilarImages(contextMenu.targetId!);
+            closeContextMenu();
+          }}>
             <Search size={14} className="mr-2 opacity-70" />
             {t('context.searchSimilar') || '搜索相似图片'}
           </div>
@@ -480,7 +492,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       {contextMenu.type === 'tab' && contextMenu.targetId && (<> <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={(e) => { handleCloseTab(e, contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeTab')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCloseOtherTabs(contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeOtherTabs')}</div><div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCloseAllTabs(); closeContextMenu(); }}>{t('context.closeAllTabs')}</div> </>)}
       {contextMenu.type === 'background' && (<>
         {activeTab.viewMode === 'people-overview' ? (
-          <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreatePerson(); closeContextMenu(); }}>{t('context.newPerson')}</div>
+          <>
+            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreatePerson(); closeContextMenu(); }}>{t('context.newPerson')}</div>
+            <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('smart-create-person', {}); closeContextMenu(); }}>
+              <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.smartCreatePerson') || '智能创建人物'}
+            </div>
+          </>
         ) : (
           <>
             <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleRefresh(); closeContextMenu(); }}>{t('context.refresh')}</div>

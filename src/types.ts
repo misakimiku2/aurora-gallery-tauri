@@ -187,7 +187,7 @@ export interface AIConfig {
 
 // ==================== CLIP 模型设置 ====================
 
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
+export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3' | '';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 // 模型系列类型
@@ -390,7 +390,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'update' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'smart-create-person' | 'update' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';
@@ -495,6 +495,24 @@ export interface ClipStats {
   is_model_loaded: boolean;
   /// 当前模型名称
   current_model?: string;
+}
+
+/// 角色标签（WD14 category=4）
+export interface CharacterTag {
+  tag_id: string;
+  name: string;
+  name_cn: string;
+  index: number;
+}
+
+/// 已检测到的角色
+export interface DetectedCharacter {
+  tag_name: string;
+  tag_name_cn: string;
+  tag_index: number;
+  file_count: number;
+  max_score: number;
+  sample_file_id: string;
 }
 
 // AI 服务商预设接口

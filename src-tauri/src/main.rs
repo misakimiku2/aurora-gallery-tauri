@@ -134,7 +134,10 @@ fn main() {
             clip_commands::clip_resume_embedding_generation,
             clip_commands::clip_update_config,
             clip_commands::clip_generate_tags_from_embeddings,
-            clip_commands::get_all_image_files
+            clip_commands::get_all_image_files,
+            clip_commands::clip_get_character_tags,
+            clip_commands::clip_search_by_character_tag,
+            clip_commands::clip_get_detected_characters
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;

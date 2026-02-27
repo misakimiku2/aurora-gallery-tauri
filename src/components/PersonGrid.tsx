@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+﻿import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Person, FileNode, TabState, PersonSortOption, PersonGroupByOption, SortDirection, Topic } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
@@ -366,7 +366,7 @@ export const PersonGrid = ({
                 // 无分组视图
                 <div className="relative min-w-0" style={{ height: noGroupTotalHeight }}>
                     {noGroupVisibleItems.map((item) => {
-                        if (item.id.startsWith('header:')) return null;
+                        if (!item.id || item.id.startsWith('header:')) return null;
                         const person = people[item.id];
                         if (!person) return null;
                         return (

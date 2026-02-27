@@ -15,9 +15,11 @@ interface CropAvatarModalProps {
     t: (key: string) => string;
     resourceRoot?: string;
     cachePath?: string;
+    customFileIds?: string[];
+    onBack?: () => void;
 }
 
-export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t, resourceRoot, cachePath }) => {
+export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initialBox, personId, allFiles, people, onConfirm, onClose, t, resourceRoot, cachePath, customFileIds, onBack }) => {
     // 基础状态
     const [scale, setScale] = useState(1);
     const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -60,7 +62,9 @@ export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initi
         return images;
     };
 
-    const personImages = getPersonImages();
+    const personImages = customFileIds 
+        ? customFileIds.map(id => allFiles[id]).filter(Boolean)
+        : getPersonImages();
 
     // 过滤图片
     const filteredImages = personImages.filter(img =>
@@ -380,12 +384,21 @@ export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initi
                     </div>
 
                     <div className="flex space-x-3">
-                        <button
-                            onClick={onClose}
-                            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
-                        >
-                            {t('settings.cancel') || '取消'}
-                        </button>
+                        {onBack ? (
+                            <button
+                                onClick={onBack}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
+                            >
+                                {t('context.backToManualRename') || '返回'}
+                            </button>
+                        ) : (
+                            <button
+                                onClick={onClose}
+                                className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition shadow-sm"
+                            >
+                                {t('settings.cancel') || '取消'}
+                            </button>
+                        )}
                         <button
                             onClick={handleSave}
                             disabled={!selectedFile}

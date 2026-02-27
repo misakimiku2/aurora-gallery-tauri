@@ -1122,3 +1122,306 @@ pub async fn clip_generate_tags_from_embeddings(
         "skipped": skipped_count,
     }))
 }
+
+// ==================== 角色标签相关命令 ====================
+
+use serde::Serialize;
+
+#[derive(Serialize, Clone)]
+pub struct CharacterTag {
+    pub tag_id: String,
+    pub name: String,
+    pub name_cn: String,
+    pub index: usize,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DetectedCharacter {
+    pub tag_name: String,
+    pub tag_name_cn: String,
+    pub tag_index: usize,
+    pub file_count: usize,
+    pub max_score: f32,
+    pub sample_file_id: String,
+}
+
+#[tauri::command]
+pub async fn clip_get_character_tags(
+    model_name: Option<String>,
+    language: Option<String>,
+) -> Result<Vec<CharacterTag>, String> {
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("角色标签仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let model_cache_dir = {
+        let guard = manager.read().await;
+        guard.config().model_cache_dir.clone()
+    };
+    
+    let tags_path = model_cache_dir
+        .join(&requested_model)
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
+    }
+    
+    let file = std::fs::File::open(&tags_path)
+        .map_err(|e| format!("Failed to open tags file: {}", e))?;
+    let mut rdr = csv::Reader::from_reader(file);
+    
+    let mut character_tags = Vec::new();
+    let mut index = 0;
+    
+    for result in rdr.records() {
+        let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+        if record.len() >= 3 {
+            let category: i32 = record[2].parse().unwrap_or(-1);
+            if category == 4 {
+                let tag_id = record[0].to_string();
+                let name = record[1].replace('_', " ").trim().to_string();
+                
+                character_tags.push(CharacterTag {
+                    tag_id,
+                    name: name.clone(),
+                    name_cn: name,
+                    index,
+                });
+            }
+        }
+        index += 1;
+    }
+    
+    log::info!("Loaded {} character tags (category=4)", character_tags.len());
+    Ok(character_tags)
+}
+
+#[tauri::command]
+pub async fn clip_search_by_character_tag(
+    tag_index: usize,
+    min_score: f32,
+    max_results: Option<usize>,
+    model_name: Option<String>,
+) -> Result<Vec<SearchResult>, String> {
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("角色标签搜索仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let mut guard = manager.write().await;
+    guard.switch_model(&requested_model)?;
+    
+    let embedding_store = guard.embedding_store()
+        .ok_or("Embedding store not available")?;
+    
+    let embeddings = embedding_store.get_all_embeddings()?;
+    
+    let mut results: Vec<SearchResult> = embeddings
+        .into_iter()
+        .filter_map(|emb| {
+            if tag_index < emb.embedding.len() {
+                let score = emb.embedding[tag_index];
+                if score >= min_score {
+                    return Some(SearchResult {
+                        file_id: emb.file_id,
+                        score,
+                        rank: 0,
+                    });
+                }
+            }
+            None
+        })
+        .collect();
+    
+    results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    
+    if let Some(max) = max_results {
+        results.truncate(max);
+    }
+    
+    for (i, result) in results.iter_mut().enumerate() {
+        result.rank = i + 1;
+    }
+    
+    log::info!("Found {} files matching character tag at index {} (min_score={})", 
+        results.len(), tag_index, min_score);
+    
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn clip_get_detected_characters(
+    min_score: f32,
+    min_count: usize,
+    model_name: Option<String>,
+    language: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<DetectedCharacter>, String> {
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("角色检测仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let (embeddings, model_cache_dir) = {
+        let mut guard = manager.write().await;
+        guard.switch_model(&requested_model)?;
+        
+        let embedding_store = guard.embedding_store()
+            .ok_or("Embedding store not available")?;
+        
+        let embeddings = embedding_store.get_all_embeddings()?;
+        let model_cache_dir = guard.config().model_cache_dir.clone();
+        
+        (embeddings, model_cache_dir)
+    };
+    
+    let tags_path = model_cache_dir
+        .join(&requested_model)
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}", tags_path));
+    }
+    
+    let file = std::fs::File::open(&tags_path)
+        .map_err(|e| format!("Failed to open tags file: {}", e))?;
+    let mut rdr = csv::Reader::from_reader(file);
+    
+    let mut character_indices: Vec<(usize, String)> = Vec::new();
+    let mut index = 0;
+    
+    for result in rdr.records() {
+        let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+        if record.len() >= 3 {
+            let category: i32 = record[2].parse().unwrap_or(-1);
+            if category == 4 {
+                let name = record[1].replace('_', " ").trim().to_string();
+                character_indices.push((index, name));
+            }
+        }
+        index += 1;
+    }
+    
+    let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("clip")
+        .join("models")
+        .join("Tags-cn_2024_ver-1.0.csv");
+    
+    let mut cn_translations: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    if lang == "zh" && cn_tags_path.exists() {
+        let cn_file = std::fs::File::open(&cn_tags_path)
+            .map_err(|e| format!("Failed to open cn tags file: {}", e))?;
+        let mut cn_rdr = csv::Reader::from_reader(cn_file);
+        
+        for result in cn_rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read cn tag record: {}", e))?;
+            if record.len() >= 5 {
+                let category: i32 = record[2].parse().unwrap_or(-1);
+                if category == 4 {
+                    let name = record[1].replace('_', " ").trim().to_string();
+                    let cn_name = record[4].trim().to_string();
+                    cn_translations.insert(name, cn_name);
+                }
+            }
+        }
+        log::info!("Loaded {} Chinese translations for character tags", cn_translations.len());
+    }
+    
+    log::info!("Loaded {} character tags, embedding count: {}, first embedding dim: {}", 
+        character_indices.len(), 
+        embeddings.len(),
+        embeddings.first().map(|e| e.embedding.len()).unwrap_or(0)
+    );
+    
+    if !character_indices.is_empty() {
+        log::info!("First 5 character indices: {:?}", &character_indices[..5.min(character_indices.len())]);
+    }
+    
+    if !embeddings.is_empty() {
+        let first_emb = &embeddings[0];
+        for &(tag_index, ref name) in character_indices.iter().take(5) {
+            if tag_index < first_emb.embedding.len() {
+                log::info!("First embedding[{}] ({}) = {}", tag_index, name, first_emb.embedding[tag_index]);
+            }
+        }
+        
+        let max_vals: Vec<f32> = first_emb.embedding.iter().cloned().take(10).collect();
+        log::info!("First 10 embedding values: {:?}", max_vals);
+        
+        let max_val = first_emb.embedding.iter().cloned().fold(0.0_f32, f32::max);
+        log::info!("Max embedding value in first embedding: {}", max_val);
+        
+        let mut max_idx = 0;
+        let mut max_v: f32 = 0.0;
+        for (i, &v) in first_emb.embedding.iter().enumerate() {
+            if v > max_v {
+                max_v = v;
+                max_idx = i;
+            }
+        }
+        log::info!("Max value {} at index {} in first embedding", max_v, max_idx);
+    }
+    
+    let effective_min_score = min_score;
+    
+    let mut character_stats: std::collections::HashMap<usize, (usize, f32, String)> = 
+        std::collections::HashMap::new();
+    
+    for emb in &embeddings {
+        for &(tag_index, _) in &character_indices {
+            if tag_index < emb.embedding.len() {
+                let score = emb.embedding[tag_index];
+                if score >= effective_min_score {
+                    let entry = character_stats.entry(tag_index).or_insert((0, 0.0, String::new()));
+                    entry.0 += 1;
+                    if score > entry.1 {
+                        entry.1 = score;
+                        entry.2 = emb.file_id.clone();
+                    }
+                }
+            }
+        }
+    }
+    
+    let mut detected: Vec<DetectedCharacter> = character_indices
+        .into_iter()
+        .filter_map(|(tag_index, name)| {
+            if let Some((count, max_score, sample_file_id)) = character_stats.remove(&tag_index) {
+                if count >= min_count {
+                    let cn_name = cn_translations.get(&name).cloned().unwrap_or_else(|| name.clone());
+                    return Some(DetectedCharacter {
+                        tag_name: name.clone(),
+                        tag_name_cn: cn_name,
+                        tag_index,
+                        file_count: count,
+                        max_score,
+                        sample_file_id,
+                    });
+                }
+            }
+            None
+        })
+        .collect();
+    
+    detected.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+    
+    log::info!("Detected {} characters with min_count={}", detected.len(), min_count);
+    
+    Ok(detected)
+}
