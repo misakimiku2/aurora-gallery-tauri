@@ -2201,7 +2201,9 @@ export const App: React.FC = () => {
     name: string,
     coverFileId: string,
     matchedFileIds: string[],
-    faceBox?: { x: number; y: number; w: number; h: number }
+    faceBox?: { x: number; y: number; w: number; h: number },
+    characterTagName?: string,
+    characterTagIndex?: number
   ) => {
     const newId = Math.random().toString(36).substr(2, 9);
     const newPerson: Person = {
@@ -2210,7 +2212,9 @@ export const App: React.FC = () => {
       coverFileId,
       count: matchedFileIds.length,
       description: '',
-      faceBox
+      faceBox,
+      characterTagName,
+      characterTagIndex
     };
 
     await dbUpsertPerson(newPerson).catch(e => console.error("Failed to create person in DB", e));
@@ -2246,6 +2250,22 @@ export const App: React.FC = () => {
         }
       });
 
+      matchedFileIds.forEach(fid => {
+        const file = newFiles[fid];
+        if (file && file.aiData) {
+          dbUpsertFileMetadata({
+            fileId: fid,
+            path: file.path,
+            tags: file.tags,
+            description: file.description,
+            sourceUrl: file.sourceUrl,
+            category: file.category,
+            aiData: file.aiData,
+            updatedAt: Date.now()
+          }).catch(err => console.error('Failed to persist file aiData:', err));
+        }
+      });
+
       return {
         ...prev,
         people: { ...prev.people, [newId]: newPerson },
@@ -2254,6 +2274,76 @@ export const App: React.FC = () => {
     });
 
     enterPeopleOverview();
+  };
+
+  const handleSmartAddToPerson = (personId: string, newFileIds: string[]) => {
+    const person = state.people[personId];
+    if (!person) return;
+
+    setState(prev => {
+      const newFiles = { ...prev.files };
+      let addedCount = 0;
+
+      newFileIds.forEach(fid => {
+        const file = newFiles[fid];
+        if (file && file.type === FileType.IMAGE) {
+          const currentFaces = file.aiData?.faces || [];
+          if (!currentFaces.some(f => f.personId === personId)) {
+            const newFace: AiFace = {
+              id: Math.random().toString(36).substr(2, 9),
+              personId: personId,
+              name: person.name,
+              confidence: 1.0,
+              box: { x: 0, y: 0, w: 0, h: 0 }
+            };
+            const newAiData = file.aiData 
+              ? { ...file.aiData, faces: [...currentFaces, newFace] }
+              : {
+                  analyzed: false,
+                  analyzedAt: new Date().toISOString(),
+                  description: '',
+                  tags: [],
+                  faces: [newFace],
+                  sceneCategory: '',
+                  confidence: 1.0,
+                  dominantColors: [],
+                  objects: []
+                };
+            newFiles[fid] = { ...file, aiData: newAiData };
+            addedCount++;
+          }
+        }
+      });
+
+      if (addedCount > 0) {
+        const updatedPerson = {
+          ...person,
+          count: person.count + addedCount
+        };
+        
+        dbUpsertPerson(updatedPerson).catch(e => console.error("Failed to update person count in DB", e));
+
+        newFileIds.forEach(fid => {
+          const file = newFiles[fid];
+          if (file && file.aiData) {
+            dbUpsertFileMetadata({
+              fileId: fid,
+              path: file.path,
+              tags: file.tags,
+              description: file.description,
+              sourceUrl: file.sourceUrl,
+              category: file.category,
+              aiData: file.aiData,
+              updatedAt: Date.now()
+            }).catch(err => console.error('Failed to persist file aiData:', err));
+          }
+        });
+
+        return { ...prev, files: newFiles, people: { ...prev.people, [personId]: updatedPerson } };
+      }
+
+      return prev;
+    });
   };
 
   const handleDeletePerson = (personId: string | string[]) => {
@@ -4704,6 +4794,7 @@ export const App: React.FC = () => {
         isCheckingUpdate={isCheckingUpdate}
         onRefreshTags={handleRefreshTags}
         handleSmartCreatePerson={handleSmartCreatePerson}
+        handleSmartAddToPerson={handleSmartAddToPerson}
       />
 
       <ContextMenu

@@ -32,6 +32,7 @@ import { CreateTopicModal as CreateTopicModalComp } from './modals/CreateTopicMo
 import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicModal';
 import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
 import { SmartCreatePersonModal as SmartCreatePersonModalComp } from './modals/SmartCreatePersonModal';
+import { SmartAddToPersonModal as SmartAddToPersonModalComp } from './modals/SmartAddToPersonModal';
 import { clipUpdateConfig } from '../api/tauri-bridge';
 
 interface AppModalsProps {
@@ -93,7 +94,8 @@ interface AppModalsProps {
   onCheckUpdate: () => void;
   isCheckingUpdate: boolean;
   onRefreshTags?: () => void;
-  handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }) => void;
+  handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
+  handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -149,6 +151,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   isCheckingUpdate,
   onRefreshTags,
   handleSmartCreatePerson,
+  handleSmartAddToPerson,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -431,8 +434,29 @@ export const AppModals: React.FC<AppModalsProps> = ({
                 modelName: state.settings.clip.modelName,
                 enabled: state.settings.clip.enabled
               }}
-              onConfirm={(name, coverFileId, matchedFileIds, faceBox) => {
-                handleSmartCreatePerson(name, coverFileId, matchedFileIds, faceBox);
+              people={peopleWithDisplayCounts}
+              onConfirm={(name, coverFileId, matchedFileIds, faceBox, characterTagName, characterTagIndex) => {
+                handleSmartCreatePerson(name, coverFileId, matchedFileIds, faceBox, characterTagName, characterTagIndex);
+                closeModals();
+              }}
+              onClose={closeModals}
+              t={t}
+            />
+          )}
+          {state.activeModal.type === 'smart-add-to-person' && handleSmartAddToPerson && state.activeModal.data?.personId && (
+            <SmartAddToPersonModalComp
+              person={peopleWithDisplayCounts[state.activeModal.data.personId]}
+              files={state.files}
+              resourceRoot={state.settings.paths.resourceRoot}
+              cachePath={state.settings.paths.cacheRoot || ''}
+              language={state.settings.language}
+              clipSettings={{
+                minScore: state.settings.clip.minScore,
+                modelName: state.settings.clip.modelName,
+                enabled: state.settings.clip.enabled
+              }}
+              onConfirm={(newFileIds) => {
+                handleSmartAddToPerson(state.activeModal.data.personId, newFileIds);
                 closeModals();
               }}
               onClose={closeModals}

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { Search, User, Check, Sparkles, X } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import * as RW from 'react-window';
-import { FileNode, CharacterTag, DetectedCharacter, ClipSearchResult } from '../../types';
+import { FileNode, CharacterTag, DetectedCharacter, ClipSearchResult, Person } from '../../types';
 import { clipGetCharacterTags, clipSearchByCharacterTag, clipGetDetectedCharacters, getThumbnail } from '../../api/tauri-bridge';
 import { ImageThumbnail } from '../ImageThumbnail';
 
@@ -24,7 +24,8 @@ interface SmartCreatePersonModalProps {
     modelName: string;
     enabled: boolean;
   };
-  onConfirm: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }) => void;
+  people: Record<string, Person>;
+  onConfirm: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
   onClose: () => void;
   t: (key: string) => string;
 }
@@ -109,6 +110,7 @@ export const SmartCreatePersonModal: React.FC<SmartCreatePersonModalProps> = ({
   cachePath,
   language,
   clipSettings,
+  people,
   onConfirm,
   onClose,
   t
@@ -503,23 +505,38 @@ export const SmartCreatePersonModal: React.FC<SmartCreatePersonModalProps> = ({
 
   const handleConfirm = useCallback(() => {
     if (!name.trim()) return;
+    const characterTagName = selectedCharacter?.tag_name;
+    const characterTagIndex = selectedCharacter?.tag_index;
     onConfirm(
       name.trim(),
       coverFileId || '',
       matchedResults.map(r => r.file_id),
-      coverFaceBox
+      coverFaceBox,
+      characterTagName,
+      characterTagIndex
     );
-  }, [name, coverFileId, matchedResults, coverFaceBox, onConfirm]);
+  }, [name, coverFileId, matchedResults, coverFaceBox, onConfirm, selectedCharacter]);
 
   const filteredCharacters = useMemo(() => {
-    if (!searchQuery.trim()) return detectedCharacters;
-    const query = searchQuery.toLowerCase();
-    return detectedCharacters.filter(char => {
-      const nameMatch = char.tag_name.toLowerCase().includes(query);
-      const nameCnMatch = char.tag_name_cn.toLowerCase().includes(query);
-      return nameMatch || nameCnMatch;
-    });
-  }, [detectedCharacters, searchQuery]);
+    const existingTagIndices = new Set(
+      Object.values(people)
+        .map(p => p.characterTagIndex)
+        .filter((idx): idx is number => idx !== undefined)
+    );
+    
+    let result = detectedCharacters.filter(char => !existingTagIndices.has(char.tag_index));
+    
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      result = result.filter(char => {
+        const nameMatch = char.tag_name.toLowerCase().includes(query);
+        const nameCnMatch = char.tag_name_cn.toLowerCase().includes(query);
+        return nameMatch || nameCnMatch;
+      });
+    }
+    
+    return result;
+  }, [detectedCharacters, searchQuery, people]);
 
   const visibleItems = useMemo(() => {
     const buffer = 400;

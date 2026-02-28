@@ -1,7 +1,7 @@
 # WD14 Tagger (EVA02-Large) 模型集成与优化记录
 
 ## 1. 背景与目标
-在 Aurora Gallery 中集成 `WD-EVA02-Large-Tagger-V3` 模型，旨在为动漫/二次元图像提供更精准的标签识别（Auto-tagging）及 1024 维的特征向量（Embedding）搜索。
+在 Aurora Gallery 中集成 `WD-EVA02-Large-Tagger-V3` 模型，旨在为动漫/二次元图像提供更精准的标签识别（Auto-tagging）及 10861 维的特征向量（Embedding）搜索。
 
 ## 2. 核心修复点回顾
 
@@ -9,7 +9,7 @@
 - **无 Tokenizer 支持**: 修正了 `ClipModel` 强制加载 `tokenizer.json` 的逻辑。对于 WD14 这类纯视觉标注模型，系统现已支持跳过 Tokenizer 加载。
 - **UI 动态反馈**: 修正了前端 `SettingsModal.tsx` 中硬编码的下载文件数量，自动适配 WD14 的 2 文件结构（Model + CSV）。
 
-### 2.2 张量布局布局 (Critical)
+### 2.2 张量布局 (Critical)
 - **NHWC 格式支持**: 
   - 标准 CLIP 模型使用 NCHW（Channels First）。
   - WD14 (TensorFlow 系) 要求 **NHWC**（Channels Last）。
@@ -29,11 +29,7 @@
 - 针对 DirectML 在高批次下可能触发的 `LayerNormalization` 算子错误或显存溢出，系统实现了**自动隔离与串行回退**。
 - 若批量推理失败，系统会逐一尝试处理该批次图像，确保任务不会中断，并维持约 4-6 files/sec 的处理速度。
 
-## 4. 后续建议
-- **多卡/并行流支持**: 若需进一步榨干 30 系/40 系显卡性能，可考虑移除推理引擎的独占锁，改为通过并发 `Session` 同时处理多路串行流。
-- **标签过滤优化**: 目前默认阈值为 0.35，用户可根据收藏偏好在后续版本中调整该灵敏度。
-
-## 4.1 UI 限制处理 (2026-02-25)
+## 4. UI 限制处理
 由于 WD14 Tagger 是纯视觉模型，不支持文本编码，因此在前端 UI 中做了以下限制：
 
 ### 功能限制
@@ -51,7 +47,7 @@
 - `src/components/AppModals.tsx` - 回调函数传递
 - `src/App.tsx` - 语义搜索状态管理
 
-## 5. DirectML LayerNormalization 错误修复 (2026-02-24)
+## 5. DirectML LayerNormalization 错误修复
 
 ### 5.1 问题现象
 - GPU 使用率波动 (100% ↔ 40%)，低利用率时间占比高
@@ -76,7 +72,7 @@
 - **GPU 利用率**: 串行处理时 GPU 持续工作，利用率更稳定
 - **处理速度**: 约 4-6 files/sec，与之前串行回退后相同
 
-## 6. 流水线预处理优化 (2026-02-24)
+## 6. 流水线预处理优化
 
 ### 6.1 问题分析
 串行处理时，GPU 在等待 CPU 预处理时是空闲的：
@@ -120,7 +116,7 @@ GPU状态:                工作          工作          工作
 4. 使用 `filter_map` 收集结果，避免 `unwrap()` panic
 5. 检查结果数量，确保所有图像都被处理
 
-## 7. CPU 模式性能优化 (2026-02-24)
+## 7. CPU 模式性能优化
 
 ### 7.1 问题现象
 - CPU 利用率仅 37% (Ryzen 9800X3D 8核16线程)
@@ -179,7 +175,7 @@ WD14 Tagger 在 CPU 上推理慢是模型特性决定的：
 
 **建议**: 如需更快速度，建议开启 GPU 加速或使用更小的模型 (ViT-B-32 / SigLIP 2 So400M)
 
-## 8. 以图搜图功能实现 (2026-02-25)
+## 8. 以图搜图功能实现
 
 ### 8.1 功能入口
 - **位置**: 图片右键菜单 → 「搜索相似图片」
@@ -200,7 +196,7 @@ WD14 Tagger 在 CPU 上推理慢是模型特性决定的：
 - `src/components/ContextMenu.tsx` - 右键菜单项
 - `src-tauri/src/clip_commands.rs` - 后端搜索命令
 
-## 9. WD14 预处理修复 (2026-02-25)
+## 9. WD14 预处理修复
 
 ### 9.1 问题现象
 - 所有图片的嵌入向量几乎相同
@@ -246,7 +242,7 @@ if self.mean == [0.0, 0.0, 0.0] && self.std == [1.0, 1.0, 1.0] {
 - 嵌入维度从 1024 改为 10861
 - **需要重新生成嵌入向量**
 
-## 10. 搜索参数可配置化 (2026-02-25)
+## 10. 搜索参数可配置化
 
 ### 10.1 新增配置项
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -272,9 +268,7 @@ if self.mean == [0.0, 0.0, 0.0] && self.std == [1.0, 1.0, 1.0] {
 - `src/components/SettingsModal.tsx` - 设置 UI
 - `src/utils/translations.ts` - 翻译文本
 
----
-
-## 11. 从嵌入向量生成标签功能 (2026-02-26)
+## 11. 从嵌入向量生成标签功能
 
 ### 11.1 功能说明
 当使用 WD14 模型生成嵌入向量时，如果当时没有开启"自动添加标签"选项，后续可以通过这个新功能快速生成标签，**无需重新推理**。
@@ -292,9 +286,7 @@ if self.mean == [0.0, 0.0, 0.0] && self.std == [1.0, 1.0, 1.0] {
 - `src/api/tauri-bridge.ts` - 前端 API
 - `src/components/SettingsModal.tsx` - UI 按钮
 
----
-
-## 12. 中文标签翻译功能 (2026-02-26)
+## 12. 中文标签翻译功能
 
 ### 12.1 功能说明
 当软件语言设置为中文时，自动将 WD14 生成的英文标签翻译成中文。
@@ -318,9 +310,7 @@ let en_tag = record[1].replace('_', " ").trim().to_string();
 - `src-tauri/src/clip_commands.rs` - 翻译调用
 - `src/components/SettingsModal.tsx` - 传递语言参数
 
----
-
-## 13. 标签持久化与刷新修复 (2026-02-26)
+## 13. 标签持久化与刷新修复
 
 ### 13.1 问题现象
 1. 标签生成后前端界面不显示，重启后才出现
@@ -343,9 +333,7 @@ let en_tag = record[1].replace('_', " ").trim().to_string();
 - `src/api/tauri-bridge.ts` - 修复字段映射
 - `src/App.tsx` - 删除持久化、新增刷新函数
 
----
-
-## 14. 智能创建人物功能 (2026-02-28)
+## 14. 智能创建人物功能
 
 ### 14.1 功能说明
 利用 WD14 Tagger 模型的角色标签（category: 4）自动识别和创建人物，支持：
@@ -353,6 +341,8 @@ let en_tag = record[1].replace('_', " ").trim().to_string();
 - 角色名称自动补全和搜索
 - 相似度阈值可调节
 - 虚拟滚动展示匹配图片
+- 头像裁剪功能
+- 排除已创建角色
 
 ### 14.2 数据源
 - **标签文件**: `tags_info.csv`（模型下载目录中）
@@ -396,26 +386,30 @@ pub struct DetectedCharacter {
 - 人物概览界面右键菜单 → 「智能创建人物」
 
 #### 14.4.3 UI 特性
-- 圆形头像预览（可点击裁剪）
+- 圆形头像预览（可点击裁剪，支持缩放和拖拽）
 - 角色名称输入（支持自动补全）
-- 已识别角色列表（虚拟滚动）
+- 已识别角色列表（虚拟滚动，使用缩略图）
+- 角色检测阈值滑块（0.01 - 0.5）
 - 相似度阈值滑块（0.01 - 0.5）
 - 匹配图片网格（虚拟滚动）
+- 自动排除已创建的角色
 
 ### 14.5 阈值优化
-
-#### 14.5.1 问题发现
 角色标签的嵌入向量值通常很小（如 0.000007），远低于默认阈值 0.4。
-
-#### 14.5.2 解决方案
 - 默认阈值从 0.4 降低到 0.1
 - 滑块范围调整为 0.01 - 0.5
-- 后端自动检测过高阈值并降级
+- 两个独立滑块：角色检测阈值和相似度阈值
 
-### 14.6 修改文件
+### 14.6 数据持久化
+- 创建人物时自动关联匹配的文件
+- 调用 `dbUpsertFileMetadata` 持久化 `aiData.faces`
+- 存储角色标签名称和索引到 Person 结构
+
+### 14.7 修改文件
 - `src-tauri/src/clip_commands.rs` - 新增 3 个命令
 - `src-tauri/src/main.rs` - 注册新命令
-- `src/types.ts` - 新增类型定义
+- `src/types.ts` - 新增类型定义，Person 添加 `characterTagName` 和 `characterTagIndex`
+- `src-tauri/src/db/persons.rs` - 数据库结构添加新字段
 - `src/api/tauri-bridge.ts` - 新增 API 函数
 - `src/components/modals/SmartCreatePersonModal.tsx` - 新建模态框组件
 - `src/components/AppModals.tsx` - 集成新模态框
@@ -423,255 +417,45 @@ pub struct DetectedCharacter {
 - `src/App.tsx` - 添加处理函数
 - `src/utils/translations.ts` - 添加翻译
 
----
+## 15. 智能添加图片功能
 
-## 15. 智能创建人物功能优化 (2026-02-28)
+### 15.1 功能说明
+在人物详情页提供手动入口，使用相似度阈值滑块搜索匹配的新图片并添加到人物。
 
-### 15.1 翻译问题修复
+### 15.2 功能入口
+- 人物右键菜单 → 「智能添加图片」
 
-#### 15.1.1 问题现象
-智能创建人物窗口中，UI 文本显示为翻译键而非翻译后的文本。
+### 15.3 UI 特性
+- 人物头像显示（支持裁剪效果）
+- 相似度阈值滑块（0.01 - 0.5）
+- 匹配图片网格（虚拟滚动）
+- 全选/取消全选按钮
+- 已关联图片自动过滤
+- 新图片检测与嵌入向量生成提示
 
-#### 15.1.2 解决方案
-在 `translations.ts` 中添加 `smartCreate` 命名空间：
-```typescript
-smartCreate: {
-  title: '智能创建人物',
-  preview: '预览匹配图片',
-  characterName: '角色名称',
-  // ... 其他翻译
-}
-```
+### 15.4 新图片检测
+打开窗口时自动检测是否有新图片缺少嵌入向量：
+1. 遍历所有未关联的图片文件
+2. 调用 `clipGetEmbeddingStatus` 检查嵌入向量是否存在
+3. 如果有新图片，显示黄色提示框
+4. 用户点击按钮后调用 `clipGenerateEmbeddingsBatch` 生成
+5. 生成完成后自动刷新匹配列表
 
-### 15.2 创建人物时自动关联文件
+### 15.5 相关 API
+| API | 说明 |
+|-----|------|
+| `clipGetEmbeddingStatus` | 检查单个文件是否有嵌入向量 |
+| `clipGenerateEmbeddingsBatch` | 批量生成嵌入向量 |
 
-#### 15.2.1 问题现象
-创建人物后，匹配的图片没有自动关联到该人物的人脸数据中。
-
-#### 15.2.2 解决方案
-修改 `handleSmartCreatePerson` 函数，在创建人物后自动为每个匹配的文件添加人脸关联记录：
-```typescript
-matchedFileIds.forEach(fid => {
-  const file = newFiles[fid];
-  if (file && file.type === FileType.IMAGE) {
-    const newFace: AiFace = {
-      id: Math.random().toString(36).substr(2, 9),
-      personId: newId,
-      name: name,
-      confidence: 1.0,
-      box: { x: 0, y: 0, w: 0, h: 0 }
-    };
-    // 更新文件的 aiData.faces
-  }
-});
-```
-
-### 15.3 头像裁剪功能重构
-
-#### 15.3.1 问题现象
-1. 点击头像进入裁剪窗口后，右侧文件栏为空
-2. 确认裁剪后创建了无名人物，没有正确返回智能创建窗口
-
-#### 15.3.2 解决方案
-将裁剪功能完全集成到 `SmartCreatePersonModal` 组件内部：
-- 移除对外部 `CropAvatarModal` 的依赖
-- 在组件内部实现 `isCropping` 状态切换
-- 裁剪界面使用原图（`convertFileSrc`）而非缩略图
-- 裁剪完成后更新 `coverFaceBox` 状态
-
-#### 15.3.3 裁剪预览实现
-使用 `img` 元素配合 `left/top` 定位显示裁剪区域：
-```tsx
-<img
-  src={coverSrc}
-  style={coverFaceBox ? {
-    width: `${10000 / coverFaceBox.w}%`,
-    height: `${10000 / coverFaceBox.h}%`,
-    left: `${-coverFaceBox.x / coverFaceBox.w * 100}%`,
-    top: `${-coverFaceBox.y / coverFaceBox.h * 100}%`
-  } : undefined}
-/>
-```
-
-### 15.4 角色列表中文翻译
-
-#### 15.4.1 问题现象
-软件语言为中文时，角色列表显示英文名称。
-
-#### 15.4.2 解决方案
-修改后端 `clip_get_detected_characters` 函数：
-1. 新增 `language` 参数
-2. 当语言为 "zh" 时，加载 `Tags-cn_2024_ver-1.0.csv` 文件
-3. 使用中文翻译填充 `tag_name_cn` 字段
-
-```rust
-let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    .join("src")
-    .join("clip")
-    .join("models")
-    .join("Tags-cn_2024_ver-1.0.csv");
-
-// 加载中文翻译映射
-let mut cn_translations: HashMap<String, String> = HashMap::new();
-if lang == "zh" && cn_tags_path.exists() {
-    // 读取 CSV 并填充映射
-}
-
-// 返回结果时使用翻译
-let cn_name = cn_translations.get(&name).cloned().unwrap_or_else(|| name.clone());
-```
-
-### 15.5 修改文件
-- `src/utils/translations.ts` - 添加 smartCreate 翻译命名空间
-- `src/App.tsx` - 修改 handleSmartCreatePerson 函数
-- `src/components/modals/SmartCreatePersonModal.tsx` - 内部实现裁剪功能
-- `src/components/AppModals.tsx` - 移除不需要的 props
-- `src/api/tauri-bridge.ts` - clipGetDetectedCharacters 添加 language 参数
-- `src-tauri/src/clip_commands.rs` - clip_get_detected_characters 添加中文翻译支持
-
----
-
-## 16. 智能创建人物功能深度优化 (2026-02-28)
-
-### 16.1 角色列表使用缩略图
-
-#### 16.1.1 问题现象
-角色列表头像使用原图加载，导致加载缓慢，且 GIF 图片会播放动画。
-
-#### 16.1.2 解决方案
-1. 新增 `characterThumbnailUrls` 状态存储角色缩略图
-2. 添加 `useEffect` 在加载角色后预加载缩略图
-3. 修改 `CharacterRow` 组件只使用缩略图，不回退到原图
-
-```tsx
-// 只使用缩略图，缩略图加载前显示占位图标
-{sampleFile && thumbnailUrl ? (
-  <img src={thumbnailUrl} ... />
-) : (
-  <User size={16} />  // 占位图标
-)}
-```
-
-#### 16.1.3 缩略图并行加载优化
-将串行加载改为并行批量加载，每批 10 个：
-
-```tsx
-const batchSize = 10;
-for (let i = 0; i < chars.length; i += batchSize) {
-  const batch = chars.slice(i, i + batchSize);
-  const results = await Promise.all(
-    batch.map(async char => ...)
-  );
-  setCharacterThumbnailUrls(prev => ({ ...prev, ...newUrls }));  // 渐进式更新
-}
-```
-
-### 16.2 窗口布局响应式优化
-
-#### 16.2.1 问题现象
-窗口固定大小 `w-[800px] max-h-[90vh]`，角色列表高度固定 `h-48`。
-
-#### 16.2.2 解决方案
-1. 窗口改为响应式：`w-full max-w-4xl h-[85vh]`
-2. 角色列表使用 `flex-1 min-h-0` 自适应高度
-3. 添加 `ResizeObserver` 动态检测列表高度
-4. `react-window` 使用动态 `characterListHeight`
-
-### 16.3 阈值滑块分离
-
-#### 16.3.1 问题现象
-只有一个相似度阈值滑块，同时影响角色列表检测和图片搜索。
-
-#### 16.3.2 解决方案
-分离为两个独立滑块：
-
-| 滑块 | 位置 | 功能 |
-|------|------|------|
-| 角色检测阈值 | 左侧面板 | 控制角色列表检测 |
-| 相似度阈值 | 右侧预览区 | 控制匹配图片搜索 |
-
-#### 16.3.3 防抖机制
-两个滑块都添加 200ms 防抖，避免频繁请求：
-
-```tsx
-const handleThresholdChange = useCallback((newThreshold: number) => {
-  setThreshold(newThreshold);
-  if (debounceTimerRef.current) {
-    clearTimeout(debounceTimerRef.current);
-  }
-  debounceTimerRef.current = setTimeout(async () => {
-    // 执行搜索
-  }, 200);
-}, [selectedCharacter]);
-```
-
-### 16.4 后端阈值降级逻辑移除
-
-#### 16.4.1 问题现象
-后端有降级逻辑：当 `min_score > 0.3` 时强制使用 `0.1`，导致阈值调高后反而检测到更多角色。
-
-#### 16.4.2 解决方案
-移除降级逻辑，让用户完全控制阈值：
-
-```rust
-// 之前
-let effective_min_score = if min_score > 0.3 { 0.1 } else { min_score };
-
-// 之后
-let effective_min_score = min_score;
-```
-
-### 16.5 头像裁剪优化
-
-#### 16.5.1 问题现象
-裁剪后头像显示缩略图而非原图效果。
-
-#### 16.5.2 解决方案
-裁剪后使用原图，未裁剪时使用缩略图：
-
-```tsx
-const coverSrc = coverFile && coverFileId 
-  ? (coverFaceBox 
-      ? coverOriginalSrc           // 裁剪后用原图
-      : thumbnailUrls[coverFileId] || coverOriginalSrc)
-  : null;
-```
-
-#### 16.5.3 选择新角色时重置裁剪框
-```tsx
-const handleSelectCharacter = useCallback(async (char: DetectedCharacter) => {
-  setCoverFileId(char.sample_file_id);
-  setCoverFaceBox(undefined);  // 重置裁剪框
-  // ...
-}, [...]);
-```
-
-### 16.6 头像大小调整
-
-| 位置 | 之前 | 之后 |
-|------|------|------|
-| 主头像 | `w-24 h-24` (96px) | `w-32 h-32` (128px) |
-| 角色列表头像 | `w-7 h-7` (28px) | `w-9 h-9` (36px) |
-| 行高 | `ITEM_HEIGHT = 40` | `ITEM_HEIGHT = 48` |
-
-### 16.7 加载状态优化
-
-#### 16.7.1 问题现象
-加载状态显示文字"加载中..."、"搜索中..."。
-
-#### 16.7.2 解决方案
-使用 CSS 旋转动画替代文字：
-
-```tsx
-<div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-500 
-                border-t-blue-500 dark:border-t-blue-400 
-                rounded-full animate-spin" />
-```
-
-### 16.8 修改文件
-- `src/components/modals/SmartCreatePersonModal.tsx` - 主要优化
-- `src/utils/translations.ts` - 添加 characterThreshold 翻译
-- `src-tauri/src/clip_commands.rs` - 移除阈值降级逻辑
+### 15.6 修改文件
+- `src/types.ts` - Person 类型添加新字段
+- `src-tauri/src/db/persons.rs` - 数据库结构添加新字段
+- `src-tauri/src/db/mod.rs` - 数据库迁移
+- `src/App.tsx` - 新增 handleSmartAddToPerson
+- `src/components/modals/SmartAddToPersonModal.tsx` - 新建组件
+- `src/components/ContextMenu.tsx` - 添加菜单入口
+- `src/components/AppModals.tsx` - 集成新模态框
+- `src/utils/translations.ts` - 添加翻译
 
 ---
 *记录时间: 2026-02-23*

@@ -78,7 +78,9 @@ export interface Person {
   count: number;
   description?: string;
   descriptor?: number[];
-  faceBox?: { x: number; y: number; w: number; h: number }; // Percentages 0-100
+  faceBox?: { x: number; y: number; w: number; h: number };
+  characterTagName?: string;
+  characterTagIndex?: number;
 }
 
 export interface CoverCropData {
@@ -390,7 +392,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'smart-create-person' | 'update' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'smart-create-person' | 'smart-add-to-person' | 'update' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';

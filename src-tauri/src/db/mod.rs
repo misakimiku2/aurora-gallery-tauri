@@ -133,6 +133,10 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     // Migration: Add category column if it doesn't exist
     let _ = conn.execute("ALTER TABLE file_metadata ADD COLUMN category TEXT", []);
 
+    // Migration: Add character_tag_name and character_tag_index columns to persons table
+    let _ = conn.execute("ALTER TABLE persons ADD COLUMN character_tag_name TEXT", []);
+    let _ = conn.execute("ALTER TABLE persons ADD COLUMN character_tag_index INTEGER", []);
+
     // Create indexes for file_metadata
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_file_metadata_path ON file_metadata(path)",

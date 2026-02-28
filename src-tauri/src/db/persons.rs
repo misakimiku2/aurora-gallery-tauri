@@ -20,12 +20,15 @@ pub struct Person {
     pub description: Option<String>,
     pub face_box: Option<FaceBox>,
     pub updated_at: Option<i64>,
+    pub character_tag_name: Option<String>,
+    pub character_tag_index: Option<i32>,
 }
 
 pub fn get_all_people(conn: &Connection) -> Result<Vec<Person>> {
     let mut stmt = conn.prepare(
         "SELECT id, name, cover_file_id, count, description, 
-                face_box_x, face_box_y, face_box_w, face_box_h, updated_at 
+                face_box_x, face_box_y, face_box_w, face_box_h, updated_at,
+                character_tag_name, character_tag_index
          FROM persons"
     )?;
     
@@ -50,6 +53,8 @@ pub fn get_all_people(conn: &Connection) -> Result<Vec<Person>> {
             description: row.get(4)?,
             face_box,
             updated_at: row.get(9)?,
+            character_tag_name: row.get(10)?,
+            character_tag_index: row.get(11)?,
         })
     })?;
 
@@ -69,8 +74,9 @@ pub fn upsert_person(conn: &Connection, person: &Person) -> Result<()> {
 
     conn.execute(
         "INSERT INTO persons (id, name, cover_file_id, count, description, 
-                              face_box_x, face_box_y, face_box_w, face_box_h, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                              face_box_x, face_box_y, face_box_w, face_box_h, updated_at,
+                              character_tag_name, character_tag_index)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
             cover_file_id = excluded.cover_file_id,
@@ -80,7 +86,9 @@ pub fn upsert_person(conn: &Connection, person: &Person) -> Result<()> {
             face_box_y = excluded.face_box_y,
             face_box_w = excluded.face_box_w,
             face_box_h = excluded.face_box_h,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            character_tag_name = excluded.character_tag_name,
+            character_tag_index = excluded.character_tag_index",
         params![
             person.id,
             person.name,
@@ -88,7 +96,9 @@ pub fn upsert_person(conn: &Connection, person: &Person) -> Result<()> {
             person.count,
             person.description,
             x, y, w, h,
-            person.updated_at
+            person.updated_at,
+            person.character_tag_name,
+            person.character_tag_index
         ],
     )?;
     Ok(())

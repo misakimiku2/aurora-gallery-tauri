@@ -76,6 +76,7 @@ export const translations = {
       enterNewTagName: '请输入新的标签名称',
       newPerson: '新建人物',
       smartCreatePerson: '智能创建人物',
+      smartAddToPerson: '智能添加图片',
       newPersonDefault: '新人物',
       addToPerson: '添加到人物...',
       clearPersonInfo: '清除人物信息',
@@ -772,7 +773,20 @@ export const translations = {
       noCharacters: '暂无识别到的角色',
       searchCharacter: '搜索角色...',
       selectCharacter: '选择角色',
-      characterThreshold: '角色检测阈值'
+      characterThreshold: '角色检测阈值',
+      cropAvatar: '裁剪头像'
+    },
+    smartAddToPerson: {
+      title: '智能添加图片',
+      selected: '已选择',
+      add: '添加',
+      availableImages: '可添加的图片',
+      noNewImages: '没有可添加的新图片',
+      tryLowerThreshold: '尝试降低阈值以找到更多图片',
+      noTagIndex: '此人物未关联角色标签，无法使用智能添加功能',
+      checkingEmbeddings: '检测新图片...',
+      newImagesDetected: '检测到新图片',
+      generateEmbeddings: '生成嵌入向量'
     }
   },
   en: {
@@ -850,6 +864,8 @@ export const translations = {
       renameTag: 'Rename Tag',
       enterNewTagName: 'Enter new tag name',
       newPerson: 'New Person',
+      smartCreatePerson: 'Smart Create Person',
+      smartAddToPerson: 'Smart Add Images',
       newPersonDefault: 'New Person',
       addToPerson: 'Add to Person...',
       clearPersonInfo: 'Clear Person Info',
@@ -1542,7 +1558,20 @@ export const translations = {
       noCharacters: 'No characters detected',
       searchCharacter: 'Search character...',
       selectCharacter: 'Select Character',
-      characterThreshold: 'Character Detection Threshold'
+      characterThreshold: 'Character Detection Threshold',
+      cropAvatar: 'Crop Avatar'
+    },
+    smartAddToPerson: {
+      title: 'Smart Add Images',
+      selected: 'Selected',
+      add: 'Add',
+      availableImages: 'Available Images',
+      noNewImages: 'No new images to add',
+      tryLowerThreshold: 'Try lowering the threshold to find more images',
+      noTagIndex: 'This person is not linked to a character tag, smart add is unavailable',
+      checkingEmbeddings: 'Checking for new images...',
+      newImagesDetected: 'New images detected',
+      generateEmbeddings: 'Generate Embeddings'
     }
   }
 };
