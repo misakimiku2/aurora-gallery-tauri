@@ -189,11 +189,11 @@ export interface AIConfig {
 
 // ==================== CLIP 模型设置 ====================
 
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3' | '';
+export type ClipModelName = 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3' | '';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 // 模型系列类型
-export type ModelSeries = 'clip' | 'siglip' | 'wd-tagger';
+export type ModelSeries = 'siglip' | 'wd-tagger';
 
 // 模型功能特性
 export interface ModelFeatures {
@@ -356,6 +356,19 @@ export interface TabState {
 
 export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about';
 
+export interface PreviewTag {
+  name: string;
+  name_cn: string;
+  count: number;
+  sample_file_ids: string[];
+}
+
+export interface TagsPreviewResult {
+  tags: PreviewTag[];
+  total_files: number;
+  files_with_tags: number;
+}
+
 export interface DragState {
   isDragging: boolean;
   draggedFileIds: string[];
@@ -392,7 +405,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'rename-topic' | 'smart-create-person' | 'smart-add-to-person' | 'update' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'create-person' | 'rename-topic' | 'smart-create-person' | 'smart-add-to-person' | 'auto-generate-tags' | 'update' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';

@@ -635,6 +635,23 @@ export const translations = {
       show: '显示',
       loading: '加载中...'
     },
+    tags: {
+      autoGenerate: '自动生成标签',
+      threshold: '置信度阈值',
+      generatePreview: '生成预览',
+      applyTags: '应用标签',
+      back: '返回',
+      detectedTags: '检测到的标签',
+      filesWithTags: '有标签的文件',
+      noTagsDetected: '未检测到标签，请尝试降低阈值',
+      generateFirst: '请先点击"生成预览"查看标签',
+      loading: '加载中...',
+      analyzing: '正在分析嵌入向量...',
+      previewFailed: '预览失败',
+      applyFailed: '应用失败',
+      wd14Required: '此功能需要启用 WD-EVA02-Large-Tagger-V3 模型',
+      regenerate: '重新生成'
+    },
     exitModal: {
       title: '关闭确认',
       message: '您希望如何关闭应用程序？',
@@ -1419,6 +1436,23 @@ export const translations = {
       hide: 'Hide',
       show: 'Show',
       loading: 'Loading...'
+    },
+    tags: {
+      autoGenerate: 'Auto Generate Tags',
+      threshold: 'Confidence Threshold',
+      generatePreview: 'Generate Preview',
+      applyTags: 'Apply Tags',
+      back: 'Back',
+      detectedTags: 'Detected Tags',
+      filesWithTags: 'Files with Tags',
+      noTagsDetected: 'No tags detected, try lowering the threshold',
+      generateFirst: 'Click "Generate Preview" to see tags first',
+      loading: 'Loading...',
+      analyzing: 'Analyzing embeddings...',
+      previewFailed: 'Preview failed',
+      applyFailed: 'Apply failed',
+      wd14Required: 'This feature requires WD-EVA02-Large-Tagger-V3 model',
+      regenerate: 'Regenerate'
     },
     exitModal: {
       title: 'Exit Confirmation',

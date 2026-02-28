@@ -33,6 +33,7 @@ import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicMo
 import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
 import { SmartCreatePersonModal as SmartCreatePersonModalComp } from './modals/SmartCreatePersonModal';
 import { SmartAddToPersonModal as SmartAddToPersonModalComp } from './modals/SmartAddToPersonModal';
+import { AutoGenerateTagsModal as AutoGenerateTagsModalComp } from './modals/AutoGenerateTagsModal';
 import { clipUpdateConfig } from '../api/tauri-bridge';
 
 interface AppModalsProps {
@@ -96,6 +97,7 @@ interface AppModalsProps {
   onRefreshTags?: () => void;
   handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
   handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
+  handleConfirmCreatePerson?: (name: string) => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -152,6 +154,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onRefreshTags,
   handleSmartCreatePerson,
   handleSmartAddToPerson,
+  handleConfirmCreatePerson,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -230,6 +233,16 @@ export const AppModals: React.FC<AppModalsProps> = ({
             <RenamePersonModalComp
               initialName={peopleWithDisplayCounts[state.activeModal.data.personId]?.name || ''}
               onConfirm={(newName: string) => handleRenamePerson(state.activeModal.data.personId, newName)}
+              onClose={closeModals}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'create-person' && handleConfirmCreatePerson && (
+            <RenamePersonModalComp
+              initialName=""
+              title={t('context.newPerson')}
+              onConfirm={(name: string) => handleConfirmCreatePerson(name)}
               onClose={closeModals}
               t={t}
             />
@@ -458,6 +471,25 @@ export const AppModals: React.FC<AppModalsProps> = ({
               onConfirm={(newFileIds) => {
                 handleSmartAddToPerson(state.activeModal.data.personId, newFileIds);
                 closeModals();
+              }}
+              onClose={closeModals}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'auto-generate-tags' && (
+            <AutoGenerateTagsModalComp
+              files={state.files}
+              resourceRoot={state.settings.paths.resourceRoot}
+              cachePath={state.settings.paths.cacheRoot || ''}
+              language={state.settings.language}
+              clipSettings={{
+                minScore: state.settings.clip.minScore,
+                modelName: state.settings.clip.modelName,
+                enabled: state.settings.clip.enabled
+              }}
+              onConfirm={() => {
+                onRefreshTags?.();
               }}
               onClose={closeModals}
               t={t}

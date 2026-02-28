@@ -2,14 +2,19 @@
 
 ## 概述
 本文档记录了 Aurora Gallery 中视觉模型集成的实现过程，包括：
-- **CLIP** (Contrastive Language-Image Pre-training) - 支持文本搜索图片
 - **SigLIP 2** - 多语言支持，中文搜索体验更佳
 - **WD14 Tagger** (EVA02-Large) - 支持自动标签识别和以图搜图
 
 ## 实现时间
-2026-02-15 ~ 2026-02-27
+2026-02-15 ~ 2026-02-28
 
 ## 更新记录
+- **2026-02-28**: 移除 VIT 系列模型
+  - 移除 ViT-B/32 和 ViT-L/14 模型（仅支持英文，已被 SigLIP 系列替代）
+  - SigLIP 2 Base 设为默认推荐模型（支持多语言）
+  - 添加设置迁移逻辑：自动将 VIT 模型用户迁移到 SigLIP 2 Base
+  - 简化模型系列分类：移除 CLIP 系列标签页
+  - 删除 `clip_vit.rs` 模型定义文件
 - **2026-02-27**: AI 视觉功能优化和 UI 改进
   - **模型选择状态修复**: 关闭再开启 AI 视觉功能后，清空 modelName，确保所有模型处于未选择状态
   - **右键菜单检查**: 未选择模型时点击"搜索相似图片"，显示提示并跳转到 AI 视觉设置面板
@@ -140,7 +145,6 @@ src-tauri/src/
 │   ├── search.rs           # 向量搜索
 │   └── models/             # 模型定义目录
 │       ├── mod.rs          # ModelSpec trait 和模型注册表
-│       ├── clip_vit.rs     # CLIP ViT 系列模型
 │       ├── siglip2.rs      # SigLIP 2 So400M 模型
 │       ├── siglip2_base.rs # SigLIP 2 Base 模型
 │       └── wd14.rs         # WD14 Tagger 模型
@@ -164,11 +168,11 @@ src/
 
 ### 1. 类型定义 (types.ts)
 ```typescript
-export type ClipModelName = 'ViT-B-32' | 'ViT-L-14' | 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3';
+export type ClipModelName = 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3' | '';
 export type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error';
 
 // 模型系列类型
-export type ModelSeries = 'clip' | 'siglip' | 'wd-tagger';
+export type ModelSeries = 'siglip' | 'wd-tagger';
 
 // 模型功能特性
 export interface ModelFeatures {
@@ -216,17 +220,42 @@ export interface ClipSettings {
 ```
 
 ### 2. Tauri 命令
+
+#### 核心搜索命令
 - `clip_search_by_text` - 文本搜索图片
 - `clip_search_by_image` - 以图搜图
+
+#### 嵌入向量生成
 - `clip_generate_embedding` - 单张图片生成嵌入
 - `clip_generate_embeddings_batch` - 批量生成嵌入
+- `clip_get_embedding_status` - 获取单个文件的嵌入状态
+- `clip_get_embedding_count` - 获取嵌入总量
+- `clip_get_embedding_count_by_model` - 按模型获取嵌入数量
+- `clip_get_embedding_stats` - 获取嵌入统计信息
+- `clip_get_model_versions` - 获取模型版本列表
+
+#### 模型管理
+- `clip_load_model` - 加载模型
+- `clip_unload_model` - 卸载模型
+- `clip_is_model_loaded` - 检查模型是否已加载
 - `clip_get_model_status` - 获取模型状态
+- `clip_delete_model` - 删除模型文件
+- `clip_open_model_folder` - 打开模型存放目录
 - `clip_update_config` - 动态更新 GPU 配置
+
+#### 任务控制
 - `clip_cancel_embedding_generation` - 取消生成任务
 - `clip_pause_embedding_generation` - 暂停生成任务
 - `clip_resume_embedding_generation` - 继续生成任务
-- `clip_get_embedding_count` - 获取嵌入总量
-- `clip_load_model` / `clip_unload_model` - 手动模型管理
+
+#### WD14 标签功能
+- `clip_generate_tags_from_embeddings` - 从嵌入向量生成标签
+- `clip_get_character_tags` - 获取所有角色标签（category=4）
+- `clip_search_by_character_tag` - 按角色标签搜索图片
+- `clip_get_detected_characters` - 获取已识别的角色列表
+
+#### 辅助命令
+- `get_all_image_files` - 获取所有图片文件列表
 
 ### 3. 事件
 - `clip-embedding-progress` - 进度更新事件
@@ -240,7 +269,6 @@ export interface ClipSettings {
 
 | 系列 | ID | 主题色 | 说明 | 包含模型 |
 |------|-----|--------|------|---------|
-| **CLIP 系列** | `clip` | 蓝色 #3B82F6 | OpenAI 开发的经典视觉-语言模型 | ViT-B/32, ViT-L/14 |
 | **SigLIP 系列** | `siglip` | 橙色 #F97316 | Google 开发的多语言视觉模型 | SigLIP 2 Base, SigLIP 2 So400M |
 | **WD Tagger 系列** | `wd-tagger` | 紫色 #8B5CF6 | 专为动漫和插画优化的标签识别模型 | WD-EVA02-Large-Tagger-V3 |
 
@@ -248,18 +276,11 @@ export interface ClipSettings {
 
 | 模型 | 文本搜索 | 以图搜图 | 自动标签 | 多语言 | 二次元优化 | 高精度 | 轻量级 |
 |------|---------|---------|---------|--------|-----------|--------|--------|
-| **ViT-B/32** | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **ViT-L/14** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ |
 | **SigLIP 2 Base** | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ✅ |
 | **SigLIP 2 So400M** | ✅ | ✅ | ❌ | ✅ | ❌ | ✅ | ❌ |
 | **WD-EVA02-Large-Tagger-V3** | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ |
 
 ### 高精度模型定义
-
-**ViT-L/14** 被标记为高精度模型，原因：
-- **更高的嵌入维度**：768维（vs ViT-B/32 的 512维）
-- **更小的 Patch Size**：14（vs ViT-B/32 的 32），能捕捉更细粒度的特征
-- **更大的模型容量**：1.6GB（vs ViT-B/32 的 580MB）
 
 **SigLIP 2 So400M** 被标记为高精度模型，原因：
 - **最高的嵌入维度**：1152维（vs SigLIP 2 Base 的 768维）
@@ -277,34 +298,32 @@ export interface ClipSettings {
 
 ## 模型参数对比
 
-| 特性 | CLIP ViT-B/32 | CLIP ViT-L/14 | SigLIP 2 Base | SigLIP 2 So400M | WD14 Tagger V3 |
-|------|---------------|---------------|---------------|-----------------|----------------|
-| 参数量 | ~87M | ~300M | ~86M | ~400M | ~580M |
-| 图像尺寸 | 224x224 | 224x224 | 224x224 | 384x384 | 448x448 |
-| Patch Size | 32 | 14 | 16 | 14 | 14 |
-| 嵌入维度 | 512 | 768 | 768 | 1152 | 10861 (标签概率) |
-| 多语言 | ❌ 仅英文 | ❌ 仅英文 | ✅ 多语言 | ✅ 多语言 | ❌ 仅视觉 |
-| 模型大小 | ~580 MB | ~1.6 GB | ~1.5 GB | ~4.3 GB | ~1.2 GB |
-| 显存占用 | ~1 GB | ~2 GB | ~1.5 GB | ~4.3 GB | ~2 GB |
-| 归一化均值 | [0.481, 0.458, 0.408] | [0.481, 0.458, 0.408] | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [0, 0, 0] |
-| 归一化标准差 | [0.269, 0.261, 0.276] | [0.269, 0.261, 0.276] | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [1, 1, 1] |
-| 最大文本长度 | 77 | 77 | 64 | 64 | 0 (不支持) |
-| 张量格式 | NCHW | NCHW | NCHW | NCHW | NHWC |
-| 颜色格式 | RGB | RGB | RGB | RGB | BGR |
-| 相似度计算 | Cosine | Cosine | Sigmoid | Sigmoid | Cosine |
-| 文本搜索 | ✅ | ✅ | ✅ | ✅ | ❌ |
-| 以图搜图 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 自动标签 | ❌ | ❌ | ❌ | ❌ | ✅ |
-| 适用场景 | 通用 | 高精度 | 低配置多语言 | 多语言 | 二次元 |
+| 特性 | SigLIP 2 Base | SigLIP 2 So400M | WD14 Tagger V3 |
+|------|---------------|-----------------|----------------|
+| 参数量 | ~86M | ~400M | ~580M |
+| 图像尺寸 | 224x224 | 384x384 | 448x448 |
+| Patch Size | 16 | 14 | 14 |
+| 嵌入维度 | 768 | 1152 | 10861 (标签概率) |
+| 多语言 | ✅ 多语言 | ✅ 多语言 | ❌ 仅视觉 |
+| 模型大小 | ~1.5 GB | ~4.3 GB | ~1.2 GB |
+| 显存占用 | ~1.5 GB | ~4.3 GB | ~2 GB |
+| 归一化均值 | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [0, 0, 0] |
+| 归一化标准差 | [0.5, 0.5, 0.5] | [0.5, 0.5, 0.5] | [1, 1, 1] |
+| 最大文本长度 | 64 | 64 | 0 (不支持) |
+| 张量格式 | NCHW | NCHW | NHWC |
+| 颜色格式 | RGB | RGB | BGR |
+| 相似度计算 | Sigmoid | Sigmoid | Cosine |
+| 文本搜索 | ✅ | ✅ | ❌ |
+| 以图搜图 | ✅ | ✅ | ✅ |
+| 自动标签 | ❌ | ❌ | ✅ |
+| 适用场景 | 低配置多语言 | 多语言 | 二次元 |
 
 ### 模型选择建议
 
 | 需求 | 推荐模型 | 原因 |
 |------|----------|------|
-| 通用文本搜索 | ViT-B/32 | 速度快、体积小 |
-| 高精度搜索 | ViT-L/14 | 嵌入维度更高 |
-| 中文搜索（低配置） | SigLIP 2 Base | 多语言支持，显存占用低 |
-| 中文搜索（高配置） | SigLIP 2 So400M | 多语言支持，精度更高 |
+| 通用文本搜索（低配置） | SigLIP 2 Base | 多语言支持，显存占用低 |
+| 通用文本搜索（高配置） | SigLIP 2 So400M | 多语言支持，精度更高 |
 | 动漫/二次元 | WD14 Tagger V3 | 专为二次元优化，支持标签识别 |
 
 ## 数据存储架构
@@ -316,10 +335,6 @@ export interface ClipSettings {
     ├── metadata.db          # 文件元数据
     ├── colors.db            # 颜色数据
     └── embeddings/          # 嵌入向量目录
-        ├── ViT-B-32/        # ViT-B/32 模型
-        │   └── embeddings.db
-        ├── ViT-L-14/        # ViT-L/14 模型
-        │   └── embeddings.db
         ├── SigLIP2-Base/    # SigLIP 2 Base 模型
         │   └── embeddings.db
         ├── SigLIP2-So400M/  # SigLIP 2 So400M 模型
@@ -421,3 +436,13 @@ export interface ClipSettings {
 7. **内存管理**：提供用户可控的内存释放机制（CLIP 功能总开关），提升用户体验
 8. **tokenizer 版本兼容性**：新模型可能需要更新的 tokenizers 版本（当前使用 0.21）
 9. **SigLIP 相似度计算**：SigLIP 系列使用 sigmoid 相似度，而非 CLIP 的 cosine 相似度，需要使用正确的 logit_scale 和 logit_bias 参数
+
+## 已知问题
+
+### ~~前端模型定义与后端不一致~~ ✅ 已修复
+
+**位置**: `src/components/SettingsModal.tsx` 第 348 行
+
+**问题**: WD-EVA02-Large-Tagger-V3 的 `embeddingDim` 定义为 1024，但后端实际使用 10861 维的标签概率向量。
+
+**修复**: 已将前端 `embeddingDim` 改为 10861，与后端保持一致。

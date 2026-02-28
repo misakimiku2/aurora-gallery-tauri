@@ -5,13 +5,14 @@ interface RenamePersonModalProps {
     onConfirm: (newName: string) => void;
     onClose: () => void;
     t: (key: string) => string;
+    title?: string;
 }
 
-export const RenamePersonModal: React.FC<RenamePersonModalProps> = ({ initialName, onConfirm, onClose, t }) => {
+export const RenamePersonModal: React.FC<RenamePersonModalProps> = ({ initialName, onConfirm, onClose, t, title }) => {
     const [val, setVal] = useState(initialName);
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 animate-zoom-in">
-            <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.renamePerson')}</h3>
+            <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{title || t('context.renamePerson')}</h3>
             <input
                 id="rename-person-input"
                 name="rename-person-input"

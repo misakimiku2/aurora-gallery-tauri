@@ -3,9 +3,6 @@
 
 use std::sync::Arc;
 
-mod clip_vit;
-pub use clip_vit::{ClipVitB32, ClipVitL14};
-
 // 模型模块
 pub mod siglip2;
 pub mod siglip2_base;
@@ -188,10 +185,6 @@ type ModelRegistry = Vec<Arc<dyn ModelSpec>>;
 fn get_registry() -> ModelRegistry {
     let mut registry = ModelRegistry::new();
 
-    // CLIP ViT 系列模型
-    registry.push(Arc::new(ClipVitB32));
-    registry.push(Arc::new(ClipVitL14));
-
     // SigLIP 2 模型
     registry.push(Arc::new(SigLIP2Base));
     registry.push(Arc::new(SigLIP2So400M));
@@ -247,10 +240,10 @@ mod tests {
     #[test]
     fn test_get_all_models_returns_registered_models() {
         let models = get_all_models();
-        // 注册表应包含 CLIP ViT 系列模型
         assert!(!models.is_empty());
-        assert!(models.iter().any(|m| m.name() == "ViT-B-32"));
-        assert!(models.iter().any(|m| m.name() == "ViT-L-14"));
+        assert!(models.iter().any(|m| m.name() == "SigLIP2-Base"));
+        assert!(models.iter().any(|m| m.name() == "SigLIP2-So400M"));
+        assert!(models.iter().any(|m| m.name() == "WD-EVA02-Large-Tagger-V3"));
     }
 
     #[test]
@@ -260,17 +253,18 @@ mod tests {
 
     #[test]
     fn test_is_model_registered_returns_true_for_known_models() {
-        assert!(is_model_registered("ViT-B-32"));
-        assert!(is_model_registered("ViT-L-14"));
+        assert!(is_model_registered("SigLIP2-Base"));
+        assert!(is_model_registered("SigLIP2-So400M"));
+        assert!(is_model_registered("WD-EVA02-Large-Tagger-V3"));
     }
 
     #[test]
     fn test_get_model_spec_returns_correct_spec() {
-        let spec = get_model_spec("ViT-B-32");
+        let spec = get_model_spec("SigLIP2-Base");
         assert!(spec.is_some());
         let spec = spec.unwrap();
-        assert_eq!(spec.name(), "ViT-B-32");
-        assert_eq!(spec.embedding_dim(), 512);
+        assert_eq!(spec.name(), "SigLIP2-Base");
+        assert_eq!(spec.embedding_dim(), 768);
     }
 
     #[test]

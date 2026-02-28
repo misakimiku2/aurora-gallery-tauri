@@ -1699,7 +1699,7 @@ export const clipGetEmbeddingStatus = async (fileId: string): Promise<boolean> =
 
 /**
  * 加载 CLIP 模型
- * @param modelName 模型名称 (ViT-B-32 或 ViT-L-14)
+ * @param modelName 模型名称 (SigLIP2-Base, SigLIP2-So400M, WD-EVA02-Large-Tagger-V3)
  */
 export const clipLoadModel = async (modelName: string): Promise<void> => {
   if (!isTauriEnvironment()) {
@@ -2038,6 +2038,37 @@ export const clipGenerateTagsFromEmbeddings = async (
     return result;
   } catch (error) {
     console.error('Failed to generate tags from embeddings:', error);
+    throw error;
+  }
+};
+
+/**
+ * 预览从嵌入向量生成的标签（不保存）
+ * @param modelName 模型名称
+ * @param threshold 标签置信度阈值
+ * @param language 标签语言（'zh' 或 'en'）
+ * @returns 预览结果
+ */
+export const clipPreviewTagsFromEmbeddings = async (
+  modelName?: string,
+  threshold?: number,
+  language?: string
+): Promise<{ tags: { name: string; name_cn: string; count: number; sample_file_ids: string[] }[]; total_files: number; files_with_tags: number }> => {
+  if (!isTauriEnvironment()) {
+    return { tags: [], total_files: 0, files_with_tags: 0 };
+  }
+  try {
+    const result = await invoke<{ tags: { name: string; name_cn: string; count: number; sample_file_ids: string[] }[]; total_files: number; files_with_tags: number }>(
+      'clip_preview_tags_from_embeddings',
+      {
+        modelName,
+        threshold: threshold ?? 0.35,
+        language,
+      }
+    );
+    return result;
+  } catch (error) {
+    console.error('Failed to preview tags from embeddings:', error);
     throw error;
   }
 };

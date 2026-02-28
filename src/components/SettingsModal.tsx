@@ -4,7 +4,7 @@ import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDi
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, clipGenerateTagsFromEmbeddings } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures } from '../types';
 
@@ -243,22 +243,16 @@ interface AIVisionPanelProps {
 // 模型系列定义
 const MODEL_SERIES: ModelSeriesInfo[] = [
   {
-    id: 'clip',
-    name: 'CLIP 系列',
-    description: 'OpenAI 开发的经典视觉-语言模型',
-    color: '#3B82F6', // 蓝色
-  },
-  {
     id: 'siglip',
     name: 'SigLIP 系列',
     description: 'Google 开发的多语言视觉模型',
-    color: '#F97316', // 橙色
+    color: '#F97316',
   },
   {
     id: 'wd-tagger',
     name: 'WD Tagger 系列',
     description: '专为动漫和插画优化的标签识别模型',
-    color: '#8B5CF6', // 紫色
+    color: '#8B5CF6',
   },
 ];
 
@@ -274,46 +268,13 @@ const FEATURE_LABELS: Record<string, { icon: React.ElementType; label: string; c
 
 const CLIP_MODELS: ClipModelInfo[] = [
   {
-    name: 'ViT-B-32',
-    displayName: 'ViT-B/32',
-    description: '推荐 - 平衡速度和准确度',
-    size: 580 * 1024 * 1024,
-    sizeDisplay: '580 MB',
-    embeddingDim: 512,
-    isRecommended: true,
-    series: 'clip',
-    features: {
-      textSearch: true,
-      imageSearch: true,
-      autoTagging: false,
-      multilingual: false,
-    },
-  },
-  {
-    name: 'ViT-L-14',
-    displayName: 'ViT-L/14',
-    description: '高精度 - 更好的语义理解',
-    size: 1600 * 1024 * 1024,
-    sizeDisplay: '1.6 GB',
-    embeddingDim: 768,
-    isRecommended: false,
-    series: 'clip',
-    isHighPrecision: true, // 高精度标记
-    features: {
-      textSearch: true,
-      imageSearch: true,
-      autoTagging: false,
-      multilingual: false,
-    },
-  },
-  {
     name: 'SigLIP2-Base',
     displayName: 'SigLIP 2 Base',
     description: '轻量级 - 多语言支持，适合低配置设备',
     size: 1600 * 1024 * 1024,
     sizeDisplay: '1.5 GB',
     embeddingDim: 768,
-    isRecommended: false,
+    isRecommended: true,
     series: 'siglip',
     features: {
       textSearch: true,
@@ -331,7 +292,7 @@ const CLIP_MODELS: ClipModelInfo[] = [
     embeddingDim: 1152,
     isRecommended: false,
     series: 'siglip',
-    isHighPrecision: true, // 高精度标记
+    isHighPrecision: true,
     features: {
       textSearch: true,
       imageSearch: true,
@@ -345,7 +306,7 @@ const CLIP_MODELS: ClipModelInfo[] = [
     description: '动漫/插画增强 - 自动标记标签 & 高质量二次元 Embedding',
     size: 1400 * 1024 * 1024,
     sizeDisplay: '1.4 GB',
-    embeddingDim: 1024,
+    embeddingDim: 10861,
     isRecommended: true,
     series: 'wd-tagger',
     features: {
@@ -391,8 +352,6 @@ const formatSpeed = (bytesPerSecond: number): string => {
 };
 
 const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSettings, onShowToast, onEnabledChange, onClipSearchDisabled, clipLoading, onRefresh, language }) => {
-  // 根据当前使用的模型初始化选中的模型系列
-  // 如果已选择模型，跳转到该模型所在系列；否则默认显示 CLIP 系列
   const getInitialSeries = (): ModelSeries => {
     if (settings.modelName) {
       const currentModel = CLIP_MODELS.find(m => m.name === settings.modelName);
@@ -400,7 +359,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         return currentModel.series;
       }
     }
-    return 'clip';
+    return 'siglip';
   };
 
   const [activeSeries, setActiveSeries] = useState<ModelSeries>(getInitialSeries);
@@ -448,8 +407,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const [estimatedTime, setEstimatedTime] = useState(globalEmbeddingState.estimatedTimeRemaining);
   const [isCancelling, setIsCancelling] = useState(globalEmbeddingState.isCancelling);
   const [isPaused, setIsPaused] = useState(globalEmbeddingState.isPaused);
-  const [isGeneratingTags, setIsGeneratingTags] = useState(false);
-  const [tagGenerationResult, setTagGenerationResult] = useState<{ total: number; success: number; skipped: number } | null>(null);
   const progressListenersRef = useRef<(() => void)[]>([]);
   const downloadListenerRef = useRef<(() => void) | null>(null);
   const isMountedRef = useRef(true);
@@ -974,8 +931,8 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         fileTuples, 
         settings.useGpu, 
         settings.modelName,
-        settings.autoAddTags,
-        settings.tagThreshold,
+        false,
+        0.35,
         language
       );
       // 进度和完成通过事件处理
@@ -1032,36 +989,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     } catch (error) {
       console.error('Failed to resume generation:', error);
       onShowToast?.('继续生成失败', 3000);
-    }
-  };
-
-  const handleGenerateTagsFromEmbeddings = async () => {
-    if (isGeneratingTags) return;
-
-    // 检查是否已选择模型
-    if (!settings.modelName) {
-      onShowToast?.('请先选择一个模型', 3000);
-      return;
-    }
-
-    setIsGeneratingTags(true);
-    setTagGenerationResult(null);
-
-    try {
-      const result = await clipGenerateTagsFromEmbeddings(
-        settings.modelName,
-        settings.tagThreshold,
-        language
-      );
-      setTagGenerationResult(result);
-      onShowToast?.(`标签生成完成: ${result.success}/${result.total}`, 3000);
-      // Refresh file metadata to show new tags
-      onRefresh?.();
-    } catch (error: any) {
-      console.error('Failed to generate tags from embeddings:', error);
-      onShowToast?.(error?.message || '标签生成失败', 3000);
-    } finally {
-      setIsGeneratingTags(false);
     }
   };
 
@@ -1623,94 +1550,6 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               </>
             )}
           </div>
-          
-          {/* WD14 标签设置 - 仅当选择 WD14 模型时显示 */}
-          {settings.modelName === 'WD-EVA02-Large-Tagger-V3' && (
-            <>
-              {/* 自动添加标签 */}
-              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.autoAddTags') || '自动添加标签'}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {t('settings.clip.autoAddTagsDesc') || '使用 WD14 模型生成嵌入时自动添加识别到的标签'}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => settings.enabled && onUpdateSettings({ ...settings, autoAddTags: !settings.autoAddTags })}
-                    disabled={!settings.enabled}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${settings.autoAddTags ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'} ${!settings.enabled ? 'cursor-not-allowed' : ''}`}
-                  >
-                    <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${settings.autoAddTags ? 'translate-x-5' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
-              </div>
-              
-              {/* 标签置信度阈值 */}
-              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.tagThreshold') || '标签置信度阈值'}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {t('settings.clip.tagThresholdDesc') || '只添加置信度高于此值的标签'}
-                    </div>
-                  </div>
-                  <div className="text-sm font-medium text-blue-600 dark:text-blue-400 min-w-[3rem] text-right">
-                    {(settings.tagThreshold ?? 0.35).toFixed(2)}
-                  </div>
-                </div>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="0.9"
-                  step="0.05"
-                  value={settings.tagThreshold ?? 0.35}
-                  onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, tagThreshold: parseFloat(e.target.value) })}
-                  disabled={!settings.enabled}
-                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                />
-                <div className="flex justify-between text-xs text-gray-400 mt-1">
-                  <span>0.10</span>
-                  <span>0.50</span>
-                  <span>0.90</span>
-                </div>
-              </div>
-              
-              {/* 从已有嵌入生成标签 */}
-              <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.generateTagsFromEmbeddings') || '从已有嵌入生成标签'}</div>
-                    <div className="text-xs text-gray-500 dark:text-gray-400">
-                      {t('settings.clip.generateTagsFromEmbeddingsDesc') || '使用已有的嵌入向量快速生成标签，无需重新推理'}
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleGenerateTagsFromEmbeddings}
-                    disabled={isGeneratingTags || !settings.enabled}
-                    className="px-3 py-1.5 bg-purple-500 hover:bg-purple-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
-                  >
-                    {isGeneratingTags ? (
-                      <>
-                        <Loader2 size={14} className="mr-1.5 animate-spin" />
-                        {t('settings.clip.generating') || '生成中...'}
-                      </>
-                    ) : (
-                      <>
-                        <Tags size={14} className="mr-1.5" />
-                        {t('settings.clip.generateTags') || '生成标签'}
-                      </>
-                    )}
-                  </button>
-                </div>
-                {tagGenerationResult && (
-                  <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-                    {t('settings.clip.tagGenerationResult') || '完成'}: {tagGenerationResult.success} / {tagGenerationResult.total} ({t('settings.clip.skipped') || '跳过'}: {tagGenerationResult.skipped})
-                  </div>
-                )}
-              </div>
-            </>
-          )}
         </div>
       </section>
 

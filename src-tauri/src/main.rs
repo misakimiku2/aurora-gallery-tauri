@@ -137,7 +137,8 @@ fn main() {
             clip_commands::get_all_image_files,
             clip_commands::clip_get_character_tags,
             clip_commands::clip_search_by_character_tag,
-            clip_commands::clip_get_detected_characters
+            clip_commands::clip_get_detected_characters,
+            clip_commands::clip_preview_tags_from_embeddings
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;

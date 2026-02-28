@@ -458,6 +458,88 @@ pub struct DetectedCharacter {
 - `src/utils/translations.ts` - 添加翻译
 
 ---
+
+## 16. 自动生成标签功能重构
+
+### 16.1 功能变更
+将原本在设置界面中的"自动添加标签"功能移至标签界面，改为独立的"自动生成标签"窗口。
+
+### 16.2 移除的设置项
+- 自动添加标签开关
+- 标签置信度阈值滑块
+- 从已有嵌入生成标签按钮
+
+### 16.3 新增功能入口
+- **位置**: 标签概览界面标题栏右侧
+- **按钮**: "自动生成标签"（紫色按钮，带 ✨ 图标）
+
+### 16.4 模态框功能
+- **阈值调整**: 滑块调整置信度阈值（0.10 - 0.90）
+- **标签预览**: 网格布局展示检测到的标签（每行 4 个）
+- **虚拟滚动**: 使用 `react-window` 的 `Grid` 组件，支持大量标签流畅渲染
+- **图片预览**: 鼠标悬停标签显示最新 3 张匹配图片
+- **操作按钮**: 返回（关闭窗口）、应用标签（确认保存）
+
+### 16.5 标签过滤
+只生成 **General 标签**（category = 0），过滤掉其他类别：
+- category 0: General（描述画面的普通特征）✅ 生成
+- category 4: Character（角色标签）❌ 不生成
+- category 9: Copyright（版权/作品标签）❌ 不生成
+
+### 16.6 后端实现
+
+#### 16.6.1 TagMapper 增强
+```rust
+struct TagEntry {
+    name: String,
+    category: i32,
+}
+
+impl TagMapper {
+    fn probs_to_general_tags(&self, probs: &[f32], threshold: f32) -> Vec<(String, f32)> {
+        // 只返回 category = 0 的标签
+    }
+}
+```
+
+#### 16.6.2 新增预览命令
+| 命令 | 说明 |
+|------|------|
+| `clip_preview_tags_from_embeddings` | 预览标签（不保存），返回标签列表和匹配图片数 |
+
+#### 16.6.3 数据结构
+```rust
+pub struct PreviewTag {
+    pub name: String,
+    pub name_cn: String,
+    pub count: usize,
+    pub sample_file_ids: Vec<String>,  // 最新3张图片ID
+}
+
+pub struct TagsPreviewResult {
+    pub tags: Vec<PreviewTag>,
+    pub total_files: usize,
+    pub files_with_tags: usize,
+}
+```
+
+### 16.7 性能优化
+- **虚拟滚动**: 只渲染可见区域的标签，即使 8000+ 标签也不卡顿
+- **响应式布局**: 模态框高度根据窗口高度自动调整（窗口高度的 85%，最大 800px）
+- **缩略图缓存**: 图片预览使用全局缩略图缓存
+
+### 16.8 修改文件
+- `src-tauri/src/clip_commands.rs` - TagMapper 增强、新增预览命令
+- `src-tauri/src/main.rs` - 注册新命令
+- `src/components/SettingsModal.tsx` - 移除 WD14 标签设置区块
+- `src/components/modals/AutoGenerateTagsModal.tsx` - 新建模态框组件
+- `src/components/AppModals.tsx` - 集成新模态框
+- `src/App.tsx` - 添加入口按钮
+- `src/types.ts` - 新增 PreviewTag、TagsPreviewResult 类型
+- `src/api/tauri-bridge.ts` - 新增 clipPreviewTagsFromEmbeddings API
+- `src/utils/translations.ts` - 添加新翻译
+
+---
 *记录时间: 2026-02-23*
 *更新时间: 2026-02-28*
 *维护者: Antigravity*

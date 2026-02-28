@@ -36,11 +36,11 @@ pub struct ClipConfig {
 impl Default for ClipConfig {
     fn default() -> Self {
         Self {
-            model_name: "ViT-B-32".to_string(),
+            model_name: "SigLIP2-Base".to_string(),
             root_path: PathBuf::from("."),
             model_cache_dir: PathBuf::from(".aurora_cache/clip"),
             use_gpu: true,
-            embedding_dim: 512,
+            embedding_dim: 768,
         }
     }
 }

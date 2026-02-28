@@ -964,9 +964,15 @@ fn save_tags_to_metadata(
     Ok(())
 }
 
+/// 标签条目，包含标签名和类别
+struct TagEntry {
+    name: String,
+    category: i32,
+}
+
 /// 标签映射器，用于将嵌入向量（标签概率）转换为标签
 struct TagMapper {
-    tags: Vec<String>,
+    tags: Vec<TagEntry>,
 }
 
 impl TagMapper {
@@ -978,9 +984,10 @@ impl TagMapper {
         let mut tags = Vec::new();
         for result in rdr.records() {
             let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
-            if record.len() >= 2 {
+            if record.len() >= 3 {
                 let tag_name = record[1].replace('_', " ").trim().to_string();
-                tags.push(tag_name);
+                let category: i32 = record[2].parse().unwrap_or(-1);
+                tags.push(TagEntry { name: tag_name, category });
             }
         }
         
@@ -992,8 +999,23 @@ impl TagMapper {
         let mut results = Vec::new();
         for (i, &prob) in probs.iter().enumerate() {
             if prob >= threshold {
-                if let Some(tag) = self.tags.get(i) {
-                    results.push((tag.clone(), prob));
+                if let Some(entry) = self.tags.get(i) {
+                    results.push((entry.name.clone(), prob));
+                }
+            }
+        }
+        results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        results
+    }
+    
+    fn probs_to_general_tags(&self, probs: &[f32], threshold: f32) -> Vec<(String, f32)> {
+        let mut results = Vec::new();
+        for (i, &prob) in probs.iter().enumerate() {
+            if prob >= threshold {
+                if let Some(entry) = self.tags.get(i) {
+                    if entry.category == 0 {
+                        results.push((entry.name.clone(), prob));
+                    }
                 }
             }
         }
@@ -1086,8 +1108,8 @@ pub async fn clip_generate_tags_from_embeddings(
             }
         };
         
-        // 将嵌入向量转换为标签
-        let tags = mapper.probs_to_tags(&embedding.embedding, threshold);
+        // 将嵌入向量转换为标签（只生成 General 标签）
+        let tags = mapper.probs_to_general_tags(&embedding.embedding, threshold);
         
         if tags.is_empty() {
             skipped_count += 1;
@@ -1121,6 +1143,123 @@ pub async fn clip_generate_tags_from_embeddings(
         "success": success_count,
         "skipped": skipped_count,
     }))
+}
+
+// ==================== 标签预览相关命令 ====================
+
+#[derive(Serialize, Clone)]
+pub struct PreviewTag {
+    pub name: String,
+    pub name_cn: String,
+    pub count: usize,
+    pub sample_file_ids: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct TagsPreviewResult {
+    pub tags: Vec<PreviewTag>,
+    pub total_files: usize,
+    pub files_with_tags: usize,
+}
+
+#[tauri::command]
+pub async fn clip_preview_tags_from_embeddings(
+    app: tauri::AppHandle,
+    model_name: Option<String>,
+    threshold: f32,
+    language: Option<String>,
+) -> Result<TagsPreviewResult, String> {
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("标签预览仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let (embeddings, model_cache_dir) = {
+        let mut guard = manager.write().await;
+        guard.switch_model(&requested_model)?;
+        
+        let embedding_store = guard.embedding_store()
+            .ok_or("Embedding store not available")?;
+        
+        let embeddings = embedding_store.get_all_embeddings()?;
+        let model_cache_dir = guard.config().model_cache_dir.clone();
+        
+        (embeddings, model_cache_dir)
+    };
+    
+    if embeddings.is_empty() {
+        return Ok(TagsPreviewResult {
+            tags: Vec::new(),
+            total_files: 0,
+            files_with_tags: 0,
+        });
+    }
+    
+    let tags_path = model_cache_dir
+        .join(&requested_model)
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
+    }
+    
+    let mapper = TagMapper::load(&tags_path)?;
+    let translator = crate::clip::model::get_tag_translator();
+    
+    log::info!("开始预览标签，阈值: {}, 嵌入数量: {}", threshold, embeddings.len());
+    
+    let mut tag_files: std::collections::HashMap<String, Vec<(String, f32)>> = std::collections::HashMap::new();
+    let mut files_with_tags = 0;
+    
+    for embedding in &embeddings {
+        let tags = mapper.probs_to_general_tags(&embedding.embedding, threshold);
+        if !tags.is_empty() {
+            files_with_tags += 1;
+            for (tag, score) in tags {
+                tag_files.entry(tag)
+                    .or_insert_with(Vec::new)
+                    .push((embedding.file_id.clone(), score));
+            }
+        }
+    }
+    
+    let mut preview_tags: Vec<PreviewTag> = tag_files
+        .into_iter()
+        .map(|(tag, files)| {
+            let mut sorted_files = files;
+            sorted_files.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+            
+            let sample_file_ids: Vec<String> = sorted_files
+                .iter()
+                .take(3)
+                .map(|(id, _)| id.clone())
+                .collect();
+            
+            let name_cn = translator.translate(&tag, &lang);
+            
+            PreviewTag {
+                name: tag,
+                name_cn,
+                count: sorted_files.len(),
+                sample_file_ids,
+            }
+        })
+        .collect();
+    
+    preview_tags.sort_by(|a, b| b.count.cmp(&a.count));
+    
+    log::info!("标签预览完成: {} 个标签, {} 个文件有标签", preview_tags.len(), files_with_tags);
+    
+    Ok(TagsPreviewResult {
+        tags: preview_tags,
+        total_files: embeddings.len(),
+        files_with_tags,
+    })
 }
 
 // ==================== 角色标签相关命令 ====================

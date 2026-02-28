@@ -104,7 +104,7 @@ export const App: React.FC = () => {
       },
       clip: {
         enabled: true,
-        modelName: 'ViT-B-32',
+        modelName: 'SigLIP2-Base',
         useGpu: false,
         downloadStatus: 'not_started',
         downloadProgress: 0,
@@ -451,21 +451,29 @@ export const App: React.FC = () => {
             if (savedData) {
               isSavedDataLoaded = true;
 
-              // 锟斤拷锟斤拷斜锟斤拷锟斤拷锟斤拷锟捷ｏ拷锟较诧拷锟斤拷锟斤拷锟斤拷锟斤拷荩锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
+              let migratedSettings = { ...savedData.settings };
+              if (migratedSettings.clip?.modelName === 'ViT-B-32' || migratedSettings.clip?.modelName === 'ViT-L-14') {
+                console.log('[Migration] Migrating deprecated VIT model to SigLIP2-Base');
+                migratedSettings.clip = {
+                  ...migratedSettings.clip,
+                  modelName: 'SigLIP2-Base'
+                };
+              }
+
               finalSettings = {
                 ...finalSettings,
-                ...savedData.settings,
+                ...migratedSettings,
                 paths: {
                   ...finalSettings.paths,
-                  ...(savedData.settings?.paths || {})
+                  ...(migratedSettings.paths || {})
                 },
                 ai: {
                   ...finalSettings.ai,
-                  ...(savedData.settings?.ai || {})
+                  ...(migratedSettings.ai || {})
                 },
                 defaultLayoutSettings: {
                   ...DEFAULT_LAYOUT_SETTINGS,
-                  ...(savedData.settings?.defaultLayoutSettings || {})
+                  ...(migratedSettings.defaultLayoutSettings || {})
                 }
               };
 
@@ -2175,10 +2183,20 @@ export const App: React.FC = () => {
   };
 
   const handleCreatePerson = () => {
+    setState(prev => ({
+      ...prev,
+      activeModal: { type: 'create-person', data: {} }
+    }));
+
+    // 自动跳转到人物界面 (人物概览)
+    enterPeopleOverview();
+  };
+
+  const handleConfirmCreatePerson = (name: string) => {
     const newId = Math.random().toString(36).substr(2, 9);
     const newPerson: Person = {
       id: newId,
-      name: t('context.newPersonDefault'),
+      name: name || t('context.newPersonDefault'),
       coverFileId: '',
       count: 0,
       description: ''
@@ -2190,11 +2208,8 @@ export const App: React.FC = () => {
     setState(prev => ({
       ...prev,
       people: { ...prev.people, [newId]: newPerson },
-      activeModal: { type: 'rename-person', data: { personId: newId } }
+      activeModal: { type: null }
     }));
-
-    // 自动跳转到人物界面 (人物概览)
-    enterPeopleOverview();
   };
 
   const handleSmartCreatePerson = async (
@@ -4529,16 +4544,33 @@ export const App: React.FC = () => {
                         <Tag size={12} className="mr-1" />
                         <span className="font-medium">{t('context.allTagsOverview')}</span>
                       </div>
-                      <div className="flex-1 flex justify-end"></div>
+                      <div className="flex-1 flex justify-end">
+                        <button
+                          onClick={() => setState(s => ({ ...s, activeModal: { type: 'auto-generate-tags' } }))}
+                          className="flex items-center px-3 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-lg transition-colors"
+                        >
+                          <Sparkles size={14} className="mr-1.5" />
+                          {t('tags.autoGenerate') || '自动生成标签'}
+                        </button>
+                      </div>
                     </div>
                   ) : activeTab.viewMode === 'people-overview' ? (
-                    <div className="flex items-center w-full justify-between">
+                    <div className="flex items-center w-full">
                       <div className="flex items-center">
                         <User size={12} className="mr-1" />
                         <span>{t('context.allPeople')}</span>
                       </div>
-                      <div className="text-[10px] opacity-60">
-                        {Object.keys(peopleWithDisplayCounts).length} {t('context.items')}
+                      <div className="flex-1 flex justify-end items-center gap-3">
+                        <span className="text-[10px] opacity-60">
+                          {Object.keys(peopleWithDisplayCounts).length} {t('context.items')}
+                        </span>
+                        <button
+                          onClick={() => setState(s => ({ ...s, activeModal: { type: 'smart-create-person', data: {} } }))}
+                          className="flex items-center px-3 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-lg transition-colors"
+                        >
+                          <Sparkles size={14} className="mr-1.5" />
+                          {t('context.smartCreatePerson') || '智能生成人物'}
+                        </button>
                       </div>
                     </div>
                   ) : (
@@ -4795,6 +4827,7 @@ export const App: React.FC = () => {
         onRefreshTags={handleRefreshTags}
         handleSmartCreatePerson={handleSmartCreatePerson}
         handleSmartAddToPerson={handleSmartAddToPerson}
+        handleConfirmCreatePerson={handleConfirmCreatePerson}
       />
 
       <ContextMenu
