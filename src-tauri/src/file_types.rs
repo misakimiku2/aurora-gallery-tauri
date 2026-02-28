@@ -62,7 +62,7 @@ pub struct ScanProgress {
 }
 
 pub const SUPPORTED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "webp", "bmp", "tiff", "ico", "svg", "avif", "jxl",
+    "jpg", "jpeg", "jfif", "png", "gif", "webp", "bmp", "tiff", "ico", "svg", "avif", "jxl",
 ];
 
 pub fn is_supported_image(extension: &str) -> bool {

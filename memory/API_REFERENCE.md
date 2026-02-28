@@ -1560,12 +1560,10 @@ interface DominantColor {
   hex: string
   rgb: [number, number, number]
   isDark: boolean
-  labL?: number      // LAB 颜色空间 L 值
-  labA?: number      // LAB 颜色空间 A 值
-  labB?: number      // LAB 颜色空间 B 值
-  percentage?: number // 颜色占比
 }
 ```
+
+**注意**: 在 AVIF 降级处理的前端颜色提取中，会额外计算 `labL`、`labA`、`labB` 和 `percentage` 字段，但核心类型定义仅包含上述三个必需字段。
 
 ---
 
@@ -1612,6 +1610,8 @@ interface Person {
   descriptor?: number[]      // 人脸特征向量
   faceBox?: { x: number; y: number; w: number; h: number }  // 百分比 0-100
   updatedAt?: number         // 更新时间戳
+  characterTagName?: string  // 关联的角色标签名称（WD14）
+  characterTagIndex?: number // 关联的角色标签索引
 }
 ```
 
@@ -1751,6 +1751,7 @@ interface AppSettings {
     isAISearchEnabled: boolean
   }
   ai: AIConfig
+  clip: ClipSettings    // CLIP 模型设置
   performance: {
     refreshInterval: number  // 毫秒
   }
@@ -1877,7 +1878,7 @@ type SortOption = 'name' | 'date' | 'size'
 type SortDirection = 'asc' | 'desc'
 type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry'
 type GroupByOption = 'none' | 'type' | 'date' | 'size'
-type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'performance'
+type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about'
 ```
 
 ---
@@ -1930,6 +1931,8 @@ pub struct Person {
     pub description: Option<String>,
     pub face_box: Option<FaceBox>,
     pub updated_at: Option<i64>,
+    pub character_tag_name: Option<String>,
+    pub character_tag_index: Option<i32>,
 }
 ```
 
@@ -2032,6 +2035,427 @@ async function manageTopics() {
 
 ---
 
+## CLIP 向量搜索 API
+
+### `clipSearchByText`
+```typescript
+async function clipSearchByText(
+  text: string,
+  options?: ClipSearchOptions,
+  modelName?: string
+): Promise<ClipSearchResult[]>
+```
+
+**描述**: 使用自然语言文本搜索图片
+
+**参数**:
+- `text`: string - 搜索文本
+- `options?`: ClipSearchOptions - 搜索选项
+- `modelName?`: string - 模型名称
+
+**返回**: `Promise<ClipSearchResult[]>` - 搜索结果列表
+
+---
+
+### `clipSearchByImage`
+```typescript
+async function clipSearchByImage(
+  imagePath: string,
+  options?: ClipSearchOptions,
+  modelName?: string
+): Promise<ClipSearchResult[]>
+```
+
+**描述**: 使用图片搜索相似图片（以图搜图）
+
+**参数**:
+- `imagePath`: string - 图片路径
+- `options?`: ClipSearchOptions - 搜索选项
+- `modelName?`: string - 模型名称
+
+**返回**: `Promise<ClipSearchResult[]>` - 搜索结果列表
+
+---
+
+### `clipGenerateEmbedding`
+```typescript
+async function clipGenerateEmbedding(
+  filePath: string,
+  fileId?: string,
+  autoAddTags?: boolean,
+  tagThreshold?: number,
+  language?: string
+): Promise<number[]>
+```
+
+**描述**: 为指定图片生成 CLIP 嵌入向量
+
+**参数**:
+- `filePath`: string - 图片路径
+- `fileId?`: string - 文件 ID
+- `autoAddTags?`: boolean - 是否自动添加标签（WD14 模型）
+- `tagThreshold?`: number - 标签置信度阈值
+- `language?`: string - 标签语言（'zh' 或 'en'）
+
+**返回**: `Promise<number[]>` - 嵌入向量
+
+---
+
+### `clipLoadModel`
+```typescript
+async function clipLoadModel(modelName: string): Promise<void>
+```
+
+**描述**: 加载 CLIP 模型
+
+**参数**:
+- `modelName`: string - 模型名称 (SigLIP2-Base, SigLIP2-So400M, WD-EVA02-Large-Tagger-V3)
+
+---
+
+### `clipUnloadModel`
+```typescript
+async function clipUnloadModel(): Promise<void>
+```
+
+**描述**: 卸载 CLIP 模型（释放内存）
+
+---
+
+### `clipIsModelLoaded`
+```typescript
+async function clipIsModelLoaded(): Promise<boolean>
+```
+
+**描述**: 检查 CLIP 模型是否已加载
+
+**返回**: `Promise<boolean>` - 是否已加载
+
+---
+
+### `clipGetEmbeddingCount`
+```typescript
+async function clipGetEmbeddingCount(): Promise<number>
+```
+
+**描述**: 获取 CLIP 嵌入向量数量
+
+**返回**: `Promise<number>` - 嵌入向量总数
+
+---
+
+### `clipGenerateEmbeddingsBatch`
+```typescript
+async function clipGenerateEmbeddingsBatch(
+  files: [string, string][],
+  useGpu: boolean,
+  modelName?: string,
+  autoAddTags?: boolean,
+  tagThreshold?: number,
+  language?: string
+): Promise<ClipBatchEmbeddingResult>
+```
+
+**描述**: 批量生成图片的 CLIP 嵌入向量
+
+**参数**:
+- `files`: [string, string][] - 文件列表，每个元素为 [file_path, file_id] 元组
+- `useGpu`: boolean - 是否启用 GPU 加速
+- `modelName?`: string - 模型名称
+- `autoAddTags?`: boolean - 是否自动添加标签
+- `tagThreshold?`: number - 标签置信度阈值
+- `language?`: string - 标签语言
+
+---
+
+### `clipGetCharacterTags`
+```typescript
+async function clipGetCharacterTags(language?: string): Promise<CharacterTag[]>
+```
+
+**描述**: 获取所有角色标签（WD14 category=4）
+
+**参数**:
+- `language?`: string - 语言（'zh' 或 'en'）
+
+**返回**: `Promise<CharacterTag[]>` - 角色标签列表
+
+---
+
+### `clipGetDetectedCharacters`
+```typescript
+async function clipGetDetectedCharacters(
+  minScore: number,
+  minCount?: number,
+  language?: string
+): Promise<DetectedCharacter[]>
+```
+
+**描述**: 获取已检测到的角色列表
+
+**参数**:
+- `minScore`: number - 最小相似度阈值
+- `minCount?`: number - 最小匹配文件数
+- `language?`: string - 语言
+
+**返回**: `Promise<DetectedCharacter[]>` - 已检测到的角色列表
+
+---
+
+## 更新检查 API
+
+### `checkForUpdates`
+```typescript
+async function checkForUpdates(): Promise<UpdateCheckResult | null>
+```
+
+**描述**: 检查应用更新
+
+**返回**: `Promise<UpdateCheckResult | null>` - 更新检查结果
+
+---
+
+### `startUpdateDownload`
+```typescript
+async function startUpdateDownload(installerUrl: string, version: string): Promise<void>
+```
+
+**描述**: 开始下载更新
+
+**参数**:
+- `installerUrl`: string - 安装程序下载链接
+- `version`: string - 版本号
+
+---
+
+### `getUpdateDownloadProgress`
+```typescript
+async function getUpdateDownloadProgress(): Promise<DownloadProgressResult | null>
+```
+
+**描述**: 获取下载进度
+
+**返回**: `Promise<DownloadProgressResult | null>` - 下载进度信息
+
+---
+
+### `installUpdate`
+```typescript
+async function installUpdate(): Promise<void>
+```
+
+**描述**: 安装更新（运行安装程序）
+
+---
+
+## 颜色数据库管理 API
+
+### `getColorDbStats`
+```typescript
+async function getColorDbStats(): Promise<ColorDbStats | null>
+```
+
+**描述**: 获取主色调数据库统计信息
+
+**返回**: `Promise<ColorDbStats | null>` - 数据库统计信息
+
+---
+
+### `getColorDbErrorFiles`
+```typescript
+async function getColorDbErrorFiles(): Promise<ColorDbErrorFile[]>
+```
+
+**描述**: 获取错误文件列表
+
+**返回**: `Promise<ColorDbErrorFile[]>` - 错误文件列表
+
+---
+
+### `retryColorExtraction`
+```typescript
+async function retryColorExtraction(filePaths?: string[]): Promise<number>
+```
+
+**描述**: 重新处理错误文件
+
+**参数**:
+- `filePaths?`: string[] - 要重新处理的文件路径列表，如果为 null 则处理所有错误文件
+
+**返回**: `Promise<number>` - 成功重置的文件数量
+
+---
+
+### `deleteColorDbErrorFiles`
+```typescript
+async function deleteColorDbErrorFiles(filePaths: string[]): Promise<number>
+```
+
+**描述**: 从数据库中删除错误文件记录
+
+**参数**:
+- `filePaths`: string[] - 要删除的文件路径列表
+
+**返回**: `Promise<number>` - 成功删除的记录数量
+
+---
+
+## 其他 API
+
+### `openExternalLink`
+```typescript
+async function openExternalLink(url: string): Promise<void>
+```
+
+**描述**: 使用系统默认浏览器打开外部链接
+
+**参数**:
+- `url`: string - 要打开的链接
+
+---
+
+### `proxyHttpRequest`
+```typescript
+async function proxyHttpRequest(
+  url: string,
+  method?: string,
+  headers?: Record<string, string>,
+  body?: string
+): Promise<string>
+```
+
+**描述**: 代理 HTTP 请求（用于绕过 CORS）
+
+**参数**:
+- `url`: string - 请求 URL
+- `method?`: string - HTTP 方法（默认 'GET'）
+- `headers?`: Record<string, string> - 请求头
+- `body?`: string - 请求体
+
+**返回**: `Promise<string>` - 响应文本
+
+---
+
+### `dbGetAllFileMetadata`
+```typescript
+async function dbGetAllFileMetadata(): Promise<FileMetadata[]>
+```
+
+**描述**: 获取所有文件元数据
+
+**返回**: `Promise<FileMetadata[]>` - 所有文件元数据列表
+
+---
+
+## CLIP 相关类型
+
+### ClipSearchResult
+```typescript
+interface ClipSearchResult {
+  file_id: string    // 文件 ID
+  score: number      // 相似度分数 (0.0 - 1.0)
+  rank: number       // 排名
+}
+```
+
+---
+
+### ClipSearchOptions
+```typescript
+interface ClipSearchOptions {
+  top_k?: number       // 返回结果数量
+  min_score?: number   // 最小相似度阈值
+}
+```
+
+---
+
+### ClipSettings
+```typescript
+interface ClipSettings {
+  enabled: boolean
+  modelName: ClipModelName
+  useGpu: boolean
+  downloadStatus: ClipDownloadStatus
+  downloadProgress: number
+  downloadError?: string
+  modelVersion: string
+  downloadedAt?: number
+  minScore: number           // 相似度阈值 (0.0 - 1.0)
+  maxResults: number         // 最大返回结果数
+  unlimitedResults: boolean  // 是否无限制结果数
+  autoAddTags: boolean       // WD14 模型是否自动添加标签
+  tagThreshold: number       // WD14 标签置信度阈值
+}
+```
+
+---
+
+### ClipModelName
+```typescript
+type ClipModelName = 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-V3' | ''
+```
+
+---
+
+### CharacterTag
+```typescript
+interface CharacterTag {
+  tag_id: string
+  name: string
+  name_cn: string
+  index: number
+}
+```
+
+---
+
+### DetectedCharacter
+```typescript
+interface DetectedCharacter {
+  tag_name: string
+  tag_name_cn: string
+  tag_index: number
+  file_count: number
+  max_score: number
+  sample_file_id: string
+}
+```
+
+---
+
+### ColorDbStats
+```typescript
+interface ColorDbStats {
+  total: number
+  extracted: number
+  error: number
+  pending: number
+  processing: number
+  dbSize: number
+  walSize: number
+}
+```
+
+---
+
+### UpdateCheckResult
+```typescript
+interface UpdateCheckResult {
+  has_update: boolean
+  current_version: string
+  latest_version: string
+  download_url: string
+  installer_url?: string
+  installer_size?: number
+  release_name: string
+  release_notes: string
+  published_at: string
+}
+```
+
+---
+
 ## 错误处理模式
 
 ### 前端错误处理
@@ -2059,7 +2483,7 @@ const [result, error] = await safeOperation(
 
 ---
 
-**文档版本**: 1.2  
-**更新日期**: 2026-02-11  
+**文档版本**: 1.3  
+**更新日期**: 2026-03-01  
 **覆盖范围**: 所有公共 API  
 **详细程度**: 高

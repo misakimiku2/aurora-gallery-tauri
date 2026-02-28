@@ -165,7 +165,7 @@ pub async fn read_file_as_base64(file_path: String) -> Result<Option<String>, St
         .unwrap_or_default();
     
     let mime_type = match extension.as_str() {
-        "jpg" | "jpeg" => "image/jpeg",
+        "jpg" | "jpeg" | "jfif" => "image/jpeg",
         "png" => "image/png",
         "gif" => "image/gif",
         "webp" => "image/webp",
