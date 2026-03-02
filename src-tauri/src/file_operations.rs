@@ -165,11 +165,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             color_db::add_pending_files(&mut conn, &[image_path])
         }).await;
         
-        if let Err(e) = result {
-            eprintln!("Failed to add file to color database: {}", e);
-        } else if let Err(e) = result.unwrap() {
-            eprintln!("Database error when adding file: {}", e);
-        }
+        let _ = result;
         
         image_node
     } else {
@@ -343,7 +339,6 @@ pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHand
     let color_db = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
 
     tokio::spawn(async move {
-        let bg_start = std::time::Instant::now();
         let res = tokio::task::spawn_blocking(move || {
             let conn = pool_clone.get_connection();
             let _ = db::file_index::migrate_index_dir(&conn, &old_clone, &new_clone);
@@ -351,13 +346,7 @@ pub async fn rename_file(old_path: String, new_path: String, app: tauri::AppHand
             let _ = color_db.move_colors(&old_clone, &new_clone);
         }).await;
 
-        if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
-            eprintln!("AURORA_BENCH: rename_file background migration elapsed={:?}", bg_start.elapsed());
-        }
-
-        if let Err(e) = res {
-            eprintln!("[rename_file][bg] migration failed: {:?}", e);
-        }
+        let _ = res;
     });
 
     Ok(())
@@ -493,17 +482,7 @@ pub async fn copy_image_colors(
     dest_path: String
 ) -> Result<bool, String> {
     let pool = app.state::<Arc<color_db::ColorDbPool>>().inner();
-    eprintln!("[Cmd] copy_image_colors invoked: src='{}' dest='{}'", src_path, dest_path);
-    match pool.copy_colors(&src_path, &dest_path) {
-        Ok(b) => {
-            eprintln!("[Cmd] copy_image_colors succeeded: src='{}' dest='{}' copied={}", src_path, dest_path, b);
-            Ok(b)
-        }
-        Err(e) => {
-            eprintln!("[Cmd] copy_image_colors failed: src='{}' dest='{}' error={}", src_path, dest_path, e);
-            Err(e)
-        }
-    }
+    pool.copy_colors(&src_path, &dest_path)
 }
 
 #[tauri::command]
@@ -561,9 +540,7 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
     }
     
     let final_dest_path = if !is_dir && dest.exists() {
-        let unique_path = generate_unique_file_path(&dest_path);
-        println!("Destination file exists, using unique path: {}", unique_path);
-        unique_path
+        generate_unique_file_path(&dest_path)
     } else {
         dest_path.clone()
     };
@@ -577,8 +554,6 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
         }
     }
     
-    println!("Copying {}: {} to {}", if is_dir { "directory" } else { "file" }, src_path, final_dest_path);
-    
     #[cfg(windows)]
     {
         use std::process::Command;
@@ -590,8 +565,6 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
             if is_dir {
                 let src_win = src_path.replace("/", "\\");
                 let dest_win = final_dest_path.replace("/", "\\");
-                
-                println!("Attempt {}: Using robocopy: {} -> {}", attempt + 1, src_win, dest_win);
                 
                 let output = Command::new("robocopy")
                     .arg(&src_win)
@@ -609,28 +582,21 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                 
                 let exit_code = output.status.code().unwrap_or(0);
                 if exit_code <= 1 {
-                    println!("Directory copy succeeded");
                     let norm = normalize_path(&final_dest_path);
-                    println!("Returning normalized path: {}", norm);
                     return Ok(norm);
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let error_msg = if !stderr.is_empty() { stderr } else { stdout };
-                    println!("Robocopy attempt {} failed with code {}: {}", attempt + 1, exit_code, error_msg.trim());
                     last_error = Some(std::io::Error::new(std::io::ErrorKind::Other, error_msg.trim().to_string()));
                 }
             } else {
-                println!("Attempt {}: Using fs::copy: {} -> {}", attempt + 1, src_path, final_dest_path);
                     match fs::copy(src, dest) {
                     Ok(_) => {
-                        println!("File copy succeeded");
                         let norm = normalize_path(&final_dest_path);
-                        println!("Returning normalized path: {}", norm);
                         return Ok(norm);
                     }
                     Err(e) => {
-                        println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
                         last_error = Some(e);
                     }
                 }
@@ -656,11 +622,9 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                 match fs_extra::dir::copy(src, dest, &fs_extra::dir::CopyOptions::new()) {
                     Ok(_) => {
                         let norm = normalize_path(&final_dest_path);
-                        println!("Returning normalized path: {}", norm);
                         return Ok(norm);
                     },
                     Err(e) => {
-                        println!("copy_dir_all attempt {} failed: {:?}", attempt + 1, e);
                         last_error = Some(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()));
                     }
                 }
@@ -668,12 +632,10 @@ pub async fn copy_file(src_path: String, dest_path: String) -> Result<String, St
                 match fs::copy(src, dest) {
                     Ok(_) => {
                         let norm = normalize_path(&final_dest_path);
-                        println!("Returning normalized path: {}", norm);
                         return Ok(norm);
                     },
                     Err(e) => {
                         last_error = Some(e);
-                        println!("fs::copy attempt {} failed: {:?}", attempt + 1, e);
                     }
                 }
             }

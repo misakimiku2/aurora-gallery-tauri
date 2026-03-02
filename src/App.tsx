@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -684,22 +684,6 @@ export const App: React.FC = () => {
                   };
                 });
 
-                // 在应用启动初始化时，确保所有图像文件都被添加到颜色提取队列中
-                if (isTauriSyncEnv) {
-                  const imagePaths = Object.values(allFiles)
-                    .filter(f => f.type === FileType.IMAGE)
-                    .map(f => f.path);
-
-                  if (imagePaths.length > 0) {
-                    addPendingFilesToDb(imagePaths).catch(err => {
-                      console.error('Failed to add pending files to color database on init:', err);
-                    });
-                  }
-
-                  // 确保恢复颜色提取任务
-                  resumeColorExtraction().catch(() => { });
-                }
-
                 // Mark initialization complete (saved-data loading finished/handled)
                 savedDataLoadedRef.current = true;
                 setSavedDataLoaded(true);
@@ -823,25 +807,44 @@ export const App: React.FC = () => {
       const colors = content.split(/[,\s]+/).map(c => c.trim()).filter(Boolean);
       if (colors.length === 0) return;
 
-      // Fetch results from Rust backend
-      const searchFn = isPalette ? searchByPalette : searchByColor;
-      const arg = isPalette ? colors : colors[0];
+      const executeSearch = async () => {
+        const colorDbStats = await getColorDbStats();
+        
+        const totalImagesInDir = Object.values(state.files).filter(f => f.type === FileType.IMAGE).length;
+        const extractedCount = colorDbStats?.extracted || 0;
+        
+        const hasInsufficientData = !colorDbStats || 
+          extractedCount === 0 || 
+          extractedCount < totalImagesInDir * 0.1;
+        
+        if (hasInsufficientData) {
+          showToast(t('tasks.colorDbInsufficient'));
+          updateActiveTab({ searchQuery: '' });
+          return;
+        }
 
-      // @ts-ignore - Argument types are handled inside wrapper functions
-      searchFn(arg).then((paths: string[]) => {
-        updateActiveTab({
-          aiFilter: {
-            keywords: [],
-            colors: colors,
-            people: [],
-            description: '',
-            filePaths: paths,
-            originalQuery: query
-          }
-        });
-      }).catch(err => {
-        console.error('[ColorSearch Sync] Backend error:', err);
-      });
+        const searchFn = isPalette ? searchByPalette : searchByColor;
+        const arg = isPalette ? colors : colors[0];
+
+        try {
+          // @ts-ignore - Argument types are handled inside wrapper functions
+          const paths: string[] = await searchFn(arg);
+          updateActiveTab({
+            aiFilter: {
+              keywords: [],
+              colors: colors,
+              people: [],
+              description: '',
+              filePaths: paths,
+              originalQuery: query
+            }
+          });
+        } catch (err) {
+          console.error('[ColorSearch Sync] Backend error:', err);
+        }
+      };
+
+      executeSearch();
     }
   }, [activeTab.searchQuery]);
 
@@ -2850,22 +2853,6 @@ export const App: React.FC = () => {
         // 扫描完成，移除监听器
         if (unlistenProgress) unlistenProgress();
 
-        // 恢复后台颜色提取任务
-        if (isTauriEnvironment()) {
-          // 收集所有图像文件路径并添加到颜色提取队列，确保新切换的目录能开始提取颜色
-          const imagePaths = Object.values(result.files)
-            .filter(f => f.type === FileType.IMAGE)
-            .map(f => f.path);
-
-          if (imagePaths.length > 0) {
-            addPendingFilesToDb(imagePaths).catch(err => {
-              console.error('Failed to add pending files to color database:', err);
-            });
-          }
-
-          await resumeColorExtraction();
-        }
-
         // 切换根目录后，重新加载人物数据
         try {
           const dbPeople = await dbGetAllPeople();
@@ -3711,7 +3698,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 1. 锟斤拷色锟斤拷锟斤拷锟竭硷拷
+    // 1. 单色搜索
     if (query.startsWith('color:')) {
       let hex = query.replace('color:', '').trim();
       if (hex.startsWith('#')) hex = hex.substring(1);
@@ -3719,6 +3706,22 @@ export const App: React.FC = () => {
       const taskId = startTask('ai', [], t('tasks.searchingColor'), false);
 
       try {
+        const colorDbStats = await getColorDbStats();
+        
+        const totalImagesInDir = Object.values(state.files).filter(f => f.type === FileType.IMAGE).length;
+        const extractedCount = colorDbStats?.extracted || 0;
+        
+        const hasInsufficientData = !colorDbStats || 
+          extractedCount === 0 || 
+          extractedCount < totalImagesInDir * 0.1;
+        
+        if (hasInsufficientData) {
+          showToast(t('tasks.colorDbInsufficient'));
+          updateTask(taskId, { current: 1, status: 'completed' });
+          setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+          return;
+        }
+
         const results = await searchByColor(`#${hex}`);
 
         const validPaths: string[] = [];
@@ -3794,7 +3797,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 1.5 锟斤拷围/色锟斤拷锟斤拷锟斤拷锟竭硷拷 (Palette)
+    // 1.5 色围/色调搜索 (Palette)
     if (query.startsWith('palette:')) {
       const rawPalette = query.replace('palette:', '').trim();
       if (!rawPalette) return;
@@ -3808,6 +3811,22 @@ export const App: React.FC = () => {
       const taskId = startTask('ai', [], t('tasks.searchingPalette'), false);
 
       try {
+        const colorDbStats = await getColorDbStats();
+        
+        const totalImagesInDir = Object.values(state.files).filter(f => f.type === FileType.IMAGE).length;
+        const extractedCount = colorDbStats?.extracted || 0;
+        
+        const hasInsufficientData = !colorDbStats || 
+          extractedCount === 0 || 
+          extractedCount < totalImagesInDir * 0.1;
+        
+        if (hasInsufficientData) {
+          showToast(t('tasks.colorDbInsufficient'));
+          updateTask(taskId, { current: 1, status: 'completed' });
+          setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 500);
+          return;
+        }
+
         const results = await searchByPalette(palette);
 
         const validPaths: string[] = [];

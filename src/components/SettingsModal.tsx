@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag, Tags, Loader2 } from 'lucide-react';
-import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption } from '../types';
+import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption, FileType } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures } from '../types';
 
@@ -1690,6 +1691,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const [deleteSuccess, setDeleteSuccess] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
 
+  // 主色调提取任务状态
+  const [isColorExtracting, setIsColorExtracting] = useState(false);
+  const [colorExtractProgress, setColorExtractProgress] = useState<{
+    current: number;
+    total: number;
+    estimatedTime?: number;
+  } | null>(null);
+  const colorExtractStartTimeRef = useRef<number>(0);
+  const colorExtractLastUpdateRef = useRef<number>(0);
+  const colorExtractLastProgressRef = useRef<number>(0);
+
   const [editingPresetName, setEditingPresetName] = useState('');
 
   useEffect(() => {
@@ -1849,6 +1861,123 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       }
     };
   }, [state.settingsCategory, refreshInterval]);
+
+  // 监听主色调提取进度事件
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const setupListener = async () => {
+      unlisten = await listen('color-extraction-progress', (event: any) => {
+        const progress = event.payload as {
+          batchId: number;
+          current: number;
+          total: number;
+          pending: number;
+          currentFile: string;
+          batchCompleted: boolean;
+        };
+
+        if (progress.total === 0) return;
+
+        setIsColorExtracting(true);
+        
+        const now = Date.now();
+        let estimatedTime: number | undefined = undefined;
+
+        // 计算预估剩余时间
+        if (progress.current > 0 && colorExtractStartTimeRef.current > 0) {
+          const elapsed = now - colorExtractStartTimeRef.current;
+          const speed = progress.current / elapsed;
+          const remaining = progress.total - progress.current;
+          if (speed > 0 && remaining > 0) {
+            estimatedTime = remaining / speed;
+          }
+        }
+
+        setColorExtractProgress({
+          current: progress.current,
+          total: progress.total,
+          estimatedTime
+        });
+
+        // 检测批次完成
+        if (progress.batchCompleted) {
+          setTimeout(() => {
+            setIsColorExtracting(false);
+            setColorExtractProgress(null);
+            colorExtractStartTimeRef.current = 0;
+            loadColorDbStats();
+          }, 500);
+        }
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // 开始主色调提取任务
+  const handleStartColorExtraction = useCallback(async () => {
+    if (isColorExtracting) {
+      // 如果正在提取，则暂停
+      await pauseColorExtraction();
+      setIsColorExtracting(false);
+      return;
+    }
+
+    // 收集当前目录下所有图片文件路径
+    const imagePaths = Object.values(state.files)
+      .filter(f => f.type === FileType.IMAGE)
+      .map(f => f.path);
+
+    if (imagePaths.length === 0) {
+      onShowToast?.(t('settings.noImagesToExtract') || '没有图片需要提取主色调');
+      return;
+    }
+
+    // 记录开始时间
+    colorExtractStartTimeRef.current = Date.now();
+    setIsColorExtracting(true);
+    // 使用图片总数作为初始总数，后续会从进度事件中更新
+    setColorExtractProgress({ current: 0, total: imagePaths.length });
+
+    try {
+      // 添加文件到待处理队列（已存在的文件会被忽略，新文件会被添加为 pending 状态）
+      const addedCount = await addPendingFilesToDb(imagePaths);
+      
+      // 如果没有新添加的文件且没有待处理的文件，说明全部已完成
+      if (addedCount === 0 && colorDbStats && colorDbStats.pending === 0) {
+        setIsColorExtracting(false);
+        setColorExtractProgress(null);
+        onShowToast?.(t('settings.colorExtractionNoPendingHint') || '当前目录所有图片的主色调已提取完成');
+        return;
+      }
+      
+      // 启动后台提取任务
+      await resumeColorExtraction();
+    } catch (error) {
+      console.error('Failed to start color extraction:', error);
+      setIsColorExtracting(false);
+      setColorExtractProgress(null);
+      onShowToast?.(t('settings.colorExtractionStartFailed') || '启动主色调提取失败');
+    }
+  }, [isColorExtracting, state.files, colorDbStats, t, onShowToast]);
+
+  // 格式化预估时间
+  const formatEstimatedTimeMs = (ms: number | undefined): string => {
+    if (!ms || ms < 0) return '';
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+  };
 
   // 加载主色调数据库统计信息
   const loadColorDbStats = async () => {
@@ -2617,6 +2746,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           </div>
                         </div>
                       </div>
+                    </div>
+
+                    {/* 主色调提取任务控制 */}
+                    <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.colorExtractionTask')}</span>
+                        <button
+                          onClick={handleStartColorExtraction}
+                          disabled={isColorExtracting && !colorExtractProgress}
+                          className={`text-sm flex items-center px-3 py-1.5 rounded-lg transition-colors ${
+                            isColorExtracting
+                              ? 'bg-yellow-100 dark:bg-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-700 text-yellow-700 dark:text-yellow-300'
+                              : 'bg-blue-500 hover:bg-blue-600 text-white'
+                          }`}
+                        >
+                          {isColorExtracting ? (
+                            <>
+                              <Pause size={14} className="mr-1" />
+                              {t('settings.stopColorExtraction')}
+                            </>
+                          ) : (
+                            <>
+                              <Play size={14} className="mr-1" />
+                              {t('settings.startColorExtraction')}
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* 进度显示 */}
+                      {isColorExtracting && colorExtractProgress && (
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs text-gray-600 dark:text-gray-400">{t('settings.colorExtracting')}</span>
+                            <span className="text-xs text-gray-600 dark:text-gray-400">
+                              {Math.round((colorExtractProgress.current / Math.max(colorExtractProgress.total, 1)) * 100)}%
+                            </span>
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-500">
+                            {colorExtractProgress.current} / {colorExtractProgress.total}
+                          </div>
+                          {colorExtractProgress.estimatedTime && colorExtractProgress.estimatedTime > 0 && (
+                            <div className="text-xs text-gray-500 dark:text-gray-500">
+                              {t('settings.estimatedTimeRemaining')}: {formatEstimatedTimeMs(colorExtractProgress.estimatedTime)}
+                            </div>
+                          )}
+                          <div className="w-full bg-gray-200 dark:bg-gray-600 h-2 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                              style={{ width: `${(colorExtractProgress.current / Math.max(colorExtractProgress.total, 1)) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* 提示信息 */}
+                      {!isColorExtracting && (() => {
+                        // 计算当前目录的图片总数
+                        const totalImagesInDir = Object.values(state.files).filter(f => f.type === FileType.IMAGE).length;
+                        const extractedCount = colorDbStats?.extracted || 0;
+                        const pendingCount = colorDbStats?.pending || 0;
+                        
+                        // 判断是否还有未处理的图片
+                        // 如果目录图片数 > 已提取数 + 待处理数，说明有图片还没加入数据库
+                        const untrackedCount = Math.max(0, totalImagesInDir - extractedCount - pendingCount);
+                        
+                        let hintText = '';
+                        if (pendingCount > 0) {
+                          hintText = t('settings.colorExtractionPendingHint').replace('{count}', pendingCount.toString());
+                        } else if (untrackedCount > 0) {
+                          // 有图片还没加入数据库（新目录或部分图片未处理）
+                          hintText = t('settings.colorExtractionUntrackedHint').replace('{count}', untrackedCount.toString()) || `有 ${untrackedCount} 个图片待提取主色调`;
+                        } else if (extractedCount > 0) {
+                          hintText = t('settings.colorExtractionNoPendingHint');
+                        } else {
+                          hintText = t('settings.colorExtractionNewDirectoryHint') || '点击按钮开始提取当前目录图片的主色调';
+                        }
+                        
+                        return <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">{hintText}</div>;
+                      })()}
                     </div>
 
                     {/* 错误文件管理 */}

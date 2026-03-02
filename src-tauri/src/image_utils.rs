@@ -3,6 +3,7 @@ use image::DynamicImage;
 use jxl_oxide::JxlImage;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use log;
 
 pub static ACTIVE_HEAVY_DECODES: AtomicUsize = AtomicUsize::new(0);
 pub const MAX_CONCURRENT_HEAVY_DECODES: usize = 3;
@@ -59,7 +60,7 @@ pub fn get_image_dimensions(path: &str) -> (u32, u32) {
         Ok(Ok(info)) => (info.size.width as u32, info.size.height as u32),
         Ok(Err(_)) => (0, 0),
         Err(_) => {
-            eprintln!("[Warning] imageinfo panicked while processing: {}", path);
+            log::warn!("imageinfo panicked while processing: {}", path);
             (0, 0)
         }
     }

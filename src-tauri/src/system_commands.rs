@@ -67,9 +67,6 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
     
     let is_context_menu = is_file.is_some();
     
-    println!("open_path: path={}, is_file={:?}, is_context_menu={}", 
-             path, is_file, is_context_menu);
-    
     let result = if cfg!(windows) {
         #[cfg(target_os = "windows")]
         {
@@ -80,8 +77,6 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
                 
                 let raw_arg = format!("/select, \"{}\"", clean_path);
                 
-                println!("Windows command: explorer.exe [raw_arg] {}", raw_arg);
-                
                 Command::new("explorer.exe")
                     .raw_arg(raw_arg)
                     .stdout(std::process::Stdio::null())
@@ -90,7 +85,6 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
                     .spawn()
                     .map(|_| ())
             } else {
-                println!("Windows command: explorer.exe \"{}\"", win_path);
                 Command::new("explorer.exe")
                     .arg(win_path)
                     .stdout(std::process::Stdio::null())
@@ -106,14 +100,12 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
         }
     } else if cfg!(target_os = "macos") {
         if is_context_menu {
-            println!("macOS command: open -R \"{}\"", absolute_path);
             Command::new("open")
                 .arg("-R")
                 .arg(&absolute_path)
                 .spawn()
                 .map(|_| ())
         } else {
-            println!("macOS command: open \"{}\"", absolute_path);
             Command::new("open")
                 .arg(&absolute_path)
                 .spawn()
@@ -129,7 +121,6 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
             absolute_path.clone()
         };
         
-        println!("Linux command: xdg-open \"{}\"", target_path);
         Command::new("xdg-open")
             .arg(target_path)
             .spawn()
@@ -137,15 +128,8 @@ pub async fn open_path(path: String, is_file: Option<bool>) -> Result<(), String
     };
     
     match result {
-        Ok(_) => {
-            println!("Successfully started file manager for path: {}", absolute_path);
-            Ok(())
-        },
-        Err(e) => {
-            let error_msg = format!("Failed to start file manager for '{}': {}", absolute_path, e);
-            println!("{}", error_msg);
-            Err(error_msg)
-        }
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to start file manager for '{}': {}", absolute_path, e))
     }
 }
 

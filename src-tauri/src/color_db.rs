@@ -52,23 +52,11 @@ impl Clone for ColorDbPool {
 
 impl ColorDbPool {
     pub fn new(path: &Path) -> Result<Self> {
-        eprintln!("=== ColorDbPool::new called ===");
-        eprintln!("Database path: {}", path.display());
-        
         if let Some(parent) = path.parent() {
-            eprintln!("Parent directory: {}", parent.display());
-            match fs::create_dir_all(parent) {
-                Ok(_) => eprintln!("Parent directory created/verified successfully"),
-                Err(e) => eprintln!("Failed to create parent directory: {}", e),
-            }
+            let _ = fs::create_dir_all(parent);
         }
         
-        eprintln!("Opening database connection...");
-        let conn = Connection::open(path).map_err(|e| {
-            eprintln!("Failed to open database: {}", e);
-            e.to_string()
-        })?;
-        eprintln!("Database connection opened successfully");
+        let conn = Connection::open(path).map_err(|e| e.to_string())?;
         
         // PRAGMA commands return the number of rows affected, not ()
         // We just need to ensure they don't error, so we ignore the result
@@ -87,18 +75,12 @@ impl ColorDbPool {
         
         let db_file_name = path.file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .ok_or_else(|| {
-                let err_msg = format!("Invalid database path: {:?}", path);
-                eprintln!("Error: {}", err_msg);
-                err_msg
-            })?;
+            .ok_or_else(|| format!("Invalid database path: {:?}", path))?;
         let db_file_name_wal = format!("{}-wal", db_file_name);
         let db_file_name_shm = format!("{}-shm", db_file_name);
         
         let _wal_path = path.with_file_name(&db_file_name_wal);
         let _shm_path = path.with_file_name(&db_file_name_shm);
-        
-        eprintln!("=== ColorDbPool::new completed ===");
         
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),

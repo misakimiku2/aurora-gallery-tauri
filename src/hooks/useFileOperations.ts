@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   copyFile, moveFile, scanFile, scanDirectory, writeFileFromBytes,
   deleteFile, createFolder, renameFile, copyImageColors,
-  dbCopyFileMetadata
+  dbCopyFileMetadata, addPendingFilesToDb, resumeColorExtraction
 } from '../api/tauri-bridge';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { info as logInfo, debug as logDebug } from '../utils/logger';
@@ -442,12 +442,18 @@ export const useFileOperations = ({
     try {
       const targetFolderId = activeTab.folderId;
       let current = 0;
+      const copiedImagePaths: string[] = [];
       for (const file of files) {
         const destPath = `${targetFolder.path}${targetFolder.path.includes('\\') ? '\\' : '/'}${file.name}`;
         try {
           const arrayBuffer = await file.arrayBuffer();
           await writeFileFromBytes(destPath, new Uint8Array(arrayBuffer));
           const scannedFile = await scanFile(destPath, targetFolderId);
+
+          // 收集图片文件路径用于主色调提取
+          if (scannedFile.type === FileType.IMAGE && scannedFile.path) {
+            copiedImagePaths.push(scannedFile.path);
+          }
 
           setState(prev => {
             const newFiles = { ...prev.files };
@@ -466,6 +472,15 @@ export const useFileOperations = ({
       }
       updateTask(taskId, { status: 'completed', current: files.length });
       showToast(t('context.copied'));
+
+      // 如果有图片文件，触发主色调提取
+      if (copiedImagePaths.length > 0 && isTauriEnvironment()) {
+        addPendingFilesToDb(copiedImagePaths).catch(err => {
+          console.error('Failed to add pending files for color extraction:', err);
+        });
+        resumeColorExtraction().catch(() => {});
+      }
+
       setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);
     } catch (error) {
       console.error(error);

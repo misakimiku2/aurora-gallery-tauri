@@ -28,11 +28,17 @@
 │  │Generator │  │Search    │  │Index     │  │DB        │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
 │       │             │             │             │          │
-│       └─────────────┴─────────────┴─────────────┴──────────┘
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                │
+│  │  CLIP    │  │ Update   │  │  Db      │                │
+│  │ Commands │  │ Commands │  │ Commands │                │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                │
+│       │             │             │                       │
+│       └─────────────┴─────────────┴───────────────────────┘
 │                              │                              │
 │                    SQLite 数据库                             │
 │                    文件系统                                   │
 │                    AI API (OpenAI/Ollama/LM Studio)         │
+│                    CLIP 模型 (ONNX Runtime)                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -175,8 +181,16 @@ worker.postMessage({
 
 ##### AI 服务 (aiService.ts)
 **位置**: `src/services/aiService.ts`  
-**行数**: 99 行（以源码为准 · 已同步）  
-**功能**: OpenAI/Ollama/LM Studio 集成
+**行数**: 727 行（以源码为准 · 已同步）  
+**功能**: OpenAI/Ollama/LM Studio/Gemini/智谱AI 集成
+
+**支持的 AI 提供商**:
+- OpenAI (GPT-4o, GPT-4o-mini, GPT-4 Turbo)
+- Gemini (Gemini 2.0/2.5/3.0 系列)
+- 智谱 AI (GLM-4V, GLM-4)
+- Ollama (本地 LLM)
+- LM Studio (本地模型管理)
+- 自定义 API 端点
 
 **2026-01-14 更新**: AI 分析优化
 ```typescript
@@ -225,11 +239,6 @@ const results = await aiService.generateFileNames(
 );
 ```
 
-**支持的 AI 提供商**:
-- OpenAI (GPT-4, GPT-3.5)
-- Ollama (本地 LLM)
-- LM Studio (本地模型管理)
-
 ##### 人脸识别服务 (faceRecognitionService.ts)
 **位置**: `src/services/faceRecognitionService.ts`  
 **行数**: 86 行（以源码为准 · 已同步）  
@@ -239,7 +248,7 @@ const results = await aiService.generateFileNames(
 
 #### Tauri Bridge API
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 1208 行（以源码为准 · 已同步）  
+**行数**: 2273 行（以源码为准 · 已同步）  
 **功能**: 前后端通信桥接
 
 **核心功能**:
@@ -250,11 +259,13 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
 export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => { ... }
 
 // 文件操作
-export const copyImageToClipboard = async (filePath: string): Promise<void> => { ... }  // [新增]
+export const copyImageToClipboard = async (filePath: string): Promise<void> => { ... }
+export const openExternalLink = async (url: string): Promise<void> => { ... }
+export const proxyHttpRequest = async (url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<string> => { ... }
 
 // 窗口管理
-export const setWindowMinSize = async (width: number, height: number): Promise<void> => { ... }  // [新增]
-export const isWindowMaximized = async (): Promise<boolean> => { ... }  // [新增]
+export const setWindowMinSize = async (width: number, height: number): Promise<void> => { ... }
+export const isWindowMaximized = async (): Promise<boolean> => { ... }
 
 // 缩略图
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => { ... }
@@ -266,42 +277,75 @@ export const getDominantColors = async (filePath: string, count?: number, thumbn
 export const searchByColor = async (color: string): Promise<string[]> => { ... }
 export const searchByPalette = async (palette: string[]): Promise<string[]> => { ... }
 
+// 颜色数据库管理 [新增]
+export const getColorDbStats = async (): Promise<ColorDbStats> => { ... }
+export const getColorDbErrorFiles = async (): Promise<ColorDbErrorFile[]> => { ... }
+export const retryColorExtraction = async (filePaths?: string[]): Promise<number> => { ... }
+export const deleteColorDbErrorFiles = async (filePaths: string[]): Promise<number> => { ... }
+
 // 数据库操作
 export const dbGetAllPeople = async (): Promise<Person[]> => { ... }
 export const dbUpsertPerson = async (person: Person): Promise<void> => { ... }
 export const dbCopyFileMetadata = async (srcPath: string, destPath: string): Promise<void> => { ... }
 export const switchRootDatabase = async (newRootPath: string): Promise<void> => { ... }
 export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => { ... }
+export const dbGetAllFileMetadata = async (): Promise<FileMetadata[]> => { ... }
 
-// 专题数据库操作 [新增]
+// 专题数据库操作
 export const dbGetAllTopics = async (): Promise<Topic[]> => { ... }
 export const dbUpsertTopic = async (topic: Topic): Promise<void> => { ... }
 export const dbDeleteTopic = async (id: string): Promise<void> => { ... }
+
+// CLIP 向量搜索 [新增]
+export const clipSearchByText = async (text: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]> => { ... }
+export const clipSearchByImage = async (imagePath: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]> => { ... }
+export const clipGenerateEmbedding = async (filePath: string, fileId?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<number[]> => { ... }
+export const clipLoadModel = async (modelName: string): Promise<void> => { ... }
+export const clipUnloadModel = async (): Promise<void> => { ... }
+export const clipIsModelLoaded = async (): Promise<boolean> => { ... }
+export const clipGetEmbeddingCount = async (): Promise<number> => { ... }
+export const clipGenerateEmbeddingsBatch = async (files: [string, string][], useGpu: boolean, modelName?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<ClipBatchEmbeddingResult> => { ... }
+export const clipGetCharacterTags = async (language?: string): Promise<CharacterTag[]> => { ... }
+export const clipGetDetectedCharacters = async (minScore: number, minCount?: number, language?: string): Promise<DetectedCharacter[]> => { ... }
+
+// 更新检查 [新增]
+export const checkForUpdates = async (): Promise<UpdateCheckResult> => { ... }
+export const startUpdateDownload = async (installerUrl: string, version: string): Promise<void> => { ... }
+export const getUpdateDownloadProgress = async (): Promise<DownloadProgressResult> => { ... }
+export const installUpdate = async (): Promise<void> => { ... }
 ```
 
 ### 4. 基础设施层 (Infrastructure Layer)
 
 #### Rust 后端架构
 **位置**: `src-tauri/src/`  
-**总行数**: ~6700 行
+**总行数**: ~9000 行
 
 ##### 主程序 (main.rs)
-**行数**: 2440 行（以源码为准 · 已同步）  
-**功能**: Tauri 应用入口，命令处理器
+**行数**: 349 行（以源码为准 · 已同步）  
+**功能**: Tauri 应用入口，模块注册
 
 **架构特点**:
 - 基于 Tokio 的异步运行时
 - 多线程任务处理（使用 Rayon）
 - SQLite 数据库集成
 - 事件驱动的进度通知
-- 缩略图生成（支持 JXL、AVIF 格式）
-- 专题数据库支持 [新增]
+- 模块化命令处理（已拆分到独立模块）
+
+##### 命令模块
+- **clip_commands.rs** (1566 行): CLIP AI 搜索命令 [新增]
+- **db_commands.rs** (243 行): 数据库命令
+- **file_operations.rs** (~750 行): 文件操作命令
+- **system_commands.rs** (~200 行): 系统工具命令
+- **window_commands.rs** (~90 行): 窗口控制命令
+- **color_commands.rs** (~100 行): 颜色相关命令
+- **update_commands.rs** (~70 行): 应用更新命令
 
 ##### 颜色处理模块
-- **color_db.rs** (871 行): 颜色数据存储和管理 （以源码为准 · 已同步）
-- **color_extractor.rs** (258 行): 颜色提取算法
-- **color_search.rs** (796 行): 颜色搜索算法
-- **color_worker.rs** (796 行): 后台颜色处理工作器 （以源码为准 · 已同步）
+- **color_db.rs** (1120 行): 颜色数据存储和管理（以源码为准 · 已同步）
+- **color_extractor.rs** (253 行): 颜色提取算法
+- **color_search.rs** (441 行): 颜色搜索算法
+- **color_worker.rs** (949 行): 后台颜色处理工作器（以源码为准 · 已同步）
 
 ##### 缩略图模块
 - **thumbnail.rs** (529 行): 缩略图生成和管理
@@ -311,12 +355,23 @@ export const dbDeleteTopic = async (id: string): Promise<void> => { ... }
   - 拖拽预览生成
   - 智能格式选择（JPEG/WebP）
 
+##### CLIP AI 模块 [新增]
+- **clip/mod.rs**: CLIP 模块入口
+- **clip/model.rs**: CLIP 模型封装
+- **clip/embedding.rs**: 嵌入向量存储
+- **clip/preprocessor.rs**: 图像预处理
+- **clip/search.rs**: 相似度搜索
+- **clip/models/mod.rs**: 模型规范定义
+- **clip/models/siglip2_base.rs**: SigLIP2-Base 模型
+- **clip/models/siglip2.rs**: SigLIP2-So400M 模型
+- **clip/models/wd14.rs**: WD-EVA02-Large-Tagger-V3 模型
+
 ##### 数据库模块
-- **db/mod.rs** (150 行): 数据库模块入口
-- **db/persons.rs** (118 行): 人物数据 CRUD 操作
-- **db/topics.rs** (175 行): 专题数据 CRUD 操作 [新增]
-- **db/file_metadata.rs** (87 行): 文件元数据存储
-- **db/file_index.rs** (200 行): 文件索引数据库
+- **db/mod.rs** (142 行): 数据库模块入口
+- **db/persons.rs** (128 行): 人物数据 CRUD 操作
+- **db/topics.rs** (175 行): 专题数据 CRUD 操作
+- **db/file_metadata.rs** (230 行): 文件元数据存储
+- **db/file_index.rs** (348 行): 文件索引数据库
 - **集成**: Rusqlite 0.30，带 JSON 支持
 
 ## 技术实现细节
@@ -597,18 +652,20 @@ Aurora Gallery Tauri 采用现代化的分层架构，结合 React 前端和 Rus
 - SQLite 提供轻量级本地数据存储
 - CIEDE2000 算法确保颜色搜索准确性
 - Web Worker 实现前端计算卸载
-- AI 智能重命名提升用户体验 [新增]
-- 专题管理系统支持图片分类组织 [新增]
+- CLIP AI 模型支持自然语言搜索和以图搜图 [新增]
+- WD14 标签器支持自动标签生成和角色识别 [新增]
+- AI 智能重命名提升用户体验
+- 专题管理系统支持图片分类组织
 
 **架构优势**:
-- 性能优异: Rust 后端 + 并行处理 + Web Worker
-- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史 + AI 智能重命名
+- 性能优异: Rust 后端 + 并行处理 + Web Worker + GPU 加速 CLIP
+- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史 + AI 智能重命名 + 自然语言搜索
 - 开发效率高: 现代化工具链 + 热重载
-- 维护性好: 分层架构 + 类型安全
-- 扩展性强: 插件化设计 + 模块化组件
+- 维护性好: 分层架构 + 类型安全 + 模块化后端
+- 扩展性强: 插件化设计 + 模块化组件 + 多模型 CLIP 支持
 
 ---
 
-**文档版本**: 1.2  
-**更新日期**: 2026-02-11  
+**文档版本**: 1.3  
+**更新日期**: 2026-03-01  
 **维护者**: Aurora Gallery Team

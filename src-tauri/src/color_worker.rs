@@ -131,10 +131,6 @@ pub async fn color_extraction_worker(
     let env_workers = std::env::var("AURORA_COLOR_WORKERS").ok().and_then(|s| s.parse::<usize>().ok());
     let default_workers = logical_cores.max(4);
     let num_workers = env_workers.unwrap_or(default_workers).min(logical_cores);
-    // 在基准模式下输出配置（方便快速验证）
-    if std::env::var("AURORA_BENCH").as_deref().ok() == Some("1") {
-        eprintln!("[AURORA_BENCH] logical_cores={} configured_color_workers={}", logical_cores, num_workers);
-    }
     let mut consumer_handles = Vec::new();
     
     for _ in 0..num_workers {
@@ -194,7 +190,6 @@ async fn producer_loop(
         if is_paused() || is_shutting_down() {
             tokio::time::sleep(Duration::from_millis(500)).await;
             if is_shutting_down() {
-                eprintln!("Producer shutting down, stopping new task dispatch");
                 break;
             }
             continue;
@@ -209,13 +204,7 @@ async fn producer_loop(
             color_db::get_pending_files_count(&mut conn)
         }).await {
             Ok(Ok(count)) => count,
-            Ok(Err(e)) => {
-                eprintln!("Failed to get pending files count: {}", e);
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            },
-            Err(e) => {
-                eprintln!("Failed to execute database query: {}", e);
+            Ok(Err(_)) | Err(_) => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
                 continue;
             }
@@ -231,10 +220,8 @@ async fn producer_loop(
         
         // 文件防抖逻辑：等待更多文件被添加完成 (Sliding Window)
         if debounce_deadline.is_none() {
-            // 首次检测到待处理文件，开始等待
             debounce_deadline = Some(tokio::time::Instant::now() + debounce_duration);
             last_pending_count = pending_count;
-            eprintln!("Detected {} pending files, waiting for file copy to complete...", pending_count);
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
         }
@@ -242,10 +229,8 @@ async fn producer_loop(
         let deadline = debounce_deadline.unwrap();
         let now = tokio::time::Instant::now();
         
-        // 如果文件数量增加，延长等待时间（滑动窗口）
         if pending_count > last_pending_count {
-            eprintln!("Pending files increased ({} -> {}), extending wait window...", last_pending_count, pending_count);
-            debounce_deadline = Some(now + Duration::from_millis(1500)); // 延长1.5秒
+            debounce_deadline = Some(now + Duration::from_millis(1500));
             last_pending_count = pending_count;
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
@@ -275,13 +260,9 @@ async fn producer_loop(
             continue;
         }
         
-        // 创建新批次
         let batch_id = generate_batch_id();
-        eprintln!("=== Starting new batch {} with {} files ===", batch_id, final_pending_count);
         
-        // 发送批次信息给结果处理器
-        if let Err(e) = batch_info_sender.send((batch_id, final_pending_count)) {
-            eprintln!("Failed to send batch info: {}", e);
+        if let Err(_) = batch_info_sender.send((batch_id, final_pending_count)) {
         }
 
         // 重置防抖计时器
@@ -293,10 +274,7 @@ async fn producer_loop(
         let batch_total = final_pending_count; // 锁定当前批次的总数
 
         loop {
-            // 如果已经发送了足够的文件，就停止当前批次
             if batch_files_sent >= batch_total {
-                eprintln!("Batch {} limit reached ({}/{} dispatched), deferring remaining files to next batch", 
-                         batch_id, batch_files_sent, batch_total);
                 break;
             }
 
@@ -306,12 +284,10 @@ async fn producer_loop(
             let remaining = batch_total - batch_files_sent;
             let current_batch_limit = batch_size.min(remaining);
 
-            // 获取一批待处理文件
             let pending_files = match tokio::task::spawn_blocking(move || {
                 let mut conn = pool_clone.get_connection();
                 let files = color_db::get_pending_files(&mut conn, current_batch_limit);
                 
-                // 立即将获取的文件状态更新为processing
                 if let Ok(ref files) = files {
                     for file_path in files {
                         let _ = color_db::update_status(&mut conn, file_path, "processing");
@@ -321,12 +297,7 @@ async fn producer_loop(
                 files
             }).await {
                 Ok(Ok(files)) => files,
-                Ok(Err(e)) => {
-                    eprintln!("Failed to get pending files: {}", e);
-                    break;
-                },
-                Err(e) => {
-                    eprintln!("Failed to execute database query: {}", e);
+                Ok(Err(_)) | Err(_) => {
                     break;
                 }
             };
@@ -336,22 +307,16 @@ async fn producer_loop(
                 break;
             }
             
-            // 将文件路径发送到任务队列（带批次ID）
             for file_path in pending_files {
                 if task_sender.send((batch_id, file_path)).is_err() {
-                    eprintln!("Task sender closed, producer exiting");
                     return;
                 }
                 batch_files_sent += 1;
             }
             
-            // 短暂睡眠
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         
-        eprintln!("Batch {} dispatched {} files to processing queue", batch_id, batch_files_sent);
-        
-        // 等待一段时间后检查是否有新文件
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -369,7 +334,6 @@ fn consumer_loop(
         // 检查是否暂停或关闭
         if is_paused() || is_shutting_down() {
             if is_shutting_down() {
-                eprintln!("Consumer loop received shutdown signal, exiting.");
                 break;
             }
             std::thread::sleep(Duration::from_millis(200));
@@ -394,27 +358,16 @@ fn consumer_loop(
                     ACTIVE_HEAVY_DECODES.fetch_add(1, Ordering::SeqCst);
                 }
 
-                // 可选基准：测量 load / extract 时间（仅在 AURORA_BENCH=1 时输出）
-                let bench = std::env::var("AURORA_BENCH").as_deref().ok() == Some("1");
-                let t_start = std::time::Instant::now();
                 let img_res = load_and_resize_image_optimized(&file_path, cache_root.as_deref());
-                let t_after_load = std::time::Instant::now();
+                let _t_after_load = std::time::Instant::now();
 
                 if is_heavy {
                     ACTIVE_HEAVY_DECODES.fetch_sub(1, Ordering::SeqCst);
                 }
 
-                // 处理图片（解码 + 提取）并记录耗时
                 let processing_result: ProcessingResult = match img_res {
                     Ok(img) => {
                         let colors = color_extractor::get_dominant_colors(&img, 8);
-                        let t_after_extract = std::time::Instant::now();
-
-                        if bench {
-                            let load_ms = (t_after_load - t_start).as_millis();
-                            let extract_ms = (t_after_extract - t_after_load).as_millis();
-                            eprintln!("[AURORA_BENCH] file={} load_ms={} extract_ms={}", file_path, load_ms, extract_ms);
-                        }
 
                         if colors.is_empty() {
                             Err((batch_id, format!("No colors extracted from file: {}", file_path)))
@@ -423,10 +376,6 @@ fn consumer_loop(
                         }
                     },
                     Err(e) => {
-                        if bench {
-                            let load_ms = (t_after_load - t_start).as_millis();
-                            eprintln!("[AURORA_BENCH] file={} load_ms={} error={}", file_path, load_ms, e);
-                        }
                         Err((batch_id, format!("Failed to load image {}: {}", file_path, e)))
                     }
                 };
@@ -435,7 +384,6 @@ fn consumer_loop(
                 let result_clone = processing_result.clone();
 
                 if result_sender.send(processing_result).is_err() {
-                    eprintln!("Result sender closed, consumer exiting");
                     break;
                 }
 
@@ -445,17 +393,12 @@ fn consumer_loop(
                 let sleep_ms = if is_heavy { 10 } else { 1 };
                 std::thread::sleep(Duration::from_millis(sleep_ms));
 
-                // 如果处理失败，更新文件状态为error
-                if let Err((_, error_msg)) = result_clone {
+                if let Err((_, _error_msg)) = result_clone {
                     let pool_clone = pool.clone();
                     let file_path_clone = file_path.clone();
                     std::thread::spawn(move || {
                         let mut conn = pool_clone.get_connection();
-                        if let Err(e) = color_db::update_status(&mut conn, &file_path_clone, "error") {
-                            eprintln!("Failed to update status to error for {}: {}", file_path_clone, e);
-                        } else {
-                            eprintln!("Updated status to error for {}: {}", file_path_clone, error_msg);
-                        }
+                        let _ = color_db::update_status(&mut conn, &file_path_clone, "error");
                     });
                 }
             },
@@ -463,7 +406,6 @@ fn consumer_loop(
                 continue;
             },
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                eprintln!("Task receiver disconnected, consumer exiting");
                 break;
             }
         }
@@ -507,7 +449,6 @@ async fn result_processor(
             batch_states.entry(id)
                 .and_modify(|s| {
                     if s.total != total {
-                        eprintln!("=== Updating batch {} total: {} -> {} ===", id, s.total, total);
                         s.total = total;
                     }
                 })
@@ -524,22 +465,17 @@ async fn result_processor(
             Ok(result) => {
                 let (batch_id, file_path, colors_opt, is_error) = match result {
                     Ok((bid, path, colors)) => (bid, path, Some(colors), false),
-                    Err((bid, err_msg)) => {
-                        eprintln!("Error processing file: {}", err_msg);
+                    Err((bid, _err_msg)) => {
                         (bid, String::new(), None, true)
                     }
                 };
                 
-                // 更新批次状态
                 let batch_state = batch_states.entry(batch_id).or_insert_with(|| {
-                    // 获取该批次的总文件数（processing状态的文件数）
                     let pool_clone = pool.clone();
                     let count = std::thread::spawn(move || {
                         let mut conn = pool_clone.get_connection();
                         color_db::get_processing_files_count(&mut conn).unwrap_or(0)
                     }).join().unwrap_or(0);
-                    
-                    eprintln!("=== New batch {} detected, total files: {} ===", batch_id, count);
                     
                     BatchState {
                         id: batch_id,
@@ -575,15 +511,11 @@ async fn result_processor(
                     };
                     let _ = app_handle.emit("color-extraction-progress", progress);
                     
-                    // 如果批次完成，从跟踪列表移除（延迟清理）
                     if batch_completed {
-                        eprintln!("=== Batch {} completed: {}/{} ===", batch_id, batch_state.processed, batch_state.total);
                     }
                 }
                 
                 if (total_success_count + total_error_count) % 50 == 0 {
-                    eprintln!("Total processed: {} (Success: {}, Errors: {})", 
-                             total_success_count + total_error_count, total_success_count, total_error_count);
                 }
                 
                 // 检查WAL检查点
@@ -599,16 +531,9 @@ async fn result_processor(
                     
                     if should_checkpoint {
                         let pool_clone = pool.clone();
-                        let checkpoint_start = std::time::Instant::now();
                         tokio::task::spawn_blocking(move || {
-                            match pool_clone.force_wal_checkpoint() {
-                                Ok(_) => {
-                                    let duration = checkpoint_start.elapsed();
-                                    eprintln!("Periodic WAL checkpoint completed in {:?}", duration);
-                                },
-                                Err(e) => eprintln!("WAL checkpoint failed: {}", e)
-                            }
-                        }).await.unwrap_or_else(|e| eprintln!("Checkpoint task failed: {}", e));
+                            let _ = pool_clone.force_wal_checkpoint();
+                        }).await.unwrap_or_else(|_| ());
                         
                         last_checkpoint_time = tokio::time::Instant::now();
                         total_processed_since_checkpoint = 0;
@@ -628,12 +553,10 @@ async fn result_processor(
                     last_save_time = tokio::time::Instant::now();
                     
                     if (is_paused() || is_shutting_down()) && !pause_checkpoint_executed {
-                        let reason = if is_paused() { "pause" } else { "shutdown" };
-                        eprintln!("Executing WAL checkpoint due to {}", reason);
                         let pool_clone = pool.clone();
                         tokio::task::spawn_blocking(move || {
                             let _ = pool_clone.force_full_checkpoint();
-                        }).await.unwrap_or_else(|e| eprintln!("Checkpoint task failed: {}", e));
+                        }).await.unwrap_or_else(|_| ());
                         pause_checkpoint_executed = true;
                     }
                 }
@@ -671,17 +594,14 @@ async fn result_processor(
 
         // 4. 处理关闭逻辑
         if is_shutting_down() {
-            eprintln!("Shutdown initiated, draining remaining results...");
-            
             while let Ok(result) = result_receiver.try_recv() {
                 match result {
                     Ok((_bid, file_path, colors)) => {
                         result_buffer.push((file_path, colors));
                         total_success_count += 1;
                     },
-                    Err((_bid, e)) => {
+                    Err((_bid, _e)) => {
                         total_error_count += 1;
-                        eprintln!("Error during shutdown drain: {}", e);
                     }
                 }
                 if result_buffer.len() >= batch_save_threshold {
@@ -695,19 +615,11 @@ async fn result_processor(
                 save_batch_results(pool.clone(), batch_data).await;
             }
             
-            // 执行最终WAL检查点
-            eprintln!("Executing final WAL checkpoint before shutdown");
             let pool_clone = pool.clone();
-            match tokio::task::spawn_blocking(move || {
+            let _ = tokio::task::spawn_blocking(move || {
                 pool_clone.force_full_checkpoint()
-            }).await {
-                Err(e) => eprintln!("Final checkpoint task failed: {}", e),
-                Ok(Err(e)) => eprintln!("Final checkpoint failed: {}", e),
-                Ok(_) => eprintln!("Final WAL checkpoint completed")
-            }
+            }).await;
             
-            eprintln!("Shutdown complete. Final stats: {} success, {} error.", 
-                     total_success_count, total_error_count);
             break;
         }
     }
@@ -728,13 +640,9 @@ async fn save_batch_results(
         return;
     }
     
-    eprintln!("Saving batch of {} files to database", batch_data.len());
-    
-    // 保存结果到数据库
     let pool_clone = pool.clone();
     let save_result = tokio::task::spawn_blocking(move || {
         
-        // 将结果转换为batch_save_colors所需的格式
         let batch_data_refs: Vec<(&str, &[color_extractor::ColorResult])> = batch_data
             .iter()
             .map(|(file_path, colors)| (file_path.as_str(), colors.as_slice()))
@@ -743,19 +651,7 @@ async fn save_batch_results(
         pool_clone.batch_save_colors(&batch_data_refs)
     }).await;
     
-    if let Err(e) = save_result {
-        eprintln!("Failed to execute batch save: {}", e);
-    } else if let Err(e) = save_result.unwrap() {
-        eprintln!("Failed to batch save colors: {}", e);
-    } else {
-        // 保存成功后，记录数据库文件大小
-        let pool_clone = pool.clone();
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = pool_clone.get_db_file_sizes() {
-                eprintln!("Failed to get database file sizes after batch save: {}", e);
-            }
-        }).await.unwrap_or_else(|e| eprintln!("Failed to spawn file size monitoring task: {}", e));
-    }
+    let _ = save_result;
 }
 
 // 优化后的图像加载和缩放逻辑

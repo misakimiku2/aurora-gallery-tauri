@@ -88,6 +88,18 @@ pending → processing → completed
 - 支持创建、编辑、删除专题
 - 支持将图片添加到专题
 
+### 8. CLIP 向量搜索 (2026-03-01 更新)
+- 支持自然语言搜索图片
+- 支持以图搜图功能
+- 支持三种 CLIP 模型：SigLIP2-Base、SigLIP2-So400M、WD-EVA02-Large-Tagger-V3
+- WD14 模型支持自动标签生成和角色识别
+- 支持 GPU 加速
+
+### 9. 应用更新 (2026-03-01 更新)
+- 内置应用更新检查功能
+- 支持自动下载和安装更新
+- 支持下载进度显示
+
 ## 常用命令速查
 
 ### 前端开发
@@ -225,6 +237,53 @@ await exitApp(): Promise<void>
 ```typescript
 await pauseColorExtraction(): Promise<boolean>
 await resumeColorExtraction(): Promise<boolean>
+```
+
+#### 颜色数据库管理
+```typescript
+await getColorDbStats(): Promise<ColorDbStats>
+await getColorDbErrorFiles(): Promise<ColorDbErrorFile[]>
+await retryColorExtraction(filePaths?: string[]): Promise<number>
+await deleteColorDbErrorFiles(filePaths: string[]): Promise<number>
+```
+
+#### CLIP 向量搜索
+```typescript
+// 文本搜索图片
+await clipSearchByText(text: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]>
+
+// 以图搜图
+await clipSearchByImage(imagePath: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]>
+
+// 生成嵌入向量
+await clipGenerateEmbedding(filePath: string, fileId?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<number[]>
+
+// 批量生成嵌入
+await clipGenerateEmbeddingsBatch(files: [string, string][], useGpu: boolean, modelName?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<ClipBatchEmbeddingResult>
+
+// 模型管理
+await clipLoadModel(modelName: string): Promise<void>
+await clipUnloadModel(): Promise<void>
+await clipIsModelLoaded(): Promise<boolean>
+await clipGetEmbeddingCount(): Promise<number>
+
+// 角色标签
+await clipGetCharacterTags(language?: string): Promise<CharacterTag[]>
+await clipGetDetectedCharacters(minScore: number, minCount?: number, language?: string): Promise<DetectedCharacter[]>
+```
+
+#### 更新检查
+```typescript
+await checkForUpdates(): Promise<UpdateCheckResult>
+await startUpdateDownload(installerUrl: string, version: string): Promise<void>
+await getUpdateDownloadProgress(): Promise<DownloadProgressResult>
+await installUpdate(): Promise<void>
+```
+
+#### 其他
+```typescript
+await openExternalLink(url: string): Promise<void>
+await proxyHttpRequest(url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<string>
 ```
 
 ## Hooks 使用示例
@@ -398,6 +457,46 @@ function MyComponent() {
     <div>
       <button onClick={handleShow}>显示 Toast</button>
       {toast.visible && <div className={toast.isLeaving ? 'leaving' : ''}>{toast.msg}</div>}
+    </div>
+  )
+}
+```
+
+### useUpdateCheck (新增)
+```tsx
+import { useUpdateCheck } from './hooks/useUpdateCheck'
+
+function MyComponent() {
+  const { 
+    updateInfo, 
+    isChecking, 
+    isDownloading, 
+    downloadProgress,
+    checkUpdate, 
+    startDownload, 
+    installUpdate 
+  } = useUpdateCheck()
+  
+  const handleCheck = async () => {
+    const result = await checkUpdate()
+    if (result?.has_update) {
+      console.log('发现新版本:', result.latest_version)
+    }
+  }
+  
+  return (
+    <div>
+      <button onClick={handleCheck} disabled={isChecking}>
+        {isChecking ? '检查中...' : '检查更新'}
+      </button>
+      {updateInfo?.has_update && (
+        <div>
+          <span>新版本: {updateInfo.latest_version}</span>
+          <button onClick={startDownload} disabled={isDownloading}>
+            {isDownloading ? `下载中 ${downloadProgress}%` : '下载更新'}
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -599,11 +698,34 @@ ls -la ~/.config/aurora-gallery-tauri/
 - **前端**: React 18.2.0, TypeScript 5.2.2, Vite 5.1.4
 - **后端**: Tauri 2.0, Rust 2021
 - **数据库**: SQLite 3.x (通过 Rusqlite)
-- **AI**: face-api.js 1.7.12, OpenAI API
+- **AI**: face-api.js 1.7.12, OpenAI API, Gemini API, 智谱 AI
+- **CLIP**: SigLIP2-Base, SigLIP2-So400M, WD-EVA02-Large-Tagger-V3 (ONNX Runtime)
 - **UI**: Tailwind CSS 3.4.1, Lucide Icons 0.344.0
 - **测试**: Vitest (单元测试框架)
 
 ## 更新日志
+
+### 2026-03-01 更新
+- 新增 CLIP 向量搜索功能
+  - `clipSearchByText`: 文本搜索图片
+  - `clipSearchByImage`: 以图搜图
+  - `clipGenerateEmbedding` / `clipGenerateEmbeddingsBatch`: 嵌入向量生成
+  - `clipLoadModel` / `clipUnloadModel`: 模型管理
+  - `clipGetCharacterTags` / `clipGetDetectedCharacters`: 角色标签
+- 新增应用更新功能
+  - `checkForUpdates`: 检查更新
+  - `startUpdateDownload`: 开始下载
+  - `getUpdateDownloadProgress`: 获取下载进度
+  - `installUpdate`: 安装更新
+- 新增颜色数据库管理 API
+  - `getColorDbStats`: 获取统计信息
+  - `getColorDbErrorFiles`: 获取错误文件
+  - `retryColorExtraction`: 重试提取
+  - `deleteColorDbErrorFiles`: 删除错误记录
+- 新增 `useUpdateCheck` Hook
+- 新增 `openExternalLink` 和 `proxyHttpRequest` API
+- AI 服务新增 Gemini 和智谱 AI 支持
+- Person 类型新增 `characterTagName` 和 `characterTagIndex` 字段
 
 ### 2026-02-11 更新
 - 新增 `useAIRename` Hook 用于 AI 智能重命名
@@ -636,6 +758,6 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ---
 
-**文档版本**: 1.3  
-**更新日期**: 2026-02-11  
+**文档版本**: 1.4  
+**更新日期**: 2026-03-01  
 **维护者**: Aurora Gallery Team

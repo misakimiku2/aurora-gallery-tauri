@@ -6,7 +6,7 @@
 
 #### `tauri-bridge.ts` - 核心桥接模块
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 1283 行  
+**行数**: 2273 行  
 **功能分类**:
 
 **文件系统操作**:
@@ -66,8 +66,46 @@ export async function dbUpsertPerson(person: Person): Promise<void>
 export async function dbDeletePerson(id: string): Promise<void>
 export async function dbUpdatePersonAvatar(personId: string, coverFileId: string, faceBox: any): Promise<void>
 export async function dbUpsertFileMetadata(metadata: FileMetadata): Promise<void>
+export async function dbGetAllFileMetadata(): Promise<FileMetadata[]>
 export async function dbCopyFileMetadata(srcPath: string, destPath: string): Promise<void>
 export async function switchRootDatabase(newRootPath: string): Promise<void>
+export async function getColorDbStats(): Promise<ColorDbStats>
+export async function getColorDbErrorFiles(): Promise<ColorDbErrorFile[]>
+export async function retryColorExtraction(filePaths?: string[]): Promise<number>
+export async function deleteColorDbErrorFiles(filePaths: string[]): Promise<number>
+```
+
+**CLIP 向量搜索**:
+```typescript
+export async function clipSearchByText(text: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]>
+export async function clipSearchByImage(imagePath: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]>
+export async function clipGenerateEmbedding(filePath: string, fileId?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<number[]>
+export async function clipLoadModel(modelName: string): Promise<void>
+export async function clipUnloadModel(): Promise<void>
+export async function clipIsModelLoaded(): Promise<boolean>
+export async function clipGetEmbeddingCount(): Promise<number>
+export async function clipGenerateEmbeddingsBatch(files: [string, string][], useGpu: boolean, modelName?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<ClipBatchEmbeddingResult>
+export async function clipGetCharacterTags(language?: string): Promise<CharacterTag[]>
+export async function clipGetDetectedCharacters(minScore: number, minCount?: number, language?: string): Promise<DetectedCharacter[]>
+export async function clipGetModelStatus(modelName: string): Promise<ClipModelStatus>
+export async function clipDeleteModel(modelName: string): Promise<void>
+```
+
+**更新检查**:
+```typescript
+export async function checkForUpdates(): Promise<UpdateCheckResult>
+export async function startUpdateDownload(installerUrl: string, version: string): Promise<void>
+export async function pauseUpdateDownload(): Promise<void>
+export async function resumeUpdateDownload(): Promise<void>
+export async function cancelUpdateDownload(): Promise<void>
+export async function getUpdateDownloadProgress(): Promise<DownloadProgressResult>
+export async function installUpdate(): Promise<void>
+```
+
+**其他**:
+```typescript
+export async function openExternalLink(url: string): Promise<void>
+export async function proxyHttpRequest(url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<string>
 ```
 
 **窗口管理**:
@@ -391,7 +429,7 @@ interface PromptPreset {
 
 ### 5. 类型定义 (`src/types.ts`)
 **位置**: `src/types.ts`  
-**行数**: 331 行  
+**行数**: 742 行  
 
 **主要类型**:
 ```typescript
@@ -426,7 +464,8 @@ export interface Person {
   description?: string
   descriptor?: number[]  // 人脸特征向量
   faceBox?: { x: number; y: number; w: number; h: number }
-  // 注意：代码中当前没有 updatedAt 字段，但数据库表中有 updated_at 字段
+  characterTagName?: string   // 关联的角色标签名称（WD14）
+  characterTagIndex?: number  // 关联的角色标签索引
 }
 
 export interface AiData {
@@ -447,8 +486,22 @@ export interface DominantColor {
   hex: string
   rgb: [number, number, number]
   isDark: boolean
-  // 注意：代码中当前只有 hex, rgb, isDark 三个字段
-  // LAB 颜色空间字段在数据库中存在，但未在 TypeScript 类型中定义
+}
+
+export interface ClipSettings {
+  enabled: boolean
+  modelName: ClipModelName
+  useGpu: boolean
+  downloadStatus: ClipDownloadStatus
+  downloadProgress: number
+  downloadError?: string
+  modelVersion: string
+  downloadedAt?: number
+  minScore: number
+  maxResults: number
+  unlimitedResults: boolean
+  autoAddTags: boolean
+  tagThreshold: number
 }
 
 export interface AppState { 
@@ -540,7 +593,63 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 ---
 
-### 3. 缩略图模块 (`src-tauri/src/thumbnail.rs`)
+### 3. CLIP 向量搜索模块 (`src-tauri/src/clip/`)
+
+#### `clip_commands.rs` - CLIP 命令处理
+**位置**: `src-tauri/src/clip_commands.rs`  
+**行数**: 1566 行  
+**功能**: CLIP 相关的 Tauri 命令
+- `clip_search_by_text` - 文本搜索图片
+- `clip_search_by_image` - 以图搜图
+- `clip_generate_embedding` - 生成嵌入向量
+- `clip_generate_embeddings_batch` - 批量生成嵌入
+- `clip_load_model` / `clip_unload_model` - 模型加载/卸载
+- `clip_get_character_tags` - 获取角色标签
+- `clip_get_detected_characters` - 获取检测到的角色
+
+#### `mod.rs` - CLIP 模块入口
+**位置**: `src-tauri/src/clip/mod.rs`  
+**功能**: CLIP 模块初始化和管理
+- CLIP Manager 全局状态
+- 模型切换和根目录切换
+
+#### `model.rs` - CLIP 模型接口
+**位置**: `src-tauri/src/clip/model.rs`  
+**功能**: CLIP 模型抽象接口
+- 模型加载和推理
+- GPU 加速支持
+- 标签翻译器
+
+#### `embedding.rs` - 嵌入向量存储
+**位置**: `src-tauri/src/clip/embedding.rs`  
+**功能**: 嵌入向量数据库操作
+- 嵌入向量存储和检索
+- 相似度搜索
+- 模型版本管理
+
+#### `search.rs` - 向量搜索
+**位置**: `src-tauri/src/clip/search.rs`  
+**功能**: 向量相似度搜索
+- 余弦相似度计算
+- Top-K 搜索
+
+#### `preprocessor.rs` - 图像预处理
+**位置**: `src-tauri/src/clip/preprocessor.rs`  
+**功能**: 图像预处理
+- 图像缩放和归一化
+- 张量转换
+
+#### `models/` - 模型实现
+| 文件 | 功能 |
+|------|------|
+| `mod.rs` | 模型规范定义 |
+| `siglip2_base.rs` | SigLIP2-Base 模型 |
+| `siglip2.rs` | SigLIP2-So400M 模型 |
+| `wd14.rs` | WD-EVA02-Large-Tagger-V3 模型 |
+
+---
+
+### 4. 缩略图模块 (`src-tauri/src/thumbnail.rs`)
 **位置**: `src-tauri/src/thumbnail.rs`  
 **行数**: 529 行  
 **功能**: 缩略图生成和管理
@@ -556,7 +665,7 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 ---
 
-### 4. 数据库模块 (`src-tauri/src/db/`)
+### 5. 数据库模块 (`src-tauri/src/db/`)
 
 #### `mod.rs` - 数据库模块入口
 **位置**: `src-tauri/src/db/mod.rs`  
@@ -568,8 +677,9 @@ export const DEFAULT_LAYOUT_SETTINGS = { ... }
 
 #### `persons.rs` - 人物数据库操作
 **位置**: `src-tauri/src/db/persons.rs`  
-**行数**: 118 行  
+**行数**: 128 行  
 **功能**: 人物数据的 CRUD 操作
+- 支持角色标签关联 (`character_tag_name`, `character_tag_index`)
 
 #### `file_metadata.rs` - 文件元数据存储
 **位置**: `src-tauri/src/db/file_metadata.rs`  
@@ -619,7 +729,63 @@ pub struct Topic {
 
 ---
 
-### 5. 工具模块
+### 6. 其他后端模块
+
+#### `db_commands.rs` - 数据库命令
+**位置**: `src-tauri/src/db_commands.rs`  
+**行数**: 243 行  
+**功能**: 数据库相关的 Tauri 命令
+- 用户数据保存/加载
+- 人物/专题 CRUD
+- 颜色数据库统计
+
+#### `system_commands.rs` - 系统命令
+**位置**: `src-tauri/src/system_commands.rs`  
+**功能**: 系统相关命令
+- 默认路径获取
+- 外部链接打开
+- HTTP 代理请求
+
+#### `window_commands.rs` - 窗口命令
+**位置**: `src-tauri/src/window_commands.rs`  
+**功能**: 窗口管理命令
+- 窗口显示/隐藏
+- 窗口状态保存
+
+#### `update_commands.rs` - 更新命令
+**位置**: `src-tauri/src/update_commands.rs`  
+**功能**: 应用更新相关命令
+- 检查更新
+- 下载更新
+- 安装更新
+
+#### `updater.rs` - 更新器
+**位置**: `src-tauri/src/updater.rs`  
+**功能**: 更新逻辑实现
+
+#### `update_downloader.rs` - 更新下载器
+**位置**: `src-tauri/src/update_downloader.rs`  
+**功能**: 更新下载实现
+
+#### `scanner.rs` - 文件扫描器
+**位置**: `src-tauri/src/scanner.rs`  
+**功能**: 文件系统扫描
+
+#### `file_operations.rs` - 文件操作
+**位置**: `src-tauri/src/file_operations.rs`  
+**功能**: 文件操作命令
+
+#### `image_utils.rs` - 图像工具
+**位置**: `src-tauri/src/image_utils.rs`  
+**功能**: 图像处理工具
+
+#### `file_types.rs` - 文件类型
+**位置**: `src-tauri/src/file_types.rs`  
+**功能**: 文件类型定义
+
+---
+
+### 7. 工具模块
 
 #### `dump_persons.rs` - 人物数据导出工具
 **位置**: `src-tauri/src/bin/dump_persons.rs`  
@@ -685,7 +851,7 @@ App.tsx (4248 行)
 │   ├── aiService.ts (411 行)
 │   └── faceRecognitionService.ts (86 行)
 ├── api/
-│   └── tauri-bridge.ts (1283 行)
+│   └── tauri-bridge.ts (2273 行)
 ├── workers/
 │   ├── layout.worker.ts (252 行)
 │   └── search.worker.ts (123 行)
@@ -699,19 +865,41 @@ App.tsx (4248 行)
 │   ├── textUtils.ts (42 行)
 │   ├── translations.ts (1247 行)
 │   └── thumbnailCache.ts (78 行)
-├── types.ts (345 行)
+├── types.ts (742 行)
 └── constants.ts (31 行)
 
 Rust Backend
-├── main.rs (2509 行)
+├── main.rs (349 行)
+├── clip_commands.rs (1566 行)
 ├── thumbnail.rs (529 行)
 ├── color_db.rs (1120 行)
 ├── color_extractor.rs (253 行)
 ├── color_search.rs (441 行)
 ├── color_worker.rs (949 行)
+├── db_commands.rs (243 行)
+├── system_commands.rs
+├── window_commands.rs
+├── update_commands.rs
+├── updater.rs
+├── update_downloader.rs
+├── scanner.rs
+├── file_operations.rs
+├── image_utils.rs
+├── file_types.rs
+├── clip/
+│   ├── mod.rs
+│   ├── model.rs
+│   ├── embedding.rs
+│   ├── search.rs
+│   ├── preprocessor.rs
+│   └── models/
+│       ├── mod.rs
+│       ├── siglip2_base.rs
+│       ├── siglip2.rs
+│       └── wd14.rs
 └── db/
     ├── mod.rs (142 行)
-    ├── persons.rs (118 行)
+    ├── persons.rs (128 行)
     ├── file_metadata.rs (230 行)
     ├── file_index.rs (348 行)
     └── topics.rs (175 行)
@@ -727,26 +915,28 @@ Tools
 
 ### 高复杂度模块 (需要关注)
 1. **App.tsx** (4248 行) - 主应用组件，状态管理复杂
-2. **main.rs** (2509 行) - Rust 主程序，命令处理集中
+2. **clip_commands.rs** (1566 行) - CLIP 命令处理，嵌入向量生成逻辑复杂
 3. **ImageComparer.tsx** (2346 行) - 图片对比组件功能复杂
-4. **AddImageModal.tsx** (1238 行) - 添加图片模态框，支持多分类浏览和虚拟滚动
-5. **TopicModule.tsx** (2690 行) - 专题管理功能丰富
-6. **MetadataPanel.tsx** (2646 行) - 元数据面板功能丰富
-7. **color_db.rs** (1120 行) - 颜色数据库操作复杂
-8. **color_worker.rs** (949 行) - 后台处理逻辑复杂
-9. **color_search.rs** (441 行) - 颜色搜索算法复杂
+4. **TopicModule.tsx** (2690 行) - 专题管理功能丰富
+5. **MetadataPanel.tsx** (2646 行) - 元数据面板功能丰富
+6. **AddImageModal.tsx** (1238 行) - 添加图片模态框，支持多分类浏览和虚拟滚动
+7. **tauri-bridge.ts** (2273 行) - API 桥接层，包含 CLIP、更新、颜色数据库等 API
+8. **color_db.rs** (1120 行) - 颜色数据库操作复杂
+9. **color_worker.rs** (949 行) - 后台处理逻辑复杂
+10. **color_search.rs** (441 行) - 颜色搜索算法复杂
 
 ### 中等复杂度模块
 1. **SettingsModal.tsx** (1347 行) - 设置界面功能丰富
 2. **ImageViewer.tsx** (1542 行) - 图片查看器功能完整
 3. **FileGrid.tsx** (1457 行) - 文件显示逻辑复杂
-4. **tauri-bridge.ts** (1283 行) - API 桥接层
-5. **useFileOperations.ts** (1049 行) - 文件操作逻辑复杂
-6. **useAIAnalysis.ts** (609 行) - AI 分析逻辑复杂
+4. **useFileOperations.ts** (1049 行) - 文件操作逻辑复杂
+5. **useAIAnalysis.ts** (609 行) - AI 分析逻辑复杂
+6. **types.ts** (742 行) - 类型定义，包含 CLIP、更新等新类型
 7. **AIBatchRenameModal.tsx** (381 行) - AI 批量重命名模态框
 8. **EditOverlay.tsx** (554 行) - 编辑覆盖层功能丰富
 9. **thumbnail.rs** (529 行) - 缩略图生成逻辑
-10. **topics.rs** (175 行) - 专题数据库操作
+10. **db_commands.rs** (243 行) - 数据库命令处理
+11. **topics.rs** (175 行) - 专题数据库操作
 
 ### 低复杂度模块
 1. **PersonGrid.tsx** (232 行) - 专用组件，职责单一
@@ -767,7 +957,7 @@ Tools
 
 ---
 
-**文档版本**: 1.4  
-**更新日期**: 2026-02-11  
+**文档版本**: 1.5  
+**更新日期**: 2026-03-01  
 **覆盖范围**: 所有前端和后端模块  
 **详细程度**: 高

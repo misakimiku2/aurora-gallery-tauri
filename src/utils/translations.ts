@@ -265,7 +265,8 @@ export const translations = {
       noImagesFound: '未找到图片文件',
       processingColors: '正在处理图片主色调',
       pause: '暂停',
-      resume: '恢复'
+      resume: '恢复',
+      colorDbInsufficient: '主色调数据不足，请先在设置中提取主色调后再使用颜色搜索功能'
     },
     meta: {
       selectHint: '选择一个文件以查看详情',
@@ -606,6 +607,17 @@ export const translations = {
       colorDbNoData: '暂无数据库信息',
       colorDbDeleteConfirm: '确定要删除选中的 {count} 个文件吗？此操作不可恢复。',
       colorDbDeleteSingleConfirm: '确定要删除文件 "{name}" 吗？此操作不可恢复。',
+      colorExtractionTask: '主色调提取任务',
+      startColorExtraction: '开始提取主色调',
+      stopColorExtraction: '停止提取',
+      colorExtracting: '正在提取主色调...',
+      estimatedTimeRemaining: '剩余时间',
+      colorExtractionPendingHint: '有 {count} 个图片待处理主色调',
+      colorExtractionUntrackedHint: '有 {count} 个图片待提取主色调',
+      colorExtractionNoPendingHint: '当前目录所有图片的主色调已提取完成',
+      colorExtractionNewDirectoryHint: '点击按钮开始提取当前目录图片的主色调',
+      noImagesToExtract: '没有图片需要提取主色调',
+      colorExtractionStartFailed: '启动主色调提取失败',
       clip: {
         minScore: '相似度阈值',
         minScoreDesc: '过滤相似度低于此值的结果，值越高结果越精准',
@@ -1069,7 +1081,8 @@ export const translations = {
       noImagesFound: 'No image files found',
       processingColors: 'Processing Image Colors',
       pause: 'Pause',
-      resume: 'Resume'
+      resume: 'Resume',
+      colorDbInsufficient: 'Insufficient color data. Please extract dominant colors in Settings before using color search'
     },
     meta: {
       selectHint: 'Select a file to view details',
@@ -1408,6 +1421,17 @@ export const translations = {
       colorDbNoData: 'No database information available',
       colorDbDeleteConfirm: 'Are you sure you want to delete {count} selected files? This action cannot be undone.',
       colorDbDeleteSingleConfirm: 'Are you sure you want to delete "{name}"? This action cannot be undone.',
+      colorExtractionTask: 'Color Extraction Task',
+      startColorExtraction: 'Start Extraction',
+      stopColorExtraction: 'Stop Extraction',
+      colorExtracting: 'Extracting colors...',
+      estimatedTimeRemaining: 'Time Remaining',
+      colorExtractionPendingHint: '{count} images pending color extraction',
+      colorExtractionUntrackedHint: '{count} images need color extraction',
+      colorExtractionNoPendingHint: 'All images in current directory have been processed',
+      colorExtractionNewDirectoryHint: 'Click the button to start extracting colors for images in current directory',
+      noImagesToExtract: 'No images to extract colors',
+      colorExtractionStartFailed: 'Failed to start color extraction',
       clip: {
         minScore: 'Similarity Threshold',
         minScoreDesc: 'Filter results below this threshold, higher values mean more precise results',

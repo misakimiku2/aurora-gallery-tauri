@@ -1,5 +1,4 @@
-// #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "console")]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::fs;
 use std::path::Path;
@@ -38,6 +37,13 @@ use db::AppDbPool;
 fn main() {
     
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.unminimize();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -46,7 +52,6 @@ fn main() {
                 .level(log::LevelFilter::Info)
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                 ])
                 .build()
         )
@@ -150,7 +155,7 @@ fn main() {
             let tray_icon = app.default_window_icon()
                 .cloned()
                 .ok_or_else(|| {
-                    eprintln!("Warning: No default window icon found, tray icon may not display correctly");
+                    log::warn!("No default window icon found, tray icon may not display correctly");
                     "No default window icon"
                 });
             
@@ -200,24 +205,24 @@ fn main() {
             {
                 let mut conn = pool_instance.get_connection();
                 if let Err(e) = color_db::init_db(&mut conn) {
-                    eprintln!("Failed to initialize color database: {}", e);
+                    log::error!("Failed to initialize color database: {}", e);
                 }
                 
                 if let Err(e) = color_db::reset_processing_to_pending(&mut conn) {
-                    eprintln!("Failed to reset processing files to pending: {}", e);
+                    log::error!("Failed to reset processing files to pending: {}", e);
                 }
             }
             if let Err(e) = pool_instance.ensure_cache_initialized_async() {
-                eprintln!("Failed to start background color cache preheat: {}", e);
+                log::error!("Failed to start background color cache preheat: {}", e);
             }
 
             if let Err(e) = pool_instance.get_db_file_sizes() {
-                eprintln!("Failed to get database file sizes: {}", e);
+                log::error!("Failed to get database file sizes: {}", e);
             }
             pool_instance
         },
         Err(e) => {
-            eprintln!("Failed to create color database connection pool: {}", e);
+            log::error!("Failed to create color database connection pool: {}", e);
             panic!("Failed to create color database connection pool: {}", e);
         }
     };
@@ -230,7 +235,7 @@ fn main() {
                     {
                         let conn = pool.get_connection();
                         if let Err(e) = db::init_db(&conn) {
-                             eprintln!("Failed to initialize app database: {}", e);
+                             log::error!("Failed to initialize app database: {}", e);
                         }
                     }
                     pool
@@ -299,7 +304,7 @@ fn main() {
             
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = clip::init_clip_manager(clip_root_path, clip_cache_root).await {
-                    eprintln!("Failed to initialize CLIP manager: {}", e);
+                    log::error!("Failed to initialize CLIP manager: {}", e);
                 } else {
                     log::info!("CLIP manager initialized successfully");
                 }

@@ -9,7 +9,7 @@
 aurora-gallery-tauri/
 ├── 📁 src/                          # 前端 React 代码 (TypeScript)
 │   ├── 📁 api/                      # API 桥接层
-│   │   └── tauri-bridge.ts          # Tauri 原生功能桥接 (1208 行)
+│   │   └── tauri-bridge.ts          # Tauri 原生功能桥接 (2273 行)
 │   ├── 📁 components/               # React 组件库
 │   │   ├── 📁 modals/               # 模态框组件集合
 │   │   │   ├── AddToPersonModal.tsx     # 添加到人物 (130 行)
@@ -100,44 +100,49 @@ aurora-gallery-tauri/
 │   │   ├── layout.worker.ts         # 布局计算工作器 (252 行)
 │   │   └── search.worker.ts         # 搜索计算工作器 (125 行)
 │   ├── constants.ts                 # 全局常量定义 (24 行)
-│   ├── types.ts                     # TypeScript 类型定义 (331 行)
+│   ├── types.ts                     # TypeScript 类型定义 (742 行)
 │   └── main.tsx                     # 应用入口文件 (39 行)
 ├── 📁 src-tauri/                    # Rust 后端代码
 │   ├── 📁 src/
-│   │   ├── main.rs                  # Tauri 主程序入口 (311 行) [重构]
+│   │   ├── main.rs                  # Tauri 主程序入口 (349 行)
 │   │   │  # ── 核心模块 ──
-│   │   ├── file_types.rs            # 核心类型定义 (~60 行) [新增]
-│   │   ├── image_utils.rs           # 图像工具模块 (~150 行) [新增]
-│   │   ├── scanner.rs               # 目录扫描模块 (~600 行) [新增]
+│   │   ├── file_types.rs            # 核心类型定义 (~60 行)
+│   │   ├── image_utils.rs           # 图像工具模块 (~150 行)
+│   │   ├── scanner.rs               # 目录扫描模块 (~600 行)
 │   │   │  # ── 命令模块 ──
-│   │   ├── file_operations.rs       # 文件操作命令 (~750 行) [新增]
-│   │   ├── clip_commands.rs         # CLIP AI 搜索命令 (~650 行) [新增]
-│   │   ├── db_commands.rs           # 数据库命令 (~230 行) [新增]
-│   │   ├── system_commands.rs       # 系统工具命令 (~200 行) [新增]
-│   │   ├── window_commands.rs       # 窗口控制命令 (~90 行) [新增]
-│   │   ├── color_commands.rs        # 颜色相关命令 (~100 行) [新增]
-│   │   ├── update_commands.rs       # 更新相关命令 (~70 行) [新增]
+│   │   ├── file_operations.rs       # 文件操作命令 (~750 行)
+│   │   ├── clip_commands.rs         # CLIP AI 搜索命令 (1566 行)
+│   │   ├── db_commands.rs           # 数据库命令 (243 行)
+│   │   ├── system_commands.rs       # 系统工具命令 (~200 行)
+│   │   ├── window_commands.rs       # 窗口控制命令 (~90 行)
+│   │   ├── color_commands.rs        # 颜色相关命令 (~100 行)
+│   │   ├── update_commands.rs       # 更新相关命令 (~70 行)
 │   │   │  # ── 功能模块 ──
 │   │   ├── thumbnail.rs             # 缩略图生成模块 (529 行)
-│   │   ├── color_db.rs              # 色彩数据库操作 (871 行)
-│   │   ├── color_extractor.rs       # 色彩提取算法 (258 行)
-│   │   ├── color_search.rs          # 色彩搜索算法 (796 行)
-│   │   ├── color_worker.rs          # 后台色彩处理工作器 (796 行)
+│   │   ├── color_db.rs              # 色彩数据库操作 (1120 行)
+│   │   ├── color_extractor.rs       # 色彩提取算法 (253 行)
+│   │   ├── color_search.rs          # 色彩搜索算法 (441 行)
+│   │   ├── color_worker.rs          # 后台色彩处理工作器 (949 行)
 │   │   ├── updater.rs               # 应用更新检查
 │   │   ├── update_downloader.rs     # 更新下载器
 │   │   │  # ── 子目录模块 ──
 │   │   ├── 📁 db/                   # 数据库模块
-│   │   │   ├── mod.rs               # 数据库模块入口 (150 行)
-│   │   │   ├── persons.rs           # 人物数据库操作 (118 行)
+│   │   │   ├── mod.rs               # 数据库模块入口 (142 行)
+│   │   │   ├── persons.rs           # 人物数据库操作 (128 行)
 │   │   │   ├── topics.rs            # 专题数据库操作 (175 行)
-│   │   │   ├── file_metadata.rs     # 文件元数据存储 (87 行)
-│   │   │   └── file_index.rs        # 文件索引数据库 (200 行)
+│   │   │   ├── file_metadata.rs     # 文件元数据存储 (230 行)
+│   │   │   └── file_index.rs        # 文件索引数据库 (348 行)
 │   │   ├── 📁 clip/                 # CLIP AI 模块
 │   │   │   ├── mod.rs               # CLIP 模块入口
 │   │   │   ├── model.rs             # CLIP 模型封装
 │   │   │   ├── embedding.rs         # 嵌入向量存储
 │   │   │   ├── preprocessor.rs      # 图像预处理
-│   │   │   └── search.rs            # 相似度搜索
+│   │   │   ├── search.rs            # 相似度搜索
+│   │   │   └── 📁 models/           # 模型实现
+│   │   │       ├── mod.rs           # 模型规范定义
+│   │   │       ├── siglip2_base.rs  # SigLIP2-Base 模型
+│   │   │       ├── siglip2.rs       # SigLIP2-So400M 模型
+│   │   │       └── wd14.rs          # WD-EVA02-Large-Tagger-V3 模型
 │   │   └── 📁 bin/                  # 工具二进制文件
 │   │       └── dump_persons.rs      # 人物数据导出工具 (45 行)
 │   ├── 📁 icons/                    # 应用图标 (多尺寸)
@@ -208,7 +213,11 @@ aurora-gallery-tauri/
 - **样式**: Tailwind CSS 3.4.1 + PostCSS 8.4.35
 - **状态管理**: React Hooks (useState, useReducer)
 - **UI 组件**: Lucide React 0.344.0 (图标库)
-- **AI 集成**: @vladmandic/face-api 1.7.12 (人脸识别)
+- AI 集成: @vladmandic/face-api 1.7.12 (人脸识别)
+- **AI 搜索**: CLIP 模型 (ONNX Runtime)
+  - SigLIP2-Base (ViT-B-16)
+  - SigLIP2-So400M (ViT-So400M)
+  - WD-EVA02-Large-Tagger-V3 (WD14 标签器)
 - **测试**: Vitest (单元测试框架)
 
 ### 后端技术栈
@@ -284,29 +293,46 @@ npm run clean        # 清理缓存
 
 ### 后端模块结构 (2026-02-19 重构)
 
-后端代码采用模块化设计，从原来的单文件 3865 行拆分为多个独立模块：
+后端代码采用模块化设计，从原来的单文件拆分为多个独立模块：
 
 ```
 src-tauri/src/
-├── main.rs              # 入口文件 (311 行)
+├── main.rs              # 入口文件 (349 行)
 ├── 📁 核心模块
 │   ├── file_types.rs    # 类型定义 (FileType, FileNode, ImageMeta)
 │   ├── image_utils.rs   # 图像工具 (JXL/AVIF 支持)
 │   └── scanner.rs       # 目录扫描 (HDD 检测优化)
 ├── 📁 命令模块
 │   ├── file_operations.rs  # 文件操作命令
-│   ├── clip_commands.rs    # CLIP AI 搜索
-│   ├── db_commands.rs      # 数据库命令
+│   ├── clip_commands.rs    # CLIP AI 搜索 (1566 行)
+│   ├── db_commands.rs      # 数据库命令 (243 行)
 │   ├── system_commands.rs  # 系统工具
 │   ├── window_commands.rs  # 窗口控制
 │   ├── color_commands.rs   # 颜色提取
 │   └── update_commands.rs  # 应用更新
 ├── 📁 功能模块
-│   ├── thumbnail.rs        # 缩略图生成
-│   ├── color_*.rs          # 颜色相关
+│   ├── thumbnail.rs        # 缩略图生成 (529 行)
+│   ├── color_db.rs         # 颜色数据库 (1120 行)
+│   ├── color_extractor.rs  # 颜色提取 (253 行)
+│   ├── color_search.rs     # 颜色搜索 (441 行)
+│   ├── color_worker.rs     # 后台处理 (949 行)
 │   └── update*.rs          # 更新相关
 ├── 📁 db/                  # 数据库模块
+│   ├── mod.rs              # 入口 (142 行)
+│   ├── persons.rs          # 人物 (128 行)
+│   ├── topics.rs           # 专题 (175 行)
+│   ├── file_metadata.rs    # 元数据 (230 行)
+│   └── file_index.rs       # 索引 (348 行)
 └── 📁 clip/                # CLIP AI 模块
+    ├── mod.rs              # 模块入口
+    ├── model.rs            # 模型封装
+    ├── embedding.rs        # 嵌入向量
+    ├── preprocessor.rs     # 图像预处理
+    ├── search.rs           # 相似度搜索
+    └── 📁 models/          # 模型实现
+        ├── siglip2_base.rs # SigLIP2-Base
+        ├── siglip2.rs      # SigLIP2-So400M
+        └── wd14.rs         # WD-EVA02-Large-Tagger-V3
 ```
 
 详见: [main.rs 模块拆分重构记录](../docs/main-rs-module-refactoring.md)
@@ -322,12 +348,12 @@ src-tauri/src/
 
 ### 核心文件
 - `src/App.tsx`: 主应用组件，包含所有业务逻辑 (4248 行)
-- `src-tauri/src/main.rs`: Rust 主程序入口 (311 行)
+- `src-tauri/src/main.rs`: Rust 主程序入口 (349 行)
 - `src-tauri/src/file_types.rs`: 核心类型定义
 - `src-tauri/src/scanner.rs`: 目录扫描核心逻辑
-- `src-tauri/src/clip_commands.rs`: CLIP AI 搜索命令
-- `src/api/tauri-bridge.ts`: 前后端通信桥接 (1208 行)
-- `src/types.ts`: TypeScript 类型定义 (331 行)
+- `src-tauri/src/clip_commands.rs`: CLIP AI 搜索命令 (1566 行)
+- `src/api/tauri-bridge.ts`: 前后端通信桥接 (2273 行)
+- `src/types.ts`: TypeScript 类型定义 (742 行)
 - `src/constants.ts`: 全局常量定义 (24 行)
 
 ### 配置文件
@@ -366,10 +392,13 @@ src-tauri/src/
 - AI 功能需要外部 API (OpenAI/Ollama/LM Studio)
 - 颜色提取使用 CIEDE2000 算法保证准确性
 - 缩略图支持 JPEG、WebP、PNG 格式，以及 JXL、AVIF 格式
-- CLIP AI 搜索支持 ViT-B-32 和 ViT-L-14 模型
+- CLIP AI 搜索支持三种模型：
+  - SigLIP2-Base: 轻量级多语言模型
+  - SigLIP2-So400M: 高性能多语言模型
+  - WD-EVA02-Large-Tagger-V3: WD14 标签器，支持自动标签生成和角色识别
 
 ---
 
-**文档版本**: 1.3  
-**更新日期**: 2026-02-19  
+**文档版本**: 1.4  
+**更新日期**: 2026-03-01  
 **维护者**: Aurora Gallery Team

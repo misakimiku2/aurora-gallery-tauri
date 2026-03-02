@@ -192,9 +192,6 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             .count();
 
         if fs_root_count <= db_root_children_count {
-            if std::env::var("AURORA_DEBUG").ok() == Some("1".to_string()) {
-                println!("Fast startup: Root consistency check passed (FS: {}, DB: {})", fs_root_count, db_root_children_count);
-            }
             let mut all_files = HashMap::new();
             let mut path_to_id = HashMap::new();
             
@@ -297,8 +294,6 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             let _ = app.emit("scan-progress", ScanProgress { processed: all_files.len(), total: all_files.len() });
             
             return Ok(all_files);
-        } else {
-             println!("Detected new files in root directory (DB: {}, FS: {}). Creating incremental update...", db_root_children_count, fs_root_count);
         }
     }
 
@@ -322,7 +317,6 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
     }
 
     let count_parallelism = if is_likely_hdd(&path) {
-        eprintln!("[Scan] Detected HDD for counting, using sequential scanning for better performance");
         jwalk::Parallelism::Serial
     } else {
         jwalk::Parallelism::RayonNewPool(16)
@@ -361,7 +355,6 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
     let cached_index_arc = Arc::new(cached_index_map);
 
     let scan_parallelism = if is_likely_hdd(&producer_path) {
-        eprintln!("[Scan] Detected HDD for scanning, using sequential scanning for better performance");
         jwalk::Parallelism::Serial
     } else {
         jwalk::Parallelism::RayonNewPool(16)
@@ -467,18 +460,8 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
     
     let mut entries_to_save = Vec::with_capacity(total_images + 1);
 
-    let mut received_count = 0;
     while let Ok((id, mut node, p_path)) = rx.recv() {
-        received_count += 1;
         scanned_paths.push(node.path.clone());
-        if node.name.contains("棕色") || node.name.contains("素材") {
-             println!("[DEBUG] Scanning node check: Name={}, GeneratedID={}, FoundMeta={}", node.name, id, metadata_map.contains_key(&id));
-        }
-
-        if received_count % 500 == 0 {
-            eprintln!("[Scan Progress] Received {} files so far, processed: {}, total expected: {}",
-                     received_count, processed_count, total_images);
-        }
 
         if matches!(node.r#type, FileType::Folder) { 
             path_to_id.insert(node.path.clone(), id.clone()); 
@@ -551,14 +534,6 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         processed: processed_count,
         total: current_total,
     });
-
-    eprintln!("[Scan Complete] Total received: {}, Total files in map: {}, Expected: {}",
-             received_count, all_files.len(), total_images);
-
-    if received_count < total_images.saturating_sub(10) {
-        eprintln!("[Scan Warning] Received fewer files than expected! This may indicate a HDD I/O issue.");
-        eprintln!("[Scan Warning] Consider checking disk health or using SSD for better performance.");
-    }
 
     let mut to_process: Vec<String> = Vec::new();
     if std::env::var("AURORA_DISABLE_BACKGROUND_INDEX").as_deref().ok() != Some("1") {

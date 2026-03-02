@@ -40,6 +40,8 @@
 - **🌐 智能翻译** - 自动翻译图片中的外文文字
 - **✨ AI 重命名** - 根据图片内容智能生成文件名
 - **🎯 批量处理** - 支持批量 AI 分析和重命名
+- **🔍 CLIP 搜索** - 自然语言搜索图片，以图搜图
+- **🏷️ 智能标签** - WD14 自动标签生成和角色识别
 
 ### 浏览与对比
 
@@ -56,6 +58,7 @@
 - **🌙 深色主题** - 支持深色模式，保护眼睛
 - **🌍 多语言** - 支持中文和英文界面
 - **🔒 本地存储** - 数据本地保存，保护隐私
+- **🔄 自动更新** - 内置应用更新检查和安装功能
 
 ## 安装说明
 
@@ -139,6 +142,7 @@ npm run tauri:build
 - **图像处理**: image, fast_image_resize, jxl-oxide
 - **数据库**: SQLite (Rusqlite)
 - **并发**: Tokio + Rayon
+- **AI 模型**: ONNX Runtime (CLIP, WD14)
 
 ## 开发指南
 
@@ -198,7 +202,6 @@ npm run tauri:build
 - [技术架构](memory/TECHNICAL_ARCHITECTURE.md)
 - [项目结构](memory/PROJECT_STRUCTURE.md)
 - [快速参考](memory/QUICK_REFERENCE.md)
-- [变更日志](memory/CHANGELOG_from_code.md)
 
 ## 贡献
 

@@ -1868,42 +1868,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                         <button
                             onClick={async () => {
                                 if (colors.length > 0) {
-                                    // 搜索相似氛围 (全色板搜�?
-                                    // 为每个颜色添加前缀 color: 用于触发UI搜索逻辑�?
-                                    // 但实际上我们需要一种新的搜索模式�?
-                                    // 目前 onSearch 仅用�?UI 搜索框输入�?
-                                    // 更好的方式是直接通过 bridge 调用后端，然后更新搜索结果，
-                                    // 但那样需要入侵性修改主 FileGrid 的状态�?
-                                    // 这里我们通过特殊的搜索指�?`palette:hex1,hex2...` 来触�?FileGrid 的响�?
-                                    // 或者，更简单的方法：我们在这里直接使用 onSearch('palette:c1,c2...')
-                                    // 并让 App.tsx 解析这个指令�?
-                                    // 假设 App.tsx 会处理这个逻辑，或者我们直接调�?bridge 并将结果视为搜索结果�?
-                                    
-                                    // 临时方案：使�?onSearch 传递特殊前缀�?
-                                    // 用户代码需要确�?App.tsx 或搜索组件能解析这个�?
-                                    // 根据用户当前需求描�?"调用 searchByPalette，并通过 onSearch 触发 UI 更新"
-                                    
-                                    try {
-                                        const { searchByPalette } = await import('../api/tauri-bridge');
-                                        
-                                        // 氛围搜索：只使用�?个主色调（占比最大的颜色�?
-                                        // 忽略后面占比小但鲜艳的点缀色，避免搜索结果过于宽泛
-                                        const atmosphereColors = colors.slice(0, 5);
-                                        
-                                        // 执行搜索
-                                        const results = await searchByPalette(atmosphereColors);
-                                        // 这里我们需要告知主 UI 显示这些结果�?
-                                        // 通常 onSearch 是更新搜索框的文字�?
-                                        // 我们可以构造一个特殊的查询字符串�?
-                                        // 或者这里只是为了触发一次搜索动作�?
-                                        
-                                        // 由于现在的架构限制，最快的方法是构造一个特殊的搜索字符�?
-                                        // 并在 FileGrid / App 层面拦截它�?
-                                        // 这里我们先只是调�?onSearch，传入一种特殊格式�?
-                                        // 最好是 "palette:hex1,hex2,hex3"
-                                        const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
-                                        onSearch(searchQuery);
-                                    } catch {}
+                                    const atmosphereColors = colors.slice(0, 5);
+                                    const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
+                                    onSearch(searchQuery);
                                 }
                             }}
                             className="p-1 px-2 flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors text-[10px] text-gray-500 font-medium"
