@@ -1,0 +1,1360 @@
+tag_id,name,category,count,aliases,is_core,is_attire
+385430,hatsune_miku_(VOCALOID),4,109002,"[""hatsune_miku_(VOCALOID)"", ""/hm""]",False,False
+12239,hakurei_reimu_(touhou),4,80802,"[""hakurei_reimu_(touhou)"", ""/hr"", ""reimu_hakurei""]",False,False
+12242,kirisame_marisa_(touhou),4,72489,"[""kirisame_marisa_(touhou)"", ""/km"", ""marisa_kirisame""]",False,False
+12248,remilia_scarlet_(touhou),4,53284,"[""remilia_scarlet_(touhou)"", ""/rs""]",False,False
+12249,flandre_scarlet_(touhou),4,53151,"[""flandre_scarlet_(touhou)"", ""/fs""]",False,False
+12314,izayoi_sakuya_(touhou),4,46669,"[""izayoi_sakuya_(touhou)"", ""/is""]",False,False
+388200,kochiya_sanae_(touhou),4,36001,"[""kochiya_sanae_(touhou)"", ""/ks"", ""kotiya_sanae""]",False,False
+9123,alice_margatroid_(touhou),4,35363,"[""alice_margatroid_(touhou)"", ""/am""]",False,False
+12247,patchouli_knowledge_(touhou),4,34876,"[""patchouli_knowledge_(touhou)"", ""/pk""]",False,False
+12244,konpaku_youmu_(touhou),4,35676,"[""konpaku_youmu_(touhou)"", ""/ky""]",False,False
+1720,cirno_(touhou),4,35275,"[""cirno_(touhou)""]",False,False
+427142,komeiji_koishi_(touhou),4,35595,"[""komeiji_koishi_(touhou)""]",False,False
+12246,yakumo_yukari_(touhou),4,33172,"[""yakumo_yukari_(touhou)"", ""/yy""]",False,False
+12308,shameimaru_aya_(touhou),4,29359,"[""shameimaru_aya_(touhou)"", ""/sa""]",False,False
+12304,reisen_udongein_inaba_(touhou),4,27462,"[""reisen_udongein_inaba_(touhou)"", ""/rui""]",False,False
+12307,fujiwara_no_mokou_(touhou),4,26979,"[""fujiwara_no_mokou_(touhou)"", ""fujiwara_mokou"", ""/fm"", ""/fnm"", ""huziwara_no_mokou""]",False,False
+427143,komeiji_satori_(touhou),4,26237,"[""komeiji_satori_(touhou)""]",False,False
+11374,hong_meiling_(touhou),4,25325,"[""hong_meiling_(touhou)"", ""ex-meiling""]",False,False
+592924,akemi_homura_(mahou_shoujo_madoka_magica),4,26676,"[""akemi_homura_(mahou_shoujo_madoka_magica)""]",False,False
+12245,saigyouji_yuyuko_(touhou),4,24473,"[""saigyouji_yuyuko_(touhou)"", ""/sy""]",False,False
+592925,kaname_madoka_(mahou_shoujo_madoka_magica),4,25939,"[""kaname_madoka_(mahou_shoujo_madoka_magica)""]",False,False
+395218,inubashiri_momiji_(touhou),4,22963,"[""inubashiri_momiji_(touhou)"", ""inubashiri_momizi""]",False,False
+12250,yakumo_ran_(touhou),4,20429,"[""yakumo_ran_(touhou)"", ""/yr""]",False,False
+390427,kagamine_rin_(VOCALOID),4,21495,"[""kagamine_rin_(VOCALOID)"", ""/kr""]",False,False
+427145,kaenbyou_rin_(touhou),4,19633,"[""kaenbyou_rin_(touhou)"", ""orin""]",False,False
+384842,moriya_suwako_(touhou),4,19186,"[""moriya_suwako_(touhou)"", ""/ms""]",False,False
+2082,rumia_(touhou),4,19422,"[""rumia_(touhou)""]",False,False
+401582,kazami_yuuka_(touhou),4,18087,"[""kazami_yuuka_(touhou)"", ""kazami_yuka""]",False,False
+593109,miki_sayaka_(mahou_shoujo_madoka_magica),4,18590,"[""miki_sayaka_(mahou_shoujo_madoka_magica)""]",False,False
+427184,reiuji_utsuho_(touhou),4,18269,"[""reiuji_utsuho_(touhou)"", ""okuu""]",False,False
+474,chen_(touhou),4,18384,"[""chen_(touhou)""]",False,False
+1414209,mash_kyrielight_(fate_grand_order),4,17484,"[""mash_kyrielight_(fate_grand_order)"", ""shielder_(fate/grand_order)""]",False,False
+473327,tatara_kogasa_(touhou),4,16825,"[""tatara_kogasa_(touhou)""]",False,False
+383392,kawashiro_nitori_(touhou),4,16692,"[""kawashiro_nitori_(touhou)""]",False,False
+12302,kamishirasawa_keine_(touhou),4,16353,"[""kamishirasawa_keine_(touhou)"", ""/kk""]",False,False
+415326,hinanawi_tenshi_(touhou),4,16141,"[""hinanawi_tenshi_(touhou)"", ""tenshi_hinanai"", ""hinanai_tenshi""]",False,False
+604258,sakura_kyoko_(mahou_shoujo_madoka_magica),4,15907,"[""sakura_kyoko_(mahou_shoujo_madoka_magica)"", ""sakura_kyouko""]",False,False
+593108,tomoe_mami_(mahou_shoujo_madoka_magica),4,15610,"[""tomoe_mami_(mahou_shoujo_madoka_magica)""]",False,False
+12306,houraisan_kaguya_(touhou),4,15217,"[""houraisan_kaguya_(touhou)"", ""/hk""]",False,False
+1799,koakuma_(touhou),4,14785,"[""koakuma_(touhou)""]",False,False
+12300,mystia_lorelei_(touhou),4,14959,"[""mystia_lorelei_(touhou)""]",False,False
+475833,souryuu_asuka_langley_(neon_genesis_evangelion),4,14884,"[""souryuu_asuka_langley_(neon_genesis_evangelion)"", ""asuka_langley_souryuu"", ""shikinami_asuka_langley"", ""shikinami_asuka_langely"", ""shikinami_asuka_langly"", ""soryuu_asuka_langly"", ""souryuu_asuka_langly"", ""/sal"", ""soryu_asuka_langley"", ""sohryu_asuka_langley""]",False,False
+12303,inaba_tewi_(touhou),4,14186,"[""inaba_tewi_(touhou)"", ""inaba_tei""]",False,False
+12313,ibuki_suika_(touhou),4,14190,"[""ibuki_suika_(touhou)""]",False,False
+473267,nazrin_(touhou),4,13709,"[""nazrin_(touhou)""]",False,False
+503349,hijiri_byakuren_(touhou),4,13222,"[""hijiri_byakuren_(touhou)""]",False,False
+393597,kagamine_len_(VOCALOID),4,13857,"[""kagamine_len_(VOCALOID)"", ""kagamine_ren""]",False,False
+6313,link_(the_legend_of_zelda),4,15540,"[""link_(the_legend_of_zelda)""]",False,False
+1686237,raiden_shogun_(genshin_impact),4,15759,"[""raiden_shogun_(genshin_impact)"", ""raiden_(genshin_impact)"", ""raiden_shogun_(genshin_impact)"", ""baal_(genshin_impact)""]",False,False
+503343,houjuu_nue_(touhou),4,12662,"[""houjuu_nue_(touhou)""]",False,False
+1533309,houshou_marine_(hololive),4,14306,"[""houshou_marine_(hololive)""]",False,False
+384841,yasaka_kanako_(touhou),4,11864,"[""yasaka_kanako_(touhou)""]",False,False
+1593594,gawr_gura_(hololive),4,13926,"[""gawr_gura_(hololive)""]",False,False
+12305,yagokoro_eirin_(touhou),4,11779,"[""yagokoro_eirin_(touhou)"", ""/ye""]",False,False
+457810,megurine_luka_(VOCALOID),4,11990,"[""megurine_luka_(VOCALOID)""]",False,False
+413783,mizuhashi_parsee_(touhou),4,11587,"[""mizuhashi_parsee_(touhou)""]",False,False
+3861,pikachu_(pokemon),4,12707,"[""pikachu_(pokemon)""]",False,False
+456150,akiyama_mio_(k-on!),4,10227,"[""akiyama_mio_(k-on!)""]",False,False
+638495,toyosatomimi_no_miko_(touhou),4,10234,"[""toyosatomimi_no_miko_(touhou)""]",False,False
+9466,suzumiya_haruhi_(suzumiya_haruhi),4,10240,"[""suzumiya_haruhi_(suzumiya_haruhi)"", ""/sh"", ""haruhi_suzumiya""]",False,False
+13814,morichika_rinnosuke_(touhou),4,9645,"[""morichika_rinnosuke_(touhou)"", ""kourin"", ""rinnosuke_morichika""]",False,False
+94496,princess_zelda_(the_legend_of_zelda),4,12215,"[""princess_zelda_(the_legend_of_zelda)"", ""zelda""]",False,False
+384197,kagiyama_hina_(touhou),4,10482,"[""kagiyama_hina_(touhou)""]",False,False
+2075918,inkling_player_character_(splatoon),4,13414,"[""inkling_player_character_(splatoon)"", ""inkling""]",False,False
+391888,tifa_lockhart_(final_fantasy),4,12024,"[""tifa_lockhart_(final_fantasy)"", ""tifa_lockheart""]",False,False
+465977,hoshiguma_yuugi_(touhou),4,9611,"[""hoshiguma_yuugi_(touhou)"", ""hoshiguma_yugi""]",False,False
+7441,fate_testarossa_(mahou_shoujo_lyrical_nanoha),4,9463,"[""fate_testarossa_(mahou_shoujo_lyrical_nanoha)"", ""fate_t_harlaown"", ""fate_testarossa_harlaown"", ""/ft""]",False,False
+700405,nishizumi_miho_(girls_und_panzer),4,9542,"[""nishizumi_miho_(girls_und_panzer)""]",False,False
+465646,tohsaka_rin_(fate),4,9147,"[""tohsaka_rin_(fate)"", ""toosaka_rin""]",False,False
+7493,daiyousei_(touhou),4,9493,"[""daiyousei_(touhou)""]",False,False
+638499,mononobe_no_futo_(touhou),4,9317,"[""mononobe_no_futo_(touhou)""]",False,False
+12299,wriggle_nightbug_(touhou),4,9220,"[""wriggle_nightbug_(touhou)""]",False,False
+599169,shanghai_doll_(touhou),4,9172,"[""shanghai_doll_(touhou)""]",False,False
+472387,nakano_azusa_(k-on!),4,8923,"[""nakano_azusa_(k-on!)""]",False,False
+9715,nagato_yuki_(suzumiya_haruhi),4,8932,"[""nagato_yuki_(suzumiya_haruhi)"", ""/ny"", ""yuki.n""]",False,False
+1479836,shirakami_fubuki_(hololive),4,11323,"[""shirakami_fubuki_(hololive)""]",False,False
+465688,shiki_eiki_(touhou),4,9129,"[""shiki_eiki_(touhou)"", ""/syx"", ""sikieiki_yamaxanadu"", ""shikieiki_yamaxanadu""]",False,False
+12342,usami_renko_(touhou),4,9429,"[""usami_renko_(touhou)""]",False,False
+395918,misaka_mikoto_(toaru_majutsu_no_index),4,9256,"[""misaka_mikoto_(toaru_majutsu_no_index)""]",False,False
+12311,onozuka_komachi_(touhou),4,8994,"[""onozuka_komachi_(touhou)""]",False,False
+12108,illyasviel_von_einzbern_(fate),4,9063,"[""illyasviel_von_einzbern_(fate)"", ""ilya""]",False,False
+455424,hirasawa_yui_(k-on!),4,8475,"[""hirasawa_yui_(k-on!)""]",False,False
+506041,maribel_hearn_(touhou),4,9096,"[""maribel_hearn_(touhou)"", ""maribel_han""]",False,False
+600200,kyubey_(mahou_shoujo_madoka_magica),4,8756,"[""kyubey_(mahou_shoujo_madoka_magica)"", ""kyuubey"", ""kyuubee""]",False,False
+1733099,yae_miko_(genshin_impact),4,10139,"[""yae_miko_(genshin_impact)"", ""yae_(genshin_impact)""]",False,False
+1233711,imaizumi_kagerou_(touhou),4,8693,"[""imaizumi_kagerou_(touhou)""]",False,False
+1964304,gotoh_hitori_(bocchi_the_rock!),4,12881,"[""gotoh_hitori_(bocchi_the_rock!)"", ""bocchi_(bocchi_the_rock!)"", ""gotou_hitori""]",False,False
+8327,ayanami_rei_(neon_genesis_evangelion),4,8868,"[""ayanami_rei_(neon_genesis_evangelion)""]",False,False
+503351,toramaru_shou_(touhou),4,7898,"[""toramaru_shou_(touhou)""]",False,False
+8552,takamachi_nanoha_(mahou_shoujo_lyrical_nanoha),4,7892,"[""takamachi_nanoha_(mahou_shoujo_lyrical_nanoha)"", ""/tn""]",False,False
+1511608,inkling_girl_(splatoon),4,11382,"[""inkling_girl_(splatoon)""]",False,False
+1531173,usada_pekora_(hololive),4,9395,"[""usada_pekora_(hololive)""]",False,False
+378876,joseph_joestar_(jojo_no_kimyou_na_bouken),4,7690,"[""joseph_joestar_(jojo_no_kimyou_na_bouken)""]",False,False
+1231258,matoi_ryuuko_(kill_la_kill),4,7951,"[""matoi_ryuuko_(kill_la_kill)""]",False,False
+1648389,yor_briar_(spy_x_family),4,8571,"[""yor_briar_(spy_x_family)"", ""yor_forger""]",False,False
+1525565,hoshimachi_suisei_(hololive),4,10923,"[""hoshimachi_suisei_(hololive)"", ""hoshimati_suisei"", ""suisei_channel""]",False,False
+456151,tainaka_ritsu_(k-on!),4,7243,"[""tainaka_ritsu_(k-on!)""]",False,False
+544560,himekaidou_hatate_(touhou),4,7476,"[""himekaidou_hatate_(touhou)""]",False,False
+1287532,megumin_(kono_subarashii_sekai_ni_shukufuku_wo!),4,8517,"[""megumin_(kono_subarashii_sekai_ni_shukufuku_wo!)""]",False,False
+592977,nishikino_maki_(love_live!),4,7449,"[""nishikino_maki_(love_live!)""]",False,False
+1593596,ninomae_ina'nis,4,8813,"[""ninomae_ina'nis""]",False,False
+1593595,mori_calliope_(hololive),4,8874,"[""mori_calliope_(hololive)"", ""calliope_mori""]",False,False
+713730,kafuu_chino_(gochuumon_wa_usagi_desu_ka?),4,7231,"[""kafuu_chino_(gochuumon_wa_usagi_desu_ka?)""]",False,False
+638538,kaku_seiga_(touhou),4,7250,"[""kaku_seiga_(touhou)""]",False,False
+615562,toujou_nozomi_(love_live!),4,0,"[""toujou_nozomi_(love_live!)""]",False,False
+593046,sonoda_umi_(love_live!),4,7160,"[""sonoda_umi_(love_live!)""]",False,False
+662185,shibuya_rin_(idolmaster_cinderella_girls),4,7072,"[""shibuya_rin_(idolmaster_cinderella_girls)""]",False,False
+503350,murasa_minamitsu_(touhou),4,7173,"[""murasa_minamitsu_(touhou)""]",False,False
+1585358,northern_ocean_princess_(kantai_collection),4,6710,"[""northern_ocean_princess_(kantai_collection)"", ""northern_ocean_hime""]",False,False
+699794,nanami_chiaki_(danganronpa),4,10291,"[""nanami_chiaki_(danganronpa)""]",False,False
+1495213,minato_aqua_(hololive),4,8527,"[""minato_aqua_(hololive)""]",False,False
+445942,gardevoir_(pokemon),4,11243,"[""gardevoir_(pokemon)""]",False,False
+593043,ayase_eli_(love_live!),4,6853,"[""ayase_eli_(love_live!)"", ""ayase_eri""]",False,False
+592974,yazawa_nico_(love_live!),4,6871,"[""yazawa_nico_(love_live!)""]",False,False
+656409,yuzuki_yukari_(vocaloid),4,7543,"[""yuzuki_yukari_(vocaloid)""]",False,False
+413645,nagae_iku_(touhou),4,6712,"[""nagae_iku_(touhou)""]",False,False
+54494,kujo_jotaro_(jojo_no_kimyou_na_bouken),4,6929,"[""kujo_jotaro_(jojo_no_kimyou_na_bouken)"", ""kuujou_joutarou""]",False,False
+1233709,hata_no_kokoro_(touhou),4,6812,"[""hata_no_kokoro_(touhou)""]",False,False
+570051,ibaraki_kasen_(touhou),4,6655,"[""ibaraki_kasen_(touhou)"", ""ibara_kasen""]",False,False
+13108,chun-li_(street_fighter),4,7175,"[""chun-li_(street_fighter)"", ""chun_li"", ""chunli""]",False,False
+7439,kinomoto_sakura_(cardcaptor_sakura),4,7208,"[""kinomoto_sakura_(cardcaptor_sakura)""]",False,False
+1518952,nekomata_okayu_(hololive),4,7940,"[""nekomata_okayu_(hololive)""]",False,False
+638583,soga_no_tojiko_(touhou),4,6396,"[""soga_no_tojiko_(touhou)""]",False,False
+10365,cloud_strife_(final_fantasy),4,10016,"[""cloud_strife_(final_fantasy)""]",False,False
+413652,kurodani_yamame_(touhou),4,6248,"[""kurodani_yamame_(touhou)""]",False,False
+619180,kasodani_kyouko_(touhou),4,6251,"[""kasodani_kyouko_(touhou)""]",False,False
+7438,matou_sakura_(fate),4,6093,"[""matou_sakura_(fate)""]",False,False
+619181,miyako_yoshika_(touhou),4,6275,"[""miyako_yoshika_(touhou)""]",False,False
+473328,kumoi_ichirin_(touhou),4,6207,"[""kumoi_ichirin_(touhou)""]",False,False
+1239690,rensouhou-chan_(kantai_collection),4,6059,"[""rensouhou-chan_(kantai_collection)""]",False,False
+1593597,takanashi_kiara_(hololive),4,7440,"[""takanashi_kiara_(hololive)""]",False,False
+101752,hoshii_miki_(idolmaster),4,5970,"[""hoshii_miki_(idolmaster)""]",False,False
+1328621,clownpiece_(touhou),4,6137,"[""clownpiece_(touhou)""]",False,False
+1549065,tokoyami_towa_(hololive),4,7558,"[""tokoyami_towa_(hololive)""]",False,False
+1243755,kijin_seija_(touhou),4,5865,"[""kijin_seija_(touhou)""]",False,False
+382074,hiiragi_kagami_(lucky_star),4,5906,"[""hiiragi_kagami_(lucky_star)""]",False,False
+11941,samus_aran_(metroid),4,6317,"[""samus_aran_(metroid)"", ""samus""]",False,False
+456152,kotobuki_tsumugi_(k-on!),4,5650,"[""kotobuki_tsumugi_(k-on!)""]",False,False
+1593598,watson_amelia_(hololive),4,6619,"[""watson_amelia_(hololive)"", ""amelia_watson""]",False,False
+713720,nishizumi_maho_(girls_und_panzer),4,5882,"[""nishizumi_maho_(girls_und_panzer)""]",False,False
+11498,kirby_(kirby),4,7323,"[""kirby_(kirby)""]",False,False
+1685272,ouro_kronii_(hololive),4,7529,"[""ouro_kronii_(hololive)"", ""kronii_ouro""]",False,False
+1651926,kamisato_ayaka_(genshin_impact),4,6437,"[""kamisato_ayaka_(genshin_impact)"", ""ayaka_(genshin_impact)"", ""kamisato_ayaka_(genshin_impact)""]",False,False
+52967,princess_peach_(super_mario),4,6663,"[""princess_peach_(super_mario)""]",False,False
+1685271,nanashi_mumei_(hololive),4,7708,"[""nanashi_mumei_(hololive)"", ""mumei_nanashi""]",False,False
+1233706,sekibanki_(touhou),4,5776,"[""sekibanki_(touhou)""]",False,False
+713721,itsumi_erika_(girls_und_panzer),4,5733,"[""itsumi_erika_(girls_und_panzer)""]",False,False
+10658,emiya_shirou_(fate),4,6157,"[""emiya_shirou_(fate)""]",False,False
+383424,aki_minoriko_(touhou),4,5664,"[""aki_minoriko_(touhou)""]",False,False
+593045,minami_kotori_(love_live!),4,5484,"[""minami_kotori_(love_live!)""]",False,False
+466669,c.c._(code_geass),4,5478,"[""c.c._(code_geass)"", ""cc""]",False,False
+452021,hieda_no_akyuu_(touhou),4,5606,"[""hieda_no_akyuu_(touhou)"", ""hieda_no_akyu""]",False,False
+382075,izumi_konata_(lucky_star),4,5585,"[""izumi_konata_(lucky_star)"", ""konata""]",False,False
+279302,dio_brando_(jojo_no_kimyou_na_bouken),4,5643,"[""dio_brando_(jojo_no_kimyou_na_bouken)""]",False,False
+405454,aerith_gainsborough_(final_fantasy),4,7680,"[""aerith_gainsborough_(final_fantasy)"", ""aeris_gainsborough""]",False,False
+7866,tsukino_usagi_(sailor_moon),4,5583,"[""tsukino_usagi_(sailor_moon)""]",False,False
+434767,caesar_anthonio_zeppeli_(jojo_no_kimyou_na_bouken),4,5143,"[""caesar_anthonio_zeppeli_(jojo_no_kimyou_na_bouken)""]",False,False
+1533307,shirogane_noel_(hololive),4,5878,"[""shirogane_noel_(hololive)""]",False,False
+9071,amami_haruka_(idolmaster),4,5177,"[""amami_haruka_(idolmaster)""]",False,False
+1515171,sakura_miko_(hololive),4,7976,"[""sakura_miko_(hololive)""]",False,False
+1243757,sukuna_shinmyoumaru_(touhou),4,5114,"[""sukuna_shinmyoumaru_(touhou)""]",False,False
+510663,yoko_littner_(tengen_toppa_gurren_lagann),4,5049,"[""yoko_littner_(tengen_toppa_gurren_lagann)"", ""yoko_ritona""]",False,False
+638500,futatsuiwa_mamizou_(touhou),4,5105,"[""futatsuiwa_mamizou_(touhou)""]",False,False
+700403,akiyama_yukari_(girls_und_panzer),4,4997,"[""akiyama_yukari_(girls_und_panzer)""]",False,False
+383855,aki_shizuha_(touhou),4,5006,"[""aki_shizuha_(touhou)""]",False,False
+1518950,inugami_korone_(hololive),4,5832,"[""inugami_korone_(hololive)""]",False,False
+424565,shijou_takane_(idolmaster),4,4977,"[""shijou_takane_(idolmaster)""]",False,False
+12295,letty_whiterock_(touhou),4,4907,"[""letty_whiterock_(touhou)""]",False,False
+701140,komaeda_nagito_(danganronpa),4,6097,"[""komaeda_nagito_(danganronpa)""]",False,False
+1246753,senketsu_(kill_la_kill),4,4903,"[""senketsu_(kill_la_kill)""]",False,False
+593044,kousaka_honoka_(love_live!),4,0,"[""kousaka_honoka_(love_live!)""]",False,False
+466315,ash_ketchum_(pokemon),4,5215,"[""ash_ketchum_(pokemon)"", ""ash_(pokemon)"", ""satoshi_(pokemon)""]",False,False
+1549061,amane_kanata_(hololive),4,5791,"[""amane_kanata_(hololive)""]",False,False
+21,suigintou_(rozen_maiden),4,4745,"[""suigintou_(rozen_maiden)""]",False,False
+1316173,watanabe_you_(love_live!),4,5936,"[""watanabe_you_(love_live!)""]",False,False
+1502759,ookami_mio_(hololive),4,5785,"[""ookami_mio_(hololive)""]",False,False
+1248945,wo-class_aircraft_carrier_(kantai_collection),4,4624,"[""wo-class_aircraft_carrier_(kantai_collection)"", ""wo-class_(kantai_collection)""]",False,False
+1500247,oozora_subaru_(hololive),4,5822,"[""oozora_subaru_(hololive)""]",False,False
+422767,gumi_(vocaloid),4,4937,"[""gumi_(vocaloid)""]",False,False
+1231257,kiryuuin_satsuki_(kill_la_kill),4,4789,"[""kiryuuin_satsuki_(kill_la_kill)""]",False,False
+1328656,hecatia_lapislazuli_(touhou),4,4948,"[""hecatia_lapislazuli_(touhou)""]",False,False
+9072,kisaragi_chihaya_(idolmaster),4,4931,"[""kisaragi_chihaya_(idolmaster)""]",False,False
+9079,kikuchi_makoto_(idolmaster),4,4759,"[""kikuchi_makoto_(idolmaster)""]",False,False
+665139,shirasaka_koume_(idolmaster_cinderella_girls),4,4906,"[""shirasaka_koume_(idolmaster_cinderella_girls)""]",False,False
+1511455,yumemi_riamu_(idolmaster_cinderella_girls),4,5142,"[""yumemi_riamu_(idolmaster_cinderella_girls)""]",False,False
+9078,minase_iori_(idolmaster),4,4608,"[""minase_iori_(idolmaster)""]",False,False
+15550,morrigan_aensland_(darkstalkers),4,5676,"[""morrigan_aensland_(darkstalkers)""]",False,False
+422691,oshino_shinobu_(bakemonogatari),4,4994,"[""oshino_shinobu_(bakemonogatari)""]",False,False
+615222,hoshizora_rin_(love_live!),4,4541,"[""hoshizora_rin_(love_live!)""]",False,False
+1770073,nishikigi_chisato_(lycoris_recoil),4,6249,"[""nishikigi_chisato_(lycoris_recoil)""]",False,False
+1934883,oma_kokichi_(danganronpa),4,7050,"[""oma_kokichi_(danganronpa)"", ""ouma_kokichi""]",False,False
+1531312,uruha_rushia_(hololive),4,4431,"[""uruha_rushia_(hololive)""]",False,False
+660315,shimamura_uzuki_(idolmaster_cinderella_girls),4,4550,"[""shimamura_uzuki_(idolmaster_cinderella_girls)""]",False,False
+472979,saber_alter_(fate),4,4452,"[""saber_alter_(fate)"", ""black_saber"", ""dark_saber""]",False,False
+1292960,midoriya_izuku_(boku_no_hero_academia),4,5162,"[""midoriya_izuku_(boku_no_hero_academia)"", ""deku_(boku_no_hero_academia)""]",False,False
+1586173,yukihana_lamy_(hololive),4,5163,"[""yukihana_lamy_(hololive)""]",False,False
+13270,cammy_white_(street_fighter),4,4775,"[""cammy_white_(street_fighter)""]",False,False
+460796,ex-keine_(touhou),4,4341,"[""ex-keine_(touhou)"", ""ex_keine"", ""exkeine""]",False,False
+1586175,shishiro_botan_(hololive),4,5197,"[""shishiro_botan_(hololive)""]",False,False
+1719003,sakamata_chloe_(hololive),4,6006,"[""sakamata_chloe_(hololive)""]",False,False
+425446,ganaha_hibiki_(idolmaster),4,4311,"[""ganaha_hibiki_(idolmaster)""]",False,False
+1561704,higuchi_madoka_(idolmaster),4,5036,"[""higuchi_madoka_(idolmaster)""]",False,False
+1435314,oyama_mahiro_(onimai),4,5907,"[""oyama_mahiro_(onimai)""]",False,False
+701382,hinata_hajime_(danganronpa),4,5516,"[""hinata_hajime_(danganronpa)""]",False,False
+665166,takagaki_kaede_(idolmaster_cinderella_girls),4,4411,"[""takagaki_kaede_(idolmaster_cinderella_girls)""]",False,False
+1233049,sagisawa_fumika_(idolmaster_cinderella_girls),4,4365,"[""sagisawa_fumika_(idolmaster_cinderella_girls)""]",False,False
+16266,son_goku_(dragon_ball),4,5301,"[""son_goku_(dragon_ball)"", ""son_gokuu"", ""goku""]",False,False
+9750,asahina_mikuru_(suzumiya_haruhi),4,4222,"[""asahina_mikuru_(suzumiya_haruhi)""]",False,False
+1586112,frieren_(sousou_no_frieren),4,8849,"[""frieren_(sousou_no_frieren)""]",False,False
+1233712,wakasagihime_(touhou),4,4289,"[""wakasagihime_(touhou)""]",False,False
+646093,ultimate_madoka_(mahou_shoujo_madoka_magica),4,4395,"[""ultimate_madoka_(mahou_shoujo_madoka_magica)"", ""madokami"", ""goddess_madoka""]",False,False
+12257,ikari_shinji_(neon_genesis_evangelion),4,4532,"[""ikari_shinji_(neon_genesis_evangelion)""]",False,False
+1328609,kishin_sagume_(touhou),4,4220,"[""kishin_sagume_(touhou)""]",False,False
+1527899,kitagawa_marin_(sono_bisque_doll_wa_koi_wo_suru),4,4498,"[""kitagawa_marin_(sono_bisque_doll_wa_koi_wo_suru)""]",False,False
+1805355,suletta_mercury_(gundam),4,5924,"[""suletta_mercury_(gundam)"", ""protagonist_(gundam_suisei_no_majo)""]",False,False
+1934951,saihara_shuichi_(danganronpa),4,6153,"[""saihara_shuichi_(danganronpa)"", ""saihara_shuuichi""]",False,False
+592976,koizumi_hanayo_(love_live!),4,3954,"[""koizumi_hanayo_(love_live!)""]",False,False
+1491767,murasaki_shion_(hololive),4,4517,"[""murasaki_shion_(hololive)""]",False,False
+8882,lily_white_(touhou),4,4049,"[""lily_white_(touhou)""]",False,False
+670056,kuroki_tomoko_(watamote),4,4188,"[""kuroki_tomoko_(watamote)""]",False,False
+3030,mario_(super_mario),4,4898,"[""mario_(super_mario)""]",False,False
+664384,jougasaki_mika_(idolmaster_cinderella_girls),4,3923,"[""jougasaki_mika_(idolmaster_cinderella_girls)""]",False,False
+9075,takatsuki_yayoi_(idolmaster),4,3953,"[""takatsuki_yayoi_(idolmaster)""]",False,False
+9681,kyon_(suzumiya_haruhi),4,3918,"[""kyon_(suzumiya_haruhi)""]",False,False
+1493247,bowsette_(super_mario),4,3841,"[""bowsette_(super_mario)""]",False,False
+1292959,uraraka_ochako_(boku_no_hero_academia),4,0,"[""uraraka_ochako_(boku_no_hero_academia)""]",False,False
+1549082,kiryu_coco_(hololive),4,3877,"[""kiryu_coco_(hololive)"", ""kiryuu_coco""]",False,False
+1719009,la+_darknesss,4,4533,"[""la+_darknesss"", ""laplus_darknesss""]",False,False
+663994,kanzaki_ranko_(idolmaster_cinderella_girls),4,3808,"[""kanzaki_ranko_(idolmaster_cinderella_girls)""]",False,False
+11055,furude_rika_(higurashi_no_naku_koro_ni),4,3899,"[""furude_rika_(higurashi_no_naku_koro_ni)""]",False,False
+8048,sailor_moon_(sailor_moon),4,4004,"[""sailor_moon_(sailor_moon)"", ""sailormoon""]",False,False
+11853,haruno_sakura_(naruto),4,4099,"[""haruno_sakura_(naruto)""]",False,False
+700407,takebe_saori_(girls_und_panzer),4,3819,"[""takebe_saori_(girls_und_panzer)""]",False,False
+445932,eevee_(pokemon),4,4852,"[""eevee_(pokemon)""]",False,False
+1316172,tsushima_yoshiko_(love_live!),4,4070,"[""tsushima_yoshiko_(love_live!)""]",False,False
+620127,narukami_yuu_(persona),4,3872,"[""narukami_yuu_(persona)"", ""seta_souji"", ""protagonist_(persona4)"", ""protagonist_(persona_4)""]",False,False
+413714,kisume_(touhou),4,3671,"[""kisume_(touhou)""]",False,False
+1770074,inoue_takina_(lycoris_recoil),4,5125,"[""inoue_takina_(lycoris_recoil)""]",False,False
+593780,super_sonico_(sonico),4,3580,"[""super_sonico_(sonico)"", ""soniko"", ""sonico"", ""super_soniko""]",False,False
+1500246,nakiri_ayame_(hololive),4,4233,"[""nakiri_ayame_(hololive)""]",False,False
+1585359,seaport_princess_(kantai_collection),4,3554,"[""seaport_princess_(kantai_collection)"", ""seaport_hime""]",False,False
+1782917,kita_ikuyo_(bocchi_the_rock!),4,6517,"[""kita_ikuyo_(bocchi_the_rock!)""]",False,False
+1533296,shiranui_flare_(hololive),4,4195,"[""shiranui_flare_(hololive)""]",False,False
+1685270,hakos_baelz_(hololive),4,4719,"[""hakos_baelz_(hololive)""]",False,False
+1265245,ichinose_shiki_(idolmaster),4,3661,"[""ichinose_shiki_(idolmaster)""]",False,False
+14152,kakyoin_noriaki_(jojo_no_kimyou_na_bouken),4,3608,"[""kakyoin_noriaki_(jojo_no_kimyou_na_bouken)"", ""kakyouin_noriaki""]",False,False
+1159816,mirko_(boku_no_hero_academia),4,4658,"[""mirko_(boku_no_hero_academia)"", ""miruko_(boku_no_hero_academia)"", ""usagiyama_rumi""]",False,False
+687394,nitta_minami_(idolmaster_cinderella_girls),4,3556,"[""nitta_minami_(idolmaster_cinderella_girls)""]",False,False
+1480186,takarada_rikka_(ssss.gridman),4,3972,"[""takarada_rikka_(ssss.gridman)""]",False,False
+550231,gokou_ruri_(oreimo),4,3520,"[""gokou_ruri_(oreimo)"", ""kuroneko_(oreimo)""]",False,False
+1271042,kiana_kaslana_(honkai_impact),4,5204,"[""kiana_kaslana_(honkai_impact)""]",False,False
+1532725,edelgard_von_hresvelg_(fire_emblem),4,4161,"[""edelgard_von_hresvelg_(fire_emblem)""]",False,False
+413395,kujo_jolyne_(jojo_no_kimyou_na_bouken),4,3633,"[""kujo_jolyne_(jojo_no_kimyou_na_bouken)"", ""cujoh_jolyne"", ""kuujou_jolyne""]",False,False
+633863,tachibana_arisu_(idolmaster_cinderella_girls),4,3931,"[""tachibana_arisu_(idolmaster_cinderella_girls)""]",False,False
+12309,medicine_melancholy_(touhou),4,3603,"[""medicine_melancholy_(touhou)""]",False,False
+1317066,doremy_sweet_(touhou),4,3588,"[""doremy_sweet_(touhou)""]",False,False
+1509453,fu_hua_(honkai_impact),4,4596,"[""fu_hua_(honkai_impact)""]",False,False
+662047,sanya_v._litvyak_(World Witches Series),4,3378,"[""sanya_v._litvyak_(World Witches Series)"", ""sanya_v_litvyak""]",False,False
+634453,barnaby_brooks_jr._(tiger_&_bunny),4,3346,"[""barnaby_brooks_jr._(tiger_&_bunny)"", ""barnaby_brooks_jr""]",False,False
+12296,lunasa_prismriver_(touhou),4,3451,"[""lunasa_prismriver_(touhou)""]",False,False
+413396,giorno_giovanna_(jojo_no_kimyou_na_bouken),4,3555,"[""giorno_giovanna_(jojo_no_kimyou_na_bouken)""]",False,False
+1316171,sakurauchi_riko_(love_live!),4,3811,"[""sakurauchi_riko_(love_live!)""]",False,False
+1054766,chloe_von_einzbern_(fate),4,3748,"[""chloe_von_einzbern_(fate)"", ""kuro_(fate/kaleid_liner)""]",False,False
+1499605,natsuiro_matsuri_(hololive),4,3702,"[""natsuiro_matsuri_(hololive)""]",False,False
+421104,eila_ilmatar_juutilainen_(strike_witches),4,3326,"[""eila_ilmatar_juutilainen_(strike_witches)""]",False,False
+12355,uzumaki_naruto_(naruto),4,3714,"[""uzumaki_naruto_(naruto)""]",False,False
+1292961,bakugou_katsuki_(boku_no_hero_academia),4,4060,"[""bakugou_katsuki_(boku_no_hero_academia)""]",False,False
+407911,jonathan_joestar_(jojo_no_kimyou_na_bouken),4,3324,"[""jonathan_joestar_(jojo_no_kimyou_na_bouken)""]",False,False
+1805391,miorine_rembran_(gundam),4,5209,"[""miorine_rembran_(gundam)""]",False,False
+1678980,sangonomiya_kokomi_(genshin_impact),4,3856,"[""sangonomiya_kokomi_(genshin_impact)"", ""kokomi_(genshin_impact)""]",False,False
+1317065,usami_sumireko_(touhou),4,3402,"[""usami_sumireko_(touhou)""]",False,False
+649985,kaburagi_t._kotetsu_(Tiger & Bunny),4,3233,"[""kaburagi_t._kotetsu_(Tiger & Bunny)"", ""kaburagi_t_kotetsu"", ""kotetsu_t_kaburagi""]",False,False
+8553,yagami_hayate_(mahou_shoujo_lyrical_nanoha),4,3298,"[""yagami_hayate_(mahou_shoujo_lyrical_nanoha)"", ""hayate_yagami""]",False,False
+539110,yuki_miku_(vocaloid),4,3540,"[""yuki_miku_(vocaloid)"", ""snow_miku""]",False,False
+12107,kotomine_kirei_(fate),4,3293,"[""kotomine_kirei_(fate)""]",False,False
+563892,kirito_(sword_art_online),4,3288,"[""kirito_(sword_art_online)"", ""kirigaya_kazuto""]",False,False
+620175,mikasa_ackerman_(shingeki_no_kyojin),4,3575,"[""mikasa_ackerman_(shingeki_no_kyojin)""]",False,False
+1782915,ijichi_nijika_(bocchi_the_rock!),4,5341,"[""ijichi_nijika_(bocchi_the_rock!)""]",False,False
+1525541,gojou_satoru_(jujutsu_kaisen),4,4111,"[""gojou_satoru_(jujutsu_kaisen)""]",False,False
+382076,hiiragi_tsukasa_(lucky_star),4,3335,"[""hiiragi_tsukasa_(lucky_star)""]",False,False
+1468120,nakano_nino_(go-toubun_no_hanayome),4,3834,"[""nakano_nino_(go-toubun_no_hanayome)""]",False,False
+660098,futaba_anzu_(idolmaster_cinderella_girls),4,3525,"[""futaba_anzu_(idolmaster_cinderella_girls)""]",False,False
+1342592,shimada_arisu_(girls_und_panzer),4,3344,"[""shimada_arisu_(girls_und_panzer)""]",False,False
+665397,koshimizu_sachiko_(idolmaster_cinderella_girls),4,3377,"[""koshimizu_sachiko_(idolmaster_cinderella_girls)""]",False,False
+711691,motoori_kosuzu_(touhou),4,3418,"[""motoori_kosuzu_(touhou)""]",False,False
+1524970,reisalin_stout_(atelier),4,3717,"[""reisalin_stout_(atelier)"", ""ryza""]",False,False
+437574,shirai_kuroko_(toaru_majutsu_no_index),4,3418,"[""shirai_kuroko_(toaru_majutsu_no_index)""]",False,False
+13543,hyuuga_hinata_(naruto),4,3486,"[""hyuuga_hinata_(naruto)""]",False,False
+419123,shirogane_naoto_(persona),4,3222,"[""shirogane_naoto_(persona)""]",False,False
+527774,monkey_d._luffy_(One Piece),4,5048,"[""monkey_d._luffy_(One Piece)"", ""monkey_d_luffy""]",False,False
+11349,ryuuguu_rena_(higurashi_no_naku_koro_ni),4,3329,"[""ryuuguu_rena_(higurashi_no_naku_koro_ni)"", ""ryuugu_rena""]",False,False
+1240694,ruby_rose_(rwby),4,3293,"[""ruby_rose_(rwby)"", ""ruby_(rwby)""]",False,False
+403357,nia_teppelin_(tengen_toppa_gurren_lagann),4,3112,"[""nia_teppelin_(tengen_toppa_gurren_lagann)""]",False,False
+12514,shiranui_mai_(fatal_fury),4,4113,"[""shiranui_mai_(fatal_fury)""]",False,False
+8956,star_sapphire_(touhou),4,3331,"[""star_sapphire_(touhou)"", ""starlight_starsapphire""]",False,False
+1276066,hoto_cocoa_(gochuumon_wa_usagi_desu_ka?),4,3166,"[""hoto_cocoa_(gochuumon_wa_usagi_desu_ka?)""]",False,False
+1452972,yorigami_shion_(touhou),4,3413,"[""yorigami_shion_(touhou)""]",False,False
+398775,sheryl_nome_(macross),4,3052,"[""sheryl_nome_(macross)"", ""sheryl_noam""]",False,False
+375279,waver_velvet_(fate),4,3123,"[""waver_velvet_(fate)""]",False,False
+1283598,bronya_zaychik_(honkai_impact),4,3782,"[""bronya_zaychik_(honkai_impact)""]",False,False
+1685269,ceres_fauna_(hololive),4,4768,"[""ceres_fauna_(hololive)""]",False,False
+411462,aisaka_taiga_(toradora!),4,3216,"[""aisaka_taiga_(toradora!)""]",False,False
+407910,higashikata_josuke_(jojo_no_kimyou_na_bouken),4,3097,"[""higashikata_josuke_(jojo_no_kimyou_na_bouken)"", ""higashikata_jousuke""]",False,False
+1443053,nakano_miku_(go-toubun_no_hanayome),4,3546,"[""nakano_miku_(go-toubun_no_hanayome)""]",False,False
+9077,miura_azusa_(idolmaster),4,3115,"[""miura_azusa_(idolmaster)""]",False,False
+1316036,takami_chika_(love_live!),4,3507,"[""takami_chika_(love_live!)""]",False,False
+721694,tatsumaki_(one_punch_man),4,3654,"[""tatsumaki_(one_punch_man)"", ""terrible_tornado""]",False,False
+663996,jougasaki_rika_(idolmaster_cinderella_girls),4,3164,"[""jougasaki_rika_(idolmaster_cinderella_girls)""]",False,False
+1448715,kizuna_akari_(vocaloid),4,3510,"[""kizuna_akari_(vocaloid)""]",False,False
+700406,reizei_mako_(girls_und_panzer),4,3051,"[""reizei_mako_(girls_und_panzer)""]",False,False
+16122,nico_robin_(one_piece),4,4425,"[""nico_robin_(one_piece)""]",False,False
+1675937,kaedehara_kazuha_(genshin_impact),4,3759,"[""kaedehara_kazuha_(genshin_impact)"", ""kazuha_(genshin_impact)""]",False,False
+9074,hagiwara_yukiho_(idolmaster),4,3047,"[""hagiwara_yukiho_(idolmaster)""]",False,False
+761961,weiss_schnee_(rwby),4,3131,"[""weiss_schnee_(rwby)""]",False,False
+8955,luna_child_(touhou),4,3084,"[""luna_child_(touhou)"", ""moonlight_lunarchild""]",False,False
+664492,maekawa_miku_(idolmaster_cinderella_girls),4,3006,"[""maekawa_miku_(idolmaster_cinderella_girls)""]",False,False
+1515525,mayuzumi_fuyuko_(idolmaster_cinderella_girls),4,3396,"[""mayuzumi_fuyuko_(idolmaster_cinderella_girls)""]",False,False
+508752,pyonta_(touhou),4,3095,"[""pyonta_(touhou)""]",False,False
+344358,roronoa_zoro_(one_piece),4,4230,"[""roronoa_zoro_(one_piece)""]",False,False
+476837,holo_(spice_and_wolf),4,3383,"[""holo_(spice_and_wolf)"", ""horo""]",False,False
+1262414,izumi_sagiri_(eromanga_sensei),4,2905,"[""izumi_sagiri_(eromanga_sensei)""]",False,False
+406263,satonaka_chie_(persona),4,2989,"[""satonaka_chie_(persona)""]",False,False
+2075923,octoling_player_character_(splatoon),4,4657,"[""octoling_player_character_(splatoon)"", ""octoling""]",False,False
+1271044,raiden_mei_(honkai_impact),4,4051,"[""raiden_mei_(honkai_impact)""]",False,False
+758462,kirigiri_kyoko_(danganronpa),4,3665,"[""kirigiri_kyoko_(danganronpa)"", ""kirigiri_kyouko""]",False,False
+466393,lelouch_vi_britannia_(code_geass),4,2948,"[""lelouch_vi_britannia_(code_geass)"", ""lelouch_lamperouge"", ""lelouch""]",False,False
+8954,sunny_milk_(touhou),4,3009,"[""sunny_milk_(touhou)"", ""sunlight_sunnymilk""]",False,False
+626945,shokuhou_misaki_(toaru_majutsu_no_index),4,3287,"[""shokuhou_misaki_(toaru_majutsu_no_index)""]",False,False
+1246772,mankanshoku_mako_(kill_la_kill),4,2895,"[""mankanshoku_mako_(kill_la_kill)""]",False,False
+401823,sonic_the_hedgehog_(sonic_the_hedgehog),4,4031,"[""sonic_the_hedgehog_(sonic_the_hedgehog)"", ""sonic""]",False,False
+660394,midorikawa_nao_(idolmaster_cinderella_girls),4,2839,"[""midorikawa_nao_(idolmaster_cinderella_girls)""]",False,False
+378867,dark_magician_girl_(yu-gi-oh!),4,3269,"[""dark_magician_girl_(yu-gi-oh!)"", ""black_magician_girl""]",False,False
+9076,akizuki_ritsuko_(idolmaster),4,2859,"[""akizuki_ritsuko_(idolmaster)""]",False,False
+660393,kise_yayoi_(idolmaster_cinderella_girls),4,2790,"[""kise_yayoi_(idolmaster_cinderella_girls)""]",False,False
+527779,han_juri_(street_fighter),4,3363,"[""han_juri_(street_fighter)"", ""juri_han""]",False,False
+510605,makise_kurisu_(steins_gate),4,3117,"[""makise_kurisu_(steins_gate)"", ""christina_(steins;gate)""]",False,False
+1387675,kamado_nezuko_(kimetsu_no_yaiba),4,2961,"[""kamado_nezuko_(kimetsu_no_yaiba)""]",False,False
+1452342,amamiya_ren_(persona),4,3525,"[""amamiya_ren_(persona)"", ""joker_(persona_5)"", ""protagonist_(persona_5)"", ""kurusu_akira""]",False,False
+12405,nagisa_kaworu_(neon_genesis_evangelion),4,3087,"[""nagisa_kaworu_(neon_genesis_evangelion)"", ""tabris_(evangelion)""]",False,False
+1762231,kirima_syaro_(gochuumon_wa_usagi_desu_ka?),4,2839,"[""kirima_syaro_(gochuumon_wa_usagi_desu_ka?)"", ""kirima_sharo""]",False,False
+466559,kouzuki_kallen_(code_geass),4,2873,"[""kouzuki_kallen_(code_geass)"", ""kallen_stadtfeld"", ""kouzuki_karen"", ""kallen""]",False,False
+1964868,yamada_ryo_(bocchi_the_rock!),4,4587,"[""yamada_ryo_(bocchi_the_rock!)"", ""yamada_ryou""]",False,False
+473279,unzan_(touhou),4,2734,"[""unzan_(touhou)""]",False,False
+601487,enoshima_junko_(danganronpa),4,3451,"[""enoshima_junko_(danganronpa)""]",False,False
+471219,kousaka_kirino_(oreimo),4,2744,"[""kousaka_kirino_(oreimo)""]",False,False
+11053,houjou_satoko_(higurashi_no_naku_koro_ni),4,2853,"[""houjou_satoko_(higurashi_no_naku_koro_ni)""]",False,False
+700933,hayami_kanade_(idolmaster_cinderella_girls),4,2826,"[""hayami_kanade_(idolmaster_cinderella_girls)""]",False,False
+1236625,eren_yeager_(shingeki_no_kyojin),4,3026,"[""eren_yeager_(shingeki_no_kyojin)"", ""eren_jaeger""]",False,False
+438339,rotom_(pokemon),4,3293,"[""rotom_(pokemon)""]",False,False
+12094,arcueid_brunestud_(tsukihime),4,3286,"[""arcueid_brunestud_(tsukihime)"", ""arcueid""]",False,False
+499269,miyu_edelfelt_(fate),4,2899,"[""miyu_edelfelt_(fate)""]",False,False
+414822,miyafuji_yoshika_(strike_witches),4,2654,"[""miyafuji_yoshika_(strike_witches)""]",False,False
+658637,chitanda_eru_(hyouka),4,2667,"[""chitanda_eru_(hyouka)""]",False,False
+1398811,kanna_kamui_(kobayashi-san_chi_no_maid_dragon),4,2838,"[""kanna_kamui_(kobayashi-san_chi_no_maid_dragon)""]",False,False
+12112,emiya_kiritsugu_(fate),4,2713,"[""emiya_kiritsugu_(fate)""]",False,False
+414823,erica_hartmann_(strike_witches),4,2610,"[""erica_hartmann_(strike_witches)""]",False,False
+1452975,yorigami_jo'on_(touhou),4,2875,"[""yorigami_jo'on_(touhou)""]",False,False
+1464778,nakano_yotsuba_(go-toubun_no_hanayome),4,3148,"[""nakano_yotsuba_(go-toubun_no_hanayome)""]",False,False
+438007,kamijou_touma_(toaru_majutsu_no_index),4,2653,"[""kamijou_touma_(toaru_majutsu_no_index)"", ""kamijo_touma""]",False,False
+717140,hishikawa_rikka_(chuunibyou),4,2550,"[""hishikawa_rikka_(chuunibyou)""]",False,False
+1366306,rowlet_(pokemon),4,2927,"[""rowlet_(pokemon)""]",False,False
+670005,yukine_chris_(senki_zesshou_symphogear),4,2703,"[""yukine_chris_(senki_zesshou_symphogear)""]",False,False
+12297,merlin_prismriver_(touhou),4,2588,"[""merlin_prismriver_(touhou)""]",False,False
+12564,uchiha_sasuke_(naruto),4,2915,"[""uchiha_sasuke_(naruto)""]",False,False
+1481047,akai_haato_(hololive),4,2650,"[""akai_haato_(hololive)"", ""haachama""]",False,False
+10284,asakura_ryouko_(suzumiya_haruhi),4,0,"[""asakura_ryouko_(suzumiya_haruhi)"", ""/ar"", ""asakura_ryoko""]",False,False
+554006,tachibana_kanade_(angel_beats!),4,2523,"[""tachibana_kanade_(angel_beats!)"", ""tenshi_(angel_beats!)"", ""angel_(angel_beats!)"", ""tenshi_(angel_beats)""]",False,False
+4587,shana_(shakugan_no_shana),4,2517,"[""shana_(shakugan_no_shana)""]",False,False
+9081,futami_mami_(idolmaster),4,2542,"[""futami_mami_(idolmaster)""]",False,False
+482064,makinami_mari_illustrious_(neon_genesis_evangelion),4,2562,"[""makinami_mari_illustrious_(neon_genesis_evangelion)"", ""mari_(evangelion)""]",False,False
+660390,aoki_reika_(idolmaster_cinderella_girls),4,2533,"[""aoki_reika_(idolmaster_cinderella_girls)""]",False,False
+420872,gertrud_barkhorn_(strike_witches),4,2483,"[""gertrud_barkhorn_(strike_witches)""]",False,False
+12298,lyrica_prismriver_(touhou),4,2527,"[""lyrica_prismriver_(touhou)""]",False,False
+1719005,hakui_koyori_(hololive),4,3374,"[""hakui_koyori_(hololive)""]",False,False
+394317,rosalina_(super_mario),4,3030,"[""rosalina_(super_mario)"", ""rosetta_(mario)"", ""rosalina_(mario)"", ""princess_rosalina""]",False,False
+394054,louise_francoise_le_blanc_de_la_valliere_(zero_no_tsukaima),4,2425,"[""louise_francoise_le_blanc_de_la_valliere_(zero_no_tsukaima)"", ""louise_francoise"", ""/lv""]",False,False
+1341257,toga_himiko_(boku_no_hero_academia),4,2881,"[""toga_himiko_(boku_no_hero_academia)""]",False,False
+1459161,tsukino_mito_(2.5_jigen_no_rikyuu),4,3253,"[""tsukino_mito_(2.5_jigen_no_rikyuu)""]",False,False
+573907,blue_oak_(pokemon),4,2768,"[""blue_oak_(pokemon)"", ""green_oak"", ""ookido_green""]",False,False
+1634527,arima_kana_(oshi_no_bushi),4,3008,"[""arima_kana_(oshi_no_bushi)""]",False,False
+1525544,itadori_yuuji_(jujutsu_kaisen),4,3081,"[""itadori_yuuji_(jujutsu_kaisen)""]",False,False
+700404,isuzu_hana_(girls_und_panzer),4,2421,"[""isuzu_hana_(girls_und_panzer)""]",False,False
+1432299,matara_okina_(touhou),4,2688,"[""matara_okina_(touhou)""]",False,False
+1817174,inkling_boy_(splatoon),4,3159,"[""inkling_boy_(splatoon)""]",False,False
+1255756,t-head_admiral_(Azur_Lane),4,2409,"[""t-head_admiral_(Azur_Lane)""]",False,False
+436994,sakurai_momoka_(idolmaster_cinderella_girls),4,2756,"[""sakurai_momoka_(idolmaster_cinderella_girls)""]",False,False
+409162,senjougahara_hitagi_(bakemonogatari),4,2679,"[""senjougahara_hitagi_(bakemonogatari)""]",False,False
+454513,hanekawa_tsubasa_(bakemonogatari),4,2507,"[""hanekawa_tsubasa_(bakemonogatari)""]",False,False
+395970,ranka_lee_(macross),4,2353,"[""ranka_lee_(macross)""]",False,False
+549180,kashiwazaki_sena_(boku_wa_tomodachi_ga_sukunai),4,2354,"[""kashiwazaki_sena_(boku_wa_tomodachi_ga_sukunai)""]",False,False
+1267920,re-class_battleship_(Kancolle),4,2313,"[""re-class_battleship_(Kancolle)""]",False,False
+1549045,tsunomaki_watame_(hololive),4,2770,"[""tsunomaki_watame_(hololive)""]",False,False
+385134,ushiromiya_battler_(umineko_no_naku_koro_ni),4,2310,"[""ushiromiya_battler_(umineko_no_naku_koro_ni)""]",False,False
+1257126,p-head_producer_(idolmaster),4,2687,"[""p-head_producer_(idolmaster)""]",False,False
+99,shinku_(rozen_maiden),4,2382,"[""shinku_(rozen_maiden)""]",False,False
+772426,ohtsuki_yui_(idolmaster_cinderella_girls),4,2545,"[""ohtsuki_yui_(idolmaster_cinderella_girls)"", ""ootsuki_yui""]",False,False
+1234829,yang_xiao_long_(rwby),4,2570,"[""yang_xiao_long_(rwby)""]",False,False
+1316167,kurosawa_dia_(love_live!),4,2630,"[""kurosawa_dia_(love_live!)""]",False,False
+1316169,matsuura_kanan_(love_live!),4,2757,"[""matsuura_kanan_(love_live!)"", ""matsuura_kana""]",False,False
+386434,piplup_(pokemon),4,2676,"[""piplup_(pokemon)""]",False,False
+403861,kyonko_(suzumiya_haruhi),4,2347,"[""kyonko_(suzumiya_haruhi)""]",False,False
+1586177,omaru_polka_(hololive),4,2870,"[""omaru_polka_(hololive)""]",False,False
+1384409,akamatsu_kaede_(danganronpa),4,3721,"[""akamatsu_kaede_(danganronpa)""]",False,False
+615600,toshinou_kyouko_(yuru_yuri),4,2292,"[""toshinou_kyouko_(yuru_yuri)"", ""tashinou_kyouko""]",False,False
+1402355,kagari_atsuko_(little_witch_academia),4,2379,"[""kagari_atsuko_(little_witch_academia)"", ""akko_kagari""]",False,False
+445847,charizard_(pokemon),4,2709,"[""charizard_(pokemon)""]",False,False
+1250847,junketsu_(kill_la_kill),4,2392,"[""junketsu_(kill_la_kill)""]",False,False
+598066,houjou_hibiki_(senki_zesshou_symphogear),4,2243,"[""houjou_hibiki_(senki_zesshou_symphogear)""]",False,False
+1252196,akuma_homura_(mahou_shoujo_madoka_magica),4,2429,"[""akuma_homura_(mahou_shoujo_madoka_magica)""]",False,False
+1719006,kazama_iroha_(hololive),4,3099,"[""kazama_iroha_(hololive)""]",False,False
+4906,lum_(urusei_yatsura),4,2648,"[""lum_(urusei_yatsura)""]",False,False
+1789597,asakura_toru_(idolmaster),4,2643,"[""asakura_toru_(idolmaster)"", ""asakura_tooru""]",False,False
+9080,futami_ami_(idolmaster),4,2284,"[""futami_ami_(idolmaster)""]",False,False
+666034,akagi_miria_(idolmaster_cinderella_girls),4,2444,"[""akagi_miria_(idolmaster_cinderella_girls)""]",False,False
+1388692,touhoku_kiritan_(vocaloid),4,3126,"[""touhoku_kiritan_(vocaloid)""]",False,False
+171918,android_18_(dragon_ball),4,2488,"[""android_18_(dragon_ball)""]",False,False
+1316166,kunikida_hanamaru_(love_live!),4,2435,"[""kunikida_hanamaru_(love_live!)""]",False,False
+662472,takanashi_rikka_(chuunibyou),4,2241,"[""takanashi_rikka_(chuunibyou)""]",False,False
+1525545,fushiguro_megumi_(jujutsu_kaisen),4,2786,"[""fushiguro_megumi_(jujutsu_kaisen)""]",False,False
+476084,saten_ruiko_(toaru_kagaku_no_railgun),4,2433,"[""saten_ruiko_(toaru_kagaku_no_railgun)""]",False,False
+1408667,kochou_shinobu_(kimetsu_no_yaiba),4,2446,"[""kochou_shinobu_(kimetsu_no_yaiba)""]",False,False
+12106,kousaka_tamaki_(idolmaster_cinderella_girls),4,2161,"[""kousaka_tamaki_(idolmaster_cinderella_girls)""]",False,False
+717136,aida_mana_(dokidoki_precure),4,2177,"[""aida_mana_(dokidoki_precure)""]",False,False
+416172,kujikawa_rise_(persona),4,2304,"[""kujikawa_rise_(persona)""]",False,False
+1459170,hachimiya_meguru_(idolmaster),4,2428,"[""hachimiya_meguru_(idolmaster)""]",False,False
+1533460,lysithea_von_ordelia_(fire_emblem),4,2353,"[""lysithea_von_ordelia_(fire_emblem)"", ""lysithea_von_cordelia""]",False,False
+1251354,phosphophyllite_(houseki_no_kuni),4,2342,"[""phosphophyllite_(houseki_no_kuni)""]",False,False
+405240,amagi_yukiko_(persona),4,2195,"[""amagi_yukiko_(persona)""]",False,False
+1533066,hilda_valentine_goneril_(fire_emblem),4,2456,"[""hilda_valentine_goneril_(fire_emblem)""]",False,False
+691541,perrine_h._clostermann,4,2160,"[""perrine_h._clostermann"", ""perrine_h_clostermann""]",False,False
+713449,morikubo_nono_(idolmaster_cinderella_girls),4,2278,"[""morikubo_nono_(idolmaster_cinderella_girls)""]",False,False
+1386288,harukawa_maki_(danganronpa),4,2929,"[""harukawa_maki_(danganronpa)""]",False,False
+599208,charlotte_e._yeager,4,2165,"[""charlotte_e._yeager"", ""charlotte_e_yeager""]",False,False
+16066,raising_heart_(mahou_shoujo_lyrical_nanoha),4,2252,"[""raising_heart_(mahou_shoujo_lyrical_nanoha)"", ""raging_heart""]",False,False
+426767,ikamusume_(squid_girl),4,2150,"[""ikamusume_(squid_girl)"", ""ika_musume""]",False,False
+530171,kurumi_erika_(idolmaster_cinderella_girls),4,2179,"[""kurumi_erika_(idolmaster_cinderella_girls)""]",False,False
+663681,honda_mio_(idolmaster_cinderella_girls),4,2147,"[""honda_mio_(idolmaster_cinderella_girls)""]",False,False
+399582,lucario_(pokemon),4,2651,"[""lucario_(pokemon)""]",False,False
+1585360,battleship_princess_(kantai_collection),4,2066,"[""battleship_princess_(kantai_collection)"", ""battleship_hime"", ""battleship-symbiotic_hime""]",False,False
+610107,akaza_akari_(yuru_yuri),4,2110,"[""akaza_akari_(yuru_yuri)""]",False,False
+1561724,fukumaru_koito_(love_live!),4,2328,"[""fukumaru_koito_(love_live!)""]",False,False
+660392,hoshizora_miyuki_(idolmaster_cinderella_girls),4,2098,"[""hoshizora_miyuki_(idolmaster_cinderella_girls)""]",False,False
+1534338,kicchou_yachie_(touhou),4,2563,"[""kicchou_yachie_(touhou)""]",False,False
+41,suiseiseki_(rozen_maiden),4,2134,"[""suiseiseki_(rozen_maiden)""]",False,False
+1227373,sessyoin_kiara_(fate),4,2525,"[""sessyoin_kiara_(fate)"", ""sesshouin_kiara""]",False,False
+11050,sonozaki_mion_(higurashi_no_naku_koro_ni),4,2150,"[""sonozaki_mion_(higurashi_no_naku_koro_ni)""]",False,False
+1316168,kurosawa_ruby_(love_live!),4,2395,"[""kurosawa_ruby_(love_live!)""]",False,False
+1524282,lio_fotia_(promare),4,2195,"[""lio_fotia_(promare)""]",False,False
+543959,sakura_miku_(vocaloid),4,2408,"[""sakura_miku_(vocaloid)""]",False,False
+16082,ryougi_shiki_(kara_no_kyoukai),4,2240,"[""ryougi_shiki_(kara_no_kyoukai)""]",False,False
+565443,shinjou_akane_(ssss.gridman),4,2272,"[""shinjou_akane_(ssss.gridman)""]",False,False
+414820,lynette_bishop_(strike_witches),4,2098,"[""lynette_bishop_(strike_witches)""]",False,False
+1654886,kudamaki_tsukasa_(touhou),4,2464,"[""kudamaki_tsukasa_(touhou)""]",False,False
+1346647,shinomiya_kaguya_(kaguya-sama_wa_kokurasetai),4,2300,"[""shinomiya_kaguya_(kaguya-sama_wa_kokurasetai)""]",False,False
+1533350,morpeko_(pokemon),4,2291,"[""morpeko_(pokemon)""]",False,False
+1542542,higashiyama_kobeni_(dance_dance_dance),4,2382,"[""higashiyama_kobeni_(dance_dance_dance)""]",False,False
+408655,kasane_teto_(vocaloid),4,7962,"[""kasane_teto_(vocaloid)""]",False,False
+1586174,momosuzu_nene_(hololive),4,2475,"[""momosuzu_nene_(hololive)""]",False,False
+664082,miyamoto_frederica_(idolmaster_cinderella_girls),4,2093,"[""miyamoto_frederica_(idolmaster_cinderella_girls)""]",False,False
+14180,lilith_aensland_(darkstalkers),4,0,"[""lilith_aensland_(darkstalkers)""]",False,False
+1255499,satou_kazuma_(kono_subarashii_sekai_ni_shukufuku_wo!),4,2603,"[""satou_kazuma_(kono_subarashii_sekai_ni_shukufuku_wo!)""]",False,False
+1406537,shima_rin_(yuru_camp),4,2153,"[""shima_rin_(yuru_camp)""]",False,False
+7914,mizuno_ami_(sailor_moon),4,2198,"[""mizuno_ami_(sailor_moon)""]",False,False
+1239637,jakuzure_nonon_(kill_la_kill),4,1981,"[""jakuzure_nonon_(kill_la_kill)""]",False,False
+1292966,asui_tsuyu_(boku_no_hero_academia),4,2148,"[""asui_tsuyu_(boku_no_hero_academia)"", ""froppy_(boku_no_hero_academia)""]",False,False
+10546,vegeta_(dragon_ball),4,2466,"[""vegeta_(dragon_ball)""]",False,False
+1425456,seele_vollerei_(honkai_impact),4,2534,"[""seele_vollerei_(honkai_impact)""]",False,False
+1678981,kujou_sara_(genshin_impact),4,2148,"[""kujou_sara_(genshin_impact)"", ""kujou_sara_(genshin_impact)""]",False,False
+7477,noumi_kudryavka_(little_busters!),4,1983,"[""noumi_kudryavka_(little_busters!)""]",False,False
+1629435,krista_lenz_(shingeki_no_kyojin),4,1985,"[""krista_lenz_(shingeki_no_kyojin)"", ""historia_reiss"", ""christa_renz""]",False,False
+1160566,blake_belladonna_(rwby),4,2134,"[""blake_belladonna_(rwby)""]",False,False
+1517401,lize_helesta_(nijisanji),4,2538,"[""lize_helesta_(nijisanji)""]",False,False
+1239070,akatsuki_kirika_(senki_zesshou_symphogear),4,2067,"[""akatsuki_kirika_(senki_zesshou_symphogear)""]",False,False
+713731,tedeza_rize_(gochuumon_wa_usagi_desu_ka?),4,1978,"[""tedeza_rize_(gochuumon_wa_usagi_desu_ka?)""]",False,False
+384405,irisviel_von_einzbern_(fate),4,2041,"[""irisviel_von_einzbern_(fate)""]",False,False
+1268743,ujimatsu_chiya_(gochuumon_wa_usagi_desu_ka?),4,1960,"[""ujimatsu_chiya_(gochuumon_wa_usagi_desu_ka?)""]",False,False
+7794,aino_minako_(sailor_moon),4,2168,"[""aino_minako_(sailor_moon)""]",False,False
+445901,gengar_(pokemon),4,2405,"[""gengar_(pokemon)""]",False,False
+1387748,katsuki_yuuri_(yuri_on_ice),4,1905,"[""katsuki_yuuri_(yuri_on_ice)""]",False,False
+700409,tsumiki_mikan_(danganronpa),4,2379,"[""tsumiki_mikan_(danganronpa)""]",False,False
+433649,johnny_joestar_(jojo_no_kimyou_na_bouken),4,1961,"[""johnny_joestar_(jojo_no_kimyou_na_bouken)""]",False,False
+1387712,viktor_nikiforov_(yuri_on_ice),4,1882,"[""viktor_nikiforov_(yuri_on_ice)""]",False,False
+383738,vivio_(mahou_shoujo_lyrical_nanoha),4,1897,"[""vivio_(mahou_shoujo_lyrical_nanoha)"", ""takamachi_vivio""]",False,False
+1403842,chiyoda_momo_(idolmaster),4,2040,"[""chiyoda_momo_(idolmaster)""]",False,False
+1657251,elira_pendora_(nijisanji),4,2053,"[""elira_pendora_(nijisanji)""]",False,False
+301250,yae_sakura_(toaru_majutsu_no_index),4,2140,"[""yae_sakura_(toaru_majutsu_no_index)""]",False,False
+753977,sinon_(sword_art_online),4,1983,"[""sinon_(sword_art_online)"", ""shinon_(sao)""]",False,False
+681874,shiomi_syuko_(persona),4,1970,"[""shiomi_syuko_(persona)"", ""shiomi_shuuko""]",False,False
+1581062,shiomi_kotone_(persona),4,2201,"[""shiomi_kotone_(persona)"", ""female_protagonist_(persona_3)"", ""/fpp3""]",False,False
+8276,bardiche_(mahou_shoujo_lyrical_nanoha),4,0,"[""bardiche_(mahou_shoujo_lyrical_nanoha)""]",False,False
+601490,monokuma_(danganronpa),4,2340,"[""monokuma_(danganronpa)""]",False,False
+1459802,shirase_sakuya_(idolmaster),4,2077,"[""shirase_sakuya_(idolmaster)""]",False,False
+716185,nishizumi_shiho_(girls_und_panzer),4,2070,"[""nishizumi_shiho_(girls_und_panzer)""]",False,False
+628777,yuzuriha_inori_(guilty_crown),4,1876,"[""yuzuriha_inori_(guilty_crown)""]",False,False
+1300728,oumae_kumiko_(hibike_euphonium),4,2264,"[""oumae_kumiko_(hibike_euphonium)""]",False,False
+382079,takara_miyuki_(lucky_star),4,1869,"[""takara_miyuki_(lucky_star)""]",False,False
+717139,kenzaki_makoto_(idolmaster_cinderella_girls),4,1797,"[""kenzaki_makoto_(idolmaster_cinderella_girls)""]",False,False
+1243759,horikawa_raiko_(touhou),4,1909,"[""horikawa_raiko_(touhou)""]",False,False
+10146,koizumi_itsuki_(suzumiya_haruhi),4,1871,"[""koizumi_itsuki_(suzumiya_haruhi)""]",False,False
+1675744,selen_tatsuki_(virtual_youtuber),4,1999,"[""selen_tatsuki_(virtual_youtuber)""]",False,False
+1536889,kanroji_mitsuri_(kimetsu_no_yaiba),4,2135,"[""kanroji_mitsuri_(kimetsu_no_yaiba)"", ""kanroji_matsuri""]",False,False
+1421907,komi_shouko_(komi-san_wa_komyushou_desu),4,2040,"[""komi_shouko_(komi-san_wa_komyushou_desu)""]",False,False
+361258,ranma-chan_(ranma_1/2),4,2544,"[""ranma-chan_(ranma_1/2)""]",False,False
+399147,yowane_haku_(vocaloid),4,1809,"[""yowane_haku_(vocaloid)""]",False,False
+13036,misumi_nagisa_(futari_wa_precure),4,1895,"[""misumi_nagisa_(futari_wa_precure)""]",False,False
+1266581,ramlethal_valentine_(guilty_gear),4,1914,"[""ramlethal_valentine_(guilty_gear)"", ""ramletherl_valentine""]",False,False
+401594,palutena_(kid_icarus),4,2138,"[""palutena_(kid_icarus)""]",False,False
+386242,sakata_gintoki_(gintama),4,1985,"[""sakata_gintoki_(gintama)""]",False,False
+414816,sakamoto_mio_(strike_witches),4,1758,"[""sakamoto_mio_(strike_witches)""]",False,False
+663432,kamiya_nao_(idolmaster_cinderella_girls),4,1843,"[""kamiya_nao_(idolmaster_cinderella_girls)""]",False,False
+727253,hojo_karen_(idolmaster),4,1879,"[""hojo_karen_(idolmaster)"", ""houjou_karen""]",False,False
+1862390,hiroi_kikuri_(bocchi_the_rock!),4,2777,"[""hiroi_kikuri_(bocchi_the_rock!)""]",False,False
+392481,madotsuki_(yume_nikki),4,2014,"[""madotsuki_(yume_nikki)""]",False,False
+1344590,matsuno_osomatsu_(osomatsu-kun),4,2002,"[""matsuno_osomatsu_(osomatsu-kun)"", ""osomatsu_(osomatsu-kun)""]",False,False
+664313,moroboshi_kirari_(idolmaster_cinderella_girls),4,1832,"[""moroboshi_kirari_(idolmaster_cinderella_girls)""]",False,False
+1749629,chouzetsusaikawa_tenshi-chan_(needy_streamer_overdose),4,3120,"[""chouzetsusaikawa_tenshi-chan_(needy_streamer_overdose)"", ""kangel_(needy_streamer_overdose)"", ""omgkawaiiangel-chan""]",False,False
+496829,makoto_nanaya_(blazblue),4,1762,"[""makoto_nanaya_(blazblue)"", ""nanaya_makoto""]",False,False
+1344591,matsuno_karamatsu_(osomatsu-kun),4,1949,"[""matsuno_karamatsu_(osomatsu-kun)"", ""karamatsu""]",False,False
+424944,hanamura_yousuke_(persona),4,1844,"[""hanamura_yousuke_(persona)"", ""hanamura_yosuke""]",False,False
+1368824,takamaki_anne_(persona),4,2051,"[""takamaki_anne_(persona)"", ""takamaki_ann"", ""takamaki_anzu""]",False,False
+663460,sasaki_chie_(persona),4,2014,"[""sasaki_chie_(persona)""]",False,False
+1462453,morino_rinze_(idolmaster),4,1956,"[""morino_rinze_(idolmaster)""]",False,False
+529058,hanasaki_tsubomi_(heartcatch_precure!),4,1822,"[""hanasaki_tsubomi_(heartcatch_precure!)""]",False,False
+1549066,himemori_luna_(hololive),4,2099,"[""himemori_luna_(hololive)""]",False,False
+8107,bulma_(dragon_ball),4,2069,"[""bulma_(dragon_ball)""]",False,False
+1365551,sakura_futaba_(persona),4,2047,"[""sakura_futaba_(persona)""]",False,False
+1423783,eternity_larva_(touhou),4,1843,"[""eternity_larva_(touhou)""]",False,False
+1292970,yaoyorozu_momo_(boku_no_hero_academia),4,1927,"[""yaoyorozu_momo_(boku_no_hero_academia)"", ""creati_(boku_no_hero_academia)""]",False,False
+1344593,matsuno_ichimatsu_(osomatsu-kun),4,1939,"[""matsuno_ichimatsu_(osomatsu-kun)"", ""ichimatsu""]",False,False
+1344594,matsuno_jyushimatsu_(osomatsu-kun),4,1917,"[""matsuno_jyushimatsu_(osomatsu-kun)"", ""matsuno_juushimatsu"", ""jyushimatsu""]",False,False
+5036,signum_(mahou_shoujo_lyrical_nanoha),4,1724,"[""signum_(mahou_shoujo_lyrical_nanoha)""]",False,False
+445954,bulbasaur_(pokemon),4,2143,"[""bulbasaur_(pokemon)""]",False,False
+1533840,kurokoma_saki_(touhou),4,1955,"[""kurokoma_saki_(touhou)""]",False,False
+1460817,kuwayama_chiyuki_(idolmaster),4,1957,"[""kuwayama_chiyuki_(idolmaster)""]",False,False
+1554856,hayakawa_aki_(chainsaw_man),4,1969,"[""hayakawa_aki_(chainsaw_man)"", ""hayakawa_aki_(chainsaw_man)""]",False,False
+657914,tokisaki_kurumi_(date_a_live),4,2042,"[""tokisaki_kurumi_(date_a_live)""]",False,False
+1316170,ohara_mari_(love_live!),4,2195,"[""ohara_mari_(love_live!)""]",False,False
+697698,kirigaya_suguha_(sword_art_online),4,1834,"[""kirigaya_suguha_(sword_art_online)""]",False,False
+1541326,hoshikawa_sara_(nijisanji),4,2046,"[""hoshikawa_sara_(nijisanji)""]",False,False
+1298160,kotonoha_akane_(vocaloid),4,2085,"[""kotonoha_akane_(vocaloid)""]",False,False
+1470527,natori_sana_(nijisanji),4,1938,"[""natori_sana_(nijisanji)""]",False,False
+401222,noel_vermillion_(blazblue),4,1705,"[""noel_vermillion_(blazblue)""]",False,False
+1296572,todoroki_shouto_(boku_no_hero_academia),4,0,"[""todoroki_shouto_(boku_no_hero_academia)""]",False,False
+1665751,t-head_trainer_(umamusume),4,0,"[""t-head_trainer""]",False,False
+15221,hanyuu_(higurashi_no_naku_koro_ni),4,1753,"[""hanyuu_(higurashi_no_naku_koro_ni)""]",False,False
+1412756,theresa_apocalypse_(honkai_impact),4,2323,"[""theresa_apocalypse_(honkai_impact)""]",False,False
+432714,trafalgar_law_(one_piece),4,2678,"[""trafalgar_law_(one_piece)""]",False,False
+375109,midna_(the_legend_of_zelda),4,1905,"[""midna_(the_legend_of_zelda)""]",False,False
+1410565,fujiwara_chika_(kaguya-sama_wa_kokurasetai),4,1920,"[""fujiwara_chika_(kaguya-sama_wa_kokurasetai)""]",False,False
+606667,kirino_ranmaru_(idolmaster),4,1703,"[""kirino_ranmaru_(idolmaster)""]",False,False
+1654887,iizunamaru_megumu_(touhou),4,1902,"[""iizunamaru_megumu_(touhou)""]",False,False
+386311,otonashi_kotori_(idolmaster),4,1718,"[""otonashi_kotori_(idolmaster)""]",False,False
+396068,watatsuki_no_yorihime_(touhou),4,1724,"[""watatsuki_no_yorihime_(touhou)""]",False,False
+1419028,komano_aunn_(touhou),4,1940,"[""komano_aunn_(touhou)"", ""komano_aun""]",False,False
+436223,nanasaki_ai_(idolmaster_cinderella_girls),4,1855,"[""nanasaki_ai_(idolmaster_cinderella_girls)""]",False,False
+8151,hino_rei_(sailor_moon),4,1827,"[""hino_rei_(sailor_moon)""]",False,False
+423669,saber_lily_(fate),4,1717,"[""saber_lily_(fate)""]",False,False
+658795,mimura_kanako_(idolmaster_cinderella_girls),4,1694,"[""mimura_kanako_(idolmaster_cinderella_girls)""]",False,False
+1525780,rotom_phone_(pokemon),4,2187,"[""rotom_phone_(pokemon)""]",False,False
+1493508,princess_king_boo_(super_mario),4,1698,"[""princess_king_boo_(super_mario)"", ""queen_boo"", ""booette"", ""boosette""]",False,False
+712088,leafa_(sword_art_online),4,0,"[""leafa_(sword_art_online)""]",False,False
+593284,naegi_makoto_(danganronpa),4,2099,"[""naegi_makoto_(danganronpa)""]",False,False
+593802,minamino_kanade_(heartcatch_precure!),4,1670,"[""minamino_kanade_(heartcatch_precure!)""]",False,False
+42,souseiseki_(rozen_maiden),4,1698,"[""souseiseki_(rozen_maiden)""]",False,False
+8586,chibi_usa_(sailor_moon),4,1748,"[""chibi_usa_(sailor_moon)""]",False,False
+1407560,kizuna_ai_(vocaloid),4,1676,"[""kizuna_ai_(vocaloid)""]",False,False
+1459804,tsukioka_kogane_(idolmaster),4,1787,"[""tsukioka_kogane_(idolmaster)""]",False,False
+707037,hoshi_syoko_(idolmaster_cinderella_girls),4,1903,"[""hoshi_syoko_(idolmaster_cinderella_girls)"", ""hoshi_shouko""]",False,False
+378207,matou_kariya_(fate),4,1687,"[""matou_kariya_(fate)""]",False,False
+1492381,shiina_yuika_(idolmaster_cinderella_girls),4,2009,"[""shiina_yuika_(idolmaster_cinderella_girls)""]",False,False
+432816,kishibe_rohan_(jojo_no_kimyou_na_bouken),4,1675,"[""kishibe_rohan_(jojo_no_kimyou_na_bouken)""]",False,False
+354943,edward_elric_(fullmetal_alchemist),4,1789,"[""edward_elric_(fullmetal_alchemist)""]",False,False
+1719012,takane_lui_(hololive),4,2293,"[""takane_lui_(hololive)""]",False,False
+403378,yuffie_kisaragi_(final_fantasy),4,2201,"[""yuffie_kisaragi_(final_fantasy)""]",False,False
+11427,kasugano_sakura_(street_fighter),4,1775,"[""kasugano_sakura_(street_fighter)""]",False,False
+727697,sylveon_(pokemon),4,2506,"[""sylveon_(pokemon)""]",False,False
+1375862,mimikyu_(pokemon),4,2033,"[""mimikyu_(pokemon)""]",False,False
+425768,umbreon_(pokemon),4,2407,"[""umbreon_(pokemon)""]",False,False
+1273262,rensouhou-kun_(kantai_collection),4,1614,"[""rensouhou-kun_(kantai_collection)""]",False,False
+466260,terra_branford_(final_fantasy),4,1802,"[""terra_branford_(final_fantasy)"", ""tina_branford""]",False,False
+7559,luigi_(super_mario),4,2452,"[""luigi_(super_mario)""]",False,False
+1245442,i-class_destroyer_(kantai_collection),4,1610,"[""i-class_destroyer_(kantai_collection)""]",False,False
+1762182,ranni_the_witch_(elden_ring),4,1930,"[""ranni_the_witch_(elden_ring)""]",False,False
+1248309,sendai_hakurei_no_miko_(touhou),4,1588,"[""sendai_hakurei_no_miko_(touhou)"", ""hakurei_miko""]",False,False
+427708,ushiromiya_ange_(umineko_no_naku_koro_ni),4,1654,"[""ushiromiya_ange_(umineko_no_naku_koro_ni)""]",False,False
+1513845,scorbunny_(pokemon),4,1840,"[""scorbunny_(pokemon)""]",False,False
+1527621,marianne_von_edmund_(fire_emblem),4,1816,"[""marianne_von_edmund_(fire_emblem)""]",False,False
+1508231,sunazuka_akira_(idolmaster),4,1849,"[""sunazuka_akira_(idolmaster)""]",False,False
+425771,glaceon_(pokemon),4,2309,"[""glaceon_(pokemon)""]",False,False
+592111,oshawott_(pokemon),4,1773,"[""oshawott_(pokemon)""]",False,False
+1344592,matsuno_choromatsu_(osomatsu-kun),4,1786,"[""matsuno_choromatsu_(osomatsu-kun)"", ""choromatsu""]",False,False
+8545,kamio_misuzu_(air),4,1624,"[""kamio_misuzu_(air)""]",False,False
+1712705,adachi_rei_(lycoris_recoil),4,4540,"[""adachi_rei_(lycoris_recoil)""]",False,False
+547415,funami_yui_(yuru_yuri),4,1581,"[""funami_yui_(yuru_yuri)""]",False,False
+1462526,higuchi_kaede_(nijisanji),4,2104,"[""higuchi_kaede_(nijisanji)""]",False,False
+1253671,gamagoori_ira_(kill_la_kill),4,1575,"[""gamagoori_ira_(kill_la_kill)"", ""gamagouri_ira""]",False,False
+374467,princess_daisy_(super_mario),4,2176,"[""princess_daisy_(super_mario)""]",False,False
+56878,fujibayashi_kyou_(clannad),4,1578,"[""fujibayashi_kyou_(clannad)""]",False,False
+1496188,yuzuki_choco_(hololive),4,2045,"[""yuzuki_choco_(hololive)""]",False,False
+8152,kino_makoto_(bishoujo_senshi_sailor_moon),4,1766,"[""kino_makoto_(bishoujo_senshi_sailor_moon)""]",False,False
+470503,konjiki_no_yami_(to_love-ru),4,1713,"[""konjiki_no_yami_(to_love-ru)"", ""golden_darkness""]",False,False
+695285,sakuma_mayu_(idolmaster_cinderella_girls),4,1741,"[""sakuma_mayu_(idolmaster_cinderella_girls)""]",False,False
+1515526,serizawa_asahi_(idolmaster),4,1867,"[""serizawa_asahi_(idolmaster)""]",False,False
+479648,hirasawa_ui_(k-on!),4,1548,"[""hirasawa_ui_(k-on!)""]",False,False
+1789592,osaki_amana_(idolmaster),4,1884,"[""osaki_amana_(idolmaster)"", ""oosaki_amana""]",False,False
+11051,sonozaki_shion_(higurashi_no_naku_koro_ni),4,1615,"[""sonozaki_shion_(higurashi_no_naku_koro_ni)""]",False,False
+1304225,mikazuki_munechika_(touken_ranbu),4,1551,"[""mikazuki_munechika_(touken_ranbu)""]",False,False
+126661,furukawa_nagisa_(clannad),4,1603,"[""furukawa_nagisa_(clannad)"", ""okazaki_nagisa""]",False,False
+1517393,inui_toko_(nijisanji),4,1951,"[""inui_toko_(nijisanji)""]",False,False
+658638,oreki_houtarou_(hyouka),4,1567,"[""oreki_houtarou_(hyouka)""]",False,False
+1307612,nishi_kinuyo_(girls_und_panzer),4,1629,"[""nishi_kinuyo_(girls_und_panzer)""]",False,False
+384100,natsume_rin_(little_busters!),4,1646,"[""natsume_rin_(little_busters!)""]",False,False
+54495,jean_pierre_polnareff_(jojo_no_kimyou_na_bouken),4,1551,"[""jean_pierre_polnareff_(jojo_no_kimyou_na_bouken)""]",False,False
+474547,uiharu_kazari_(toaru_kagaku_no_railgun),4,1569,"[""uiharu_kazari_(toaru_kagaku_no_railgun)""]",False,False
+1420690,hikawa_sayo_(bandori),4,1816,"[""hikawa_sayo_(bandori)""]",False,False
+1525557,nanami_kento_(jujutsu_kaisen),4,1809,"[""nanami_kento_(jujutsu_kaisen)""]",False,False
+1533833,haniyasushin_keiki_(touhou),4,1709,"[""haniyasushin_keiki_(touhou)""]",False,False
+414819,francesca_lucchini_(strike_witches),4,1549,"[""francesca_lucchini_(strike_witches)""]",False,False
+418600,kamui_gakupo_(vocaloid),4,1599,"[""kamui_gakupo_(vocaloid)""]",False,False
+423040,amy_rose_(sonic_the_hedgehog),4,2281,"[""amy_rose_(sonic_the_hedgehog)""]",False,False
+657793,cure_peace_(smile_precure!),4,1524,"[""cure_peace_(smile_precure!)""]",False,False
+12208,shihouin_yoruichi_(bleach),4,1943,"[""shihouin_yoruichi_(bleach)""]",False,False
+1611363,kureiji_ollie_(hololive),4,1820,"[""kureiji_ollie_(hololive)""]",False,False
+1360561,natsuki_subaru_(re_zero),4,1849,"[""natsuki_subaru_(re_zero)""]",False,False
+1303947,kashuu_kiyomitsu_(touken_ranbu),4,1520,"[""kashuu_kiyomitsu_(touken_ranbu)""]",False,False
+4908,kero_(cardcaptor_sakura),4,0,"[""kero_(cardcaptor_sakura)""]",False,False
+1972686,fuwawa_abyssgard_(hololive),4,3228,"[""fuwawa_abyssgard_(hololive)""]",False,False
+13037,yukishiro_honoka_(futari_wa_precure),4,1632,"[""yukishiro_honoka_(futari_wa_precure)""]",False,False
+1517396,ange_katrina_(nijisanji),4,2107,"[""ange_katrina_(nijisanji)""]",False,False
+1344595,matsuno_todomatsu_(osomatsu-kun),4,1643,"[""matsuno_todomatsu_(osomatsu-kun)"", ""todomatsu""]",False,False
+1445023,hikawa_hina_(bandori),4,1640,"[""hikawa_hina_(bandori)""]",False,False
+1495228,konno_junko_(sword_art_online),4,1512,"[""konno_junko_(sword_art_online)""]",False,False
+382240,nekomusume_(gegege_no_kitarou),4,1548,"[""nekomusume_(gegege_no_kitarou)""]",False,False
+1298161,kotonoha_aoi_(vocaloid),4,1871,"[""kotonoha_aoi_(vocaloid)""]",False,False
+1972687,mococo_abyssgard_(hololive),4,3180,"[""mococo_abyssgard_(hololive)""]",False,False
+437685,bayonetta_(bayonetta),4,1625,"[""bayonetta_(bayonetta)"", ""bayonetta_(character)""]",False,False
+10082,sephiroth_(final_fantasy),4,3441,"[""sephiroth_(final_fantasy)""]",False,False
+1374966,kamado_tanjirou_(kimetsu_no_yaiba),4,1690,"[""kamado_tanjirou_(kimetsu_no_yaiba)""]",False,False
+12207,inoue_orihime_(bleach),4,1939,"[""inoue_orihime_(bleach)"", ""orihime_inoue""]",False,False
+1503277,makaino_ririmu_(idolmaster),4,1927,"[""makaino_ririmu_(idolmaster)""]",False,False
+1575935,nagatoro_hayase_(ijiranaide_nagatoro-san),4,1746,"[""nagatoro_hayase_(ijiranaide_nagatoro-san)"", ""nagatoro""]",False,False
+902082,tateyama_ayano_(kagerou_project),4,1524,"[""tateyama_ayano_(kagerou_project)""]",False,False
+1243753,tsukumo_benben_(touhou),4,1570,"[""tsukumo_benben_(touhou)""]",False,False
+1462508,tokino_sora_(hololive),4,1798,"[""tokino_sora_(hololive)""]",False,False
+466937,higashi_setsuna_(fresh_precure!),4,1510,"[""higashi_setsuna_(fresh_precure!)""]",False,False
+428744,yuri_lowell_(tales_of),4,1542,"[""yuri_lowell_(tales_of)""]",False,False
+12210,kuchiki_rukia_(bleach),4,2144,"[""kuchiki_rukia_(bleach)""]",False,False
+1829230,octoling_girl_(splatoon),4,3183,"[""octoling_girl_(splatoon)""]",False,False
+7449,daidouji_tomoyo_(cardcaptor_sakura),4,1703,"[""daidouji_tomoyo_(cardcaptor_sakura)""]",False,False
+181219,kirijou_mitsuru_(persona),4,1826,"[""kirijou_mitsuru_(persona)"", ""mitsuru_kirijou"", ""mitsuru_kirijyo""]",False,False
+550010,tsukikage_yuri_(heartcatch_precure!),4,1468,"[""tsukikage_yuri_(heartcatch_precure!)""]",False,False
+1288044,popuko_(pop_team_epic),4,1577,"[""popuko_(pop_team_epic)""]",False,False
+1438046,android_21_(dragon_ball),4,1614,"[""android_21_(dragon_ball)""]",False,False
+1462223,hatoba_tsugu_(idolmaster),4,1711,"[""hatoba_tsugu_(idolmaster)""]",False,False
+1377502,tamura_yuri_(yuru_yuri),4,1516,"[""tamura_yuri_(yuru_yuri)""]",False,False
+387299,prisma_illya_(fate),4,1700,"[""prisma_illya_(fate)""]",False,False
+717606,yukinoshita_yukino_(oregairu),4,1737,"[""yukinoshita_yukino_(oregairu)""]",False,False
+445840,jigglypuff_(pokemon),4,1769,"[""jigglypuff_(pokemon)""]",False,False
+428824,bruno_bucciarati_(jojo_no_kimyou_na_bouken),4,1536,"[""bruno_bucciarati_(jojo_no_kimyou_na_bouken)"", ""bruno_buccellati""]",False,False
+1464773,nakano_itsuki_(go-toubun_no_hanayome),4,1835,"[""nakano_itsuki_(go-toubun_no_hanayome)""]",False,False
+1518710,hisakawa_hayate_(idolmaster),4,1642,"[""hisakawa_hayate_(idolmaster)""]",False,False
+439343,ragna_the_bloodedge_(blazblue),4,1425,"[""ragna_the_bloodedge_(blazblue)""]",False,False
+1706706,toutetsu_yuuma_(touhou),4,1945,"[""toutetsu_yuuma_(touhou)""]",False,False
+101524,bowser_(super_mario),4,1687,"[""bowser_(super_mario)""]",False,False
+1462454,sonoda_chiyoko_(idolmaster),4,1702,"[""sonoda_chiyoko_(idolmaster)""]",False,False
+1619061,jumpy_dumpty_(shugo_chara!),4,1553,"[""jumpy_dumpty_(shugo_chara!)""]",False,False
+1258989,failure_penguin_(mawaru_penguindrum),4,1424,"[""failure_penguin_(mawaru_penguindrum)""]",False,False
+1522439,niwatari_kutaka_(touhou),4,1761,"[""niwatari_kutaka_(touhou)""]",False,False
+592340,snivy_(pokemon),4,1669,"[""snivy_(pokemon)""]",False,False
+1436229,uehara_ayumu_(nijisanji),4,2421,"[""uehara_ayumu_(nijisanji)""]",False,False
+1304908,yamato-no-kami_yasusada_(touken_ranbu),4,1420,"[""yamato-no-kami_yasusada_(touken_ranbu)""]",False,False
+1525546,kugisaki_nobara_(jujutsu_kaisen),4,1905,"[""kugisaki_nobara_(jujutsu_kaisen)""]",False,False
+610092,yoshikawa_chinatsu_(yuru_yuri),4,1438,"[""yoshikawa_chinatsu_(yuru_yuri)""]",False,False
+602082,charlotte_dunois_(infinite_stratos),4,1407,"[""charlotte_dunois_(infinite_stratos)""]",False,False
+1462457,komiya_kaho_(idolmaster_cinderella_girls),4,1694,"[""komiya_kaho_(idolmaster_cinderella_girls)""]",False,False
+663499,totoki_airi_(idolmaster_cinderella_girls),4,1492,"[""totoki_airi_(idolmaster_cinderella_girls)""]",False,False
+1657252,pomu_rainpuff_(nijisanji),4,1490,"[""pomu_rainpuff_(nijisanji)""]",False,False
+419122,tatsumi_kanji_(persona),4,1437,"[""tatsumi_kanji_(persona)""]",False,False
+1432308,nishida_satono_(touhou),4,1548,"[""nishida_satono_(touhou)""]",False,False
+1468121,nakano_ichika_(go-toubun_no_hanayome),4,1854,"[""nakano_ichika_(go-toubun_no_hanayome)""]",False,False
+1258306,ninomiya_asuka_(idolmaster),4,1490,"[""ninomiya_asuka_(idolmaster)""]",False,False
+1513846,sobble_(pokemon),4,1537,"[""sobble_(pokemon)""]",False,False
+1435315,oyama_mihari_(onimai),4,1878,"[""oyama_mihari_(onimai)""]",False,False
+1685273,tsukumo_sana_(hololive),4,1557,"[""tsukumo_sana_(hololive)""]",False,False
+16268,son_gohan_(dragon_ball),4,1834,"[""son_gohan_(dragon_ball)"", ""gohan_(dragon_ball)""]",False,False
+445848,squirtle_(pokemon),4,1647,"[""squirtle_(pokemon)""]",False,False
+416940,su-san_(crayon_shin-chan),4,1474,"[""su-san_(crayon_shin-chan)""]",False,False
+411080,lopunny_(pokemon),4,1821,"[""lopunny_(pokemon)""]",False,False
+1972683,nerissa_ravencroft_(hololive),4,3264,"[""nerissa_ravencroft_(hololive)""]",False,False
+487228,sengoku_nadeko_(bakemonogatari),4,1611,"[""sengoku_nadeko_(bakemonogatari)""]",False,False
+1406536,kagamihara_nadeshiko_(yuru_camp),4,1485,"[""kagamihara_nadeshiko_(yuru_camp)""]",False,False
+464857,sailor_mercury_(sailor_moon),4,1526,"[""sailor_mercury_(sailor_moon)""]",False,False
+520787,elin_(tera),4,1368,"[""elin_(tera)"", ""elin_(tera)""]",False,False
+430852,hachikuji_mayoi_(bakemonogatari),4,1506,"[""hachikuji_mayoi_(bakemonogatari)""]",False,False
+1607938,getou_suguru_(jujutsu_kaisen),4,1804,"[""getou_suguru_(jujutsu_kaisen)""]",False,False
+617637,oomuro_sakurako_(yuru_yuri),4,1437,"[""oomuro_sakurako_(yuru_yuri)""]",False,False
+12091,tohno_akiha_(tsukihime),4,1478,"[""tohno_akiha_(tsukihime)"", ""toono_akiha""]",False,False
+677075,reiner_braun_(shingeki_no_kyojin),4,1514,"[""reiner_braun_(shingeki_no_kyojin)""]",False,False
+513774,shantae_(shantae),4,1648,"[""shantae_(shantae)"", ""shantae_(character)""]",False,False
+1518711,hisakawa_nagi_(idolmaster_cinderella_girls),4,1546,"[""hisakawa_nagi_(idolmaster_cinderella_girls)""]",False,False
+1292974,ashido_mina_(boku_no_hero_academia),4,1608,"[""ashido_mina_(boku_no_hero_academia)"", ""pinky_(boku_no_hero_academia)""]",False,False
+1498626,rita_rossweisse_(idolmaster),4,1581,"[""rita_rossweisse_(idolmaster)""]",False,False
+1432310,teireida_mai_(touhou),4,1514,"[""teireida_mai_(touhou)""]",False,False
+445933,vaporeon_(pokemon),4,1960,"[""vaporeon_(pokemon)""]",False,False
+547150,myoudouin_itsuki_(heartcatch_precure!),4,1365,"[""myoudouin_itsuki_(heartcatch_precure!)""]",False,False
+709319,yuigahama_yui_(oregairu),4,1540,"[""yuigahama_yui_(oregairu)""]",False,False
+710980,kadotani_anzu_(girls_und_panzer),4,1448,"[""kadotani_anzu_(girls_und_panzer)""]",False,False
+389156,frederica_bernkastel_(umineko_no_naku_koro_ni),4,1441,"[""frederica_bernkastel_(umineko_no_naku_koro_ni)""]",False,False
+1567159,shinonome_ena_(project_sekai),4,1996,"[""shinonome_ena_(project_sekai)""]",False,False
+475559,araragi_koyomi_(bakemonogatari),4,1484,"[""araragi_koyomi_(bakemonogatari)""]",False,False
+1459806,tanaka_mamimi_(idolmaster),4,1562,"[""tanaka_mamimi_(idolmaster)""]",False,False
+1304230,tsurumaru_kuninaga_(touken_ranbu),4,1379,"[""tsurumaru_kuninaga_(touken_ranbu)""]",False,False
+1451890,kaguya_luna_(hololive),4,1344,"[""kaguya_luna_(hololive)""]",False,False
+1690906,kamisato_ayato_(genshin_impact),4,1726,"[""kamisato_ayato_(genshin_impact)""]",False,False
+1226975,diana_cavendish_(little_witch_academia),4,1427,"[""diana_cavendish_(little_witch_academia)""]",False,False
+1534340,joutouguu_mayumi_(touhou),4,1491,"[""joutouguu_mayumi_(touhou)""]",False,False
+653217,nepgear_(hyperdimension_neptunia),4,1357,"[""nepgear_(hyperdimension_neptunia)""]",False,False
+1300741,kousaka_reina_(hibike_euphonium),4,1573,"[""kousaka_reina_(hibike_euphonium)""]",False,False
+405776,riesz_(seiken_densetsu),4,1351,"[""riesz_(seiken_densetsu)""]",False,False
+1567162,tenma_tsukasa_(project_sekai),4,1656,"[""tenma_tsukasa_(project_sekai)""]",False,False
+451173,haramura_nodoka_(saki),4,1359,"[""haramura_nodoka_(saki)""]",False,False
+12258,katsuragi_misato_(neon_genesis_evangelion),4,1612,"[""katsuragi_misato_(neon_genesis_evangelion)""]",False,False
+12518,leona_heidern_(fatal_fury),4,1494,"[""leona_heidern_(fatal_fury)""]",False,False
+1459172,sakuragi_mano_(idolmaster),4,1623,"[""sakuragi_mano_(idolmaster)""]",False,False
+1368823,niijima_makoto_(persona),4,1553,"[""niijima_makoto_(persona)""]",False,False
+9090,mizunashi_akari_(aria),4,1462,"[""mizunashi_akari_(aria)""]",False,False
+622669,alisa_ilinichina_amiella_(god_eater),4,1351,"[""alisa_ilinichina_amiella_(god_eater)"", ""arisa_iriinchina_amieera""]",False,False
+1291135,elphelt_valentine_(guilty_gear),4,1735,"[""elphelt_valentine_(guilty_gear)""]",False,False
+489852,akizuki_ryo_(idolmaster),4,1327,"[""akizuki_ryo_(idolmaster)"", ""akizuki_ryou""]",False,False
+1399519,tamaki_iroha_(magia_record),4,1913,"[""tamaki_iroha_(magia_record)""]",False,False
+596939,akali_(league_of_legends),4,1420,"[""akali_(league_of_legends)""]",False,False
+596093,caren_hortensia_(fate),4,1383,"[""caren_hortensia_(fate)"", ""caren_ortensia"", ""karen_ortensia""]",False,False
+542685,oribe_yasuna_(kill_me_baby),4,1473,"[""oribe_yasuna_(kill_me_baby)""]",False,False
+587823,tsurumaki_maki_(vocaloid),4,1476,"[""tsurumaki_maki_(vocaloid)""]",False,False
+601379,takagi-san_(karakai_jouzu_no_takagi-san),4,1556,"[""takagi-san_(karakai_jouzu_no_takagi-san)""]",False,False
+599168,hourai_doll_(touhou),4,1338,"[""hourai_doll_(touhou)""]",False,False
+664000,ichihara_nina_(idolmaster_cinderella_girls),4,1431,"[""ichihara_nina_(idolmaster_cinderella_girls)""]",False,False
+672515,abe_nana_(idolmaster_cinderella_girls),4,1400,"[""abe_nana_(idolmaster_cinderella_girls)""]",False,False
+644430,rias_gremory_(high_school_dxd),4,1427,"[""rias_gremory_(high_school_dxd)""]",False,False
+681655,oikawa_shizuku_(idolmaster_cinderella_girls),4,1392,"[""oikawa_shizuku_(idolmaster_cinderella_girls)""]",False,False
+1567158,asahina_mafuyu_(project_sekai),4,2178,"[""asahina_mafuyu_(project_sekai)""]",False,False
+1420943,tennouji_rina_(love_live!),4,0,"[""tennouji_rina_(love_live!)""]",False,False
+555,haro_(gundam),4,1663,"[""haro_(gundam)""]",False,False
+433648,gyro_zeppeli_(jojo_no_kimyou_na_bouken),4,1331,"[""gyro_zeppeli_(jojo_no_kimyou_na_bouken)""]",False,False
+532518,cure_marine_(heartcatch_precure!),4,1325,"[""cure_marine_(heartcatch_precure!)""]",False,False
+1386434,momota_kaito_(danganronpa),4,1916,"[""momota_kaito_(danganronpa)""]",False,False
+6177,moogle_(final_fantasy),4,1639,"[""moogle_(final_fantasy)""]",False,False
+893075,suou_momoko_(idolmaster_cinderella_girls),4,1582,"[""suou_momoko_(idolmaster_cinderella_girls)""]",False,False
+425767,espeon_(pokemon),4,1877,"[""espeon_(pokemon)""]",False,False
+422389,cyndaquil_(pokemon),4,1574,"[""cyndaquil_(pokemon)""]",False,False
+11052,maebara_keiichi_(higurashi_no_naku_koro_ni),4,1350,"[""maebara_keiichi_(higurashi_no_naku_koro_ni)""]",False,False
+1814893,magical_mirai_miku_(vocaloid),4,1542,"[""magical_mirai_miku_(vocaloid)"", ""magimirai_miku""]",False,False
+1567149,ootori_emu_(project_sekai),4,1688,"[""ootori_emu_(project_sekai)""]",False,False
+464855,sailor_venus_(sailor_moon),4,1412,"[""sailor_venus_(sailor_moon)""]",False,False
+445845,charmander_(pokemon),4,1507,"[""charmander_(pokemon)""]",False,False
+1299395,amanogawa_kirara_(idolmaster_cinderella_girls),4,1298,"[""amanogawa_kirara_(idolmaster_cinderella_girls)""]",False,False
+1477331,osaki_tenka_(idolmaster),4,1492,"[""osaki_tenka_(idolmaster)"", ""oosaki_tenka""]",False,False
+421102,minna-dietlinde_wilcke_(strike_witches),4,1288,"[""minna-dietlinde_wilcke_(strike_witches)""]",False,False
+618147,honma_meiko_(anohana),4,1266,"[""honma_meiko_(anohana)""]",False,False
+1459180,kazano_hiori_(idolmaster),4,1480,"[""kazano_hiori_(idolmaster)""]",False,False
+1447775,katou_asuka_(idolmaster),4,1386,"[""katou_asuka_(idolmaster)""]",False,False
+1520852,hozuki_momiji_(idolmaster),4,1776,"[""hozuki_momiji_(idolmaster)""]",False,False
+1282191,hoshino_fumina_(gundam),4,1313,"[""hoshino_fumina_(gundam)""]",False,False
+1972693,shiori_novella_(hololive),4,3012,"[""shiori_novella_(hololive)""]",False,False
+1305388,namazuo_toushirou_(touken_ranbu),4,1257,"[""namazuo_toushirou_(touken_ranbu)""]",False,False
+2060124,marcille_donato_(dungeon_meshi),4,4367,"[""marcille_donato_(dungeon_meshi)"", ""marcille""]",False,False
+459048,momozono_love_(fresh_precure!),4,1310,"[""momozono_love_(fresh_precure!)""]",False,False
+633741,furutani_himawari_(girls_und_panzer),4,1290,"[""furutani_himawari_(girls_und_panzer)"", ""furuya_himawari""]",False,False
+713156,hoshimiya_ichigo_(aikatsu!),4,1430,"[""hoshimiya_ichigo_(aikatsu!)""]",False,False
+597205,silica_(sword_art_online),4,1255,"[""silica_(sword_art_online)""]",False,False
+566644,blaze_the_cat_(sonic_the_hedgehog),4,1663,"[""blaze_the_cat_(sonic_the_hedgehog)""]",False,False
+7459,white_mage_(final_fantasy),4,0,"[""white_mage_(final_fantasy)""]",False,False
+501746,shadow_the_hedgehog_(sonic_the_hedgehog),4,2256,"[""shadow_the_hedgehog_(sonic_the_hedgehog)""]",False,False
+464856,sailor_mars_(sailor_moon),4,1359,"[""sailor_mars_(sailor_moon)""]",False,False
+1232066,armin_arlert_(shingeki_no_kyojin),4,1348,"[""armin_arlert_(shingeki_no_kyojin)"", ""armin_arelet""]",False,False
+1462463,arisugawa_natsuha_(idolmaster),4,1378,"[""arisugawa_natsuha_(idolmaster)""]",False,False
+1567160,akiyama_mizuki_(project_sekai),4,1993,"[""akiyama_mizuki_(project_sekai)""]",False,False
+1292110,shidare_hotaru_(dagashi_kashi),4,1253,"[""shidare_hotaru_(dagashi_kashi)""]",False,False
+1654888,tenkyuu_chimata_(touhou),4,1439,"[""tenkyuu_chimata_(touhou)""]",False,False
+1564800,moona_hoshinova_(hololive),4,1564,"[""moona_hoshinova_(hololive)""]",False,False
+1305386,honebami_toushirou_(touken_ranbu),4,1225,"[""honebami_toushirou_(touken_ranbu)""]",False,False
+618301,ivan_karelin_(tiger_&_bunny),4,1222,"[""ivan_karelin_(tiger_&_bunny)""]",False,False
+1761329,sprigatito_(pokemon),4,1782,"[""sprigatito_(pokemon)""]",False,False
+8760,kusanagi_motoko_(ghost_in_the_shell),4,1405,"[""kusanagi_motoko_(ghost_in_the_shell)""]",False,False
+564326,nakamura_yuri_(angel_beats!),4,1360,"[""nakamura_yuri_(angel_beats!)"", ""yuri_(angel_beats!)""]",False,False
+1856034,backbeako_(touhou),4,0,"[""backbeako_(touhou)""]",False,False
+1571010,takasaki_yuu_(love_live!),4,0,"[""takasaki_yuu_(love_live!)""]",False,False
+1333583,kozakura_marry_(kagerou_project),4,1251,"[""kozakura_marry_(kagerou_project)"", ""kozakura_mary""]",False,False
+1561721,ichikawa_hinana_(idolmaster),4,1495,"[""ichikawa_hinana_(idolmaster)""]",False,False
+1233044,yuuki_haru_(idolmaster_cinderella_girls),4,1494,"[""yuuki_haru_(idolmaster_cinderella_girls)""]",False,False
+1288043,pipimi_(pop_team_epic),4,1324,"[""pipimi_(pop_team_epic)""]",False,False
+1303946,midare_toushirou_(touken_ranbu),4,1221,"[""midare_toushirou_(touken_ranbu)""]",False,False
+1436151,uzaki_hana_(uzaki-chan_wa_asobitai!),4,1286,"[""uzaki_hana_(uzaki-chan_wa_asobitai!)""]",False,False
+1515913,reines_el-melloi_archisorte_(fate),4,1252,"[""reines_el-melloi_archisorte_(fate)""]",False,False
+375278,tohsaka_tokiomi_(fate),4,1209,"[""tohsaka_tokiomi_(fate)"", ""toosaka_tokiomi""]",False,False
+1401930,nemoto_hina_(idolmaster_cinderella_girls),4,1256,"[""nemoto_hina_(idolmaster_cinderella_girls)""]",False,False
+1541815,rabbit_yukine_(vocaloid),4,1311,"[""rabbit_yukine_(vocaloid)"", ""yukine_(vocaloid)""]",False,False
+425769,leafeon_(pokemon),4,1708,"[""leafeon_(pokemon)""]",False,False
+402795,meowth_(pokemon),4,1444,"[""meowth_(pokemon)"", ""nyarth""]",False,False
+1239071,tsukuyomi_shirabe_(symphogear),4,1299,"[""tsukuyomi_shirabe_(symphogear)""]",False,False
+1496142,minamoto_sakura_(zombie_land_saga),4,1234,"[""minamoto_sakura_(zombie_land_saga)""]",False,False
+375868,kururugi_suzaku_(code_geass),4,1248,"[""kururugi_suzaku_(code_geass)""]",False,False
+1277829,sento_isuzu_(amagi_brilliant_park),4,1230,"[""sento_isuzu_(amagi_brilliant_park)""]",False,False
+1487055,sasaki_saku_(nijisanji),4,1363,"[""sasaki_saku_(nijisanji)""]",False,False
+712140,kawashima_momo_(hibike_euphonium),4,1246,"[""kawashima_momo_(hibike_euphonium)""]",False,False
+1229728,kitazawa_shiho_(idolmaster_cinderella_girls),4,1360,"[""kitazawa_shiho_(idolmaster_cinderella_girls)""]",False,False
+1247199,braixen_(pokemon),4,1415,"[""braixen_(pokemon)""]",False,False
+176593,takeba_yukari_(persona),4,1965,"[""takeba_yukari_(persona)"", ""yukari_takeba""]",False,False
+1242334,ta-class_battleship_(kantai_collection),4,1191,"[""ta-class_battleship_(kantai_collection)"", ""ta-class_(kantai_collection)""]",False,False
+1886373,sora_harewataru_(hirogaru_sky_precure!),4,1982,"[""sora_harewataru_(hirogaru_sky_precure!)""]",False,False
+10145,tsuruya_(suzumiya_haruhi),4,1208,"[""tsuruya_(suzumiya_haruhi)""]",False,False
+420502,guido_mista_(jojo_no_kimyou_na_bouken),4,1249,"[""guido_mista_(jojo_no_kimyou_na_bouken)""]",False,False
+745262,celestia_ludenberg_(danganronpa),4,1502,"[""celestia_ludenberg_(danganronpa)"", ""celestia_ludenberck"", ""celestia_rudenberk""]",False,False
+7566,kamikita_komari_(little_busters!),4,1221,"[""kamikita_komari_(little_busters!)""]",False,False
+1495229,mizuno_ai_(zombie_land_saga),4,1203,"[""mizuno_ai_(zombie_land_saga)""]",False,False
+1242336,ru-class_battleship_(kantai_collection),4,1168,"[""ru-class_battleship_(kantai_collection)""]",False,False
+1246940,matoba_risa_(idolmaster_cinderella_girls),4,1424,"[""matoba_risa_(idolmaster_cinderella_girls)""]",False,False
+1522347,suzuhara_lulu_(nijisanji),4,1366,"[""suzuhara_lulu_(nijisanji)""]",False,False
+396070,watatsuki_no_toyohime_(touhou),4,1213,"[""watatsuki_no_toyohime_(touhou)""]",False,False
+1440644,inuyama_aoi_(yuru_camp),4,1291,"[""inuyama_aoi_(yuru_camp)""]",False,False
+12212,kurosaki_ichigo_(bleach),4,1813,"[""kurosaki_ichigo_(bleach)""]",False,False
+6000,baiken_(guilty_gear),4,1299,"[""baiken_(guilty_gear)""]",False,False
+394620,yuuki_mikan_(danganronpa),4,1192,"[""yuuki_mikan_(danganronpa)""]",False,False
+592339,tepig_(pokemon),4,1292,"[""tepig_(pokemon)""]",False,False
+1760945,kuki_shinobu_(genshin_impact),4,1369,"[""kuki_shinobu_(genshin_impact)""]",False,False
+688842,leon_s._kennedy_(resident_evil),4,1480,"[""leon_s._kennedy_(resident_evil)"", ""leon_s_kennedy""]",False,False
+8305,tomoe_hotaru_(sailor_moon),4,1221,"[""tomoe_hotaru_(sailor_moon)""]",False,False
+701392,mioda_ibuki_(danganronpa),4,1425,"[""mioda_ibuki_(danganronpa)""]",False,False
+1366296,popplio_(pokemon),4,1313,"[""popplio_(pokemon)""]",False,False
+87514,cure_black_(futari_wa_precure),4,1239,"[""cure_black_(futari_wa_precure)""]",False,False
+1292965,jirou_kyouka_(boku_no_hero_academia),4,0,"[""jirou_kyouka_(boku_no_hero_academia)""]",False,False
+1513843,grookey_(pokemon),4,1266,"[""grookey_(pokemon)""]",False,False
+8896,backbeard_(gegege_no_kitarou),4,1530,"[""backbeard_(gegege_no_kitarou)""]",False,False
+438329,torchic_(pokemon),4,1368,"[""torchic_(pokemon)""]",False,False
+379900,squall_leonhart_(final_fantasy),4,1644,"[""squall_leonhart_(final_fantasy)""]",False,False
+12213,matsumoto_rangiku_(bleach),4,1345,"[""matsumoto_rangiku_(bleach)""]",False,False
+15312,millia_rage_(guilty_gear),4,1160,"[""millia_rage_(guilty_gear)""]",False,False
+502557,nu-13_(blazblue),4,1115,"[""nu-13_(blazblue)"", ""nu_(blazblue)"", ""v-13""]",False,False
+630836,huang_baoling_(girls_und_panzer),4,1116,"[""huang_baoling_(girls_und_panzer)"", ""paolin_huan""]",False,False
+1573025,isekai_joucho_(kamitsubaki_studio),4,0,"[""isekai_joucho_(kamitsubaki_studio)""]",False,False
+461046,killua_zoldyck_(hunter_x_hunter),4,1385,"[""killua_zoldyck_(hunter_x_hunter)"", ""killua_zaoldyeck"", ""killua""]",False,False
+378066,chris_redfield_(resident_evil),4,1337,"[""chris_redfield_(resident_evil)""]",False,False
+601489,maizono_sayaka_(danganronpa),4,1467,"[""maizono_sayaka_(danganronpa)""]",False,False
+1304228,izumi-no-kami_kanesada_(touken_ranbu),4,1128,"[""izumi-no-kami_kanesada_(touken_ranbu)""]",False,False
+550750,cure_sunshine_(heartcatch_precure!),4,1121,"[""cure_sunshine_(heartcatch_precure!)""]",False,False
+654355,kazanari_tsubasa_(senki_zesshou_symphogear),4,1225,"[""kazanari_tsubasa_(senki_zesshou_symphogear)""]",False,False
+1926018,luo_xiaohei_(luo_xiaohei_zhan_ji),4,1221,"[""luo_xiaohei_(luo_xiaohei_zhan_ji)"", ""luoxiaohei""]",False,False
+1611905,hoshino_ruby_(oshi_no_bushi),4,1632,"[""hoshino_ruby_(oshi_no_bushi)""]",False,False
+711467,kamukura_izuru_(danganronpa),4,1446,"[""kamukura_izuru_(danganronpa)""]",False,False
+1319288,yoroizuka_mizore_(hibike_euphonium),4,1244,"[""yoroizuka_mizore_(hibike_euphonium)""]",False,False
+1343724,miyamizu_mitsuha_(kimi_no_na_wa),4,1173,"[""miyamizu_mitsuha_(kimi_no_na_wa)""]",False,False
+1280966,kaneki_ken_(tokyo_ghoul),4,1183,"[""kaneki_ken_(tokyo_ghoul)""]",False,False
+1500657,hayasaka_ai_(kaguya-sama_wa_kokurasetai),4,1249,"[""hayasaka_ai_(kaguya-sama_wa_kokurasetai)""]",False,False
+1281721,slaine_troyard_(aldnoah.zero),4,1109,"[""slaine_troyard_(aldnoah.zero)""]",False,False
+435392,boa_hancock_(one_piece),4,1502,"[""boa_hancock_(one_piece)""]",False,False
+597292,fujisaki_chihiro_(danganronpa),4,1335,"[""fujisaki_chihiro_(danganronpa)""]",False,False
+657796,cure_beauty_(smile_precure!),4,1121,"[""cure_beauty_(smile_precure!)""]",False,False
+1447393,alina_gray_(magia_record),4,1184,"[""alina_gray_(magia_record)""]",False,False
+1797173,hyakumantenbara_salome_(nijisanji),4,1325,"[""hyakumantenbara_salome_(nijisanji)""]",False,False
+1292136,raphtalia_(tate_no_yuusha_no_nariagari),4,1366,"[""raphtalia_(tate_no_yuusha_no_nariagari)""]",False,False
+532519,cure_blossom_(heartcatch_precure!),4,1135,"[""cure_blossom_(heartcatch_precure!)""]",False,False
+1177793,katou_megumi_(saekano),4,1133,"[""katou_megumi_(saekano)""]",False,False
+743241,racing_miku_(vocaloid),4,1298,"[""racing_miku_(vocaloid)""]",False,False
+1657250,finana_ryugu_(nijisanji),4,1195,"[""finana_ryugu_(nijisanji)""]",False,False
+15840,kos-mos_(xenosaga),4,1135,"[""kos-mos_(xenosaga)""]",False,False
+596161,steven_stone_(pokemon),4,1242,"[""steven_stone_(pokemon)"", ""steven_(pokemon)"", ""tsuwabuki_daigo"", ""daigo_(pokemon)""]",False,False
+1515527,izumi_mei_(idolmaster),4,1264,"[""izumi_mei_(idolmaster)""]",False,False
+1316824,spider-gwen_(marvel),4,1326,"[""spider-gwen_(marvel)""]",False,False
+464858,sailor_jupiter_(sailor_moon),4,1217,"[""sailor_jupiter_(sailor_moon)""]",False,False
+14569,jill_valentine_(resident_evil),4,1190,"[""jill_valentine_(resident_evil)""]",False,False
+428743,estellise_sidos_heurassein_(tales_of),4,1102,"[""estellise_sidos_heurassein_(tales_of)""]",False,False
+664409,sajo_yukimi_(idolmaster_cinderella_girls),4,1261,"[""sajo_yukimi_(idolmaster_cinderella_girls)"", ""sajou_yukimi""]",False,False
+1243761,tsukumo_yatsuhashi_(touhou),4,1132,"[""tsukumo_yatsuhashi_(touhou)""]",False,False
+416695,uryuu_ryuunosuke_(fate),4,1072,"[""uryuu_ryuunosuke_(fate)""]",False,False
+1412049,mitake_ran_(bandori),4,1248,"[""mitake_ran_(bandori)""]",False,False
+7583,fukuzawa_yumi_(maria_sama_ga_miteru),4,1073,"[""fukuzawa_yumi_(maria_sama_ga_miteru)""]",False,False
+186196,winry_rockbell_(fullmetal_alchemist),4,1091,"[""winry_rockbell_(fullmetal_alchemist)""]",False,False
+445935,flareon_(pokemon),4,1467,"[""flareon_(pokemon)""]",False,False
+1403111,sucy_manbavaran_(little_witch_academia),4,1143,"[""sucy_manbavaran_(little_witch_academia)"", ""sucy_manbabalan""]",False,False
+1229730,makabe_mizuki_(idolmaster),4,1228,"[""makabe_mizuki_(idolmaster)""]",False,False
+1533061,bernadetta_von_varley_(fire_emblem),4,1253,"[""bernadetta_von_varley_(fire_emblem)""]",False,False
+376498,zidane_tribal_(final_fantasy),4,1252,"[""zidane_tribal_(final_fantasy)""]",False,False
+436529,toon_link_(the_legend_of_zelda),4,1220,"[""toon_link_(the_legend_of_zelda)""]",False,False
+664191,tada_riina_(idolmaster_cinderella_girls),4,1110,"[""tada_riina_(idolmaster_cinderella_girls)""]",False,False
+1634596,hoshino_aquamarine_(oshi_no_bushi),4,1568,"[""hoshino_aquamarine_(oshi_no_bushi)""]",False,False
+1350177,violet_evergarden_(violet_evergarden),4,1096,"[""violet_evergarden_(violet_evergarden)"", ""violet_evergarden_(character)""]",False,False
+422393,jirachi_(pokemon),4,1457,"[""jirachi_(pokemon)""]",False,False
+1420954,nakasu_kasumi_(love_live!),4,1780,"[""nakasu_kasumi_(love_live!)""]",False,False
+9687,kula_diamond_(fatal_fury),4,1124,"[""kula_diamond_(fatal_fury)""]",False,False
+439063,rachel_alucard_(blazblue),4,1059,"[""rachel_alucard_(blazblue)""]",False,False
+701163,kisaragi_shintarou_(kagerou_project),4,1085,"[""kisaragi_shintarou_(kagerou_project)""]",False,False
+1423942,eris_greyrat_(mushoku_tensei),4,1553,"[""eris_greyrat_(mushoku_tensei)""]",False,False
+437349,garchomp_(pokemon),4,1347,"[""garchomp_(pokemon)""]",False,False
+1344209,roxy_migurdia_(mushoku_tensei),4,1731,"[""roxy_migurdia_(mushoku_tensei)""]",False,False
+1534941,claude_von_riegan_(fire_emblem),4,1309,"[""claude_von_riegan_(fire_emblem)"", ""claude_(fire_emblem:_three_houses)""]",False,False
+464824,hinaichigo_(rozen_maiden),4,1086,"[""hinaichigo_(rozen_maiden)"", ""hina_ichigo""]",False,False
+1366290,okumura_haru_(persona),4,1185,"[""okumura_haru_(persona)""]",False,False
+382261,subaru_nakajima_(mahou_shoujo_lyrical_nanoha),4,1060,"[""subaru_nakajima_(mahou_shoujo_lyrical_nanoha)"", ""nakajima_subaru""]",False,False
+1285741,suzukaze_aoba_(new_game!),4,1064,"[""suzukaze_aoba_(new_game!)""]",False,False
+402521,meta_knight_(Kirby),4,1289,"[""meta_knight_(Kirby)""]",False,False
+12099,komaki_manaka_(to_love-ru),4,1048,"[""komaki_manaka_(to_love-ru)""]",False,False
+1314604,sakurajima_mai_(seishun_buta_yarou),4,1149,"[""sakurajima_mai_(seishun_buta_yarou)""]",False,False
+1241333,sanageyama_uzu_(kill_la_kill),4,1041,"[""sanageyama_uzu_(kill_la_kill)""]",False,False
+1533059,dorothea_arnault_(fire_emblem),4,1220,"[""dorothea_arnault_(fire_emblem)""]",False,False
+13066,okazaki_yumemi_(touhou),4,1087,"[""okazaki_yumemi_(touhou)""]",False,False
+1479891,rimuru_tempest_(tensei_shitara_slime_datta_ken),4,1204,"[""rimuru_tempest_(tensei_shitara_slime_datta_ken)""]",False,False
+1304904,horikawa_kunihiro_(touken_ranbu),4,1034,"[""horikawa_kunihiro_(touken_ranbu)""]",False,False
+378317,garnet_til_alexandros_xvii_(final_fantasy),4,1184,"[""garnet_til_alexandros_xvii_(final_fantasy)"", ""dagger_(ff9)"", ""garnet_(ff9)""]",False,False
+605171,kujou_karen_(idolmaster_cinderella_girls),4,1065,"[""kujou_karen_(idolmaster_cinderella_girls)""]",False,False
+385133,ushiromiya_maria_(umineko_no_naku_koro_ni),4,1051,"[""ushiromiya_maria_(umineko_no_naku_koro_ni)""]",False,False
+1410354,purah_(the_legend_of_zelda),4,1207,"[""purah_(the_legend_of_zelda)""]",False,False
+378846,tenjouin_asuka_(yu-gi-oh!),4,1193,"[""tenjouin_asuka_(yu-gi-oh!)"", ""alexis_rhodes""]",False,False
+429524,mudkip_(pokemon),4,1227,"[""mudkip_(pokemon)""]",False,False
+717654,kiriya_aoi_(aikatsu!),4,1138,"[""kiriya_aoi_(aikatsu!)""]",False,False
+1566087,yoisaki_kanade_(project_sekai),4,1655,"[""yoisaki_kanade_(project_sekai)""]",False,False
+1537880,dimitri_alexandre_blaiddyd_(fire_emblem),4,2253,"[""dimitri_alexandre_blaiddyd_(fire_emblem)"", ""dimitri_alexandre_bladud""]",False,False
+354942,alphonse_elric_(fullmetal_alchemist),4,1093,"[""alphonse_elric_(fullmetal_alchemist)""]",False,False
+716728,kitashirakawa_tamako_(tamako_market),4,1025,"[""kitashirakawa_tamako_(tamako_market)""]",False,False
+1432652,jack-o'_valentine_(guilty_gear),4,1188,"[""jack-o'_valentine_(guilty_gear)""]",False,False
+252261,godzilla_(godzilla),4,1360,"[""godzilla_(godzilla)"", ""gojira""]",False,False
+657791,cure_happy_(smile_precure!),4,1037,"[""cure_happy_(smile_precure!)""]",False,False
+480039,manabe_nodoka_(k-on!),4,1015,"[""manabe_nodoka_(k-on!)""]",False,False
+713607,sawa_azusa_(k-on!),4,1104,"[""sawa_azusa_(k-on!)""]",False,False
+539676,taneshima_popura_(working!!),4,1048,"[""taneshima_popura_(working!!)"", ""taneshima_poplar""]",False,False
+1340376,murata_himeko_(honkai_impact),4,1172,"[""murata_himeko_(honkai_impact)""]",False,False
+383404,ibuki_fuuko_(clannad),4,1041,"[""ibuki_fuuko_(clannad)""]",False,False
+376441,arle_nadja_(puyo_puyo),4,1194,"[""arle_nadja_(puyo_puyo)""]",False,False
+431436,momo_velia_deviluke_(to_love-ru),4,1084,"[""momo_velia_deviluke_(to_love-ru)""]",False,False
+1489740,aki_rosenthal_(hololive),4,1234,"[""aki_rosenthal_(hololive)"", ""akirose""]",False,False
+1459805,yukoku_kiriko_(idolmaster),4,1194,"[""yukoku_kiriko_(idolmaster)"", ""yuukoku_kiriko""]",False,False
+1611382,pavolia_reine_(hololive),4,1377,"[""pavolia_reine_(hololive)""]",False,False
+1701951,arataki_itto_(genshin_impact),4,1256,"[""arataki_itto_(genshin_impact)"", ""itto_(genshin_impact)""]",False,False
+461883,chikorita_(pokemon),4,1225,"[""chikorita_(pokemon)""]",False,False
+487246,araragi_karen_(bakemonogatari),4,1072,"[""araragi_karen_(bakemonogatari)""]",False,False
+423041,rouge_the_bat_(sonic_the_hedgehog),4,1401,"[""rouge_the_bat_(sonic_the_hedgehog)""]",False,False
+657794,cure_march_(smile_precure!),4,1022,"[""cure_march_(smile_precure!)""]",False,False
+664614,ryuzaki_kaoru_(idolmaster_cinderella_girls),4,1203,"[""ryuzaki_kaoru_(idolmaster_cinderella_girls)"", ""ryuuzaki_kaoru""]",False,False
+1275005,ousaka_shizuku_(idolmaster_cinderella_girls),4,0,"[""ousaka_shizuku_(idolmaster_cinderella_girls)""]",False,False
+594282,cure_melody_(suite_precure),4,1022,"[""cure_melody_(suite_precure)""]",False,False
+1479271,rengoku_kyoujurou_(kimetsu_no_yaiba),4,1108,"[""rengoku_kyoujurou_(kimetsu_no_yaiba)""]",False,False
+286,kooh_(touhou),4,999,"[""kooh_(touhou)""]",False,False
+439615,misaka_imouto_(toaru_majutsu_no_index),4,1049,"[""misaka_imouto_(toaru_majutsu_no_index)""]",False,False
+12095,aozaki_aoko_(tsukihime),4,1344,"[""aozaki_aoko_(tsukihime)""]",False,False
+1257905,shirayuki_hime_(akagami_no_shirayuki-hime),4,1014,"[""shirayuki_hime_(akagami_no_shirayuki-hime)""]",False,False
+717540,yotsuba_alice_(k-on!),4,1013,"[""yotsuba_alice_(k-on!)""]",False,False
+1567150,kusanagi_nene_(project_sekai),4,1317,"[""kusanagi_nene_(project_sekai)""]",False,False
+12093,tohno_shiki_(tsukihime),4,1195,"[""tohno_shiki_(tsukihime)"", ""toono_shiki""]",False,False
+1554751,damian_desmond_(spy_x_family),4,1269,"[""damian_desmond_(spy_x_family)""]",False,False
+1567152,kamishiro_rui_(project_sekai),4,1215,"[""kamishiro_rui_(project_sekai)""]",False,False
+482492,tendou_akane_(ranma_1/2),4,1520,"[""tendou_akane_(ranma_1/2)"", ""tendo_akane""]",False,False
+420074,izayoi_aki_(yu-gi-oh!),4,1125,"[""izayoi_aki_(yu-gi-oh!)"", ""akiza_izinski""]",False,False
+381743,yumehara_nozomi_(yes_precure_5!),4,1076,"[""yumehara_nozomi_(yes_precure_5!)""]",False,False
+1515002,aisha_landar_(elsword),4,1039,"[""aisha_landar_(elsword)"", ""aisha_(elsword)""]",False,False
+1387746,yuri_plisetsky_(yuri_on_ice),4,993,"[""yuri_plisetsky_(yuri_on_ice)""]",False,False
+1254335,marie_rose_(dead_or_alive),4,1066,"[""marie_rose_(dead_or_alive)""]",False,False
+1222099,nanao_yuriko_(idolmaster_cinderella_girls),4,1145,"[""nanao_yuriko_(idolmaster_cinderella_girls)""]",False,False
+1290263,danua_(idolmaster),4,1027,"[""danua_(idolmaster)""]",False,False
+1319289,kasaki_nozomi_(idolmaster_cinderella_girls),4,1120,"[""kasaki_nozomi_(idolmaster_cinderella_girls)""]",False,False
+1629433,annie_leonhart_(shingeki_no_kyojin),4,1081,"[""annie_leonhart_(shingeki_no_kyojin)"", ""annie_leonhardt""]",False,False
+50896,pichu_(pokemon),4,1271,"[""pichu_(pokemon)""]",False,False
+438937,spider-man_(marvel),4,1427,"[""spider-man_(marvel)"", ""spider_man"", ""spiderman""]",False,False
+1571004,shibuya_kanon_(love_live!),4,1852,"[""shibuya_kanon_(love_live!)""]",False,False
+1303902,miss_cloud_(idolmaster_cinderella_girls),4,979,"[""miss_cloud_(idolmaster_cinderella_girls)""]",False,False
+665521,ogata_chieri_(idolmaster_cinderella_girls),4,1021,"[""ogata_chieri_(idolmaster_cinderella_girls)""]",False,False
+1700488,enna_alouette_(nijisanji),4,1244,"[""enna_alouette_(nijisanji)""]",False,False
+663434,kohinata_miho_(idolmaster_cinderella_girls),4,1069,"[""kohinata_miho_(idolmaster_cinderella_girls)""]",False,False
+401814,saotome_alto_(macross),4,974,"[""saotome_alto_(macross)""]",False,False
+662826,himejima_akeno_(high_school_dxd),4,1074,"[""himejima_akeno_(high_school_dxd)""]",False,False
+1472931,y'shtola_rhul_(final_fantasy_xiv),4,1253,"[""y'shtola_rhul_(final_fantasy_xiv)""]",False,False
+1243506,magical_ruby_(fate),4,1230,"[""magical_ruby_(fate)""]",False,False
+655527,kayneth_el-melloi_archibald_(fate),4,970,"[""kayneth_el-melloi_archibald_(fate)"", ""kayneth_archibald_el-melloi""]",False,False
+664381,mukai_takumi_(idolmaster_cinderella_girls),4,1008,"[""mukai_takumi_(idolmaster_cinderella_girls)""]",False,False
+397841,ganondorf_(the_legend_of_zelda),4,1177,"[""ganondorf_(the_legend_of_zelda)""]",False,False
+1246021,momoe_nagisa_(mahou_shoujo_madoka_magica),4,1173,"[""momoe_nagisa_(mahou_shoujo_madoka_magica)""]",False,False
+520564,lucy_heartfilia_(fairy_tail),4,1111,"[""lucy_heartfilia_(fairy_tail)"", ""lucy_heartphilia""]",False,False
+428825,narancia_ghirga_(jojo_no_kimyou_na_bouken),4,1016,"[""narancia_ghirga_(jojo_no_kimyou_na_bouken)""]",False,False
+444532,maka_albarn_(soul_eater),4,1251,"[""maka_albarn_(soul_eater)"", ""maka_alban"", ""maka_arubaan""]",False,False
+618134,karina_lyle_(tiger_&_bunny),4,960,"[""karina_lyle_(tiger_&_bunny)""]",False,False
+1373495,airfield_princess_(kantai_collection),4,977,"[""airfield_princess_(kantai_collection)"", ""airfield_hime""]",False,False
+610702,oktavia_von_seckendorff_(mahou_shoujo_madoka_magica),4,1010,"[""oktavia_von_seckendorff_(mahou_shoujo_madoka_magica)"", ""oktavia_von_seckendorff_(madoka_magica)""]",False,False
+87516,cure_white_(futari_wa_precure),4,1057,"[""cure_white_(futari_wa_precure)""]",False,False
+11488,sol_badguy_(guilty_gear),4,1095,"[""sol_badguy_(guilty_gear)""]",False,False
+508153,okabe_rintarou_(steins_gate),4,1112,"[""okabe_rintarou_(steins_gate)"", ""hououin_kyouma""]",False,False
+877404,yokoyama_nao_(idolmaster_cinderella_girls),4,1036,"[""yokoyama_nao_(idolmaster_cinderella_girls)""]",False,False
+399324,vash_the_stampede_(trigun),4,1174,"[""vash_the_stampede_(trigun)""]",False,False
+376579,katsura_hinagiku_(hayate_no_gotoku!),4,961,"[""katsura_hinagiku_(hayate_no_gotoku!)""]",False,False
+1594498,alice_zuberg_(sword_art_online),4,1021,"[""alice_zuberg_(sword_art_online)"", ""alice_schuberg""]",False,False
+1461094,shizuka_rin_(idolmaster),4,1055,"[""shizuka_rin_(idolmaster)""]",False,False
+1478614,wakan_tanka_(touhou),4,998,"[""wakan_tanka_(touhou)""]",False,False
+1476820,yozora_mel_(hololive),4,1041,"[""yozora_mel_(hololive)""]",False,False
+1345441,asahina_mirai_(mahou_tsukai_precure!),4,1112,"[""asahina_mirai_(mahou_tsukai_precure!)""]",False,False
+712653,kondou_taeko_(idolmaster_cinderella_girls),4,991,"[""kondou_taeko_(idolmaster_cinderella_girls)""]",False,False
+1545097,cinderace_(pokemon),4,1104,"[""cinderace_(pokemon)""]",False,False
+7587,toudou_shimako_(maria_sama_ga_miteru),4,956,"[""toudou_shimako_(maria_sama_ga_miteru)""]",False,False
+465401,ten'ou_haruka_(sailor_moon),4,1019,"[""ten'ou_haruka_(sailor_moon)"", ""tennou_haruka"", ""tenou_haruka"", ""tenoh_haruka""]",False,False
+16210,lenna_charlotte_tycoon_(final_fantasy),4,979,"[""lenna_charlotte_tycoon_(final_fantasy)"", ""reina_charlotte_tycoon""]",False,False
+416104,eva_02_(neon_genesis_evangelion),4,1025,"[""eva_02_(neon_genesis_evangelion)""]",False,False
+850878,gwen_stacy_(marvel),4,1176,"[""gwen_stacy_(marvel)""]",False,False
+425936,doujima_nanako_(persona),4,998,"[""doujima_nanako_(persona)"", ""dojima_nanako""]",False,False
+1597904,shishio_chris_(virtual_youtuber),4,1001,"[""shishio_chris_(virtual_youtuber)"", ""shishiou_chris""]",False,False
+396114,lei_lei_(darkstalkers),4,0,"[""lei_lei_(darkstalkers)"", ""hsien-ko"", ""leilei""]",False,False
+384609,tony_tony_chopper_(one_piece),4,1607,"[""tony_tony_chopper_(one_piece)""]",False,False
+1272916,kageyama_shigeo_(mob_psycho_100),4,1408,"[""kageyama_shigeo_(mob_psycho_100)""]",False,False
+16119,star_platinum_(jojo_no_kimyou_na_bouken),4,983,"[""star_platinum_(jojo_no_kimyou_na_bouken)""]",False,False
+536735,yuuki_juudai_(yu-gi-oh!),4,0,"[""yuuki_juudai_(yu-gi-oh!)"", ""yuki_judai"", ""jaden_yuki""]",False,False
+503373,furudo_erika_(umineko_no_naku_koro_ni),4,1016,"[""furudo_erika_(umineko_no_naku_koro_ni)""]",False,False
+466281,phoenix_wright_(ace_attorney),4,1234,"[""phoenix_wright_(ace_attorney)"", ""naruhodou_ryuuichi""]",False,False
+1240487,yusa_kozue_(idolmaster_cinderella_girls),4,1119,"[""yusa_kozue_(idolmaster_cinderella_girls)""]",False,False
+471218,aragaki_ayase_(oreimo),4,949,"[""aragaki_ayase_(oreimo)""]",False,False
+615130,anjou_naruko_(anohana),4,938,"[""anjou_naruko_(anohana)""]",False,False
+672299,oshino_ougi_(bakemonogatari),4,1184,"[""oshino_ougi_(bakemonogatari)""]",False,False
+1815153,mitaka_asa_(chainsaw_man),4,1754,"[""mitaka_asa_(chainsaw_man)""]",False,False
+1335159,sugimoto_saichi_(golden_kamuy),4,1207,"[""sugimoto_saichi_(golden_kamuy)""]",False,False
+1367142,litten_(pokemon),4,1092,"[""litten_(pokemon)""]",False,False
+1597903,ryugasaki_rene_(idolmaster),4,989,"[""ryugasaki_rene_(idolmaster)"", ""ryuugasaki_rene""]",False,False
+1530334,yorumi_rena_(vocaloid),4,1137,"[""yorumi_rena_(vocaloid)""]",False,False
+254440,kirlia_(pokemon),4,1900,"[""kirlia_(pokemon)""]",False,False
+471221,kousaka_kyousuke_(oreimo),4,967,"[""kousaka_kyousuke_(oreimo)""]",False,False
+547417,sugiura_ayano_(idolmaster_cinderella_girls),4,986,"[""sugiura_ayano_(idolmaster_cinderella_girls)""]",False,False
+487224,kanbaru_suruga_(bakemonogatari),4,1036,"[""kanbaru_suruga_(bakemonogatari)""]",False,False
+1480638,nadia_la_arwall_(nadia),4,1048,"[""nadia_la_arwall_(nadia)"", ""nadia""]",False,False
+388724,lala_satalin_deviluke_(to_love-ru),4,1010,"[""lala_satalin_deviluke_(to_love-ru)""]",False,False
+434747,kira_yoshikage_(jojo_no_kimyou_na_bouken),4,1018,"[""kira_yoshikage_(jojo_no_kimyou_na_bouken)""]",False,False
+1235294,kurokawa_eren_(idolmaster_cinderella_girls),4,945,"[""kurokawa_eren_(idolmaster_cinderella_girls)"", ""kurokawa_ellen""]",False,False
+1443093,zundamon_(vocaloid),4,1803,"[""zundamon_(vocaloid)""]",False,False
+473288,sister_claire_(idolmaster_cinderella_girls),4,1168,"[""sister_claire_(idolmaster_cinderella_girls)"", ""sister_cleaire""]",False,False
+16208,faris_scherwiz_(final_fantasy),4,940,"[""faris_scherwiz_(final_fantasy)""]",False,False
+701389,sonia_nevermind_(danganronpa),4,1082,"[""sonia_nevermind_(danganronpa)""]",False,False
+4858,chocobo_(final_fantasy),4,1240,"[""chocobo_(final_fantasy)""]",False,False
+606666,shindou_takuto_(cardfight!!_vanguard),4,936,"[""shindou_takuto_(cardfight!!_vanguard)""]",False,False
+1505470,galo_thymos_(promare),4,1036,"[""galo_thymos_(promare)""]",False,False
+14685,kazama_asuka_(senran_kagura),4,1021,"[""kazama_asuka_(senran_kagura)""]",False,False
+620348,keith_goodman_(tiger_&_bunny),4,927,"[""keith_goodman_(tiger_&_bunny)""]",False,False
+1654873,himemushi_momoyo_(touhou),4,1037,"[""himemushi_momoyo_(touhou)""]",False,False
+1263716,kiss-shot_acerola-orion_heart-under-blade_(bakemonogatari),4,1115,"[""kiss-shot_acerola-orion_heart-under-blade_(bakemonogatari)"", ""kissshot_acerolaorion_heartunderblade"", ""/kah""]",False,False
+1257904,aino_megumi_(idolmaster),4,935,"[""aino_megumi_(idolmaster)""]",False,False
+1538828,ingrid_brandl_galatea_(street_fighter),4,1127,"[""ingrid_brandl_galatea_(street_fighter)"", ""ingrid_brandol_galatea""]",False,False
+654784,lord_el-melloi_ii_(fate),4,1005,"[""lord_el-melloi_ii_(fate)""]",False,False
+1327418,maria_cadenzavna_eve_(senki_zesshou_symphogear),4,1189,"[""maria_cadenzavna_eve_(senki_zesshou_symphogear)"", ""maria_cadenzavuna_eve""]",False,False
+1304226,hotarumaru_(touken_ranbu),4,919,"[""hotarumaru_(touken_ranbu)""]",False,False
+1386133,ogata_hyakunosuke_(golden_kamuy),4,1172,"[""ogata_hyakunosuke_(golden_kamuy)""]",False,False
+664518,kobayakawa_sae_(idolmaster_cinderella_girls),4,975,"[""kobayakawa_sae_(idolmaster_cinderella_girls)""]",False,False
+1270627,jouga_maya_(idolmaster),4,935,"[""jouga_maya_(idolmaster)"", ""joukawa_maya""]",False,False
+1526525,jill_stingray_(idolmaster),4,1101,"[""jill_stingray_(idolmaster)"", ""julianne_stingray""]",False,False
+1412894,tsurumaki_kokoro_(bandori),4,1000,"[""tsurumaki_kokoro_(bandori)""]",False,False
+1763570,malenia_blade_of_miquella_(elden_ring),4,1353,"[""malenia_blade_of_miquella_(elden_ring)""]",False,False
+1468152,roboco-san_(hololive),4,1113,"[""roboco-san_(hololive)""]",False,False
+1307315,konoe_kanata_(nijisanji),4,1484,"[""konoe_kanata_(nijisanji)""]",False,False
+1386435,yumeno_himiko_(danganronpa),4,1471,"[""yumeno_himiko_(danganronpa)""]",False,False
+1934875,amami_rantaro_(danganronpa),4,1456,"[""amami_rantaro_(danganronpa)"", ""amami_rantarou""]",False,False
+414192,rx-78-2_(gundam),4,1099,"[""rx-78-2_(gundam)""]",False,False
+666040,takamori_aiko_(idolmaster_cinderella_girls),4,982,"[""takamori_aiko_(idolmaster_cinderella_girls)""]",False,False
+1504965,hagoromo_lala_(star_twinkle_precure),4,946,"[""hagoromo_lala_(star_twinkle_precure)""]",False,False
+457596,diego_brando_(jojo_no_kimyou_na_bouken),4,952,"[""diego_brando_(jojo_no_kimyou_na_bouken)""]",False,False
+631826,sans_(undertale),4,0,"[""sans_(undertale)""]",False,False
+1390755,cosmog_(pokemon),4,988,"[""cosmog_(pokemon)""]",False,False
+1533411,neo_politan_(touhou),4,0,"[""neo_politan_(touhou)""]",False,False
+14172,rainbow_mika_(street_fighter),4,968,"[""rainbow_mika_(street_fighter)"", ""nanakawa_mika""]",False,False
+409295,zack_fair_(final_fantasy),4,1639,"[""zack_fair_(final_fantasy)""]",False,False
+662499,nibutani_shinka_(chuunibyou),4,896,"[""nibutani_shinka_(chuunibyou)""]",False,False
+1789595,saijo_juri_(idolmaster),4,1052,"[""saijo_juri_(idolmaster)"", ""saijou_juri""]",False,False
+1538147,sukoya_kana_(nijisanji),4,1386,"[""sukoya_kana_(nijisanji)""]",False,False
+176585,yamagishi_fuuka_(persona),4,1056,"[""yamagishi_fuuka_(persona)""]",False,False
+400139,kaiou_michiru_(sailor_moon),4,970,"[""kaiou_michiru_(sailor_moon)"", ""kaioh_michiru""]",False,False
+16001,iwakura_lain_(serial_experiments_lain),4,1125,"[""iwakura_lain_(serial_experiments_lain)""]",False,False
+1378272,alolan_vulpix_(pokemon),4,1098,"[""alolan_vulpix_(pokemon)""]",False,False
+726764,sakura_chiyo_(idolmaster_cinderella_girls),4,888,"[""sakura_chiyo_(idolmaster_cinderella_girls)""]",False,False
+657795,cure_sunny_(smile_precure!),4,899,"[""cure_sunny_(smile_precure!)""]",False,False
+378592,usada_hikaru_(idolmaster_cinderella_girls),4,992,"[""usada_hikaru_(idolmaster_cinderella_girls)"", ""rabi_en_rose""]",False,False
+717114,kasumigaoka_utaha_(saekano),4,909,"[""kasumigaoka_utaha_(saekano)""]",False,False
+708151,kido_tsubomi_(kagerou_project),4,905,"[""kido_tsubomi_(kagerou_project)""]",False,False
+662005,mifune_miyu_(idolmaster_cinderella_girls),4,951,"[""mifune_miyu_(idolmaster_cinderella_girls)""]",False,False
+1277846,isshiki_iroha_(oregairu),4,1066,"[""isshiki_iroha_(oregairu)""]",False,False
+1386439,iruma_miu_(danganronpa),4,1470,"[""iruma_miu_(danganronpa)""]",False,False
+14899,yamamura_sadako_(idolmaster_cinderella_girls),4,1202,"[""yamamura_sadako_(idolmaster_cinderella_girls)""]",False,False
+623899,shirabe_ako_(senki_zesshou_symphogear),4,886,"[""shirabe_ako_(senki_zesshou_symphogear)""]",False,False
+398745,lambdadelta_(umineko_no_naku_koro_ni),4,928,"[""lambdadelta_(umineko_no_naku_koro_ni)""]",False,False
+467599,takoluka_(vocaloid),4,928,"[""takoluka_(vocaloid)""]",False,False
+1205702,kirishima_touka_(tokyo_ghoul),4,944,"[""kirishima_touka_(tokyo_ghoul)""]",False,False
+1521268,yoshizawa_kasumi_(persona),4,1100,"[""yoshizawa_kasumi_(persona)""]",False,False
+524044,gekota_(toaru_kagaku_no_railgun),4,1022,"[""gekota_(toaru_kagaku_no_railgun)""]",False,False
+487247,araragi_tsukihi_(bakemonogatari),4,976,"[""araragi_tsukihi_(bakemonogatari)""]",False,False
+8711,prinny_(disgaea),4,954,"[""prinny_(disgaea)""]",False,False
+390798,eva_01_(neon_genesis_evangelion),4,961,"[""eva_01_(neon_genesis_evangelion)""]",False,False
+1270628,natsu_megumi_(idolmaster),4,910,"[""natsu_megumi_(idolmaster)""]",False,False
+422413,altaria_(pokemon),4,1088,"[""altaria_(pokemon)""]",False,False
+455510,cure_peach_(fresh_precure!),4,916,"[""cure_peach_(fresh_precure!)""]",False,False
+1791907,utsumi_erice_(fate),4,945,"[""utsumi_erice_(fate)"", ""utsumi_erise""]",False,False
+668055,kohinata_miku_(idolmaster_cinderella_girls),4,943,"[""kohinata_miku_(idolmaster_cinderella_girls)""]",False,False
+1152270,ibuki_tsubasa_(idolmaster),4,1039,"[""ibuki_tsubasa_(idolmaster)""]",False,False
+602083,laura_bodewig_(infinite_stratos),4,867,"[""laura_bodewig_(infinite_stratos)""]",False,False
+588022,cecilia_alcott_(infinite_stratos),4,870,"[""cecilia_alcott_(infinite_stratos)""]",False,False
+1304346,yagen_toushirou_(touken_ranbu),4,879,"[""yagen_toushirou_(touken_ranbu)""]",False,False
+491993,chibi_miku_(vocaloid),4,834,"[""chibi_miku_(vocaloid)"", ""mini_miku""]",False,False
+16164,celes_chere_(final_fantasy),4,936,"[""celes_chere_(final_fantasy)""]",False,False
+452145,miyanaga_saki_(saki),4,865,"[""miyanaga_saki_(saki)""]",False,False
+1124739,angela_balzac_(expelled_from_paradise),4,874,"[""angela_balzac_(expelled_from_paradise)""]",False,False
+382135,reinforce_zwei_(mahou_shoujo_lyrical_nanoha),4,871,"[""reinforce_zwei_(mahou_shoujo_lyrical_nanoha)"", ""reinforce_ii""]",False,False
+410025,cinnamoroll_(sanrio),4,1423,"[""cinnamoroll_(sanrio)""]",False,False
+1227600,mochizuki_anna_(idolmaster),4,1018,"[""mochizuki_anna_(idolmaster)""]",False,False
+445930,lapras_(pokemon),4,1023,"[""lapras_(pokemon)""]",False,False
+439179,mohammed_avdol_(jojo_no_kimyou_na_bouken),4,877,"[""mohammed_avdol_(jojo_no_kimyou_na_bouken)""]",False,False
+1527683,yamper_(pokemon),4,1000,"[""yamper_(pokemon)""]",False,False
+1416553,maruyama_aya_(bandori),4,957,"[""maruyama_aya_(bandori)""]",False,False
+409649,gon_freecss_(hunter_x_hunter),4,1077,"[""gon_freecss_(hunter_x_hunter)""]",False,False
+668312,senkawa_chihiro_(idolmaster_cinderella_girls),4,914,"[""senkawa_chihiro_(idolmaster_cinderella_girls)""]",False,False
+550369,lightning_farron_(final_fantasy),4,901,"[""lightning_farron_(final_fantasy)"", ""lightning_(ff13)"", ""lightning_(ffxiii)""]",False,False
+1419237,tanned_cirno_(touhou),4,909,"[""tanned_cirno_(touhou)""]",False,False
+545377,pannacotta_fugo_(jojo_no_kimyou_na_bouken),4,890,"[""pannacotta_fugo_(jojo_no_kimyou_na_bouken)""]",False,False
+445934,jolteon_(pokemon),4,1188,"[""jolteon_(pokemon)""]",False,False
+1276392,otokura_yuuki_(idolmaster),4,955,"[""otokura_yuuki_(idolmaster)""]",False,False
+879608,toyokawa_fuka_(idolmaster_cinderella_girls),4,1004,"[""toyokawa_fuka_(idolmaster_cinderella_girls)"", ""toyokawa_fuuka""]",False,False
+1423996,asaka_karin_(love_live!),4,1490,"[""asaka_karin_(love_live!)""]",False,False
+14431,kurapika_(hunter_x_hunter),4,1147,"[""kurapika_(hunter_x_hunter)""]",False,False
+708150,kano_shuuya_(kagerou_project),4,857,"[""kano_shuuya_(kagerou_project)""]",False,False
+9881,meer_campbell_(gundam),4,902,"[""meer_campbell_(gundam)"", ""meer""]",False,False
+1761331,fuecoco_(pokemon),4,1104,"[""fuecoco_(pokemon)""]",False,False
+1862559,meowscarada_(pokemon),4,1373,"[""meowscarada_(pokemon)""]",False,False
+1239636,inumuta_houka_(kill_la_kill),4,839,"[""inumuta_houka_(kill_la_kill)""]",False,False
+1972681,koseki_bijou_(hololive),4,2072,"[""koseki_bijou_(hololive)""]",False,False
+428827,trish_una_(jojo_no_kimyou_na_bouken),4,895,"[""trish_una_(jojo_no_kimyou_na_bouken)""]",False,False
+1399945,tanya_degurechaff_(youjo_senki),4,1001,"[""tanya_degurechaff_(youjo_senki)""]",False,False
+1251661,mega_gardevoir_(pokemon),4,1993,"[""mega_gardevoir_(pokemon)""]",False,False
+14169,ken_masters_(street_fighter),4,1073,"[""ken_masters_(street_fighter)""]",False,False
+445931,ditto_(pokemon),4,1000,"[""ditto_(pokemon)""]",False,False
+1229733,mogami_shizuka_(idolmaster_cinderella_girls),4,966,"[""mogami_shizuka_(idolmaster_cinderella_girls)""]",False,False
+713599,koyama_yuzu_(citrus),4,868,"[""koyama_yuzu_(citrus)""]",False,False
+1479269,tomioka_giyuu_(kimetsu_no_yaiba),4,958,"[""tomioka_giyuu_(kimetsu_no_yaiba)""]",False,False
+1374967,agatsuma_zenitsu_(kimetsu_no_yaiba),4,956,"[""agatsuma_zenitsu_(kimetsu_no_yaiba)""]",False,False
+722479,fennekin_(pokemon),4,1020,"[""fennekin_(pokemon)""]",False,False
+1421068,miyashita_ai_(love_live!),4,1511,"[""miyashita_ai_(love_live!)""]",False,False
+11594,lina_inverse_(slayers),4,935,"[""lina_inverse_(slayers)""]",False,False
+538729,cure_moonlight_(heartcatch_precure!),4,833,"[""cure_moonlight_(heartcatch_precure!)""]",False,False
+611796,litwick_(pokemon),4,1132,"[""litwick_(pokemon)""]",False,False
+439342,taokaka_(blazblue),4,841,"[""taokaka_(blazblue)""]",False,False
+462517,yamabuki_inori_(guilty_crown),4,843,"[""yamabuki_inori_(guilty_crown)""]",False,False
+507427,anegasaki_nene_(idolmaster),4,850,"[""anegasaki_nene_(idolmaster)""]",False,False
+396395,naoe_riki_(little_busters!),4,857,"[""naoe_riki_(little_busters!)""]",False,False
+1302247,sawamura_spencer_eriri_(saekano),4,846,"[""sawamura_spencer_eriri_(saekano)"", ""sawamura_eriri_spencer""]",False,False
+622721,korra_(the_legend_of_korra),4,924,"[""korra_(the_legend_of_korra)""]",False,False
+16312,tenjou_utena_(shoujo_kakumei_utena),4,940,"[""tenjou_utena_(shoujo_kakumei_utena)""]",False,False
+445911,magnemite_(pokemon),4,1139,"[""magnemite_(pokemon)""]",False,False
+1293670,yamada_elf_(eromanga_sensei),4,816,"[""yamada_elf_(eromanga_sensei)""]",False,False
+1229736,satake_minako_(idolmaster_cinderella_girls),4,944,"[""satake_minako_(idolmaster_cinderella_girls)""]",False,False
+1522438,ushizaki_urumi_(idolmaster_cinderella_girls),4,922,"[""ushizaki_urumi_(idolmaster_cinderella_girls)""]",False,False
+426520,waddle_dee_(kirby),4,1115,"[""waddle_dee_(kirby)""]",False,False
+1567156,aoyagi_touya_(project_sekai),4,1025,"[""aoyagi_touya_(project_sekai)""]",False,False
+390231,raichu_(pokemon),4,1009,"[""raichu_(pokemon)""]",False,False
+410735,mewtwo_(pokemon),4,1017,"[""mewtwo_(pokemon)""]",False,False
+790426,ara_haan_(elsword),4,842,"[""ara_haan_(elsword)"", ""ara_(elsword)"", ""ara_han""]",False,False
+1398095,hinatsuru_ai_(idolmaster),4,817,"[""hinatsuru_ai_(idolmaster)""]",False,False
+8330,hoshino_ruri_(nadesico),4,876,"[""hoshino_ruri_(nadesico)""]",False,False
+382266,teana_lanster_(mahou_shoujo_lyrical_nanoha),4,824,"[""teana_lanster_(mahou_shoujo_lyrical_nanoha)"", ""tiana_lanster""]",False,False
+445938,snorlax_(pokemon),4,1019,"[""snorlax_(pokemon)""]",False,False
+1567155,shinonome_akito_(project_sekai),4,1071,"[""shinonome_akito_(project_sekai)""]",False,False
+712651,isobe_noriko_(girls_und_panzer),4,835,"[""isobe_noriko_(girls_und_panzer)""]",False,False
+406554,latias_(pokemon),4,1154,"[""latias_(pokemon)""]",False,False
+1240058,hange_zoe_(shingeki_no_kyojin),4,854,"[""hange_zoe_(shingeki_no_kyojin)"", ""hanji_zoe""]",False,False
+11683,optimus_prime_(transformers),4,1015,"[""optimus_prime_(transformers)""]",False,False
+1475191,aoba_moca_(bandori),4,965,"[""aoba_moca_(bandori)""]",False,False
+1438842,emma_verde_(love_live!),4,1510,"[""emma_verde_(love_live!)""]",False,False
+1534451,amamiya_kokoro_(idolmaster),4,1098,"[""amamiya_kokoro_(idolmaster)""]",False,False
+381201,konpaku_youki_(touhou),4,802,"[""konpaku_youki_(touhou)""]",False,False
+1237385,akaboshi_koume_(idolmaster_cinderella_girls),4,910,"[""akaboshi_koume_(idolmaster_cinderella_girls)""]",False,False
+611797,chandelure_(pokemon),4,1050,"[""chandelure_(pokemon)""]",False,False
+410791,king_dedede_(kirby),4,998,"[""king_dedede_(kirby)""]",False,False
+1259432,oomori_yuuko_(idolmaster),4,814,"[""oomori_yuuko_(idolmaster)""]",False,False
+1643064,goutokuji_mike_(idolmaster_cinderella_girls),4,969,"[""goutokuji_mike_(idolmaster_cinderella_girls)""]",False,False
+464859,sailor_saturn_(sailor_moon),4,849,"[""sailor_saturn_(sailor_moon)""]",False,False
+445834,hypno_(pokemon),4,944,"[""hypno_(pokemon)""]",False,False
+387301,perona_(one_piece),4,1163,"[""perona_(one_piece)""]",False,False
+1401541,izayoi_liko_(precure),4,913,"[""izayoi_liko_(precure)"", ""izayoi_riko""]",False,False
+1509649,uzaki_tsuki_(uzaki-chan_wa_asobitai!),4,938,"[""uzaki_tsuki_(uzaki-chan_wa_asobitai!)""]",False,False
+14491,i-no_(guilty_gear),4,856,"[""i-no_(guilty_gear)""]",False,False
+1306594,ichigo_hitofuri_(touken_ranbu),4,791,"[""ichigo_hitofuri_(touken_ranbu)""]",False,False
+1605833,klein_moretti_(lord_of_the_mysteries),4,862,"[""klein_moretti_(lord_of_the_mysteries)""]",False,False
+1675745,petra_gurin_(nijisanji),4,927,"[""petra_gurin_(nijisanji)""]",False,False
+15724,riza_hawkeye_(fullmetal_alchemist),4,861,"[""riza_hawkeye_(fullmetal_alchemist)""]",False,False
+601752,milla_maxwell_(tales_of),4,797,"[""milla_maxwell_(tales_of)""]",False,False
+437875,takei_hisa_(saki),4,780,"[""takei_hisa_(saki)""]",False,False
+1398097,sora_ginko_(saki),4,796,"[""sora_ginko_(saki)""]",False,False
+1203675,melia_antiqua_(xenoblade),4,939,"[""melia_antiqua_(xenoblade)""]",False,False
+1299400,haruno_haruka_(idolmaster),4,838,"[""haruno_haruka_(idolmaster)""]",False,False
+1420709,hadou_nejire_(boku_no_hero_academia),4,0,"[""hadou_nejire_(boku_no_hero_academia)""]",False,False
+427882,bazett_fraga_mcremitz_(fate),4,820,"[""bazett_fraga_mcremitz_(fate)"", ""bazette_fraga_mcremitz""]",False,False
+566218,platinum_the_trinity_(blazblue),4,781,"[""platinum_the_trinity_(blazblue)""]",False,False
+1515003,rena_erindel_(elsword),4,793,"[""rena_erindel_(elsword)"", ""rena_(elsword)""]",False,False
+1257345,harime_nui_(kill_la_kill),4,805,"[""harime_nui_(kill_la_kill)""]",False,False
+1249877,iori_rinko_(idolmaster),4,799,"[""iori_rinko_(idolmaster)""]",False,False
+1007211,hinata_hideki_(angel_beats!),4,780,"[""hinata_hideki_(angel_beats!)"", ""hinata_(angel_beats!)""]",False,False
+633080,takakura_himari_(mawaru_penguindrum),4,781,"[""takakura_himari_(mawaru_penguindrum)""]",False,False
+16204,agrias_oaks_(final_fantasy),4,802,"[""agrias_oaks_(final_fantasy)""]",False,False
+1249308,greninja_(pokemon),4,938,"[""greninja_(pokemon)""]",False,False
+2022005,manaka_laala_(pretty_rhythm),4,1342,"[""manaka_laala_(pretty_rhythm)"", ""manaka_lala""]",False,False
+1794300,shikanoin_heizou_(genshin_impact),4,1070,"[""shikanoin_heizou_(genshin_impact)""]",False,False
+419659,rita_mordio_(tales_of),4,794,"[""rita_mordio_(tales_of)""]",False,False
+444238,drifloon_(pokemon),4,965,"[""drifloon_(pokemon)""]",False,False
+1245116,ri-class_heavy_cruiser_(kantai_collection),4,771,"[""ri-class_heavy_cruiser_(kantai_collection)""]",False,False
+1571593,tang_keke_(love_live!),4,1299,"[""tang_keke_(love_live!)""]",False,False
+16323,char_aznable_(gundam),4,1000,"[""char_aznable_(gundam)""]",False,False
+1265247,sato_shin_(idolmaster),4,925,"[""sato_shin_(idolmaster)"", ""satou_shin""]",False,False
+432818,hirose_koichi_(jojo_no_kimyou_na_bouken),4,782,"[""hirose_koichi_(jojo_no_kimyou_na_bouken)"", ""hirose_kouichi""]",False,False
+688953,igarashi_kyoko_(idolmaster_cinderella_girls),4,966,"[""igarashi_kyoko_(idolmaster_cinderella_girls)"", ""igarashi_kyouko""]",False,False
+466150,yuri_sakazaki_(fatal_fury),4,820,"[""yuri_sakazaki_(fatal_fury)"", ""sakazaki_yuri""]",False,False
+523901,shinonome_nano_(nichijou),4,836,"[""shinonome_nano_(nichijou)""]",False,False
+1934879,k1-b0_(danganronpa),4,1091,"[""k1-b0_(danganronpa)"", ""keebo""]",False,False
+1432300,yatadera_narumi_(touhou),4,845,"[""yatadera_narumi_(touhou)""]",False,False
+1565905,bianka_durandal_ataegina_(honkai_impact),4,0,"[""bianka_durandal_ataegina_(honkai_impact)"", ""durandal_(honkai_impact)""]",False,False
+14141,saotome_ranma_(ranma_1/2),4,1077,"[""saotome_ranma_(ranma_1/2)""]",False,False
+423092,dead_master_(black_rock_shooter),4,888,"[""dead_master_(black_rock_shooter)""]",False,False
+445904,gastly_(pokemon),4,947,"[""gastly_(pokemon)""]",False,False
+868605,todo_yurika_(aikatsu!),4,811,"[""todo_yurika_(aikatsu!)"", ""toudou_yurika""]",False,False
+1572168,heanna_sumire_(love_live),4,1277,"[""heanna_sumire_(love_live)""]",False,False
+462002,flygon_(pokemon),4,991,"[""flygon_(pokemon)""]",False,False
+7660,enma_ai_(jigoku_shoujo),4,782,"[""enma_ai_(jigoku_shoujo)""]",False,False
+450993,milotic_(pokemon),4,957,"[""milotic_(pokemon)""]",False,False
+13993,ky_kiske_(guilty_gear),4,883,"[""ky_kiske_(guilty_gear)""]",False,False
+410729,absol_(pokemon),4,1118,"[""absol_(pokemon)""]",False,False
+462261,nikka_edvardine_katajainen_(strike_witches),4,794,"[""nikka_edvardine_katajainen_(strike_witches)""]",False,False
+716715,cure_heart_(dokidoki_precure),4,778,"[""cure_heart_(dokidoki_precure)""]",False,False
+400328,okita_sougo_(gintama),4,796,"[""okita_sougo_(gintama)""]",False,False
+466277,maya_fey_(ace_attorney),4,932,"[""maya_fey_(ace_attorney)"", ""ayasato_mayoi""]",False,False
+8108,piccolo_(dragon_ball),4,960,"[""piccolo_(dragon_ball)""]",False,False
+1646429,fukuda_haru_(girls_und_panzer),4,806,"[""fukuda_haru_(girls_und_panzer)"", ""fukuda_(girls_und_panzer)""]",False,False
+15646,usopp_(one_piece),4,1149,"[""usopp_(one_piece)""]",False,False
+449290,dragonite_(pokemon),4,1022,"[""dragonite_(pokemon)""]",False,False
+1304907,gokotai_(touken_ranbu),4,755,"[""gokotai_(touken_ranbu)""]",False,False
+1416572,nanami_yachiyo_(magia_record),4,1013,"[""nanami_yachiyo_(magia_record)""]",False,False
+1496591,nikaidou_saki_(zombie_land_saga),4,773,"[""nikaidou_saki_(zombie_land_saga)""]",False,False
+1400058,satanichia_kurumizawa_mcdowell_(gabriel_dropout),4,762,"[""satanichia_kurumizawa_mcdowell_(gabriel_dropout)"", ""kurumizawa_satanichia_mcdowell"", ""satania_(gabriel_dropout)""]",False,False
+1885929,nijigaoka_mashiro_(love_live!),4,1185,"[""nijigaoka_mashiro_(love_live!)""]",False,False
+466172,bartz_klauser_(final_fantasy),4,812,"[""bartz_klauser_(final_fantasy)"", ""butz_klauser""]",False,False
+176591,aragaki_shinjirou_(persona),4,914,"[""aragaki_shinjirou_(persona)"", ""shinjirou_aragaki""]",False,False
+1316228,nakagawa_natsuki_(hibike!_euphonium),4,887,"[""nakagawa_natsuki_(hibike!_euphonium)"",974,[""""psyduck_(pokemon)""""]""",False,False
+445864,clefairy_(pokemon),4,899,"[""clefairy_(pokemon)""]",False,False
+1085943,tokoro_megumi_(idolmaster_cinderella_girls),4,876,"[""tokoro_megumi_(idolmaster_cinderella_girls)""]",False,False
+1305420,shokudaikiri_mitsutada_(touken_ranbu),4,763,"[""shokudaikiri_mitsutada_(touken_ranbu)""]",False,False
+1934685,fukawa_toko_(danganronpa),4,1049,"[""fukawa_toko_(danganronpa)"", ""fukawa_touko""]",False,False
+391387,akita_neru_(vocaloid),4,1069,"[""akita_neru_(vocaloid)""]",False,False
+11487,kuradoberi_jam_(guilty_gear),4,758,"[""kuradoberi_jam_(guilty_gear)""]",False,False
+427478,fudou_yuusei_(yu-gi-oh!),4,0,"[""fudou_yuusei_(yu-gi-oh!)""]",False,False
+420633,santa_claus_(christmas),4,857,"[""santa_claus_(christmas)"", ""father_christmas""]",False,False
+386902,itou_kaiji_(kaiji),4,883,"[""itou_kaiji_(kaiji)""]",False,False
+1550049,yamada_anna_(idolmaster_cinderella_girls),4,1292,"[""yamada_anna_(idolmaster_cinderella_girls)""]",False,False
+664407,himekawa_yuki_(idolmaster_cinderella_girls),4,768,"[""himekawa_yuki_(idolmaster_cinderella_girls)""]",False,False
+421517,portgas_d._ace_(one_piece),4,1380,"[""portgas_d._ace_(one_piece)"", ""ace_(one_piece)"", ""portgas_d_ace""]",False,False
+593801,cure_rhythm_(suite_precure),4,748,"[""cure_rhythm_(suite_precure)""]",False,False
+1346345,takimoto_hifumi_(new_game!),4,761,"[""takimoto_hifumi_(new_game!)""]",False,False
+1386286,yonaga_angie_(danganronpa),4,1098,"[""yonaga_angie_(danganronpa)""]",False,False
+1491428,takamiya_rion_(virtual_youtuber),4,861,"[""takamiya_rion_(virtual_youtuber)""]",False,False
+520900,sf-a2_miki_(vocaloid),4,748,"[""sf-a2_miki_(vocaloid)"", ""miki"", ""miki_(vocaloid)""]",False,False
+408937,young_link_(the_legend_of_zelda),4,1073,"[""young_link_(the_legend_of_zelda)""]",False,False
+432820,nijimura_okuyasu_(jojo_no_kimyou_na_bouken),4,787,"[""nijimura_okuyasu_(jojo_no_kimyou_na_bouken)""]",False,False
+690136,touhoku_zunko_(vocaloid),4,906,"[""touhoku_zunko_(vocaloid)""]",False,False
+1491126,tsuyuri_kanao_(kimetsu_no_yaiba),4,811,"[""tsuyuri_kanao_(kimetsu_no_yaiba)""]",False,False
+1305382,kogitsunemaru_(touken_ranbu),4,733,"[""kogitsunemaru_(touken_ranbu)""]",False,False
+1538827,mercedes_von_martritz_(fire_emblem),4,878,"[""mercedes_von_martritz_(fire_emblem)"", ""mercedes_von_marltritz""]",False,False
+708153,seto_kousuke_(kagerou_project),4,748,"[""seto_kousuke_(kagerou_project)""]",False,False
+1356607,chomusuke_(kono_subarashii_sekai_ni_shukufuku_wo!),4,851,"[""chomusuke_(kono_subarashii_sekai_ni_shukufuku_wo!)""]",False,False
+31266,roy_mustang_(fullmetal_alchemist),4,799,"[""roy_mustang_(fullmetal_alchemist)""]",False,False
+1377218,otomachi_una_(vocaloid),4,1096,"[""otomachi_una_(vocaloid)""]",False,False
+1343981,mikumo_guynemer_(macross),4,775,"[""mikumo_guynemer_(macross)""]",False,False
+713347,katagiri_sanae_(idolmaster_cinderella_girls),4,794,"[""katagiri_sanae_(idolmaster_cinderella_girls)""]",False,False
+384314,saigusa_haruka_(little_busters!),4,742,"[""saigusa_haruka_(little_busters!)""]",False,False
+1461165,uchi_emiri_(WataMote),4,785,"[""uchi_emiri_(WataMote)""]",False,False
+496529,touwa_erio_(denpa_onna_to_seishun_otoko),4,725,"[""touwa_erio_(denpa_onna_to_seishun_otoko)""]",False,False
+408664,pachirisu_(pokemon),4,971,"[""pachirisu_(pokemon)""]",False,False
+701386,koizumi_mahiru_(danganronpa),4,885,"[""koizumi_mahiru_(danganronpa)""]",False,False
+1237658,error_musume_(kantai_collection),4,713,"[""error_musume_(kantai_collection)""]",False,False
+713611,utsugi_yuuki_(idolmaster_cinderella_girls),4,743,"[""utsugi_yuuki_(idolmaster_cinderella_girls)""]",False,False
+1067206,hayasaka_mirei_(idolmaster_cinderella_girls),4,783,"[""hayasaka_mirei_(idolmaster_cinderella_girls)""]",False,False
+405335,olimar_(pikmin),4,1180,"[""olimar_(pikmin)""]",False,False
+644034,kariya_masaki_(fate),4,717,"[""kariya_masaki_(fate)""]",False,False
+1337509,freyja_wion_(macross),4,750,"[""freyja_wion_(macross)""]",False,False
+1445281,misono_karin_(Madoka Magica),4,761,"[""misono_karin_(Madoka Magica)""]",False,False
+1689852,hatsutori_hajime_(idolmaster),4,4283,"[""hatsutori_hajime_(idolmaster)""]",False,False
+1722734,bronya_rand_(honkai_impact),4,999,"[""bronya_rand_(honkai_impact)""]",False,False
+1272430,isolated_island_oni_(kantai_collection),4,708,"[""isolated_island_oni_(kantai_collection)""]",False,False
+462515,aono_miki_(vocaloid),4,737,"[""aono_miki_(vocaloid)""]",False,False
+1520873,murosaki_miyo_(kantai_collection),4,964,"[""murosaki_miyo_(kantai_collection)""]",False,False
+480982,asbel_lhant_(tales_of),4,714,"[""asbel_lhant_(tales_of)""]",False,False
+1420829,matsubara_kanon_(idolmaster_cinderella_girls),4,849,"[""matsubara_kanon_(idolmaster_cinderella_girls)""]",False,False
+1530109,alcremie_(pokemon),4,964,"[""alcremie_(pokemon)""]",False,False
+4516,poring_(ragnarok_online),4,949,"[""poring_(ragnarok_online)""]",False,False
+381037,minazuki_karen_(yes!_precure),4,743,"[""minazuki_karen_(yes!_precure)""]",False,False
+731293,nakiri_erina_(shokugeki_no_souma),4,1016,"[""nakiri_erina_(shokugeki_no_souma)""]",False,False
+1400388,olga_marie_animusphere_(fate),4,821,"[""olga_marie_animusphere_(fate)"", ""olga_marie""]",False,False
+575935,mishaguji_(touhou),4,849,"[""mishaguji_(touhou)""]",False,False
+497689,cheria_barnes_(tales_of),4,709,"[""cheria_barnes_(tales_of)""]",False,False
+1500529,rindou_mikoto_(virtual_youtuber),4,823,"[""rindou_mikoto_(virtual_youtuber)""]",False,False
+717138,cure_sword_(dokidoki_precure),4,712,"[""cure_sword_(dokidoki_precure)""]",False,False
+958112,hakozaki_serika_(idolmaster_cinderella_girls),4,896,"[""hakozaki_serika_(idolmaster_cinderella_girls)""]",False,False
+1578643,mifune_shioriko_(love_live!),4,1382,"[""mifune_shioriko_(love_live!)""]",False,False
+1296576,kirishima_eijirou_(boku_no_hero_academia),4,0,"[""kirishima_eijirou_(boku_no_hero_academia)""]",False,False
+1434774,uehara_himari_(bandori),4,735,"[""uehara_himari_(bandori)""]",False,False
+1387021,tanigaki_genjirou_(golden_kamuy),4,942,"[""tanigaki_genjirou_(golden_kamuy)""]",False,False
+433613,sailor_chibi_moon_(sailor_moon),4,750,"[""sailor_chibi_moon_(sailor_moon)""]",False,False
+1677248,lain_paterson_(nijisanji),4,803,"[""lain_paterson_(nijisanji)""]",False,False
+1331206,kawakami_mai_(musaigen_no_phantom_world),4,696,"[""kawakami_mai_(musaigen_no_phantom_world)""]",False,False
+1564454,subaru_duck_(hololive),4,848,"[""subaru_duck_(hololive)""]",False,False
+1564454,subaru_duck_(idolmaster),4,848,"[""subaru_duck_(idolmaster)""]",False,False
+1520862,hozuki_kaede_(idolmaster),4,973,"[""hozuki_kaede_(idolmaster)""]",False,False
+1495284,honma_himawari_(idolmaster),4,844,"[""honma_himawari_(idolmaster)""]",False,False
+1507455,himesaka_noa_(idolmaster),4,814,"[""himesaka_noa_(idolmaster)""]",False,False
+548087,hasegawa_kobato_(boku_wa_tomodachi_ga_sukunai),4,702,"[""hasegawa_kobato_(boku_wa_tomodachi_ga_sukunai)""]",False,False
+1525774,wooloo_(pokemon),4,791,"[""wooloo_(pokemon)""]",False,False
+416301,asahina_aoi_(danganronpa),4,789,"[""asahina_aoi_(danganronpa)"", ""asahina_aoi_(dangan-ronpa)""]",False,False
+971934,vampy_(idolmaster),4,706,"[""vampy_(idolmaster)"", ""vania""]",False,False
+1411715,okusawa_misaki_(bandori),4,863,"[""okusawa_misaki_(bandori)""]",False,False
+1420691,imai_lisa_(bandori),4,898,"[""imai_lisa_(bandori)""]",False,False
+1552638,kagemori_michiru_(brand_new_animal),4,824,"[""kagemori_michiru_(brand_new_animal)""]",False,False
+437350,ayatsuji_tsukasa_(idan_invaded),4,775,"[""ayatsuji_tsukasa_(idan_invaded)""]",False,False
+658080,ikusaba_mukuro_(danganronpa),4,880,"[""ikusaba_mukuro_(danganronpa)""]",False,False
+1445024,shirasagi_chisato_(bandori),4,725,"[""shirasagi_chisato_(bandori)""]",False,False
+437351,morishima_haruka_(idolmaster_cinderella_girls),4,743,"[""morishima_haruka_(idolmaster_cinderella_girls)""]",False,False
+1520878,oka_asahi_(idolmaster),4,1013,"[""oka_asahi_(idolmaster)""]",False,False
+1459803,mitsumine_yuika_(idolmaster),4,891,"[""mitsumine_yuika_(idolmaster)""]",False,False
+1460549,nekomiya_hinata_(vshojo),4,706,"[""nekomiya_hinata_(vshojo)""]",False,False
+1343588,shimada_chiyo_(girls_und_panzer),4,747,"[""shimada_chiyo_(girls_und_panzer)""]",False,False
+1505254,uesugi_fuutarou_(go-toubun_no_hanayome),4,1012,"[""uesugi_fuutarou_(go-toubun_no_hanayome)""]",False,False
+1443600,romani_archaman_(fate),4,852,"[""romani_archaman_(fate)""]",False,False
+842024,tanaka_kotoha_(idolmaster_cinderella_girls),4,833,"[""tanaka_kotoha_(idolmaster_cinderella_girls)""]",False,False
+1315625,adult_neptune_(hyperdimension_neptunia),4,688,"[""adult_neptune_(hyperdimension_neptunia)""]",False,False
+1695582,laura_la_mer_(tropical-rouge!_precure),4,760,"[""laura_la_mer_(tropical-rouge!_precure)"", ""laura_(precure)""]",False,False
+1493140,red_pikmin_(pikmin),4,1215,"[""red_pikmin_(pikmin)""]",False,False
+1257848,hoshimiya_kate_(idolmaster),4,681,"[""hoshimiya_kate_(idolmaster)""]",False,False
+700408,saionji_hiyoko_(danganronpa),4,914,"[""saionji_hiyoko_(danganronpa)""]",False,False
+422385,wingull_(pokemon),4,832,"[""wingull_(pokemon)""]",False,False
+1284579,bertolt_hoover_(shingeki_no_kyojin),4,741,"[""bertolt_hoover_(shingeki_no_kyojin)"", ""bertholt_fubar""]",False,False
+1286003,alice_cartelet_(kin-iro_mosaic),4,704,"[""alice_cartelet_(kin-iro_mosaic)"", ""alice_carteret"", ""alice_cartalet""]",False,False
+1465798,morinaka_kazaki_(nijisanji),4,701,"[""morinaka_kazaki_(nijisanji)""]",False,False
+1606123,kon_kanaho_(idolmaster_cinderella_girls),4,866,"[""kon_kanaho_(idolmaster_cinderella_girls)""]",False,False
+1528696,nui_sociere_(bandori),4,868,"[""nui_sociere_(bandori)""]",False,False
+1419936,minato_yukina_(bandori),4,799,"[""minato_yukina_(bandori)""]",False,False
+1325649,hacka_doll_3_(hacka_doll),4,696,"[""hacka_doll_3_(hacka_doll)""]",False,False
+1535934,falin_thorden_(dungeon_meshi),4,0,"[""falin_thorden_(dungeon_meshi)""]",False,False
+1276394,yorita_yoshino_(idolmaster_cinderella_girls),4,744,"[""yorita_yoshino_(idolmaster_cinderella_girls)""]",False,False
+664507,aiba_yumi_(idolmaster_cinderella_girls),4,702,"[""aiba_yumi_(idolmaster_cinderella_girls)""]",False,False
+1482584,xenovia_quarta_(high_school_dxd),4,660,"[""xenovia_quarta_(high_school_dxd)"", ""xenovia_(high_school_dxd)"", ""zenovia_(high_school_dxd)""]",False,False
+1284942,midway_princess_(kantai_collection),4,652,"[""midway_princess_(kantai_collection)"", ""midway_hime""]",False,False
+722673,yukimura_aoi_(sengoku_basara),4,757,"[""yukimura_aoi_(sengoku_basara)""]",False,False
+1386296,chabashira_tenko_(danganronpa),4,1008,"[""chabashira_tenko_(danganronpa)""]",False,False
+466270,apollo_justice_(ace_attorney),4,768,"[""apollo_justice_(ace_attorney)"", ""odoroki_housuke""]",False,False
+1504963,hoshina_hikaru_(star_twinkle_precure),4,693,"[""hoshina_hikaru_(star_twinkle_precure)""]",False,False
+1538826,annette_fantine_dominic_(fire_emblem),4,761,"[""annette_fantine_dominic_(fire_emblem)"", ""annette_fantine_dominique""]",False,False
+1535933,laios_thorden_(dungeon_meshi),4,0,"[""laios_thorden_(dungeon_meshi)""]",False,False
+1523150,bokukawauso_(touhou),4,667,"[""bokukawauso_(touhou)""]",False,False
+1255892,cure_lovely_(happinessCharge_precure!),4,653,"[""cure_lovely_(happinessCharge_precure!)""]",False,False
+1312417,muppo_(idolmaster),4,632,"[""muppo_(idolmaster)""]",False,False
+1513963,shirayuki_chiyo_(idolmaster_cinderella_girls),4,750,"[""shirayuki_chiyo_(idolmaster_cinderella_girls)""]",False,False
+1420746,udagawa_tomoe_(bandori),4,658,"[""udagawa_tomoe_(bandori)""]",False,False
+1886371,cure_sky_(hirogaru_sky_precure!),4,1061,"[""cure_sky_(hirogaru_sky_precure!)""]",False,False
+788671,bottle_miku_(vocaloid),4,680,"[""bottle_miku_(vocaloid)""]",False,False
+1423117,sakuramori_kaori_(idolmaster),4,733,"[""sakuramori_kaori_(idolmaster)""]",False,False
+1319286,yoshikawa_yuuko_(idolmaster_cinderella_girls),4,761,"[""yoshikawa_yuuko_(idolmaster_cinderella_girls)""]",False,False
+1340823,asirpa_(golden_kamuy),4,843,"[""asirpa_(golden_kamuy)""]",False,False
+1504669,tsujino_akari_(idolmaster_cinderella_girls),4,737,"[""tsujino_akari_(idolmaster_cinderella_girls)""]",False,False
+1533772,uzuki_sayaka_(idolmaster_cinderella_girls),4,607,"[""uzuki_sayaka_(idolmaster_cinderella_girls)""]",False,False
+1533771,kumada_masaru_(idolmaster_cinderella_girls),4,600,"[""kumada_masaru_(idolmaster_cinderella_girls)""]",False,False
