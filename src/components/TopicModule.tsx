@@ -587,58 +587,89 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // 专题封面图片组件 - 使用 img 标签以获得更好的抗锯齿效果
     const TopicCoverImage = React.memo(({ topic, className }: { topic: Topic; className?: string }) => {
         const coverUrl = getCoverUrl(topic);
+        const [imgDimensions, setImgDimensions] = React.useState<{ width: number; height: number } | null>(null);
+
+        const handleImageLoad = React.useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+            const img = e.currentTarget;
+            setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+        }, []);
+
         if (!coverUrl) return null;
 
         const crop = topic.coverCrop;
-        
-        // 有裁剪数据时使用绝对定位方式显示裁剪区域
-        if (crop && crop.width > 0 && crop.height > 0) {
-            const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
-            const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
+        const hasValidCrop = crop && crop.width > 0 && crop.height > 0;
 
-            // 计算图片需要放大多少倍才能显示裁剪区域
-            // 例如：裁剪区域占原图的 50%，则需要放大 100/50 = 2 倍
-            const scaleW = 100 / safeWidth;
-            const scaleH = 100 / safeHeight;
+        let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
 
-            // 计算裁剪区域中心点的位置（百分比）
-            // crop.x 是裁剪区域左上角的 x 坐标（百分比）
-            // safeWidth 是裁剪区域的宽度（百分比）
-            // 所以中心点 = 左上角 + 宽度/2
-            const centerX = crop.x + safeWidth / 2;
-            const centerY = crop.y + safeHeight / 2;
+        if (hasValidCrop) {
+            renderCrop = crop;
+        } else if (imgDimensions) {
+            const { width: imgW, height: imgH } = imgDimensions;
+            const targetAspect = 3 / 4;
+            const imgAspect = imgW / imgH;
+
+            let cropW: number, cropH: number, cropX: number, cropY: number;
+
+            if (imgAspect > targetAspect) {
+                cropH = 100;
+                cropW = (targetAspect / imgAspect) * 100;
+                cropX = (100 - cropW) / 2;
+                cropY = 0;
+            } else {
+                cropW = 100;
+                cropH = (imgAspect / targetAspect) * 100;
+                cropX = 0;
+                cropY = (100 - cropH) / 2;
+            }
+
+            renderCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
+        }
+
+        if (renderCrop) {
+            const safeWidth = Math.min(Math.max(renderCrop.width, 0.1), 99.9);
+            const safeHeight = Math.min(Math.max(renderCrop.height, 0.1), 99.9);
 
             return (
-                <div className={`overflow-hidden ${className || ''}`}>
+                <div className={`overflow-hidden relative ${className || ''}`}>
                     <img
                         src={coverUrl}
                         alt={topic.name}
-                        className="max-w-none pointer-events-none"
+                        className="absolute"
                         decoding="async"
+                        onLoad={!hasValidCrop ? handleImageLoad : undefined}
                         style={{
-                            width: `${scaleW * 100}%`,
-                            height: `${scaleH * 100}%`,
-                            objectFit: 'cover',
-                            objectPosition: `${centerX}% ${centerY}%`,
-                            transform: 'translate(-50%, -50%)',
-                            transformOrigin: 'center center',
-                            position: 'relative',
-                            left: '50%',
-                            top: '50%'
+                            width: `${10000 / safeWidth}%`,
+                            height: `${10000 / safeHeight}%`,
+                            maxWidth: 'none',
+                            minWidth: 'unset',
+                            left: `${-renderCrop.x / safeWidth * 100}%`,
+                            top: `${-renderCrop.y / safeHeight * 100}%`,
+                            imageRendering: 'auto'
                         }}
                     />
                 </div>
             );
         }
 
-        // 无裁剪数据时直接使用 object-cover
         return (
-            <img
-                src={coverUrl}
-                alt={topic.name}
-                className={`w-full h-full object-cover pointer-events-none ${className || ''}`}
-                decoding="async"
-            />
+            <div className={`overflow-hidden relative ${className || ''}`}>
+                <img
+                    src={coverUrl}
+                    alt={topic.name}
+                    className="absolute"
+                    decoding="async"
+                    onLoad={!hasValidCrop ? handleImageLoad : undefined}
+                    style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        objectPosition: 'center',
+                        left: 0,
+                        top: 0,
+                        imageRendering: 'auto'
+                    }}
+                />
+            </div>
         );
     });
 
@@ -1895,21 +1926,23 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                                 p.faceBox ? (
                                                                     <img
                                                                         src={convertFileSrc(coverFile.path)}
-                                                                        className="absolute max-w-none"
+                                                                        className="absolute"
                                                                         decoding="async"
                                                                         style={{
                                                                             width: `${10000 / Math.min(p.faceBox.w, 99.9)}%`,
                                                                             height: `${10000 / Math.min(p.faceBox.h, 99.9)}%`,
-                                                                            left: 0,
-                                                                            top: 0,
-                                                                            transformOrigin: 'top left',
-                                                                            transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                                            maxWidth: 'none',
+                                                                            minWidth: 'unset',
+                                                                            left: `${-p.faceBox.x / Math.min(p.faceBox.w, 99.9) * 100}%`,
+                                                                            top: `${-p.faceBox.y / Math.min(p.faceBox.h, 99.9) * 100}%`,
+                                                                            imageRendering: 'auto'
                                                                         }}
                                                                     />
                                                                 ) : (
                                                                     <img
                                                                         src={convertFileSrc(coverFile.path)}
                                                                         className="w-full h-full object-cover"
+                                                                        style={{ imageRendering: 'auto' }}
                                                                     />
                                                                 )
                                                             ) : (

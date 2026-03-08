@@ -1330,6 +1330,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   sortBy={personSortBy}
                   sortDirection={personSortDirection}
                   groupBy={personGroupBy}
+                  resourceRoot={effectiveResourceRoot}
               />
           ) : groupBy !== 'none' && groupedFiles && groupedFiles.length > 0 ? (
               <div className="w-full min-w-0">

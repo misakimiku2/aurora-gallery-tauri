@@ -2548,6 +2548,17 @@ export const App: React.FC = () => {
         const existingFiles = new Set(updatedTopic.fileIds || []);
         targetFileIds.forEach(id => existingFiles.add(id));
         updatedTopic.fileIds = Array.from(existingFiles);
+
+        // 如果专题没有封面，自动将添加的第一张图片设置为封面
+        if (!updatedTopic.coverFileId && targetFileIds.length > 0) {
+          const firstImageId = targetFileIds.find(id => {
+            const file = current.files[id];
+            return file && file.type === FileType.IMAGE;
+          });
+          if (firstImageId) {
+            updatedTopic.coverFileId = firstImageId;
+          }
+        }
       }
 
       if (targetPersonIds.length > 0) {

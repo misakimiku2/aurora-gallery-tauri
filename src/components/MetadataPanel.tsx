@@ -1191,15 +1191,16 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                        p.faceBox ? (
                                                            <img 
                                                                src={convertFileSrc(pCover.path)}
-                                                               className="absolute max-w-none"
+                                                               className="absolute"
                                                                decoding="async"
                                                                style={{
                                                                    width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
                                                                    height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                                                   left: 0,
-                                                                   top: 0,
-                                                                   transformOrigin: 'top left',
-                                                                   transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
+                                                                   maxWidth: 'none',
+                                                                   minWidth: 'unset',
+                                                                   left: `${-p.faceBox.x / Math.max(p.faceBox.w, 2.0) * 100}%`,
+                                                                   top: `${-p.faceBox.y / Math.max(p.faceBox.h, 2.0) * 100}%`,
+                                                                   imageRendering: 'auto'
                                                                }}
                                                            />
                                                        ) : (
@@ -1209,10 +1210,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                                className="w-full h-full object-cover" 
                                                                decoding="async"
                                                                style={{
-                                                                   willChange: 'transform, width, height',
-                                                                   WebkitBackfaceVisibility: 'hidden',
-                                                                   backfaceVisibility: 'hidden',
-                                                                   transform: 'translate3d(0, 0, 0)',
+                                                                   imageRendering: 'auto'
                                                                }}
                                                            />
                                                        )
@@ -1578,17 +1576,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                           selectedPerson.faceBox ? (
                             <img 
                                 src={coverUrl} 
-                                className="absolute max-w-none"
+                                className="absolute"
                                 decoding="async"
                                 style={{
                                     width: `${10000 / Math.max(selectedPerson.faceBox.w, 2.0)}%`,
                                     height: `${10000 / Math.max(selectedPerson.faceBox.h, 2.0)}%`,
-                                    left: 0,
-                                    top: 0,
-                                    transformOrigin: 'top left',
-                                    transform: `translate3d(${-selectedPerson.faceBox.x}%, ${-selectedPerson.faceBox.y}%, 0)`,
-                                    willChange: 'transform, width, height',
-                                    backfaceVisibility: 'hidden',
+                                    maxWidth: 'none',
+                                    minWidth: 'unset',
+                                    left: `${-selectedPerson.faceBox.x / Math.max(selectedPerson.faceBox.w, 2.0) * 100}%`,
+                                    top: `${-selectedPerson.faceBox.y / Math.max(selectedPerson.faceBox.h, 2.0) * 100}%`,
                                     imageRendering: 'auto'
                                 }}
                             />
@@ -1597,12 +1593,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                               src={coverUrl} 
                               className="w-full h-full object-cover"
                               decoding="async"
-                              style={{
-                                  willChange: 'transform, width, height',
-                                  WebkitBackfaceVisibility: 'hidden',
-                                  backfaceVisibility: 'hidden',
-                                  transform: 'translate3d(0, 0, 0)',
-                              }}
+                              style={{ imageRendering: 'auto' }}
                             />
                           )
                         ) : (
@@ -1654,17 +1645,16 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                            {person.faceBox ? (
                               <img 
                                   src={coverUrl}
-                                  className="absolute max-w-none"
+                                  className="absolute"
                                   decoding="async"
                                   style={{
                                       width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
                                       height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                      left: 0,
-                                      top: 0,
-                                      transformOrigin: 'top left',
-                                      transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                                      willChange: 'transform, width, height',
-                                      backfaceVisibility: 'hidden'
+                                      maxWidth: 'none',
+                                      minWidth: 'unset',
+                                      left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
+                                      top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                      imageRendering: 'auto'
                                   }}
                                />
                            ) : (
@@ -1672,12 +1662,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                    src={coverUrl} 
                                    className="w-full h-full object-cover"
                                    decoding="async"
-                                   style={{
-                                      willChange: 'transform, width, height',
-                                      WebkitBackfaceVisibility: 'hidden',
-                                      backfaceVisibility: 'hidden',
-                                      transform: 'translate3d(0, 0, 0)',
-                                   }}
+                                   style={{ imageRendering: 'auto' }}
                                />
                            )}
                        </div>

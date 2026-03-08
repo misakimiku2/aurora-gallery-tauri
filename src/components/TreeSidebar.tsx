@@ -12,12 +12,13 @@ const FixedSizeListComp: any = (() => {
   return null;
 })();
 import { createPortal } from 'react-dom';
-import { FileNode, FileType, TaskProgress, Person } from '../types';
+import { FileNode, FileType, TaskProgress, Person, PersonSortOption, SortDirection } from '../types';
 import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc, Scan, Download } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
 import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { PeopleCanvas } from './PeopleCanvas';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const [src, setSrc] = useState<string | null>(() => {
@@ -200,162 +201,171 @@ interface PeopleSectionControlledProps extends PeopleSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
   listHeight: number;
-  rowHeight: number;
   scrollTop: number;
-  bufferRows: number;
-  FixedSizeListComp: any;
-  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   isHovered: boolean;
 }
 
+const ROW_HEIGHT = 88;
+const COLS = 3;
+
 const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ 
   people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots
+  expanded, onToggleExpand, listHeight, scrollTop, isHovered, roots
 }) => {
-  const peopleList = useMemo(() => Object.values(people), [people]);
+  const [sidebarSortBy, setSidebarSortBy] = useState<PersonSortOption>(() => {
+    try {
+      const saved = localStorage.getItem('aurora_sidebar_people_sort_by');
+      return (saved as PersonSortOption) || 'count';
+    } catch (e) {
+      return 'count';
+    }
+  });
   
-  const peopleRows = useMemo(() => {
-    const rows = [];
-    for (let i = 0; i < peopleList.length; i += 4) {
-      rows.push(peopleList.slice(i, i + 4));
+  const [sidebarSortDirection, setSidebarSortDirection] = useState<SortDirection>(() => {
+    try {
+      const saved = localStorage.getItem('aurora_sidebar_people_sort_direction');
+      return (saved as SortDirection) || 'desc';
+    } catch (e) {
+      return 'desc';
     }
-    return rows;
-  }, [peopleList]);
-
+  });
+  
+  const handleTogglePersonSort = useCallback(() => {
+    if (sidebarSortBy === 'name') {
+      if (sidebarSortDirection === 'asc') {
+        setSidebarSortDirection('desc');
+        try { localStorage.setItem('aurora_sidebar_people_sort_direction', 'desc'); } catch (e) { }
+      } else {
+        setSidebarSortBy('count');
+        setSidebarSortDirection('desc');
+        try { 
+          localStorage.setItem('aurora_sidebar_people_sort_by', 'count');
+          localStorage.setItem('aurora_sidebar_people_sort_direction', 'desc');
+        } catch (e) { }
+      }
+    } else if (sidebarSortBy === 'count') {
+      if (sidebarSortDirection === 'asc') {
+        setSidebarSortDirection('desc');
+        try { localStorage.setItem('aurora_sidebar_people_sort_direction', 'desc'); } catch (e) { }
+      } else {
+        setSidebarSortBy('created');
+        setSidebarSortDirection('desc');
+        try { 
+          localStorage.setItem('aurora_sidebar_people_sort_by', 'created');
+          localStorage.setItem('aurora_sidebar_people_sort_direction', 'desc');
+        } catch (e) { }
+      }
+    } else {
+      if (sidebarSortDirection === 'asc') {
+        setSidebarSortBy('name');
+        setSidebarSortDirection('asc');
+        try { 
+          localStorage.setItem('aurora_sidebar_people_sort_by', 'name');
+          localStorage.setItem('aurora_sidebar_people_sort_direction', 'asc');
+        } catch (e) { }
+      } else {
+        setSidebarSortDirection('asc');
+        try { localStorage.setItem('aurora_sidebar_people_sort_direction', 'asc'); } catch (e) { }
+      }
+    }
+  }, [sidebarSortBy, sidebarSortDirection]);
+  
+  const sortedPeopleList = useMemo(() => {
+    const peopleList = Object.values(people);
+    return [...peopleList].sort((a, b) => {
+      let comparison = 0;
+      switch (sidebarSortBy) {
+        case 'name':
+          comparison = a.name.localeCompare(b.name, 'zh-CN');
+          break;
+        case 'count':
+          comparison = a.count - b.count;
+          break;
+        case 'created':
+          const fileA = files[a.coverFileId];
+          const fileB = files[b.coverFileId];
+          const dateA = fileA?.meta?.created ? new Date(fileA.meta.created).getTime() : 0;
+          const dateB = fileB?.meta?.created ? new Date(fileB.meta.created).getTime() : 0;
+          comparison = dateA - dateB;
+          break;
+        default:
+          comparison = a.count - b.count;
+      }
+      return sidebarSortDirection === 'asc' ? comparison : -comparison;
+    });
+  }, [people, files, sidebarSortBy, sidebarSortDirection]);
+  
+  const sortedPeople = useMemo(() => {
+    const result: Record<string, Person> = {};
+    sortedPeopleList.forEach(person => {
+      result[person.id] = person;
+    });
+    return result;
+  }, [sortedPeopleList]);
+  
   const availableHeight = Math.max(200, listHeight - 180);
-
-  // Performance Optimization: Freeze rendering when not hovered
-  const frozenScrollTop = useRef(scrollTop);
+  
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(200);
+  const [localScrollTop, setLocalScrollTop] = useState(0);
+  const [selectedPersonId, setSelectedPersonId] = useState<string | undefined>();
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+  
   useEffect(() => {
-    if (isHovered) {
-      frozenScrollTop.current = scrollTop;
-    }
-  }, [scrollTop, isHovered]);
-
-  // Force update when roots change (indicates a database switch)
+    const observer = new MutationObserver(() => {
+      setIsDarkMode(document.documentElement.classList.contains('dark'));
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+  
   useEffect(() => {
-    frozenScrollTop.current = scrollTop;
-  }, [roots]);
+    const el = containerRef.current;
+    if (!el) return;
+    
+    const ro = new ResizeObserver(() => {
+      setContainerWidth(el.clientWidth);
+    });
+    ro.observe(el);
+    setContainerWidth(el.clientWidth);
+    
+    return () => ro.disconnect();
+  }, [expanded]);
 
-  const PersonCardInner: React.FC<{ person: Person }> = ({ person }) => {
-    const coverFile = files[person.coverFileId];
-    const coverSrc = useMemo(() => coverFile ? convertFileSrc(coverFile.path) : undefined, [coverFile?.path]);
+  const totalHeight = useMemo(() => {
+    const rows = Math.ceil(sortedPeopleList.length / COLS);
+    return rows * ROW_HEIGHT;
+  }, [sortedPeopleList.length]);
 
-    // clamp extreme faceBox scaling to avoid huge layout work
-    const clamp = (v: number, minV: number, maxV: number) => Math.max(minV, Math.min(maxV, v));
+  const handlePersonClick = useCallback((id: string, e: React.MouseEvent) => {
+    setSelectedPersonId(id);
+    onPersonSelect(id);
+  }, [onPersonSelect]);
 
-    return (
-      <div
-         key={person.id}
-         className="flex flex-col items-center group cursor-pointer h-full justify-start pt-1"
-         onClick={() => onPersonSelect(person.id)}
-         onContextMenu={(e) => onContextMenu(e, 'person', person.id)}
-         onDoubleClick={(e) => { e.stopPropagation(); onStartRenamePerson(person.id); }}
-         title={person.name}
-      >
-         <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative flex-shrink-0" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden', isolation: 'isolate' }}>
-            {coverFile ? (
-                person.faceBox ? (
-                   <img
-                     src={coverSrc}
-                     alt={person.name}
-                     className="absolute max-w-none"
-                     decoding="async"
-                     loading="lazy"
-                     style={{
-                         width: `${clamp(10000 / Math.max(person.faceBox.w, 2.0), 0, 1000)}%`,
-                         height: `${clamp(10000 / Math.max(person.faceBox.h, 2.0), 0, 1000)}%`,
-                         left: 0,
-                         top: 0,
-                         transformOrigin: 'top left',
-                         transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                         willChange: 'transform',
-                         backfaceVisibility: 'hidden',
-                         imageRendering: 'crisp-edges' as any
-                     }}
-                   />
-                ) : (
-                   <img
-                     src={coverSrc}
-                     alt={person.name}
-                     className="w-full h-full object-cover"
-                     loading="lazy"
-                     style={{ transform: 'translateZ(0)' }}
-                   />
-                )
-            ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-400" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}><User size={18} strokeWidth={1.5}/></div>
-            )}
-         </div>
-         <span className="text-[10px] mt-1.5 text-gray-600 dark:text-gray-400 truncate w-full text-center leading-tight group-hover:text-purple-600 dark:group-hover:text-purple-300">{person.name}</span>
-         <span className="text-[9px] text-gray-500 dark:text-gray-500 truncate w-full text-center leading-tight">{person.count} {t('sidebar.files')}</span>
-      </div>
-    );
-  };
+  const handlePersonDoubleClick = useCallback((id: string) => {
+    onStartRenamePerson(id);
+  }, [onStartRenamePerson]);
 
-  const personCardEqual = (prev: { person: Person }, next: { person: Person }) => {
-    const a = prev.person;
-    const b = next.person;
-    return a.id === b.id && a.name === b.name && a.coverFileId === b.coverFileId && a.count === b.count && JSON.stringify(a.faceBox || {}) === JSON.stringify(b.faceBox || {});
-  };
+  const handlePersonContextMenu = useCallback((e: React.MouseEvent, id: string) => {
+    onContextMenu(e, 'person', id);
+  }, [onContextMenu]);
 
-  const PersonCard = React.memo(PersonCardInner, personCardEqual);
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    setLocalScrollTop(e.currentTarget.scrollTop);
+  }, []);
 
-  const listContent = useMemo(() => {
-    if (!expanded) return null;
-    if (peopleList.length === 0) {
-      return <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>;
+  const getSortTitle = () => {
+    if (sidebarSortBy === 'name') {
+      return sidebarSortDirection === 'asc' ? `${t('sort.name')} A-Z` : `${t('sort.name')} Z-A`;
+    } else if (sidebarSortBy === 'count') {
+      return sidebarSortDirection === 'asc' ? `${t('person.fileCount')} ${t('sort.asc')}` : `${t('person.fileCount')} ${t('sort.desc')}`;
+    } else {
+      return sidebarSortDirection === 'asc' ? `${t('sort.date')} ${t('sort.oldest')}` : `${t('sort.date')} ${t('sort.newest')}`;
     }
-
-    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
-
-    if (FixedSizeListComp) {
-      return (
-        <FixedSizeListComp
-          height={Math.min(peopleRows.length * rowHeight, availableHeight)}
-          itemCount={peopleRows.length}
-          itemSize={rowHeight}
-          width={'100%'}
-          initialScrollOffset={currentST}
-          itemData={{ rows: peopleRows, PersonCard }}
-        >
-          {({ index, style, data }: any) => (
-            <div style={style} className="grid grid-cols-4 gap-1 px-1">
-              {data.rows[index].map((person: Person) => (
-                <data.PersonCard key={person.id} person={person} />
-              ))}
-            </div>
-          )}
-        </FixedSizeListComp>
-      );
-    }
-
-    const total = peopleRows.length;
-    const totalHeight = total * rowHeight;
-    const viewportRows = Math.ceil(availableHeight / rowHeight);
-    const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
-    const last = Math.min(total, first + viewportRows + bufferRows * 2);
-    const topHeight = first * rowHeight;
-    const bottomHeight = Math.max(0, (total - last) * rowHeight);
-    const slice = peopleRows.slice(first, last);
-
-    return (
-      <div style={{ height: totalHeight, position: 'relative' }}>
-        <div style={{ height: topHeight }} />
-        {slice.map((row, rowIdx) => (
-          <div key={rowIdx} className="grid grid-cols-4 gap-1 px-1" style={{ height: rowHeight }}>
-            {row.map(person => (
-              <PersonCard key={person.id} person={person} />
-            ))}
-          </div>
-        ))}
-        <div style={{ height: bottomHeight }} />
-      </div>
-    );
-  }, [expanded, peopleRows, rowHeight, availableHeight, FixedSizeListComp, PersonCard, t, (isHovered ? scrollTop : null), peopleRows.length]);
+  };
 
   return (
-      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`} style={{ contain: 'layout style' }}>
+      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
         <div 
           className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
           style={isSelected ? { backgroundColor: '#a855f7', borderLeftColor: 'rgba(168,85,247,0.35)' } : undefined}
@@ -373,8 +383,26 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           </div>
           <div className="flex items-center flex-1">
             <Brain size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-purple-500 dark:text-purple-400'}`} />
-            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.people')} ({peopleList.length})</span>
+            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.people')} ({sortedPeopleList.length})</span>
           </div>
+          {expanded && (
+            <div 
+              className={`p-1 flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-purple-500'}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleTogglePersonSort();
+              }}
+              title={getSortTitle()}
+            >
+              {sidebarSortBy === 'name' ? (
+                sidebarSortDirection === 'asc' ? <SortAsc size={14} /> : <SortDesc size={14} />
+              ) : sidebarSortBy === 'count' ? (
+                sidebarSortDirection === 'asc' ? <ArrowUpDown size={14} className="rotate-180" /> : <ArrowUpDown size={14} />
+              ) : (
+                <Clock size={14} className={sidebarSortDirection === 'asc' ? 'rotate-180' : ''} />
+              )}
+            </div>
+          )}
           <button 
            className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onCreatePerson(); }}
@@ -386,14 +414,30 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
 
           {expanded && (
            <div 
-             className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0"
+             ref={containerRef}
+             className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0 bg-white dark:bg-gray-900"
              style={{ 
                maxHeight: `${availableHeight}px`,
-               contentVisibility: 'auto'
              }}
-             onScroll={onScroll}
+             onScroll={handleScroll}
            >
-             {listContent}
+             {sortedPeopleList.length === 0 ? (
+               <div className="text-xs text-gray-400 italic py-1">{t('sidebar.noPeople')}</div>
+             ) : (
+               <PeopleCanvas
+                 people={sortedPeople}
+                 files={files}
+                 selectedPersonId={selectedPersonId}
+                 onPersonClick={handlePersonClick}
+                 onPersonDoubleClick={handlePersonDoubleClick}
+                 onPersonContextMenu={handlePersonContextMenu}
+                 width={containerWidth - 32}
+                 height={totalHeight}
+                 scrollTop={localScrollTop}
+                 t={t}
+                 isDarkMode={isDarkMode}
+               />
+             )}
            </div>
           )}
       </div>
@@ -1380,7 +1424,6 @@ export const Sidebar: React.FC<{
   return (
     <div 
       className="w-full h-full flex flex-col overflow-hidden"
-      style={{ contain: 'layout style paint' }}
       onMouseEnter={handleMouseEnterSidebar}
       onMouseLeave={handleMouseLeaveSidebar}
     >
@@ -1439,11 +1482,7 @@ export const Sidebar: React.FC<{
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
             listHeight={listHeight}
-            rowHeight={88}
             scrollTop={scrollTop}
-            bufferRows={bufferRows}
-            FixedSizeListComp={FixedSizeListComp}
-            onScroll={handleScroll}
             isHovered={isSidebarHovered}
             roots={roots}
           />

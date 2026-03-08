@@ -4,6 +4,7 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
 import { useLayout, LayoutItem } from './useLayoutHook';
 import { getPinyinGroup } from '../utils/textUtils';
+import { getThumbnail } from '../api/tauri-bridge';
 
 interface PersonGroup {
     id: string;
@@ -20,7 +21,8 @@ const PersonCard = React.memo(({
   onStartRenamePerson,
   onPersonContextMenu,
   t,
-  style
+  style,
+  resourceRoot
 }: {
   person: Person;
   files: Record<string, FileNode>;
@@ -31,6 +33,7 @@ const PersonCard = React.memo(({
   onPersonContextMenu: (e: React.MouseEvent, id: string) => void;
   t: (key: string) => string;
   style: any;
+  resourceRoot?: string;
 }) => {
   if (!person) return null;
   
@@ -39,6 +42,51 @@ const PersonCard = React.memo(({
   const coverSrc = coverFile?.path ? convertFileSrc(coverFile.path) : null;
   const { width, height, x, y } = style;
   const avatarSize = Math.min(width, height - 60);
+
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
+  
+  const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+  }, []);
+  
+  useEffect(() => {
+    if (hasCover && coverFile?.path && resourceRoot && !person.faceBox) {
+      getThumbnail(coverFile.path, undefined, resourceRoot)
+        .then(url => setThumbnailUrl(url))
+        .catch(e => console.error('Failed to load avatar thumbnail:', e));
+    } else {
+      setThumbnailUrl(null);
+    }
+  }, [hasCover, coverFile?.path, resourceRoot, person.faceBox]);
+
+  const displaySrc = person.faceBox ? coverSrc : (thumbnailUrl || coverSrc);
+
+  const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+
+  let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+
+  if (hasFaceBox) {
+    renderCrop = {
+      x: person.faceBox.x,
+      y: person.faceBox.y,
+      width: person.faceBox.w,
+      height: person.faceBox.h
+    };
+  } else if (imgDimensions) {
+    const { width: imgW, height: imgH } = imgDimensions;
+    const minDim = Math.min(imgW, imgH);
+    const cropX = (imgW - minDim) / 2;
+    const cropY = (imgH - minDim) / 2;
+    
+    const cropWPercent = (minDim / imgW) * 100;
+    const cropHPercent = (minDim / imgH) * 100;
+    const cropXPercent = (cropX / imgW) * 100;
+    const cropYPercent = (cropY / imgH) * 100;
+
+    renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
+  }
 
   return (
     <div
@@ -64,39 +112,46 @@ const PersonCard = React.memo(({
         style={{ width: avatarSize, height: avatarSize }}
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
-        <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden', isolation: 'isolate' }}>
-          <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
-            {hasCover && coverSrc ? (
-               person.faceBox ? (
-                  <img 
-                      src={coverSrc} 
-                      alt={person.name}
-                      className="absolute max-w-none"
-                      decoding="async"
-                      loading="lazy"
-                      style={{
-                          width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                          height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                          left: 0,
-                          top: 0,
-                          transformOrigin: 'top left',
-                          transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                          willChange: 'transform',
-                          backfaceVisibility: 'hidden',
-                          imageRendering: 'crisp-edges' as any
-                      }}
-                  />
+        <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
+          <div className="w-full h-full overflow-hidden relative">
+            {hasCover && displaySrc ? (
+              renderCrop ? (
+                <img 
+                  src={displaySrc} 
+                  alt={person.name}
+                  className="absolute"
+                  decoding="async"
+                  onLoad={!hasFaceBox ? handleImageLoad : undefined}
+                  style={{
+                    width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
+                    height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
+                    maxWidth: 'none',
+                    minWidth: 'unset',
+                    left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
+                    top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+                    imageRendering: 'auto'
+                  }}
+                />
               ) : (
-                  <img 
-                      src={coverSrc} 
-                      alt={person.name}
-                      className="w-full h-full object-cover"
-                      loading="lazy"
-                      style={{ transform: 'translateZ(0)' }}
-                  />
+                <img 
+                  src={displaySrc} 
+                  alt={person.name}
+                  className="absolute"
+                  decoding="async"
+                  onLoad={!hasFaceBox ? handleImageLoad : undefined}
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover',
+                    objectPosition: 'center',
+                    left: 0,
+                    top: 0,
+                    imageRendering: 'auto'
+                  }}
+                />
               )
             ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}>
+              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
                 <User size={avatarSize * 0.4} strokeWidth={1.5} />
               </div>
             )}
@@ -158,6 +213,7 @@ interface PersonGridProps {
     sortBy?: PersonSortOption;
     sortDirection?: SortDirection;
     groupBy?: PersonGroupByOption;
+    resourceRoot?: string;
 }
 
 export const PersonGrid = ({
@@ -176,7 +232,8 @@ export const PersonGrid = ({
     scrollTop,
     sortBy = 'count',
     sortDirection = 'desc',
-    groupBy = 'none'
+    groupBy = 'none',
+    resourceRoot
 }: PersonGridProps) => {
 
     // 排序人物列表
@@ -384,6 +441,7 @@ export const PersonGrid = ({
                                 onPersonContextMenu={onPersonContextMenu}
                                 t={t}
                                 style={item}
+                                resourceRoot={resourceRoot}
                             />
                         );
                     })}
@@ -420,6 +478,7 @@ export const PersonGrid = ({
                                                     onPersonContextMenu={onPersonContextMenu}
                                                     t={t}
                                                     style={item}
+                                                    resourceRoot={resourceRoot}
                                                 />
                                             );
                                         })}

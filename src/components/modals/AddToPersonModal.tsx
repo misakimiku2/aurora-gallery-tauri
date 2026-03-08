@@ -1,17 +1,8 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Search, User, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import * as RW from 'react-window';
+import { List } from 'react-window';
 import { Person, FileNode } from '../../types';
-
-// Resolve FixedSizeList component from various module shapes
-const FixedSizeListComp: any = (() => {
-  const mod: any = RW as any;
-  if (mod.FixedSizeList) return mod.FixedSizeList;
-  if (mod.default && mod.default.FixedSizeList) return mod.default.FixedSizeList;
-  if (mod.default && (typeof mod.default === 'function' || typeof mod.default === 'object')) return mod.default;
-  return null;
-})();
 
 interface AddToPersonModalProps {
     people: Record<string, Person>;
@@ -23,21 +14,15 @@ interface AddToPersonModalProps {
 
 const ITEM_HEIGHT = 44;
 const LIST_HEIGHT = 280;
-const LIST_WIDTH = 288;
 
-interface PersonRowProps {
-    index: number;
-    style: React.CSSProperties;
-    data: {
-        people: Person[];
-        files: Record<string, FileNode>;
-        selectedIds: Set<string>;
-        toggleSelection: (personId: string) => void;
-    };
+interface RowProps {
+    people: Person[];
+    files: Record<string, FileNode>;
+    selectedIds: Set<string>;
+    toggleSelection: (personId: string) => void;
 }
 
-const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
-    const { people, files, selectedIds, toggleSelection } = data;
+const PersonRow = ({ index, style, people, files, selectedIds, toggleSelection }: { index: number; style: React.CSSProperties } & RowProps) => {
     const person = people[index];
     const coverFile = files[person.coverFileId];
     const hasCover = !!coverFile;
@@ -47,7 +32,7 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
         <div
             style={style}
             onClick={() => toggleSelection(person.id)}
-            className={`flex items-center p-2 rounded cursor-pointer group ${
+            className={`flex items-center px-2 py-1 rounded cursor-pointer group ${
                 isSelected
                     ? 'bg-blue-100 dark:bg-blue-900/30'
                     : 'hover:bg-gray-100 dark:hover:bg-gray-700'
@@ -61,18 +46,16 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
                                 <img
                                     src={convertFileSrc(coverFile.path)}
                                     alt={person.name}
-                                    className="absolute max-w-none"
+                                    className="absolute"
                                     decoding="async"
                                     loading="lazy"
                                     style={{
                                         width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
                                         height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                        left: 0,
-                                        top: 0,
-                                        transformOrigin: 'top left',
-                                        transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                                        willChange: 'transform',
-                                        backfaceVisibility: 'hidden',
+                                        maxWidth: 'none',
+                                        minWidth: 'unset',
+                                        left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
+                                        top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
                                         imageRendering: 'auto'
                                     }}
                                 />
@@ -83,6 +66,7 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
                                     className="w-full h-full object-cover"
                                     decoding="async"
                                     loading="lazy"
+                                    style={{ imageRendering: 'auto' }}
                                 />
                             )
                         ) : (
@@ -103,9 +87,7 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
             </span>
         </div>
     );
-});
-
-PersonRow.displayName = 'PersonRow';
+};
 
 export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, files, onConfirm, onClose, t }) => {
     const [search, setSearch] = useState('');
@@ -137,7 +119,7 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
         }
     };
 
-    const itemData = useMemo(() => ({
+    const rowProps = useMemo(() => ({
         people: filteredPeople,
         files,
         selectedIds,
@@ -159,33 +141,20 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                     autoFocus
                 />
             </div>
-            <div className="flex-1 min-h-[200px] mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">
+            <div className="flex-1 min-h-0 mb-4 border border-gray-100 dark:border-gray-700 rounded overflow-hidden">
                 {filteredPeople.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-gray-500 text-sm">
+                    <div className="flex items-center justify-center h-full text-gray-500 text-sm py-8">
                         {t('sidebar.noPeople')}
                     </div>
-                ) : FixedSizeListComp ? (
-                    <FixedSizeListComp
-                        height={LIST_HEIGHT}
-                        itemCount={filteredPeople.length}
-                        itemSize={ITEM_HEIGHT}
-                        width={LIST_WIDTH}
-                        itemData={itemData}
-                        overscanCount={5}
-                    >
-                        {PersonRow}
-                    </FixedSizeListComp>
                 ) : (
-                    <div className="overflow-y-auto h-full">
-                        {filteredPeople.map((person, index) => (
-                            <PersonRow
-                                key={person.id}
-                                index={index}
-                                style={{ height: ITEM_HEIGHT }}
-                                data={itemData}
-                            />
-                        ))}
-                    </div>
+                    <List
+                        style={{ height: LIST_HEIGHT, width: '100%' }}
+                        rowCount={filteredPeople.length}
+                        rowHeight={ITEM_HEIGHT}
+                        rowComponent={PersonRow}
+                        rowProps={rowProps}
+                        overscanCount={5}
+                    />
                 )}
             </div>
             <div className="flex justify-between items-center">

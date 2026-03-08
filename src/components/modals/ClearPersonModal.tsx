@@ -56,23 +56,21 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
                         <img
                             src={convertFileSrc(coverFile.path)}
                             alt={p.name}
-                            className="absolute max-w-none"
+                            className="absolute"
                             decoding="async"
                             loading="lazy"
                             style={{
                                 width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
                                 height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                left: 0,
-                                top: 0,
-                                transformOrigin: 'top left',
-                                transform: `translate3d(${-p.faceBox.x}%, ${-p.faceBox.y}%, 0)`,
-                                willChange: 'transform',
-                                backfaceVisibility: 'hidden',
+                                maxWidth: 'none',
+                                minWidth: 'unset',
+                                left: `${-p.faceBox.x / Math.max(p.faceBox.w, 2.0) * 100}%`,
+                                top: `${-p.faceBox.y / Math.max(p.faceBox.h, 2.0) * 100}%`,
                                 imageRendering: 'auto'
                             }}
                         />
                     ) : (
-                        <img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" decoding="async" loading="lazy" />
+                        <img src={convertFileSrc(coverFile.path)} alt={p.name} className="w-full h-full object-cover" decoding="async" loading="lazy" style={{ imageRendering: 'auto' }} />
                     )
                 ) : (
                     <User size={14} className="text-gray-400 dark:text-gray-500" />

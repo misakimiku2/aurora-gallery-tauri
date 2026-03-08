@@ -318,13 +318,15 @@ export const SmartAddToPersonModal: React.FC<SmartAddToPersonModalProps> = ({
                       maxWidth: 'none',
                       minWidth: 'unset',
                       left: `${-person.faceBox.x / person.faceBox.w * 100}%`,
-                      top: `${-person.faceBox.y / person.faceBox.h * 100}%`
+                      top: `${-person.faceBox.y / person.faceBox.h * 100}%`,
+                      imageRendering: 'auto'
                     } : {
                       width: '100%',
                       height: '100%',
                       objectFit: 'cover',
                       left: 0,
-                      top: 0
+                      top: 0,
+                      imageRendering: 'auto'
                     }}
                   />
                 </div>
