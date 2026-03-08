@@ -206,6 +206,191 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
 };
 
 
+const PersonAvatar = ({ person, coverFile, size = 80, className = '' }: { 
+  person: Person; 
+  coverFile?: FileNode; 
+  size?: number;
+  className?: string;
+}) => {
+  const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
+  
+  const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+  }, []);
+
+  const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
+  const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+
+  let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+
+  if (hasFaceBox) {
+    renderCrop = {
+      x: person.faceBox.x,
+      y: person.faceBox.y,
+      width: person.faceBox.w,
+      height: person.faceBox.h
+    };
+  } else if (imgDimensions) {
+    const { width: imgW, height: imgH } = imgDimensions;
+    const minDim = Math.min(imgW, imgH);
+    const cropX = (imgW - minDim) / 2;
+    const cropY = (imgH - minDim) / 2;
+    
+    const cropWPercent = (minDim / imgW) * 100;
+    const cropHPercent = (minDim / imgH) * 100;
+    const cropXPercent = (cropX / imgW) * 100;
+    const cropYPercent = (cropY / imgH) * 100;
+
+    renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
+  }
+
+  if (!coverUrl) {
+    return (
+      <div 
+        className={`w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400 ${className}`}
+        style={{ width: size, height: size }}
+      >
+        <User size={size * 0.4} strokeWidth={1.5} />
+      </div>
+    );
+  }
+
+  return (
+    <div 
+      className={`overflow-hidden relative ${className}`}
+      style={{ width: size, height: size }}
+    >
+      {renderCrop ? (
+        <img 
+          src={coverUrl}
+          alt={person.name}
+          className="absolute"
+          decoding="async"
+          onLoad={!hasFaceBox ? handleImageLoad : undefined}
+          style={{
+            width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
+            height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
+            maxWidth: 'none',
+            minWidth: 'unset',
+            left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
+            top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+            imageRendering: 'auto'
+          }}
+        />
+      ) : (
+        <img 
+          src={coverUrl}
+          alt={person.name}
+          className="absolute"
+          decoding="async"
+          onLoad={!hasFaceBox ? handleImageLoad : undefined}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            objectPosition: 'center',
+            left: 0,
+            top: 0,
+            imageRendering: 'auto'
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
+  topic: Topic;
+  coverUrl: string | null;
+  className?: string;
+}) => {
+  const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
+
+  const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+  }, []);
+
+  const hasCrop = topic.coverCrop && topic.coverCrop.width > 0 && topic.coverCrop.height > 0;
+
+  let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+
+  if (hasCrop) {
+    renderCrop = topic.coverCrop;
+  } else if (imgDimensions) {
+    const { width: imgW, height: imgH } = imgDimensions;
+    const targetAspect = 3 / 4;
+    const imgAspect = imgW / imgH;
+
+    let cropW: number, cropH: number, cropX: number, cropY: number;
+
+    if (imgAspect > targetAspect) {
+      cropH = 100;
+      cropW = (targetAspect / imgAspect) * 100;
+      cropX = (100 - cropW) / 2;
+      cropY = 0;
+    } else {
+      cropW = 100;
+      cropH = (imgAspect / targetAspect) * 100;
+      cropX = 0;
+      cropY = (100 - cropH) / 2;
+    }
+
+    renderCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
+  }
+
+  if (!coverUrl) {
+    return (
+      <div className={`w-full h-full flex flex-col items-center justify-center text-gray-300 dark:text-gray-600 ${className}`}>
+        <Layout size={64} className="mb-4 opacity-20" />
+        <span className="text-xs uppercase tracking-[0.2em] font-medium">Topic</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`overflow-hidden relative ${className}`}>
+      {renderCrop ? (
+        <img
+          src={coverUrl}
+          alt={topic.name}
+          className="absolute"
+          decoding="async"
+          onLoad={!hasCrop ? handleImageLoad : undefined}
+          style={{
+            width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
+            height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
+            maxWidth: 'none',
+            minWidth: 'unset',
+            left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
+            top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+            imageRendering: 'auto'
+          }}
+        />
+      ) : (
+        <img
+          src={coverUrl}
+          alt={topic.name}
+          className="absolute"
+          decoding="async"
+          onLoad={!hasCrop ? handleImageLoad : undefined}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            objectPosition: 'center',
+            left: 0,
+            top: 0,
+            imageRendering: 'auto'
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+
 const CategorySelector = ({ current, onChange, t }: any) => (
   <div className="space-y-2 pt-4 border-t border-gray-200 dark:border-gray-800">
       <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mb-2">{t('meta.folderCategory')}</div>
@@ -1083,28 +1268,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
       return (
         <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-           {/* 现代化封�?Header */}
            <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
-               {coverUrl ? (
-                   <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
-                       <div 
-                           className="w-full h-full bg-cover bg-center"
-                           style={{
-                               ...getCoverStyle(topic, coverUrl),
-                               willChange: 'transform, width, height',
-                               WebkitBackfaceVisibility: 'hidden',
-                               backfaceVisibility: 'hidden',
-                               transform: 'translate3d(0, 0, 0)',
-                           }}
-                       />
-                   </div>
-               ) : (
-                   <div className="w-full h-full flex flex-col items-center justify-center text-gray-300 dark:text-gray-600">
-                       <Layout size={64} className="mb-4 opacity-20" />
-                       <span className="text-xs uppercase tracking-[0.2em] font-medium">{t('sidebar.topics')}</span>
-                   </div>
-               )}
-               {/* 底部渐变遮罩 */}
+               <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
+                   <TopicCoverImage topic={topic} coverUrl={coverUrl} className="w-full h-full" />
+               </div>
                <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
            </div>
 
@@ -1187,34 +1354,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         <div className="relative w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-800 border border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
                                             <div className="relative w-full h-full rounded-full overflow-hidden">
                                                 <div className="w-full h-full transition-transform duration-500 group-hover/avatar:scale-110">
-                                                    {pCover ? (
-                                                       p.faceBox ? (
-                                                           <img 
-                                                               src={convertFileSrc(pCover.path)}
-                                                               className="absolute"
-                                                               decoding="async"
-                                                               style={{
-                                                                   width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
-                                                                   height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                                                   maxWidth: 'none',
-                                                                   minWidth: 'unset',
-                                                                   left: `${-p.faceBox.x / Math.max(p.faceBox.w, 2.0) * 100}%`,
-                                                                   top: `${-p.faceBox.y / Math.max(p.faceBox.h, 2.0) * 100}%`,
-                                                                   imageRendering: 'auto'
-                                                               }}
-                                                           />
-                                                       ) : (
-                                                           <img 
-                                                               src={convertFileSrc(pCover.path)} 
-                                                               alt={p.name}
-                                                               className="w-full h-full object-cover" 
-                                                               decoding="async"
-                                                               style={{
-                                                                   imageRendering: 'auto'
-                                                               }}
-                                                           />
-                                                       )
-                                                    ) : <User className="w-full h-full p-3 text-gray-400"/>}
+                                                    <PersonAvatar person={p} coverFile={pCover} size={80} className="rounded-full" />
                                                 </div>
                                             </div>
 
@@ -1252,26 +1392,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         onClick={() => onSelectTopic && onSelectTopic(sub.id)}
                                     >
                                         <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
-                                            {subCoverUrl ? (
-                                                <div className="w-full h-full transition-transform duration-500 group-hover/sub:scale-110">
-                                                    <div 
-                                                        className="w-full h-full bg-cover bg-center" 
-                                                        style={{
-                                                            ...getCoverStyle(sub, subCoverUrl),
-                                                            willChange: 'transform, width, height',
-                                                            WebkitBackfaceVisibility: 'hidden',
-                                                            backfaceVisibility: 'hidden',
-                                                            transform: 'translate3d(0, 0, 0)',
-                                                        }}
-                                                    />
-                                                </div>
-                                            ) : (
-                                                <div className="w-full h-full flex flex-col items-center justify-center text-gray-400 bg-gray-50 dark:bg-gray-800/50">
-                                                    <Folder size={24} className="opacity-20 mb-1" />
-                                                    <span className="text-[9px] uppercase tracking-widest font-bold opacity-30">Topic</span>
-                                                </div>
-                                            )}
-                                            {/* 底部渐显遮罩 */}
+                                            <div className="w-full h-full transition-transform duration-500 group-hover/sub:scale-110">
+                                                <TopicCoverImage topic={sub} coverUrl={subCoverUrl} className="w-full h-full rounded-2xl" />
+                                            </div>
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover/sub:opacity-100 transition-opacity pointer-events-none" />
                                         </div>
                                         <div className="px-1 min-w-0">
@@ -1562,7 +1685,6 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                   if (!selectedPerson) return null;
                   
                   const coverFile = files[selectedPerson.coverFileId];
-                  const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
                   
                   return (
                     <div 
@@ -1572,33 +1694,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     >
                       {/* Avatar */}
                       <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
-                        {coverUrl ? (
-                          selectedPerson.faceBox ? (
-                            <img 
-                                src={coverUrl} 
-                                className="absolute"
-                                decoding="async"
-                                style={{
-                                    width: `${10000 / Math.max(selectedPerson.faceBox.w, 2.0)}%`,
-                                    height: `${10000 / Math.max(selectedPerson.faceBox.h, 2.0)}%`,
-                                    maxWidth: 'none',
-                                    minWidth: 'unset',
-                                    left: `${-selectedPerson.faceBox.x / Math.max(selectedPerson.faceBox.w, 2.0) * 100}%`,
-                                    top: `${-selectedPerson.faceBox.y / Math.max(selectedPerson.faceBox.h, 2.0) * 100}%`,
-                                    imageRendering: 'auto'
-                                }}
-                            />
-                          ) : (
-                            <img 
-                              src={coverUrl} 
-                              className="w-full h-full object-cover"
-                              decoding="async"
-                              style={{ imageRendering: 'auto' }}
-                            />
-                          )
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={18}/></div>
-                        )}
+                        <PersonAvatar person={selectedPerson} coverFile={coverFile} size={56} className="rounded-full" />
                       </div>
                       
                       {/* Name and Stats */}
@@ -1640,35 +1736,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
              <div className="relative z-10 pt-10 px-5 pb-2 flex flex-col items-center">
                 {/* Avatar */}
                 <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-gray-200 dark:bg-gray-700 mb-4 relative group">
-                    {coverUrl ? (
-                       <div className="w-full h-full transition-transform duration-300 group-hover:scale-110">
-                           {person.faceBox ? (
-                              <img 
-                                  src={coverUrl}
-                                  className="absolute"
-                                  decoding="async"
-                                  style={{
-                                      width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                                      height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                      maxWidth: 'none',
-                                      minWidth: 'unset',
-                                      left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
-                                      top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
-                                      imageRendering: 'auto'
-                                  }}
-                               />
-                           ) : (
-                               <img 
-                                   src={coverUrl} 
-                                   className="w-full h-full object-cover"
-                                   decoding="async"
-                                   style={{ imageRendering: 'auto' }}
-                               />
-                           )}
-                       </div>
-                    ) : (
-                       <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={32}/></div>
-                    )}
+                    <div className="w-full h-full transition-transform duration-300 group-hover:scale-110">
+                        <PersonAvatar person={person} coverFile={coverFile} size={128} className="rounded-full" />
+                    </div>
                 </div>
 
                 {/* Name Input (dynamic width to avoid overlapping edit icon) */}

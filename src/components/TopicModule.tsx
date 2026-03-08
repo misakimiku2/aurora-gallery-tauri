@@ -673,6 +673,92 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         );
     });
 
+    const TopicPersonAvatar = React.memo(({ person, coverFile, size = 120 }: { person: Person; coverFile?: FileNode; size?: number }) => {
+        const [imgDimensions, setImgDimensions] = React.useState<{ width: number; height: number } | null>(null);
+
+        const handleImageLoad = React.useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+            const img = e.currentTarget;
+            setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+        }, []);
+
+        const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
+        const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
+
+        let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+
+        if (hasFaceBox) {
+            renderCrop = {
+                x: person.faceBox.x,
+                y: person.faceBox.y,
+                width: person.faceBox.w,
+                height: person.faceBox.h
+            };
+        } else if (imgDimensions) {
+            const { width: imgW, height: imgH } = imgDimensions;
+            const minDim = Math.min(imgW, imgH);
+            const cropX = (imgW - minDim) / 2;
+            const cropY = (imgH - minDim) / 2;
+
+            const cropWPercent = (minDim / imgW) * 100;
+            const cropHPercent = (minDim / imgH) * 100;
+            const cropXPercent = (cropX / imgW) * 100;
+            const cropYPercent = (cropY / imgH) * 100;
+
+            renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
+        }
+
+        if (!coverUrl) {
+            return (
+                <div
+                    className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400"
+                    style={{ width: size, height: size }}
+                >
+                    <User size={size * 0.5} strokeWidth={1.5} />
+                </div>
+            );
+        }
+
+        return (
+            <div className="overflow-hidden relative w-full h-full rounded-full">
+                {renderCrop ? (
+                    <img
+                        src={coverUrl}
+                        alt={person.name}
+                        className="absolute"
+                        decoding="async"
+                        onLoad={!hasFaceBox ? handleImageLoad : undefined}
+                        style={{
+                            width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
+                            height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
+                            maxWidth: 'none',
+                            minWidth: 'unset',
+                            left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
+                            top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+                            imageRendering: 'auto'
+                        }}
+                    />
+                ) : (
+                    <img
+                        src={coverUrl}
+                        alt={person.name}
+                        className="absolute"
+                        decoding="async"
+                        onLoad={!hasFaceBox ? handleImageLoad : undefined}
+                        style={{
+                            width: '100%',
+                            height: '100%',
+                            objectFit: 'cover',
+                            objectPosition: 'center',
+                            left: 0,
+                            top: 0,
+                            imageRendering: 'auto'
+                        }}
+                    />
+                )}
+            </div>
+        );
+    });
+
     const currentTopic = currentTopicId ? topics[currentTopicId] : null;
 
     // --- Gallery Logic (Root) ---
@@ -1922,32 +2008,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                 <div className={`relative w-[120px] h-[120px] rounded-full bg-gray-100 dark:bg-gray-800 border-2 border-transparent group-hover/person:border-blue-500/50 transition-all shadow-md ${((selectedPersonIds || []).includes(p.id)) ? 'ring-4 ring-blue-500 ring-offset-0' : (clickedOncePerson === p.id ? 'ring-4 ring-blue-500 ring-offset-0' : '')}`}>
                                                     <div className="relative w-full h-full rounded-full overflow-hidden">
                                                         <div className="w-full h-full transition-transform duration-500 group-hover/person:scale-110">
-                                                            {coverFile ? (
-                                                                p.faceBox ? (
-                                                                    <img
-                                                                        src={convertFileSrc(coverFile.path)}
-                                                                        className="absolute"
-                                                                        decoding="async"
-                                                                        style={{
-                                                                            width: `${10000 / Math.min(p.faceBox.w, 99.9)}%`,
-                                                                            height: `${10000 / Math.min(p.faceBox.h, 99.9)}%`,
-                                                                            maxWidth: 'none',
-                                                                            minWidth: 'unset',
-                                                                            left: `${-p.faceBox.x / Math.min(p.faceBox.w, 99.9) * 100}%`,
-                                                                            top: `${-p.faceBox.y / Math.min(p.faceBox.h, 99.9) * 100}%`,
-                                                                            imageRendering: 'auto'
-                                                                        }}
-                                                                    />
-                                                                ) : (
-                                                                    <img
-                                                                        src={convertFileSrc(coverFile.path)}
-                                                                        className="w-full h-full object-cover"
-                                                                        style={{ imageRendering: 'auto' }}
-                                                                    />
-                                                                )
-                                                            ) : (
-                                                                <User className="w-full h-full p-6 text-gray-400" />
-                                                            )}
+                                                            <TopicPersonAvatar person={p} coverFile={coverFile} />
                                                         </div>
                                                     </div>
 

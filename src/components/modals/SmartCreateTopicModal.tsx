@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { FolderOpen, Check, Sparkles, X, Users, Image } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { FolderOpen, Check, Sparkles, X, Users, Image, AlertTriangle } from 'lucide-react';
 import * as RW from 'react-window';
-import { WorkTopicInfo, Topic, Person } from '../../types';
+import { WorkTopicInfo, Topic, Person, FileNode } from '../../types';
 import { clipGetWorkTopics, clipCreateWorkTopics } from '../../api/tauri-bridge';
 
 const FixedSizeListComp: any = (() => {
@@ -21,6 +22,8 @@ interface SmartCreateTopicModalProps {
   };
   people: Record<string, Person>;
   topics: Record<string, Topic>;
+  files: Record<string, FileNode>;
+  resourceRoot: string;
   onConfirm: (topics: Topic[], people: Person[]) => void;
   onClose: () => void;
   t: (key: string) => string;
@@ -38,52 +41,64 @@ interface WorkRowProps {
     language: 'zh' | 'en';
     onSelect: (work: WorkTopicInfo) => void;
     selectedWorkName: string | null;
+    files: Record<string, FileNode>;
+    resourceRoot: string;
   };
 }
 
 const WorkRow = React.memo(({ index, style, data }: WorkRowProps) => {
-  const { works, selectedWorks, onToggle, language, onSelect, selectedWorkName } = data;
+  const { works, selectedWorks, onToggle, language, onSelect, selectedWorkName, files, resourceRoot } = data;
   const work = works[index];
   const isSelected = selectedWorks.has(work.workName);
   const isPreviewed = selectedWorkName === work.workName;
-  
+
   const displayName = language === 'zh' && work.workNameCn ? work.workNameCn : work.workName;
   const existingTopic = work.existingTopicId;
-  
+
+  const coverFile = work.coverFileId ? files[work.coverFileId] : null;
+  const coverUrl = coverFile ? convertFileSrc(coverFile.path) : null;
+
   return (
     <div
       style={style}
       onClick={() => onSelect(work)}
-      className={`flex items-center p-2 rounded cursor-pointer group ${
-        isPreviewed
-          ? 'bg-blue-100 dark:bg-blue-900/30'
-          : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-      }`}
+      className={`flex items-center px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 group m-1 border ${isPreviewed
+        ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800/50 shelf-shadow'
+        : 'hover:bg-gray-100 dark:hover:bg-gray-700/50 border-transparent'
+        }`}
     >
       <div
         onClick={(e) => {
           e.stopPropagation();
           if (!existingTopic) onToggle(work.workName);
         }}
-        className={`mr-3 w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${
-          existingTopic
-            ? 'border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 cursor-not-allowed'
-            : isSelected
-              ? 'border-blue-500 bg-blue-500 cursor-pointer'
-              : 'border-gray-300 dark:border-gray-600 cursor-pointer'
-        }`}
+        className={`mr-3 w-5 h-5 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${existingTopic
+          ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 cursor-not-allowed'
+          : isSelected
+            ? 'border-purple-500 bg-purple-500 cursor-pointer shadow-sm shadow-purple-500/20'
+            : 'border-gray-300 dark:border-gray-600 cursor-pointer hover:border-purple-400'
+          }`}
       >
-        {isSelected && !existingTopic && <Check size={12} className="text-white" />}
-        {existingTopic && <Check size={12} className="text-gray-400 dark:text-gray-500" />}
+        {isSelected && !existingTopic && <Check size={12} className="text-white" strokeWidth={3} />}
+        {existingTopic && <Check size={12} className="text-gray-300 dark:text-gray-600" />}
       </div>
+
+      <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 mr-3 bg-gray-100 dark:bg-gray-700 flex items-center justify-center border border-gray-200 dark:border-gray-700">
+        {coverUrl ? (
+          <img src={coverUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          <FolderOpen size={16} className="text-gray-400" />
+        )}
+      </div>
+
       <div className="flex-1 min-w-0">
-        <div className={`text-sm truncate ${isPreviewed ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
+        <div className={`text-sm truncate ${isPreviewed ? 'text-purple-700 dark:text-purple-300 font-semibold' : 'text-gray-800 dark:text-gray-200'}`}>
           {displayName}
-          {existingTopic && <span className="ml-2 text-xs text-gray-400">({language === 'zh' ? '已创建' : 'Created'})</span>}
+          {existingTopic && <span className="ml-1 text-[10px] uppercase font-bold text-gray-400 opacity-60">({language === 'zh' ? '已创建' : 'Created'})</span>}
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
-          <span className="flex items-center gap-1"><Users size={10} />{work.characterCount}</span>
-          <span className="flex items-center gap-1"><Image size={10} />{work.imageCount}</span>
+        <div className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-2 mt-0.5">
+          <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Users size={8} />{work.characterCount}</span>
+          <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Image size={8} />{work.imageCount}</span>
         </div>
       </div>
     </div>
@@ -97,6 +112,8 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
   clipSettings,
   people,
   topics,
+  files,
+  resourceRoot,
   onConfirm,
   onClose,
   t
@@ -108,7 +125,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
   const [creating, setCreating] = useState(false);
   const [threshold, setThreshold] = useState(0.1);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   const workListRef = useRef<HTMLDivElement>(null);
   const [workListHeight, setWorkListHeight] = useState(300);
   const thresholdDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -120,15 +137,15 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
         setWorkListHeight(rect.height);
       }
     };
-    
+
     updateWorkListHeight();
     window.addEventListener('resize', updateWorkListHeight);
-    
+
     const observer = new ResizeObserver(updateWorkListHeight);
     if (workListRef.current) {
       observer.observe(workListRef.current);
     }
-    
+
     return () => {
       window.removeEventListener('resize', updateWorkListHeight);
       observer.disconnect();
@@ -140,7 +157,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
       setLoading(false);
       return;
     }
-    
+
     setLoading(true);
     try {
       const topics = await clipGetWorkTopics(minScore, 1, language);
@@ -158,11 +175,11 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
 
   const handleThresholdChange = useCallback((newThreshold: number) => {
     setThreshold(newThreshold);
-    
+
     if (thresholdDebounceRef.current) {
       clearTimeout(thresholdDebounceRef.current);
     }
-    
+
     thresholdDebounceRef.current = setTimeout(() => {
       loadWorkTopics(newThreshold);
     }, 300);
@@ -195,7 +212,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
 
   const handleConfirm = useCallback(async () => {
     if (selectedWorks.size === 0) return;
-    
+
     setCreating(true);
     try {
       const workNames = Array.from(selectedWorks);
@@ -213,7 +230,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
 
   const filteredWorks = useMemo(() => {
     if (!searchQuery.trim()) return workTopics;
-    
+
     const query = searchQuery.toLowerCase();
     return workTopics.filter(work => {
       const nameMatch = work.workName.toLowerCase().includes(query);
@@ -235,7 +252,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
       const work = workTopics.find(w => w.workName === workName);
       return sum + (work?.imageCount || 0);
     }, 0);
-    
+
     return { total, existing, available, selected, totalCharacters, totalImages };
   }, [workTopics, selectedWorks]);
 
@@ -245,8 +262,10 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
     onToggle: handleToggleWork,
     language,
     onSelect: handleSelectWork,
-    selectedWorkName: selectedWork?.workName ?? null
-  }), [filteredWorks, selectedWorks, handleToggleWork, language, handleSelectWork, selectedWork]);
+    selectedWorkName: selectedWork?.workName ?? null,
+    files,
+    resourceRoot
+  }), [filteredWorks, selectedWorks, handleToggleWork, language, handleSelectWork, selectedWork, files, resourceRoot]);
 
   useEffect(() => {
     return () => {
@@ -290,7 +309,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
         <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 p-4 flex flex-col overflow-hidden">
           <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
             <div className="text-sm text-purple-700 dark:text-purple-300">
-              {language === 'zh' 
+              {language === 'zh'
                 ? `检测到 ${stats.total} 个作品，${stats.available} 个可创建`
                 : `Detected ${stats.total} works, ${stats.available} available`}
             </div>
@@ -388,13 +407,12 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
               <button
                 onClick={handleConfirm}
                 disabled={selectedWorks.size === 0 || creating}
-                className={`flex-1 px-4 py-2 rounded text-sm text-white transition-colors ${
-                  selectedWorks.size > 0 && !creating
-                    ? 'bg-purple-600 hover:bg-purple-700'
-                    : 'bg-gray-400 cursor-not-allowed'
-                }`}
+                className={`flex-1 px-4 py-2 rounded text-sm text-white transition-colors ${selectedWorks.size > 0 && !creating
+                  ? 'bg-purple-600 hover:bg-purple-700'
+                  : 'bg-gray-400 cursor-not-allowed'
+                  }`}
               >
-                {creating 
+                {creating
                   ? (t('smartCreateTopic.creating') || '创建中...')
                   : `${t('smartCreateTopic.createTopics') || '创建专题'} (${selectedWorks.size})`}
               </button>
@@ -402,84 +420,115 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col overflow-hidden bg-gray-50 dark:bg-gray-900">
-          <div className="p-3 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+        <div className="flex-1 flex flex-col overflow-hidden bg-gray-50/50 dark:bg-gray-900/50">
+          <div className="p-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-800 flex items-center justify-between">
+            <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
               {selectedWork
-                ? `${t('smartCreateTopic.preview') || '预览'}: ${language === 'zh' && selectedWork.workNameCn ? selectedWork.workNameCn : selectedWork.workName}`
+                ? `${t('smartCreateTopic.preview') || '预览'}`
                 : t('smartCreateTopic.selectToPreview') || '选择作品查看详情'}
             </span>
           </div>
-          <div className="flex-1 overflow-auto p-4">
+          <div className="flex-1 overflow-auto p-6">
             {!selectedWork ? (
-              <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-600">
                 <div className="text-center">
-                  <FolderOpen size={48} className="mx-auto mb-3 opacity-30" />
-                  <p>{t('smartCreateTopic.selectWorkToPreview') || '请选择作品查看详情'}</p>
+                  <div className="w-16 h-16 rounded-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center mx-auto mb-4 border border-gray-200 dark:border-gray-700">
+                    <FolderOpen size={32} className="opacity-40" />
+                  </div>
+                  <p className="text-sm">{t('smartCreateTopic.selectWorkToPreview') || '请选择左侧作品以开始预览'}</p>
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm">
-                  <h4 className="font-medium text-gray-900 dark:text-white mb-2">
-                    {language === 'zh' ? '作品信息' : 'Work Info'}
-                  </h4>
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">{language === 'zh' ? '英文名' : 'English Name'}:</span>
-                      <span className="ml-2 text-gray-900 dark:text-white">{selectedWork.workName}</span>
+              <div className="space-y-6 max-w-4xl mx-auto">
+                <div className="relative overflow-hidden rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shelf-shadow p-6">
+                  {/* Decorative Background */}
+                  <div className="absolute top-0 right-0 -mt-8 -mr-8 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                  <div className="flex items-start gap-6 relative">
+                    <div className="w-32 h-44 rounded-xl overflow-hidden shadow-lg border border-white/20 flex-shrink-0">
+                      {selectedWork.coverFileId ? (
+                        <img
+                          src={convertFileSrc(files[selectedWork.coverFileId]?.path)}
+                          alt=""
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                          <Image size={32} className="text-gray-300 dark:text-gray-600" />
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">{language === 'zh' ? '中文名' : 'Chinese Name'}:</span>
-                      <span className="ml-2 text-gray-900 dark:text-white">{selectedWork.workNameCn || '-'}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">{language === 'zh' ? '角色数' : 'Characters'}:</span>
-                      <span className="ml-2 text-gray-900 dark:text-white">{selectedWork.characterCount}</span>
-                    </div>
-                    <div>
-                      <span className="text-gray-500 dark:text-gray-400">{language === 'zh' ? '图片数' : 'Images'}:</span>
-                      <span className="ml-2 text-gray-900 dark:text-white">{selectedWork.imageCount}</span>
+
+                    <div className="flex-1 pt-2">
+                      <h4 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 leading-tight">
+                        {language === 'zh' && selectedWork.workNameCn ? selectedWork.workNameCn : selectedWork.workName}
+                      </h4>
+                      <div className="text-sm text-gray-500 dark:text-gray-400 mb-6 flex flex-col gap-1">
+                        <span className="font-mono">{selectedWork.workName}</span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">{language === 'zh' ? '包含角色' : 'Characters'}</span>
+                          <span className="text-xl font-bold text-purple-600 dark:text-purple-400 font-mono">{selectedWork.characterCount}</span>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">{language === 'zh' ? '匹配图片' : 'Images'}</span>
+                          <span className="text-xl font-bold text-blue-600 dark:text-blue-400 font-mono">{selectedWork.imageCount}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-white dark:bg-gray-800 rounded-lg p-4 shadow-sm">
-                  <h4 className="font-medium text-gray-900 dark:text-white mb-3">
-                    {language === 'zh' ? '角色列表' : 'Character List'}
-                  </h4>
-                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                <div>
+                  <div className="flex items-center gap-2 mb-4 px-1">
+                    <div className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+                    <h5 className="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-widest">
+                      {language === 'zh' ? '角色列表' : 'Character List'}
+                    </h5>
+                    <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800 ml-2" />
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {selectedWork.characters.map((char) => {
                       const person = char.personId ? people[char.personId] : null;
                       const charDisplayName = language === 'zh' && char.tagNameCn ? char.tagNameCn : char.tagName;
-                      
+                      const charCoverFile = char.coverFileId ? files[char.coverFileId] : null;
+                      const charCoverUrl = charCoverFile ? convertFileSrc(charCoverFile.path) : null;
+
                       return (
                         <div
                           key={char.tagName}
-                          className="flex items-center justify-between p-2 bg-gray-50 dark:bg-gray-700 rounded"
+                          className="flex items-center gap-3 p-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shelf-shadow hover:scale-[1.02] transition-transform duration-200 group"
                         >
-                          <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 flex items-center justify-center">
-                              {person ? (
-                                <span className="text-xs text-gray-600 dark:text-gray-300">
-                                  {person.name.charAt(0)}
+                          <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                            {charCoverUrl ? (
+                              <img src={charCoverUrl} alt="" className="w-full h-full object-cover" />
+                            ) : person ? (
+                              <div className="w-full h-full flex items-center justify-center text-sm font-bold text-purple-600 bg-purple-50 dark:bg-purple-900/20">
+                                {person.name.charAt(0)}
+                              </div>
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center">
+                                <Users size={18} className="text-gray-300 dark:text-gray-600" />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-bold text-gray-900 dark:text-white truncate group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                              {charDisplayName}
+                            </div>
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5 font-medium flex items-center gap-2">
+                              <span>{char.imageCount} {language === 'zh' ? '张图片' : 'images'}</span>
+                              {person && (
+                                <span className="flex items-center gap-0.5 text-green-600 dark:text-green-500 font-bold uppercase text-[9px]">
+                                  <Check size={8} strokeWidth={4} /> {language === 'zh' ? '已有关联' : 'Linked'}
                                 </span>
-                              ) : (
-                                <Users size={14} className="text-gray-400" />
                               )}
                             </div>
-                            <div>
-                              <div className="text-sm text-gray-900 dark:text-white">{charDisplayName}</div>
-                              <div className="text-xs text-gray-500 dark:text-gray-400">
-                                {char.imageCount} {language === 'zh' ? '张图片' : 'images'}
-                              </div>
-                            </div>
                           </div>
-                          {person && (
-                            <span className="text-xs text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded">
-                              {language === 'zh' ? '已创建' : 'Created'}
-                            </span>
-                          )}
                         </div>
                       );
                     })}
@@ -487,12 +536,18 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                 </div>
 
                 {selectedWork.existingTopicId && (
-                  <div className="bg-yellow-50 dark:bg-yellow-900/20 rounded-lg p-4">
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                      {language === 'zh'
-                        ? '此作品的专题已存在，无法重复创建'
-                        : 'Topic for this work already exists'}
-                    </p>
+                  <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-xl p-4 flex items-start gap-3">
+                    <AlertTriangle size={18} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-bold text-amber-800 dark:text-amber-300">
+                        {language === 'zh' ? '专题已存在' : 'Topic Exists'}
+                      </p>
+                      <p className="text-xs text-amber-700/70 dark:text-amber-400/70 mt-0.5 leading-relaxed">
+                        {language === 'zh'
+                          ? '系统检测到此作品的专题已存在，无需重复创建。'
+                          : 'A topic for this work already exists in your collection.'}
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>

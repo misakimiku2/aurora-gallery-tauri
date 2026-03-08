@@ -18,6 +18,7 @@ pub struct WorkCharacter {
     pub tag_name_cn: Option<String>,
     pub person_id: Option<String>,
     pub image_count: usize,
+    pub cover_file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub struct WorkTopicInfo {
     pub image_count: usize,
     pub characters: Vec<WorkCharacter>,
     pub existing_topic_id: Option<String>,
+    pub cover_file_id: Option<String>,
+    pub sample_file_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1776,13 +1776,13 @@ pub async fn clip_get_work_topics(
         }
     }
     
-    let detected: Vec<(usize, String, Option<String>, usize)> = character_tags
+    let detected: Vec<(usize, String, Option<String>, usize, String)> = character_tags
         .into_iter()
         .filter_map(|(tag_index, name)| {
-            if let Some((count, _max_score, _sample_file_id)) = character_stats.remove(&tag_index) {
+            if let Some((count, _max_score, sample_file_id)) = character_stats.remove(&tag_index) {
                 if count >= min_count {
                     let cn_name = cn_translations.get(&name).cloned();
-                    return Some((tag_index, name, cn_name, count));
+                    return Some((tag_index, name, cn_name, count, sample_file_id));
                 }
             }
             None
@@ -1806,7 +1806,7 @@ pub async fn clip_get_work_topics(
         })
         .collect();
     
-    for (_tag_index, tag_name, tag_name_cn, image_count) in detected {
+    for (_tag_index, tag_name, tag_name_cn, image_count, cover_file_id) in detected {
         if let Some(extraction) = extract_work_name(&tag_name, tag_name_cn.as_deref()) {
             let work_name = extraction.work_name.clone();
             
@@ -1817,6 +1817,7 @@ pub async fn clip_get_work_topics(
                 tag_name_cn: tag_name_cn.clone(),
                 person_id,
                 image_count,
+                cover_file_id: Some(cover_file_id),
             };
             
             work_characters.entry(work_name.clone()).or_default().push(character);
@@ -1844,6 +1845,11 @@ pub async fn clip_get_work_topics(
             let image_count: usize = characters.iter().map(|c| c.image_count).sum();
             let work_name_cn = work_names_cn.get(&work_name).cloned();
             let existing_topic_id = existing_topic_by_work.get(&work_name).cloned();
+            let cover_file_id = characters.first().and_then(|c| c.cover_file_id.clone());
+            let sample_file_ids = characters.iter()
+                .filter_map(|c| c.cover_file_id.clone())
+                .take(4)
+                .collect();
             
             WorkTopicInfo {
                 work_name,
@@ -1852,6 +1858,8 @@ pub async fn clip_get_work_topics(
                 image_count,
                 characters,
                 existing_topic_id,
+                cover_file_id,
+                sample_file_ids,
             }
         })
         .collect();
@@ -2165,13 +2173,23 @@ pub async fn clip_create_work_topics(
         log::info!("[clip_create_work_topics]   people_ids 数量: {}", people_ids.len());
         log::info!("[clip_create_work_topics]   file_ids 数量: {}", file_ids.len());
         
+        let mut cover_file_id = None;
+        if let Some(stats) = character_stats_by_work.get(&work_name) {
+            for (_, (_, _, sample)) in stats {
+                if sample.is_some() {
+                    cover_file_id = sample.clone();
+                    break;
+                }
+            }
+        }
+
         let topic = db::topics::Topic {
             id: topic_id.clone(),
             parent_id: None,
             name: display_name,
             description: None,
             topic_type: Some("work".to_string()),
-            cover_file_id: None,
+            cover_file_id,
             background_file_id: None,
             cover_crop: None,
             people_ids,

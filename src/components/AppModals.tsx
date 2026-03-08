@@ -490,6 +490,8 @@ export const AppModals: React.FC<AppModalsProps> = ({
               }}
               people={peopleWithDisplayCounts}
               topics={state.topics}
+              files={state.files}
+              resourceRoot={state.settings.paths.resourceRoot}
               onConfirm={async (topics, people) => {
                 await handleSmartCreateTopic(topics, people);
                 closeModals();
