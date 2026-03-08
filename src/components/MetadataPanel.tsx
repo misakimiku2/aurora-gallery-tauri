@@ -2195,9 +2195,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     <div>
                                         <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Smile size={10} className="mr-1"/> {t('meta.aiFaces')}</div>
                                         <div className="flex flex-wrap gap-1.5">
-                                            {file.aiData.faces.map(face => (
+                                            {file.aiData.faces.map((face, i) => (
                                                 <div 
-                                                    key={face.id} 
+                                                    key={`${face.id}-${i}`} 
                                                     className={`flex items-center bg-white dark:bg-gray-800 px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm transition-all ${face.personId ? 'cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-95' : ''}`}
                                                     onClick={() => face.personId && onSelectPerson && onSelectPerson(face.personId)}
                                                 >
@@ -2213,8 +2213,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     <div>
                                         <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Scan size={10} className="mr-1"/> {t('meta.aiObjects')}</div>
                                         <div className="flex flex-wrap gap-1">
-                                            {file.aiData.objects.map(obj => (
-                                                <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800">
+                                            {file.aiData.objects.map((obj, i) => (
+                                                <span key={`${obj}-${i}`} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800">
                                                     {obj}
                                                 </span>
                                             ))}

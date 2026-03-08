@@ -26,6 +26,9 @@ pub struct Topic {
     pub source_url: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+    pub source_type: Option<String>,
+    pub work_name: Option<String>,
+    pub work_name_cn: Option<String>,
 }
 
 pub fn create_table(conn: &Connection) -> Result<()> {
@@ -46,7 +49,10 @@ pub fn create_table(conn: &Connection) -> Result<()> {
             file_ids TEXT,
             source_url TEXT,
             created_at INTEGER,
-            updated_at INTEGER
+            updated_at INTEGER,
+            source_type TEXT,
+            work_name TEXT,
+            work_name_cn TEXT
         )",
         [],
     )?;
@@ -58,7 +64,8 @@ pub fn get_all_topics(conn: &Connection) -> Result<Vec<Topic>> {
         "SELECT id, parent_id, name, description, topic_type, 
                 cover_file_id, background_file_id,
                 cover_crop_x, cover_crop_y, cover_crop_width, cover_crop_height,
-                people_ids, file_ids, source_url, created_at, updated_at 
+                people_ids, file_ids, source_url, created_at, updated_at,
+                source_type, work_name, work_name_cn
          FROM topics"
     )?;
 
@@ -99,6 +106,9 @@ pub fn get_all_topics(conn: &Connection) -> Result<Vec<Topic>> {
             source_url: row.get(13)?,
             created_at: row.get(14)?,
             updated_at: row.get(15)?,
+            source_type: row.get(16)?,
+            work_name: row.get(17)?,
+            work_name_cn: row.get(18)?,
         })
     })?;
 
@@ -132,8 +142,9 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
         "INSERT INTO topics (id, parent_id, name, description, topic_type, 
                            cover_file_id, background_file_id,
                            cover_crop_x, cover_crop_y, cover_crop_width, cover_crop_height,
-                           people_ids, file_ids, source_url, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+                           people_ids, file_ids, source_url, created_at, updated_at,
+                           source_type, work_name, work_name_cn)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
          ON CONFLICT(id) DO UPDATE SET
             parent_id = excluded.parent_id,
             name = excluded.name,
@@ -149,7 +160,10 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
             file_ids = excluded.file_ids,
             source_url = excluded.source_url,
             created_at = excluded.created_at,
-            updated_at = excluded.updated_at",
+            updated_at = excluded.updated_at,
+            source_type = excluded.source_type,
+            work_name = excluded.work_name,
+            work_name_cn = excluded.work_name_cn",
         params![
             topic.id,
             topic.parent_id,
@@ -163,7 +177,10 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
             file_ids_str,
             topic.source_url,
             topic.created_at,
-            topic.updated_at
+            topic.updated_at,
+            topic.source_type,
+            topic.work_name,
+            topic.work_name_cn
         ],
     )?;
     Ok(())
@@ -172,4 +189,64 @@ pub fn upsert_topic(conn: &Connection, topic: &Topic) -> Result<()> {
 pub fn delete_topic(conn: &Connection, topic_id: &str) -> Result<()> {
     conn.execute("DELETE FROM topics WHERE id = ?1", params![topic_id])?;
     Ok(())
+}
+
+pub fn find_topic_by_work_name(conn: &Connection, work_name: &str) -> Result<Option<Topic>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, parent_id, name, description, topic_type, 
+                cover_file_id, background_file_id,
+                cover_crop_x, cover_crop_y, cover_crop_width, cover_crop_height,
+                people_ids, file_ids, source_url, created_at, updated_at,
+                source_type, work_name, work_name_cn
+         FROM topics WHERE work_name = ?1"
+    )?;
+
+    let mut topic_iter = stmt.query_map(params![work_name], |row| {
+        let cover_crop_x: Option<f64> = row.get(7)?;
+        let cover_crop = if let Some(x) = cover_crop_x {
+            Some(CoverCropData {
+                x,
+                y: row.get(8)?,
+                width: row.get(9)?,
+                height: row.get(10)?,
+            })
+        } else {
+            None
+        };
+
+        let people_ids_str: Option<String> = row.get(11)?;
+        let people_ids = people_ids_str
+            .map(|s| s.split(',').map(|id| id.to_string()).collect())
+            .unwrap_or_default();
+
+        let file_ids_str: Option<String> = row.get(12)?;
+        let file_ids = file_ids_str
+            .map(|s| s.split(',').map(|id| id.to_string()).collect())
+            .unwrap_or_default();
+
+        Ok(Topic {
+            id: row.get(0)?,
+            parent_id: row.get(1)?,
+            name: row.get(2)?,
+            description: row.get(3)?,
+            topic_type: row.get(4)?,
+            cover_file_id: row.get(5)?,
+            background_file_id: row.get(6)?,
+            cover_crop,
+            people_ids,
+            file_ids,
+            source_url: row.get(13)?,
+            created_at: row.get(14)?,
+            updated_at: row.get(15)?,
+            source_type: row.get(16)?,
+            work_name: row.get(17)?,
+            work_name_cn: row.get(18)?,
+        })
+    })?;
+
+    if let Some(topic) = topic_iter.next() {
+        Ok(Some(topic?))
+    } else {
+        Ok(None)
+    }
 }

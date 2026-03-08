@@ -16,6 +16,7 @@ mod thumbnail;
 mod updater;
 mod update_downloader;
 mod clip;
+mod work_extractor;
 
 mod file_types;
 mod image_utils;
@@ -52,6 +53,7 @@ fn main() {
                 .level(log::LevelFilter::Info)
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                 ])
                 .build()
         )
@@ -143,7 +145,9 @@ fn main() {
             clip_commands::clip_get_character_tags,
             clip_commands::clip_search_by_character_tag,
             clip_commands::clip_get_detected_characters,
-            clip_commands::clip_preview_tags_from_embeddings
+            clip_commands::clip_preview_tags_from_embeddings,
+            clip_commands::clip_get_work_topics,
+            clip_commands::clip_create_work_topics
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;

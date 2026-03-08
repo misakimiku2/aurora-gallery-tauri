@@ -964,6 +964,115 @@ fn save_tags_to_metadata(
     Ok(())
 }
 
+/// 将图片关联到人物（更新 ai_data.faces）
+fn link_files_to_persons(
+    file_tags_map: &std::collections::HashMap<String, std::collections::HashSet<String>>,
+    tag_to_person_id: &std::collections::HashMap<String, String>,
+    person_names: &std::collections::HashMap<String, String>,
+    conn: &rusqlite::Connection,
+) -> Result<(), String> {
+    use std::collections::HashSet;
+    
+    let mut updated_count = 0;
+    let mut not_found_count = 0;
+    
+    log::info!("[link_files_to_persons] 开始处理 {} 个文件", file_tags_map.len());
+    
+    for (file_id, new_tags) in file_tags_map {
+        let mut metadata = match get_metadata_by_id(&conn, file_id) {
+            Ok(Some(m)) => m,
+            Ok(None) => {
+                let file_path = match db::file_index::get_path_by_id(&conn, file_id) {
+                    Ok(Some(path)) => path,
+                    Ok(None) => {
+                        log::warn!("[link_files_to_persons] 文件 {} 在 file_index 中不存在，跳过", file_id);
+                        not_found_count += 1;
+                        continue;
+                    }
+                    Err(e) => {
+                        log::error!("[link_files_to_persons] 获取文件 {} 路径失败: {}", file_id, e);
+                        not_found_count += 1;
+                        continue;
+                    }
+                };
+                
+                FileMetadata {
+                    file_id: file_id.clone(),
+                    path: db::normalize_path(&file_path),
+                    tags: None,
+                    description: None,
+                    source_url: None,
+                    ai_data: None,
+                    category: None,
+                    updated_at: Some(chrono::Utc::now().timestamp()),
+                }
+            }
+            Err(e) => {
+                log::error!("[link_files_to_persons] 获取文件 {} 元数据失败: {}", file_id, e);
+                not_found_count += 1;
+                continue;
+            }
+        };
+        
+        let mut ai_data: serde_json::Value = metadata.ai_data.clone().unwrap_or_else(|| {
+            serde_json::json!({
+                "analyzed": false,
+                "analyzedAt": chrono::Utc::now().to_rfc3339(),
+                "description": "",
+                "tags": [],
+                "faces": [],
+                "sceneCategory": "",
+                "confidence": 1.0,
+                "dominantColors": [],
+                "objects": []
+            })
+        });
+        
+        let faces = ai_data.get("faces").and_then(|f| f.as_array()).cloned().unwrap_or_default();
+        let mut new_faces = faces.clone();
+        let existing_person_ids: HashSet<String> = new_faces
+            .iter()
+            .filter_map(|f| f.get("personId").and_then(|p| p.as_str().map(|s| s.to_string())))
+            .collect();
+        
+        let mut ai_data_changed = false;
+        
+        for tag_name in new_tags {
+            if let Some(person_id) = tag_to_person_id.get(tag_name) {
+                if !existing_person_ids.contains(person_id) {
+                    let person_name = person_names.get(person_id).cloned().unwrap_or_default();
+                    let new_face = serde_json::json!({
+                        "id": db::generate_id(&format!("face_{}", file_id)),
+                        "personId": person_id,
+                        "name": person_name,
+                        "confidence": 1.0,
+                        "box": { "x": 0, "y": 0, "w": 0, "h": 0 }
+                    });
+                    new_faces.push(new_face);
+                    ai_data_changed = true;
+                    log::info!("[link_files_to_persons] 为文件 {} 添加人物关联: {} ({})", file_id, person_name, person_id);
+                }
+            }
+        }
+        
+        if ai_data_changed {
+            if let Some(obj) = ai_data.as_object_mut() {
+                obj.insert("faces".to_string(), serde_json::Value::Array(new_faces));
+            }
+            metadata.ai_data = Some(ai_data);
+            metadata.updated_at = Some(chrono::Utc::now().timestamp());
+            
+            upsert_file_metadata(&conn, &metadata)
+                .map_err(|e| format!("Failed to update metadata: {}", e))?;
+            updated_count += 1;
+        }
+    }
+    
+    log::info!("[link_files_to_persons] 完成: 更新 {} 个文件, 未找到 {} 个文件", updated_count, not_found_count);
+    
+    Ok(())
+}
+
 /// 标签条目，包含标签名和类别
 struct TagEntry {
     name: String,
@@ -1459,7 +1568,6 @@ pub async fn clip_get_detected_characters(
     let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("src")
         .join("clip")
-        .join("models")
         .join("Tags-cn_2024_ver-1.0.csv");
     
     let mut cn_translations: std::collections::HashMap<String, String> = std::collections::HashMap::new();
@@ -1563,4 +1671,550 @@ pub async fn clip_get_detected_characters(
     log::info!("Detected {} characters with min_count={}", detected.len(), min_count);
     
     Ok(detected)
+}
+
+#[tauri::command]
+pub async fn clip_get_work_topics(
+    min_score: f32,
+    min_count: usize,
+    model_name: Option<String>,
+    language: Option<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::work_extractor::WorkTopicInfo>, String> {
+    use crate::work_extractor::{extract_work_name, WorkTopicInfo, WorkCharacter};
+    use std::collections::HashMap;
+    
+    let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
+    let lang = language.unwrap_or_else(|| "en".to_string());
+    
+    if requested_model != "WD-EVA02-Large-Tagger-V3" {
+        return Err("作品专题仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
+    }
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let (embeddings, model_cache_dir) = {
+        let mut guard = manager.write().await;
+        guard.switch_model(&requested_model)?;
+        
+        let embedding_store = guard.embedding_store()
+            .ok_or("Embedding store not available")?;
+        
+        let embeddings = embedding_store.get_all_embeddings()?;
+        let model_cache_dir = guard.config().model_cache_dir.clone();
+        
+        (embeddings, model_cache_dir)
+    };
+    
+    let tags_path = model_cache_dir
+        .join(&requested_model)
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}", tags_path));
+    }
+    
+    let file = std::fs::File::open(&tags_path)
+        .map_err(|e| format!("Failed to open tags file: {}", e))?;
+    let mut rdr = csv::Reader::from_reader(file);
+    
+    let mut character_tags: Vec<(usize, String)> = Vec::new();
+    let mut index = 0;
+    
+    for result in rdr.records() {
+        let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+        if record.len() >= 3 {
+            let category: i32 = record[2].parse().unwrap_or(-1);
+            if category == 4 {
+                let name = record[1].to_string();
+                character_tags.push((index, name));
+            }
+        }
+        index += 1;
+    }
+    
+    let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("clip")
+        .join("Tags-cn_2024_ver-1.0.csv");
+    
+    let mut cn_translations: HashMap<String, String> = HashMap::new();
+    if cn_tags_path.exists() {
+        let cn_file = std::fs::File::open(&cn_tags_path)
+            .map_err(|e| format!("Failed to open cn tags file: {}", e))?;
+        let mut cn_rdr = csv::Reader::from_reader(cn_file);
+        
+        for result in cn_rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read cn tag record: {}", e))?;
+            if record.len() >= 5 {
+                let category: i32 = record[2].parse().unwrap_or(-1);
+                if category == 4 {
+                    let name = record[1].to_string();
+                    let cn_name = record[4].trim().to_string();
+                    cn_translations.insert(name, cn_name);
+                }
+            }
+        }
+    }
+    
+    let mut character_stats: HashMap<usize, (usize, f32, String)> = HashMap::new();
+    
+    for emb in &embeddings {
+        for &(tag_index, _) in &character_tags {
+            if tag_index < emb.embedding.len() {
+                let score = emb.embedding[tag_index];
+                if score >= min_score {
+                    let entry = character_stats.entry(tag_index).or_insert((0, 0.0, String::new()));
+                    entry.0 += 1;
+                    if score > entry.1 {
+                        entry.1 = score;
+                        entry.2 = emb.file_id.clone();
+                    }
+                }
+            }
+        }
+    }
+    
+    let detected: Vec<(usize, String, Option<String>, usize)> = character_tags
+        .into_iter()
+        .filter_map(|(tag_index, name)| {
+            if let Some((count, _max_score, _sample_file_id)) = character_stats.remove(&tag_index) {
+                if count >= min_count {
+                    let cn_name = cn_translations.get(&name).cloned();
+                    return Some((tag_index, name, cn_name, count));
+                }
+            }
+            None
+        })
+        .collect();
+    
+    let mut work_characters: HashMap<String, Vec<WorkCharacter>> = HashMap::new();
+    let mut work_names_cn: HashMap<String, String> = HashMap::new();
+    
+    let app_db_pool = app.state::<db::AppDbPool>();
+    let conn = app_db_pool.get_connection();
+    let existing_people = db::persons::get_all_people(&conn)
+        .map_err(|e| format!("Failed to get persons: {}", e))?;
+    
+    let person_by_tag: HashMap<String, String> = existing_people
+        .iter()
+        .filter_map(|p| {
+            p.character_tag_name.as_ref().map(|tag_name: &String| {
+                (tag_name.clone(), p.id.clone())
+            })
+        })
+        .collect();
+    
+    for (_tag_index, tag_name, tag_name_cn, image_count) in detected {
+        if let Some(extraction) = extract_work_name(&tag_name, tag_name_cn.as_deref()) {
+            let work_name = extraction.work_name.clone();
+            
+            let person_id = person_by_tag.get(&tag_name).cloned();
+            
+            let character = WorkCharacter {
+                tag_name: tag_name.clone(),
+                tag_name_cn: tag_name_cn.clone(),
+                person_id,
+                image_count,
+            };
+            
+            work_characters.entry(work_name.clone()).or_default().push(character);
+            
+            if let Some(cn) = extraction.work_name_cn {
+                work_names_cn.entry(work_name).or_insert(cn);
+            }
+        }
+    }
+    
+    let existing_topics = db::topics::get_all_topics(&conn)
+        .map_err(|e| format!("Failed to get topics: {}", e))?;
+    
+    let existing_topic_by_work: HashMap<String, String> = existing_topics
+        .iter()
+        .filter_map(|t| {
+            t.work_name.as_ref().map(|wn| (wn.clone(), t.id.clone()))
+        })
+        .collect();
+    
+    let mut work_topics: Vec<WorkTopicInfo> = work_characters
+        .into_iter()
+        .map(|(work_name, characters)| {
+            let character_count = characters.len();
+            let image_count: usize = characters.iter().map(|c| c.image_count).sum();
+            let work_name_cn = work_names_cn.get(&work_name).cloned();
+            let existing_topic_id = existing_topic_by_work.get(&work_name).cloned();
+            
+            WorkTopicInfo {
+                work_name,
+                work_name_cn,
+                character_count,
+                image_count,
+                characters,
+                existing_topic_id,
+            }
+        })
+        .collect();
+    
+    work_topics.sort_by(|a, b| b.image_count.cmp(&a.image_count));
+    
+    log::info!("Found {} work topics", work_topics.len());
+    
+    Ok(work_topics)
+}
+
+#[tauri::command]
+pub async fn clip_create_work_topics(
+    work_names: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<crate::work_extractor::CreateWorkTopicsResult, String> {
+    use crate::work_extractor::{extract_work_name, get_work_display_name, CreateWorkTopicsResult};
+    use std::collections::{HashMap, HashSet};
+    
+    log::info!("[clip_create_work_topics] 开始创建专题, work_names: {:?}", work_names);
+    
+    let manager = crate::clip::get_clip_manager().await
+        .ok_or("CLIP manager not initialized")?;
+    
+    let (embeddings, model_cache_dir) = {
+        let mut guard = manager.write().await;
+        guard.switch_model("WD-EVA02-Large-Tagger-V3")?;
+        
+        let embedding_store = guard.embedding_store()
+            .ok_or("Embedding store not available")?;
+        
+        let embeddings = embedding_store.get_all_embeddings()?;
+        let model_cache_dir = guard.config().model_cache_dir.clone();
+        
+        (embeddings, model_cache_dir)
+    };
+    
+    log::info!("[clip_create_work_topics] 加载了 {} 个 embeddings", embeddings.len());
+    
+    let tags_path = model_cache_dir
+        .join("WD-EVA02-Large-Tagger-V3")
+        .join("tags_info.csv");
+    
+    if !tags_path.exists() {
+        return Err(format!("标签文件不存在: {:?}", tags_path));
+    }
+    
+    let file = std::fs::File::open(&tags_path)
+        .map_err(|e| format!("Failed to open tags file: {}", e))?;
+    let mut rdr = csv::Reader::from_reader(file);
+    
+    let mut character_tags: Vec<(usize, String)> = Vec::new();
+    let mut index = 0;
+    
+    for result in rdr.records() {
+        let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+        if record.len() >= 3 {
+            let category: i32 = record[2].parse().unwrap_or(-1);
+            if category == 4 {
+                let name = record[1].to_string();
+                character_tags.push((index, name));
+            }
+        }
+        index += 1;
+    }
+    
+    log::info!("[clip_create_work_topics] 加载了 {} 个角色标签", character_tags.len());
+    
+    let cn_tags_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("clip")
+        .join("Tags-cn_2024_ver-1.0.csv");
+    
+    let mut cn_translations: HashMap<String, String> = HashMap::new();
+    if cn_tags_path.exists() {
+        let cn_file = std::fs::File::open(&cn_tags_path)
+            .map_err(|e| format!("Failed to open cn tags file: {}", e))?;
+        let mut cn_rdr = csv::Reader::from_reader(cn_file);
+        
+        for result in cn_rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read cn tag record: {}", e))?;
+            if record.len() >= 5 {
+                let category: i32 = record[2].parse().unwrap_or(-1);
+                if category == 4 {
+                    let name = record[1].to_string();
+                    let cn_name = record[4].trim().to_string();
+                    cn_translations.insert(name, cn_name);
+                }
+            }
+        }
+    }
+    
+    log::info!("[clip_create_work_topics] 加载了 {} 个中文翻译", cn_translations.len());
+    
+    let mut tag_to_work: HashMap<String, String> = HashMap::new();
+    for (_, tag_name) in &character_tags {
+        if let Some(extraction) = extract_work_name(tag_name, cn_translations.get(tag_name).map(|s| s.as_str())) {
+            let work_name = extraction.work_name;
+            if work_names.contains(&work_name) {
+                tag_to_work.insert(tag_name.clone(), work_name);
+            }
+        }
+    }
+    
+    log::info!("[clip_create_work_topics] tag_to_work 映射数量: {}", tag_to_work.len());
+    for (tag, work) in tag_to_work.iter().take(10) {
+        log::info!("[clip_create_work_topics]   标签 '{}' -> 作品 '{}'", tag, work);
+    }
+    
+    let mut files_by_work: HashMap<String, Vec<String>> = HashMap::new();
+    let min_score = 0.1f32;
+    
+    log::info!("[clip_create_work_topics] 开始遍历 embeddings, min_score = {}", min_score);
+    
+    if let Some(first_emb) = embeddings.first() {
+        log::info!("[clip_create_work_topics] 第一个 embedding 维度: {}", first_emb.embedding.len());
+        
+        let max_val = first_emb.embedding.iter().cloned().fold(0.0f32, f32::max);
+        let min_val = first_emb.embedding.iter().cloned().fold(1.0f32, f32::min);
+        log::info!("[clip_create_work_topics] 第一个 embedding 最大值: {}, 最小值: {}", max_val, min_val);
+        
+        let mut high_vals: Vec<(usize, f32)> = first_emb.embedding.iter().enumerate()
+            .map(|(i, &v)| (i, v))
+            .filter(|(_, v)| *v > 0.1)
+            .collect();
+        high_vals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        log::info!("[clip_create_work_topics] 第一个 embedding 前10个高分值: {:?}", high_vals.iter().take(10).collect::<Vec<_>>());
+    }
+    
+    if let Some(first_char_tag) = character_tags.first() {
+        log::info!("[clip_create_work_topics] 第一个角色标签索引: {}, 名称: {}", first_char_tag.0, first_char_tag.1);
+    }
+    if let Some(last_char_tag) = character_tags.last() {
+        log::info!("[clip_create_work_topics] 最后一个角色标签索引: {}, 名称: {}", last_char_tag.0, last_char_tag.1);
+    }
+    
+    let mut total_matches = 0usize;
+    let mut sample_logged = false;
+    let mut high_score_count = 0usize;
+    let mut file_character_tags: HashMap<String, HashSet<String>> = HashMap::new();
+    
+    for emb in &embeddings {
+        let mut file_works: std::collections::HashSet<String> = std::collections::HashSet::new();
+        
+        for &(tag_index, ref tag_name) in &character_tags {
+            if tag_index < emb.embedding.len() {
+                let score = emb.embedding[tag_index];
+                if score >= min_score {
+                    high_score_count += 1;
+                    if let Some(work_name) = tag_to_work.get(tag_name) {
+                        file_works.insert(work_name.clone());
+                        total_matches += 1;
+                        
+                        file_character_tags
+                            .entry(emb.file_id.clone())
+                            .or_default()
+                            .insert(tag_name.clone());
+                        
+                        if !sample_logged && work_names.contains(work_name) {
+                            log::info!("[clip_create_work_topics] 样例匹配: file_id={}, tag={}, score={}, work={}", 
+                                emb.file_id, tag_name, score, work_name);
+                            sample_logged = true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        for work_name in file_works {
+            files_by_work.entry(work_name).or_default().push(emb.file_id.clone());
+        }
+    }
+    
+    log::info!("[clip_create_work_topics] 高分标签数 (score >= {}): {}", min_score, high_score_count);
+    log::info!("[clip_create_work_topics] 总匹配次数: {}", total_matches);
+    log::info!("[clip_create_work_topics] files_by_work 结果 (共 {} 个作品):", files_by_work.len());
+    for (work, files) in files_by_work.iter() {
+        log::info!("[clip_create_work_topics]   作品 '{}' 有 {} 个图片", work, files.len());
+    }
+    
+    let mut characters_by_work: HashMap<String, Vec<(String, Option<String>, String)>> = HashMap::new();
+    
+    for emb in &embeddings {
+        for &(tag_index, ref tag_name) in &character_tags {
+            if tag_index < emb.embedding.len() {
+                let score = emb.embedding[tag_index];
+                if score >= min_score {
+                    if let Some(work_name) = tag_to_work.get(tag_name) {
+                        let cn_name = cn_translations.get(tag_name).cloned();
+                        characters_by_work
+                            .entry(work_name.clone())
+                            .or_default()
+                            .push((tag_name.clone(), cn_name, emb.file_id.clone()));
+                    }
+                }
+            }
+        }
+    }
+    
+    let mut character_stats_by_work: HashMap<String, HashMap<String, (Option<String>, usize, Option<String>)>> = HashMap::new();
+    for (work_name, chars) in characters_by_work {
+        let mut stats: HashMap<String, (Option<String>, usize, Option<String>)> = HashMap::new();
+        for (tag_name, cn_name, file_id) in chars {
+            let entry = stats.entry(tag_name).or_insert((cn_name.clone(), 0, None));
+            entry.1 += 1;
+            if entry.0.is_none() && cn_name.is_some() {
+                entry.0 = cn_name;
+            }
+            if entry.2.is_none() {
+                entry.2 = Some(file_id);
+            }
+        }
+        character_stats_by_work.insert(work_name, stats);
+    }
+    
+    let app_db_pool = app.state::<db::AppDbPool>();
+    let conn = app_db_pool.get_connection();
+    
+    let existing_people = db::persons::get_all_people(&conn)
+        .map_err(|e| format!("Failed to get persons: {}", e))?;
+    
+    log::info!("[clip_create_work_topics] 数据库中有 {} 个人物", existing_people.len());
+    
+    let person_by_tag: HashMap<String, String> = existing_people
+        .iter()
+        .filter_map(|p| {
+            p.character_tag_name.as_ref().map(|tag_name| {
+                (tag_name.clone(), p.id.clone())
+            })
+        })
+        .collect();
+    
+    let mut people_by_work: HashMap<String, Vec<String>> = HashMap::new();
+    
+    for person in &existing_people {
+        if let Some(tag_name) = &person.character_tag_name {
+            if let Some(extraction) = extract_work_name(tag_name, cn_translations.get(tag_name).map(|s| s.as_str())) {
+                let work_name = extraction.work_name;
+                if work_names.contains(&work_name) {
+                    people_by_work.entry(work_name.clone()).or_default().push(person.id.clone());
+                    log::info!("[clip_create_work_topics]   人物 '{}' (tag: '{}') 属于作品 '{}'", person.name, tag_name, work_name);
+                }
+            }
+        }
+    }
+    
+    log::info!("[clip_create_work_topics] people_by_work 结果:");
+    for (work, people) in people_by_work.iter() {
+        log::info!("[clip_create_work_topics]   作品 '{}' 有 {} 个人物", work, people.len());
+    }
+    
+    let mut created_topics: Vec<db::topics::Topic> = Vec::new();
+    let mut created_people: Vec<db::persons::Person> = Vec::new();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    
+    for work_name in work_names {
+        let existing_topic = db::topics::find_topic_by_work_name(&conn, &work_name)
+            .map_err(|e| format!("Failed to find topic: {}", e))?;
+        
+        if existing_topic.is_some() {
+            log::info!("[clip_create_work_topics] 作品 '{}' 的专题已存在，跳过", work_name);
+            continue;
+        }
+        
+        let work_name_cn = crate::work_extractor::get_series_name_cn(&work_name);
+        
+        let display_name = get_work_display_name(&work_name, "zh");
+        let work_name_cn_value = work_name_cn.unwrap_or_else(|| display_name.clone());
+        
+        let topic_id = db::generate_id(&format!("work_topic_{}", work_name));
+        let mut people_ids = people_by_work.get(&work_name).cloned().unwrap_or_default();
+        let file_ids = files_by_work.get(&work_name).cloned().unwrap_or_default();
+        
+        if let Some(character_stats) = character_stats_by_work.get(&work_name) {
+            for (tag_name, (cn_name, image_count, sample_file_id)) in character_stats {
+                if !person_by_tag.contains_key(tag_name) {
+                    let new_person_id = db::generate_id(&format!("person_{}", tag_name));
+                    let person_name = cn_name.clone().unwrap_or_else(|| tag_name.clone());
+                    let cover_file_id = sample_file_id.clone().unwrap_or_default();
+                    
+                    let new_person = db::persons::Person {
+                        id: new_person_id.clone(),
+                        name: person_name.clone(),
+                        cover_file_id,
+                        count: *image_count as i32,
+                        description: None,
+                        face_box: None,
+                        updated_at: Some(now),
+                        character_tag_name: Some(tag_name.clone()),
+                        character_tag_index: None,
+                    };
+                    
+                    match db::persons::upsert_person(&conn, &new_person) {
+                        Ok(_) => {
+                            log::info!("[clip_create_work_topics]   创建新人物 '{}' (tag: '{}', 图片数: {}, 封面: {})", person_name, tag_name, image_count, new_person.cover_file_id);
+                            people_ids.push(new_person_id);
+                            created_people.push(new_person);
+                        }
+                        Err(e) => {
+                            log::error!("[clip_create_work_topics]   创建人物失败: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+        
+        log::info!("[clip_create_work_topics] 创建专题 '{}' (work_name: '{}')", display_name, work_name);
+        log::info!("[clip_create_work_topics]   people_ids 数量: {}", people_ids.len());
+        log::info!("[clip_create_work_topics]   file_ids 数量: {}", file_ids.len());
+        
+        let topic = db::topics::Topic {
+            id: topic_id.clone(),
+            parent_id: None,
+            name: display_name,
+            description: None,
+            topic_type: Some("work".to_string()),
+            cover_file_id: None,
+            background_file_id: None,
+            cover_crop: None,
+            people_ids,
+            file_ids,
+            source_url: None,
+            created_at: Some(now),
+            updated_at: Some(now),
+            source_type: Some("auto_work".to_string()),
+            work_name: Some(work_name.clone()),
+            work_name_cn: Some(work_name_cn_value),
+        };
+        
+        db::topics::upsert_topic(&conn, &topic)
+            .map_err(|e| format!("Failed to create topic: {}", e))?;
+        
+        created_topics.push(topic);
+        log::info!("[clip_create_work_topics] Created topic for work: {}", work_name);
+    }
+    
+    let mut tag_to_person_id: HashMap<String, String> = HashMap::new();
+    let mut person_names: HashMap<String, String> = HashMap::new();
+    
+    // 添加已存在的人物
+    for person in &existing_people {
+        person_names.insert(person.id.clone(), person.name.clone());
+        if let Some(ref tag_name) = person.character_tag_name {
+            tag_to_person_id.insert(tag_name.clone(), person.id.clone());
+        }
+    }
+    
+    // 添加新创建的人物
+    for person in &created_people {
+        person_names.insert(person.id.clone(), person.name.clone());
+        if let Some(ref tag_name) = person.character_tag_name {
+            tag_to_person_id.insert(tag_name.clone(), person.id.clone());
+        }
+    }
+    
+    log::info!("[clip_create_work_topics] 开始关联文件到人物, 共 {} 个文件需要处理", file_character_tags.len());
+    link_files_to_persons(&file_character_tags, &tag_to_person_id, &person_names, &conn)?;
+    
+    Ok(CreateWorkTopicsResult {
+        topics: created_topics,
+        people: created_people,
+    })
 }

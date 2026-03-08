@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check, Sparkles } from 'lucide-react';
 import { ImageThumbnail } from './ImageThumbnail';
 import { debug as logDebug, info as logInfo } from '../utils/logger';
 import { CreateTopicModal } from './modals/CreateTopicModal';
@@ -319,41 +319,34 @@ interface TopicModuleProps {
     currentTopicId: string | null;
     selectedTopicIds: string[];
     selectedFileIds?: string[];
-    // New: selected people for multi-select support (controlled by parent)
     selectedPersonIds?: string[];
-    // New: last selected id (used for shift+range selection)
     lastSelectedId?: string | null;
     onNavigateTopic: (topicId: string | null) => void;
     onUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
     onCreateTopic: (parentId: string | null, name?: string, type?: string) => void;
     onDeleteTopic: (topicId: string) => void;
     onSelectTopics: (ids: string[], lastSelectedId?: string | null) => void;
-    // Note: onSelectFiles now accepts an optional lastSelectedId to allow caller to set it
     onSelectFiles: (ids: string[], lastSelectedId?: string | null) => void;
-    // New: allow bulk selection of people
     onSelectPeople?: (ids: string[]) => void;
     onSelectPerson?: (personId: string, e: React.MouseEvent) => void;
     onNavigatePerson?: (personId: string) => void;
-    // Optional: provide a handler to open a topic/person/file in a new tab, or to open file folder
     onOpenTopicInNewTab?: (topicId: string) => void;
     onOpenPersonInNewTab?: (personId: string) => void;
     onOpenFileInNewTab?: (fileId: string) => void;
     onOpenFileFolder?: (folderId: string, options?: { targetId?: string }) => void;
-    // Optional: resource root and cache path for thumbnail generation
     resourceRoot?: string;
     cachePath?: string;
-    // Called to open a file in viewer (double-click)
     onOpenFile?: (fileId: string) => void;
     t: (key: string) => string;
     scrollTop?: number;
     onScrollTopChange?: (scrollTop: number) => void;
     isVisible?: boolean;
-    // Optional: allow parent to control topic layout mode (TopBar will render buttons when provided)
     topicLayoutMode?: LayoutMode;
     onTopicLayoutModeChange?: (mode: LayoutMode) => void;
     onShowToast?: (message: string) => void;
     hoverPlayingId?: string | null;
     onSetHoverPlayingId?: (id: string | null) => void;
+    onSmartCreateTopic?: () => void;
 }
 
 export const TopicModule: React.FC<TopicModuleProps> = ({
@@ -361,7 +354,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
     onSelectPeople, onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
     scrollTop, onScrollTopChange, isVisible = true, topicLayoutMode, onTopicLayoutModeChange, onShowToast,
-    hoverPlayingId, onSetHoverPlayingId
+    hoverPlayingId, onSetHoverPlayingId, onSmartCreateTopic
 }) => {
 
     // 递归获取所有子专题ID（包含嵌套子专题）
@@ -558,7 +551,9 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             if (topicSortMode === 'name') {
                 comparison = (a.name || '').localeCompare(b.name || '');
             } else {
-                comparison = (a.createdAt || '').localeCompare(b.createdAt || '');
+                const aTime = typeof a.createdAt === 'number' ? a.createdAt : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+                const bTime = typeof b.createdAt === 'number' ? b.createdAt : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+                comparison = aTime - bTime;
             }
             return topicSortOrder === 'asc' ? comparison : -comparison;
         });
@@ -2030,13 +2025,27 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 onClick={(e) => e.stopPropagation()}
             >
                 {contextMenu.type === 'blank' && (
-                    <button
-                        className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
-                        onClick={handleCreateTopic}
-                    >
-                        <Plus size={16} className="mr-3" />
-                        {t('context.newTopic')}
-                    </button>
+                    <>
+                        <button
+                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            onClick={handleCreateTopic}
+                        >
+                            <Plus size={16} className="mr-3" />
+                            {t('context.newTopic')}
+                        </button>
+                        {onSmartCreateTopic && (
+                            <button
+                                className="w-full px-4 py-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/30 flex items-center text-purple-600 dark:text-purple-400"
+                                onClick={() => {
+                                    onSmartCreateTopic();
+                                    setContextMenu(null);
+                                }}
+                            >
+                                <Sparkles size={16} className="mr-3" />
+                                {t('context.smartCreateTopic') || '智能创建专题'}
+                            </button>
+                        )}
+                    </>
                 )}
 
                 {contextMenu.type === 'single' && contextMenu.topicId && (

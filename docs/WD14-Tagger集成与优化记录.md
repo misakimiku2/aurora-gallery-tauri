@@ -417,6 +417,24 @@ pub struct DetectedCharacter {
 - `src/App.tsx` - 添加处理函数
 - `src/utils/translations.ts` - 添加翻译
 
+### 14.8 中文标签文件路径修复（2026-03-07）
+
+#### 14.8.1 问题
+代码中存在两个不同版本的中文标签文件：
+- `src/clip/Tags-cn_2024_ver-1.0.csv` - **完整版本**，包含所有角色的中文翻译
+- `src/clip/models/Tags-cn_2024_ver-1.0.csv` - **不完整版本**，缺少很多角色翻译
+
+代码中的路径错误地指向了 `models` 子目录下的不完整版本，导致很多角色无法正确显示中文名。
+
+#### 14.8.2 解决方案
+修复 `clip_commands.rs` 中 `clip_get_detected_characters` 函数的中文标签文件路径：
+- 从 `src/clip/models/Tags-cn_2024_ver-1.0.csv` 改为 `src/clip/Tags-cn_2024_ver-1.0.csv`
+
+#### 14.8.3 预期效果
+修复后，智能创建人物中的角色名能正确显示中文：
+- `miura_azusa_(idolmaster)` → `三浦梓`
+- `shibuya_rin_(idolmaster_cinderella_girls)` → `涉谷凛`
+
 ## 15. 智能添加图片功能
 
 ### 15.1 功能说明
@@ -539,7 +557,327 @@ pub struct TagsPreviewResult {
 - `src/api/tauri-bridge.ts` - 新增 clipPreviewTagsFromEmbeddings API
 - `src/utils/translations.ts` - 添加新翻译
 
+## 17. 智能创建专题功能
+
+### 17.1 功能说明
+根据 WD14 V3 模型的角色标签格式，自动从角色名中提取作品名，创建专题并关联相关人物和图片。
+
+### 17.2 角色标签格式分析
+
+**英文格式** (tags_info.csv):
+```
+hatsune_miku_(VOCALOID)     → 角色名: hatsune_miku, 作品名: VOCALOID
+hakurei_reimu_(touhou)      → 角色名: hakurei_reimu, 作品名: touhou
+ganyu_(genshin_impact)      → 角色名: ganyu, 作品名: genshin_impact
+```
+
+**中文格式** (Tags-cn_2024_ver-1.0.csv):
+```
+初音未来(VOCALOID)          → 角色名: 初音未来, 作品名: VOCALOID
+博丽灵梦(东方 Project)      → 角色名: 博丽灵梦, 作品名: 东方 Project
+甘雨(原神)                  → 角色名: 甘雨, 作品名: 原神
+```
+
+### 17.3 功能入口
+- **位置**: 专题概览界面右键菜单 → 「智能创建专题」
+
+### 17.4 UI 特性
+- 作品列表（虚拟滚动，支持多选）
+- 显示每个作品的角色数量和图片数量
+- 预览选中作品的角色和图片
+- 全选/取消全选按钮
+- 自动过滤已创建的同名专题
+- 检测阈值滑块（0.01 - 0.5）
+- 作品搜索功能
+
+### 17.5 后端实现
+
+#### 17.5.1 新增模块
+- `src-tauri/src/work_extractor.rs` - 作品名提取模块
+
+#### 17.5.2 新增命令
+| 命令 | 说明 |
+|------|------|
+| `clip_get_work_topics` | 获取所有可创建的作品专题 |
+| `clip_create_work_topics` | 批量创建作品专题 |
+
+#### 17.5.3 数据结构
+```rust
+pub struct WorkExtractionResult {
+    pub work_name: String,
+    pub work_name_cn: Option<String>,
+    pub character_name: String,
+    pub character_name_cn: Option<String>,
+}
+
+pub struct WorkCharacter {
+    pub tag_name: String,
+    pub tag_name_cn: Option<String>,
+    pub person_id: Option<String>,
+    pub image_count: usize,
+}
+
+pub struct WorkTopicInfo {
+    pub work_name: String,
+    pub work_name_cn: Option<String>,
+    pub character_count: usize,
+    pub image_count: usize,
+    pub characters: Vec<WorkCharacter>,
+    pub existing_topic_id: Option<String>,
+}
+```
+
+### 17.6 作品名提取规则
+1. 匹配最后一个 `(` 或 `_( ` 括号
+2. 提取括号内的作品名
+3. 支持中英文双语提取
+4. 内置常见作品名中英文映射表
+
+### 17.7 数据结构扩展
+
+#### 17.7.1 Topic 类型扩展
+```typescript
+export interface Topic {
+  // ... 现有字段
+  sourceType?: 'manual' | 'auto_work';  // 专题来源类型
+  workName?: string;                     // 原始作品名（英文）
+  workNameCn?: string;                   // 中文作品名
+}
+```
+
+#### 17.7.2 数据库结构扩展
+```rust
+pub struct Topic {
+    // ... 现有字段
+    pub source_type: Option<String>,  // "manual" | "auto_work"
+    pub work_name: Option<String>,     // 原始作品名
+    pub work_name_cn: Option<String>,  // 中文作品名
+}
+```
+
+### 17.8 修改文件
+- `src-tauri/src/work_extractor.rs` - 新建作品名提取模块
+- `src-tauri/src/clip_commands.rs` - 新增 2 个命令
+- `src-tauri/src/main.rs` - 注册新命令
+- `src-tauri/src/db/topics.rs` - 扩展数据结构
+- `src-tauri/src/db/mod.rs` - 数据库迁移
+- `src/types.ts` - 新增 WorkTopicInfo、WorkCharacter 类型，扩展 Topic 类型
+- `src/api/tauri-bridge.ts` - 新增 clipGetWorkTopics、clipCreateWorkTopics API
+- `src/components/modals/SmartCreateTopicModal.tsx` - 新建模态框组件
+- `src/components/AppModals.tsx` - 集成新模态框
+- `src/components/ContextMenu.tsx` - 添加菜单入口
+- `src/components/TopicModule.tsx` - 添加右键菜单入口
+- `src/App.tsx` - 添加处理函数
+- `src/utils/translations.ts` - 添加翻译
+
+### 17.9 作品名映射优化（2026-03-07）
+
+#### 17.9.1 问题
+- `work_extractor.rs` 中硬编码的作品名映射表只有约20个，缺少大量作品
+- 已有的 `series_names.json` 文件（包含450+映射）未被使用
+- 中文标签文件路径错误，指向了不完整的版本
+
+#### 17.9.2 解决方案
+1. 移除 `work_extractor.rs` 中的硬编码映射表 `WORK_NAME_ALIASES`
+2. 新增从 `series_names.json` 加载作品名映射的函数 `get_series_name_cn()`
+3. 修复中文标签文件路径，从 `src/clip/models/Tags-cn_2024_ver-1.0.csv` 改为 `src/clip/Tags-cn_2024_ver-1.0.csv`
+
+#### 17.9.3 修改文件
+- `src-tauri/src/work_extractor.rs` - 移除硬编码映射，添加 series_names.json 加载
+- `src-tauri/src/clip_commands.rs` - 修复三处中文标签文件路径
+
+#### 17.9.4 数据流程
+**中文模式**：
+1. 从 `tags_info.csv` 读取角色标签 `miura_azusa_(idolmaster)`
+2. 从 `Tags-cn_2024_ver-1.0.csv` 获取中文翻译 `三浦梓`
+3. 提取英文作品名：`idolmaster`
+4. 从 `series_names.json` 获取作品中文名：`偶像大师`
+5. 显示：作品名 `偶像大师`，角色名 `三浦梓`
+
+### 17.10 智能创建专题功能修复（2026-03-08）
+
+#### 17.10.1 问题 1：专题创建后为空
+**现象**：点击智能创建专题后，只创建了空专题，没有关联人物和图片。
+
+**原因**：`clip_create_work_topics` 函数中 `files_by_work` HashMap 被声明但从未填充。
+
+**解决方案**：添加遍历 embeddings 并填充 `files_by_work` 的逻辑。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 添加填充 `files_by_work` 的逻辑
+
+#### 17.10.2 问题 2：阈值过高导致无匹配
+**现象**：`files_by_work` 为空，没有任何图片被匹配。
+
+**原因**：
+- 阈值 `min_score = 0.35` 太高
+- Embedding 最大值只有 0.168，所有标签分数都低于阈值
+
+**解决方案**：将阈值从 `0.35` 降低到 `0.1`。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 修改 `min_score` 值
+
+#### 17.10.3 问题 3：前端排序错误
+**现象**：`(a.createdAt || "").localeCompare is not a function`
+
+**原因**：`createdAt` 可能是数字类型（时间戳），不能调用 `localeCompare`。
+
+**解决方案**：修改 `sortTopics` 函数，正确处理数字和字符串类型。
+
+**修改文件**：
+- `src/components/TopicModule.tsx` - 修改排序逻辑
+
+#### 17.10.4 问题 4：创建专题后人物不显示
+**现象**：专题创建成功，人物也创建了，但前端人物列表不显示新人物。
+
+**原因**：
+1. 后端只返回 `topics`，没有返回 `people`
+2. 前端 `handleSmartCreateTopic` 只更新 `topics` 状态
+
+**解决方案**：
+1. 后端新增 `CreateWorkTopicsResult` 结构，返回 `{ topics, people }`
+2. 前端同时更新 `topics` 和 `people` 状态
+
+**修改文件**：
+- `src-tauri/src/work_extractor.rs` - 新增 `CreateWorkTopicsResult` 结构
+- `src-tauri/src/clip_commands.rs` - 修改返回类型
+- `src/types.ts` - 新增 `CreateWorkTopicsResult` 类型
+- `src/api/tauri-bridge.ts` - 修改 `clipCreateWorkTopics` 返回类型
+- `src/components/modals/SmartCreateTopicModal.tsx` - 修改 `onConfirm` 参数
+- `src/components/AppModals.tsx` - 修改 `handleSmartCreateTopic` 类型
+- `src/App.tsx` - 修改 `handleSmartCreateTopic` 同时更新 topics 和 people
+
+#### 17.10.5 问题 5：人物图片数量显示为 0
+**现象**：智能创建的人物图片数量显示为 0。
+
+**原因**：
+1. `personCounts` 计算逻辑只从 `aiData.faces` 计算图片数量
+2. WD14 标签存储在 `file.tags` 中，而不是 `aiData.tags`
+
+**解决方案**：修改 `personCounts` 计算逻辑，同时支持：
+- 从 `aiData.faces` 计算图片数量（人脸识别）
+- 从 `file.tags` 匹配 `characterTagName` 计算图片数量（WD14 标签）
+
+**修改文件**：
+- `src/App.tsx` - 修改 `personCounts` 计算逻辑
+
+#### 17.10.6 其他修复
+- 修复 `src-tauri/src/clip/model.rs` 中中文标签文件路径错误
+- 添加详细日志输出便于调试
+
+#### 17.10.7 问题 6：数据库连接死锁
+**现象**：点击创建后一直显示"创建中"，程序卡住。
+
+**原因**：`clip_create_work_topics` 函数中已持有数据库连接锁，调用 `add_character_tags_to_files` 时又尝试获取锁，由于 `Mutex` 不是可重入的，导致死锁。
+
+**解决方案**：修改 `add_character_tags_to_files` 函数，接受已获取的连接引用 `&rusqlite::Connection`，而不是自己获取连接。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 修改函数签名，传入连接引用
+
+#### 17.10.8 问题 7：部分文件元数据不存在
+**现象**：部分文件的标签无法写入，日志显示"元数据不存在"。
+
+**原因**：部分文件在 `file_metadata` 表中没有记录。
+
+**解决方案**：当元数据不存在时，从 `file_index` 表获取文件路径并创建新的元数据记录。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 添加创建新元数据记录的逻辑
+
+#### 17.10.9 问题 8：创建专题后前端 tags 未刷新
+**现象**：创建专题后人物图片数量显示正确，但点击人物进去没有文件。
+
+**原因**：
+1. 后端返回 `file_tags` 映射，但前端没有正确更新 `state.files`
+2. `useFileSearch.ts` 中人物文件过滤逻辑只检查 `aiData.faces`，不检查 `file.tags`
+
+**解决方案**：
+1. 后端返回 `file_tags` 映射
+2. 前端 `handleSmartCreateTopic` 直接更新 `state.files` 中文件的 `tags` 字段
+3. 修改 `useFileSearch.ts` 中的人物文件过滤逻辑，同时检查 `aiData.faces` 和 `file.tags`
+
+**修改文件**：
+- `src-tauri/src/work_extractor.rs` - 添加 `file_tags` 字段
+- `src-tauri/src/clip_commands.rs` - 返回 `file_tags` 映射
+- `src/types.ts` - 添加 `fileTags` 字段
+- `src/api/tauri-bridge.ts` - 更新默认返回值
+- `src/App.tsx` - 直接更新 `files` 和 `customTags`
+- `src/hooks/useFileSearch.ts` - 修改人物文件过滤逻辑
+
+#### 17.10.10 问题 9：人物头像无法显示和编辑
+**现象**：智能创建专题创建的人物没有头像，无法编辑头像。
+
+**原因**：创建人物时 `cover_file_id` 被设置为空字符串。
+
+**解决方案**：在创建人物时设置 `cover_file_id` 为该人物匹配到的第一个文件的 ID。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 修改角色统计数据结构，保存示例文件 ID
+
+#### 17.10.11 问题 10：图片未关联到人物
+**现象**：智能创建专题创建的人物显示了图片数量，但图片没有真正关联到人物。
+
+**原因**：只创建了标签，没有将图片添加到 `aiData.faces` 中。
+
+**解决方案**：修改 `add_character_tags_to_files` 函数，同时更新 `ai_data.faces`，将图片关联到人物。
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 添加 `ai_data.faces` 更新逻辑
+- `src/App.tsx` - 前端同时更新 `aiData.faces`
+
+#### 17.10.12 问题 11：不需要自动创建人物名标签
+**现象**：智能创建专题时自动创建了人物名标签，但用户不需要。
+
+**原因**：设计时误以为需要创建标签来关联图片。
+
+**解决方案**：
+1. 后端：重命名 `add_character_tags_to_files` 为 `link_files_to_persons`，去掉 tags 更新逻辑，只保留 `ai_data.faces` 的更新
+2. 后端：从 `CreateWorkTopicsResult` 中移除 `file_tags` 字段
+3. 前端：从 `handleSmartCreateTopic` 中移除 `fileTags` 参数和相关逻辑
+
+**修改文件**：
+- `src-tauri/src/work_extractor.rs` - 移除 `file_tags` 字段
+- `src-tauri/src/clip_commands.rs` - 重命名函数，去掉 tags 更新逻辑
+- `src/types.ts` - 移除 `fileTags` 字段
+- `src/api/tauri-bridge.ts` - 更新默认返回值
+- `src/App.tsx` - 简化 `handleSmartCreateTopic`
+- `src/components/AppModals.tsx` - 更新类型定义和调用
+- `src/components/modals/SmartCreateTopicModal.tsx` - 更新 `onConfirm` 调用
+
+#### 17.10.13 问题 12：已存在的人物文件关联失败
+**现象**：智能创建专题时，已存在的人物头像能显示，但点击进去没有文件。
+
+**原因**：`tag_to_person_id` 映射只包含新创建的人物，不包含已存在的人物。当人物已经存在于数据库时，`link_files_to_persons` 函数无法找到对应的 `person_id`，导致文件不会被关联到这些人物。
+
+**解决方案**：修改 `tag_to_person_id` 和 `person_names` 的构建逻辑，同时包含已存在的人物和新创建的人物：
+
+```rust
+let mut tag_to_person_id: HashMap<String, String> = HashMap::new();
+let mut person_names: HashMap<String, String> = HashMap::new();
+
+// 添加已存在的人物
+for person in &existing_people {
+    person_names.insert(person.id.clone(), person.name.clone());
+    if let Some(ref tag_name) = person.character_tag_name {
+        tag_to_person_id.insert(tag_name.clone(), person.id.clone());
+    }
+}
+
+// 添加新创建的人物
+for person in &created_people {
+    person_names.insert(person.id.clone(), person.name.clone());
+    if let Some(ref tag_name) = person.character_tag_name {
+        tag_to_person_id.insert(tag_name.clone(), person.id.clone());
+    }
+}
+```
+
+**修改文件**：
+- `src-tauri/src/clip_commands.rs` - 修改 `clip_create_work_topics` 函数中 `tag_to_person_id` 的构建逻辑
+
 ---
 *记录时间: 2026-02-23*
-*更新时间: 2026-02-28*
+*更新时间: 2026-03-08*
 *维护者: Antigravity*

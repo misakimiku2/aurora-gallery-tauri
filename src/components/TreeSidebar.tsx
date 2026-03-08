@@ -253,7 +253,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
          onDoubleClick={(e) => { e.stopPropagation(); onStartRenamePerson(person.id); }}
          title={person.name}
       >
-         <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative flex-shrink-0">
+         <div className="w-10 h-10 rounded-full border border-gray-200 dark:border-gray-800 overflow-hidden bg-gray-100 dark:bg-gray-800 hover:border-purple-500 dark:hover:border-purple-400 hover:ring-2 ring-purple-200 dark:ring-purple-900 transition-all shadow-sm relative flex-shrink-0" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden', isolation: 'isolate' }}>
             {coverFile ? (
                 person.faceBox ? (
                    <img
@@ -261,6 +261,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                      alt={person.name}
                      className="absolute max-w-none"
                      decoding="async"
+                     loading="lazy"
                      style={{
                          width: `${clamp(10000 / Math.max(person.faceBox.w, 2.0), 0, 1000)}%`,
                          height: `${clamp(10000 / Math.max(person.faceBox.h, 2.0), 0, 1000)}%`,
@@ -268,8 +269,9 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                          top: 0,
                          transformOrigin: 'top left',
                          transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                         willChange: 'transform, width, height',
-                         backfaceVisibility: 'hidden'
+                         willChange: 'transform',
+                         backfaceVisibility: 'hidden',
+                         imageRendering: 'crisp-edges' as any
                      }}
                    />
                 ) : (
@@ -277,10 +279,12 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
                      src={coverSrc}
                      alt={person.name}
                      className="w-full h-full object-cover"
+                     loading="lazy"
+                     style={{ transform: 'translateZ(0)' }}
                    />
                 )
             ) : (
-              <div className="w-full h-full flex items-center justify-center text-gray-400"><User size={16}/></div>
+              <div className="w-full h-full flex items-center justify-center text-gray-400" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}><User size={18} strokeWidth={1.5}/></div>
             )}
          </div>
          <span className="text-[10px] mt-1.5 text-gray-600 dark:text-gray-400 truncate w-full text-center leading-tight group-hover:text-purple-600 dark:group-hover:text-purple-300">{person.name}</span>
@@ -351,7 +355,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   }, [expanded, peopleRows, rowHeight, availableHeight, FixedSizeListComp, PersonCard, t, (isHovered ? scrollTop : null), peopleRows.length]);
 
   return (
-      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`} style={{ contain: 'layout style' }}>
         <div 
           className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
           style={isSelected ? { backgroundColor: '#a855f7', borderLeftColor: 'rgba(168,85,247,0.35)' } : undefined}
@@ -1376,6 +1380,7 @@ export const Sidebar: React.FC<{
   return (
     <div 
       className="w-full h-full flex flex-col overflow-hidden"
+      style={{ contain: 'layout style paint' }}
       onMouseEnter={handleMouseEnterSidebar}
       onMouseLeave={handleMouseLeaveSidebar}
     >

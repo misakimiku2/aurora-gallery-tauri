@@ -17,7 +17,7 @@ use super::preprocessor::{ImagePreprocessor, TextPreprocessor};
 use super::models::{ModelSpec, get_model_spec};
 
 /// 嵌入中文标签翻译文件
-const TAGS_CN_CSV: &str = include_str!("models/Tags-cn_2024_ver-1.0.csv");
+const TAGS_CN_CSV: &str = include_str!("Tags-cn_2024_ver-1.0.csv");
 
 /// 标签翻译器，将英文标签翻译为中文
 pub struct TagTranslator {

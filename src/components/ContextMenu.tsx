@@ -42,6 +42,7 @@ interface ContextMenuProps {
   requestDeleteTags: (tags: string[]) => void;
   handleSetAvatar: (id: string) => void;
   handleCreatePerson: () => void;
+  handleCreateTopic: () => void;
   handleCloseTab: (e: any, id: string) => void;
   handleCloseOtherTabs: (id: string) => void;
   handleCloseAllTabs: () => void;
@@ -86,6 +87,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   requestDeleteTags,
   handleSetAvatar,
   handleCreatePerson,
+  handleCreateTopic,
   handleCloseTab,
   handleCloseOtherTabs,
   handleCloseAllTabs,
@@ -498,6 +500,13 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreatePerson(); closeContextMenu(); }}>{t('context.newPerson')}</div>
             <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('smart-create-person', {}); closeContextMenu(); }}>
               <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.smartCreatePerson') || '智能创建人物'}
+            </div>
+          </>
+        ) : activeTab.viewMode === 'topics-overview' ? (
+          <>
+            <div className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer" onClick={() => { handleCreateTopic(); closeContextMenu(); }}>{t('context.newTopic') || '新建专题'}</div>
+            <div className="px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center" onClick={() => { setModal('smart-create-topic', {}); closeContextMenu(); }}>
+              <Sparkles size={14} className="mr-2 opacity-70" /> {t('context.smartCreateTopic') || '智能创建专题'}
             </div>
           </>
         ) : (

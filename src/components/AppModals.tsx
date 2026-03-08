@@ -33,6 +33,7 @@ import { RenameTopicModal as RenameTopicModalComp } from './modals/RenameTopicMo
 import { UpdateModal as UpdateModalComp } from './modals/UpdateModal';
 import { SmartCreatePersonModal as SmartCreatePersonModalComp } from './modals/SmartCreatePersonModal';
 import { SmartAddToPersonModal as SmartAddToPersonModalComp } from './modals/SmartAddToPersonModal';
+import { SmartCreateTopicModal as SmartCreateTopicModalComp } from './modals/SmartCreateTopicModal';
 import { AutoGenerateTagsModal as AutoGenerateTagsModalComp } from './modals/AutoGenerateTagsModal';
 import { clipUpdateConfig } from '../api/tauri-bridge';
 
@@ -97,6 +98,7 @@ interface AppModalsProps {
   onRefreshTags?: () => void;
   handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
   handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
+  handleSmartCreateTopic?: (topics: Topic[], people: Person[]) => Promise<void>;
   handleConfirmCreatePerson?: (name: string) => void;
 }
 
@@ -154,6 +156,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onRefreshTags,
   handleSmartCreatePerson,
   handleSmartAddToPerson,
+  handleSmartCreateTopic,
   handleConfirmCreatePerson,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
@@ -470,6 +473,25 @@ export const AppModals: React.FC<AppModalsProps> = ({
               }}
               onConfirm={(newFileIds) => {
                 handleSmartAddToPerson(state.activeModal.data.personId, newFileIds);
+                closeModals();
+              }}
+              onClose={closeModals}
+              t={t}
+            />
+          )}
+
+          {state.activeModal.type === 'smart-create-topic' && handleSmartCreateTopic && (
+            <SmartCreateTopicModalComp
+              language={state.settings.language}
+              clipSettings={{
+                minScore: state.settings.clip.minScore,
+                modelName: state.settings.clip.modelName,
+                enabled: state.settings.clip.enabled
+              }}
+              people={peopleWithDisplayCounts}
+              topics={state.topics}
+              onConfirm={async (topics, people) => {
+                await handleSmartCreateTopic(topics, people);
                 closeModals();
               }}
               onClose={closeModals}

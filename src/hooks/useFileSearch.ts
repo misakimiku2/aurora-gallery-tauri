@@ -76,7 +76,14 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
         return true;
       });
     } else if (searchCriteria.activePersonId) {
-      candidates = allFiles.filter(f => f.type === FileType.IMAGE && f.aiData?.faces?.some(face => face.personId === searchCriteria.activePersonId));
+      const person = state.people[searchCriteria.activePersonId];
+      const characterTagName = person?.characterTagName;
+      candidates = allFiles.filter(f => {
+        if (f.type !== FileType.IMAGE) return false;
+        if (f.aiData?.faces?.some(face => face.personId === searchCriteria.activePersonId)) return true;
+        if (characterTagName && f.tags?.some(tag => tag === characterTagName)) return true;
+        return false;
+      });
     } else if (searchCriteria.activeTags.length > 0) {
       const tagSet = new Set(searchCriteria.activeTags);
       candidates = allFiles.filter(f => f.type !== FileType.FOLDER && f.tags?.some(tag => tagSet.has(tag)));

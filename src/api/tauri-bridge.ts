@@ -2271,3 +2271,41 @@ export const clipGetDetectedCharacters = async (
     throw error;
   }
 };
+
+import { WorkTopicInfo, Topic } from '../types';
+
+export const clipGetWorkTopics = async (
+  minScore: number,
+  minCount?: number,
+  language?: string
+): Promise<WorkTopicInfo[]> => {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const topics = await invoke<WorkTopicInfo[]>('clip_get_work_topics', {
+      minScore,
+      minCount: minCount ?? 1,
+      language: language ?? 'en',
+    });
+    return topics;
+  } catch (error) {
+    console.error('Failed to get work topics:', error);
+    throw error;
+  }
+};
+
+export const clipCreateWorkTopics = async (workNames: string[]): Promise<import('../types').CreateWorkTopicsResult> => {
+  if (!isTauriEnvironment()) {
+    return { topics: [], people: [] };
+  }
+  try {
+    const result = await invoke<import('../types').CreateWorkTopicsResult>('clip_create_work_topics', {
+      workNames,
+    });
+    return result;
+  } catch (error) {
+    console.error('Failed to create work topics:', error);
+    throw error;
+  }
+};

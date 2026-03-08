@@ -1529,7 +1529,6 @@ export const App: React.FC = () => {
   }, [filesVersion, state.settings.language, state.customTags, tagSearchQuery, state.files]);
   // Memoized person counts to avoid recalculating every time
   const personCounts = useMemo(() => {
-    // 锟斤拷始锟斤拷录锟斤拷员锟斤拷锟斤拷锟斤拷锟斤拷
     const timer = performance.now();
     const counts = new Map<string, number>();
 
@@ -1538,17 +1537,44 @@ export const App: React.FC = () => {
       counts.set(personId, 0);
     });
 
+    // Build a map from characterTagName to personId for faster lookup
+    const tagToPersonId = new Map<string, string>();
+    Object.values(state.people).forEach(person => {
+      if (person.characterTagName) {
+        tagToPersonId.set(person.characterTagName, person.id);
+      }
+    });
+
     // Count files per person
     Object.values(state.files).forEach(file => {
-      if (file.type === FileType.IMAGE && file.aiData?.faces) {
-        const personIds = new Set(file.aiData.faces.map(face => face.personId));
+      if (file.type === FileType.IMAGE) {
+        const personIds = new Set<string>();
+        
+        // Count from faces (face recognition)
+        if (file.aiData?.faces) {
+          file.aiData.faces.forEach(face => {
+            if (face.personId) {
+              personIds.add(face.personId);
+            }
+          });
+        }
+        
+        // Count from WD14 tags (stored in file.tags)
+        if (file.tags && file.tags.length > 0) {
+          file.tags.forEach(tag => {
+            const personId = tagToPersonId.get(tag);
+            if (personId) {
+              personIds.add(personId);
+            }
+          });
+        }
+        
         personIds.forEach(personId => {
           counts.set(personId, (counts.get(personId) || 0) + 1);
         });
       }
     });
 
-    // 锟斤拷录锟斤拷锟斤拷指锟斤拷
     const duration = performance.now() - timer;
     performanceMonitor.timing('personCounts', duration, {
       personCount: Object.keys(state.people).length,
@@ -2361,6 +2387,24 @@ export const App: React.FC = () => {
       }
 
       return prev;
+    });
+  };
+
+  const handleSmartCreateTopic = async (createdTopics: Topic[], createdPeople: Person[]) => {
+    if (createdTopics.length === 0 && createdPeople.length === 0) return;
+    
+    setState(prev => {
+      const newTopics = { ...prev.topics };
+      createdTopics.forEach(topic => {
+        newTopics[topic.id] = topic;
+      });
+      
+      const newPeople = { ...prev.people };
+      createdPeople.forEach(person => {
+        newPeople[person.id] = person;
+      });
+      
+      return { ...prev, topics: newTopics, people: newPeople };
     });
   };
 
@@ -4667,6 +4711,7 @@ export const App: React.FC = () => {
                     onShowToast={showToast}
                     hoverPlayingId={hoverPlayingId}
                     onSetHoverPlayingId={setHoverPlayingId}
+                    onSmartCreateTopic={() => setState(prev => ({ ...prev, activeModal: { type: 'smart-create-topic', data: {} } }))}
                   />
                 ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
                   // If folder is being actively refreshed after an operation, show a loading state
@@ -4846,6 +4891,7 @@ export const App: React.FC = () => {
         onRefreshTags={handleRefreshTags}
         handleSmartCreatePerson={handleSmartCreatePerson}
         handleSmartAddToPerson={handleSmartAddToPerson}
+        handleSmartCreateTopic={handleSmartCreateTopic}
         handleConfirmCreatePerson={handleConfirmCreatePerson}
       />
 
@@ -4877,6 +4923,7 @@ export const App: React.FC = () => {
         requestDeleteTags={requestDeleteTags}
         handleSetAvatar={handleSetAvatar}
         handleCreatePerson={handleCreatePerson}
+        handleCreateTopic={() => setState(s => ({ ...s, activeModal: { type: 'create-topic', data: { parentId: null } } }))}
         handleCloseTab={handleCloseTab}
         handleCloseOtherTabs={handleCloseOtherTabs}
         handleCloseAllTabs={handleCloseAllTabs}

@@ -76,6 +76,7 @@ export const translations = {
       enterNewTagName: '请输入新的标签名称',
       newPerson: '新建人物',
       smartCreatePerson: '智能创建人物',
+      smartCreateTopic: '智能创建专题',
       smartAddToPerson: '智能添加图片',
       newPersonDefault: '新人物',
       addToPerson: '添加到人物...',
@@ -816,6 +817,20 @@ export const translations = {
       checkingEmbeddings: '检测新图片...',
       newImagesDetected: '检测到新图片',
       generateEmbeddings: '生成嵌入向量'
+    },
+    smartCreateTopic: {
+      title: '智能创建专题',
+      wd14Required: '此功能需要启用 WD14 模型',
+      threshold: '检测阈值',
+      searchWork: '搜索作品...',
+      selectAll: '全选',
+      deselectAll: '取消全选',
+      noWorks: '暂无检测到的作品',
+      preview: '预览',
+      selectToPreview: '选择作品查看详情',
+      selectWorkToPreview: '请选择作品查看详情',
+      createTopics: '创建专题',
+      creating: '创建中...'
     }
   },
   en: {
@@ -894,6 +909,7 @@ export const translations = {
       enterNewTagName: 'Enter new tag name',
       newPerson: 'New Person',
       smartCreatePerson: 'Smart Create Person',
+      smartCreateTopic: 'Smart Create Topic',
       smartAddToPerson: 'Smart Add Images',
       newPersonDefault: 'New Person',
       addToPerson: 'Add to Person...',
@@ -1630,6 +1646,20 @@ export const translations = {
       checkingEmbeddings: 'Checking for new images...',
       newImagesDetected: 'New images detected',
       generateEmbeddings: 'Generate Embeddings'
+    },
+    smartCreateTopic: {
+      title: 'Smart Create Topic',
+      wd14Required: 'This feature requires WD14 model',
+      threshold: 'Detection Threshold',
+      searchWork: 'Search work...',
+      selectAll: 'Select All',
+      deselectAll: 'Deselect All',
+      noWorks: 'No works detected',
+      preview: 'Preview',
+      selectToPreview: 'Select a work to preview',
+      selectWorkToPreview: 'Please select a work to preview details',
+      createTopics: 'Create Topics',
+      creating: 'Creating...'
     }
   }
 };

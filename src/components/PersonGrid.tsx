@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Person, FileNode, TabState, PersonSortOption, PersonGroupByOption, SortDirection, Topic } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
@@ -64,7 +64,7 @@ const PersonCard = React.memo(({
         style={{ width: avatarSize, height: avatarSize }}
         onDoubleClick={() => onPersonDoubleClick(person.id)}
       >
-        <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative">
+        <div className="w-full h-full rounded-full bg-white dark:bg-gray-800 overflow-hidden border-[3px] border-white dark:border-gray-800 relative" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden', isolation: 'isolate' }}>
           <div className="w-full h-full transition-transform duration-500 group-hover:scale-110">
             {hasCover && coverSrc ? (
                person.faceBox ? (
@@ -73,6 +73,7 @@ const PersonCard = React.memo(({
                       alt={person.name}
                       className="absolute max-w-none"
                       decoding="async"
+                      loading="lazy"
                       style={{
                           width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
                           height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
@@ -80,20 +81,22 @@ const PersonCard = React.memo(({
                           top: 0,
                           transformOrigin: 'top left',
                           transform: `translate3d(${-person.faceBox.x}%, ${-person.faceBox.y}%, 0)`,
-                          willChange: 'transform, width, height',
+                          willChange: 'transform',
                           backfaceVisibility: 'hidden',
-                          imageRendering: 'auto'
+                          imageRendering: 'crisp-edges' as any
                       }}
                   />
               ) : (
                   <img 
                       src={coverSrc} 
                       alt={person.name}
-                      className="w-full h-full object-cover" 
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      style={{ transform: 'translateZ(0)' }}
                   />
               )
             ) : (
-              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500">
+              <div className="w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-300 dark:text-gray-500" style={{ transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}>
                 <User size={avatarSize * 0.4} strokeWidth={1.5} />
               </div>
             )}

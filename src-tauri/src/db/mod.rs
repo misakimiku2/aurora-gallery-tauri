@@ -137,6 +137,11 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     let _ = conn.execute("ALTER TABLE persons ADD COLUMN character_tag_name TEXT", []);
     let _ = conn.execute("ALTER TABLE persons ADD COLUMN character_tag_index INTEGER", []);
 
+    // Migration: Add source_type, work_name, work_name_cn columns to topics table
+    let _ = conn.execute("ALTER TABLE topics ADD COLUMN source_type TEXT", []);
+    let _ = conn.execute("ALTER TABLE topics ADD COLUMN work_name TEXT", []);
+    let _ = conn.execute("ALTER TABLE topics ADD COLUMN work_name_cn TEXT", []);
+
     // Create indexes for file_metadata
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_file_metadata_path ON file_metadata(path)",
