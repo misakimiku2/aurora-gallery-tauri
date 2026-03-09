@@ -17,6 +17,7 @@ pub struct Topic {
     pub parent_id: Option<String>,
     pub name: String,
     pub description: Option<String>,
+    #[serde(rename = "type")]
     pub topic_type: Option<String>,
     pub cover_file_id: Option<String>,
     pub background_file_id: Option<String>,

@@ -127,6 +127,13 @@ export interface WorkTopicInfo {
   existingTopicId?: string;
   coverFileId?: string;
   sampleFileIds?: string[];
+  fileIds?: string[];
+}
+
+export interface WorkToCreate {
+  name: string;
+  topicType?: string;
+  coverFileId?: string;
 }
 
 export interface CreateWorkTopicsResult {

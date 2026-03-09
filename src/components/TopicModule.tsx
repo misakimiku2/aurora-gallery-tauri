@@ -194,7 +194,7 @@ const TopicFileGrid = React.memo(({
         containerWidth,
         200
     );
-    
+
     const { layout, totalHeight } = externalLayout || localLayout;
 
     const gridRef = useRef<HTMLDivElement>(null);
@@ -212,7 +212,7 @@ const TopicFileGrid = React.memo(({
         const relativeScrollTop = scrollTop - offsetTop;
         const start = relativeScrollTop - BUFFER;
         const end = relativeScrollTop + viewportHeight + BUFFER;
-        
+
         return layout.filter(item => {
             return (item.y + item.height > start) && (item.y < end);
         });
@@ -688,10 +688,10 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         if (hasFaceBox) {
             renderCrop = {
-                x: person.faceBox.x,
-                y: person.faceBox.y,
-                width: person.faceBox.w,
-                height: person.faceBox.h
+                x: person.faceBox!.x,
+                y: person.faceBox!.y,
+                width: person.faceBox!.w,
+                height: person.faceBox!.h
             };
         } else if (imgDimensions) {
             const { width: imgW, height: imgH } = imgDimensions;
@@ -845,7 +845,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const subTopicsLayout = useMemo(() => {
         if (!detailData || currentTopic?.parentId) return { items: [], height: 0 };
         const { sortedSubTopics } = detailData;
-        
+
         const subSafeWidth = containerRect.width > 0 ? containerRect.width : 1280;
         const subAvailableWidth = Math.max(100, subSafeWidth - 48);
         const subGap = 32;
@@ -887,7 +887,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const safeWidth = containerRect.width > 0 ? containerRect.width : 1280;
         const availableWidth = Math.max(100, safeWidth - PADDING_X * 2);
         const cols = Math.max(1, Math.floor((availableWidth + GAP_X) / (ITEM_SIZE + GAP_X)));
-        
+
         const items = topicPeople.map((p, index) => {
             const row = Math.floor(index / cols);
             const col = index % cols;
@@ -926,15 +926,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const headerPadding = 24; // text-xl mb-4 etc. approx
 
         let currentY = headerHeight + topPadding;
-        
+
         const subTopics = { start: currentY, height: subTopicsLayout.height > 0 ? subTopicsLayout.height + 60 : 0 }; // 60 for title and margin
         if (subTopics.height > 0) currentY += subTopics.height + gap;
-        
+
         const people = { start: currentY, height: peopleLayout.height > 0 ? peopleLayout.height + 60 : 0 };
         if (people.height > 0) currentY += people.height + gap;
-        
+
         const files = { start: currentY, height: imagesTotalHeight + 60 };
-        
+
         return { subTopics, people, files };
     }, [headerHeight, subTopicsLayout.height, peopleLayout.height, imagesTotalHeight]);
 
@@ -1441,13 +1441,13 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             } else {
                 newSelection = [...selectedTopicIds, topicId];
             }
-            
+
             // Clear other selection types when selecting topics first
             if (typeof onSelectPeople === 'function') onSelectPeople([]);
             onSelectFiles && onSelectFiles([], null);
             // Clear local single-click person state
             setClickedOncePerson(null);
-            
+
             onSelectTopics(newSelection, topicId);
             lastSelectedIdRef.current = topicId;
         } else if (e.shiftKey && lastSelectedIdRef.current) {
@@ -1470,7 +1470,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 onSelectTopics(newSelection, topicId);
             } else {
                 // Fallback if range invalid
-                 onSelectTopics([topicId], topicId);
+                onSelectTopics([topicId], topicId);
             }
         } else {
             // Normal click: Single selection
@@ -1479,7 +1479,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             onSelectFiles && onSelectFiles([], null);
             // Clear local single-click person state
             setClickedOncePerson(null);
-            
+
             onSelectTopics([topicId], topicId);
             lastSelectedIdRef.current = topicId;
 

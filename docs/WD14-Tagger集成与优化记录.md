@@ -615,6 +615,7 @@ pub struct WorkCharacter {
     pub tag_name_cn: Option<String>,
     pub person_id: Option<String>,
     pub image_count: usize,
+    pub cover_file_id: Option<String>,
 }
 
 pub struct WorkTopicInfo {
@@ -624,6 +625,20 @@ pub struct WorkTopicInfo {
     pub image_count: usize,
     pub characters: Vec<WorkCharacter>,
     pub existing_topic_id: Option<String>,
+    pub cover_file_id: Option<String>,
+    pub sample_file_ids: Vec<String>,
+    pub file_ids: Vec<String>,
+}
+
+pub struct WorkToCreate {
+    pub name: String,
+    pub topic_type: Option<String>,
+    pub cover_file_id: Option<String>,
+}
+
+pub struct CreateWorkTopicsResult {
+    pub topics: Vec<Topic>,
+    pub people: Vec<Person>,
 }
 ```
 
@@ -656,19 +671,21 @@ pub struct Topic {
 ```
 
 ### 17.8 修改文件
-- `src-tauri/src/work_extractor.rs` - 新建作品名提取模块
-- `src-tauri/src/clip_commands.rs` - 新增 2 个命令
+- `src-tauri/src/work_extractor.rs` - 作品名提取模块，包含核心数据结构定义
+- `src-tauri/src/clip_commands.rs` - 新增 `clip_get_work_topics` 和 `clip_create_work_topics` 命令
 - `src-tauri/src/main.rs` - 注册新命令
-- `src-tauri/src/db/topics.rs` - 扩展数据结构
+- `src-tauri/src/db/topics.rs` - 扩展 Topic 数据结构（source_type, work_name, work_name_cn）
+- `src-tauri/src/db/persons.rs` - 扩展 Person 数据结构（character_tag_name, character_tag_index）
 - `src-tauri/src/db/mod.rs` - 数据库迁移
-- `src/types.ts` - 新增 WorkTopicInfo、WorkCharacter 类型，扩展 Topic 类型
-- `src/api/tauri-bridge.ts` - 新增 clipGetWorkTopics、clipCreateWorkTopics API
-- `src/components/modals/SmartCreateTopicModal.tsx` - 新建模态框组件
-- `src/components/AppModals.tsx` - 集成新模态框
-- `src/components/ContextMenu.tsx` - 添加菜单入口
-- `src/components/TopicModule.tsx` - 添加右键菜单入口
-- `src/App.tsx` - 添加处理函数
-- `src/utils/translations.ts` - 添加翻译
+- `src/types.ts` - TypeScript 类型定义（WorkTopicInfo, WorkCharacter, WorkToCreate, CreateWorkTopicsResult）
+- `src/api/tauri-bridge.ts` - API 桥接（clipGetWorkTopics, clipCreateWorkTopics）
+- `src/components/modals/SmartCreateTopicModal.tsx` - 智能创建专题模态框组件
+- `src/components/AppModals.tsx` - 模态框集成
+- `src/components/ContextMenu.tsx` - 右键菜单入口
+- `src/components/TopicModule.tsx` - 专题模块右键菜单
+- `src/App.tsx` - 全局状态更新处理
+- `src/utils/translations.ts` - 多语言翻译
+- `src/hooks/useFileSearch.ts` - 文件搜索逻辑（人物关联）
 
 ### 17.9 作品名映射优化（2026-03-07）
 
@@ -696,188 +713,70 @@ pub struct Topic {
 
 ### 17.10 智能创建专题功能修复（2026-03-08）
 
-#### 17.10.1 问题 1：专题创建后为空
-**现象**：点击智能创建专题后，只创建了空专题，没有关联人物和图片。
+#### 17.10.1 核心功能修复
 
-**原因**：`clip_create_work_topics` 函数中 `files_by_work` HashMap 被声明但从未填充。
+| 问题 | 现象 | 原因 | 解决方案 |
+|------|------|------|----------|
+| 专题创建后为空 | 只创建空专题，无关联人物和图片 | `files_by_work` HashMap 未填充 | 添加遍历 embeddings 填充逻辑 |
+| 阈值过高 | 无图片匹配 | `min_score = 0.35` 太高 | 降低到 `0.1` |
+| 人物不显示 | 人物创建但列表不显示 | 后端只返回 topics | 新增 `CreateWorkTopicsResult` 返回 `{ topics, people }` |
+| 数据库死锁 | 点击创建后程序卡住 | Mutex 非可重入，重复获取连接 | 函数接受连接引用而非自己获取 |
+| 元数据不存在 | 标签无法写入 | 部分文件无 metadata 记录 | 从 file_index 获取路径创建记录 |
+| 人物无头像 | 人物头像无法显示编辑 | `cover_file_id` 为空 | 设置为匹配到的第一个文件 ID |
+| 图片未关联 | 人物显示数量但无文件 | 未更新 `ai_data.faces` | `link_files_to_persons` 函数更新 faces |
+| 已存在人物关联失败 | 已存在人物无文件 | `tag_to_person_id` 只含新人物 | 同时添加已存在和新创建的人物 |
 
-**解决方案**：添加遍历 embeddings 并填充 `files_by_work` 的逻辑。
+#### 17.10.2 前端修复
 
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 添加填充 `files_by_work` 的逻辑
+| 问题 | 现象 | 解决方案 |
+|------|------|----------|
+| 排序错误 | `localeCompare is not a function` | 修改 `sortTopics` 处理数字和字符串类型 |
+| 图片数量显示为 0 | 人物图片数量显示为 0 | `personCounts` 同时支持 `aiData.faces` 和 `file.tags` |
 
-#### 17.10.2 问题 2：阈值过高导致无匹配
-**现象**：`files_by_work` 为空，没有任何图片被匹配。
-
-**原因**：
-- 阈值 `min_score = 0.35` 太高
-- Embedding 最大值只有 0.168，所有标签分数都低于阈值
-
-**解决方案**：将阈值从 `0.35` 降低到 `0.1`。
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 修改 `min_score` 值
-
-#### 17.10.3 问题 3：前端排序错误
-**现象**：`(a.createdAt || "").localeCompare is not a function`
-
-**原因**：`createdAt` 可能是数字类型（时间戳），不能调用 `localeCompare`。
-
-**解决方案**：修改 `sortTopics` 函数，正确处理数字和字符串类型。
-
-**修改文件**：
-- `src/components/TopicModule.tsx` - 修改排序逻辑
-
-#### 17.10.4 问题 4：创建专题后人物不显示
-**现象**：专题创建成功，人物也创建了，但前端人物列表不显示新人物。
-
-**原因**：
-1. 后端只返回 `topics`，没有返回 `people`
-2. 前端 `handleSmartCreateTopic` 只更新 `topics` 状态
-
-**解决方案**：
-1. 后端新增 `CreateWorkTopicsResult` 结构，返回 `{ topics, people }`
-2. 前端同时更新 `topics` 和 `people` 状态
-
-**修改文件**：
+#### 17.10.3 修改文件
 - `src-tauri/src/work_extractor.rs` - 新增 `CreateWorkTopicsResult` 结构
-- `src-tauri/src/clip_commands.rs` - 修改返回类型
-- `src/types.ts` - 新增 `CreateWorkTopicsResult` 类型
-- `src/api/tauri-bridge.ts` - 修改 `clipCreateWorkTopics` 返回类型
-- `src/components/modals/SmartCreateTopicModal.tsx` - 修改 `onConfirm` 参数
-- `src/components/AppModals.tsx` - 修改 `handleSmartCreateTopic` 类型
-- `src/App.tsx` - 修改 `handleSmartCreateTopic` 同时更新 topics 和 people
+- `src-tauri/src/clip_commands.rs` - 修复文件关联、死锁、元数据创建等问题
+- `src/components/TopicModule.tsx` - 修复排序逻辑
+- `src/App.tsx` - 修复 `personCounts` 计算
+- `src/hooks/useFileSearch.ts` - 人物文件过滤逻辑
 
-#### 17.10.5 问题 5：人物图片数量显示为 0
-**现象**：智能创建的人物图片数量显示为 0。
+## 18. 智能创建专题 UI 优化与功能完善 (2026-03-09)
 
-**原因**：
-1. `personCounts` 计算逻辑只从 `aiData.faces` 计算图片数量
-2. WD14 标签存储在 `file.tags` 中，而不是 `aiData.tags`
+### 18.1 react-window 兼容性与崩溃修复
+针对 `SmartCreateTopicModal` 在特定环境下出现的 `react-window` 崩溃问题进行了根本性修复：
+- **API 兼容性**: 识别出项目中集成的 `react-window` (2.2.6) 与标准 API 的显著差异。将 `FixedSizeGrid` 手动切换为支持 `cellComponent` 属性的 `Grid` 组件。
+- **动态组件获取**: 恢复并改进了对 `RW as any` 的防御性检测逻辑，确保在不同导出模式下仍能正确获取到 `FixedSizeList`。
+- **渲染回调修复**: 修复了由于 `Grid` 内部缺失 `cellProps` 导致的运行时异常。
 
-**解决方案**：修改 `personCounts` 计算逻辑，同时支持：
-- 从 `aiData.faces` 计算图片数量（人脸识别）
-- 从 `file.tags` 匹配 `characterTagName` 计算图片数量（WD14 标签）
+### 18.2 列表布局优化
+- **行高调整**: 将 `react-window` 列表单项高度调整为 `104px`，并调整内边距规则 `mx-1.5 my-1`，确保边界包含计算一致且显示正常。
+- **侧边栏宽度**: 将左侧侧边栏宽度设置为 `w-[360px]` (360px)，为作品名称提供充足显示空间。
+- **预览封面增强**: 将主预览区域的封面尺寸设置为 `w-56`，遵循 3:4 的标准作品比例。
 
-**修改文件**：
-- `src/App.tsx` - 修改 `personCounts` 计算逻辑
+### 18.3 "已创建"标签优化
+- **位置调整**: 将 "EXISTING"/"已创建" 标签移动到专题名称同一行
+- **样式更新**: 
+  - 背景色从灰色改为绿色 (`bg-green-500`)
+  - 字体颜色改为白色 (`text-white`)
+  - 支持根据语言切换显示文本（中文显示"已创建"，英文显示"EXISTING"）
 
-#### 17.10.6 其他修复
-- 修复 `src-tauri/src/clip/model.rs` 中中文标签文件路径错误
-- 添加详细日志输出便于调试
+### 18.4 前端预览效能重构
+- **缩略图优先策略**: 将预览区域的文件显示组件从加载原图的 `SharpImage` 切换为专门的 `ImageThumbnail`，降低 GPU 显存压力。
+- **资源路径修正**: 确保 `resourceRoot` 正确透传至底层组件，解决预览图片路径问题。
 
-#### 17.10.7 问题 6：数据库连接死锁
-**现象**：点击创建后一直显示"创建中"，程序卡住。
+### 18.5 自定义专题分类支持 (Full-Stack)
+实现了在智能扫描导入期间进行专题类型的自定义：
+- **前端输入层**: 在右侧的作品预览面板新增**专题分类 (Topic Category)** 输入框（默认值 `TOPIC`）。通过 `customTopicTypes` 状态独立追踪各个作品的预期分类。
+- **参数数据解耦**: `src/types.ts` 新增 `WorkToCreate` 接口声明 `name`、`topicType` 和 `coverFileId` 属性。
+- **桥接层**: `tauri-bridge.ts` 中的 `clipCreateWorkTopics` 参数由字符串数组升级至 `WorkToCreate[]` 对象数组。
+- **后端持久层**: 修改 Rust 后端的 `clip_commands.rs::clip_create_work_topics`，提取前端传入的 `topic_type` 参数并在创建专题时应用。
 
-**原因**：`clip_create_work_topics` 函数中已持有数据库连接锁，调用 `add_character_tags_to_files` 时又尝试获取锁，由于 `Mutex` 不是可重入的，导致死锁。
-
-**解决方案**：修改 `add_character_tags_to_files` 函数，接受已获取的连接引用 `&rusqlite::Connection`，而不是自己获取连接。
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 修改函数签名，传入连接引用
-
-#### 17.10.8 问题 7：部分文件元数据不存在
-**现象**：部分文件的标签无法写入，日志显示"元数据不存在"。
-
-**原因**：部分文件在 `file_metadata` 表中没有记录。
-
-**解决方案**：当元数据不存在时，从 `file_index` 表获取文件路径并创建新的元数据记录。
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 添加创建新元数据记录的逻辑
-
-#### 17.10.9 问题 8：创建专题后前端 tags 未刷新
-**现象**：创建专题后人物图片数量显示正确，但点击人物进去没有文件。
-
-**原因**：
-1. 后端返回 `file_tags` 映射，但前端没有正确更新 `state.files`
-2. `useFileSearch.ts` 中人物文件过滤逻辑只检查 `aiData.faces`，不检查 `file.tags`
-
-**解决方案**：
-1. 后端返回 `file_tags` 映射
-2. 前端 `handleSmartCreateTopic` 直接更新 `state.files` 中文件的 `tags` 字段
-3. 修改 `useFileSearch.ts` 中的人物文件过滤逻辑，同时检查 `aiData.faces` 和 `file.tags`
-
-**修改文件**：
-- `src-tauri/src/work_extractor.rs` - 添加 `file_tags` 字段
-- `src-tauri/src/clip_commands.rs` - 返回 `file_tags` 映射
-- `src/types.ts` - 添加 `fileTags` 字段
-- `src/api/tauri-bridge.ts` - 更新默认返回值
-- `src/App.tsx` - 直接更新 `files` 和 `customTags`
-- `src/hooks/useFileSearch.ts` - 修改人物文件过滤逻辑
-
-#### 17.10.10 问题 9：人物头像无法显示和编辑
-**现象**：智能创建专题创建的人物没有头像，无法编辑头像。
-
-**原因**：创建人物时 `cover_file_id` 被设置为空字符串。
-
-**解决方案**：在创建人物时设置 `cover_file_id` 为该人物匹配到的第一个文件的 ID。
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 修改角色统计数据结构，保存示例文件 ID
-
-#### 17.10.11 问题 10：图片未关联到人物
-**现象**：智能创建专题创建的人物显示了图片数量，但图片没有真正关联到人物。
-
-**原因**：只创建了标签，没有将图片添加到 `aiData.faces` 中。
-
-**解决方案**：修改 `add_character_tags_to_files` 函数，同时更新 `ai_data.faces`，将图片关联到人物。
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 添加 `ai_data.faces` 更新逻辑
-- `src/App.tsx` - 前端同时更新 `aiData.faces`
-
-#### 17.10.12 问题 11：不需要自动创建人物名标签
-**现象**：智能创建专题时自动创建了人物名标签，但用户不需要。
-
-**原因**：设计时误以为需要创建标签来关联图片。
-
-**解决方案**：
-1. 后端：重命名 `add_character_tags_to_files` 为 `link_files_to_persons`，去掉 tags 更新逻辑，只保留 `ai_data.faces` 的更新
-2. 后端：从 `CreateWorkTopicsResult` 中移除 `file_tags` 字段
-3. 前端：从 `handleSmartCreateTopic` 中移除 `fileTags` 参数和相关逻辑
-
-**修改文件**：
-- `src-tauri/src/work_extractor.rs` - 移除 `file_tags` 字段
-- `src-tauri/src/clip_commands.rs` - 重命名函数，去掉 tags 更新逻辑
-- `src/types.ts` - 移除 `fileTags` 字段
-- `src/api/tauri-bridge.ts` - 更新默认返回值
-- `src/App.tsx` - 简化 `handleSmartCreateTopic`
-- `src/components/AppModals.tsx` - 更新类型定义和调用
-- `src/components/modals/SmartCreateTopicModal.tsx` - 更新 `onConfirm` 调用
-
-#### 17.10.13 问题 12：已存在的人物文件关联失败
-**现象**：智能创建专题时，已存在的人物头像能显示，但点击进去没有文件。
-
-**原因**：`tag_to_person_id` 映射只包含新创建的人物，不包含已存在的人物。当人物已经存在于数据库时，`link_files_to_persons` 函数无法找到对应的 `person_id`，导致文件不会被关联到这些人物。
-
-**解决方案**：修改 `tag_to_person_id` 和 `person_names` 的构建逻辑，同时包含已存在的人物和新创建的人物：
-
-```rust
-let mut tag_to_person_id: HashMap<String, String> = HashMap::new();
-let mut person_names: HashMap<String, String> = HashMap::new();
-
-// 添加已存在的人物
-for person in &existing_people {
-    person_names.insert(person.id.clone(), person.name.clone());
-    if let Some(ref tag_name) = person.character_tag_name {
-        tag_to_person_id.insert(tag_name.clone(), person.id.clone());
-    }
-}
-
-// 添加新创建的人物
-for person in &created_people {
-    person_names.insert(person.id.clone(), person.name.clone());
-    if let Some(ref tag_name) = person.character_tag_name {
-        tag_to_person_id.insert(tag_name.clone(), person.id.clone());
-    }
-}
-```
-
-**修改文件**：
-- `src-tauri/src/clip_commands.rs` - 修改 `clip_create_work_topics` 函数中 `tag_to_person_id` 的构建逻辑
+### 18.6 修改文件
+- `src/components/modals/SmartCreateTopicModal.tsx` - UI 布局与交互优化
+- `src/types.ts` - 类型定义更新（WorkToCreate 接口）
+- `src/api/tauri-bridge.ts` - API 参数类型更新
 
 ---
 *记录时间: 2026-02-23*
-*更新时间: 2026-03-08*
+*更新时间: 2026-03-09*
 *维护者: Antigravity*

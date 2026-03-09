@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { FolderOpen, Check, Sparkles, X, Users, Image, AlertTriangle } from 'lucide-react';
+import { Grid } from 'react-window';
 import * as RW from 'react-window';
-import { WorkTopicInfo, Topic, Person, FileNode } from '../../types';
+import { WorkTopicInfo, Topic, Person, FileNode, WorkCharacter } from '../../types';
 import { clipGetWorkTopics, clipCreateWorkTopics } from '../../api/tauri-bridge';
+import { ImageThumbnail } from '../ImageThumbnail';
 
 const FixedSizeListComp: any = (() => {
   const mod: any = RW as any;
@@ -12,6 +14,132 @@ const FixedSizeListComp: any = (() => {
   if (mod.default && (typeof mod.default === 'function' || typeof mod.default === 'object')) return mod.default;
   return null;
 })();
+
+const SharpImage = React.memo(({ src, aspect = 3 / 4, className = "" }: { src: string; aspect?: number; className?: string }) => {
+  const [dim, setDim] = useState<{ w: number; h: number } | null>(null);
+  const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    setDim({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight });
+  };
+
+  let imgStyle: React.CSSProperties = { objectFit: 'cover' };
+  if (dim) {
+    const imgAspect = dim.w / dim.h;
+    let cw, ch, cx, cy;
+    if (imgAspect > aspect) {
+      ch = 100; cw = (aspect / imgAspect) * 100; cx = (100 - cw) / 2; cy = 0;
+    } else {
+      cw = 100; ch = (imgAspect / aspect) * 100; cx = 0; cy = (100 - ch) / 2;
+    }
+    imgStyle = {
+      position: 'absolute',
+      width: `${10000 / cw}%`,
+      height: `${10000 / ch}%`,
+      left: `${-cx / cw * 100}%`,
+      top: `${-cy / ch * 100}%`,
+      maxWidth: 'none',
+      imageRendering: 'auto'
+    };
+  }
+
+  return (
+    <div className={`relative overflow-hidden ${className}`}>
+      <img
+        src={src}
+        onLoad={handleLoad}
+        style={imgStyle}
+        className={dim ? "" : "w-full h-full object-cover opacity-0"}
+        decoding="async"
+      />
+      {!dim && (
+        <div className="absolute inset-0 bg-gray-100 dark:bg-gray-800 animate-pulse flex items-center justify-center">
+          <Image size={16} className="text-gray-300 dark:text-gray-600" />
+        </div>
+      )}
+    </div>
+  );
+});
+SharpImage.displayName = 'SharpImage';
+
+const FilePreviewGrid = React.memo(({ fileIds, files, resourceRoot }: { fileIds: string[]; files: Record<string, FileNode>; resourceRoot: string }) => {
+  const columnCount = 5;
+  const rowCount = Math.ceil(fileIds.length / columnCount);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const updateWidth = () => {
+      if (el.offsetWidth > 0) setWidth(el.offsetWidth);
+    };
+    updateWidth();
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect.width > 0) {
+          setWidth(entry.contentRect.width);
+        }
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const Cell = useCallback(({ columnIndex, rowIndex, style }: any) => {
+    const index = rowIndex * columnCount + columnIndex;
+    if (index >= fileIds.length) return null;
+
+    const fileId = fileIds[index];
+    const file = files[fileId];
+
+    return (
+      <div style={{ ...style, padding: '4px' }}>
+        <div className="w-full h-full rounded-lg overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 relative">
+          {file ? (
+            <ImageThumbnail
+              src=""
+              alt={file.name}
+              isSelected={false}
+              filePath={file.path}
+              modified={file.updatedAt || file.meta?.modified}
+              resourceRoot={resourceRoot}
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <Image size={20} className="text-gray-300 dark:text-gray-600" />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [fileIds, files, resourceRoot]);
+
+  const gutter = 8;
+  const columnWidth = (width > 0) ? (width - gutter * 2) / columnCount : 0;
+
+  return (
+    <div ref={containerRef} className="w-full h-full min-h-[200px]">
+      {(width === 0) ? (
+        <div className="w-full h-full font-mono text-xs flex flex-col items-center justify-center text-gray-400 gap-2">
+          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-500"></div>
+          Initializing Grid... (W: {width})
+        </div>
+      ) : (
+        <Grid
+          columnCount={columnCount}
+          columnWidth={columnWidth}
+          rowCount={rowCount}
+          rowHeight={columnWidth}
+          style={{ height: 400, width: width }}
+          cellComponent={Cell}
+          cellProps={{} as any}
+        />
+      )}
+    </div>
+  );
+});
+FilePreviewGrid.displayName = 'FilePreviewGrid';
 
 interface SmartCreateTopicModalProps {
   language: 'zh' | 'en';
@@ -29,7 +157,7 @@ interface SmartCreateTopicModalProps {
   t: (key: string) => string;
 }
 
-const ITEM_HEIGHT = 56;
+const ITEM_HEIGHT = 104;
 
 interface WorkRowProps {
   index: number;
@@ -47,7 +175,7 @@ interface WorkRowProps {
 }
 
 const WorkRow = React.memo(({ index, style, data }: WorkRowProps) => {
-  const { works, selectedWorks, onToggle, language, onSelect, selectedWorkName, files, resourceRoot } = data;
+  const { works, selectedWorks, onToggle, language, onSelect, selectedWorkName, files } = data;
   const work = works[index];
   const isSelected = selectedWorks.has(work.workName);
   const isPreviewed = selectedWorkName === work.workName;
@@ -59,46 +187,54 @@ const WorkRow = React.memo(({ index, style, data }: WorkRowProps) => {
   const coverUrl = coverFile ? convertFileSrc(coverFile.path) : null;
 
   return (
-    <div
-      style={style}
-      onClick={() => onSelect(work)}
-      className={`flex items-center px-3 py-2 rounded-xl cursor-pointer transition-all duration-200 group m-1 border ${isPreviewed
-        ? 'bg-purple-100 dark:bg-purple-900/30 border-purple-200 dark:border-purple-800/50 shelf-shadow'
-        : 'hover:bg-gray-100 dark:hover:bg-gray-700/50 border-transparent'
-        }`}
-    >
+    <div style={style}>
       <div
-        onClick={(e) => {
-          e.stopPropagation();
-          if (!existingTopic) onToggle(work.workName);
-        }}
-        className={`mr-3 w-5 h-5 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${existingTopic
-          ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 cursor-not-allowed'
-          : isSelected
-            ? 'border-purple-500 bg-purple-500 cursor-pointer shadow-sm shadow-purple-500/20'
-            : 'border-gray-300 dark:border-gray-600 cursor-pointer hover:border-purple-400'
+        onClick={() => onSelect(work)}
+        className={`flex items-center px-4 py-3 rounded-2xl cursor-pointer transition-all duration-200 group mx-1.5 my-1 border ${isPreviewed
+          ? 'bg-purple-100 dark:bg-purple-900/40 border-purple-200 dark:border-purple-800 shelf-shadow shadow-purple-500/10'
+          : 'hover:bg-gray-100 dark:hover:bg-gray-700/50 border-transparent shadow-sm shadow-transparent'
           }`}
       >
-        {isSelected && !existingTopic && <Check size={12} className="text-white" strokeWidth={3} />}
-        {existingTopic && <Check size={12} className="text-gray-300 dark:text-gray-600" />}
-      </div>
-
-      <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 mr-3 bg-gray-100 dark:bg-gray-700 flex items-center justify-center border border-gray-200 dark:border-gray-700">
-        {coverUrl ? (
-          <img src={coverUrl} alt="" className="w-full h-full object-cover" />
-        ) : (
-          <FolderOpen size={16} className="text-gray-400" />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className={`text-sm truncate ${isPreviewed ? 'text-purple-700 dark:text-purple-300 font-semibold' : 'text-gray-800 dark:text-gray-200'}`}>
-          {displayName}
-          {existingTopic && <span className="ml-1 text-[10px] uppercase font-bold text-gray-400 opacity-60">({language === 'zh' ? '已创建' : 'Created'})</span>}
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!existingTopic) onToggle(work.workName);
+          }}
+          className={`mr-4 w-6 h-6 rounded-lg border-2 flex items-center justify-center flex-shrink-0 transition-all ${existingTopic
+            ? 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 cursor-not-allowed'
+            : isSelected
+              ? 'border-purple-500 bg-purple-500 cursor-pointer shadow-sm shadow-purple-500/20'
+              : 'border-gray-300 dark:border-gray-600 cursor-pointer bg-white dark:bg-gray-800 hover:border-purple-400 focus-within:ring-2 ring-purple-500/50'
+            }`}
+        >
+          {isSelected && !existingTopic && <Check size={14} className="text-white" strokeWidth={3} />}
+          {existingTopic && <Check size={14} className="text-gray-300 dark:text-gray-600" />}
         </div>
-        <div className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-2 mt-0.5">
-          <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Users size={8} />{work.characterCount}</span>
-          <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Image size={8} />{work.imageCount}</span>
+
+        <div className="w-14 h-[74.6px] rounded-xl overflow-hidden flex-shrink-0 mr-4 bg-gray-100 dark:bg-gray-700 flex items-center justify-center border border-gray-200 dark:border-gray-700 shadow-sm relative">
+          {coverUrl ? (
+            <SharpImage src={coverUrl} aspect={3 / 4} className="w-full h-full" />
+          ) : (
+            <FolderOpen size={20} className="text-gray-400" />
+          )}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <div className={`text-sm truncate leading-tight ${isPreviewed ? 'text-purple-700 dark:text-purple-300 font-bold' : 'text-gray-800 dark:text-gray-200 font-medium'}`}>
+              {displayName}
+            </div>
+            {existingTopic && (
+              <div className="bg-green-500 px-2 py-0.5 rounded-full text-[9px] font-bold text-white uppercase tracking-tighter flex-shrink-0">
+                {language === 'zh' ? '已创建' : 'EXISTING'}
+              </div>
+            )}
+          </div>
+          <div className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mt-1 mb-1 block">Topic</div>
+          <div className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center gap-2">
+            <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Users size={8} />{work.characterCount}</span>
+            <span className="flex items-center gap-1 bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded-full"><Image size={8} />{work.imageCount}</span>
+          </div>
         </div>
       </div>
     </div>
@@ -125,6 +261,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
   const [creating, setCreating] = useState(false);
   const [threshold, setThreshold] = useState(0.1);
   const [searchQuery, setSearchQuery] = useState('');
+  const [customTopicTypes, setCustomTopicTypes] = useState<Record<string, string>>({});
 
   const workListRef = useRef<HTMLDivElement>(null);
   const [workListHeight, setWorkListHeight] = useState(300);
@@ -215,9 +352,16 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
 
     setCreating(true);
     try {
-      const workNames = Array.from(selectedWorks);
-      console.log('[SmartCreateTopicModal] Creating topics for works:', workNames);
-      const result = await clipCreateWorkTopics(workNames);
+      const worksToCreate = Array.from(selectedWorks).map(workName => {
+        const work = workTopics.find(w => w.workName === workName);
+        return {
+          name: workName,
+          topicType: customTopicTypes[workName] || 'TOPIC',
+          coverFileId: work?.coverFileId
+        };
+      });
+      console.log('[SmartCreateTopicModal] Creating topics for works:', worksToCreate);
+      const result = await clipCreateWorkTopics(worksToCreate);
       console.log('[SmartCreateTopicModal] Created topics:', result.topics);
       console.log('[SmartCreateTopicModal] Created people:', result.people);
       onConfirm(result.topics, result.people);
@@ -226,7 +370,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
     } finally {
       setCreating(false);
     }
-  }, [selectedWorks, onConfirm]);
+  }, [selectedWorks, workTopics, customTopicTypes, onConfirm]);
 
   const filteredWorks = useMemo(() => {
     if (!searchQuery.trim()) return workTopics;
@@ -306,7 +450,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-80 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 p-4 flex flex-col overflow-hidden">
+        <div className="w-[360px] flex-shrink-0 border-r border-gray-200 dark:border-gray-700 p-4 flex flex-col overflow-hidden">
           <div className="mb-3 p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg">
             <div className="text-sm text-purple-700 dark:text-purple-300">
               {language === 'zh'
@@ -445,12 +589,12 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                   <div className="absolute top-0 right-0 -mt-8 -mr-8 w-32 h-32 bg-purple-500/10 rounded-full blur-3xl pointer-events-none" />
 
                   <div className="flex items-start gap-6 relative">
-                    <div className="w-32 h-44 rounded-xl overflow-hidden shadow-lg border border-white/20 flex-shrink-0">
+                    <div className="w-56 h-[298.7px] rounded-xl overflow-hidden shadow-xl border-4 border-white dark:border-gray-700 flex-shrink-0 relative">
                       {selectedWork.coverFileId ? (
-                        <img
+                        <SharpImage
                           src={convertFileSrc(files[selectedWork.coverFileId]?.path)}
-                          alt=""
-                          className="w-full h-full object-cover"
+                          aspect={3 / 4}
+                          className="w-full h-full"
                         />
                       ) : (
                         <div className="w-full h-full bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
@@ -463,8 +607,21 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                       <h4 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 leading-tight">
                         {language === 'zh' && selectedWork.workNameCn ? selectedWork.workNameCn : selectedWork.workName}
                       </h4>
-                      <div className="text-sm text-gray-500 dark:text-gray-400 mb-6 flex flex-col gap-1">
+                      <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 flex flex-col gap-1">
                         <span className="font-mono">{selectedWork.workName}</span>
+                      </div>
+
+                      <div className="mb-6 flex flex-col gap-1.5 focus-within:text-purple-600 dark:focus-within:text-purple-400">
+                        <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest transition-colors">
+                          {language === 'zh' ? '专题分类' : 'Topic Category'}
+                        </label>
+                        <input
+                          type="text"
+                          value={customTopicTypes[selectedWork.workName] !== undefined ? customTopicTypes[selectedWork.workName] : 'TOPIC'}
+                          onChange={(e) => setCustomTopicTypes(prev => ({ ...prev, [selectedWork.workName]: e.target.value }))}
+                          placeholder={language === 'zh' ? '默认为 TOPIC' : 'Default is TOPIC'}
+                          className="px-3 py-1.5 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-bold text-gray-700 dark:text-gray-200 focus:outline-none focus:ring-2 focus:ring-purple-500 w-full md:w-48 shadow-sm transition-all"
+                        />
                       </div>
 
                       <div className="grid grid-cols-2 gap-6 p-4 bg-gray-50 dark:bg-gray-900/50 rounded-xl border border-gray-100 dark:border-gray-800">
@@ -491,7 +648,7 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {selectedWork.characters.map((char) => {
+                    {selectedWork.characters.map((char: WorkCharacter) => {
                       const person = char.personId ? people[char.personId] : null;
                       const charDisplayName = language === 'zh' && char.tagNameCn ? char.tagNameCn : char.tagName;
                       const charCoverFile = char.coverFileId ? files[char.coverFileId] : null;
@@ -502,9 +659,9 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                           key={char.tagName}
                           className="flex items-center gap-3 p-3 bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shelf-shadow hover:scale-[1.02] transition-transform duration-200 group"
                         >
-                          <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+                          <div className="w-12 h-12 rounded-xl overflow-hidden flex-shrink-0 bg-gray-100 dark:bg-gray-800 border-2 border-white dark:border-gray-700 shadow-sm relative">
                             {charCoverUrl ? (
-                              <img src={charCoverUrl} alt="" className="w-full h-full object-cover" />
+                              <SharpImage src={charCoverUrl} aspect={1} className="w-full h-full" />
                             ) : person ? (
                               <div className="w-full h-full flex items-center justify-center text-sm font-bold text-purple-600 bg-purple-50 dark:bg-purple-900/20">
                                 {person.name.charAt(0)}
@@ -532,6 +689,23 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                         </div>
                       );
                     })}
+                  </div>
+                  <div className="flex items-center gap-2 mb-4 px-1 mt-8">
+                    <div className="h-1.5 w-1.5 rounded-full bg-blue-500" />
+                    <h5 className="text-sm font-bold text-gray-800 dark:text-gray-200 uppercase tracking-widest">
+                      {language === 'zh' ? '包含文件' : 'Attached Files'}
+                    </h5>
+                    <div className="flex-1 h-px bg-gray-200 dark:bg-gray-800 ml-2" />
+                  </div>
+
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl border border-gray-100 dark:border-gray-700 shelf-shadow p-4 overflow-hidden" style={{ height: '400px' }}>
+                    {selectedWork.fileIds && selectedWork.fileIds.length > 0 ? (
+                      <FilePreviewGrid fileIds={selectedWork.fileIds} files={files} resourceRoot={resourceRoot} />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-gray-400 italic text-sm">
+                        {language === 'zh' ? '暂无匹配文件' : 'No matching files'}
+                      </div>
+                    )}
                   </div>
                 </div>
 

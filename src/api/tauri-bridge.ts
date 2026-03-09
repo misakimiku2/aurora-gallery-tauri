@@ -1198,7 +1198,7 @@ export const dbGetAllFileMetadata = async (): Promise<Array<{
       aiData?: any;
       updatedAt?: number;
     }>>('db_get_all_file_metadata');
-    
+
     return result.map(item => ({
       fileId: item.fileId,
       path: item.path,
@@ -2295,13 +2295,13 @@ export const clipGetWorkTopics = async (
   }
 };
 
-export const clipCreateWorkTopics = async (workNames: string[]): Promise<import('../types').CreateWorkTopicsResult> => {
+export const clipCreateWorkTopics = async (worksToCreate: import('../types').WorkToCreate[]): Promise<import('../types').CreateWorkTopicsResult> => {
   if (!isTauriEnvironment()) {
     return { topics: [], people: [] };
   }
   try {
     const result = await invoke<import('../types').CreateWorkTopicsResult>('clip_create_work_topics', {
-      workNames,
+      worksToCreate,
     });
     return result;
   } catch (error) {

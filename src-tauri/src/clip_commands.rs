@@ -1777,17 +1777,37 @@ pub async fn clip_get_work_topics(
     }
     
     let detected: Vec<(usize, String, Option<String>, usize, String)> = character_tags
-        .into_iter()
+        .iter()
         .filter_map(|(tag_index, name)| {
-            if let Some((count, _max_score, sample_file_id)) = character_stats.remove(&tag_index) {
+            if let Some((count, _max_score, sample_file_id)) = character_stats.remove(tag_index) {
                 if count >= min_count {
-                    let cn_name = cn_translations.get(&name).cloned();
-                    return Some((tag_index, name, cn_name, count, sample_file_id));
+                    let cn_name = cn_translations.get(name).cloned();
+                    return Some((*tag_index, name.clone(), cn_name, count, sample_file_id));
                 }
             }
             None
         })
         .collect();
+    
+    use std::collections::HashSet;
+    
+    // 预先建立 tag_index 到 work_name 的映射，用于高效收集 file_ids
+    let mut tag_to_work: HashMap<usize, String> = HashMap::new();
+    let mut work_file_ids: HashMap<String, HashSet<String>> = HashMap::new();
+    for (tag_idx, tag_name, tag_name_cn, _, _) in &detected {
+        if let Some(extraction) = extract_work_name(tag_name, tag_name_cn.as_deref()) {
+            tag_to_work.insert(*tag_idx, extraction.work_name);
+        }
+    }
+
+    // 单次遍历 embeddings 收集所有作品的 file_ids
+    for emb in &embeddings {
+        for (tag_idx, work_name) in &tag_to_work {
+            if *tag_idx < emb.embedding.len() && emb.embedding[*tag_idx] >= min_score {
+                work_file_ids.entry(work_name.clone()).or_default().insert(emb.file_id.clone());
+            }
+        }
+    }
     
     let mut work_characters: HashMap<String, Vec<WorkCharacter>> = HashMap::new();
     let mut work_names_cn: HashMap<String, String> = HashMap::new();
@@ -1817,7 +1837,7 @@ pub async fn clip_get_work_topics(
                 tag_name_cn: tag_name_cn.clone(),
                 person_id,
                 image_count,
-                cover_file_id: Some(cover_file_id),
+                cover_file_id: Some(cover_file_id.clone()),
             };
             
             work_characters.entry(work_name.clone()).or_default().push(character);
@@ -1850,6 +1870,7 @@ pub async fn clip_get_work_topics(
                 .filter_map(|c| c.cover_file_id.clone())
                 .take(4)
                 .collect();
+            let file_ids = work_file_ids.get(&work_name).cloned().unwrap_or_default().into_iter().collect();
             
             WorkTopicInfo {
                 work_name,
@@ -1860,6 +1881,7 @@ pub async fn clip_get_work_topics(
                 existing_topic_id,
                 cover_file_id,
                 sample_file_ids,
+                file_ids,
             }
         })
         .collect();
@@ -1873,11 +1895,15 @@ pub async fn clip_get_work_topics(
 
 #[tauri::command]
 pub async fn clip_create_work_topics(
-    work_names: Vec<String>,
+    works_to_create: Vec<crate::work_extractor::WorkToCreate>,
     app: tauri::AppHandle,
 ) -> Result<crate::work_extractor::CreateWorkTopicsResult, String> {
     use crate::work_extractor::{extract_work_name, get_work_display_name, CreateWorkTopicsResult};
     use std::collections::{HashMap, HashSet};
+    
+    let work_names: Vec<String> = works_to_create.iter().map(|w| w.name.clone()).collect();
+    let work_types: HashMap<String, Option<String>> = works_to_create.iter().map(|w| (w.name.clone(), w.topic_type.clone())).collect();
+    let work_cover_ids: HashMap<String, Option<String>> = works_to_create.iter().map(|w| (w.name.clone(), w.cover_file_id.clone())).collect();
     
     log::info!("[clip_create_work_topics] 开始创建专题, work_names: {:?}", work_names);
     
@@ -2173,22 +2199,27 @@ pub async fn clip_create_work_topics(
         log::info!("[clip_create_work_topics]   people_ids 数量: {}", people_ids.len());
         log::info!("[clip_create_work_topics]   file_ids 数量: {}", file_ids.len());
         
-        let mut cover_file_id = None;
-        if let Some(stats) = character_stats_by_work.get(&work_name) {
-            for (_, (_, _, sample)) in stats {
-                if sample.is_some() {
-                    cover_file_id = sample.clone();
-                    break;
+        let cover_file_id = work_cover_ids.get(&work_name)
+            .and_then(|c| c.clone())
+            .or_else(|| {
+                if let Some(stats) = character_stats_by_work.get(&work_name) {
+                    for (_, (_, _, sample)) in stats {
+                        if sample.is_some() {
+                            return sample.clone();
+                        }
+                    }
                 }
-            }
-        }
+                None
+            });
+
+        let custom_type = work_types.get(&work_name).and_then(|t| t.clone()).or(Some("TOPIC".to_string()));
 
         let topic = db::topics::Topic {
             id: topic_id.clone(),
             parent_id: None,
             name: display_name,
             description: None,
-            topic_type: Some("work".to_string()),
+            topic_type: custom_type,
             cover_file_id,
             background_file_id: None,
             cover_crop: None,

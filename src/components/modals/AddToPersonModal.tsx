@@ -1,8 +1,16 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { Search, User, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { List } from 'react-window';
+import * as RW from 'react-window';
 import { Person, FileNode } from '../../types';
+
+const FixedSizeListComp: any = (() => {
+    const mod: any = RW as any;
+    if (mod.FixedSizeList) return mod.FixedSizeList;
+    if (mod.default && mod.default.FixedSizeList) return mod.default.FixedSizeList;
+    if (mod.default && (typeof mod.default === 'function' || typeof mod.default === 'object')) return mod.default;
+    return null;
+})();
 
 interface AddToPersonModalProps {
     people: Record<string, Person>;
@@ -22,7 +30,8 @@ interface RowProps {
     toggleSelection: (personId: string) => void;
 }
 
-const PersonRow = ({ index, style, people, files, selectedIds, toggleSelection }: { index: number; style: React.CSSProperties } & RowProps) => {
+const PersonRow = ({ index, style, data }: { index: number; style: React.CSSProperties; data: RowProps }) => {
+    const { people, files, selectedIds, toggleSelection } = data;
     const person = people[index];
     const coverFile = files[person.coverFileId];
     const hasCover = !!coverFile;
@@ -32,11 +41,10 @@ const PersonRow = ({ index, style, people, files, selectedIds, toggleSelection }
         <div
             style={style}
             onClick={() => toggleSelection(person.id)}
-            className={`flex items-center px-2 py-1 rounded cursor-pointer group ${
-                isSelected
-                    ? 'bg-blue-100 dark:bg-blue-900/30'
-                    : 'hover:bg-gray-100 dark:hover:bg-gray-700'
-            }`}
+            className={`flex items-center px-2 py-1 rounded cursor-pointer group ${isSelected
+                ? 'bg-blue-100 dark:bg-blue-900/30'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                }`}
         >
             <div className="relative mr-3 flex-shrink-0">
                 <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden">
@@ -50,12 +58,12 @@ const PersonRow = ({ index, style, people, files, selectedIds, toggleSelection }
                                     decoding="async"
                                     loading="lazy"
                                     style={{
-                                        width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                                        height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                        width: `${10000 / Math.max(person.faceBox!.w, 2.0)}%`,
+                                        height: `${10000 / Math.max(person.faceBox!.h, 2.0)}%`,
                                         maxWidth: 'none',
                                         minWidth: 'unset',
-                                        left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
-                                        top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                        left: `${-person.faceBox!.x / Math.max(person.faceBox!.w, 2.0) * 100}%`,
+                                        top: `${-person.faceBox!.y / Math.max(person.faceBox!.h, 2.0) * 100}%`,
                                         imageRendering: 'auto'
                                     }}
                                 />
@@ -147,14 +155,16 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                         {t('sidebar.noPeople')}
                     </div>
                 ) : (
-                    <List
-                        style={{ height: LIST_HEIGHT, width: '100%' }}
-                        rowCount={filteredPeople.length}
-                        rowHeight={ITEM_HEIGHT}
-                        rowComponent={PersonRow}
-                        rowProps={rowProps}
+                    <FixedSizeListComp
+                        height={LIST_HEIGHT}
+                        width="100%"
+                        itemCount={filteredPeople.length}
+                        itemSize={ITEM_HEIGHT}
+                        itemData={rowProps}
                         overscanCount={5}
-                    />
+                    >
+                        {PersonRow}
+                    </FixedSizeListComp>
                 )}
             </div>
             <div className="flex justify-between items-center">
@@ -168,11 +178,10 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                     <button
                         onClick={handleConfirm}
                         disabled={selectedIds.size === 0}
-                        className={`px-3 py-1.5 rounded text-sm text-white transition-colors ${
-                            selectedIds.size > 0
-                                ? 'bg-blue-600 hover:bg-blue-700'
-                                : 'bg-gray-400 cursor-not-allowed'
-                        }`}
+                        className={`px-3 py-1.5 rounded text-sm text-white transition-colors ${selectedIds.size > 0
+                            ? 'bg-blue-600 hover:bg-blue-700'
+                            : 'bg-gray-400 cursor-not-allowed'
+                            }`}
                     >
                         {t('settings.confirm')}
                     </button>

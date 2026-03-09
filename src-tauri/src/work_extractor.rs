@@ -32,6 +32,7 @@ pub struct WorkTopicInfo {
     pub existing_topic_id: Option<String>,
     pub cover_file_id: Option<String>,
     pub sample_file_ids: Vec<String>,
+    pub file_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +40,14 @@ pub struct WorkTopicInfo {
 pub struct CreateWorkTopicsResult {
     pub topics: Vec<crate::db::topics::Topic>,
     pub people: Vec<crate::db::persons::Person>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkToCreate {
+    pub name: String,
+    pub topic_type: Option<String>,
+    pub cover_file_id: Option<String>,
 }
 
 static SERIES_NAMES: Lazy<HashMap<String, String>> = Lazy::new(|| {
