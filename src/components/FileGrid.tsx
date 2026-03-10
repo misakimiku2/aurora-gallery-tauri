@@ -9,7 +9,7 @@ import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLayout, LayoutItem } from './useLayoutHook';
 import { PersonGrid } from './PersonGrid';
-import { TagsList } from './TagsList';
+import { TagsList, TagIndexBar } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { throttle } from '../utils/debounce';
@@ -21,8 +21,8 @@ import { InlineRenameInput } from './InlineRenameInput';
 import { FileListItem } from './FileListItem';
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
-    if (a === '0-9') return -1; if (b === '0-9') return 1;
-    if (a === '#') return 1; if (b === '#') return -1;
+    if (a === '#') return -1;
+    if (b === '#') return 1;
     return a.localeCompare(b);
 });
 
@@ -1166,44 +1166,50 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
   if (activeTab.viewMode === 'tags-overview') {
       return (
-          <div
-              ref={containerRef}
-              id="file-grid-container"
-              className="w-full h-full overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
-              onContextMenu={onBackgroundContextMenu}
-              onMouseDown={handleMouseDownInternal}
-              onMouseMove={onMouseMove}
-              onMouseUp={onMouseUp}
-          >
-              <div className="absolute inset-0 pointer-events-none z-50">
-                  {selectionBox && (
-                      <div
-                          className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
-                          style={{
-                              left: Math.min(selectionBox.startX, selectionBox.currentX),
-                              top: Math.min(selectionBox.startY, selectionBox.currentY),
-                              width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                              height: Math.abs(selectionBox.currentY - selectionBox.startY),
-                          }}
-                      />
-                  )}
-              </div>
-              <TagsList
-                  groupedTags={groupedTags || {}}
+          <div className="w-full h-full flex flex-col">
+              <TagIndexBar 
                   keys={sortedKeys}
-                  files={files}
-                  selectedTagIds={activeTab.selectedTagIds}
-                  onTagClick={handleTagClickStable}
-                  onTagDoubleClick={handleTagDoubleClickStable}
-                  onTagContextMenu={handleTagContextMenuStable}
-                  t={t}
-                  searchQuery={activeTab.searchQuery}
-                  layout={layout}
-                  totalHeight={totalHeight}
                   scrollTop={scrollTop}
-                  containerHeight={containerRect.height}
-                  resourceRoot={resourceRoot}
+                  layout={layout}
               />
+              <div
+                  ref={containerRef}
+                  id="file-grid-container"
+                  className="flex-1 overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
+                  onContextMenu={onBackgroundContextMenu}
+                  onMouseDown={handleMouseDownInternal}
+                  onMouseMove={onMouseMove}
+                  onMouseUp={onMouseUp}
+              >
+                  <div className="absolute inset-0 pointer-events-none z-50">
+                      {selectionBox && (
+                          <div
+                              className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
+                              style={{
+                                  left: Math.min(selectionBox.startX, selectionBox.currentX),
+                                  top: Math.min(selectionBox.startY, selectionBox.currentY),
+                                  width: Math.abs(selectionBox.currentX - selectionBox.startX),
+                                  height: Math.abs(selectionBox.currentY - selectionBox.startY),
+                              }}
+                          />
+                      )}
+                  </div>
+                  <TagsList
+                      groupedTags={groupedTags || {}}
+                      keys={sortedKeys}
+                      files={files}
+                      selectedTagIds={activeTab.selectedTagIds}
+                      onTagClick={handleTagClickStable}
+                      onTagDoubleClick={handleTagDoubleClickStable}
+                      onTagContextMenu={handleTagContextMenuStable}
+                      t={t}
+                      layout={layout}
+                      totalHeight={totalHeight}
+                      scrollTop={scrollTop}
+                      containerHeight={containerRect.height}
+                      resourceRoot={resourceRoot}
+                  />
+              </div>
           </div>
       );
   }

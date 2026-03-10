@@ -603,7 +603,17 @@ export const TopBar: React.FC<TopBarProps> = ({
   }, [onGoBack, onGoForward, activeTab.history.currentIndex, activeTab.history.stack.length]);
 
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
-  const currentSearchColor = useMemo(() => isColorSearchQuery ? toolbarQuery.replace('color:', '') : '', [isColorSearchQuery, toolbarQuery]);
+  const isPaletteSearchQuery = useMemo(() => toolbarQuery.startsWith('palette:'), [toolbarQuery]);
+  const currentSearchColor = useMemo(() => {
+    if (!isColorSearchQuery) return '';
+    const color = toolbarQuery.replace('color:', '');
+    return color.startsWith('#') ? color : '#' + color;
+  }, [isColorSearchQuery, toolbarQuery]);
+  const paletteColors = useMemo(() => {
+    if (!isPaletteSearchQuery) return [];
+    const rawPalette = toolbarQuery.replace('palette:', '');
+    return rawPalette.split(',').map(c => c.trim().startsWith('#') ? c.trim() : '#' + c.trim());
+  }, [isPaletteSearchQuery, toolbarQuery]);
 
   const pickerInitialColor = useMemo(() => {
     // 1. Current typing in toolbar
@@ -767,6 +777,18 @@ export const TopBar: React.FC<TopBarProps> = ({
                 style={{ backgroundColor: currentSearchColor }}
             />
           )}
+          
+          {isPaletteSearchQuery && paletteColors.length > 0 && (
+            <div className="flex -space-x-1 mr-2 flex-shrink-0">
+              {paletteColors.slice(0, 5).map((color, i) => (
+                <div
+                  key={i}
+                  className="w-4 h-4 rounded-full border border-white dark:border-gray-700 shadow-sm"
+                  style={{ backgroundColor: color, zIndex: 5 - i }}
+                />
+              ))}
+            </div>
+          )}
 
           <input
             ref={searchInputRef}
@@ -793,7 +815,8 @@ export const TopBar: React.FC<TopBarProps> = ({
             }
             value={
               activeTab.viewMode === 'people-overview' ? (personSearchQuery || '') :
-              activeTab.viewMode === 'tags-overview' ? tagSearchQuery : toolbarQuery
+              activeTab.viewMode === 'tags-overview' ? tagSearchQuery :
+              (isColorSearchQuery || isPaletteSearchQuery) ? '' : toolbarQuery
             }
             onChange={(e) => {
               const v = e.target.value;

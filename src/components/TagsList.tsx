@@ -7,6 +7,54 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { FileType, FileNode } from '../types';
 import { LayoutItem } from './useLayoutHook';
 
+interface TagIndexBarProps {
+  keys: string[];
+  scrollTop: number;
+  layout: LayoutItem[];
+}
+
+export const TagIndexBar: React.FC<TagIndexBarProps> = ({ keys, scrollTop, layout }) => {
+  const activeKey = useMemo(() => {
+    const headerItems = layout.filter(item => item.id.startsWith('header:'));
+    for (let i = headerItems.length - 1; i >= 0; i--) {
+      if (scrollTop >= headerItems[i].y - 100) {
+        return headerItems[i].id.replace('header:', '');
+      }
+    }
+    return headerItems[0]?.id.replace('header:', '') || '';
+  }, [scrollTop, layout]);
+
+  const scrollToGroup = useCallback((group: string) => {
+    const headerItem = layout.find(item => item.id === `header:${group}`);
+    if (headerItem) {
+      const container = document.getElementById('file-grid-container');
+      if (container) {
+        container.scrollTo({ top: headerItem.y, behavior: 'smooth' });
+      }
+    }
+  }, [layout]);
+
+  if (keys.length === 0) return null;
+
+  return (
+    <div className="h-8 flex items-center justify-center px-4 gap-1 border-b border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50 backdrop-blur shrink-0 relative z-10 overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600 scrollbar-track-transparent">
+      {keys.map((key) => (
+        <button
+          key={key}
+          onClick={() => scrollToGroup(key)}
+          className={`min-w-[24px] h-6 px-1.5 rounded-md flex items-center justify-center text-xs font-medium transition-all flex-shrink-0 ${
+            activeKey === key
+              ? 'bg-blue-500 text-white shadow-sm scale-110'
+              : 'text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700'
+          }`}
+        >
+          {key}
+        </button>
+      ))}
+    </div>
+  );
+};
+
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const [src, setSrc] = useState<string | null>(() => {
     if (!file.path) return null;
@@ -98,7 +146,6 @@ interface TagsListProps {
   onTagDoubleClick: (tag: string) => void;
   onTagContextMenu: (e: React.MouseEvent, tag: string) => void;
   t: (key: string) => string;
-  searchQuery?: string;
   layout: LayoutItem[];
   totalHeight: number;
   scrollTop: number;
@@ -115,7 +162,6 @@ export const TagsList = React.memo(({
   onTagDoubleClick, 
   onTagContextMenu, 
   t, 
-  searchQuery,
   layout,
   totalHeight,
   scrollTop,
@@ -154,16 +200,6 @@ export const TagsList = React.memo(({
     return res;
   }, [hoveredTag, files]);
 
-  // Filter keys for the index-bar (still needed visually)
-  const filteredKeys = useMemo(() => {
-    const query = searchQuery?.toLowerCase().trim();
-    if (!query) return keys;
-    return keys.filter(key => {
-        const tags = groupedTags[key];
-        return tags?.some(tag => tag.toLowerCase().includes(query));
-    });
-  }, [keys, groupedTags, searchQuery]);
-
   const visibleItems = useMemo(() => {
     const buffer = 400; 
     const minY = scrollTop - buffer;
@@ -197,86 +233,9 @@ export const TagsList = React.memo(({
     setHoveredTag(null);
     setHoveredTagPos(null);
   }, []);
-  
-  // 计算并维护字母索引栏相对于视口的 top（使其垂直居中于文件列表区域）
-  const [indexTop, setIndexTop] = useState<number | null>(null);
-
-  const computeIndexTop = useCallback(() => {
-    try {
-      const container = document.getElementById('file-grid-container');
-      if (container) {
-        const rect = container.getBoundingClientRect();
-        const top = rect.top + rect.height / 2; // 相对于视口的 y
-        setIndexTop(Math.round(top));
-        return;
-      }
-    } catch (e) {
-      // ignore
-    }
-    // fallback: 视口中心
-    setIndexTop(Math.round(window.innerHeight / 2));
-  }, []);
-
-  useEffect(() => {
-    computeIndexTop();
-    const onResize = () => computeIndexTop();
-    const onScroll = () => computeIndexTop();
-    window.addEventListener('resize', onResize);
-    window.addEventListener('scroll', onScroll, true);
-    const ro = new MutationObserver(() => computeIndexTop());
-    ro.observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
-    return () => {
-      window.removeEventListener('resize', onResize);
-      window.removeEventListener('scroll', onScroll, true);
-      ro.disconnect();
-    };
-  }, [computeIndexTop]);
 
   return (
     <div className={`relative ${layout.length === 0 ? 'h-full' : ''}`} style={{ height: layout.length === 0 ? '100%' : totalHeight }}>
-      {/* 字母索引栏 */}
-      {filteredKeys.length > 0 && createPortal(
-        <div className="fixed transform -translate-y-1/2 z-[110] bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm rounded-full px-1 py-2 shadow-md border border-gray-200 dark:border-gray-800 transition-all duration-300"
-             style={{ right: 'calc(20px + var(--metadata-panel-width, 0px))', top: indexTop != null ? `${indexTop}px` : '50%' }}
-             onMouseEnter={() => {
-              const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
-              if (metadataPanel) {
-                metadataPanel.style.zIndex = '10';
-              }
-            }}
-            onMouseLeave={() => {
-              const metadataPanel = document.querySelector('.metadata-panel-container') as HTMLElement | null;
-              if (metadataPanel) {
-                metadataPanel.style.zIndex = '40';
-              }
-            }}
-        >
-          <div className="flex flex-col items-center space-y-1">
-            {filteredKeys.map((group: string) => (
-              <button
-                key={group}
-                onClick={() => {
-                  const headerItem = layout.find(item => item.id === `header:${group}`);
-                  if (headerItem) {
-                    const container = document.getElementById('file-grid-container'); 
-                    if (container) {
-                      container.scrollTo({ top: headerItem.y, behavior: 'smooth' });
-                    }
-                  }
-                }}
-                className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                title={group}
-              >
-                {group}
-              </button>
-            ))}
-          </div>
-        </div>,
-        // 渲染到 body，确保 fixed 相对于视口
-        (typeof document !== 'undefined' ? document.body : null) as Element
-      )}
-      
-      {/* 标签列表内容 */}
       {layout.length === 0 && (
           <div className="flex flex-col items-center justify-center text-gray-400 w-full h-full min-h-[400px]">
               <Tag size={80} strokeWidth={1.5} className="mb-4 opacity-20"/>
@@ -368,7 +327,6 @@ export const TagsList = React.memo(({
            prev.files === next.files && 
            prev.selectedTagIds === next.selectedTagIds &&
            prev.keys === next.keys &&
-           prev.searchQuery === next.searchQuery &&
            prev.layout === next.layout &&
            prev.totalHeight === next.totalHeight &&
            prev.scrollTop === next.scrollTop &&
