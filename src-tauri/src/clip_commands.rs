@@ -6,6 +6,8 @@ use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{Emitter, Manager};
 
+const TAGS_EN_CSV: &str = include_str!("clip/tags_info.csv");
+
 static CANCEL_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 static PAUSE_GENERATION: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
 static IS_GENERATING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(false));
@@ -1085,6 +1087,23 @@ struct TagMapper {
 }
 
 impl TagMapper {
+    fn load_embedded() -> Result<Self, String> {
+        let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
+        
+        let mut tags = Vec::new();
+        for result in rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+            if record.len() >= 3 {
+                let tag_name = record[1].replace('_', " ").trim().to_string();
+                let category: i32 = record[2].parse().unwrap_or(-1);
+                tags.push(TagEntry { name: tag_name, category });
+            }
+        }
+        
+        log::info!("Loaded {} tags from embedded file", tags.len());
+        Ok(Self { tags })
+    }
+    
     fn load(tags_path: &std::path::Path) -> Result<Self, String> {
         let file = std::fs::File::open(tags_path)
             .map_err(|e| format!("Failed to open tags file: {}", e))?;
@@ -1176,17 +1195,8 @@ pub async fn clip_generate_tags_from_embeddings(
             "message": "没有找到嵌入向量，请先生成嵌入向量"
         }));
     }
-    
-    // 加载标签文件
-    let tags_path = model_cache_dir
-        .join(&requested_model)
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
-    }
-    
-    let mapper = TagMapper::load(&tags_path)?;
+
+    let mapper = TagMapper::load_embedded()?;
     
     log::info!("开始从 {} 个嵌入向量生成标签，阈值: {}", embeddings.len(), threshold);
     
@@ -1308,16 +1318,8 @@ pub async fn clip_preview_tags_from_embeddings(
             files_with_tags: 0,
         });
     }
-    
-    let tags_path = model_cache_dir
-        .join(&requested_model)
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
-    }
-    
-    let mapper = TagMapper::load(&tags_path)?;
+
+    let mapper = TagMapper::load_embedded()?;
     let translator = crate::clip::model::get_tag_translator();
     
     log::info!("开始预览标签，阈值: {}, 嵌入数量: {}", threshold, embeddings.len());
@@ -1404,25 +1406,7 @@ pub async fn clip_get_character_tags(
         return Err("角色标签仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());
     }
     
-    let manager = crate::clip::get_clip_manager().await
-        .ok_or("CLIP manager not initialized")?;
-    
-    let model_cache_dir = {
-        let guard = manager.read().await;
-        guard.config().model_cache_dir.clone()
-    };
-    
-    let tags_path = model_cache_dir
-        .join(&requested_model)
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}，请确保模型已下载", tags_path));
-    }
-    
-    let file = std::fs::File::open(&tags_path)
-        .map_err(|e| format!("Failed to open tags file: {}", e))?;
-    let mut rdr = csv::Reader::from_reader(file);
+    let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
     
     let mut character_tags = Vec::new();
     let mut index = 0;
@@ -1525,7 +1509,7 @@ pub async fn clip_get_detected_characters(
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
-    let (embeddings, model_cache_dir) = {
+    let (embeddings, _) = {
         let mut guard = manager.write().await;
         guard.switch_model(&requested_model)?;
         
@@ -1533,22 +1517,11 @@ pub async fn clip_get_detected_characters(
             .ok_or("Embedding store not available")?;
         
         let embeddings = embedding_store.get_all_embeddings()?;
-        let model_cache_dir = guard.config().model_cache_dir.clone();
         
-        (embeddings, model_cache_dir)
+        (embeddings, ())
     };
     
-    let tags_path = model_cache_dir
-        .join(&requested_model)
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}", tags_path));
-    }
-    
-    let file = std::fs::File::open(&tags_path)
-        .map_err(|e| format!("Failed to open tags file: {}", e))?;
-    let mut rdr = csv::Reader::from_reader(file);
+    let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
     
     let mut character_indices: Vec<(usize, String)> = Vec::new();
     let mut index = 0;
@@ -1694,7 +1667,7 @@ pub async fn clip_get_work_topics(
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
-    let (embeddings, model_cache_dir) = {
+    let (embeddings, _) = {
         let mut guard = manager.write().await;
         guard.switch_model(&requested_model)?;
         
@@ -1702,22 +1675,11 @@ pub async fn clip_get_work_topics(
             .ok_or("Embedding store not available")?;
         
         let embeddings = embedding_store.get_all_embeddings()?;
-        let model_cache_dir = guard.config().model_cache_dir.clone();
         
-        (embeddings, model_cache_dir)
+        (embeddings, ())
     };
     
-    let tags_path = model_cache_dir
-        .join(&requested_model)
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}", tags_path));
-    }
-    
-    let file = std::fs::File::open(&tags_path)
-        .map_err(|e| format!("Failed to open tags file: {}", e))?;
-    let mut rdr = csv::Reader::from_reader(file);
+    let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
     
     let mut character_tags: Vec<(usize, String)> = Vec::new();
     let mut index = 0;
@@ -1910,7 +1872,7 @@ pub async fn clip_create_work_topics(
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
-    let (embeddings, model_cache_dir) = {
+    let (embeddings, _) = {
         let mut guard = manager.write().await;
         guard.switch_model("WD-EVA02-Large-Tagger-V3")?;
         
@@ -1918,24 +1880,13 @@ pub async fn clip_create_work_topics(
             .ok_or("Embedding store not available")?;
         
         let embeddings = embedding_store.get_all_embeddings()?;
-        let model_cache_dir = guard.config().model_cache_dir.clone();
         
-        (embeddings, model_cache_dir)
+        (embeddings, ())
     };
     
     log::info!("[clip_create_work_topics] 加载了 {} 个 embeddings", embeddings.len());
     
-    let tags_path = model_cache_dir
-        .join("WD-EVA02-Large-Tagger-V3")
-        .join("tags_info.csv");
-    
-    if !tags_path.exists() {
-        return Err(format!("标签文件不存在: {:?}", tags_path));
-    }
-    
-    let file = std::fs::File::open(&tags_path)
-        .map_err(|e| format!("Failed to open tags file: {}", e))?;
-    let mut rdr = csv::Reader::from_reader(file);
+    let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
     
     let mut character_tags: Vec<(usize, String)> = Vec::new();
     let mut index = 0;
@@ -2166,7 +2117,15 @@ pub async fn clip_create_work_topics(
             for (tag_name, (cn_name, image_count, sample_file_id)) in character_stats {
                 if !person_by_tag.contains_key(tag_name) {
                     let new_person_id = db::generate_id(&format!("person_{}", tag_name));
-                    let person_name = cn_name.clone().unwrap_or_else(|| tag_name.clone());
+                    
+                    let person_name = if let Some(cn) = cn_name {
+                        cn.clone()
+                    } else if let Some(extraction) = extract_work_name(tag_name, None) {
+                        extraction.character_name
+                    } else {
+                        tag_name.clone()
+                    };
+                    
                     let cover_file_id = sample_file_id.clone().unwrap_or_default();
                     
                     let new_person = db::persons::Person {

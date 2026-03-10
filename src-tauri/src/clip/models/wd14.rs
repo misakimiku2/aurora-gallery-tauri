@@ -43,15 +43,9 @@ impl ModelSpec for WdEva02LargeV3 {
 
     fn model_files(&self) -> Vec<ModelFile> {
         vec![
-            // ONNX 模型文件
             ModelFile::new(
                 "model.onnx",
                 "https://hf-mirror.com/deepghs/wd14_tagger_with_embeddings/resolve/main/SmilingWolf/wd-eva02-large-tagger-v3/model.onnx",
-            ),
-            // 标签映射文件
-            ModelFile::new(
-                "tags_info.csv",
-                "https://hf-mirror.com/deepghs/wd14_tagger_with_embeddings/resolve/main/SmilingWolf/wd-eva02-large-tagger-v3/tags_info.csv",
             ),
         ]
     }
@@ -81,7 +75,7 @@ impl ModelSpec for WdEva02LargeV3 {
     }
 
     fn tags_file(&self) -> Option<&str> {
-        Some("tags_info.csv")
+        None
     }
 
     fn similarity_type(&self) -> SimilarityType {

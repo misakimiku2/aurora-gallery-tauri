@@ -15,6 +15,26 @@ const FixedSizeListComp: any = (() => {
   return null;
 })();
 
+const extractCharacterName = (tagName: string): string => {
+  const patterns = ['_(', '('];
+  for (const pattern of patterns) {
+    const pos = tagName.lastIndexOf(pattern);
+    if (pos !== -1) {
+      return tagName.substring(0, pos);
+    }
+  }
+  return tagName;
+};
+
+const formatDisplayName = (name: string): string => {
+  return name.replace(/_/g, ' ');
+};
+
+const formatCharacterName = (tagName: string): string => {
+  const characterName = extractCharacterName(tagName);
+  return formatDisplayName(characterName);
+};
+
 const SharpImage = React.memo(({ src, aspect = 3 / 4, className = "" }: { src: string; aspect?: number; className?: string }) => {
   const [dim, setDim] = useState<{ w: number; h: number } | null>(null);
   const handleLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -180,7 +200,9 @@ const WorkRow = React.memo(({ index, style, data }: WorkRowProps) => {
   const isSelected = selectedWorks.has(work.workName);
   const isPreviewed = selectedWorkName === work.workName;
 
-  const displayName = language === 'zh' && work.workNameCn ? work.workNameCn : work.workName;
+  const displayName = language === 'zh' && work.workNameCn 
+    ? work.workNameCn 
+    : formatDisplayName(work.workName);
   const existingTopic = work.existingTopicId;
 
   const coverFile = work.coverFileId ? files[work.coverFileId] : null;
@@ -605,10 +627,12 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
 
                     <div className="flex-1 pt-2">
                       <h4 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 leading-tight">
-                        {language === 'zh' && selectedWork.workNameCn ? selectedWork.workNameCn : selectedWork.workName}
+                        {language === 'zh' && selectedWork.workNameCn 
+                          ? selectedWork.workNameCn 
+                          : formatDisplayName(selectedWork.workName)}
                       </h4>
                       <div className="text-sm text-gray-500 dark:text-gray-400 mb-4 flex flex-col gap-1">
-                        <span className="font-mono">{selectedWork.workName}</span>
+                        <span className="font-mono">{formatDisplayName(selectedWork.workName)}</span>
                       </div>
 
                       <div className="mb-6 flex flex-col gap-1.5 focus-within:text-purple-600 dark:focus-within:text-purple-400">
@@ -650,7 +674,9 @@ export const SmartCreateTopicModal: React.FC<SmartCreateTopicModalProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     {selectedWork.characters.map((char: WorkCharacter) => {
                       const person = char.personId ? people[char.personId] : null;
-                      const charDisplayName = language === 'zh' && char.tagNameCn ? char.tagNameCn : char.tagName;
+                      const charDisplayName = language === 'zh' && char.tagNameCn 
+                        ? char.tagNameCn 
+                        : formatCharacterName(char.tagName);
                       const charCoverFile = char.coverFileId ? files[char.coverFileId] : null;
                       const charCoverUrl = charCoverFile ? convertFileSrc(charCoverFile.path) : null;
 

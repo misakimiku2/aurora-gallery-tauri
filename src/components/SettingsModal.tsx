@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { getVersion } from '@tauri-apps/api/app';
 import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag, Tags, Loader2 } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption, FileType } from '../types';
 import { AuroraLogo } from './Logo';
@@ -21,9 +22,13 @@ interface AboutPanelProps {
 }
 
 const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, isChecking, downloadProgress, onInstallUpdate, onOpenDownloadFolder }) => {
-  const appVersion = '1.0.0';
+  const [appVersion, setAppVersion] = useState<string>('');
   const tauriVersion = '2.0';
   const reactVersion = '18.2.0';
+
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => setAppVersion('unknown'));
+  }, []);
 
   const handleOpenLink = (url: string) => {
     openExternalLink(url);
@@ -46,7 +51,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
               <p className="text-gray-500 dark:text-gray-400 text-sm mb-2">{t('settings.about.tagline')}</p>
               <div className="flex items-center gap-2">
                 <span className="px-2.5 py-1 bg-blue-500/20 text-blue-400 text-xs font-medium rounded-full">
-                  v{appVersion}
+                  v{appVersion || '...'}
                 </span>
                 <span className="px-2.5 py-1 bg-green-500/20 text-green-600 dark:text-green-400 text-xs font-medium rounded-full">
                   {t('settings.about.stable')}
@@ -66,7 +71,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('settings.about.appVersion')}</div>
-            <div className="text-lg font-semibold text-gray-800 dark:text-white">{appVersion}</div>
+            <div className="text-lg font-semibold text-gray-800 dark:text-white">{appVersion || '...'}</div>
           </div>
           <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Tauri</div>
@@ -89,7 +94,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-gray-800 dark:text-white mb-1">
-                {t('settings.about.currentVersion')}: {appVersion}
+                {t('settings.about.currentVersion')}: {appVersion || '...'}
                 {/* 下载完成时显示新版本号 */}
                 {downloadProgress?.state === 'completed' && (
                   <span className="ml-2 text-green-500">

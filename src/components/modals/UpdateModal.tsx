@@ -1,4 +1,6 @@
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { 
   Download, 
   X, 
@@ -59,17 +61,6 @@ const formatFileSize = (bytes: number): string => {
 const formatSpeed = (bytesPerSec: number): string => {
   if (bytesPerSec === 0) return '0 KB/s';
   return formatFileSize(bytesPerSec) + '/s';
-};
-
-const formatReleaseNotes = (notes: string, t: (key: string) => string): string => {
-  if (!notes) return t('settings.about.noReleaseNotes');
-  
-  // 简单的 Markdown 格式转换
-  return notes
-    .replace(/#{1,6}\s+/g, '') // 移除标题标记
-    .replace(/\*\*/g, '') // 移除粗体标记
-    .replace(/\*/g, '•') // 将星号转换为圆点
-    .trim();
 };
 
 export const UpdateModal: React.FC<UpdateModalProps> = ({
@@ -373,10 +364,10 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({
           {updateInfo.releaseNotes && !hasDownloadProgress && (
             <div className="mb-6">
               <h3 className="text-gray-700 dark:text-white/80 text-sm font-medium mb-2">{t('settings.about.releaseNotes')}</h3>
-              <div className="bg-gray-50 dark:bg-white/5 rounded-xl p-4 border border-gray-100 dark:border-white/5 max-h-40 overflow-y-auto">
-                <pre className="text-gray-600 dark:text-white/70 text-sm whitespace-pre-wrap font-sans leading-relaxed">
-                  {formatReleaseNotes(updateInfo.releaseNotes, t)}
-                </pre>
+              <div className="bg-gray-50 dark:bg-white/5 rounded-xl p-4 border border-gray-100 dark:border-white/5 max-h-60 overflow-y-auto prose prose-sm dark:prose-invert prose-headings:text-gray-800 dark:prose-headings:text-white prose-p:text-gray-600 dark:prose-p:text-white/70 prose-a:text-blue-500 dark:prose-a:text-blue-400 prose-code:text-gray-700 dark:prose-code:text-white/80 prose-code:bg-gray-200 dark:prose-code:bg-white/10 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none prose-ul:text-gray-600 dark:prose-ul:text-white/70 prose-ol:text-gray-600 dark:prose-ol:text-white/70 prose-li:marker:text-gray-400 dark:prose-li:marker:text-white/50 prose-hr:border-gray-200 dark:prose-hr:border-white/10 prose-blockquote:text-gray-600 dark:prose-blockquote:text-white/70 prose-blockquote:border-blue-500">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {updateInfo.releaseNotes}
+                </ReactMarkdown>
               </div>
             </div>
           )}

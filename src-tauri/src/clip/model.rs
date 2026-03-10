@@ -19,6 +19,9 @@ use super::models::{ModelSpec, get_model_spec};
 /// 嵌入中文标签翻译文件
 const TAGS_CN_CSV: &str = include_str!("Tags-cn_2024_ver-1.0.csv");
 
+/// 嵌入英文标签文件
+const TAGS_EN_CSV: &str = include_str!("tags_info.csv");
+
 /// 标签翻译器，将英文标签翻译为中文
 pub struct TagTranslator {
     en_to_zh: HashMap<String, String>,
@@ -114,18 +117,31 @@ struct LabelMapper {
 }
 
 impl LabelMapper {
+    pub fn load_embedded() -> Result<Self, String> {
+        let mut rdr = csv::Reader::from_reader(TAGS_EN_CSV.as_bytes());
+        
+        let mut tags = Vec::new();
+        for result in rdr.records() {
+            let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
+            if record.len() >= 2 {
+                let tag_name = record[1].replace('_', " ").trim().to_string();
+                tags.push(tag_name);
+            }
+        }
+        
+        log::info!("Loaded {} tags from embedded file", tags.len());
+        Ok(Self { tags })
+    }
+
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
         let file = std::fs::File::open(path)
             .map_err(|e| format!("Failed to open tags file: {}", e))?;
         let mut rdr = csv::Reader::from_reader(file);
         
         let mut tags = Vec::new();
-        // CSV 格式通常为: id,name,category,count
         for result in rdr.records() {
             let record = result.map_err(|e| format!("Failed to read tag record: {}", e))?;
             if record.len() >= 2 {
-                // 将下划线替换为空格，如 "long_hair" -> "long hair"
-                // 这样更符合自然语言搜索习惯，且 UI 展示更美观
                 let tag_name = record[1].replace('_', " ").trim().to_string();
                 tags.push(tag_name);
             }
@@ -243,11 +259,7 @@ impl ClipModel {
         // 加载标签映射器（如果是 Tagger）
         let mut label_mapper = None;
         if model_spec.is_tagger() {
-            if let Some(tags_file_name) = model_spec.tags_file() {
-                if let Some(tags_path) = downloaded_paths.get(tags_file_name) {
-                    label_mapper = Some(LabelMapper::load(tags_path)?);
-                }
-            }
+            label_mapper = Some(LabelMapper::load_embedded()?);
         }
 
         Ok(Self {
