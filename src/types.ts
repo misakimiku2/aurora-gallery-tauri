@@ -279,6 +279,24 @@ export interface ClipSettings {
   tagThreshold: number;    // WD14 标签置信度阈值 (0.0 - 1.0)
 }
 
+// 局域网共享设置
+export interface LanShareSettings {
+  enabled: boolean;           // 是否启用局域网共享
+  port: number;              // 服务端口
+  accessCode: string;        // 访问验证码
+  allowEdit: boolean;        // 允许编辑和删除
+  allowUpload: boolean;      // 允许上传
+}
+
+// 已连接设备信息
+export interface ConnectedDevice {
+  id: string;                // 设备唯一标识
+  name: string;              // 设备名称
+  ip: string;                // IP地址
+  connectedAt: number;       // 连接时间戳
+  lastActiveAt: number;      // 最后活跃时间
+}
+
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   language: 'zh' | 'en';
@@ -295,6 +313,7 @@ export interface AppSettings {
   performance: {
     refreshInterval: number; // 毫秒
   };
+  lanShare: LanShareSettings;
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析
   topics?: Record<string, Topic>;
   defaultLayoutSettings: {
@@ -388,7 +407,7 @@ export interface TabState {
   scrollTop: number;
 }
 
-export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about';
+export type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'lanShare' | 'about';
 
 export interface PreviewTag {
   name: string;

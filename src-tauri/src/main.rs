@@ -17,6 +17,8 @@ mod updater;
 mod update_downloader;
 mod clip;
 mod work_extractor;
+mod lan_share;
+mod lan_share_commands;
 
 mod file_types;
 mod image_utils;
@@ -33,6 +35,7 @@ use crate::thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnai
 use crate::color_search::{search_by_palette, search_by_color};
 use crate::file_types::SavedWindowState;
 use crate::window_commands::{get_window_state_path, get_initial_db_paths, save_window_state};
+use crate::lan_share_commands::LanShareState;
 use db::AppDbPool;
 
 fn main() {
@@ -147,7 +150,14 @@ fn main() {
             clip_commands::clip_get_detected_characters,
             clip_commands::clip_preview_tags_from_embeddings,
             clip_commands::clip_get_work_topics,
-            clip_commands::clip_create_work_topics
+            clip_commands::clip_create_work_topics,
+            lan_share_commands::lan_share_start,
+            lan_share_commands::lan_share_stop,
+            lan_share_commands::lan_share_get_status,
+            lan_share_commands::lan_share_get_devices,
+            lan_share_commands::lan_share_get_local_ip,
+            lan_share_commands::lan_share_check_port,
+            lan_share_commands::lan_share_update_config
         ])
         .setup(|app| {
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
@@ -249,6 +259,8 @@ fn main() {
                 }
             };
             app.manage(app_db_pool);
+            
+            app.manage(LanShareState::new());
             
             let batch_size = 50;
             let app_handle_new = app.handle().clone();

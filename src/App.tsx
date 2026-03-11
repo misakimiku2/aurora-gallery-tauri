@@ -115,6 +115,13 @@ export const App: React.FC = () => {
         autoAddTags: false,
         tagThreshold: 0.35,
       },
+      lanShare: {
+        enabled: false,
+        port: 8080,
+        accessCode: '',
+        allowEdit: false,
+        allowUpload: false,
+      },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
     },
     // Scan progress (onboarding)

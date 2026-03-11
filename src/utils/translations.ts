@@ -372,6 +372,7 @@ export const translations = {
       catStorage: '存储',
       catAi: 'AI 智能',
       catPerformance: '性能',
+      catLanShare: '局域网共享',
       catAbout: '关于',
       about: {
         tagline: '现代化的图片管理与浏览工具',
@@ -646,7 +647,24 @@ export const translations = {
       refresh: '刷新',
       hide: '隐藏',
       show: '显示',
-      loading: '加载中...'
+      loading: '加载中...',
+      lanShare: {
+        title: '局域网共享',
+        description: '允许同一 Wi-Fi 下的设备（手机、平板）访问和管理图库',
+        scanToConnect: '扫码连接',
+        accessCode: '访问验证码',
+        regenerate: '重新生成',
+        allowEdit: '允许编辑和删除',
+        accessUrl: '访问地址',
+        copy: '复制',
+        copied: '已复制',
+        open: '打开',
+        connectedDevices: '已连接设备',
+        online: '在线',
+        active: '活跃',
+        noDevices: '暂无设备连接',
+        tip: '确保设备连接到同一 Wi-Fi 网络'
+      }
     },
     tags: {
       autoGenerate: '自动生成标签',
@@ -1201,6 +1219,7 @@ export const translations = {
       catStorage: 'Storage',
       catAi: 'AI Intelligence',
       catPerformance: 'Performance',
+      catLanShare: 'LAN Sharing',
       catAbout: 'About',
       about: {
         tagline: 'Modern Image Management & Viewer',
@@ -1475,7 +1494,24 @@ export const translations = {
       refresh: 'Refresh',
       hide: 'Hide',
       show: 'Show',
-      loading: 'Loading...'
+      loading: 'Loading...',
+      lanShare: {
+        title: 'LAN Sharing',
+        description: 'Allow devices on the same Wi-Fi (phones, tablets) to access and manage the gallery',
+        scanToConnect: 'Scan to Connect',
+        accessCode: 'Access Code',
+        regenerate: 'Regenerate',
+        allowEdit: 'Allow Edit and Delete',
+        accessUrl: 'Access URL',
+        copy: 'Copy',
+        copied: 'Copied',
+        open: 'Open',
+        connectedDevices: 'Connected Devices',
+        online: 'Online',
+        active: 'Active',
+        noDevices: 'No devices connected',
+        tip: 'Ensure devices are connected to the same Wi-Fi network'
+      }
     },
     tags: {
       autoGenerate: 'Auto Generate Tags',
