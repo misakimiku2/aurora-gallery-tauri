@@ -1,9 +1,10 @@
 export interface BrowseItem {
   name: string;
   path: string;
-  item_type: 'folder' | 'image';
+  type: 'folder' | 'image';
   size?: number;
   thumbnail?: string;
+  preview_images?: string[];
   width?: number;
   height?: number;
 }
@@ -142,6 +143,27 @@ class LanShareApi {
     }
 
     const response = await fetch(`${API_BASE}/api/devices`, { headers });
+    return response.json();
+  }
+
+  async search(query: string, scope?: string, token?: string): Promise<BrowseResponse> {
+    const authToken = token || this.token;
+    const headers: Record<string, string> = {};
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+
+    let url = `${API_BASE}/api/search?q=${encodeURIComponent(query)}`;
+    if (scope) {
+      url += `&scope=${encodeURIComponent(scope)}`;
+    }
+
+    const response = await fetch(url, { headers });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
     return response.json();
   }
 

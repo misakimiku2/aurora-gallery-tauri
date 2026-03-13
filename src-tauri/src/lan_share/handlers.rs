@@ -15,6 +15,7 @@ use tower_http::cors::{Any, CorsLayer};
 use super::device_manager::DeviceManager;
 use super::session::SessionManager;
 use super::types::*;
+use crate::db::AppDbPool;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,6 +23,7 @@ pub struct AppState {
     pub sessions: Arc<SessionManager>,
     pub devices: Arc<DeviceManager>,
     pub root_path: Arc<std::path::PathBuf>,
+    pub db_pool: Option<Arc<AppDbPool>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,6 +51,12 @@ pub struct ImageQuery {
     pub token: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    pub q: String,
+    pub scope: Option<String>,
+}
+
 pub async fn handle_root() -> impl IntoResponse {
     Json(serde_json::json!({
         "name": "Aurora Gallery LAN Share",
@@ -56,6 +64,7 @@ pub async fn handle_root() -> impl IntoResponse {
         "endpoints": {
             "auth": "POST /api/auth/verify",
             "browse": "GET /api/browse",
+            "search": "GET /api/search",
             "thumbnail": "GET /api/thumbnail",
             "image": "GET /api/image",
             "delete": "DELETE /api/file",
@@ -152,6 +161,7 @@ pub async fn handle_browse(
         raw_path.trim_start_matches('/').to_string()
     };
     let full_path = state.root_path.join(&relative_path);
+    let root_path = state.root_path.clone();
 
     log::info!("[LAN Share] 浏览请求 - 设备: {}, 路径: {} (原始: {})", session.device_name, relative_path, raw_path);
 
@@ -160,63 +170,304 @@ pub async fn handle_browse(
         return Err(error_response(StatusCode::NOT_FOUND, "Path not found"));
     }
 
-    let mut folders = Vec::new();
-    let mut images = Vec::new();
-
-    if let Ok(mut entries) = fs::read_dir(&full_path).await {
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            let path = entry.path();
-            let name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            if name.starts_with('.') {
-                continue;
+    let normalized_parent_path = crate::db::normalize_path(&full_path.to_string_lossy());
+    
+    if let Some(pool) = state.db_pool.clone() {
+        let pool_clone = pool.clone();
+        let normalized_parent_path_clone = normalized_parent_path.clone();
+        let root_path_clone = root_path.clone();
+        
+        let result = tokio::task::spawn_blocking(move || {
+            let conn = pool_clone.get_connection();
+            
+            match crate::db::file_index::get_children_by_parent_path(&conn, &normalized_parent_path_clone) {
+                Ok(children) => {
+                    if !children.is_empty() {
+                        let folder_ids: Vec<String> = children.iter()
+                            .filter(|e| e.file_type == "Folder")
+                            .map(|e| e.file_id.clone())
+                            .collect();
+                        
+                        let folder_info = crate::db::file_index::get_folder_info_batch(&conn, &folder_ids)
+                            .unwrap_or_default();
+                        
+                        let root_path_str = root_path_clone.to_string_lossy().to_string();
+                        
+                        let mut folders: Vec<BrowseItem> = Vec::new();
+                        let mut images: Vec<BrowseItem> = Vec::new();
+                        
+                        for entry in children {
+                            let relative_item_path = entry.path.strip_prefix(&root_path_str)
+                                .unwrap_or(&entry.path)
+                                .to_string();
+                            
+                            if entry.file_type == "Folder" {
+                                let (preview_paths, count) = folder_info.get(&entry.file_id)
+                                    .map(|(paths, c)| {
+                                        let rel_paths: Vec<String> = paths.iter()
+                                            .map(|p| p.strip_prefix(&root_path_str).unwrap_or(p).to_string())
+                                            .collect();
+                                        (if rel_paths.is_empty() { None } else { Some(rel_paths) }, if *c > 0 { Some(*c) } else { None })
+                                    })
+                                    .unwrap_or((None, None));
+                                
+                                folders.push(BrowseItem {
+                                    name: entry.name,
+                                    path: relative_item_path,
+                                    item_type: "folder".to_string(),
+                                    size: count,
+                                    thumbnail: None,
+                                    preview_images: preview_paths,
+                                    width: None,
+                                    height: None,
+                                });
+                            } else if entry.file_type == "Image" {
+                                let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                                images.push(BrowseItem {
+                                    name: entry.name,
+                                    path: relative_item_path,
+                                    item_type: "image".to_string(),
+                                    size: Some(entry.size),
+                                    thumbnail: Some(thumbnail_url),
+                                    preview_images: None,
+                                    width: entry.width,
+                                    height: entry.height,
+                                });
+                            }
+                        }
+                        
+                        folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                        images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                        
+                        return Some((folders, images));
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[LAN Share] 数据库查询失败，回退到文件系统: {}", e);
+                }
             }
+            None
+        }).await.unwrap_or(None);
+        
+        if let Some((folders, images)) = result {
+            log::info!("[LAN Share] 浏览成功 (数据库) - 返回 {} 个文件夹, {} 张图片", folders.len(), images.len());
+            return Ok(Json(BrowseResponse {
+                current_path: relative_path,
+                folders,
+                images,
+            }));
+        }
+    }
 
-            let relative_item_path = path.strip_prefix(state.root_path.as_path())
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
+    let full_path_clone = full_path.clone();
+    let root_path_clone = root_path.clone();
+    
+    let (folder_paths, image_entries): (Vec<(std::path::PathBuf, String, String)>, Vec<(std::path::PathBuf, String, String, Option<u64>)>) = 
+        tokio::task::spawn_blocking(move || {
+            let mut folder_paths = Vec::new();
+            let mut image_entries = Vec::new();
+            
+            if let Ok(entries) = std::fs::read_dir(&full_path_clone) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let name = path.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-            if path.is_dir() {
-                folders.push(BrowseItem {
-                    name,
-                    path: relative_item_path,
-                    item_type: "folder".to_string(),
-                    size: None,
-                    thumbnail: None,
-                    width: None,
-                    height: None,
-                });
-            } else if is_image_file(&name) {
-                let size = entry.metadata().await.ok().map(|m| m.len());
-                let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                    if name.starts_with('.') {
+                        continue;
+                    }
+
+                    let relative_item_path = path.strip_prefix(root_path_clone.as_path())
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/");
+
+                    if path.is_dir() {
+                        folder_paths.push((path, name, relative_item_path));
+                    } else if is_image_file(&name) {
+                        let size = entry.metadata().ok().map(|m| m.len());
+                        image_entries.push((path, name, relative_item_path, size));
+                    }
+                }
+            }
+            
+            (folder_paths, image_entries)
+        }).await.unwrap_or((Vec::new(), Vec::new()));
+
+    let root_path_clone = root_path.clone();
+    let folders: Vec<BrowseItem> = if !folder_paths.is_empty() {
+        tokio::task::spawn_blocking(move || {
+            use rayon::prelude::*;
+            folder_paths.into_par_iter()
+                .map(|(path, name, relative_item_path)| {
+                    let (preview_images, file_count) = get_folder_info_fast(&path, root_path_clone.as_path());
+                    
+                    BrowseItem {
+                        name,
+                        path: relative_item_path,
+                        item_type: "folder".to_string(),
+                        size: file_count,
+                        thumbnail: None,
+                        preview_images,
+                        width: None,
+                        height: None,
+                    }
+                })
+                .collect()
+        }).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    let mut images: Vec<BrowseItem> = if !image_entries.is_empty() {
+        let db_pool = state.db_pool.clone();
+        let root_path_clone = root_path.clone();
+        let image_entries_clone = image_entries.clone();
+        
+        let dimensions: Vec<(Option<u32>, Option<u32>)> = if let Some(pool) = db_pool {
+            tokio::task::spawn_blocking(move || {
+                let paths: Vec<String> = image_entries_clone.iter()
+                    .map(|(_, _, relative_item_path, _)| {
+                        let normalized = crate::db::normalize_path(&root_path_clone.join(relative_item_path).to_string_lossy());
+                        normalized
+                    })
+                    .collect();
                 
-                images.push(BrowseItem {
+                let conn = pool.get_connection();
+                match crate::db::file_index::get_image_dimensions_batch(&conn, &paths) {
+                    Ok(dim_map) => {
+                        image_entries_clone.iter()
+                            .map(|(_, _, relative_item_path, _)| {
+                                let normalized = crate::db::normalize_path(&root_path_clone.join(relative_item_path).to_string_lossy());
+                                dim_map.get(&normalized)
+                                    .map(|(w, h)| (*w, *h))
+                                    .unwrap_or((None, None))
+                            })
+                            .collect()
+                    }
+                    Err(_) => {
+                        use rayon::prelude::*;
+                        image_entries_clone.par_iter()
+                            .map(|(path, _, _, _)| {
+                                let (w, h) = crate::image_utils::get_image_dimensions(&path.to_string_lossy());
+                                (if w > 0 { Some(w) } else { None }, if h > 0 { Some(h) } else { None })
+                            })
+                            .collect()
+                    }
+                }
+            }).await.unwrap_or_default()
+        } else {
+            tokio::task::spawn_blocking(move || {
+                use rayon::prelude::*;
+                image_entries_clone.par_iter()
+                    .map(|(path, _, _, _)| {
+                        let (w, h) = crate::image_utils::get_image_dimensions(&path.to_string_lossy());
+                        (if w > 0 { Some(w) } else { None }, if h > 0 { Some(h) } else { None })
+                    })
+                    .collect()
+            }).await.unwrap_or_default()
+        };
+        
+        image_entries.into_iter().zip(dimensions.iter())
+            .map(|((_, name, relative_item_path, size), &(width, height))| {
+                let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                BrowseItem {
                     name,
                     path: relative_item_path,
                     item_type: "image".to_string(),
                     size,
                     thumbnail: Some(thumbnail_url),
-                    width: None,
-                    height: None,
-                });
-            }
-        }
-    }
+                    preview_images: None,
+                    width,
+                    height,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
+    let mut folders = folders;
     folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
-    log::info!("[LAN Share] 浏览成功 - 返回 {} 个文件夹, {} 张图片", folders.len(), images.len());
+    log::info!("[LAN Share] 浏览成功 (文件系统) - 返回 {} 个文件夹, {} 张图片", folders.len(), images.len());
 
     Ok(Json(BrowseResponse {
         current_path: relative_path,
         folders,
         images,
     }))
+}
+
+fn get_folder_info_fast(
+    folder_path: &std::path::Path,
+    root_path: &std::path::Path,
+) -> (Option<Vec<String>>, Option<u64>) {
+    let mut preview_images = Vec::new();
+    let mut file_count: u64 = 0;
+    
+    if let Ok(entries) = std::fs::read_dir(folder_path) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            
+            if name_str.starts_with('.') {
+                continue;
+            }
+            
+            let path = entry.path();
+            
+            if path.is_dir() {
+                file_count += 1;
+                
+                if preview_images.len() < 3 {
+                    if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                        for sub_entry in sub_entries.flatten() {
+                            let sub_name = sub_entry.file_name();
+                            let sub_name_str = sub_name.to_string_lossy();
+                            
+                            if sub_name_str.starts_with('.') {
+                                continue;
+                            }
+                            
+                            let sub_path = sub_entry.path();
+                            if sub_path.is_file() && is_image_file(&sub_name_str) {
+                                if let Ok(relative) = sub_path.strip_prefix(root_path) {
+                                    let relative_str = relative.to_string_lossy().replace('\\', "/");
+                                    preview_images.push(relative_str);
+                                    if preview_images.len() >= 3 {
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if is_image_file(&name_str) {
+                file_count += 1;
+                
+                if preview_images.len() < 3 {
+                    if let Ok(relative) = path.strip_prefix(root_path) {
+                        let relative_str = relative.to_string_lossy().replace('\\', "/");
+                        preview_images.push(relative_str);
+                    }
+                }
+            }
+        }
+    }
+    
+    let preview_images = if preview_images.is_empty() {
+        None
+    } else {
+        Some(preview_images)
+    };
+    
+    let file_count = if file_count > 0 { Some(file_count) } else { None };
+    
+    (preview_images, file_count)
 }
 
 pub async fn handle_thumbnail(
@@ -432,6 +683,171 @@ pub async fn handle_devices(
     Ok(Json(DevicesResponse { devices }))
 }
 
+pub async fn handle_search(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<BrowseResponse>, Response> {
+    let token = extract_token(&headers)?;
+    let session = state.sessions.validate_token(&token).await
+        .ok_or_else(|| {
+            log::warn!("[LAN Share] 搜索请求失败 - 无效或过期的 Token");
+            error_response(StatusCode::UNAUTHORIZED, "Invalid or expired token")
+        })?;
+    
+    state.devices.update_activity(&session.device_id).await;
+
+    let search_term = query.q.to_lowercase();
+    let scope = query.scope.as_deref().unwrap_or("all");
+    
+    log::info!("[LAN Share] 搜索请求 - 设备: {}, 关键词: {}, 范围: {}", session.device_name, search_term, scope);
+
+    let (folders, images) = if let Some(pool) = state.db_pool.clone() {
+        let scope_clone = scope.to_string();
+        let search_term_clone = search_term.clone();
+        let root_path = state.root_path.clone();
+        
+        tokio::task::spawn_blocking(move || {
+            let conn = pool.get_connection();
+            match crate::db::file_index::search_by_name(&conn, &search_term_clone, &scope_clone) {
+                Ok(entries) => {
+                    let mut found_folders: Vec<BrowseItem> = Vec::new();
+                    let mut found_images: Vec<BrowseItem> = Vec::new();
+                    
+                    for entry in entries {
+                        let relative_item_path = entry.path.clone();
+                        
+                        if entry.file_type == "Folder" {
+                            let full_path = root_path.join(&relative_item_path);
+                            let (preview_images, file_count) = get_folder_info_fast(&full_path, &root_path);
+                            found_folders.push(BrowseItem {
+                                name: entry.name,
+                                path: relative_item_path,
+                                item_type: "folder".to_string(),
+                                size: file_count,
+                                thumbnail: None,
+                                preview_images,
+                                width: None,
+                                height: None,
+                            });
+                        } else if entry.file_type == "Image" {
+                            let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                            found_images.push(BrowseItem {
+                                name: entry.name,
+                                path: relative_item_path,
+                                item_type: "image".to_string(),
+                                size: Some(entry.size),
+                                thumbnail: Some(thumbnail_url),
+                                preview_images: None,
+                                width: entry.width,
+                                height: entry.height,
+                            });
+                        }
+                    }
+                    
+                    found_folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    found_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                    
+                    (found_folders, found_images)
+                }
+                Err(e) => {
+                    log::error!("[LAN Share] 数据库搜索失败: {}", e);
+                    (Vec::new(), Vec::new())
+                }
+            }
+        }).await.unwrap_or((Vec::new(), Vec::new()))
+    } else {
+        let root_path = state.root_path.clone();
+        let search_term_clone = search_term.clone();
+        let scope_clone = scope.to_string();
+        
+        tokio::task::spawn_blocking(move || {
+            let mut found_folders: Vec<BrowseItem> = Vec::new();
+            let mut found_images: Vec<BrowseItem> = Vec::new();
+            
+            fn search_recursive(
+                current_path: &std::path::Path,
+                root_path: &std::path::Path,
+                search_term: &str,
+                scope: &str,
+                folders: &mut Vec<BrowseItem>,
+                images: &mut Vec<BrowseItem>,
+            ) {
+                if let Ok(entries) = std::fs::read_dir(current_path) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        let name = path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string();
+
+                        if name.starts_with('.') {
+                            continue;
+                        }
+
+                        let name_lower = name.to_lowercase();
+                        let relative_item_path = path.strip_prefix(root_path)
+                            .unwrap_or(&path)
+                            .to_string_lossy()
+                            .replace('\\', "/");
+
+                        if path.is_dir() {
+                            if (scope == "all" || scope == "folder") && name_lower.contains(search_term) {
+                                let (preview_images, file_count) = get_folder_info_fast(&path, root_path);
+                                folders.push(BrowseItem {
+                                    name,
+                                    path: relative_item_path,
+                                    item_type: "folder".to_string(),
+                                    size: file_count,
+                                    thumbnail: None,
+                                    preview_images,
+                                    width: None,
+                                    height: None,
+                                });
+                            }
+                            search_recursive(&path, root_path, search_term, scope, folders, images);
+                        } else if is_image_file(&name) {
+                            if (scope == "all" || scope == "file") && name_lower.contains(search_term) {
+                                let size = entry.metadata().ok().map(|m| m.len());
+                                let (width, height) = {
+                                    let (w, h) = crate::image_utils::get_image_dimensions(&path.to_string_lossy());
+                                    (if w > 0 { Some(w) } else { None }, if h > 0 { Some(h) } else { None })
+                                };
+                                let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
+                                images.push(BrowseItem {
+                                    name,
+                                    path: relative_item_path,
+                                    item_type: "image".to_string(),
+                                    size,
+                                    thumbnail: Some(thumbnail_url),
+                                    preview_images: None,
+                                    width,
+                                    height,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            search_recursive(&root_path, &root_path, &search_term_clone, &scope_clone, &mut found_folders, &mut found_images);
+            
+            found_folders.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            found_images.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            
+            (found_folders, found_images)
+        }).await.unwrap_or((Vec::new(), Vec::new()))
+    };
+
+    log::info!("[LAN Share] 搜索完成 - 找到 {} 个文件夹, {} 张图片", folders.len(), images.len());
+
+    Ok(Json(BrowseResponse {
+        current_path: format!("search:{}", search_term),
+        folders,
+        images,
+    }))
+}
+
 fn extract_token(headers: &HeaderMap) -> Result<String, Response> {
     let auth_header = headers
         .get(header::AUTHORIZATION)
@@ -477,6 +893,67 @@ fn is_image_file(name: &str) -> bool {
         ext.as_str(),
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "tiff" | "tif" | "avif" | "jxl"
     )
+}
+
+fn find_preview_images(
+    folder_path: &std::path::Path,
+    root_path: &std::path::Path,
+    limit: usize,
+) -> Vec<String> {
+    let mut images = Vec::new();
+    const MAX_DEPTH: usize = 2;
+
+    fn find_recursive(
+        current_path: &std::path::Path,
+        root_path: &std::path::Path,
+        images: &mut Vec<String>,
+        limit: usize,
+        current_depth: usize,
+        max_depth: usize,
+    ) {
+        if images.len() >= limit || current_depth > max_depth {
+            return;
+        }
+
+        if let Ok(entries) = std::fs::read_dir(current_path) {
+            let mut dirs_to_explore = Vec::new();
+            
+            for entry in entries.flatten() {
+                if images.len() >= limit {
+                    break;
+                }
+
+                let path = entry.path();
+                
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name.starts_with('.') {
+                        continue;
+                    }
+
+                    if path.is_dir() {
+                        if current_depth < max_depth {
+                            dirs_to_explore.push(path);
+                        }
+                    } else if is_image_file(name) {
+                        if let Ok(relative) = path.strip_prefix(root_path) {
+                            let relative_str = relative.to_string_lossy().replace('\\', "/");
+                            images.push(relative_str);
+                        }
+                    }
+                }
+            }
+
+            for dir in dirs_to_explore {
+                if images.len() >= limit {
+                    break;
+                }
+                find_recursive(&dir, root_path, images, limit, current_depth + 1, max_depth);
+            }
+        }
+    }
+
+    find_recursive(folder_path, root_path, &mut images, limit, 0, MAX_DEPTH);
+    images
 }
 
 fn get_content_type(path: &std::path::Path) -> String {

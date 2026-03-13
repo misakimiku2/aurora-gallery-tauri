@@ -46,6 +46,16 @@ pub fn create_table(conn: &Connection) -> Result<()> {
         [],
     )?;
 
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_index_name ON file_index(name)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_index_type ON file_index(file_type)",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -216,6 +226,39 @@ pub fn get_minimal_entries_under_path(conn: &Connection, root_path: &str) -> Res
         entries.push(row?);
     }
     Ok(entries)
+}
+
+/// 批量获取指定路径列表的图片尺寸信息
+/// 返回 (path -> (width, height)) 的映射
+pub fn get_image_dimensions_batch(conn: &Connection, paths: &[String]) -> Result<std::collections::HashMap<String, (Option<u32>, Option<u32>)>> {
+    let mut result = std::collections::HashMap::new();
+    
+    if paths.is_empty() {
+        return Ok(result);
+    }
+    
+    let placeholders: Vec<String> = paths.iter().map(|_| "?".to_string()).collect();
+    let sql = format!(
+        "SELECT path, width, height FROM file_index WHERE path IN ({})",
+        placeholders.join(",")
+    );
+    
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<&dyn rusqlite::ToSql> = paths.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+    
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        let path: String = row.get(0)?;
+        let width: Option<u32> = row.get(1)?;
+        let height: Option<u32> = row.get(2)?;
+        Ok((path, width, height))
+    })?;
+    
+    for row in rows {
+        let (path, width, height) = row?;
+        result.insert(path, (width, height));
+    }
+    
+    Ok(result)
 }
 
 
@@ -391,4 +434,151 @@ pub fn migrate_index_dir(conn: &Connection, old_path: &str, new_path: &str) -> R
     )?;
     
     Ok(())
+}
+
+pub fn search_by_name(conn: &Connection, query: &str, scope: &str) -> Result<Vec<FileIndexEntry>> {
+    let search_pattern = format!("%{}%", query.to_lowercase());
+    
+    let sql = match scope {
+        "file" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Image'",
+        "folder" => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1 AND file_type = 'Folder'",
+        _ => "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format FROM file_index WHERE lower(name) LIKE ?1",
+    };
+    
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![search_pattern], |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: row.get(1)?,
+            path: row.get(2)?,
+            name: row.get(3)?,
+            file_type: row.get(4)?,
+            size: row.get(5)?,
+            created_at: row.get(6)?,
+            modified_at: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+            format: row.get(10)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
+pub fn get_children_by_parent_path(conn: &Connection, parent_path: &str) -> Result<Vec<FileIndexEntry>> {
+    let parent_id = crate::db::generate_id(parent_path);
+    
+    let mut stmt = conn.prepare(
+        "SELECT file_id, parent_id, path, name, file_type, size, created_at, modified_at, width, height, format 
+         FROM file_index WHERE parent_id = ?1"
+    )?;
+    
+    let rows = stmt.query_map(params![parent_id], |row| {
+        Ok(FileIndexEntry {
+            file_id: row.get(0)?,
+            parent_id: row.get(1)?,
+            path: row.get(2)?,
+            name: row.get(3)?,
+            file_type: row.get(4)?,
+            size: row.get(5)?,
+            created_at: row.get(6)?,
+            modified_at: row.get(7)?,
+            width: row.get(8)?,
+            height: row.get(9)?,
+            format: row.get(10)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
+pub fn get_folder_preview_images(conn: &Connection, folder_path: &str, limit: usize) -> Result<Vec<String>> {
+    let folder_id = crate::db::generate_id(folder_path);
+    
+    let sql = format!(
+        "SELECT path FROM file_index WHERE parent_id = ?1 AND file_type = 'Image' ORDER BY modified_at DESC LIMIT {}", 
+        limit
+    );
+    
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params![folder_id], |row| {
+        row.get::<_, String>(0)
+    })?;
+
+    let mut paths = Vec::new();
+    for row in rows {
+        paths.push(row?);
+    }
+    Ok(paths)
+}
+
+pub fn get_folder_file_count(conn: &Connection, folder_path: &str) -> Result<u64> {
+    let folder_id = crate::db::generate_id(folder_path);
+    
+    let count: u64 = conn.query_row(
+        "SELECT COUNT(*) FROM file_index WHERE parent_id = ?1",
+        params![folder_id],
+        |row| row.get(0),
+    )?;
+    
+    Ok(count)
+}
+
+pub fn get_folder_info_batch(conn: &Connection, folder_ids: &[String]) -> Result<std::collections::HashMap<String, (Vec<String>, u64)>> {
+    if folder_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    
+    let mut result: std::collections::HashMap<String, (Vec<String>, u64)> = std::collections::HashMap::new();
+    for id in folder_ids {
+        result.insert(id.clone(), (Vec::new(), 0));
+    }
+    
+    let placeholders: Vec<String> = folder_ids.iter().map(|_| "?".to_string()).collect();
+    
+    let count_sql = format!(
+        "SELECT parent_id, COUNT(*) as cnt FROM file_index WHERE parent_id IN ({}) GROUP BY parent_id",
+        placeholders.join(",")
+    );
+    
+    let params: Vec<&dyn rusqlite::ToSql> = folder_ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
+    
+    let mut count_stmt = conn.prepare(&count_sql)?;
+    let count_rows = count_stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+    })?;
+    
+    for row in count_rows {
+        let (parent_id, count) = row?;
+        if let Some(entry) = result.get_mut(&parent_id) {
+            entry.1 = count;
+        }
+    }
+    
+    let preview_sql = format!(
+        "SELECT parent_id, path FROM (SELECT parent_id, path, ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY modified_at DESC) as rn FROM file_index WHERE parent_id IN ({}) AND file_type = 'Image') WHERE rn <= 3",
+        placeholders.join(",")
+    );
+    
+    let mut preview_stmt = conn.prepare(&preview_sql)?;
+    let preview_rows = preview_stmt.query_map(params.as_slice(), |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    
+    for row in preview_rows {
+        let (parent_id, path) = row?;
+        if let Some(entry) = result.get_mut(&parent_id) {
+            entry.0.push(path);
+        }
+    }
+    
+    Ok(result)
 }

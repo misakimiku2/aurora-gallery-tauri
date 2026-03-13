@@ -1,18 +1,18 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import path from 'path';
+import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
   plugins: [react()],
   base: '/',
-  root: path.resolve(__dirname, 'src/lan-share'),
+  root: 'src/lan-share',
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   build: {
-    outDir: path.resolve(__dirname, 'src-tauri/static/lan-share'),
+    outDir: fileURLToPath(new URL('./src-tauri/static/lan-share', import.meta.url)),
     emptyOutDir: true,
     rollupOptions: {
       output: {

@@ -3,8 +3,14 @@ import AuthScreen from './components/AuthScreen';
 import BrowseScreen from './components/BrowseScreen';
 import ImageViewer from './components/ImageViewer';
 import { lanShareApi, BrowseItem, BrowseResponse } from './api';
+import { LayoutMode, SortOption, SortDirection, SearchScope } from '@/shared/api/types';
 
 type Screen = 'auth' | 'browse' | 'viewer';
+
+interface HistoryState {
+  stack: string[];
+  currentIndex: number;
+}
 
 interface AppState {
   screen: Screen;
@@ -15,10 +21,38 @@ interface AppState {
   viewingImage: BrowseItem | null;
   viewingIndex: number;
   allowEdit: boolean;
+  history: HistoryState;
+  layoutMode: LayoutMode;
+  sortBy: SortOption;
+  sortDirection: SortDirection;
+  searchQuery: string;
+  searchScope: SearchScope;
 }
 
+const STORAGE_KEY_PREFIX = 'lan_share_settings_';
+
+const loadSettings = <T,>(key: string, defaultValue: T): T => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + key);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    console.error('Failed to load settings:', e);
+  }
+  return defaultValue;
+};
+
+const saveSettings = <T,>(key: string, value: T): void => {
+  try {
+    localStorage.setItem(STORAGE_KEY_PREFIX + key, JSON.stringify(value));
+  } catch (e) {
+    console.error('Failed to save settings:', e);
+  }
+};
+
 const LanShareApp: React.FC = () => {
-  const [state, setState] = useState<AppState>({
+  const [state, setState] = useState<AppState>(() => ({
     screen: 'auth',
     token: null,
     currentPath: '/',
@@ -27,7 +61,13 @@ const LanShareApp: React.FC = () => {
     viewingImage: null,
     viewingIndex: -1,
     allowEdit: false,
-  });
+    history: { stack: ['/'], currentIndex: 0 },
+    layoutMode: loadSettings('layoutMode', 'grid' as LayoutMode),
+    sortBy: loadSettings('sortBy', 'name' as SortOption),
+    sortDirection: loadSettings('sortDirection', 'asc' as SortDirection),
+    searchQuery: '',
+    searchScope: 'all' as SearchScope,
+  }));
 
   useEffect(() => {
     const savedToken = localStorage.getItem('lan_share_token');
@@ -40,19 +80,32 @@ const LanShareApp: React.FC = () => {
     }
   }, []);
 
-  const browse = useCallback(async (path: string, token?: string) => {
+  const browse = useCallback(async (path: string, token?: string, addToHistory: boolean = true) => {
     const authToken = token || state.token;
     if (!authToken) return;
 
     try {
       const data: BrowseResponse = await lanShareApi.browse(path, authToken!);
-      setState(prev => ({
-        ...prev,
-        currentPath: path,
-        folders: data.folders,
-        images: data.images,
-        screen: 'browse',
-      }));
+      setState(prev => {
+        let newHistory = prev.history;
+        if (addToHistory) {
+          const newStack = prev.history.stack.slice(0, prev.history.currentIndex + 1);
+          newStack.push(path);
+          newHistory = {
+            stack: newStack,
+            currentIndex: newStack.length - 1,
+          };
+        }
+        return {
+          ...prev,
+          currentPath: path,
+          folders: data.folders,
+          images: data.images,
+          screen: 'browse',
+          history: newHistory,
+          searchQuery: '',
+        };
+      });
     } catch (error) {
       console.error('Browse error:', error);
       if (path === '/') {
@@ -142,6 +195,72 @@ const LanShareApp: React.FC = () => {
     }
   }, [state.viewingImage, state.viewingIndex, state.images, state.allowEdit, state.token, state.currentPath, handleCloseViewer, browse]);
 
+  const handleGoBack = useCallback(() => {
+    const { history } = state;
+    if (history.currentIndex > 0) {
+      const newIndex = history.currentIndex - 1;
+      const path = history.stack[newIndex];
+      setState(prev => ({
+        ...prev,
+        history: { ...prev.history, currentIndex: newIndex },
+      }));
+      browse(path, undefined, false);
+    }
+  }, [state.history, browse]);
+
+  const handleGoForward = useCallback(() => {
+    const { history } = state;
+    if (history.currentIndex < history.stack.length - 1) {
+      const newIndex = history.currentIndex + 1;
+      const path = history.stack[newIndex];
+      setState(prev => ({
+        ...prev,
+        history: { ...prev.history, currentIndex: newIndex },
+      }));
+      browse(path, undefined, false);
+    }
+  }, [state.history, browse]);
+
+  const handleNavigateUp = useCallback(() => {
+    const { currentPath } = state;
+    if (currentPath === '/' || currentPath === '') return;
+    
+    const parts = currentPath.split('/').filter(Boolean);
+    parts.pop();
+    const parentPath = parts.length === 0 ? '/' : '/' + parts.join('/');
+    browse(parentPath);
+  }, [state.currentPath, browse]);
+
+  const handleRefresh = useCallback(() => {
+    browse(state.currentPath, undefined, false);
+  }, [state.currentPath, browse]);
+
+  const handleLayoutModeChange = useCallback((mode: LayoutMode) => {
+    setState(prev => ({ ...prev, layoutMode: mode }));
+    saveSettings('layoutMode', mode);
+  }, []);
+
+  const handleSortChange = useCallback((option: SortOption) => {
+    setState(prev => ({ ...prev, sortBy: option }));
+    saveSettings('sortBy', option);
+  }, []);
+
+  const handleSortDirectionChange = useCallback(() => {
+    setState(prev => {
+      const newDirection = prev.sortDirection === 'asc' ? 'desc' : 'asc';
+      saveSettings('sortDirection', newDirection);
+      return { ...prev, sortDirection: newDirection };
+    });
+  }, []);
+
+  const handleSearchChange = useCallback((query: string) => {
+    setState(prev => ({ ...prev, searchQuery: query }));
+  }, []);
+
+  const handleSearchScopeChange = useCallback((scope: SearchScope) => {
+    setState(prev => ({ ...prev, searchScope: scope }));
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (state.screen === 'viewer') {
@@ -154,6 +273,10 @@ const LanShareApp: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [state.screen, handleNavigateImage, handleCloseViewer]);
+
+  const canGoBack = state.history.currentIndex > 0;
+  const canGoForward = state.history.currentIndex < state.history.stack.length - 1;
+  const canNavigateUp = state.currentPath !== '/' && state.currentPath !== '';
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900 text-gray-900 dark:text-white">
@@ -170,6 +293,23 @@ const LanShareApp: React.FC = () => {
           onNavigate={handleNavigate}
           onViewImage={handleViewImage}
           onLogout={handleLogout}
+          layoutMode={state.layoutMode}
+          onLayoutModeChange={handleLayoutModeChange}
+          sortBy={state.sortBy}
+          sortDirection={state.sortDirection}
+          onSortChange={handleSortChange}
+          onSortDirectionChange={handleSortDirectionChange}
+          searchQuery={state.searchQuery}
+          onSearchChange={handleSearchChange}
+          searchScope={state.searchScope}
+          onSearchScopeChange={handleSearchScopeChange}
+          onRefresh={handleRefresh}
+          onGoBack={handleGoBack}
+          onGoForward={handleGoForward}
+          onNavigateUp={handleNavigateUp}
+          canGoBack={canGoBack}
+          canGoForward={canGoForward}
+          canNavigateUp={canNavigateUp}
         />
       )}
       {state.screen === 'viewer' && state.viewingImage && (

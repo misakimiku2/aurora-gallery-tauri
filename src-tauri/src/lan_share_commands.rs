@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use tokio::sync::RwLock;
 
+use crate::db::AppDbPool;
 use crate::lan_share::{
     check_port_available, get_local_ip, LanShareConfig, LanShareInfo, LanShareServer,
     LanShareStatus, ConnectedDevice,
@@ -34,6 +35,7 @@ pub async fn lan_share_start(
     config: LanShareConfig,
     root_path: String,
     state: State<'_, LanShareState>,
+    app: AppHandle,
 ) -> Result<LanShareInfo, String> {
     log::info!("[LAN Share] 收到启动命令 - 根目录: {}, 端口: {}", root_path, config.port);
     
@@ -59,7 +61,8 @@ pub async fn lan_share_start(
         }
     }
 
-    let mut server = LanShareServer::new(root);
+    let db_pool = Arc::new(app.state::<AppDbPool>().inner().clone());
+    let mut server = LanShareServer::new(root).with_db_pool(db_pool);
     let info = server.start(config).await?;
     *server_guard = Some(server);
 

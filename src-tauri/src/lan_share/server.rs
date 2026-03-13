@@ -14,6 +14,7 @@ use super::device_manager::DeviceManager;
 use super::handlers::*;
 use super::session::SessionManager;
 use super::types::*;
+use crate::db::AppDbPool;
 
 // Build timestamp: 2026-03-12-force-rebuild-v2
 // This comment forces Rust to recompile this file when static files change
@@ -41,6 +42,7 @@ pub struct LanShareServer {
     sessions: Arc<SessionManager>,
     devices: Arc<DeviceManager>,
     root_path: Arc<PathBuf>,
+    db_pool: Option<Arc<AppDbPool>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_handle: Option<JoinHandle<()>>,
     cleanup_handle: Option<JoinHandle<()>>,
@@ -56,12 +58,18 @@ impl LanShareServer {
             sessions: Arc::new(SessionManager::new()),
             devices: Arc::new(DeviceManager::new()),
             root_path: Arc::new(root_path),
+            db_pool: None,
             shutdown_tx: None,
             server_handle: None,
             cleanup_handle: None,
             local_ip: None,
             port: 8080,
         }
+    }
+    
+    pub fn with_db_pool(mut self, pool: Arc<AppDbPool>) -> Self {
+        self.db_pool = Some(pool);
+        self
     }
 
     pub async fn start(&mut self, config: LanShareConfig) -> Result<LanShareInfo, String> {
@@ -95,6 +103,7 @@ impl LanShareServer {
             sessions: self.sessions.clone(),
             devices: self.devices.clone(),
             root_path: self.root_path.clone(),
+            db_pool: self.db_pool.clone(),
         };
 
         log::info!("[LAN Share] 注册 API 路由...");
@@ -104,6 +113,7 @@ impl LanShareServer {
             .route("/app.js", get(handle_app_js))
             .route("/api/auth/verify", post(handle_auth))
             .route("/api/browse", get(handle_browse))
+            .route("/api/search", get(handle_search))
             .route("/api/thumbnail", get(handle_thumbnail))
             .route("/api/image", get(handle_image))
             .route("/api/file", delete(handle_delete))
