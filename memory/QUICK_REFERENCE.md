@@ -100,6 +100,19 @@ pending → processing → completed
 - 支持自动下载和安装更新
 - 支持下载进度显示
 
+### 10. 局域网共享 (2026-03-14 更新)
+- 内置 HTTP 服务器，支持局域网图片共享
+- Token 认证机制，支持密码保护
+- 支持多设备同时连接
+- 支持远程浏览、缩略图预览和图片查看
+- 支持远程编辑（可选）
+
+### 11. 作品/角色提取 (2026-03-14 更新)
+- 从 WD14 标签自动提取作品名称和角色名称
+- 支持中文名称映射
+- 自动创建作品专题和人物
+- 支持智能创建专题/人物模态框
+
 ## 常用命令速查
 
 ### 前端开发
@@ -266,10 +279,44 @@ await clipLoadModel(modelName: string): Promise<void>
 await clipUnloadModel(): Promise<void>
 await clipIsModelLoaded(): Promise<boolean>
 await clipGetEmbeddingCount(): Promise<number>
+await clipGetModelStatus(modelName: string): Promise<ClipModelStatus>
+await clipDeleteModel(modelName: string): Promise<void>
 
 // 角色标签
 await clipGetCharacterTags(language?: string): Promise<CharacterTag[]>
 await clipGetDetectedCharacters(minScore: number, minCount?: number, language?: string): Promise<DetectedCharacter[]>
+
+// 作品/角色提取 (2026-03-14 新增)
+await clipGetWorkTopics(minScore: number, language?: string): Promise<WorkTopicInfo[]>
+await clipCreateWorkTopics(workIds: string[], topicType?: string): Promise<CreateWorkTopicsResult>
+
+// 标签生成 (2026-03-14 新增)
+await clipPreviewTagsFromEmbeddings(fileIds: string[], threshold: number): Promise<TagsPreviewResult>
+await clipGenerateTagsFromEmbeddings(fileIds: string[], threshold: number): Promise<void>
+```
+
+#### 局域网共享 (2026-03-14 新增)
+```typescript
+// 启动共享服务
+await lanShareStart(password: string, port?: number, allowEdit?: boolean): Promise<void>
+
+// 停止共享服务
+await lanShareStop(): Promise<void>
+
+// 获取服务状态
+await lanShareGetStatus(): Promise<LanShareStatus>
+
+// 获取连接设备
+await lanShareGetDevices(): Promise<ConnectedDevice[]>
+
+// 获取本地 IP
+await lanShareGetLocalIp(): Promise<string | null>
+
+// 检查端口可用性
+await lanShareCheckPort(port: number): Promise<boolean>
+
+// 更新配置
+await lanShareUpdateConfig(password?: string, port?: number, allowEdit?: boolean): Promise<void>
 ```
 
 #### 更新检查
@@ -705,6 +752,34 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ## 更新日志
 
+### 2026-03-14 更新
+- 新增局域网共享功能
+  - `lanShareStart`: 启动共享服务
+  - `lanShareStop`: 停止共享服务
+  - `lanShareGetStatus`: 获取服务状态
+  - `lanShareGetDevices`: 获取连接设备
+  - `lanShareGetLocalIp`: 获取本地 IP
+  - `lanShareCheckPort`: 检查端口可用性
+  - `lanShareUpdateConfig`: 更新配置
+- 新增作品/角色提取功能
+  - `clipGetWorkTopics`: 获取作品专题信息
+  - `clipCreateWorkTopics`: 创建作品专题
+  - `clipPreviewTagsFromEmbeddings`: 预览标签生成
+  - `clipGenerateTagsFromEmbeddings`: 从嵌入生成标签
+- 新增 CLIP 模型管理 API
+  - `clipGetModelStatus`: 获取模型状态
+  - `clipDeleteModel`: 删除模型
+- 新增智能模态框
+  - `SmartCreatePersonModal`: 智能创建人物
+  - `SmartCreateTopicModal`: 智能创建专题
+  - `SmartAddToPersonModal`: 智能添加到人物
+  - `AutoGenerateTagsModal`: 自动生成标签
+- 新增 `LanSharePanel` 设置面板
+- 新增共享模块 (`src/shared/`) 用于主应用和 LAN Share 客户端
+- 新增独立 LAN Share 客户端应用 (`src/lan-share/`)
+- Topic 类型新增 `sourceType`、`workName`、`workNameCn` 字段
+- Person 类型新增 `characterTagName`、`characterTagIndex` 字段
+
 ### 2026-03-01 更新
 - 新增 CLIP 向量搜索功能
   - `clipSearchByText`: 文本搜索图片
@@ -758,6 +833,6 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ---
 
-**文档版本**: 1.4  
-**更新日期**: 2026-03-01  
+**文档版本**: 1.5  
+**更新日期**: 2026-03-14  
 **维护者**: Aurora Gallery Team

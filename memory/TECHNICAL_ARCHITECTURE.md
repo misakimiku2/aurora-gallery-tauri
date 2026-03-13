@@ -7,7 +7,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                    用户界面层 (React)                        │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
-│  │   │  │组件库    │  │服务层    │  │工具库    │   │
+│  │ App      │  │组件库    │  │服务层    │  │工具库    │   │
 │  │          │  │          │  │          │  │          │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┴──────────┘   │
 │       │             │             │                      │
@@ -28,17 +28,23 @@
 │  │Generator │  │Search    │  │Index     │  │DB        │   │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
 │       │             │             │             │          │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐                │
-│  │  CLIP    │  │ Update   │  │  Db      │                │
-│  │ Commands │  │ Commands │  │ Commands │                │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘                │
-│       │             │             │                       │
-│       └─────────────┴─────────────┴───────────────────────┘
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │
+│  │  CLIP    │  │ Update   │  │  Db      │  │ LanShare │   │
+│  │ Commands │  │ Commands │  │ Commands │  │ Server   │   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘   │
+│       │             │             │             │          │
+│  ┌──────────┐  ┌──────────┐                                   │
+│  │ Work     │  │ LanShare │                                   │
+│  │ Extractor│  │ Handlers │                                   │
+│  └────┬─────┘  └────┬─────┘                                   │
+│       │             │                                          │
+│       └─────────────┴─────────────────────────────────────────┘
 │                              │                              │
 │                    SQLite 数据库                             │
 │                    文件系统                                   │
 │                    AI API (OpenAI/Ollama/LM Studio)         │
 │                    CLIP 模型 (ONNX Runtime)                  │
+│                    HTTP 服务器 (局域网共享)                   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,32 +55,40 @@
 #### React 组件架构
 ```typescript
 // 组件层次结构
-App (根组件 - 4248 行) （以源码为准 · 已同步）
-├── TabBar (标签页管理 - 249 行)
-├── TopBar (工具栏 - 921 行)
+App (根组件 - 4362 行) （以源码为准 · 已同步）
+├── TabBar (标签页管理 - 456 行)
+├── TopBar (工具栏 - 1141 行)
 ├── Sidebar (侧边栏)
-│   ├── TreeSidebar (文件树 - 654 行)
-│   └── TaskProgressModal (任务进度 - 200 行)
+│   ├── TreeSidebar (文件树 - 1518 行)
+│   └── TaskProgressModal (任务进度 - 78 行)
 ├── MainContent (主内容区)
-│   ├── PersonGrid (人物网格 - 224 行) （以源码为准 · 已同步）
-│   ├── FileGrid (文件网格 - 1457 行) （以源码为准 · 已同步）
-│   ├── ImageViewer (图片查看器 - 1542 行)
-│   ├── ImageComparer (图片对比 - 2600+ 行)
-│   ├── TopicModule (专题模块 - 2618 行)
-│   └── TagsList (标签列表 - 470 行)
-├── MetadataPanel (元数据面板 - 2607 行)
-├── SettingsModal (设置模态框 - 1347 行) （以源码为准 · 已同步）
+│   ├── PersonGrid (人物网格 - 440 行) （以源码为准 · 已同步）
+│   ├── PeopleCanvas (人物画布 - 342 行) [新增]
+│   ├── FileGrid (文件网格 - 1414 行) （以源码为准 · 已同步）
+│   ├── ImageViewer (图片查看器 - 1482 行)
+│   ├── ImageComparer (图片对比 - 2039 行)
+│   ├── TopicModule (专题模块 - 2485 行)
+│   └── TagsList (标签列表 - 312 行)
+├── MetadataPanel (元数据面板 - 2409 行)
+├── SettingsModal (设置模态框 - 3774 行) （以源码为准 · 已同步）
 ├── Modals (模态框集合 - src/components/modals/) [重构]
-│   ├── FolderPickerModal (文件夹选择)
-│   ├── BatchRenameModal (批量重命名)
-│   ├── AIBatchRenameModal (AI 批量重命名 - 387 行) [新增]
-│   ├── AddImageModal (添加图片 - 1262 行) [新增]
-│   ├── WelcomeModal (欢迎向导)
-│   ├── CreateTopicModal (创建专题)
-│   ├── RenameTopicModal (重命名专题)
+│   ├── FolderPickerModal (文件夹选择 - 141 行)
+│   ├── BatchRenameModal (批量重命名 - 57 行)
+│   ├── AIBatchRenameModal (AI 批量重命名 - 376 行) [新增]
+│   ├── AddImageModal (添加图片 - 1163 行) [新增]
+│   ├── AutoGenerateTagsModal (自动生成标签 - 410 行) [新增]
+│   ├── SmartCreatePersonModal (智能创建人物 - 921 行) [新增]
+│   ├── SmartCreateTopicModal (智能创建专题 - 691 行) [新增]
+│   ├── SmartAddToPersonModal (智能添加到人物 - 505 行) [新增]
+│   ├── UpdateModal (更新模态框 - 360 行) [新增]
+│   ├── WelcomeModal (欢迎向导 - 187 行)
+│   ├── CreateTopicModal (创建专题 - 66 行)
+│   ├── RenameTopicModal (重命名专题 - 68 行)
 │   └── [其他 10+ 模态框...]
-├── AIRenameButton (AI 重命名按钮 - 38 行) [新增]
-├── AIRenamePreview (AI 重命名预览 - 40 行) [新增]
+├── Settings (设置面板 - src/components/settings/)
+│   └── LanSharePanel (局域网共享设置 - 346 行) [新增]
+├── AIRenameButton (AI 重命名按钮 - 36 行) [新增]
+├── AIRenamePreview (AI 重命名预览 - 38 行) [新增]
 └── Toasts (通知)
 ```
 
@@ -99,6 +113,10 @@ const { isGenerating, previewName, generateName, applyRename, cancelRename } = u
   settings, people, onUpdate, showToast, t
 });
 // 支持根据图片内容生成语义化文件名
+
+// 更新检查 (extracted to useUpdateCheck.ts) [新增]
+const { updateInfo, isChecking, isDownloading, downloadProgress, checkUpdate, startDownload, installUpdate } = useUpdateCheck();
+// 支持应用更新检查和下载
 
 // 实时元数据同步
 // - 监听 'metadata-updated' 全局事件以更新 App 状态中的文件元数据。
@@ -248,7 +266,7 @@ const results = await aiService.generateFileNames(
 
 #### Tauri Bridge API
 **位置**: `src/api/tauri-bridge.ts`  
-**行数**: 2273 行（以源码为准 · 已同步）  
+**行数**: 2151 行（以源码为准 · 已同步）  
 **功能**: 前后端通信桥接
 
 **核心功能**:
@@ -257,15 +275,20 @@ const results = await aiService.generateFileNames(
 export const scanDirectory = async (path: string, forceRefresh?: boolean): Promise<{ roots: string[]; files: Record<string, FileNode> }> => { ... }
 export const forceRescan = async (path: string): Promise<{ roots: string[]; files: Record<string, FileNode> }> => { ... }
 export const scanFile = async (filePath: string, parentId?: string | null): Promise<FileNode> => { ... }
-
-// 文件操作
+export const renameFile = async (oldPath: string, newPath: string): Promise<void> => { ... }
+export const deleteFile = async (path: string): Promise<void> => { ... }
+export const copyFile = async (src: string, dest: string): Promise<string> => { ... }
+export const copyImageColors = async (src: string, dest: string): Promise<void> => { ... }
 export const copyImageToClipboard = async (filePath: string): Promise<void> => { ... }
-export const openExternalLink = async (url: string): Promise<void> => { ... }
-export const proxyHttpRequest = async (url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<string> => { ... }
+export const moveFile = async (src: string, dest: string): Promise<void> => { ... }
+export const writeFileFromBytes = async (path: string, bytes: number[]): Promise<void> => { ... }
 
 // 窗口管理
 export const setWindowMinSize = async (width: number, height: number): Promise<void> => { ... }
 export const isWindowMaximized = async (): Promise<boolean> => { ... }
+export const hideWindow = async (): Promise<void> => { ... }
+export const showWindow = async (): Promise<void> => { ... }
+export const exitApp = async (): Promise<void> => { ... }
 
 // 缩略图
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => { ... }
@@ -276,8 +299,10 @@ getAssetUrl(filePath: string): string
 export const getDominantColors = async (filePath: string, count?: number, thumbnailPath?: string): Promise<DominantColor[]> => { ... }
 export const searchByColor = async (color: string): Promise<string[]> => { ... }
 export const searchByPalette = async (palette: string[]): Promise<string[]> => { ... }
+export const pauseColorExtraction = async (): Promise<void> => { ... }
+export const resumeColorExtraction = async (): Promise<void> => { ... }
 
-// 颜色数据库管理 [新增]
+// 颜色数据库管理
 export const getColorDbStats = async (): Promise<ColorDbStats> => { ... }
 export const getColorDbErrorFiles = async (): Promise<ColorDbErrorFile[]> => { ... }
 export const retryColorExtraction = async (filePaths?: string[]): Promise<number> => { ... }
@@ -286,17 +311,20 @@ export const deleteColorDbErrorFiles = async (filePaths: string[]): Promise<numb
 // 数据库操作
 export const dbGetAllPeople = async (): Promise<Person[]> => { ... }
 export const dbUpsertPerson = async (person: Person): Promise<void> => { ... }
+export const dbDeletePerson = async (id: string): Promise<void> => { ... }
+export const dbUpdatePersonAvatar = async (personId: string, coverFileId: string, faceBox?: FaceBox): Promise<void> => { ... }
 export const dbCopyFileMetadata = async (srcPath: string, destPath: string): Promise<void> => { ... }
 export const switchRootDatabase = async (newRootPath: string): Promise<void> => { ... }
 export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => { ... }
 export const dbGetAllFileMetadata = async (): Promise<FileMetadata[]> => { ... }
+export const dbUpsertFileMetadata = async (metadata: FileMetadata): Promise<void> => { ... }
 
 // 专题数据库操作
 export const dbGetAllTopics = async (): Promise<Topic[]> => { ... }
 export const dbUpsertTopic = async (topic: Topic): Promise<void> => { ... }
 export const dbDeleteTopic = async (id: string): Promise<void> => { ... }
 
-// CLIP 向量搜索 [新增]
+// CLIP 向量搜索
 export const clipSearchByText = async (text: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]> => { ... }
 export const clipSearchByImage = async (imagePath: string, options?: ClipSearchOptions, modelName?: string): Promise<ClipSearchResult[]> => { ... }
 export const clipGenerateEmbedding = async (filePath: string, fileId?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<number[]> => { ... }
@@ -307,72 +335,104 @@ export const clipGetEmbeddingCount = async (): Promise<number> => { ... }
 export const clipGenerateEmbeddingsBatch = async (files: [string, string][], useGpu: boolean, modelName?: string, autoAddTags?: boolean, tagThreshold?: number, language?: string): Promise<ClipBatchEmbeddingResult> => { ... }
 export const clipGetCharacterTags = async (language?: string): Promise<CharacterTag[]> => { ... }
 export const clipGetDetectedCharacters = async (minScore: number, minCount?: number, language?: string): Promise<DetectedCharacter[]> => { ... }
+export const clipGetModelStatus = async (modelName: string): Promise<ModelStatus> => { ... } // [新增]
+export const clipDeleteModel = async (modelName: string): Promise<void> => { ... } // [新增]
+export const clipGetWorkTopics = async (minScore: number, language?: string): Promise<WorkTopic[]> => { ... } // [新增]
+export const clipCreateWorkTopics = async (workIds: string[], topicType?: string): Promise<void> => { ... } // [新增]
+export const clipPreviewTagsFromEmbeddings = async (fileIds: string[], threshold: number): Promise<TagPreview[]> => { ... } // [新增]
+export const clipGenerateTagsFromEmbeddings = async (fileIds: string[], threshold: number): Promise<void> => { ... } // [新增]
 
-// 更新检查 [新增]
+// 局域网共享 [新增]
+export const lanShareStart = async (password: string, port?: number, allowEdit?: boolean): Promise<void> => { ... }
+export const lanShareStop = async (): Promise<void> => { ... }
+export const lanShareGetStatus = async (): Promise<LanShareStatus> => { ... }
+export const lanShareGetDevices = async (): Promise<LanDevice[]> => { ... }
+export const lanShareGetLocalIp = async (): Promise<string> => { ... }
+export const lanShareCheckPort = async (port: number): Promise<boolean> => { ... }
+export const lanShareUpdateConfig = async (password?: string, port?: number, allowEdit?: boolean): Promise<void> => { ... }
+
+// 更新检查
 export const checkForUpdates = async (): Promise<UpdateCheckResult> => { ... }
 export const startUpdateDownload = async (installerUrl: string, version: string): Promise<void> => { ... }
 export const getUpdateDownloadProgress = async (): Promise<DownloadProgressResult> => { ... }
 export const installUpdate = async (): Promise<void> => { ... }
+
+// 其他
+export const openExternalLink = async (url: string): Promise<void> => { ... }
+export const proxyHttpRequest = async (url: string, method?: string, headers?: Record<string, string>, body?: string): Promise<string> => { ... }
 ```
 
 ### 4. 基础设施层 (Infrastructure Layer)
 
 #### Rust 后端架构
-**位置**: `src-tauri/src/`  
-**总行数**: ~9000 行
 
-##### 主程序 (main.rs)
-**行数**: 349 行（以源码为准 · 已同步）  
-**功能**: Tauri 应用入口，模块注册
+##### 模块结构 (2026-03-14 更新)
+```
+src-tauri/src/
+├── main.rs              # 入口文件 (359 行) （以源码为准 · 已同步）
+│
+├── 📁 核心模块
+│   ├── file_types.rs    # 类型定义 (FileType, FileNode, ImageMeta) - 62 行
+│   ├── image_utils.rs   # 图像工具 (JXL/AVIF 支持) - 137 行
+│   └── scanner.rs       # 目录扫描 (HDD 检测优化) - 547 行
+│
+├── 📁 命令模块
+│   ├── file_operations.rs  # 文件操作命令 - 763 行
+│   ├── clip_commands.rs    # CLIP AI 搜索 - 2155 行 （以源码为准 · 已同步）
+│   ├── db_commands.rs      # 数据库命令 - 221 行
+│   ├── system_commands.rs  # 系统工具 - 226 行
+│   ├── window_commands.rs  # 窗口控制 - 87 行
+│   ├── color_commands.rs   # 颜色提取 - 93 行
+│   ├── update_commands.rs  # 应用更新 - 51 行
+│   └── lan_share_commands.rs # 局域网共享 - 164 行 [新增]
+│
+├── 📁 功能模块
+│   ├── thumbnail.rs        # 缩略图生成 - 479 行
+│   ├── color_db.rs         # 颜色数据库 - 1124 行
+│   ├── color_extractor.rs  # 颜色提取 - 239 行
+│   ├── color_search.rs     # 颜色搜索 - 422 行
+│   ├── color_worker.rs     # 后台处理 - 797 行
+│   ├── updater.rs          # 更新检查 - 749 行
+│   ├── update_downloader.rs # 更新下载 - 499 行
+│   └── work_extractor.rs   # 作品提取器 - 199 行 [新增]
+│
+├── 📁 db/                  # 数据库模块
+│   ├── mod.rs              # 入口 - 132 行
+│   ├── persons.rs          # 人物 - 118 行
+│   ├── topics.rs           # 专题 - 233 行
+│   ├── file_metadata.rs    # 元数据 - 214 行
+│   └── file_index.rs       # 索引 - 526 行
+│
+├── 📁 clip/                # CLIP AI 模块
+│   ├── mod.rs              # 模块入口 - 206 行
+│   ├── model.rs            # 模型封装 - 1099 行
+│   ├── embedding.rs        # 嵌入向量 - 397 行
+│   ├── preprocessor.rs     # 图像预处理 - 272 行
+│   ├── search.rs           # 相似度搜索 - 451 行
+│   └── 📁 models/          # 模型实现
+│       ├── mod.rs          # 模型规范 - 197 行
+│       ├── siglip2_base.rs # SigLIP2-Base - 140 行
+│       ├── siglip2.rs      # SigLIP2-So400M - 164 行
+│       └── wd14.rs         # WD-EVA02-Large-Tagger-V3 - 68 行
+│
+├── 📁 lan_share/           # 局域网共享模块 [新增]
+│   ├── mod.rs              # 模块入口 - 9 行
+│   ├── server.rs           # HTTP 服务器 - 293 行
+│   ├── handlers.rs         # 请求处理器 - 903 行
+│   ├── session.rs          # 会话管理 - 105 行
+│   ├── device_manager.rs   # 设备管理 - 74 行
+│   └── types.rs            # 类型定义 - 129 行
+│
+└── 📁 bin/                 # 工具
+    └── dump_persons.rs     # 人物数据导出 - 35 行
+```
 
-**架构特点**:
+##### 架构特点
 - 基于 Tokio 的异步运行时
 - 多线程任务处理（使用 Rayon）
 - SQLite 数据库集成
 - 事件驱动的进度通知
 - 模块化命令处理（已拆分到独立模块）
-
-##### 命令模块
-- **clip_commands.rs** (1566 行): CLIP AI 搜索命令 [新增]
-- **db_commands.rs** (243 行): 数据库命令
-- **file_operations.rs** (~750 行): 文件操作命令
-- **system_commands.rs** (~200 行): 系统工具命令
-- **window_commands.rs** (~90 行): 窗口控制命令
-- **color_commands.rs** (~100 行): 颜色相关命令
-- **update_commands.rs** (~70 行): 应用更新命令
-
-##### 颜色处理模块
-- **color_db.rs** (1120 行): 颜色数据存储和管理（以源码为准 · 已同步）
-- **color_extractor.rs** (253 行): 颜色提取算法
-- **color_search.rs** (441 行): 颜色搜索算法
-- **color_worker.rs** (949 行): 后台颜色处理工作器（以源码为准 · 已同步）
-
-##### 缩略图模块
-- **thumbnail.rs** (529 行): 缩略图生成和管理
-  - 单文件/批量缩略图生成
-  - JXL 格式支持（使用 jxl-oxide）
-  - AVIF 格式降级处理
-  - 拖拽预览生成
-  - 智能格式选择（JPEG/WebP）
-
-##### CLIP AI 模块 [新增]
-- **clip/mod.rs**: CLIP 模块入口
-- **clip/model.rs**: CLIP 模型封装
-- **clip/embedding.rs**: 嵌入向量存储
-- **clip/preprocessor.rs**: 图像预处理
-- **clip/search.rs**: 相似度搜索
-- **clip/models/mod.rs**: 模型规范定义
-- **clip/models/siglip2_base.rs**: SigLIP2-Base 模型
-- **clip/models/siglip2.rs**: SigLIP2-So400M 模型
-- **clip/models/wd14.rs**: WD-EVA02-Large-Tagger-V3 模型
-
-##### 数据库模块
-- **db/mod.rs** (142 行): 数据库模块入口
-- **db/persons.rs** (128 行): 人物数据 CRUD 操作
-- **db/topics.rs** (175 行): 专题数据 CRUD 操作
-- **db/file_metadata.rs** (230 行): 文件元数据存储
-- **db/file_index.rs** (348 行): 文件索引数据库
-- **集成**: Rusqlite 0.30，带 JSON 支持
 
 ## 技术实现细节
 
@@ -433,6 +493,8 @@ CREATE TABLE persons (
     description TEXT,
     descriptor BLOB, -- 人脸特征向量
     face_box TEXT,   -- 人脸位置 (JSON)
+    character_tag_name TEXT,  -- 关联的角色标签名 [新增]
+    character_tag_index INTEGER, -- 角色标签索引 [新增]
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
@@ -444,6 +506,9 @@ CREATE TABLE topics (
     name TEXT NOT NULL,
     description TEXT,
     topic_type TEXT,
+    source_type TEXT,  -- 来源类型: 'manual' | 'work' | 'character' [新增]
+    work_name TEXT,    -- 作品名称 (英文) [新增]
+    work_name_cn TEXT, -- 作品名称 (中文) [新增]
     cover_file_id TEXT,
     background_file_id TEXT,
     cover_crop_x REAL,
@@ -652,20 +717,18 @@ Aurora Gallery Tauri 采用现代化的分层架构，结合 React 前端和 Rus
 - SQLite 提供轻量级本地数据存储
 - CIEDE2000 算法确保颜色搜索准确性
 - Web Worker 实现前端计算卸载
-- CLIP AI 模型支持自然语言搜索和以图搜图 [新增]
-- WD14 标签器支持自动标签生成和角色识别 [新增]
-- AI 智能重命名提升用户体验
-- 专题管理系统支持图片分类组织
+- CLIP 模型支持自然语言搜索和以图搜图
+- WD14 标签器支持自动标签生成和角色识别
+- HTTP 服务器实现局域网图片共享
+- 作品提取器从 WD14 标签自动提取作品/角色信息
 
-**架构优势**:
-- 性能优异: Rust 后端 + 并行处理 + Web Worker + GPU 加速 CLIP
-- 用户体验佳: 响应式设计 + 流畅交互 + 导航历史 + AI 智能重命名 + 自然语言搜索
-- 开发效率高: 现代化工具链 + 热重载
-- 维护性好: 分层架构 + 类型安全 + 模块化后端
-- 扩展性强: 插件化设计 + 模块化组件 + 多模型 CLIP 支持
+**架构亮点**:
+- 共享模块设计：主应用与 LAN Share 客户端共用组件和逻辑
+- 智能模态框：基于 WD14 角色检测的智能创建人物/专题功能
+- 模块化后端：清晰的命令/功能/数据库模块划分
 
 ---
 
-**文档版本**: 1.3  
-**更新日期**: 2026-03-01  
+**文档版本**: 1.5  
+**更新日期**: 2026-03-14  
 **维护者**: Aurora Gallery Team

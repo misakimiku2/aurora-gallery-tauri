@@ -847,6 +847,416 @@ async function switchRootDatabase(newRootPath: string): Promise<void>
 
 ---
 
+## 局域网共享 API (LAN Share)
+
+局域网共享功能允许用户在局域网内通过浏览器访问和管理图片库，支持多设备同时连接。
+
+### 前端 API (TypeScript)
+
+#### `lanShareStart`
+```typescript
+async function lanShareStart(
+  config: LanShareSettings,
+  rootPath: string
+): Promise<LanShareInfo>
+```
+
+**描述**: 启动局域网共享服务
+
+**参数**:
+- `config`: LanShareSettings - 共享配置
+  - `enabled`: boolean - 是否启用
+  - `port`: number - 服务端口（默认 8080）
+  - `accessCode`: string - 访问验证码
+  - `allowEdit`: boolean - 是否允许编辑和删除
+  - `allowUpload`: boolean - 是否允许上传
+- `rootPath`: string - 根目录路径
+
+**返回**: `Promise<LanShareInfo>`
+```typescript
+interface LanShareInfo {
+  url: string        // 访问地址，如 "http://192.168.1.100:8080"
+  port: number       // 实际使用的端口
+  local_ip: string   // 本机局域网 IP 地址
+}
+```
+
+**示例**:
+```typescript
+const info = await lanShareStart({
+  enabled: true,
+  port: 8080,
+  accessCode: '123456',
+  allowEdit: false,
+  allowUpload: false
+}, '/home/user/Pictures')
+console.log(`服务已启动: ${info.url}`)
+```
+
+---
+
+#### `lanShareStop`
+```typescript
+async function lanShareStop(): Promise<void>
+```
+
+**描述**: 停止局域网共享服务
+
+**示例**:
+```typescript
+await lanShareStop()
+```
+
+---
+
+#### `lanShareGetStatus`
+```typescript
+async function lanShareGetStatus(): Promise<LanShareStatus>
+```
+
+**描述**: 获取局域网共享服务状态
+
+**返回**: `Promise<LanShareStatus>`
+```typescript
+interface LanShareStatus {
+  is_running: boolean      // 服务是否运行中
+  port: number             // 服务端口
+  local_ip: string | null  // 本机局域网 IP
+  device_count: number     // 当前连接设备数
+}
+```
+
+**示例**:
+```typescript
+const status = await lanShareGetStatus()
+if (status.is_running) {
+  console.log(`服务运行中，端口: ${status.port}，设备数: ${status.device_count}`)
+}
+```
+
+---
+
+#### `lanShareGetDevices`
+```typescript
+async function lanShareGetDevices(): Promise<ConnectedDevice[]>
+```
+
+**描述**: 获取已连接设备列表
+
+**返回**: `Promise<ConnectedDevice[]>` - 已连接设备数组
+
+**示例**:
+```typescript
+const devices = await lanShareGetDevices()
+devices.forEach(device => {
+  console.log(`${device.name} (${device.ip}) - 最后活跃: ${new Date(device.lastActiveAt * 1000)}`)
+})
+```
+
+---
+
+#### `lanShareGetLocalIp`
+```typescript
+async function lanShareGetLocalIp(): Promise<string>
+```
+
+**描述**: 获取本机局域网 IP 地址
+
+**返回**: `Promise<string>` - IP 地址
+
+**示例**:
+```typescript
+const ip = await lanShareGetLocalIp()
+console.log(`本机 IP: ${ip}`)
+```
+
+---
+
+#### `lanShareCheckPort`
+```typescript
+async function lanShareCheckPort(port: number): Promise<boolean>
+```
+
+**描述**: 检查端口是否可用
+
+**参数**:
+- `port`: number - 端口号
+
+**返回**: `Promise<boolean>` - 端口是否可用
+
+**示例**:
+```typescript
+const available = await lanShareCheckPort(8080)
+if (!available) {
+  console.log('端口 8080 已被占用')
+}
+```
+
+---
+
+#### `lanShareUpdateConfig`
+```typescript
+async function lanShareUpdateConfig(config: LanShareSettings): Promise<void>
+```
+
+**描述**: 更新局域网共享配置（运行时更新）
+
+**参数**:
+- `config`: LanShareSettings - 新配置
+
+**示例**:
+```typescript
+await lanShareUpdateConfig({
+  ...currentConfig,
+  allowEdit: true
+})
+```
+
+---
+
+### 后端命令 (Rust / Tauri)
+
+#### `lan_share_start`
+```rust
+#[tauri::command]
+pub async fn lan_share_start(
+    config: LanShareConfig,
+    root_path: String,
+    state: State<'_, LanShareState>,
+    app: AppHandle
+) -> Result<LanShareInfo, String>
+```
+
+**描述**: 启动局域网共享服务器
+
+**参数**:
+- `config`: LanShareConfig - 服务配置
+- `root_path`: String - 资源根目录路径
+
+**返回**: `Result<LanShareInfo, String>` - 服务信息
+
+---
+
+#### `lan_share_stop`
+```rust
+#[tauri::command]
+pub async fn lan_share_stop(
+    state: State<'_, LanShareState>
+) -> Result<(), String>
+```
+
+**描述**: 停止局域网共享服务器
+
+---
+
+#### `lan_share_get_status`
+```rust
+#[tauri::command]
+pub async fn lan_share_get_status(
+    state: State<'_, LanShareState>
+) -> Result<LanShareStatus, String>
+```
+
+**描述**: 获取服务器运行状态
+
+---
+
+#### `lan_share_get_devices`
+```rust
+#[tauri::command]
+pub async fn lan_share_get_devices(
+    state: State<'_, LanShareState>
+) -> Result<Vec<ConnectedDevice>, String>
+```
+
+**描述**: 获取已连接设备列表
+
+---
+
+#### `lan_share_get_local_ip`
+```rust
+#[tauri::command]
+pub async fn lan_share_get_local_ip() -> Result<String, String>
+```
+
+**描述**: 获取本机局域网 IP 地址
+
+---
+
+#### `lan_share_check_port`
+```rust
+#[tauri::command]
+pub async fn lan_share_check_port(port: u16) -> Result<bool, String>
+```
+
+**描述**: 检查端口是否可用
+
+---
+
+#### `lan_share_update_config`
+```rust
+#[tauri::command]
+pub async fn lan_share_update_config(
+    config: LanShareConfig,
+    state: State<'_, LanShareState>
+) -> Result<(), String>
+```
+
+**描述**: 更新服务配置
+
+---
+
+### HTTP API (局域网客户端)
+
+局域网共享服务启动后，客户端可通过 HTTP API 访问资源。所有 API（除认证外）需要携带 Bearer Token。
+
+#### `POST /api/auth/verify`
+认证接口，获取访问令牌。
+
+**请求体**:
+```json
+{
+  "code": "123456",
+  "device_name": "My Phone"  // 可选
+}
+```
+
+**响应**:
+```json
+{
+  "success": true,
+  "token": "uuid-token-string",
+  "expires_in": 3600
+}
+```
+
+---
+
+#### `GET /api/browse`
+浏览目录内容。
+
+**查询参数**:
+- `path`: string - 目录路径（可选，默认为根目录）
+
+**响应**:
+```json
+{
+  "current_path": "folder/subfolder",
+  "folders": [
+    {
+      "name": "Vacation",
+      "path": "folder/subfolder/Vacation",
+      "type": "folder",
+      "size": 150,
+      "preview_images": ["img1.jpg", "img2.jpg"]
+    }
+  ],
+  "images": [
+    {
+      "name": "photo.jpg",
+      "path": "folder/subfolder/photo.jpg",
+      "type": "image",
+      "size": 2048576,
+      "thumbnail": "/api/thumbnail?path=folder/subfolder/photo.jpg",
+      "width": 1920,
+      "height": 1080
+    }
+  ]
+}
+```
+
+---
+
+#### `GET /api/search`
+搜索文件和文件夹。
+
+**查询参数**:
+- `q`: string - 搜索关键词
+- `scope`: string - 搜索范围（"all" | "file" | "folder"，可选）
+
+**响应**: 与 `/api/browse` 相同格式
+
+---
+
+#### `GET /api/thumbnail`
+获取图片缩略图。
+
+**查询参数**:
+- `path`: string - 图片路径
+- `size`: number - 缩略图尺寸（可选，默认 256）
+- `token`: string - 访问令牌（可选，可作为查询参数传递）
+
+**响应**: JPEG 图片数据
+
+---
+
+#### `GET /api/image`
+获取原始图片。
+
+**查询参数**:
+- `path`: string - 图片路径
+- `token`: string - 访问令牌（可选）
+
+**响应**: 原始图片数据（Content-Type 根据格式自动设置）
+
+---
+
+#### `DELETE /api/file`
+删除文件（需要 `allow_edit` 权限）。
+
+**查询参数**:
+- `path`: string - 文件路径
+
+**响应**:
+```json
+{
+  "success": true
+}
+```
+
+---
+
+#### `POST /api/rename`
+重命名文件（需要 `allow_edit` 权限）。
+
+**请求体**:
+```json
+{
+  "old_path": "folder/old_name.jpg",
+  "new_name": "new_name.jpg"
+}
+```
+
+**响应**:
+```json
+{
+  "success": true,
+  "path": "folder/new_name.jpg"
+}
+```
+
+---
+
+#### `GET /api/devices`
+获取当前连接的设备列表。
+
+**响应**:
+```json
+{
+  "devices": [
+    {
+      "id": "device-uuid",
+      "name": "My Phone",
+      "ip": "192.168.1.101",
+      "connected_at": 1700000000,
+      "last_active_at": 1700001000
+    }
+  ]
+}
+```
+
+---
+
 ## 后端命令 (Rust / Tauri)
 
 ### 1. 文件系统命令
@@ -1647,6 +2057,9 @@ interface Topic {
   sourceUrl?: string
   createdAt?: string
   updatedAt?: string
+  sourceType?: 'manual' | 'auto_work'  // 来源类型：手动创建或自动生成
+  workName?: string          // 作品名称（自动生成时）
+  workNameCn?: string        // 作品中文名
 }
 ```
 
@@ -1755,6 +2168,7 @@ interface AppSettings {
   performance: {
     refreshInterval: number  // 毫秒
   }
+  lanShare: LanShareSettings  // 局域网共享设置
   defaultLayoutSettings: {
     layoutMode: LayoutMode
     sortBy: SortOption
@@ -1878,7 +2292,171 @@ type SortOption = 'name' | 'date' | 'size'
 type SortDirection = 'asc' | 'desc'
 type LayoutMode = 'grid' | 'adaptive' | 'list' | 'masonry'
 type GroupByOption = 'none' | 'type' | 'date' | 'size'
-type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'about'
+type SettingsCategory = 'general' | 'appearance' | 'network' | 'storage' | 'ai' | 'aiVision' | 'performance' | 'lanShare' | 'about'
+type PersonSortOption = 'name' | 'count' | 'created'
+type PersonGroupByOption = 'none' | 'name' | 'topic'
+```
+
+---
+
+### LanShareSettings
+```typescript
+interface LanShareSettings {
+  enabled: boolean           // 是否启用局域网共享
+  port: number               // 服务端口（默认 8080）
+  accessCode: string         // 访问验证码
+  allowEdit: boolean         // 允许编辑和删除
+  allowUpload: boolean       // 允许上传
+}
+```
+
+---
+
+### LanShareInfo
+```typescript
+interface LanShareInfo {
+  url: string                // 访问地址，如 "http://192.168.1.100:8080"
+  port: number               // 实际使用的端口
+  local_ip: string           // 本机局域网 IP 地址
+}
+```
+
+---
+
+### LanShareStatus
+```typescript
+interface LanShareStatus {
+  is_running: boolean        // 服务是否运行中
+  port: number               // 服务端口
+  local_ip: string | null    // 本机局域网 IP
+  device_count: number       // 当前连接设备数
+}
+```
+
+---
+
+### ConnectedDevice
+```typescript
+interface ConnectedDevice {
+  id: string                 // 设备唯一标识
+  name: string               // 设备名称
+  ip: string                 // IP 地址
+  connectedAt: number        // 连接时间戳（Unix 时间戳，秒）
+  lastActiveAt: number       // 最后活跃时间戳（Unix 时间戳，秒）
+}
+```
+
+---
+
+### BrowseItem
+```typescript
+interface BrowseItem {
+  name: string               // 文件/文件夹名称
+  path: string               // 相对路径
+  type: string               // 类型："folder" 或 "image"
+  size?: number              // 文件大小（字节）或文件夹内文件数
+  thumbnail?: string         // 缩略图 URL（仅图片）
+  preview_images?: string[]  // 预览图片路径数组（仅文件夹）
+  width?: number             // 图片宽度
+  height?: number            // 图片高度
+}
+```
+
+---
+
+### BrowseResponse
+```typescript
+interface BrowseResponse {
+  current_path: string       // 当前路径
+  folders: BrowseItem[]      // 文件夹列表
+  images: BrowseItem[]       // 图片列表
+}
+```
+
+---
+
+### AuthRequest
+```typescript
+interface AuthRequest {
+  code: string               // 访问验证码
+  device_name?: string       // 设备名称（可选）
+}
+```
+
+---
+
+### AuthResponse
+```typescript
+interface AuthResponse {
+  success: boolean           // 认证是否成功
+  token?: string             // 访问令牌（成功时返回）
+  expires_in?: number        // 令牌有效期（秒）
+  error?: string             // 错误信息（失败时返回）
+}
+```
+
+---
+
+### OperationResponse
+```typescript
+interface OperationResponse {
+  success: boolean           // 操作是否成功
+  path?: string              // 新路径（重命名成功时返回）
+  error?: string             // 错误信息（失败时返回）
+}
+```
+
+---
+
+### LanShareConfig (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanShareConfig {
+    pub enabled: bool,
+    pub port: u16,
+    pub access_code: String,
+    pub allow_edit: bool,
+    pub allow_upload: bool,
+}
+```
+
+---
+
+### ConnectedDevice (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectedDevice {
+    pub id: String,
+    pub name: String,
+    pub ip: String,
+    pub connected_at: u64,
+    pub last_active_at: u64,
+}
+```
+
+---
+
+### LanShareStatus (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanShareStatus {
+    pub is_running: bool,
+    pub port: u16,
+    pub local_ip: Option<String>,
+    pub device_count: usize,
+}
+```
+
+---
+
+### LanShareInfo (Rust)
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanShareInfo {
+    pub url: String,
+    pub port: u16,
+    pub local_ip: String,
+}
 ```
 
 ---
@@ -2144,6 +2722,286 @@ async function clipGetEmbeddingCount(): Promise<number>
 
 ---
 
+### `clipGetEmbeddingCountByModel`
+```typescript
+async function clipGetEmbeddingCountByModel(modelName: string): Promise<number>
+```
+
+**描述**: 获取指定模型的嵌入向量数量
+
+**参数**:
+- `modelName`: string - 模型名称
+
+**返回**: `Promise<number>` - 该模型的嵌入向量数量
+
+---
+
+### `clipGetModelVersions`
+```typescript
+async function clipGetModelVersions(): Promise<Array<[string, number]>>
+```
+
+**描述**: 获取所有模型版本及其嵌入数量
+
+**返回**: `Promise<Array<[string, number]>>` - 模型版本和嵌入数量的列表
+
+---
+
+### `clipGetEmbeddingStats`
+```typescript
+async function clipGetEmbeddingStats(): Promise<ClipEmbeddingStats>
+```
+
+**描述**: 获取嵌入向量统计信息（包括根目录路径）
+
+**返回**: `Promise<ClipEmbeddingStats>` - 嵌入向量统计信息
+
+---
+
+### `clipGetModelStatus`
+```typescript
+async function clipGetModelStatus(modelName: string): Promise<ClipModelStatus>
+```
+
+**描述**: 获取 CLIP 模型下载状态
+
+**参数**:
+- `modelName`: string - 模型名称
+
+**返回**: `Promise<ClipModelStatus>` - 模型状态
+
+---
+
+### `clipDeleteModel`
+```typescript
+async function clipDeleteModel(modelName: string): Promise<void>
+```
+
+**描述**: 删除 CLIP 模型文件
+
+**参数**:
+- `modelName`: string - 模型名称
+
+---
+
+### `clipUpdateConfig`
+```typescript
+async function clipUpdateConfig(useGpu: boolean): Promise<void>
+```
+
+**描述**: 更新 CLIP 配置（如 GPU 加速）
+
+**参数**:
+- `useGpu`: boolean - 是否启用 GPU 加速
+
+---
+
+### `clipCancelEmbeddingGeneration`
+```typescript
+async function clipCancelEmbeddingGeneration(): Promise<void>
+```
+
+**描述**: 取消 CLIP 嵌入向量生成
+
+---
+
+### `clipPauseEmbeddingGeneration`
+```typescript
+async function clipPauseEmbeddingGeneration(): Promise<void>
+```
+
+**描述**: 暂停 CLIP 嵌入向量生成
+
+---
+
+### `clipResumeEmbeddingGeneration`
+```typescript
+async function clipResumeEmbeddingGeneration(): Promise<void>
+```
+
+**描述**: 继续 CLIP 嵌入向量生成
+
+---
+
+### `clipGenerateTagsFromEmbeddings`
+```typescript
+async function clipGenerateTagsFromEmbeddings(
+  modelName?: string,
+  threshold?: number,
+  language?: string
+): Promise<{ total: number; success: number; skipped: number }>
+```
+
+**描述**: 从已有的嵌入向量生成标签（仅 WD14 模型）
+
+**参数**:
+- `modelName?`: string - 模型名称
+- `threshold?`: number - 标签置信度阈值
+- `language?`: string - 标签语言（'zh' 或 'en'）
+
+**返回**: `Promise<{ total: number; success: number; skipped: number }>` - 处理结果
+
+---
+
+### `clipPreviewTagsFromEmbeddings`
+```typescript
+async function clipPreviewTagsFromEmbeddings(
+  modelName?: string,
+  threshold?: number,
+  language?: string
+): Promise<{ tags: PreviewTag[]; total_files: number; files_with_tags: number }>
+```
+
+**描述**: 预览从嵌入向量生成的标签（不保存）
+
+**参数**:
+- `modelName?`: string - 模型名称
+- `threshold?`: number - 标签置信度阈值
+- `language?`: string - 标签语言
+
+**返回**: 预览结果
+
+---
+
+### `clipSearchByCharacterTag`
+```typescript
+async function clipSearchByCharacterTag(
+  tagIndex: number,
+  minScore: number,
+  maxResults?: number
+): Promise<ClipSearchResult[]>
+```
+
+**描述**: 按角色标签搜索图片
+
+**参数**:
+- `tagIndex`: number - 标签索引
+- `minScore`: number - 最小相似度阈值
+- `maxResults?`: number - 最大返回结果数
+
+**返回**: `Promise<ClipSearchResult[]>` - 搜索结果列表
+
+---
+
+### `clipGetWorkTopics`
+```typescript
+async function clipGetWorkTopics(
+  minScore: number,
+  minCount?: number,
+  language?: string
+): Promise<WorkTopicInfo[]>
+```
+
+**描述**: 获取作品专题信息（从 WD14 角色标签提取）
+
+**参数**:
+- `minScore`: number - 最小相似度阈值
+- `minCount?`: number - 最小匹配文件数
+- `language?`: string - 语言
+
+**返回**: `Promise<WorkTopicInfo[]>` - 作品专题列表
+
+---
+
+### `clipCreateWorkTopics`
+```typescript
+async function clipCreateWorkTopics(
+  worksToCreate: WorkToCreate[]
+): Promise<CreateWorkTopicsResult>
+```
+
+**描述**: 创建作品专题（自动创建关联人物）
+
+**参数**:
+- `worksToCreate`: WorkToCreate[] - 要创建的作品列表
+
+**返回**: `Promise<CreateWorkTopicsResult>` - 创建结果
+
+---
+
+### `getAllImageFiles`
+```typescript
+async function getAllImageFiles(): Promise<{ id: string; path: string; name: string; format?: string }[]>
+```
+
+**描述**: 获取所有图片文件（从数据库查询），用于 CLIP 嵌入向量生成
+
+**返回**: 图片文件列表
+
+---
+
+### `clipOpenModelFolder`
+```typescript
+async function clipOpenModelFolder(): Promise<void>
+```
+
+**描述**: 打开 CLIP 模型缓存文件夹
+
+---
+
+### `listenClipEmbeddingProgress`
+```typescript
+function listenClipEmbeddingProgress(
+  callback: (data: {
+    current: number;
+    total: number;
+    progress: number;
+    success: number;
+    failed: number;
+    skipped?: number;
+    processed?: number;
+    timestamp?: number;
+  }) => void
+): Promise<() => void>
+```
+
+**描述**: 监听 CLIP 嵌入向量生成进度事件
+
+**返回**: 取消监听的函数
+
+---
+
+### `listenClipEmbeddingCompleted`
+```typescript
+function listenClipEmbeddingCompleted(
+  callback: (data: {
+    total: number;
+    success: number;
+    failed: number;
+    cancelled: boolean;
+  }) => void
+): Promise<() => void>
+```
+
+**描述**: 监听 CLIP 嵌入向量生成完成事件
+
+---
+
+### `listenClipEmbeddingCancelled`
+```typescript
+function listenClipEmbeddingCancelled(
+  callback: (data: {
+    processed: number;
+    total: number;
+  }) => void
+): Promise<() => void>
+```
+
+**描述**: 监听 CLIP 嵌入向量生成取消事件
+
+---
+
+### `listenClipModelDownloadProgress`
+```typescript
+function listenClipModelDownloadProgress(
+  callback: (data: ClipModelDownloadProgress) => void
+): Promise<() => void>
+```
+
+**描述**: 监听 CLIP 模型下载进度事件
+
+---
+
 ### `clipGenerateEmbeddingsBatch`
 ```typescript
 async function clipGenerateEmbeddingsBatch(
@@ -2162,7 +3020,7 @@ async function clipGenerateEmbeddingsBatch(
 - `files`: [string, string][] - 文件列表，每个元素为 [file_path, file_id] 元组
 - `useGpu`: boolean - 是否启用 GPU 加速
 - `modelName?`: string - 模型名称
-- `autoAddTags?`: boolean - 是否自动添加标签
+- `autoAddTags?`: boolean - 是否自动添加标签（WD14 模型）
 - `tagThreshold?`: number - 标签置信度阈值
 - `language?`: string - 标签语言
 
@@ -2398,6 +3256,137 @@ type ClipModelName = 'SigLIP2-Base' | 'SigLIP2-So400M' | 'WD-EVA02-Large-Tagger-
 
 ---
 
+### ClipDownloadStatus
+```typescript
+type ClipDownloadStatus = 'not_started' | 'downloading' | 'completed' | 'error'
+```
+
+---
+
+### ClipEmbeddingStats
+```typescript
+interface ClipEmbeddingStats {
+  total_count: number     // 嵌入向量总数
+  model_name: string      // 当前模型名称
+  root_path: string       // 根目录路径
+}
+```
+
+---
+
+### ClipModelStatus
+```typescript
+interface ClipModelStatus {
+  model_name: string
+  display_name: string
+  description: string
+  is_downloaded: boolean
+  is_gpu_active: boolean
+  embedding_dim: number
+  image_size: number
+  downloaded_size: number
+  files: {
+    [key: string]: boolean  // 模型文件名 -> 是否已下载
+  }
+}
+```
+
+---
+
+### ClipModelDownloadProgress
+```typescript
+interface ClipModelDownloadProgress {
+  file_name: string
+  file_index: number
+  total_files: number
+  downloaded: number
+  total: number
+  progress: number
+  overall_progress: number
+  speed: number
+}
+```
+
+---
+
+### ClipBatchEmbeddingResult
+```typescript
+interface ClipBatchEmbeddingResult {
+  total: number
+  success: number
+  failed: number
+  failed_files: string[]
+  cancelled?: boolean
+  throughput?: number
+  elapsed_secs?: number
+}
+```
+
+---
+
+### PreviewTag
+```typescript
+interface PreviewTag {
+  name: string
+  name_cn: string
+  count: number
+  sample_file_ids: string[]
+}
+```
+
+---
+
+### WorkTopicInfo
+```typescript
+interface WorkTopicInfo {
+  workName: string
+  workNameCn?: string
+  characterCount: number
+  imageCount: number
+  characters: WorkCharacter[]
+  existingTopicId?: string
+  coverFileId?: string
+  sampleFileIds?: string[]
+  fileIds?: string[]
+}
+```
+
+---
+
+### WorkCharacter
+```typescript
+interface WorkCharacter {
+  tagName: string
+  tagNameCn?: string
+  personId?: string
+  imageCount: number
+  coverFileId?: string
+}
+```
+
+---
+
+### WorkToCreate
+```typescript
+interface WorkToCreate {
+  name: string
+  topicType?: string
+  coverFileId?: string
+}
+```
+
+---
+
+### CreateWorkTopicsResult
+```typescript
+interface CreateWorkTopicsResult {
+  topics: Topic[]
+  people: Person[]
+}
+```
+
+---
+
 ### CharacterTag
 ```typescript
 interface CharacterTag {
@@ -2483,7 +3472,7 @@ const [result, error] = await safeOperation(
 
 ---
 
-**文档版本**: 1.3  
-**更新日期**: 2026-03-01  
-**覆盖范围**: 所有公共 API  
+**文档版本**: 1.4  
+**更新日期**: 2026-03-14  
+**覆盖范围**: 所有公共 API（包括局域网共享 API）  
 **详细程度**: 高
