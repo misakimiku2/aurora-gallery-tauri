@@ -66,16 +66,12 @@
 ### 系统要求
 
 - **Windows**: Windows 10 或更高版本
-- **macOS**: macOS 10.15 或更高版本
-- **Linux**: Ubuntu 20.04 或兼容发行版
 
 ### 下载安装
 
 1. 前往 [Releases](https://github.com/misakimiku2/aurora-gallery-tauri/releases) 页面
 2. 下载对应平台的安装包：
-   - Windows: `.msi` 安装程序
-   - macOS: `.dmg` 磁盘镜像
-   - Linux: `.AppImage` 可执行文件
+   - Windows: `.msi` 安装程序 `exe`程序
 3. 运行安装程序并按提示完成安装
 
 ### 从源码构建
