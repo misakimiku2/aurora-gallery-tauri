@@ -16,7 +16,7 @@ impl DeviceManager {
         }
     }
 
-    pub async fn register_device(&self, session: &Session) {
+    pub async fn register_device(&self, session: &Session, device_type: &str) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -28,6 +28,7 @@ impl DeviceManager {
             ip: session.ip.clone(),
             connected_at: now,
             last_active_at: now,
+            device_type: device_type.to_string(),
         };
 
         let mut devices = self.devices.write().await;

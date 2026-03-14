@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Wifi, Copy, RefreshCw, Shield, Smartphone, ExternalLink, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { Wifi, Copy, RefreshCw, Shield, Smartphone, ExternalLink, Check, AlertCircle, Loader2, Monitor, Tablet } from 'lucide-react';
 import { LanShareSettings, ConnectedDevice } from '../../types';
 import {
   lanShareStart,
@@ -25,6 +25,15 @@ const generateQRCodeUrl = (text: string): string => {
   return `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(text)}`;
 };
 
+const getDeviceIcon = (deviceType: string) => {
+  switch (deviceType) {
+    case 'desktop': return Monitor;
+    case 'tablet': return Tablet;
+    case 'phone': return Smartphone;
+    default: return Smartphone;
+  }
+};
+
 export const LanSharePanel: React.FC<LanSharePanelProps> = ({
   t,
   settings,
@@ -33,6 +42,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
+  const [qrLoading, setQrLoading] = useState(false);
   const [serverStatus, setServerStatus] = useState<LanShareStatus | null>(null);
   const [connectedDevices, setConnectedDevices] = useState<ConnectedDevice[]>([]);
   const [isStarting, setIsStarting] = useState(false);
@@ -46,9 +56,11 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
 
   useEffect(() => {
     if (serverUrl) {
+      setQrLoading(true);
       setQrCodeUrl(generateQRCodeUrl(serverUrl));
     } else {
       setQrCodeUrl('');
+      setQrLoading(false);
     }
   }, [serverUrl]);
 
@@ -209,12 +221,19 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center">
                   {t('settings.lanShare.scanToConnect') || '扫码连接'}
                 </label>
-                <div className="bg-white rounded-lg p-3 inline-block border border-gray-200 dark:border-gray-600 overflow-hidden">
+                <div className="bg-white rounded-lg p-3 inline-block border border-gray-200 dark:border-gray-600 overflow-hidden relative">
+                  {qrLoading && (
+                    <div className="absolute top-3 left-3 w-36 h-36 bg-white rounded flex items-center justify-center z-10">
+                      <Loader2 size={32} className="text-gray-400 animate-spin" />
+                    </div>
+                  )}
                   {qrCodeUrl ? (
                     <img
                       src={qrCodeUrl}
                       alt="QR Code"
                       className="w-36 h-36 object-contain block"
+                      onLoad={() => setQrLoading(false)}
+                      onError={() => setQrLoading(false)}
                     />
                   ) : (
                     <div className="w-36 h-36 bg-gray-100 rounded flex items-center justify-center">
@@ -323,32 +342,35 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
 
             {connectedDevices.length > 0 ? (
               <div className="space-y-2">
-                {connectedDevices.map((device) => (
-                  <div
-                    key={device.id}
-                    className="flex items-center justify-between p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
-                        <Smartphone size={16} className="text-gray-500" />
+                {connectedDevices.map((device) => {
+                  const DeviceIcon = getDeviceIcon(device.deviceType);
+                  return (
+                    <div
+                      key={device.id}
+                      className="flex items-center justify-between p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
+                          <DeviceIcon size={16} className="text-gray-500" />
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium text-gray-800 dark:text-white">
+                            {device.name}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {device.ip}
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="text-sm font-medium text-gray-800 dark:text-white">
-                          {device.name}
-                        </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {device.ip}
-                        </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          {t('settings.lanShare.active') || '活跃'}
+                        </span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                      <span className="text-xs text-gray-500 dark:text-gray-400">
-                        {t('settings.lanShare.active') || '活跃'}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="text-center py-6 text-gray-500 dark:text-gray-400">

@@ -124,6 +124,9 @@ pub async fn lan_share_get_devices(
     if let Some(server) = server_guard.as_ref() {
         let devices = server.get_connected_devices().await;
         log::debug!("[LAN Share] 当前 {} 个设备在线", devices.len());
+        for device in &devices {
+            log::debug!("[LAN Share] 设备: {} ({}), 类型: {}", device.name, device.id, device.device_type);
+        }
         Ok(devices)
     } else {
         log::debug!("[LAN Share] 服务器未运行，返回空设备列表");

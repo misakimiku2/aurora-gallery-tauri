@@ -21,7 +21,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -558,6 +558,19 @@ export const App: React.FC = () => {
                   setState(prev => ({ ...prev, aiConnectionStatus: 'disconnected' }));
                 }
               })();
+
+              // 自动启动局域网共享服务（如果之前已启用）
+              if (finalSettings.lanShare?.enabled && finalSettings.paths?.resourceRoot) {
+                (async () => {
+                  try {
+                    console.log('[LAN Share] Auto-starting LAN share service...');
+                    await lanShareStart(finalSettings.lanShare, finalSettings.paths.resourceRoot);
+                    console.log('[LAN Share] Auto-started successfully');
+                  } catch (e) {
+                    console.error('[LAN Share] Auto-start failed:', e);
+                  }
+                })();
+              }
 
               // 锟斤拷锟斤拷锟斤拷锟斤拷 ref 锟斤拷确锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷使锟斤拷锟斤拷确锟斤拷值
               exitActionRef.current = finalSettings.exitAction || 'ask';

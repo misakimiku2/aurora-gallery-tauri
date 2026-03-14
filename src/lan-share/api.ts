@@ -169,12 +169,98 @@ class LanShareApi {
 
   private getDeviceName(): string {
     const ua = navigator.userAgent;
-    if (/iPhone/.test(ua)) return 'iPhone';
-    if (/iPad/.test(ua)) return 'iPad';
-    if (/Android/.test(ua)) return 'Android';
-    if (/Windows/.test(ua)) return 'Windows';
-    if (/Mac/.test(ua)) return 'Mac';
-    if (/Linux/.test(ua)) return 'Linux';
+    
+    // iPad
+    if (/iPad/.test(ua)) {
+      const match = ua.match(/iPad\d+,\d+/);
+      return match ? `iPad (${match[0]})` : 'iPad';
+    }
+    
+    // iPhone
+    if (/iPhone/.test(ua)) {
+      const match = ua.match(/iPhone\d+,\d+/);
+      return match ? `iPhone (${match[0]})` : 'iPhone';
+    }
+    
+    // Android - 尝试提取型号
+    if (/Android/.test(ua)) {
+      // 尝试匹配 Android; 版本; 型号 格式
+      let match = ua.match(/Android\s*[\d.]+;\s*([^;)]+)/i);
+      if (match && match[1]) {
+        let model = match[1].trim();
+        // 过滤掉无意义的短型号（如 "K"）
+        const isMeaningfulModel = model.length >= 3 || /^[A-Z]{2,}-/i.test(model);
+        
+        if (isMeaningfulModel && model.length < 30) {
+          // 检查是否是已知品牌
+          if (/SM-/i.test(model)) return `三星 ${model}`;
+          if (/SC-/i.test(model)) return `三星 ${model}`;
+          if (/Pixel/i.test(model)) return `Google ${model}`;
+          if (/Nexus/i.test(model)) return `Google ${model}`;
+          if (/Redmi/i.test(model)) return `红米 ${model.replace(/Redmi\s*/i, '')}`;
+          if (/Mi\s/i.test(model)) return `小米 ${model.replace(/Mi\s/i, '')}`;
+          if (/OnePlus/i.test(model)) return `一加 ${model.replace(/OnePlus\s*/i, '')}`;
+          if (/HUAWEI/i.test(model)) return `华为 ${model.replace(/HUAWEI\s*/i, '')}`;
+          if (/Honor/i.test(model)) return `荣耀 ${model.replace(/Honor\s*/i, '')}`;
+          if (/OPPO/i.test(model)) return `OPPO ${model.replace(/OPPO\s*/i, '')}`;
+          if (/vivo/i.test(model)) return `vivo ${model.replace(/vivo\s*/i, '')}`;
+          if (/iQOO/i.test(model)) return `iQOO ${model.replace(/iQOO\s*/i, '')}`;
+          if (/RedMagic/i.test(model)) return `红魔 ${model.replace(/RedMagic\s*/i, '')}`;
+          if (/Samsung/i.test(model)) return `三星 ${model.replace(/Samsung\s*/i, '')}`;
+          // 其他有意义的型号直接返回
+          return model;
+        }
+      }
+      
+      // 尝试匹配 Samsung SM-XXXX 格式
+      match = ua.match(/Samsung\s*(SM-[A-Z0-9]+)/i);
+      if (match) return `三星 ${match[1]}`;
+      
+      match = ua.match(/SM-([A-Z0-9]+)/i);
+      if (match) return `三星 SM-${match[1]}`;
+      
+      match = ua.match(/SC-([A-Z0-9]+)/i);
+      if (match) return `三星 SC-${match[1]}`;
+      
+      match = ua.match(/Pixel\s*(\d+)/i);
+      if (match) return `Google Pixel ${match[1]}`;
+      
+      match = ua.match(/Nexus\s*(\d+)/i);
+      if (match) return `Google Nexus ${match[1]}`;
+      
+      // 检测是否是平板（无 Mobile 关键词）
+      if (!/Mobile/i.test(ua)) {
+        return 'Android 平板';
+      }
+      
+      return 'Android 手机';
+    }
+    
+    // Windows
+    if (/Windows/.test(ua)) {
+      const match = ua.match(/Windows\s*NT\s*([\d.]+)/);
+      if (match) {
+        const version = match[1];
+        if (version.startsWith('10')) return 'Windows 10/11';
+        if (version.startsWith('6.3')) return 'Windows 8.1';
+        if (version.startsWith('6.2')) return 'Windows 8';
+        if (version.startsWith('6.1')) return 'Windows 7';
+      }
+      return 'Windows';
+    }
+    
+    // Mac
+    if (/Mac/.test(ua)) {
+      const match = ua.match(/Mac\s*OS\s*X\s*([\d_]+)/);
+      if (match) return `macOS ${match[1].replace(/_/g, '.')}`;
+      return 'Mac';
+    }
+    
+    // Linux
+    if (/Linux/.test(ua)) {
+      return 'Linux';
+    }
+    
     return 'Unknown Device';
   }
 }

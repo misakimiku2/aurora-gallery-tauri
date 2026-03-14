@@ -30,7 +30,7 @@
 - **🔍 快速搜索** - 支持文件名、标签、描述等多维度搜索
 - **🎨 色彩搜索** - 基于 CIEDE2000 算法的精准颜色搜索
 - **👤 人物识别** - AI 人脸识别，自动归类人物照片
-- **📂 专题管理** - 创建专题专辑，灵活组织图片
+- **📂 专题管理** - 创建专题专辑，支持智能创建（自动识别作品和角色）
 - **🏷️ 标签系统** - 自定义标签，高效分类管理
 
 ### AI 智能功能
@@ -59,6 +59,7 @@
 - **🌍 多语言** - 支持中文和英文界面
 - **🔒 本地存储** - 数据本地保存，保护隐私
 - **🔄 自动更新** - 内置应用更新检查和安装功能
+- **🌐 局域网共享** - 内置 HTTP 服务器，支持局域网图片共享和远程浏览
 
 ## 安装说明
 
@@ -135,6 +136,7 @@ npm run tauri:build
 - **样式**: Tailwind CSS 3
 - **图标**: Lucide React
 - **AI 识别**: face-api.js
+- **AI 分析**: OpenAI, Gemini, 智谱 AI, Ollama, LM Studio
 
 ### 后端
 - **框架**: Tauri 2.0
@@ -142,7 +144,7 @@ npm run tauri:build
 - **图像处理**: image, fast_image_resize, jxl-oxide
 - **数据库**: SQLite (Rusqlite)
 - **并发**: Tokio + Rayon
-- **AI 模型**: ONNX Runtime (CLIP, WD14)
+- **AI 模型**: ONNX Runtime (CLIP: SigLIP2-Base, SigLIP2-So400M, WD14)
 
 ## 开发指南
 

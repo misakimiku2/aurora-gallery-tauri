@@ -295,6 +295,7 @@ export interface ConnectedDevice {
   ip: string;                // IP地址
   connectedAt: number;       // 连接时间戳
   lastActiveAt: number;      // 最后活跃时间
+  deviceType: string;        // 设备类型: "desktop", "tablet", "phone"
 }
 
 export interface AppSettings {

@@ -104,6 +104,7 @@ pub async fn handle_app_js() -> impl IntoResponse {
 pub async fn handle_auth(
     State(state): State<AppState>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(payload): Json<AuthRequest>,
 ) -> Result<Json<AuthResponse>, StatusCode> {
     log::info!("[LAN Share] 认证请求来自 IP: {}, 验证码: {}", addr.ip(), payload.code);
@@ -125,12 +126,19 @@ pub async fn handle_auth(
         format!("Device-{}", &device_id[..8])
     });
     let ip = addr.ip().to_string();
+    
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    log::info!("[LAN Share] User-Agent: {}", user_agent);
+    let device_type = parse_device_type(user_agent);
 
     let session = state.sessions.create_session(device_id.clone(), device_name.clone(), ip.clone()).await;
-    state.devices.register_device(&session).await;
+    state.devices.register_device(&session, &device_type).await;
 
-    log::info!("[LAN Share] 认证成功 - 设备: {} ({}), IP: {}, Token: {}...", 
-        device_name, device_id, ip, &session.token[..8]);
+    log::info!("[LAN Share] 认证成功 - 设备: {} ({}), IP: {}, 设备类型: {}, Token: {}...", 
+        device_name, device_id, ip, device_type, &session.token[..8]);
 
     Ok(Json(AuthResponse {
         success: true,
@@ -138,6 +146,53 @@ pub async fn handle_auth(
         expires_in: Some(SESSION_TIMEOUT_SECS),
         error: None,
     }))
+}
+
+fn parse_device_type(user_agent: &str) -> String {
+    let ua_lower = user_agent.to_lowercase();
+    
+    // iPad 检测
+    if ua_lower.contains("ipad") {
+        return "tablet".to_string();
+    }
+    // iPhone 检测
+    if ua_lower.contains("iphone") {
+        return "phone".to_string();
+    }
+    // Android 检测 - 必须在 Linux 检测之前
+    if ua_lower.contains("android") {
+        // 平板特征检测
+        let tablet_keywords = ["tablet", "sm-", "sc-", "nexus", "pixel", "kindle", "pad"];
+        for keyword in &tablet_keywords {
+            if ua_lower.contains(keyword) {
+                return "tablet".to_string();
+            }
+        }
+        // Android 手机通常包含 "Mobile" 关键词
+        if ua_lower.contains("mobile") {
+            return "phone".to_string();
+        }
+        // 其他 Android 设备默认为平板
+        return "tablet".to_string();
+    }
+    // Windows 桌面检测
+    if ua_lower.contains("windows nt") || ua_lower.contains("windows phone") {
+        if ua_lower.contains("windows phone") {
+            return "phone".to_string();
+        }
+        return "desktop".to_string();
+    }
+    // Mac 桌面检测
+    if ua_lower.contains("macintosh") || ua_lower.contains("mac os x") {
+        return "desktop".to_string();
+    }
+    // Linux 桌面检测（排除已处理的 Android）
+    if ua_lower.contains("linux") {
+        return "desktop".to_string();
+    }
+    
+    // 默认返回手机
+    "phone".to_string()
 }
 
 pub async fn handle_browse(

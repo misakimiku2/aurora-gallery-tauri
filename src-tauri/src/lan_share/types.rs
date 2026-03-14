@@ -62,6 +62,12 @@ pub struct ConnectedDevice {
     pub ip: String,
     pub connected_at: u64,
     pub last_active_at: u64,
+    #[serde(default = "default_device_type", rename = "deviceType")]
+    pub device_type: String,
+}
+
+fn default_device_type() -> String {
+    "phone".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
