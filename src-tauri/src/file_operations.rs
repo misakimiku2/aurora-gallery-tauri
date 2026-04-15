@@ -486,6 +486,7 @@ pub async fn copy_image_colors(
 }
 
 #[tauri::command]
+#[cfg(not(target_os = "android"))]
 pub async fn copy_image_to_clipboard(file_path: String) -> Result<(), String> {
     use arboard::Clipboard;
     

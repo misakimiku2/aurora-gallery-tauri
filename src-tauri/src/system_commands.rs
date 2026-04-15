@@ -4,35 +4,69 @@ use std::fs;
 use std::path::Path;
 
 #[tauri::command]
+pub fn get_platform() -> String {
+    if cfg!(target_os = "android") {
+        "android".to_string()
+    } else if cfg!(target_os = "ios") {
+        "ios".to_string()
+    } else if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "windows") {
+        "windows".to_string()
+    } else if cfg!(target_os = "linux") {
+        "linux".to_string()
+    } else {
+        "unknown".to_string()
+    }
+}
+
+#[tauri::command]
 pub async fn get_default_paths() -> Result<HashMap<String, String>, String> {
     use std::env;
     
     let mut paths = HashMap::new();
     
-    let home = env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .unwrap_or_else(|_| "C:\\Users\\User".to_string());
+    #[cfg(target_os = "android")]
+    {
+        let resource_root = "/storage/emulated/0/Pictures/AuroraGallery".to_string();
+        let cache_root = {
+            let app_data = env::var("HOME")
+                .or_else(|_| env::var("USERPROFILE"))
+                .unwrap_or_else(|_| "/data/data/com.aurora.gallery".to_string());
+            format!("{}/.Aurora_Cache", app_data)
+        };
+        paths.insert("resourceRoot".to_string(), resource_root);
+        paths.insert("cacheRoot".to_string(), cache_root);
+        return Ok(paths);
+    }
     
-    let resource_root = if cfg!(windows) {
-        format!("{}\\Pictures\\AuroraGallery", home)
-    } else if cfg!(target_os = "macos") {
-        format!("{}/Pictures/AuroraGallery", home)
-    } else {
-        format!("{}/Pictures/AuroraGallery", home)
-    };
-    
-    let cache_root = if cfg!(windows) {
-        format!("{}\\AppData\\Local\\Aurora\\Cache", home)
-    } else if cfg!(target_os = "macos") {
-        format!("{}/Library/Application Support/Aurora/Cache", home)
-    } else {
-        format!("{}/.local/share/aurora/cache", home)
-    };
-    
-    paths.insert("resourceRoot".to_string(), resource_root);
-    paths.insert("cacheRoot".to_string(), cache_root);
-    
-    Ok(paths)
+    #[cfg(not(target_os = "android"))]
+    {
+        let home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .unwrap_or_else(|_| "C:\\Users\\User".to_string());
+        
+        let resource_root = if cfg!(windows) {
+            format!("{}\\Pictures\\AuroraGallery", home)
+        } else if cfg!(target_os = "macos") {
+            format!("{}/Pictures/AuroraGallery", home)
+        } else {
+            format!("{}/Pictures/AuroraGallery", home)
+        };
+        
+        let cache_root = if cfg!(windows) {
+            format!("{}\\AppData\\Local\\Aurora\\Cache", home)
+        } else if cfg!(target_os = "macos") {
+            format!("{}/Library/Application Support/Aurora/Cache", home)
+        } else {
+            format!("{}/.local/share/aurora/cache", home)
+        };
+        
+        paths.insert("resourceRoot".to_string(), resource_root);
+        paths.insert("cacheRoot".to_string(), cache_root);
+        
+        Ok(paths)
+    }
 }
 
 #[tauri::command]

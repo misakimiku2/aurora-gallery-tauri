@@ -2,6 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for the application",
+  "platforms": ["macOS", "windows", "linux"],
   "remote": {
     "urls": [
       "http://localhost:14422",

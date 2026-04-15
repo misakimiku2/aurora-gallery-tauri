@@ -141,7 +141,8 @@ pub async fn switch_root_database(
     
     let _ = color_db_pool.ensure_cache_initialized_async();
     
-    // 切换 CLIP 嵌入数据库
+    // 切换 CLIP 嵌入数据库 (仅桌面端)
+    #[cfg(not(target_os = "android"))]
     if let Some(manager) = crate::clip::get_clip_manager().await {
         let mut guard = manager.write().await;
         guard.switch_root(root.to_path_buf()).await?;

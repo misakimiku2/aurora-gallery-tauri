@@ -18,9 +18,7 @@ export default defineConfig({
   server: {
     port: 14422,
     strictPort: true,
-    // Listen on all interfaces to ensure availability
-    host: 'localhost',
-    // Let Vite determine HMR settings automatically based on host
+    host: '0.0.0.0',
     hmr: {
       protocol: 'ws',
       host: 'localhost',

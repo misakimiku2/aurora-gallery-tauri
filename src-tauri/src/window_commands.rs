@@ -14,7 +14,7 @@ pub fn get_initial_db_paths(app_handle: &tauri::AppHandle) -> (std::path::PathBu
     let config_path = app_data_dir.join("user_data.json");
     
     if config_path.exists() {
-        if let Ok(json_str) = fs::read_to_string(config_path) {
+        if let Ok(json_str) = fs::read_to_string(&config_path) {
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
                 if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
                     if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
@@ -30,6 +30,7 @@ pub fn get_initial_db_paths(app_handle: &tauri::AppHandle) -> (std::path::PathBu
     (app_data_dir.join("colors.db"), app_data_dir.join("metadata.db"))
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn save_window_state(app_handle: &tauri::AppHandle) {
     let window = match app_handle.get_webview_window("main") {
         Some(w) => w,
@@ -67,25 +68,42 @@ pub fn save_window_state(app_handle: &tauri::AppHandle) {
     }
 }
 
+#[cfg(target_os = "android")]
+pub fn save_window_state(_app_handle: &tauri::AppHandle) {
+    // No-op on Android
+}
+
 #[tauri::command]
 pub async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String> {
-    save_window_state(&app_handle);
-    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
-    window.hide().map_err(|e| e.to_string())
+    #[cfg(not(target_os = "android"))]
+    {
+        save_window_state(&app_handle);
+        let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+        window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
-    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
-    window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())
+    #[cfg(not(target_os = "android"))]
+    {
+        let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
 pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
-    let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
-    window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize { width, height })))
-        .map_err(|e| e.to_string())
+    #[cfg(not(target_os = "android"))]
+    {
+        let window = app_handle.get_webview_window("main").ok_or("Window not found")?;
+        window.set_min_size(Some(tauri::Size::Logical(tauri::LogicalSize { width, height })))
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

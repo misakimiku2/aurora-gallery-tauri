@@ -1,0 +1,568 @@
+pub mod color_extractor;
+pub mod color_db;
+pub mod color_worker;
+pub mod db;
+pub mod color_search;
+pub mod thumbnail;
+pub mod file_types;
+pub mod image_utils;
+pub mod scanner;
+pub mod file_operations;
+pub mod db_commands;
+pub mod system_commands;
+pub mod window_commands;
+pub mod color_commands;
+
+#[cfg(not(target_os = "android"))]
+pub mod clip;
+#[cfg(not(target_os = "android"))]
+pub mod clip_commands;
+#[cfg(not(target_os = "android"))]
+pub mod work_extractor;
+#[cfg(not(target_os = "android"))]
+pub mod lan_share;
+#[cfg(not(target_os = "android"))]
+pub mod lan_share_commands;
+#[cfg(not(target_os = "android"))]
+pub mod updater;
+#[cfg(not(target_os = "android"))]
+pub mod update_downloader;
+#[cfg(not(target_os = "android"))]
+pub mod update_commands;
+
+#[cfg(target_os = "android")]
+pub mod android;
+
+pub use thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
+pub use color_search::{search_by_palette, search_by_color};
+pub use file_types::SavedWindowState;
+pub use window_commands::{get_window_state_path, get_initial_db_paths, save_window_state};
+pub use db::AppDbPool;
+
+#[cfg(not(target_os = "android"))]
+pub use lan_share_commands::LanShareState;
+
+#[cfg(target_os = "android")]
+pub use android::{scan_device_images, scan_device_folders, generate_thumbnail as android_generate_thumbnail, ThumbnailResult, AndroidImageInfo, AndroidFolderInfo};
+
+use std::fs;
+use std::path::Path;
+use std::sync::Arc;
+use tauri::Manager;
+
+#[cfg(target_os = "android")]
+use jni::objects::{JObject, JString};
+
+#[cfg(not(target_os = "android"))]
+use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+#[cfg(not(target_os = "android"))]
+use tauri::menu::{Menu, MenuItem};
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_scan_images() -> Result<Vec<AndroidImageInfo>, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    log::info!("android_scan_images: starting JNI scan");
+    let result = scan_device_images(&mut env, &activity_obj);
+    match &result {
+        Ok(images) => log::info!("android_scan_images: found {} images", images.len()),
+        Err(e) => log::error!("android_scan_images: failed: {}", e),
+    }
+    result
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_scan_folders() -> Result<Vec<AndroidFolderInfo>, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    log::info!("android_scan_folders: starting JNI scan");
+    let result = scan_device_folders(&mut env, &activity_obj);
+    match &result {
+        Ok(folders) => log::info!("android_scan_folders: found {} folders", folders.len()),
+        Err(e) => log::error!("android_scan_folders: failed: {}", e),
+    }
+    result
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_get_thumbnail(
+    file_path: String,
+    cache_root: String,
+) -> Result<ThumbnailResult, String> {
+    let cache_path = std::path::Path::new(&cache_root).to_path_buf();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        android_generate_thumbnail(&file_path, &cache_path)
+    }).await;
+    match result {
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn check_android_permissions() -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    let result = env.call_method(
+        &activity_obj,
+        "checkMediaPermissions",
+        "()Ljava/lang/String;",
+        &[],
+    ).map_err(|e| format!("Failed to call checkMediaPermissions: {:?}", e))?;
+    
+    let jstr = result.l()
+        .map_err(|e| format!("Failed to get result: {:?}", e))?;
+    
+    let java_str = unsafe { JString::from_raw(jstr.into_raw()) };
+    let rust_string: String = env.get_string(&java_str)
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+    
+    Ok(rust_string)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn request_android_permissions() -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    env.call_method(
+        &activity_obj,
+        "requestMediaPermissions",
+        "()V",
+        &[],
+    ).map_err(|e| format!("Failed to call requestMediaPermissions: {:?}", e))?;
+    
+    Ok("requested".to_string())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let builder = tauri::Builder::default();
+    
+    #[cfg(not(target_os = "android"))]
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+                let _ = window.unminimize();
+            }
+        }));
+    
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init());
+    
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(tauri_plugin_drag::init());
+    
+    let builder = builder.plugin(
+        tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Info)
+            .targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            ])
+            .build()
+    );
+    
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        db_commands::save_user_data,
+        db_commands::load_user_data,
+        search_by_palette,
+        search_by_color,
+        scanner::scan_directory,
+        file_operations::db_copy_file_metadata,
+        scanner::force_rescan,
+        color_commands::add_pending_files_to_db,
+        system_commands::get_platform,
+        system_commands::get_default_paths,
+        get_thumbnail,
+        get_thumbnails_batch,
+        save_remote_thumbnail,
+        image_utils::get_avif_preview,
+        image_utils::get_jxl_preview,
+        generate_drag_preview,
+        system_commands::read_file_as_base64,
+        file_operations::ensure_directory,
+        file_operations::file_exists,
+        system_commands::open_path,
+        file_operations::create_folder,
+        file_operations::rename_file,
+        file_operations::delete_file,
+        file_operations::copy_file,
+        file_operations::copy_image_colors,
+        file_operations::move_file,
+        file_operations::write_file_from_bytes,
+        file_operations::scan_file,
+        window_commands::hide_window,
+        window_commands::show_window,
+        window_commands::set_window_min_size,
+        window_commands::exit_app,
+        color_commands::get_dominant_colors,
+        color_worker::pause_color_extraction,
+        color_worker::resume_color_extraction,
+        db_commands::force_wal_checkpoint,
+        db_commands::get_wal_info,
+        db_commands::db_get_all_people,
+        db_commands::db_upsert_person,
+        db_commands::db_delete_person,
+        db_commands::db_update_person_avatar,
+        db_commands::db_get_all_topics,
+        db_commands::db_upsert_topic,
+        db_commands::db_delete_topic,
+        db_commands::db_upsert_file_metadata,
+        db_commands::db_get_all_file_metadata,
+        file_operations::db_copy_file_metadata,
+        db_commands::switch_root_database,
+        file_operations::copy_image_to_clipboard,
+        db_commands::get_color_db_stats,
+        db_commands::get_color_db_error_files,
+        db_commands::retry_color_extraction,
+        db_commands::delete_color_db_error_files,
+        update_commands::check_for_updates_command,
+        system_commands::open_external_link,
+        update_commands::start_update_download,
+        update_commands::pause_update_download,
+        update_commands::resume_update_download,
+        update_commands::cancel_update_download,
+        update_commands::get_update_download_progress,
+        update_commands::install_update,
+        update_commands::open_update_download_folder,
+        system_commands::proxy_http_request,
+        clip_commands::clip_search_by_text,
+        clip_commands::clip_search_by_image,
+        clip_commands::clip_generate_embedding,
+        clip_commands::clip_get_embedding_status,
+        clip_commands::clip_load_model,
+        clip_commands::clip_unload_model,
+        clip_commands::clip_is_model_loaded,
+        clip_commands::clip_get_embedding_count,
+        clip_commands::clip_get_embedding_count_by_model,
+        clip_commands::clip_get_model_versions,
+        clip_commands::clip_get_model_status,
+        clip_commands::clip_get_embedding_stats,
+        clip_commands::clip_delete_model,
+        clip_commands::clip_open_model_folder,
+        clip_commands::clip_generate_embeddings_batch,
+        clip_commands::clip_cancel_embedding_generation,
+        clip_commands::clip_pause_embedding_generation,
+        clip_commands::clip_resume_embedding_generation,
+        clip_commands::clip_update_config,
+        clip_commands::clip_generate_tags_from_embeddings,
+        clip_commands::get_all_image_files,
+        clip_commands::clip_get_character_tags,
+        clip_commands::clip_search_by_character_tag,
+        clip_commands::clip_get_detected_characters,
+        clip_commands::clip_preview_tags_from_embeddings,
+        clip_commands::clip_get_work_topics,
+        clip_commands::clip_create_work_topics,
+        lan_share_commands::lan_share_start,
+        lan_share_commands::lan_share_stop,
+        lan_share_commands::lan_share_get_status,
+        lan_share_commands::lan_share_get_devices,
+        lan_share_commands::lan_share_get_local_ip,
+        lan_share_commands::lan_share_check_port,
+        lan_share_commands::lan_share_update_config
+    ]);
+
+    #[cfg(target_os = "android")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        db_commands::save_user_data,
+        db_commands::load_user_data,
+        search_by_palette,
+        search_by_color,
+        scanner::scan_directory,
+        file_operations::db_copy_file_metadata,
+        scanner::force_rescan,
+        color_commands::add_pending_files_to_db,
+        system_commands::get_platform,
+        system_commands::get_default_paths,
+        get_thumbnail,
+        get_thumbnails_batch,
+        save_remote_thumbnail,
+        image_utils::get_avif_preview,
+        image_utils::get_jxl_preview,
+        generate_drag_preview,
+        system_commands::read_file_as_base64,
+        file_operations::ensure_directory,
+        file_operations::file_exists,
+        system_commands::open_path,
+        file_operations::create_folder,
+        file_operations::rename_file,
+        file_operations::delete_file,
+        file_operations::copy_file,
+        file_operations::move_file,
+        file_operations::write_file_from_bytes,
+        file_operations::scan_file,
+        window_commands::hide_window,
+        window_commands::show_window,
+        window_commands::set_window_min_size,
+        window_commands::exit_app,
+        color_commands::get_dominant_colors,
+        color_worker::pause_color_extraction,
+        color_worker::resume_color_extraction,
+        db_commands::force_wal_checkpoint,
+        db_commands::get_wal_info,
+        db_commands::db_get_all_people,
+        db_commands::db_upsert_person,
+        db_commands::db_delete_person,
+        db_commands::db_update_person_avatar,
+        db_commands::db_get_all_topics,
+        db_commands::db_upsert_topic,
+        db_commands::db_delete_topic,
+        db_commands::db_upsert_file_metadata,
+        db_commands::db_get_all_file_metadata,
+        db_commands::switch_root_database,
+        db_commands::get_color_db_stats,
+        db_commands::get_color_db_error_files,
+        db_commands::retry_color_extraction,
+        db_commands::delete_color_db_error_files,
+        system_commands::proxy_http_request,
+        android_scan_images,
+        android_scan_folders,
+        android_get_thumbnail,
+        check_android_permissions,
+        request_android_permissions,
+    ]);
+    
+    builder
+        .setup(|app| {
+            #[cfg(not(target_os = "android"))]
+            {
+                let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+                let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+                
+                let app_handle = app.handle().clone();
+                
+                let tray_icon = app.default_window_icon()
+                    .cloned()
+                    .ok_or_else(|| {
+                        log::warn!("No default window icon found, tray icon may not display correctly");
+                        "No default window icon"
+                    });
+                
+                let tray = TrayIconBuilder::new()
+                    .tooltip("Aurora Gallery")
+                    .icon(match tray_icon {
+                        Ok(icon) => icon,
+                        Err(_) => {
+                            return Ok(());
+                        }
+                    })
+                    .menu(&menu)
+                    .show_menu_on_left_click(false)
+                    .on_menu_event(move |app, event| {
+                        match event.id.as_ref() {
+                            "show" => {
+                                if let Some(window) = app.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            "quit" => {
+                                app.exit(0);
+                            }
+                            _ => {}
+                        }
+                    })
+                    .on_tray_icon_event(move |_tray, event| {
+                        match event {
+                            TrayIconEvent::DoubleClick { .. } => {
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    let _ = window.show();
+                                    let _ = window.set_focus();
+                                }
+                            }
+                            _ => {}
+                        }
+                    })
+                    .build(app)?;
+                
+                app.manage(Some(tray));
+            }
+            
+            let (db_path, app_db_path) = get_initial_db_paths(app.handle());
+            
+            let pool = match color_db::ColorDbPool::new(&db_path) {
+                Ok(pool_instance) => {
+                    {
+                        let mut conn = pool_instance.get_connection();
+                        if let Err(e) = color_db::init_db(&mut conn) {
+                            log::error!("Failed to initialize color database: {}", e);
+                        }
+                        if let Err(e) = color_db::reset_processing_to_pending(&mut conn) {
+                            log::error!("Failed to reset processing files to pending: {}", e);
+                        }
+                    }
+                    if let Err(e) = pool_instance.ensure_cache_initialized_async() {
+                        log::error!("Failed to start background color cache preheat: {}", e);
+                    }
+                    if let Err(e) = pool_instance.get_db_file_sizes() {
+                        log::error!("Failed to get database file sizes: {}", e);
+                    }
+                    pool_instance
+                },
+                Err(e) => {
+                    log::error!("Failed to create color database connection pool: {}", e);
+                    panic!("Failed to create color database connection pool: {}", e);
+                }
+            };
+            
+            let pool_arc = Arc::new(pool);
+            app.manage(pool_arc.clone());
+
+            let app_db_pool = match AppDbPool::new(&app_db_path) {
+                Ok(pool) => {
+                    {
+                        let conn = pool.get_connection();
+                        if let Err(e) = db::init_db(&conn) {
+                            log::error!("Failed to initialize app database: {}", e);
+                        }
+                    }
+                    pool
+                },
+                Err(e) => {
+                    panic!("Failed to create app database pool: {}", e);
+                }
+            };
+            app.manage(app_db_pool);
+            
+            #[cfg(not(target_os = "android"))]
+            app.manage(LanShareState::new());
+            
+            let batch_size = 50;
+            let app_handle_new = app.handle().clone();
+            let app_handle_arc = Arc::new(app_handle_new);
+
+            let cache_root = {
+                let home = std::env::var("HOME")
+                    .or_else(|_| std::env::var("USERPROFILE"))
+                    .ok();
+                home.map(|h| {
+                    if cfg!(windows) {
+                        Path::new(&h).join("AppData").join("Local").join("Aurora").join("Cache")
+                    } else if cfg!(target_os = "macos") {
+                        Path::new(&h).join("Library").join("Application Support").join("Aurora").join("Cache")
+                    } else {
+                        Path::new(&h).join(".local").join("share").join("aurora").join("cache")
+                    }
+                })
+            };
+            
+            #[cfg(not(target_os = "android"))]
+            {
+                let clip_cache_root = cache_root.clone().unwrap_or_else(|| {
+                    let home = std::env::var("HOME")
+                        .or_else(|_| std::env::var("USERPROFILE"))
+                        .unwrap_or_else(|_| ".".to_string());
+                    Path::new(&home).join(".aurora_cache")
+                });
+                
+                let clip_root_path = {
+                    let app_data_dir = app.handle().path().app_data_dir()
+                        .expect("Failed to get app data directory");
+                    let config_path = app_data_dir.join("user_data.json");
+                    if config_path.exists() {
+                        if let Ok(json_str) = fs::read_to_string(&config_path) {
+                            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                                if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
+                                    if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
+                                        Path::new(first_root).to_path_buf()
+                                    } else {
+                                        app_data_dir.clone()
+                                    }
+                                } else {
+                                    app_data_dir.clone()
+                                }
+                            } else {
+                                app_data_dir.clone()
+                            }
+                        } else {
+                            app_data_dir.clone()
+                        }
+                    } else {
+                        app_data_dir.clone()
+                    }
+                };
+                
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = clip::init_clip_manager(clip_root_path, clip_cache_root).await {
+                        log::error!("Failed to initialize CLIP manager: {}", e);
+                    } else {
+                        log::info!("CLIP manager initialized successfully");
+                    }
+                });
+            }
+            
+            tauri::async_runtime::spawn(async move {
+                color_worker::color_extraction_worker(
+                    pool_arc,
+                    batch_size,
+                    Some(app_handle_arc),
+                    cache_root
+                ).await;
+            });
+            
+            #[cfg(not(target_os = "android"))]
+            if let Some(window) = app.get_webview_window("main") {
+                let app_handle_for_state = app.handle();
+                let path = get_window_state_path(app_handle_for_state);
+                let mut state_restored = false;
+                if path.exists() {
+                    if let Ok(json) = fs::read_to_string(&path) {
+                        if let Ok(state) = serde_json::from_str::<SavedWindowState>(&json) {
+                            let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize { width: state.width, height: state.height }));
+                            let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition { x: state.x, y: state.y }));
+                            if state.maximized {
+                                let _ = window.maximize();
+                            }
+                            state_restored = true;
+                        }
+                    }
+                }
+                if !state_restored {
+                    let _ = window.center();
+                }
+                let _ = window.show();
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                save_window_state(window.app_handle());
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
