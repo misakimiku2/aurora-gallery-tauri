@@ -8,12 +8,35 @@ import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { performanceMonitor } from '../utils/performanceMonitor';
 
+let _globalCacheRoot: string | null = null;
+let _isAndroid: boolean = false;
+
+export function setGlobalCacheRoot(cacheRoot: string) {
+  _globalCacheRoot = cacheRoot;
+}
+
+export function getGlobalCacheRoot(): string | null {
+  return _globalCacheRoot;
+}
+
+export function setAndroidPlatform(isAndroid: boolean) {
+  _isAndroid = isAndroid;
+}
+
+export function isAndroidPlatformCached(): boolean {
+  return _isAndroid;
+}
+
 /**
  * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
  * @param filePath 文件路径
+ * @param contentUri Android 端的 content URI（可选，优先使用）
  * @returns 资源 URL
  */
-export const getAssetUrl = (filePath: string): string => {
+export const getAssetUrl = (filePath: string, contentUri?: string): string => {
+  if (contentUri && contentUri.startsWith('content://')) {
+    return convertFileSrc(contentUri);
+  }
   return convertFileSrc(filePath);
 };
 
@@ -465,22 +488,53 @@ const thumbnailBatcher = new ThumbnailBatcher();
  * @param rootPath 资源根目录路径（可选，用于计算缓存目录）
  * @param signal AbortSignal (可选，用于取消请求)
  * @param onColors 颜色提取回调（可选）
+ * @param cachePathOverride 缓存目录路径覆盖（可选，Android 端使用后端返回的 cacheRoot）
  * @returns 缩略图 Asset URL，如果失败则返回 null
  */
-export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void): Promise<string | null> => {
-  // 验证参数
+export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void, cachePathOverride?: string, mediaStoreId?: number): Promise<string | null> => {
   if (!filePath || filePath.trim() === '') return null;
-  if (!rootPath || rootPath.trim() === '') return null;
 
-  // 计算缓存目录路径
-  const cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+  let cachePath: string;
+  if (cachePathOverride && cachePathOverride.trim() !== '') {
+    cachePath = cachePathOverride;
+  } else if (_globalCacheRoot) {
+    cachePath = _globalCacheRoot;
+  } else if (rootPath && rootPath.trim() !== '') {
+    cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
+  } else {
+    console.error('[Thumbnail] No cache path available: cachePathOverride=', cachePathOverride, '_globalCacheRoot=', _globalCacheRoot, 'rootPath=', rootPath);
+    return null;
+  }
 
-  // 使用批量处理器，记录时长 (使用采样以避免过高性能开销)
+  if (_isAndroid) {
+    const timerId = performanceMonitor.start('getThumbnail', undefined, false);
+    try {
+      console.error('[Thumbnail] Android invoke: filePath=', filePath, 'cacheRoot=', cachePath, 'imageId=', mediaStoreId);
+      const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number } | null>(
+        'android_get_thumbnail',
+        { filePath, cacheRoot: cachePath, imageId: mediaStoreId ?? null }
+      );
+      console.error('[Thumbnail] Android result:', result, 'thumbnailPath=', result?.thumbnailPath, 'path=', result?.path);
+      if (result?.thumbnailPath) {
+        const src = convertFileSrc(result.thumbnailPath);
+        console.error('[Thumbnail] Android convertFileSrc:', result.thumbnailPath, '->', src);
+        performanceMonitor.end(timerId, 'getThumbnail', { success: true });
+        return src;
+      }
+      console.error('[Thumbnail] Android: thumbnailPath is null/empty, returning null');
+      performanceMonitor.end(timerId, 'getThumbnail', { success: false });
+      return null;
+    } catch (err) {
+      console.error('[Thumbnail] Android error:', err);
+      performanceMonitor.end(timerId, 'getThumbnail', { success: false, error: true });
+      return null;
+    }
+  }
+
   const timerId = performanceMonitor.start('getThumbnail', undefined, false);
   try {
     const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
 
-    // 如果处理失败且是 AVIF 格式，尝试前端降级生成
     if (!res && filePath.toLowerCase().endsWith('.avif') && !signal?.aborted) {
       const remoteRes = await generateAvifThumbnailAndColors(filePath, cachePath, onColors);
       performanceMonitor.end(timerId, 'getThumbnail', { success: !!remoteRes, fallback: true });

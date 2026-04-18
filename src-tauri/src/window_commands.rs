@@ -11,23 +11,31 @@ pub fn get_initial_db_paths(app_handle: &tauri::AppHandle) -> (std::path::PathBu
     let app_data_dir = app_handle.path().app_data_dir()
         .expect("Failed to get app data directory");
     
-    let config_path = app_data_dir.join("user_data.json");
-    
-    if config_path.exists() {
-        if let Ok(json_str) = fs::read_to_string(&config_path) {
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
-                    if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
-                        let root = Path::new(first_root);
-                        let aurora_dir = root.join(".aurora");
-                        return (aurora_dir.join("colors.db"), aurora_dir.join("metadata.db"));
+    #[cfg(target_os = "android")]
+    {
+        return (app_data_dir.join("colors.db"), app_data_dir.join("metadata.db"));
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let config_path = app_data_dir.join("user_data.json");
+        
+        if config_path.exists() {
+            if let Ok(json_str) = fs::read_to_string(&config_path) {
+                if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    if let Some(root_paths) = data.get("rootPaths").and_then(|v| v.as_array()) {
+                        if let Some(first_root) = root_paths.get(0).and_then(|v| v.as_str()) {
+                            let root = Path::new(first_root);
+                            let aurora_dir = root.join(".aurora");
+                            return (aurora_dir.join("colors.db"), aurora_dir.join("metadata.db"));
+                        }
                     }
                 }
             }
         }
+        
+        (app_data_dir.join("colors.db"), app_data_dir.join("metadata.db"))
     }
-    
-    (app_data_dir.join("colors.db"), app_data_dir.join("metadata.db"))
 }
 
 #[cfg(not(target_os = "android"))]

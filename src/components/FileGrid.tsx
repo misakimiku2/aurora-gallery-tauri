@@ -490,6 +490,7 @@ const FileCard = React.memo(({
                 fileMeta={file.meta}
                 resourceRoot={effectiveResourceRoot}
                 cachePath={effectiveCachePath}
+                mediaStoreId={file.mediaStoreId}
             />
             )}
             

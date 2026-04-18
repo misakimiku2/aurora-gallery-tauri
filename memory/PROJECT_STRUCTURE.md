@@ -43,7 +43,7 @@ aurora-gallery-tauri/
 │   │   │   └── EmptyFolderPlaceholder.spec.tsx  # 空文件夹占位符测试
 │   │   ├── 📁 settings/             # 设置面板组件 [新增]
 │   │   │   └── LanSharePanel.tsx        # 局域网共享设置面板 (346 行)
-│   │   ├── App.tsx                  # 主应用组件 (4362 行)
+│   │   ├── App.tsx                  # 主应用组件 (2557 行) [重构: 从5211行拆分至23个自定义Hooks]
 │   │   ├── AppModals.tsx            # 应用模态框集中渲染入口 (575 行)
 │   │   ├── PersonGrid.tsx           # 人物网格组件 (440 行)
 │   │   ├── PeopleCanvas.tsx         # 人物画布组件 (342 行) [新增]
@@ -76,19 +76,30 @@ aurora-gallery-tauri/
 │   │   ├── AIRenameButton.tsx       # AI 重命名按钮 (36 行)
 │   │   ├── AIRenamePreview.tsx      # AI 重命名预览 (38 行)
 │   │   └── useLayoutHook.ts         # 布局管理 Hook (80 行)
-│   ├── 📁 hooks/                    # 自定义 Hooks
-│   │   ├── useAIAnalysis.ts         # AI 分析相关 Hook (552 行)
-│   │   ├── useAIRename.ts           # AI 重命名 Hook (87 行)
-│   │   ├── useContextMenu.ts        # 右键/上下文菜单交互 Hook (80 行)
-│   │   ├── useFileOperations.ts     # 文件复制/移动/删除等操作封装 (1053 行)
-│   │   ├── useFileSearch.ts         # 搜索逻辑 Hook (172 行)
-│   │   ├── useMarqueeSelection.ts   # 框选逻辑 Hook (162 行)
-│   │   ├── useTasks.ts              # 任务管理 Hook (267 行)
-│   │   ├── useNavigation.ts         # 导航管理 Hook (235 行)
-│   │   ├── useInView.ts             # 视口检测 Hook (30 行)
-│   │   ├── useKeyboardShortcuts.ts  # 键盘快捷键管理 Hook (69 行)
-│   │   ├── useToasts.ts             # Toast 通知管理 Hook (37 行)
-│   │   └── useUpdateCheck.ts        # 更新检查 Hook (272 行)
+│   ├── 📁 hooks/                    # 自定义 Hooks (23个, 共约6400行)
+│   │   ├── useAppInit.ts            # 应用初始化 Hook (378 行) [P1提取]
+│   │   ├── useDirectoryScan.ts      # 目录扫描 Hook (501 行) [P1提取]
+│   │   ├── useWindowLifecycle.ts    # 窗口生命周期 Hook (157 行) [P1提取]
+│   │   ├── useSearch.ts             # 搜索功能 Hook (640 行) [P1提取: AI/CLIP/相似图片搜索]
+│   │   ├── usePeople.ts             # 人物管理 Hook (575 行) [P1提取: CRUD/头像/智能创建]
+│   │   ├── useTopics.ts             # 专题管理 Hook (217 行) [P1提取]
+│   │   ├── useTags.ts               # 标签管理 Hook (223 行) [P1提取]
+│   │   ├── useExternalDragDrop.ts   # 外部拖拽处理 Hook (110 行) [P2提取]
+│   │   ├── usePersistence.ts        # 持久化与自动保存 Hook (53 行) [P2提取]
+│   │   ├── useFileSelection.ts      # 文件选择交互 Hook (69 行) [P2提取]
+│   │   ├── useFolderSettings.ts     # 文件夹设置记忆 Hook (120 行) [P2提取]
+│   │   ├── useAIAnalysis.ts         # AI 分析相关 Hook (629 行)
+│   │   ├── useAIRename.ts           # AI 重命名 Hook (107 行)
+│   │   ├── useContextMenu.ts        # 右键/上下文菜单交互 Hook (91 行)
+│   │   ├── useFileOperations.ts     # 文件复制/移动/删除等操作封装 (1178 行)
+│   │   ├── useFileSearch.ts         # 搜索逻辑 Hook (191 行)
+│   │   ├── useMarqueeSelection.ts   # 框选逻辑 Hook (186 行)
+│   │   ├── useTasks.ts              # 任务管理 Hook (315 行)
+│   │   ├── useNavigation.ts         # 导航管理 Hook (260 行)
+│   │   ├── useInView.ts             # 视口检测 Hook (37 行)
+│   │   ├── useKeyboardShortcuts.ts  # 键盘快捷键管理 Hook (78 行)
+│   │   ├── useToasts.ts             # Toast 通知管理 Hook (42 行)
+│   │   └── useUpdateCheck.ts        # 更新检查 Hook (307 行)
 │   ├── 📁 services/                 # 业务服务层
 │   │   ├── aiService.ts             # AI 服务 (624 行)
 │   │   └── faceRecognitionService.ts # 人脸识别服务 (63 行)
@@ -346,10 +357,11 @@ npm run clean        # 清理缓存
 
 ### 前端架构
 - **组件化**: 基于 React 的组件化架构
+- **Hook 模块化**: 核心业务逻辑已拆分至 23 个自定义 Hooks (P1: 7个 + P2: 4个 + 原有: 12个)
 - **类型安全**: 完整的 TypeScript 类型定义
 - **响应式设计**: 支持多种屏幕尺寸
 - **国际化**: 多语言支持 (translations.ts)
-- **性能优化**: 
+- **性能优化**:
   - 虚拟滚动
   - 懒加载
   - Web Worker 布局计算
@@ -431,18 +443,22 @@ src-tauri/src/
 ## 关键文件说明
 
 ### 核心文件
-- `src/App.tsx`: 主应用组件，包含所有业务逻辑 (4362 行)
+- `src/App.tsx`: 主应用组件，负责 UI 状态、视图路由与 Hook 编排 (2557 行) [重构后: 从5211行降至2557行, 51%代码已拆分至23个自定义Hooks]
 - `src-tauri/src/main.rs`: Rust 主程序入口 (359 行)
 - `src-tauri/src/file_types.rs`: 核心类型定义 (62 行)
 - `src-tauri/src/scanner.rs`: 目录扫描核心逻辑 (547 行)
 - `src-tauri/src/clip_commands.rs`: CLIP AI 搜索命令 (2155 行)
-- `src-tauri/src/lan_share_commands.rs`: 局域网共享命令 (164 行) [新增]
-- `src-tauri/src/work_extractor.rs`: 作品提取器 (199 行) [新增]
+- `src-tauri/src/lan_share_commands.rs`: 局域网共享命令 (164 行)
+- `src-tauri/src/work_extractor.rs`: 作品提取器 (199 行)
 - `src/api/tauri-bridge.ts`: 前后端通信桥接 (2151 行)
 - `src/types.ts`: TypeScript 类型定义 (699 行)
 - `src/constants.ts`: 全局常量定义 (29 行)
-- `src/shared/`: 共享模块（主应用与 LAN Share 客户端共用） [新增]
-- `src/lan-share/`: 局域网共享独立客户端应用 [新增]
+- `src/hooks/`: 自定义 Hooks 集合 (23个文件, ~6400行) [P1+P2模块化重构核心产出]
+  - **P1 Hooks** (7个): useAppInit, useDirectoryScan, useWindowLifecycle, useSearch, usePeople, useTopics, useTags
+  - **P2 Hooks** (4个): useExternalDragDrop, usePersistence, useFileSelection, useFolderSettings
+  - **原有 Hooks** (12个): useTasks, useNavigation, useAIAnalysis, useAIRename, useContextMenu, useFileOperations, useFileSearch, useInView, useKeyboardShortcuts, useMarqueeSelection, useToasts, useUpdateCheck
+- `src/shared/`: 共享模块（主应用与 LAN Share 客户端共用）
+- `src/lan-share/`: 局域网共享独立客户端应用
 
 ### 配置文件
 - `package.json`: Node.js 项目配置和脚本
@@ -487,6 +503,6 @@ src-tauri/src/
 
 ---
 
-**文档版本**: 1.5  
-**更新日期**: 2026-03-14  
+**文档版本**: 2.0
+**更新日期**: 2026-04-18
 **维护者**: Aurora Gallery Team

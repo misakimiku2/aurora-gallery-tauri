@@ -50,7 +50,7 @@ export interface FileNode {
   name: string;
   type: FileType;
   path: string;
-  size?: number; // Size in bytes for cache key generation
+  size?: number;
   children?: string[];
 
   category?: 'general' | 'book' | 'sequence';
@@ -64,10 +64,12 @@ export interface FileNode {
   meta?: ImageMeta;
   aiData?: AiData;
 
+  contentUri?: string;
+  mediaStoreId?: number;
+
   createdAt?: string;
   updatedAt?: string;
   lastRefresh?: number;
-  /** Transient UI-only flag used to show a loading state for folder-level refreshes */
   isRefreshing?: boolean;
 }
 

@@ -21,11 +21,14 @@ export default defineConfig({
     host: '0.0.0.0',
     hmr: {
       protocol: 'ws',
-      host: 'localhost',
+      host: '0.0.0.0',
       port: 14422,
     },
     watch: {
       ignored: ['**/src-tauri/**'],
+    },
+    headers: {
+      'Cache-Control': 'no-store',
     },
   },
   build: {

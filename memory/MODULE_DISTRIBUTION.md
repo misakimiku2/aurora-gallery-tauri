@@ -119,63 +119,69 @@ export async function exitApp(): Promise<void>
 
 ### 2. 组件库 (`src/components/`)
 
-#### `App.tsx` - 主应用组件
-**位置**: `src/App.tsx`  
-**行数**: 4362 行  
+#### `App.tsx` - 主应用组件（Hook 编排层）
+**位置**: `src/App.tsx`
+**行数**: 2557 行（重构后，原 5211 行，减少 51%）
 
 **概览**:
-- `App.tsx` 仍为大型单体组件，负责绝大多数 UI 状态、视图路由与操作协调。近期改动强调可维护性与性能：把任务管理抽出到 `src/hooks/useTasks.ts`，并精细化拖拽、选择与 AI/色彩搜索逻辑。
+- `App.tsx` 已从大型单体组件重构为 **Hook 编排层**，核心业务逻辑已拆分至 23 个自定义 Hooks。当前职责聚焦于：状态声明、派生状态计算（useMemo/useCallback）、JSX 渲染、以及 Hook 调用与依赖传递。
+- 本次重构提取了 **P1（7个）** + **P2（4个）** 共 11 个新 Hook，加上原有 12 个 Hook，总计 23 个。
 
-**状态与配置（关键字段）**:
-- 完整 `AppState` 初始化包含：root 列表、`files`、`people`、`topics`、多个 `tabs`、视图排序和分组、`thumbnailSize`、`clipboard`、`customTags`、`folderSettings`、`layout`（侧边栏与元数据面板可见性）、幻灯片配置、`settings.ai`（OpenAI/Ollama/LM Studio 配置与开关）、以及拖拽/选择相关状态（`dragState` / `isExternalDragging` / `isDraggingInternal` / `draggedFilePaths`）。
+**当前保留在 App.tsx 中的内容**:
+- **状态声明**: 完整 `AppState` 初始化（root 列表、files、people、topics、tabs、视图排序/分组、thumbnailSize、clipboard、customTags、folderSettings、layout、settings.ai、拖拽/选择相关状态等）
+- **派生状态**: 大量 `useMemo`/`useCallback`（activeTab、displayFileIds、groupedTags、personCounts、peopleWithDisplayCounts 等）
+- **性能优化**: `performanceMonitor` 计时、Web Worker 布局计算
+- **Hook 编排**: 23 个自定义 Hook 的调用与依赖传递（按严格顺序排列）
+- **JSX 渲染**: 完整的 UI 渲染逻辑
+- **内联回调**: 少量未归入 Hook 的简单回调（如 `toggleSettings`）
 
-**派生状态与性能优化**:
-- 使用大量 `useMemo`/`useCallback` 计算派生数据：`activeTab`、`displayFileIds`（含 AI 过滤、颜色/色板搜索与日期过滤）、`groupedTags`、`personCounts`（带性能计时）、`peopleWithDisplayCounts` 等。
-- 引入 `performanceMonitor` 记录关键函数的耗时（如 `personCounts`、复制/移动任务等）。
-- 布局计算使用 Web Worker (`src/workers/layout.worker.ts`) 进行异步计算，避免阻塞主线程。
+**已提取至 Hook 的功能**（11 个新 Hook）:
 
-**核心 Hook 与初始化**:
-- 初始化流程负责：检测 Tauri 环境、加载用户数据、扫描目录、注册事件（包括自定义 `color-update` 事件以即时更新文件主色调）以及挂载窗口关闭/最小化回调。
-- 色彩提取进度监听已迁移并集中在 `useTasks` 中。
+| Hook | 提取的功能 | 行数 |
+|------|-----------|------|
+| `useAppInit` | 应用初始化：Tauri 环境检测、用户数据加载、目录扫描、事件注册、语言/分组设置 | 378 |
+| `useDirectoryScan` | 目录扫描：handleOpenFolder、scanAndMerge、handleRefresh、handleRefreshTags、handleChangePath | 501 |
+| `useWindowLifecycle` | 窗口生命周期：退出确认、关闭监听、颜色/色板搜索 useEffect、标题更新 | 157 |
+| `useSearch` | 搜索功能：AI搜索、CLIP搜索、相似图片搜索、clip设置状态 | 640 |
+| `usePeople` | 人物管理：CRUD、头像裁剪、智能创建（16个函数） | 575 |
+| `useTopics` | 专题管理：CRUD（6个函数） | 217 |
+| `useTags` | 标签管理：CRUD、复制/粘贴标签、清除过滤（13项返回） | 223 |
+| `useExternalDragDrop` | 外部拖拽处理：dragEnter/Over/Leave/Drop + isExternalDragging 状态 | 110 |
+| `usePersistence` | 持久化：自动保存 useEffect | 53 |
+| `useFileSelection` | 文件选择交互：handleFileClick（Ctrl/Shift/点击选择） | 69 |
+| `useFolderSettings` | 文件夹设置记忆：handleRememberFolderSettings + useEffects | 120 |
 
-**任务管理（迁移到 `useTasks`）**:
-- `useTasks` 提供 `startTask`、`updateTask`、任务状态列表等，统一处理：复制/移动/AI/颜色/缩略图等任务，并对 `color-extraction-progress` 事件进行监听与更新。
+**原有 12 个 Hook**（未变）:
 
-**交互与输入处理**:
-- 复杂的鼠标选择框实现（按下/移动/释放），优化为直接 DOM 操作 + 节流（`throttle` 函数）以减少抖动并提升性能。
-- 右键菜单、键盘快捷键以及范围选择（Ctrl/Shift）均实现并支持基于显示顺序的范围选择（文件/人物/标签）。
+| Hook | 功能 | 行数 |
+|------|------|------|
+| `useTasks` | 任务管理 | 315 |
+| `useNavigation` | 导航历史 | 260 |
+| `useAIAnalysis` | AI 分析封装 | 629 |
+| `useAIRename` | AI 重命名 | 107 |
+| `useContextMenu` | 右键菜单 | 91 |
+| `useFileOperations` | 文件操作（复制/移动/重命名/删除） | 1178 |
+| `useFileSearch` | 搜索逻辑 | 191 |
+| `useInView` | 视口检测 | 37 |
+| `useKeyboardShortcuts` | 键盘快捷键 | 78 |
+| `useMarqueeSelection` | 框选状态管理 | 186 |
+| `useToasts` | Toast 通知 | 42 |
+| `useUpdateCheck` | 更新检查 | 307 |
 
-**拖拽与外部文件处理**:
-- 完整的内部与外部拖拽处理：区分内部拖拽（application/json）与外部（Files），实现 `handleExternalDragEnter` / `handleExternalDragLeave` / `handleExternalDrop` 等。
-- 支持 `handleExternalCopyFiles` 与 `handleExternalMoveFiles`（将浏览器 `File` 对象导入到目标文件夹），并以后台任务形式显示进度。
-- 支持生成外部拖拽预览（委托给后端/`tauri-bridge` 的接口）与跨应用拖拽（`startDragToExternal`）。
+**Hook 调用顺序**（严格的依赖链）:
+```
+useUpdateCheck → useWindowLifecycle → useExternalDragDrop → useFileSelection
+→ usePersistence → useTags → useDirectoryScan → useFileOperations
+→ useSearch → useAppInit → useFolderSettings → useTopics → usePeople
++ useTasks, useNavigation, useAIAnalysis, useAIRename, useContextMenu,
+  useFileSearch, useInView, useKeyboardShortcuts, useMarqueeSelection, useToasts
+```
 
-**文件操作（复制/移动/重命名/删除）**:
-- `handleCopyFiles`、`handleMoveFiles` 使用并发控制（`asyncPool`）与详尽的冲突/重复名处理策略，任务以 `useTasks` 展示并记录性能日志。
-- 批量重命名（`handleBatchRename`）以任务形式运行并保证顺序。
-- 删除支持撤销（`deletionTasks` 列表、`undoDelete` / `dismissDelete`）。
-
-**持久化与设置**:
-- `saveUserData` 包含对 Tauri 环境的异步检测（`detectTauriEnvironmentAsync`），并以防抖策略保存：根路径、标签、人物、专题、文件元数据与设置。
-- `folderSettings` 支持记忆与自动应用，使用 `folderSettingsRef` 避免副作用循环。
-- 退出/最小化逻辑使用 `exitActionRef` 以避免闭包过时问题，并支持"记住我的选择"。
-
-**搜索与 AI 功能**:
-- 增强的搜索：支持 `color:` 与 `palette:` 前缀的颜色/色板搜索（直接调用色彩数据库或后端），并在 `onPerformSearch` 中优先处理这些特殊查询。
-- `performAiSearch` / `handleAIAnalysis` / `handleFolderAIAnalysis` 支持对单文件/文件夹进行 AI 分析（描述、标签、场景、对象识别、OCR、翻译），AI 任务也通过 `useTasks` 管理。
-
-**人物与专题管理**:
-- 人物管理（新增/重命名/设置头像/清除信息）与数据库同步（`dbUpsertPerson` / `dbDeletePerson`）。
-- `personCounts` 通过扫描 `state.files` 计算并缓存，UI 使用 `peopleWithDisplayCounts` 提供显示相关计数和排序。
-
-**Viewer 与导航**:
-- 支持进入/退出查看器、前进/后退历史（`pushHistory` 使用全局时间戳 `__AURORA_NAV_TIMESTAMP__` 防止滚动冲突）、幻灯片播放配置与查看器内跳转（next/prev/random）。
-
-**工具/辅助函数**:
-- 常见内部工具：`throttle`、`asyncPool`、`showToast`、`async` 文件 I/O 协助与直接 DOM refs（`selectionRef`、`selectionBoxRef` 等）。
-
-**小结/维护建议**:
-- `App.tsx` 仍然很大（职责范围广），但最近按功能进行了模块化：把任务管理抽出到 `useTasks`，并持续将展示组件（`PersonGrid`、`FileGrid`）与逻辑（复制/移动、AI 分析）解耦。建议继续拆分导航/持久化/大文件操作逻辑到独立模块以便单元测试与可维护性提升。
+**小结**:
+- App.tsx 已从 5211 行降至 2557 行（减少 51%），不再是"单体组件"
+- 当前角色转变为 **编排层**：声明状态 → 计算派生数据 → 调用 Hooks → 渲染 JSX
+- 各 Hook 通过 props 接收 state/setState 及所需派生值，内部封装完整业务逻辑
+- 未来可进一步考虑将 JSX 部分拆分为子组件（如 SettingsPanel、ViewerPanel 等）
 
 ---
 
@@ -231,8 +237,8 @@ export async function exitApp(): Promise<void>
 ---
 
 #### `src/hooks/useTasks.ts` - 任务管理 Hook
-**位置**: `src/hooks/useTasks.ts`  
-**行数**: 267 行  
+**位置**: `src/hooks/useTasks.ts`
+**行数**: 315 行
 **功能**: 集中管理后台任务状态
 - `startTask`: 启动新任务 (copy/move/ai/color/thumbnail)
 - `updateTask`: 更新任务进度 (带防抖)
@@ -243,8 +249,8 @@ export async function exitApp(): Promise<void>
 ---
 
 #### `src/hooks/useNavigation.ts` - 导航管理 Hook
-**位置**: `src/hooks/useNavigation.ts`  
-**行数**: 235 行  
+**位置**: `src/hooks/useNavigation.ts`
+**行数**: 260 行
 **功能**: 管理应用导航历史
 - `navigateTo`: 导航到指定文件夹或视图
 - `goBack`: 返回上一页
@@ -276,20 +282,45 @@ export async function exitApp(): Promise<void>
 
 ---
 
-#### 其他自定义 Hooks
+#### 自定义 Hooks（共 23 个，~6400 行）
+
+**P1 提取 Hook（核心业务逻辑，7 个）**:
 
 | Hook | 位置 | 行数 | 功能 |
 |------|------|------|------|
-| `useAIAnalysis.ts` | `src/hooks/useAIAnalysis.ts` | 552 行 | AI 分析封装（描述、标签、场景识别、OCR、翻译） |
-| `useAIRename.ts` | `src/hooks/useAIRename.ts` | 87 行 | AI 智能重命名 Hook |
-| `useContextMenu.ts` | `src/hooks/useContextMenu.ts` | 80 行 | 右键菜单管理 |
-| `useFileOperations.ts` | `src/hooks/useFileOperations.ts` | 1053 行 | 文件操作封装 |
-| `useFileSearch.ts` | `src/hooks/useFileSearch.ts` | 172 行 | 搜索逻辑处理 |
-| `useInView.ts` | `src/hooks/useInView.ts` | 30 行 | 视口检测 Hook |
-| `useKeyboardShortcuts.ts` | `src/hooks/useKeyboardShortcuts.ts` | 69 行 | 键盘快捷键管理 |
-| `useMarqueeSelection.ts` | `src/hooks/useMarqueeSelection.ts` | 162 行 | 框选状态管理 |
-| `useToasts.ts` | `src/hooks/useToasts.ts` | 37 行 | Toast 通知管理 |
-| `useUpdateCheck.ts` | `src/hooks/useUpdateCheck.ts` | 272 行 | 更新检查 Hook |
+| `useAppInit.ts` | `src/hooks/useAppInit.ts` | 378 行 | 应用初始化：Tauri 环境检测、用户数据加载、目录扫描、事件注册 |
+| `useDirectoryScan.ts` | `src/hooks/useDirectoryScan.ts` | 501 行 | 目录扫描：打开文件夹、合并扫描、刷新、路径变更 |
+| `useWindowLifecycle.ts` | `src/hooks/useWindowLifecycle.ts` | 157 行 | 窗口生命周期：退出确认、关闭监听、标题更新 |
+| `useSearch.ts` | `src/hooks/useSearch.ts` | 640 行 | 搜索功能：AI 搜索、CLIP 向量搜索、相似图片搜索 |
+| `usePeople.ts` | `src/hooks/usePeople.ts` | 575 行 | 人物管理：CRUD、头像裁剪、智能创建（16 个函数） |
+| `useTopics.ts` | `src/hooks/useTopics.ts` | 217 行 | 专题管理：CRUD（6 个函数） |
+| `useTags.ts` | `src/hooks/useTags.ts` | 223 行 | 标签管理：CRUD、复制/粘贴标签、清除过滤（13 项返回） |
+
+**P2 提取 Hook（辅助逻辑，4 个）**:
+
+| Hook | 位置 | 行数 | 功能 |
+|------|------|------|------|
+| `useExternalDragDrop.ts` | `src/hooks/useExternalDragDrop.ts` | 110 行 | 外部拖拽处理：dragEnter/Over/Leave/Drop + 状态管理 |
+| `usePersistence.ts` | `src/hooks/usePersistence.ts` | 53 行 | 持久化与自动保存 useEffect |
+| `useFileSelection.ts` | `src/hooks/useFileSelection.ts` | 69 行 | 文件选择交互：handleFileClick（Ctrl/Shift/点击选择） |
+| `useFolderSettings.ts` | `src/hooks/useFolderSettings.ts` | 120 行 | 文件夹设置记忆：handleRememberFolderSettings + useEffects |
+
+**原有 Hook（12 个）**:
+
+| Hook | 位置 | 行数 | 功能 |
+|------|------|------|------|
+| `useAIAnalysis.ts` | `src/hooks/useAIAnalysis.ts` | 629 行 | AI 分析封装（描述、标签、场景识别、OCR、翻译） |
+| `useAIRename.ts` | `src/hooks/useAIRename.ts` | 107 行 | AI 智能重命名 Hook |
+| `useContextMenu.ts` | `src/hooks/useContextMenu.ts` | 91 行 | 右键菜单管理 |
+| `useFileOperations.ts` | `src/hooks/useFileOperations.ts` | 1178 行 | 文件操作封装（复制/移动/重命名/删除/撤销） |
+| `useFileSearch.ts` | `src/hooks/useFileSearch.ts` | 191 行 | 搜索逻辑处理 |
+| `useInView.ts` | `src/hooks/useInView.ts` | 37 行 | 视口检测 Hook |
+| `useKeyboardShortcuts.ts` | `src/hooks/useKeyboardShortcuts.ts` | 78 行 | 键盘快捷键管理 |
+| `useMarqueeSelection.ts` | `src/hooks/useMarqueeSelection.ts` | 186 行 | 框选状态管理 |
+| `useToasts.ts` | `src/hooks/useToasts.ts` | 42 行 | Toast 通知管理 |
+| `useUpdateCheck.ts` | `src/hooks/useUpdateCheck.ts` | 307 行 | 更新检查 Hook |
+| `useTasks.ts` | `src/hooks/useTasks.ts` | 315 行 | 任务管理（含颜色提取进度监听） |
+| `useNavigation.ts` | `src/hooks/useNavigation.ts` | 260 行 | 导航历史管理 |
 
 ---
 
@@ -963,7 +994,7 @@ pub struct Topic {
 ## 依赖关系图
 
 ```
-App.tsx (4362 行)
+App.tsx (2557 行) [Hook 编排层: 原始5211行, 重构后减少51%]
 ├── components/
 │   ├── modals/ (22 个模态框)
 │   │   ├── AddImageModal.tsx (1163 行)
@@ -1009,19 +1040,33 @@ App.tsx (4362 行)
 │   ├── TaskProgressModal.tsx (78 行)
 │   ├── ImageComparer.tsx (2039 行)
 │   └── useLayoutHook.ts (80 行)
-├── hooks/
-│   ├── useTasks.ts (267 行)
-│   ├── useNavigation.ts (235 行)
-│   ├── useAIAnalysis.ts (552 行)
-│   ├── useAIRename.ts (87 行)
-│   ├── useContextMenu.ts (80 行)
-│   ├── useFileOperations.ts (1053 行)
-│   ├── useFileSearch.ts (172 行)
-│   ├── useInView.ts (30 行)
-│   ├── useKeyboardShortcuts.ts (69 行)
-│   ├── useMarqueeSelection.ts (162 行)
-│   ├── useToasts.ts (37 行)
-│   └── useUpdateCheck.ts (272 行)
+├── hooks/ (23 个自定义 Hooks, ~6400 行)
+│   ├── P1 提取 Hook (7 个):
+│   │   ├── useAppInit.ts (378 行)
+│   │   ├── useDirectoryScan.ts (501 行)
+│   │   ├── useWindowLifecycle.ts (157 行)
+│   │   ├── useSearch.ts (640 行)
+│   │   ├── usePeople.ts (575 行)
+│   │   ├── useTopics.ts (217 行)
+│   │   └── useTags.ts (223 行)
+│   ├── P2 提取 Hook (4 个):
+│   │   ├── useExternalDragDrop.ts (110 行)
+│   │   ├── usePersistence.ts (53 行)
+│   │   ├── useFileSelection.ts (69 行)
+│   │   └── useFolderSettings.ts (120 行)
+│   └── 原有 Hook (12 个):
+│       ├── useTasks.ts (315 行)
+│       ├── useNavigation.ts (260 行)
+│       ├── useAIAnalysis.ts (629 行)
+│       ├── useAIRename.ts (107 行)
+│       ├── useContextMenu.ts (91 行)
+│       ├── useFileOperations.ts (1178 行)
+│       ├── useFileSearch.ts (191 行)
+│       ├── useInView.ts (37 行)
+│       ├── useKeyboardShortcuts.ts (78 行)
+│       ├── useMarqueeSelection.ts (186 行)
+│       ├── useToasts.ts (42 行)
+│       └── useUpdateCheck.ts (307 行)
 ├── services/
 │   ├── aiService.ts (624 行)
 │   └── faceRecognitionService.ts (63 行)
@@ -1129,7 +1174,7 @@ Tools
 ### 高复杂度模块 (需要关注)
 1. **SettingsModal.tsx** (3774 行) - 设置界面功能丰富，包含 CLIP、AI、局域网共享等配置
 2. **clip_commands.rs** (2155 行) - CLIP 命令处理，嵌入向量生成、作品提取逻辑复杂
-3. **App.tsx** (4362 行) - 主应用组件，状态管理复杂
+3. **useFileOperations.ts** (1178 行) - 文件操作封装，复制/移动/重命名/删除/撤销逻辑复杂
 4. **ImageComparer.tsx** (2039 行) - 图片对比组件功能复杂
 5. **TopicModule.tsx** (2485 行) - 专题管理功能丰富
 6. **MetadataPanel.tsx** (2409 行) - 元数据面板功能丰富
@@ -1139,38 +1184,47 @@ Tools
 10. **model.rs** (1099 行) - CLIP 模型接口复杂
 
 ### 中等复杂度模块
-1. **ImageViewer.tsx** (1482 行) - 图片查看器功能完整
-2. **FileGrid.tsx** (1414 行) - 文件显示逻辑复杂
-3. **useFileOperations.ts** (1053 行) - 文件操作逻辑复杂
-4. **SmartCreatePersonModal.tsx** (921 行) - 智能创建人物模态框
-5. **color_worker.rs** (797 行) - 后台处理逻辑复杂
-6. **file_operations.rs** (763 行) - 文件操作命令
-7. **updater.rs** (749 行) - 更新逻辑
-8. **aiService.ts** (624 行) - AI 分析逻辑复杂
-9. **useAIAnalysis.ts** (552 行) - AI 分析 Hook
-10. **SmartCreateTopicModal.tsx** (691 行) - 智能创建专题模态框
-11. **translations.ts** (1701 行) - 国际化文案
+1. **App.tsx** (2557 行) [重构后] - Hook 编排层，状态声明 + 派生计算 + JSX 渲染（已从 5211 行降至 2557 行）
+2. **useAIAnalysis.ts** (629 行) - AI 分析 Hook
+3. **useSearch.ts** (640 行) - 搜索功能 Hook（AI/CLIP/相似图片）
+4. **ImageViewer.tsx** (1482 行) - 图片查看器功能完整
+5. **FileGrid.tsx** (1414 行) - 文件显示逻辑复杂
+6. **useDirectoryScan.ts** (501 行) - 目录扫描 Hook
+7. **usePeople.ts** (575 行) - 人物管理 Hook
+8. **SmartCreatePersonModal.tsx** (921 行) - 智能创建人物模态框
+9. **color_worker.rs** (797 行) - 后台处理逻辑复杂
+10. **file_operations.rs** (763 行) - 文件操作命令
+11. **updater.rs** (749 行) - 更新逻辑
+12. **aiService.ts** (624 行) - AI 分析逻辑复杂
+13. **SmartCreateTopicModal.tsx** (691 行) - 智能创建专题模态框
+14. **translations.ts** (1701 行) - 国际化文案
 
 ### 低复杂度模块
 1. **PersonGrid.tsx** (440 行) - 专用组件，职责单一
 2. **useLayoutHook.ts** (80 行) - 布局计算 Hook
 3. **constants.ts** (29 行) - 常量定义
-4. **工具函数** - 各司其职，逻辑简单
+4. **P2 Hooks** (53-120 行) - 职责单一，逻辑清晰
+   - usePersistence.ts (53 行)
+   - useFileSelection.ts (69 行)
+   - useExternalDragDrop.ts (110 行)
+   - useFolderSettings.ts (120 行)
+5. **工具函数** - 各司其职，逻辑简单
 
 ---
 
 ## 架构改进建议
 
-1. **组件拆分**: App.tsx 过大，建议进一步拆分为更小的功能组件（如导航逻辑、文件操作逻辑）
-2. **状态管理**: 考虑引入 Zustand 或 Redux 进行更精细的状态管理
-3. **API 分层**: tauri-bridge.ts 可以按功能进一步拆分（文件操作、数据库操作、窗口管理等）
-4. **测试覆盖**: 为关键模块添加单元测试和集成测试
-5. **类型安全**: 完善 TypeScript 类型定义，提高代码可维护性
-6. **Worker 扩展**: 考虑将更多计算密集型任务（如 AI 分析预处理）移到 Worker
+1. **~~组件拆分~~** ✅ 已完成: App.tsx 已从 5211 行重构为 2557 行（51% 代码拆分至 23 个自定义 Hooks）
+2. **JSX 子组件化**: App.tsx 当前仍包含完整 JSX 渲染逻辑（~1500 行），可进一步按视图区域拆分为子组件（如 MainView、ViewerPanel、SettingsPanel 等）
+3. **状态管理**: 考虑引入 Zustand 或 Redux 进行更精细的状态管理，减少 props drilling
+4. **API 分层**: tauri-bridge.ts 可以按功能进一步拆分（文件操作、数据库操作、窗口管理等）
+5. **测试覆盖**: 为 23 个自定义 Hook 添加单元测试和集成测试
+6. **类型安全**: 完善 TypeScript 类型定义，提高代码可维护性
+7. **Worker 扩展**: 考虑将更多计算密集型任务（如 AI 分析预处理）移到 Worker
 
 ---
 
-**文档版本**: 1.6  
-**更新日期**: 2026-03-14  
-**覆盖范围**: 所有前端和后端模块（含局域网共享模块）  
+**文档版本**: 2.0
+**更新日期**: 2026-04-18
+**覆盖范围**: 所有前端和后端模块（含局域网共享模块、Hook 模块化重构）
 **详细程度**: 高

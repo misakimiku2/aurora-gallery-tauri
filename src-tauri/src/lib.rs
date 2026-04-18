@@ -99,14 +99,72 @@ async fn android_scan_folders() -> Result<Vec<AndroidFolderInfo>, String> {
 async fn android_get_thumbnail(
     file_path: String,
     cache_root: String,
+    image_id: Option<i64>,
 ) -> Result<ThumbnailResult, String> {
+    log::info!("[Thumbnail] Request: path={}, cache_root={}, image_id={:?}", file_path, cache_root, image_id);
     let cache_path = std::path::Path::new(&cache_root).to_path_buf();
+    let file_path_clone = file_path.clone();
+    let cache_path_clone = cache_path.clone();
+
+    if let Some(id) = image_id {
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            let activity = ndk_context::android_context();
+            let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+                .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+            let mut env = vm.attach_current_thread()
+                .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+            let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+            match crate::android::get_android_system_thumbnail(&mut env, &activity_obj, id, &cache_path) {
+                Ok(Some(thumb_path)) => {
+                    log::info!("[Thumbnail] System thumbnail OK: {}", thumb_path);
+                    Ok(ThumbnailResult {
+                        path: file_path_clone,
+                        thumbnail_path: Some(thumb_path),
+                        width: 0,
+                        height: 0,
+                    })
+                }
+                Ok(None) => {
+                    log::info!("[Thumbnail] System thumbnail returned None, falling back to file decode");
+                    android_generate_thumbnail(&file_path_clone, &cache_path)
+                }
+                Err(e) => {
+                    log::warn!("[Thumbnail] System thumbnail error: {}, falling back to file decode", e);
+                    android_generate_thumbnail(&file_path_clone, &cache_path)
+                }
+            }
+        }).await;
+
+        match result {
+            Ok(Ok(r)) => {
+                log::info!("[Thumbnail] Final result: path={}, thumb={:?}", r.path, r.thumbnail_path);
+                return Ok(r);
+            }
+            Ok(Err(e)) => {
+                log::error!("[Thumbnail] Generation failed: {}", e);
+                return Err(e);
+            }
+            Err(e) => {
+                log::error!("[Thumbnail] Task join error: {}", e);
+                return Err(e.to_string());
+            }
+        }
+    }
+
+    log::info!("[Thumbnail] No image_id, using file path fallback");
     let result = tauri::async_runtime::spawn_blocking(move || {
-        android_generate_thumbnail(&file_path, &cache_path)
+        android_generate_thumbnail(&file_path, &cache_path_clone)
     }).await;
     match result {
-        Ok(Ok(r)) => Ok(r),
-        Ok(Err(e)) => Err(e),
+        Ok(Ok(r)) => {
+            log::info!("[Thumbnail] File decode result: path={}, thumb={:?}", r.path, r.thumbnail_path);
+            Ok(r)
+        }
+        Ok(Err(e)) => {
+            log::error!("[Thumbnail] File decode failed: {}", e);
+            Err(e)
+        }
         Err(e) => Err(e.to_string()),
     }
 }

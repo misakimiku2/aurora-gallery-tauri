@@ -20,23 +20,67 @@ pub fn get_platform() -> String {
     }
 }
 
+#[cfg(target_os = "android")]
+fn get_android_path(method: &str) -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+    let dir_file = env.call_method(
+        &activity_obj,
+        method,
+        "()Ljava/io/File;",
+        &[],
+    ).map_err(|e| format!("Failed to call {}: {:?}", method, e))?
+    .l().map_err(|e| format!("Failed to convert result: {:?}", e))?;
+
+    let path_str = env.call_method(
+        &dir_file,
+        "getAbsolutePath",
+        "()Ljava/lang/String;",
+        &[],
+    ).map_err(|e| format!("Failed to get path: {:?}", e))?
+    .l().map_err(|e| format!("Failed to convert path: {:?}", e))?;
+
+    let result: String = env.get_string(&path_str.into())
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn get_default_paths() -> Result<HashMap<String, String>, String> {
+    #[cfg(not(target_os = "android"))]
     use std::env;
     
     let mut paths = HashMap::new();
     
     #[cfg(target_os = "android")]
     {
-        let resource_root = "/storage/emulated/0/Pictures/AuroraGallery".to_string();
-        let cache_root = {
-            let app_data = env::var("HOME")
-                .or_else(|_| env::var("USERPROFILE"))
-                .unwrap_or_else(|_| "/data/data/com.aurora.gallery".to_string());
-            format!("{}/.Aurora_Cache", app_data)
-        };
+        let cache_dir = get_android_path("getCacheDir")
+            .unwrap_or_else(|e| {
+                log::error!("[get_default_paths] Failed to getCacheDir: {}", e);
+                "/data/data/com.aurora.gallery/cache".to_string()
+            });
+        let files_dir = get_android_path("getFilesDir")
+            .unwrap_or_else(|e| {
+                log::error!("[get_default_paths] Failed to getFilesDir: {}", e);
+                "/data/data/com.aurora.gallery/files".to_string()
+            });
+
+        let resource_root = "android_media_store".to_string();
+        let cache_root = format!("{}/thumbnails", cache_dir);
+        log::info!("[get_default_paths] Android: cache_dir={}, files_dir={}, cache_root={}", cache_dir, files_dir, cache_root);
+
+        let app_data_dir = files_dir;
+
         paths.insert("resourceRoot".to_string(), resource_root);
         paths.insert("cacheRoot".to_string(), cache_root);
+        paths.insert("appDataDir".to_string(), app_data_dir);
         return Ok(paths);
     }
     

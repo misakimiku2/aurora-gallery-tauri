@@ -7,6 +7,7 @@ use std::collections::HashMap;
 pub struct AndroidImageInfo {
     pub id: i64,
     pub path: String,
+    pub content_uri: String,
     pub name: String,
     pub size: i64,
     pub width: Option<i32>,
@@ -235,9 +236,12 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
         
         let mime_type = get_cursor_string(env, &cursor, column_indices.mime_type)?;
         
+        let content_uri = format!("content://media/external/images/media/{}", id);
+        
         results.push(AndroidImageInfo {
             id,
             path,
+            content_uri,
             name,
             size,
             width,

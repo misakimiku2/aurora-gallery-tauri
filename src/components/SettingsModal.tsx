@@ -6,6 +6,7 @@ import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDi
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
+import { isAndroidPlatform } from '../utils/androidPlatform';
 import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
@@ -1675,7 +1676,12 @@ interface SettingsModalProps {
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh }) => {
-  // ... (keep existing state and checkConnection logic)
+  const [isAndroid, setIsAndroid] = useState(false);
+
+  useEffect(() => {
+    isAndroidPlatform().then(setIsAndroid);
+  }, []);
+
   const [isTesting, setIsTesting] = useState(false);
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'failed'>('idle');
   // Use AI connection status from AppState instead of local state
@@ -2582,6 +2588,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               <section>
                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center"><Database size={20} className="mr-2 text-blue-500" /> {t('settings.catStorage')}</h3>
                 <div className="space-y-4">
+                  {!isAndroid && (
                   <div>
                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.resourceRoot')}</label>
                     <div className="flex items-center">
@@ -2596,22 +2603,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </button>
                     </div>
                   </div>
+                  )}
                   <div>
                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
                     <div className="flex items-center">
                       <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
-                        {state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet')}
+                        {isAndroid
+                          ? (state.settings.paths.cacheRoot || t('settings.notSet'))
+                          : (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet'))
+                        }
                       </div>
                       <button
                         onClick={() => {
-                          const cachePath = state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '';
+                          const cachePath = isAndroid
+                            ? (state.settings.paths.cacheRoot || '')
+                            : (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '');
                           if (cachePath) {
                             import('../api/tauri-bridge').then(({ openPath }) => {
                               openPath(cachePath);
                             });
                           }
                         }}
-                        disabled={!state.settings.paths.resourceRoot}
+                        disabled={isAndroid ? !state.settings.paths.cacheRoot : !state.settings.paths.resourceRoot}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
                       >
                         打开

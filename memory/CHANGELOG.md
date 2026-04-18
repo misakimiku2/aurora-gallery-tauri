@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-04-18
+
+### ✨ New Features
+
+#### App.tsx Hook 模块化重构
+- 将 App.tsx 从 **5211 行** 大型单体组件重构为 **2557 行** Hook 编排层（减少 **51%**）
+- 新增 **11 个自定义 Hooks**（P1: 7个 + P2: 4个），加上原有 12 个，总计 **23 个** 自定义 Hooks
+- **P1 提取 Hook（核心业务逻辑）**:
+  - `useAppInit` (378 行) — 应用初始化：Tauri 环境检测、用户数据加载、目录扫描、事件注册、语言/分组设置
+  - `useDirectoryScan` (501 行) — 目录扫描：handleOpenFolder、scanAndMerge、handleRefresh、handleRefreshTags、handleChangePath
+  - `useWindowLifecycle` (157 行) — 窗口生命周期：退出确认、关闭监听、颜色/色板搜索 useEffect、标题更新
+  - `useSearch` (640 行) — 搜索功能：AI 搜索、CLIP 向量搜索、相似图片搜索、clip 设置状态管理
+  - `usePeople` (575 行) — 人物管理：CRUD 操作、头像裁剪、智能创建（16 个函数）
+  - `useTopics` (217 行) — 专题管理：CRUD 操作（6 个函数）
+  - `useTags` (223 行) — 标签管理：CRUD、复制/粘贴标签、清除过滤（13 项返回值）
+- **P2 提取 Hook（辅助逻辑）**:
+  - `useExternalDragDrop` (110 行) — 外部拖拽处理：dragEnter/Over/Leave/Drop + isExternalDragging 状态
+  - `usePersistence` (53 行) — 持久化与自动保存 useEffect
+  - `useFileSelection` (69 行) — 文件选择交互：handleFileClick（Ctrl/Shift/点击选择逻辑）
+  - `useFolderSettings` (120 行) — 文件夹设置记忆：handleRememberFolderSettings + useEffects
+
+### 🔧 Technical
+
+- **Hook 依赖链设计**: 所有 23 个 Hook 按严格依赖顺序调用，确保变量声明在使用之前
+  - 关键依赖：useDirectoryScan → useFileOperations（handleRefresh 前置依赖）
+  - 前向声明模式：enterPeopleOverview 使用 `let` 前向声明，解决 usePeople 的引用依赖
+- **代码提取策略**: 采用预定义行范围 + 底向上删除策略，避免行号偏移问题
+- **原有 Hook 行数更新**: 同步修正了 12 个原有 Hook 的实际行数统计
+- TypeScript 编译 **0 错误**，Vite 构建成功
+- 文档全面更新：PROJECT_STRUCTURE.md / MODULE_DISTRIBUTION.md / CHANGELOG.md
+
+---
+
 ## [1.1.3] - 2026-03-14
 
 ### ✨ New Features

@@ -19,11 +19,13 @@ export async function isAndroidPlatform(): Promise<boolean> {
 
 let _androidPermissionResolve: ((result: string) => void) | null = null;
 let _androidPermissionPromise: Promise<string> | null = null;
+let _lastPermissionResult: string | null = null;
 
 export function initAndroidPermissionListener() {
   if (typeof window === 'undefined') return;
   (window as any).__onAndroidPermissionResult = (result: string) => {
     console.error('[Android] Permission result received:', result);
+    _lastPermissionResult = result;
     if (_androidPermissionResolve) {
       _androidPermissionResolve(result);
       _androidPermissionResolve = null;
@@ -33,6 +35,11 @@ export function initAndroidPermissionListener() {
 }
 
 export function waitForAndroidPermission(): Promise<string> {
+  if (_lastPermissionResult) {
+    const result = _lastPermissionResult;
+    _lastPermissionResult = null;
+    return Promise.resolve(result);
+  }
   if (_androidPermissionPromise) return _androidPermissionPromise;
   _androidPermissionPromise = new Promise<string>((resolve) => {
     _androidPermissionResolve = resolve;
@@ -49,6 +56,7 @@ export function waitForAndroidPermission(): Promise<string> {
 
 export async function ensureAndroidPermissionAndScan(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
   try {
+    _lastPermissionResult = null;
     console.error('[Android] ensureAndroidPermissionAndScan: checking permissions...');
     let permStatus = await invoke<string>('check_android_permissions');
     console.error('[Android] check_android_permissions result:', permStatus);
@@ -103,7 +111,7 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
     const folders = await invoke<Array<{ id: number; name: string; path: string; image_count: number }>>('android_scan_folders');
     console.error('[Android] scanAndroidMedia: got', folders.length, 'folders');
     console.error('[Android] scanAndroidMedia: invoking android_scan_images...');
-    const images = await invoke<Array<{ id: number; path: string; name: string; size: number; width: number | null; height: number | null; date_modified: number; mime_type: string }>>('android_scan_images');
+    const images = await invoke<Array<{ id: number; path: string; content_uri: string; name: string; size: number; width: number | null; height: number | null; date_modified: number; mime_type: string }>>('android_scan_images');
     console.error('[Android] scanAndroidMedia: got', images.length, 'images');
 
     const files: Record<string, any> = {};
@@ -130,10 +138,23 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
       }
     }
 
+    let matchedCount = 0;
+    let unmatchedCount = 0;
+    let firstUnmatchedDirs: string[] = [];
+
     for (const img of images) {
       const fileId = generateId(img.path);
       const parentDir = img.path.substring(0, img.path.lastIndexOf('/'));
       const parentId = folderMap.get(parentDir);
+
+      if (parentId) {
+        matchedCount++;
+      } else {
+        unmatchedCount++;
+        if (firstUnmatchedDirs.length < 5) {
+          firstUnmatchedDirs.push(parentDir);
+        }
+      }
 
       files[fileId] = {
         id: fileId,
@@ -141,6 +162,8 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
         name: img.name,
         type: 'image' as FileType,
         path: img.path,
+        contentUri: img.content_uri,
+        mediaStoreId: img.id,
         size: img.size,
         width: img.width,
         height: img.height,
@@ -152,6 +175,16 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
       if (parentId && files[parentId]) {
         files[parentId].children.push(fileId);
       }
+    }
+
+    console.error('[Android] Image-folder matching: matched=', matchedCount, 'unmatched=', unmatchedCount, 'firstUnmatchedDirs=', firstUnmatchedDirs);
+
+    const foldersWithChildren = roots.filter(id => files[id]?.children?.length > 0).length;
+    console.error('[Android] Folders with children:', foldersWithChildren, 'out of', roots.length);
+    if (folders.length > 0) {
+      const sampleFolder = folders[0];
+      const sampleFolderId = generateId(sampleFolder.path || `folder_${sampleFolder.id}`);
+      console.error('[Android] Sample folder: path=', sampleFolder.path, 'id=', sampleFolderId, 'children=', files[sampleFolderId]?.children?.length);
     }
 
     if (images.length > 0 && roots.length === 0) {

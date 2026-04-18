@@ -5,7 +5,7 @@ import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 
-export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath }: { 
+export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath, mediaStoreId }: { 
   src: string; 
   alt: string; 
   isSelected: boolean;
@@ -16,6 +16,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   fileMeta?: { format?: string };
   resourceRoot?: string;
   cachePath?: string;
+  mediaStoreId?: number;
 }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' }); 
   
@@ -58,7 +59,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         try {
           const { getThumbnail } = await import('../api/tauri-bridge');
 
-          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal);
+          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, undefined, cachePath, mediaStoreId);
           
           if (!controller.signal.aborted && thumbnail) {
             if (cache.get(key) !== thumbnail) {

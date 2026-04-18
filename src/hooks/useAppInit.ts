@@ -6,6 +6,7 @@ import { isAndroidPlatform, ensureAndroidPermissionAndScan } from '../utils/andr
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
+import { setGlobalCacheRoot, setAndroidPlatform } from '../api/tauri-bridge';
 import {
   loadUserData as tauriLoadUserData,
   getDefaultPaths as tauriGetDefaultPaths,
@@ -55,6 +56,13 @@ export const useAppInit = ({
             const defaults = await tauriGetDefaultPaths();
             const savedData = await tauriLoadUserData();
 
+            if (defaults.cacheRoot) {
+              setGlobalCacheRoot(defaults.cacheRoot);
+            }
+
+            const isAndroidNow = await isAndroidPlatform();
+            setAndroidPlatform(isAndroidNow);
+
             let finalSettings = {
               ...state.settings,
               paths: {
@@ -80,7 +88,12 @@ export const useAppInit = ({
                 ...migratedSettings,
                 paths: {
                   ...finalSettings.paths,
-                  ...(migratedSettings.paths || {})
+                  ...(migratedSettings.paths || {}),
+                  ...(isAndroidNow ? {
+                    resourceRoot: defaults.resourceRoot,
+                    cacheRoot: defaults.cacheRoot,
+                    appDataDir: defaults.appDataDir,
+                  } : {})
                 },
                 ai: {
                   ...finalSettings.ai,
@@ -194,19 +207,40 @@ export const useAppInit = ({
             }
 
             if (!savedData) {
-              setState(prev => ({ ...prev, settings: finalSettings }));
-              setIsLoading(false);
               const isAndroid = await isAndroidPlatform();
               if (isAndroid) {
                 localStorage.setItem('aurora_onboarded', 'true');
+                setState(prev => ({ ...prev, settings: finalSettings }));
+                setIsLoading(false);
+                setTimeout(() => setShowSplash(false), 500);
+
                 const result = await ensureAndroidPermissionAndScan();
                 if (result) {
-                  setState(prev => ({ ...prev, settings: finalSettings, files: result.files, roots: result.roots }));
+                  const initialFolder = result.roots[0];
+                  const defaultTab: TabState = {
+                    ...DUMMY_TAB,
+                    id: 'tab-default',
+                    folderId: initialFolder,
+                  };
+                  defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+
+                  setState(prev => ({
+                    ...prev,
+                    settings: finalSettings,
+                    files: result.files,
+                    roots: result.roots,
+                    expandedFolderIds: result.roots,
+                    tabs: [defaultTab],
+                    activeTabId: defaultTab.id,
+                    currentFolderId: initialFolder,
+                  }));
                 }
               } else {
+                setState(prev => ({ ...prev, settings: finalSettings }));
+                setIsLoading(false);
                 setShowWelcome(true);
+                setTimeout(() => setShowSplash(false), 200);
               }
-              setTimeout(() => setShowSplash(false), 200);
               return;
             }
 
@@ -217,7 +251,9 @@ export const useAppInit = ({
               setIsLoading(false);
               setTimeout(() => setShowSplash(false), 500);
 
+              console.error('[AppInit] Android branch: calling ensureAndroidPermissionAndScan...');
               const result = await ensureAndroidPermissionAndScan();
+              console.error('[AppInit] Android scan result:', result ? `files=${Object.keys(result.files).length}, roots=${result.roots.length}` : 'null');
               if (result) {
                 const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
                 const initialFolder = result.roots[0];
@@ -256,11 +292,11 @@ export const useAppInit = ({
             }
 
             if (validRootPaths.length === 0) {
-              if (finalSettings.paths.resourceRoot) {
+              if (finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
                 pathsToScan = [finalSettings.paths.resourceRoot];
               }
             } else {
-              pathsToScan = validRootPaths;
+              pathsToScan = validRootPaths.filter((p: string) => p !== 'android_media_store');
             }
 
             if (pathsToScan.length > 0) {

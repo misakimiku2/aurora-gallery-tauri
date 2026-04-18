@@ -361,6 +361,7 @@ export const FileListItem = React.memo(({
                             fileMeta={file.meta}
                             resourceRoot={resourceRoot}
                             cachePath={cachePath}
+                            mediaStoreId={file.mediaStoreId}
                         />
                     </div>
                 ) : (
