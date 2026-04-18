@@ -1935,7 +1935,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     }
 
     // 收集当前目录下所有图片文件路径
-    const imagePaths = Object.values(state.files)
+    const imagePaths = Object.values(state.files || {})
       .filter(f => f.type === FileType.IMAGE)
       .map(f => f.path);
 
@@ -2816,7 +2816,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       {/* 提示信息 */}
                       {!isColorExtracting && (() => {
                         // 计算当前目录的图片总数
-                        const totalImagesInDir = Object.values(state.files).filter(f => f.type === FileType.IMAGE).length;
+                        const totalImagesInDir = Object.values(state.files || {}).filter(f => f.type === FileType.IMAGE).length;
                         const extractedCount = colorDbStats?.extracted || 0;
                         const pendingCount = colorDbStats?.pending || 0;
                         

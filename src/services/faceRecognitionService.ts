@@ -46,7 +46,7 @@ class FaceRecognitionService {
     let bestMatch: { person: Person; distance: number } | null = null;
     const FACE_MATCH_THRESHOLD = 0.6;
 
-    for (const person of Object.values(people)) {
+    for (const person of Object.values(people || {})) {
       if (person.descriptor) {
         const personDescriptor = new Float32Array(person.descriptor);
         const distance = faceapi.euclideanDistance(descriptor, personDescriptor);

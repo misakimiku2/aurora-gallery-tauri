@@ -360,7 +360,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // 递归获取所有子专题ID（包含嵌套子专题）
     const getAllDescendantTopicIds = useCallback((topicId: string): string[] => {
         const result: string[] = [];
-        const directChildren = Object.values(topics).filter(t => t.parentId === topicId);
+        const directChildren = Object.values(topics || {}).filter(t => t.parentId === topicId);
         for (const child of directChildren) {
             result.push(child.id);
             result.push(...getAllDescendantTopicIds(child.id));
@@ -765,7 +765,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     const { layoutItems, totalHeight } = useMemo(() => {
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
 
-        const rootTopics = Object.values(topics).filter(topic => !topic.parentId);
+        const rootTopics = Object.values(topics || {}).filter(topic => !topic.parentId);
         const sortedRootTopics = sortTopics(rootTopics);
 
         const GAP_X = 32; // Increased horizontal gap
@@ -813,7 +813,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // --- Detail View Logic & Layouts ---
     const detailData = useMemo(() => {
         if (!currentTopic) return null;
-        const subTopics = Object.values(topics).filter(t => t.parentId === currentTopic.id);
+        const subTopics = Object.values(topics || {}).filter(t => t.parentId === currentTopic.id);
         const sortedSubTopics = sortTopics(subTopics);
         const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
 
@@ -833,7 +833,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         peopleSubtopicCount[pid] = (peopleSubtopicCount[pid] || 0) + 1;
                     });
                 }
-                Object.values(topics).forEach(sub => {
+                Object.values(topics || {}).forEach(sub => {
                     if (sub.parentId === tid) stack.push(sub.id);
                 });
             }
@@ -1039,7 +1039,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         markTopic(currentTopic.id);
         if (!currentTopic.parentId) {
             const traverse = (parentId: string) => {
-                Object.values(topics).forEach(child => {
+                Object.values(topics || {}).forEach(child => {
                     if (child.parentId === parentId) {
                         markTopic(child.id);
                         traverse(child.id);
@@ -1608,7 +1608,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
     // View: Topic Gallery (Root)
     const renderGallery = () => {
-        const rootTopics = Object.values(topics).filter(topic => !topic.parentId);
+        const rootTopics = Object.values(topics || {}).filter(topic => !topic.parentId);
         const sortedRootTopics = sortTopics(rootTopics);
         const allTopicIds = sortedRootTopics.map(t => t.id);
 
@@ -1681,7 +1681,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         const coverUrl = getCoverUrl(topic);
                         const personCount = getTotalPersonCount(topic);
                         const fileCount = getTotalFileCount(topic);
-                        const subTopicCount = Object.values(topics).filter(t => t.parentId === topic.id).length;
+                        const subTopicCount = Object.values(topics || {}).filter(t => t.parentId === topic.id).length;
                         const isSelected = selectedTopicIds.includes(topic.id);
 
                         return (
@@ -2398,7 +2398,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
 
     if (!topic.parentId) {
         // This is a parent topic, group by sub-topics
-        const subTopics = Object.values(topics).filter(t => t.parentId === topic.id);
+        const subTopics = Object.values(topics || {}).filter(t => t.parentId === topic.id);
 
         // Images directly in parent topic
         const directImages = topicImages.filter(img => {

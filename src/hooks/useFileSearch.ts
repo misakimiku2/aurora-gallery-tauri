@@ -12,7 +12,7 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   // 1. 缓存文件数组，避免重复执行 Object.values
-  const allFiles = useMemo(() => Object.values(state.files) as FileNode[], [state.files]);
+  const allFiles = useMemo(() => Object.values(state.files || {}) as FileNode[], [state.files]);
 
   // 2. 隔离搜索参数：只有这些参数变化才需要重新“检索”
   // 排除掉 scrollTop 等与检索无关的干扰项

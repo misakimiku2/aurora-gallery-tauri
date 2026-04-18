@@ -13,8 +13,8 @@ export const AddToTopicModal: React.FC<AddToTopicModalProps> = ({ topics, onConf
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-    const mainTopics = Object.values(topics).filter((t: any) => !t.parentId);
-    const getSubTopics = (parentId: string) => Object.values(topics).filter((t: any) => t.parentId === parentId);
+    const mainTopics = Object.values(topics || {}).filter((t: any) => !t.parentId);
+    const getSubTopics = (parentId: string) => Object.values(topics || {}).filter((t: any) => t.parentId === parentId);
 
     const toggleExpand = (id: string, e: React.MouseEvent) => {
         e.stopPropagation();

@@ -1386,7 +1386,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
-      Object.values(sessionFiles).forEach(file => {
+      Object.values(sessionFiles || {}).forEach(file => {
         if (file.path?.startsWith('blob:')) {
           URL.revokeObjectURL(file.path);
         }

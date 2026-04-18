@@ -176,14 +176,14 @@ export function getModelDownloadInfo(modelName: string): ModelDownloadInfo | und
 
 // 获取所有活跃的下载
 export function getActiveDownloads(): ModelDownloadInfo[] {
-  return Object.values(globalModelDownloadState.downloads).filter(
+  return Object.values(globalModelDownloadState.downloads || {}).filter(
     d => d.status === 'downloading'
   );
 }
 
 // 是否有正在进行的下载
 export function hasActiveDownloads(): boolean {
-  return Object.values(globalModelDownloadState.downloads).some(
+  return Object.values(globalModelDownloadState.downloads || {}).some(
     d => d.status === 'downloading'
   );
 }

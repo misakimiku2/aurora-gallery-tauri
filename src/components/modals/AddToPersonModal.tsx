@@ -102,7 +102,7 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
     const filteredPeople = useMemo(() => {
-        const peopleList = Object.values(people);
+        const peopleList = Object.values(people || {});
         if (!search.trim()) return peopleList;
         return peopleList.filter((p: Person) =>
             p.name.toLowerCase().includes(search.toLowerCase())
@@ -154,7 +154,7 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                     <div className="flex items-center justify-center h-full text-gray-500 text-sm py-8">
                         {t('sidebar.noPeople')}
                     </div>
-                ) : (
+                ) : FixedSizeListComp ? (
                     <FixedSizeListComp
                         height={LIST_HEIGHT}
                         width="100%"
@@ -165,6 +165,48 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                     >
                         {PersonRow}
                     </FixedSizeListComp>
+                ) : (
+                    <div className="overflow-y-auto" style={{ maxHeight: LIST_HEIGHT }}>
+                        {filteredPeople.map((person: Person) => (
+                            <div
+                                key={person.id}
+                                onClick={() => toggleSelection(person.id)}
+                                className={`flex items-center px-2 py-1 rounded cursor-pointer ${selectedIds.has(person.id)
+                                    ? 'bg-blue-100 dark:bg-blue-900/30'
+                                    : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    }`}
+                                style={{ height: ITEM_HEIGHT }}
+                            >
+                                <div className="relative mr-3 flex-shrink-0">
+                                    <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden">
+                                        <div className="w-full h-full rounded-full overflow-hidden relative">
+                                            {files[person.coverFileId] ? (
+                                                <img
+                                                    src={convertFileSrc(files[person.coverFileId].path)}
+                                                    alt={person.name}
+                                                    className="w-full h-full object-cover"
+                                                    decoding="async"
+                                                    loading="lazy"
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center">
+                                                    <User size={14} className="text-gray-400 dark:text-gray-500" />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {selectedIds.has(person.id) && (
+                                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
+                                            <Check size={10} className="text-white" />
+                                        </div>
+                                    )}
+                                </div>
+                                <span className={`text-sm truncate ${selectedIds.has(person.id) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
+                                    {person.name}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 )}
             </div>
             <div className="flex justify-between items-center">

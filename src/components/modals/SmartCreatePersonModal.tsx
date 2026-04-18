@@ -519,7 +519,7 @@ export const SmartCreatePersonModal: React.FC<SmartCreatePersonModalProps> = ({
 
   const filteredCharacters = useMemo(() => {
     const existingTagIndices = new Set(
-      Object.values(people)
+      Object.values(people || {})
         .map(p => p.characterTagIndex)
         .filter((idx): idx is number => idx !== undefined)
     );

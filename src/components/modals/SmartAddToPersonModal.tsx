@@ -54,7 +54,7 @@ export const SmartAddToPersonModal: React.FC<SmartAddToPersonModalProps> = ({
 
   const existingFileIds = useMemo(() => {
     const ids = new Set<string>();
-    Object.values(files).forEach(file => {
+    Object.values(files || {}).forEach(file => {
       if (file.aiData?.faces?.some(f => f.personId === person.id)) {
         ids.add(file.id);
       }
@@ -63,7 +63,7 @@ export const SmartAddToPersonModal: React.FC<SmartAddToPersonModalProps> = ({
   }, [files, person.id]);
 
   const allImageFiles = useMemo(() => {
-    return Object.values(files).filter(file => 
+    return Object.values(files || {}).filter(file => 
       file.type === FileType.IMAGE && file.path && !existingFileIds.has(file.id)
     );
   }, [files, existingFileIds]);

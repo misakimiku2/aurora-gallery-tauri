@@ -1,0 +1,378 @@
+import { useEffect } from 'react';
+import { AppState, FileNode, FileType, Person, Topic, TabState } from '../types';
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
+import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
+import { isAndroidPlatform, ensureAndroidPermissionAndScan } from '../utils/androidPlatform';
+import { initializeFileSystem } from '../utils/mockFileSystem';
+import { performanceMonitor } from '../utils/performanceMonitor';
+import { aiService } from '../services/aiService';
+import {
+  loadUserData as tauriLoadUserData,
+  getDefaultPaths as tauriGetDefaultPaths,
+  scanDirectory,
+  dbGetAllPeople,
+  dbGetAllTopics,
+  lanShareStart,
+} from '../api/tauri-bridge';
+
+let isAppInitialized = false;
+
+interface UseAppInitProps {
+  state: AppState;
+  setState: React.Dispatch<React.SetStateAction<AppState>>;
+  savedDataLoadedRef: React.MutableRefObject<boolean>;
+  setSavedDataLoaded: (v: boolean) => void;
+  setIsLoading: (v: boolean) => void;
+  setShowSplash: (v: boolean) => void;
+  setShowWelcome: (v: boolean) => void;
+  exitActionRef: React.MutableRefObject<'ask' | 'minimize' | 'exit'>;
+  setGroupBy: (groupBy: any) => void;
+}
+
+export const useAppInit = ({
+  state,
+  setState,
+  savedDataLoadedRef,
+  setSavedDataLoaded,
+  setIsLoading,
+  setShowSplash,
+  setShowWelcome,
+  exitActionRef,
+  setGroupBy,
+}: UseAppInitProps) => {
+  useEffect(() => {
+    if (isAppInitialized) return;
+    isAppInitialized = true;
+
+    const init = async () => {
+      const isTauriEnv = await detectTauriEnvironmentAsync();
+      if (isTauriEnv) {
+        const isTauriSyncEnv = isTauriEnvironment();
+        let isSavedDataLoaded = false;
+
+        if (isTauriSyncEnv) {
+          try {
+            const defaults = await tauriGetDefaultPaths();
+            const savedData = await tauriLoadUserData();
+
+            let finalSettings = {
+              ...state.settings,
+              paths: {
+                ...state.settings.paths,
+                ...defaults,
+              }
+            };
+
+            if (savedData) {
+              isSavedDataLoaded = true;
+
+              let migratedSettings = { ...savedData.settings };
+              if (migratedSettings.clip?.modelName === 'ViT-B-32' || migratedSettings.clip?.modelName === 'ViT-L-14') {
+                console.log('[Migration] Migrating deprecated VIT model to SigLIP2-Base');
+                migratedSettings.clip = {
+                  ...migratedSettings.clip,
+                  modelName: 'SigLIP2-Base'
+                };
+              }
+
+              finalSettings = {
+                ...finalSettings,
+                ...migratedSettings,
+                paths: {
+                  ...finalSettings.paths,
+                  ...(migratedSettings.paths || {})
+                },
+                ai: {
+                  ...finalSettings.ai,
+                  ...(migratedSettings.ai || {})
+                },
+                defaultLayoutSettings: {
+                  ...DEFAULT_LAYOUT_SETTINGS,
+                  ...(migratedSettings.defaultLayoutSettings || {})
+                }
+              };
+
+              let peopleData = savedData.people || {};
+              try {
+                const dbPeople = await dbGetAllPeople();
+                if (Array.isArray(dbPeople) && dbPeople.length > 0) {
+                  const dbPeopleMap: Record<string, Person> = {};
+                  dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
+                  peopleData = dbPeopleMap;
+                }
+              } catch (e) { console.error("Failed to load people from DB", e); }
+
+              let topicsData = savedData.topics || {};
+              try {
+                const dbTopics = await dbGetAllTopics();
+                if (Array.isArray(dbTopics) && dbTopics.length > 0) {
+                  const dbTopicsMap: Record<string, Topic> = {};
+                  dbTopics.forEach((t: any) => {
+                    dbTopicsMap[t.id] = {
+                      id: t.id,
+                      parentId: t.parentId,
+                      name: t.name,
+                      description: t.description,
+                      type: t.topicType,
+                      coverFileId: t.coverFileId,
+                      backgroundFileId: t.backgroundFileId,
+                      coverCrop: t.coverCrop,
+                      peopleIds: t.peopleIds || [],
+                      fileIds: t.fileIds || [],
+                      sourceUrl: t.sourceUrl,
+                      createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
+                      updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,
+                    };
+                  });
+                  topicsData = dbTopicsMap;
+                }
+              } catch (e) { console.error("Failed to load topics from DB", e); }
+
+              setState(prev => ({
+                ...prev,
+                customTags: savedData.customTags || [],
+                people: peopleData,
+                topics: topicsData,
+                folderSettings: savedData.folderSettings || {},
+                settings: finalSettings
+              }));
+              savedDataLoadedRef.current = true;
+              setSavedDataLoaded(true);
+
+              (async () => {
+                try {
+                  setState(prev => ({ ...prev, aiConnectionStatus: 'checking' }));
+                  const res = await aiService.checkConnection(finalSettings.ai);
+                  if (res.status === 'connected') {
+                    setState(prev => ({ ...prev, aiConnectionStatus: 'connected' }));
+
+                    if (finalSettings.ai.provider === 'lmstudio' && res.result && res.result.data && Array.isArray(res.result.data) && res.result.data.length > 0) {
+                      const detectedModel = res.result.data[0].id;
+                      if (detectedModel && detectedModel !== finalSettings.ai.lmstudio.model) {
+                        setState(prev => ({ ...prev, settings: { ...prev.settings, ai: { ...prev.settings.ai, lmstudio: { ...prev.settings.ai.lmstudio, model: detectedModel } } } }));
+                      }
+                    }
+                  } else {
+                    setState(prev => ({ ...prev, aiConnectionStatus: 'disconnected' }));
+                  }
+                } catch (e) {
+                  console.error('Auto AI connection check failed:', e);
+                  setState(prev => ({ ...prev, aiConnectionStatus: 'disconnected' }));
+                }
+              })();
+
+              if (finalSettings.lanShare?.enabled && finalSettings.paths?.resourceRoot) {
+                (async () => {
+                  try {
+                    console.log('[LAN Share] Auto-starting LAN share service...');
+                    await lanShareStart(finalSettings.lanShare, finalSettings.paths.resourceRoot);
+                    console.log('[LAN Share] Auto-started successfully');
+                  } catch (e) {
+                    console.error('[LAN Share] Auto-start failed:', e);
+                  }
+                })();
+              }
+
+              exitActionRef.current = finalSettings.exitAction || 'ask';
+            } else {
+              setState(prev => ({
+                ...prev,
+                settings: finalSettings
+              }));
+              exitActionRef.current = finalSettings.exitAction || 'ask';
+            }
+
+            let pathsToScan: string[] = [];
+            let validRootPaths: string[] = [];
+
+            if (savedData?.rootPaths && Array.isArray(savedData.rootPaths) && savedData.rootPaths.length > 0) {
+              validRootPaths = savedData.rootPaths.filter((path: string) => {
+                const lastDotIndex = path.lastIndexOf('.');
+                const lastSlashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+                return lastDotIndex === -1 || lastDotIndex < lastSlashIndex;
+              });
+            }
+
+            if (!savedData) {
+              setState(prev => ({ ...prev, settings: finalSettings }));
+              setIsLoading(false);
+              const isAndroid = await isAndroidPlatform();
+              if (isAndroid) {
+                localStorage.setItem('aurora_onboarded', 'true');
+                const result = await ensureAndroidPermissionAndScan();
+                if (result) {
+                  setState(prev => ({ ...prev, settings: finalSettings, files: result.files, roots: result.roots }));
+                }
+              } else {
+                setShowWelcome(true);
+              }
+              setTimeout(() => setShowSplash(false), 200);
+              return;
+            }
+
+            const isAndroid = await isAndroidPlatform();
+
+            if (isAndroid) {
+              setState(prev => ({ ...prev, settings: finalSettings }));
+              setIsLoading(false);
+              setTimeout(() => setShowSplash(false), 500);
+
+              const result = await ensureAndroidPermissionAndScan();
+              if (result) {
+                const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+                const initialFolder = result.roots[0];
+                const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
+                const layoutMode = savedForRoot?.layoutMode || globalLayoutSettings.layoutMode;
+                const sortBy = savedForRoot?.sortBy || globalLayoutSettings.sortBy;
+                const sortDirection = savedForRoot?.sortDirection || globalLayoutSettings.sortDirection;
+
+                const defaultTab: TabState = {
+                  ...DUMMY_TAB,
+                  id: 'tab-default',
+                  folderId: initialFolder,
+                  layoutMode: layoutMode as any
+                };
+                defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+
+                setState(prev => ({
+                  ...prev,
+                  files: result.files,
+                  roots: result.roots,
+                  expandedFolderIds: result.roots,
+                  tabs: [defaultTab],
+                  activeTabId: defaultTab.id,
+                  currentFolderId: initialFolder,
+                  sortBy,
+                  sortDirection,
+                }));
+
+                savedDataLoadedRef.current = true;
+                setSavedDataLoaded(true);
+              }
+
+              savedDataLoadedRef.current = true;
+              setSavedDataLoaded(true);
+              return;
+            }
+
+            if (validRootPaths.length === 0) {
+              if (finalSettings.paths.resourceRoot) {
+                pathsToScan = [finalSettings.paths.resourceRoot];
+              }
+            } else {
+              pathsToScan = validRootPaths;
+            }
+
+            if (pathsToScan.length > 0) {
+              let allFiles: Record<string, FileNode> = {};
+              let allRoots: string[] = [];
+              const savedMetadata = savedData?.fileMetadata || {};
+              for (const p of pathsToScan) {
+                try {
+                  const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
+
+                  const result = await scanDirectory(p);
+
+                  performanceMonitor.end(scanTimer, 'scanDirectory', {
+                    path: p,
+                    fileCount: Object.keys(result.files).length,
+                    rootCount: result.roots.length
+                  });
+
+                  performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
+
+                  Object.values(result.files || {}).forEach((f: any) => {
+                    const saved = savedMetadata[f.path];
+                    if (!saved) return;
+
+                    if ((!f.tags || f.tags.length === 0) && saved.tags) f.tags = saved.tags;
+                    if (!f.description && saved.description) f.description = saved.description;
+                    if (!f.sourceUrl && saved.sourceUrl) f.sourceUrl = saved.sourceUrl;
+                    if (!f.aiData && saved.aiData) f.aiData = saved.aiData;
+                    if (!f.category && saved.category) f.category = saved.category;
+
+                    if (saved.meta && f.meta) {
+                      if ((!f.meta.width || f.meta.width === 0) && saved.meta.width) f.meta.width = saved.meta.width;
+                      if ((!f.meta.height || f.meta.height === 0) && saved.meta.height) f.meta.height = saved.meta.height;
+                      if ((!f.meta.palette || f.meta.palette.length === 0) && saved.meta.palette) f.meta.palette = saved.meta.palette;
+                    }
+                  });
+
+                  Object.assign(allFiles, result.files);
+                  allRoots.push(...result.roots);
+                } catch (err) {
+                  console.error(`Failed to reload root: ${p}`, err);
+                }
+              }
+              if (allRoots.length > 0) {
+                const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+
+                setState(prev => {
+                  const initialFolder = allRoots[0];
+
+                  const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
+
+                  const layoutMode = savedForRoot?.layoutMode || globalLayoutSettings.layoutMode;
+                  const sortBy = savedForRoot?.sortBy || globalLayoutSettings.sortBy;
+                  const sortDirection = savedForRoot?.sortDirection || globalLayoutSettings.sortDirection;
+                  const groupBySetting = savedForRoot?.groupBy || globalLayoutSettings.groupBy;
+
+                  const defaultTab: TabState = {
+                    ...DUMMY_TAB,
+                    id: 'tab-default',
+                    folderId: initialFolder,
+                    layoutMode: layoutMode as any
+                  };
+                  defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+
+                  setGroupBy(groupBySetting as any);
+
+                  return {
+                    ...prev,
+                    roots: allRoots,
+                    files: allFiles,
+                    expandedFolderIds: allRoots,
+                    tabs: [defaultTab],
+                    activeTabId: defaultTab.id,
+                    sortBy: sortBy,
+                    sortDirection: sortDirection
+                  };
+                });
+
+                savedDataLoadedRef.current = true;
+                setSavedDataLoaded(true);
+                setIsLoading(false);
+                setTimeout(() => {
+                  setShowSplash(false);
+                }, 500);
+                return;
+              } else {
+                isSavedDataLoaded = false;
+              }
+            }
+          } catch (e) {
+            console.error("Tauri initialization failed", e);
+            isSavedDataLoaded = false;
+          }
+        }
+
+        if (!isSavedDataLoaded) {
+          const { roots, files } = initializeFileSystem();
+          const initialFolder = roots[0];
+          const defaultTab: TabState = { ...DUMMY_TAB, id: 'tab-default', folderId: initialFolder, history: { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 } };
+          setState(prev => ({ ...prev, roots, files, people: {}, expandedFolderIds: roots, tabs: [defaultTab], activeTabId: defaultTab.id }));
+        }
+
+        savedDataLoadedRef.current = true;
+        setSavedDataLoaded(true);
+        console.debug('[Init] Initialization complete (no saved data)');
+
+        setIsLoading(false);
+        setTimeout(() => {
+          setShowSplash(false);
+        }, 500);
+      }
+    };
+    init();
+  }, []);
+};

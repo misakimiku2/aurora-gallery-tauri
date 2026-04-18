@@ -238,7 +238,7 @@ export const PersonGrid = ({
 
   // 排序人物列表
   const sortedPeopleList = useMemo(() => {
-    const peopleList = Object.values(people);
+    const peopleList = Object.values(people || {});
 
     // 创建新数组并排序，避免修改原数组
     return [...peopleList].sort((a, b) => {
@@ -286,7 +286,7 @@ export const PersonGrid = ({
 
         case 'topic':
           // 按专题分组
-          const personTopics = Object.values(topics).filter(topic =>
+          const personTopics = Object.values(topics || {}).filter(topic =>
             topic.peopleIds?.includes(person.id)
           );
           if (personTopics.length > 0) {

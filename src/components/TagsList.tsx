@@ -175,7 +175,7 @@ export const TagsList = React.memo(({
   // Tag counts
   const tagCounts = useMemo(() => {
       const counts: Record<string, number> = {};
-      Object.values(files).forEach((f: FileNode) => {
+      Object.values(files || {}).forEach((f: FileNode) => {
           if (f.tags) {
               f.tags.forEach((t: string) => {
                   counts[t] = (counts[t] || 0) + 1;
@@ -189,7 +189,7 @@ export const TagsList = React.memo(({
   const previewImages = useMemo(() => {
     if (!hoveredTag) return [];
     const res: FileNode[] = [];
-    const allFiles = Object.values(files);
+    const allFiles = Object.values(files || {});
     // Find last 3 images with this tag
     for (let i = allFiles.length - 1; i >= 0 && res.length < 3; i--) {
         const f = allFiles[i];

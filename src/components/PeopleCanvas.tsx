@@ -33,7 +33,7 @@ const AVATAR_SIZE = 48;
 const ROW_HEIGHT = 88;
 
 function calculateLayout(people: Record<string, Person>, containerWidth: number): PersonLayout[] {
-  const peopleList = Object.values(people);
+  const peopleList = Object.values(people || {});
   const itemWidth = (containerWidth - PADDING * 2 - GAP * (COLS - 1)) / COLS;
   
   return peopleList.map((person, index) => {

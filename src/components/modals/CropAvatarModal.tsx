@@ -36,7 +36,7 @@ export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initi
     // 初始化时设置当前图片ID
     useEffect(() => {
         // 找到与fileUrl对应的文件
-        const initialFile: any = Object.values(allFiles).find((file: any) => {
+        const initialFile: any = Object.values(allFiles || {}).find((file: any) => {
             return file.url === fileUrl || convertFileSrc(file.path) === fileUrl;
         });
 
@@ -50,7 +50,7 @@ export const CropAvatarModal: React.FC<CropAvatarModalProps> = ({ fileUrl, initi
     const getPersonImages = () => {
         const images: any[] = [];
 
-        Object.values(allFiles).forEach((file: any) => {
+        Object.values(allFiles || {}).forEach((file: any) => {
             if (file.type === 'image' && file.aiData?.faces) {
                 const hasPerson = file.aiData.faces.some((face: any) => face.personId === personId);
                 if (hasPerson) {

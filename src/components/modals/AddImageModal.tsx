@@ -116,15 +116,14 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
 
     // 获取所有图片文件（排除已存在的）
     const imageFiles = useMemo(() => {
-        return Object.values(files).filter(f => 
+        return Object.values(files || {}).filter(f => 
             f.type === FileType.IMAGE && !existingIdsSet.has(f.id)
         );
     }, [files, existingIdsSet]);
 
-    // 获取标签列表
     const allTags = useMemo(() => {
         const tagSet = new Set<string>(customTags);
-        Object.values(files).forEach(file => {
+        Object.values(files || {}).forEach(file => {
             if (file.tags && !existingIdsSet.has(file.id)) {
                 file.tags.forEach(tag => tagSet.add(tag));
             }
@@ -134,28 +133,27 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
 
     // 获取根专题（parentId 为 null 的专题）
     const rootTopics = useMemo(() => {
-        return Object.values(topics)
+        return Object.values(topics || {})
             .filter(t => !t.parentId)
             .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
     }, [topics]);
 
-    // 获取子专题
     const getChildTopics = useCallback((parentId: string) => {
-        return Object.values(topics)
+        return Object.values(topics || {})
             .filter(t => t.parentId === parentId)
             .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
     }, [topics]);
 
     // 获取人物列表
     const peopleList = useMemo(() => {
-        return Object.values(people).sort((a, b) => 
+        return Object.values(people || {}).sort((a, b) => 
             (a.name || '').localeCompare(b.name || '', 'zh-CN')
         );
     }, [people]);
 
     // 获取根文件夹
     const rootFolders = useMemo(() => {
-        return Object.values(files).filter(f => 
+        return Object.values(files || {}).filter(f => 
             f.type === FileType.FOLDER && !f.parentId
         ).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
     }, [files]);
@@ -232,7 +230,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
             case 'people': {
                 peopleList.forEach(person => {
                     // 计算该人物下可添加的图片数量
-                    const availableCount = Object.values(files).filter(f => 
+                    const availableCount = Object.values(files || {}).filter(f => 
                         f.type === FileType.IMAGE && 
                         !existingIdsSet.has(f.id) &&
                         f.aiData?.faces?.some(face => face.personId === person.id)

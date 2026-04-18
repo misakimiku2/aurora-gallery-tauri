@@ -13,7 +13,7 @@ interface TagEditorProps {
 export const TagEditor: React.FC<TagEditorProps> = ({ file, files, onUpdate, onClose, t }) => {
     const [input, setInput] = useState('');
     const allTags = new Set<string>();
-    Object.values(files).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t)));
+    Object.values(files || {}).forEach((f: any) => f.tags.forEach((t: string) => allTags.add(t)));
     const allTagsList = Array.from(allTags);
     const addTag = (tag: string) => { if (!file.tags.includes(tag)) { onUpdate(file.id, { tags: [...file.tags, tag] }); } setInput(''); };
     return (

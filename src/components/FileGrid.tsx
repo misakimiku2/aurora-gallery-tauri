@@ -1018,7 +1018,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
         observer.disconnect();
         containerRef?.current?.removeEventListener('scroll', handleScroll);
     };
-  }, [containerRef]);
+  }, [containerRef, activeTab.viewMode]);
 
   const { layout, totalHeight } = useLayout(
       activeTab.viewMode === 'people-overview' ? [] : displayFileIds,

@@ -112,7 +112,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   // 获取所有标签列表，用于智能联想
   const allTags = React.useMemo(() => {
     const tagsSet = new Set<string>();
-    Object.values(groupedTags).forEach(tags => {
+    Object.values(groupedTags || {}).forEach(tags => {
       tags.forEach(tag => tagsSet.add(tag));
     });
     return Array.from(tagsSet);
@@ -144,7 +144,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   }, [allTags, localSearchQuery, isFocused]);
   
   const keys = Object.keys(filteredGroupedTags).sort();
-  const totalTags = Object.values(filteredGroupedTags).reduce((acc, curr) => acc + curr.length, 0);
+  const totalTags = Object.values(filteredGroupedTags || {}).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
     <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50">

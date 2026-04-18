@@ -271,7 +271,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   }, [sidebarSortBy, sidebarSortDirection]);
   
   const sortedPeopleList = useMemo(() => {
-    const peopleList = Object.values(people);
+    const peopleList = Object.values(people || {});
     return [...peopleList].sort((a, b) => {
       let comparison = 0;
       switch (sidebarSortBy) {
@@ -1404,7 +1404,7 @@ export const Sidebar: React.FC<{
     win.__AURORA_RENDER_COUNTS__.treeSidebarLogical = visibleNodes.length;
 
     // total folder count (authoritative for virtualization detection)
-    const totalFolders = Object.values(files).filter(f => f.type === FileType.FOLDER).length;
+    const totalFolders = Object.values(files || {}).filter(f => f.type === FileType.FOLDER).length;
     win.__AURORA_RENDER_COUNTS__.treeSidebarTotal = totalFolders;
 
     // DOM-mounted count (best-effort selector matching TreeNode structure)

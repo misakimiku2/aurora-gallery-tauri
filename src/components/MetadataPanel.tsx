@@ -579,7 +579,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     const systemTags = useMemo(() => {
         const tags = new Set<string>();
-        Object.values(files).forEach((f: FileNode) => f.tags.forEach(tag => tags.add(tag)));
+        Object.values(files || {}).forEach((f: FileNode) => f.tags.forEach(tag => tags.add(tag)));
         return Array.from(tags).sort();
     }, [filesVersion]);
 
@@ -588,7 +588,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         if (!file || !topics) return null;
 
         // Find the topic that contains this file's ID in its fileIds
-        const topicList = Object.values(topics);
+        const topicList = Object.values(topics || {});
         // Note: We prioritize finding sub-topics (topics with parentId) first
         // as a file might technically be in both if the logic allows, 
         // but usually it's assigned to a specific sub-topic.
@@ -1010,7 +1010,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         if (!person) return null;
         let totalSize = 0;
         let count = 0;
-        Object.values(files).forEach((f: FileNode) => {
+        Object.values(files || {}).forEach((f: FileNode) => {
             if (f.type === FileType.IMAGE && f.aiData?.faces.some(face => face.personId === person.id)) {
                 totalSize += f.meta?.sizeKb || 0;
                 count++;
@@ -1219,7 +1219,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             peopleSubtopicCount[pid] = (peopleSubtopicCount[pid] || 0) + 1;
                         });
                     }
-                    Object.values(topics).forEach(sub => {
+                    Object.values(topics || {}).forEach(sub => {
                         if (sub.parentId === tid) stack.push(sub.id);
                     });
                 }
@@ -1515,7 +1515,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 const coverUrl = getTopicCover(topic);
                                 const isMainTopic = !topic.parentId;
                                 const allSubTopics = isMainTopic
-                                    ? Object.values(topics).filter(sub => sub.parentId === topic.id)
+                                    ? Object.values(topics || {}).filter(sub => sub.parentId === topic.id)
                                         .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
                                     : [];
 
