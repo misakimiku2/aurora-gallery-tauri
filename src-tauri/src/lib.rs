@@ -43,7 +43,7 @@ pub use db::AppDbPool;
 pub use lan_share_commands::LanShareState;
 
 #[cfg(target_os = "android")]
-pub use android::{scan_device_images, scan_device_folders, generate_thumbnail as android_generate_thumbnail, ThumbnailResult, AndroidImageInfo, AndroidFolderInfo};
+pub use android::{scan_device_images, scan_device_folders, scan_device_all, generate_thumbnail as android_generate_thumbnail, ThumbnailResult, AndroidImageInfo, AndroidFolderInfo, AndroidScanAllResult};
 
 use std::fs;
 use std::path::Path;
@@ -61,17 +61,18 @@ use tauri::menu::{Menu, MenuItem};
 #[cfg(target_os = "android")]
 #[tauri::command]
 async fn android_scan_images() -> Result<Vec<AndroidImageInfo>, String> {
+    let start = std::time::Instant::now();
     let activity = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
         .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
     let mut env = vm.attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
     let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
-    log::info!("android_scan_images: starting JNI scan");
     let result = scan_device_images(&mut env, &activity_obj);
+    let elapsed = start.elapsed();
     match &result {
-        Ok(images) => log::info!("android_scan_images: found {} images", images.len()),
-        Err(e) => log::error!("android_scan_images: failed: {}", e),
+        Ok(images) => log::info!("android_scan_images: found {} images in {:.2}s ({:.0} img/s)", images.len(), elapsed.as_secs_f64(), images.len() as f64 / elapsed.as_secs_f64().max(0.001)),
+        Err(e) => log::error!("android_scan_images: failed in {:.2}s: {}", elapsed.as_secs_f64(), e),
     }
     result
 }
@@ -79,19 +80,84 @@ async fn android_scan_images() -> Result<Vec<AndroidImageInfo>, String> {
 #[cfg(target_os = "android")]
 #[tauri::command]
 async fn android_scan_folders() -> Result<Vec<AndroidFolderInfo>, String> {
+    let start = std::time::Instant::now();
     let activity = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
         .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
     let mut env = vm.attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
     let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
-    log::info!("android_scan_folders: starting JNI scan");
     let result = scan_device_folders(&mut env, &activity_obj);
+    let elapsed = start.elapsed();
     match &result {
-        Ok(folders) => log::info!("android_scan_folders: found {} folders", folders.len()),
-        Err(e) => log::error!("android_scan_folders: failed: {}", e),
+        Ok(folders) => log::info!("android_scan_folders: found {} folders in {:.2}s", folders.len(), elapsed.as_secs_f64()),
+        Err(e) => log::error!("android_scan_folders: failed in {:.2}s: {}", elapsed.as_secs_f64(), e),
     }
     result
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_scan_all() -> Result<AndroidScanAllResult, String> {
+    let start = std::time::Instant::now();
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    let result = scan_device_all(&mut env, &activity_obj);
+    let elapsed = start.elapsed();
+    match &result {
+        Ok(r) => log::info!("android_scan_all: found {} images, {} folders in {:.2}s ({:.0} img/s)", r.images.len(), r.folders.len(), elapsed.as_secs_f64(), r.images.len() as f64 / elapsed.as_secs_f64().max(0.001)),
+        Err(e) => log::error!("android_scan_all: failed in {:.2}s: {}", elapsed.as_secs_f64(), e),
+    }
+    result
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_save_scan_cache(app_data_dir: String, data: String, cache_type: Option<String>) -> Result<(), String> {
+    use std::io::Write;
+    let file_name = match cache_type.as_deref() {
+        Some("folders") => "scan_cache_folders.json",
+        _ => "scan_cache.json",
+    };
+    let cache_path = std::path::Path::new(&app_data_dir).join(file_name);
+    if let Some(parent) = cache_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let mut file = std::fs::File::create(&cache_path)
+        .map_err(|e| format!("Failed to create cache file: {:?}", e))?;
+    let mut encoder = flate2::write::GzEncoder::new(&mut file, flate2::Compression::fast());
+    encoder.write_all(data.as_bytes())
+        .map_err(|e| format!("Failed to write cache: {:?}", e))?;
+    encoder.finish()
+        .map_err(|e| format!("Failed to finish compression: {:?}", e))?;
+    log::info!("android_save_scan_cache: saved to {} ({} bytes)", cache_path.display(), file.metadata().map(|m| m.len()).unwrap_or(0));
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_load_scan_cache(app_data_dir: String, cache_type: Option<String>) -> Result<String, String> {
+    use std::io::Read;
+    let file_name = match cache_type.as_deref() {
+        Some("folders") => "scan_cache_folders.json",
+        _ => "scan_cache.json",
+    };
+    let cache_path = std::path::Path::new(&app_data_dir).join(file_name);
+    if !cache_path.exists() {
+        return Err("Cache file not found".to_string());
+    }
+    let file = std::fs::File::open(&cache_path)
+        .map_err(|e| format!("Failed to open cache file: {:?}", e))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
+    let mut data = String::new();
+    decoder.read_to_string(&mut data)
+        .map_err(|e| format!("Failed to read cache: {:?}", e))?;
+    log::info!("android_load_scan_cache: loaded from {} ({} bytes)", cache_path.display(), data.len());
+    Ok(data)
 }
 
 #[cfg(target_os = "android")]
@@ -407,6 +473,9 @@ pub fn run() {
         system_commands::proxy_http_request,
         android_scan_images,
         android_scan_folders,
+        android_scan_all,
+        android_save_scan_cache,
+        android_load_scan_cache,
         android_get_thumbnail,
         check_android_permissions,
         request_android_permissions,

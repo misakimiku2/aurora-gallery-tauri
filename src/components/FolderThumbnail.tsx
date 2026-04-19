@@ -5,6 +5,7 @@ import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
+import { Folder3DIcon } from './Folder3DIcon';
 
 const findImagesDeeply = (
     rootFolder: FileNode, 
@@ -147,8 +148,6 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
       };
     }
   }, [isInView, wasInView, loaded, imageChildren, resourceRoot, previewSrcs.length]);
-
-  const { Folder3DIcon } = require('./Folder3DIcon');
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">

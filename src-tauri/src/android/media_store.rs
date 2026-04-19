@@ -26,6 +26,198 @@ pub struct AndroidFolderInfo {
     pub cover_image_id: Option<i64>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AndroidScanAllResult {
+    pub images: Vec<AndroidImageInfo>,
+    pub folders: Vec<AndroidFolderInfo>,
+}
+
+pub fn scan_device_all<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> Result<AndroidScanAllResult, String> {
+    env.ensure_local_capacity(256)
+        .map_err(|e| format!("Failed to ensure local capacity: {:?}", e))?;
+    let content_resolver = get_content_resolver(env, activity)?;
+
+    let projection = [
+        "_id",
+        "_data",
+        "_display_name",
+        "_size",
+        "width",
+        "height",
+        "date_modified",
+        "mime_type",
+        "bucket_id",
+        "bucket_display_name",
+    ];
+
+    let sort_order = "date_modified DESC";
+
+    let uri = get_images_uri(env)?;
+    let proj_array = create_string_array(env, &projection)?;
+
+    let cursor = env.call_method(
+        &content_resolver,
+        "query",
+        "(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;",
+        &[
+            JValue::Object(&uri),
+            JValue::Object(&proj_array),
+            JValue::Object(&JObject::null()),
+            JValue::Object(&JObject::null()),
+            JValue::Object(&env.new_string(sort_order).map_err(|e| format!("Failed to create string: {:?}", e))?.into()),
+        ],
+    ).map_err(|e| format!("Failed to query: {:?}", e))?;
+
+    let cursor = cursor.l().map_err(|e| format!("Failed to get cursor: {:?}", e))?;
+
+    parse_all_cursor(env, cursor)
+}
+
+fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllResult, String> {
+    struct FolderData {
+        name: String,
+        path: String,
+        count: i32,
+        cover_image_path: Option<String>,
+        cover_image_id: Option<i64>,
+        max_date_modified: i64,
+    }
+
+    let mut images = Vec::new();
+    let mut folder_map: HashMap<i64, FolderData> = HashMap::new();
+
+    let has_next = env.call_method(&cursor, "moveToFirst", "()Z", &[])
+        .map_err(|e| format!("Failed to move to first: {:?}", e))?
+        .z()
+        .map_err(|e| format!("Failed to get boolean: {:?}", e))?;
+
+    if !has_next {
+        let _ = env.call_method(&cursor, "close", "()V", &[]);
+        return Ok(AndroidScanAllResult { images, folders: Vec::new() });
+    }
+
+    let col_id = get_column_index(env, &cursor, "_id")?;
+    let col_data = get_column_index(env, &cursor, "_data")?;
+    let col_name = get_column_index(env, &cursor, "_display_name")?;
+    let col_size = get_column_index(env, &cursor, "_size")?;
+    let col_width = get_column_index(env, &cursor, "width")?;
+    let col_height = get_column_index(env, &cursor, "height")?;
+    let col_date = get_column_index(env, &cursor, "date_modified")?;
+    let col_mime = get_column_index(env, &cursor, "mime_type")?;
+    let col_bucket_id = get_column_index(env, &cursor, "bucket_id")?;
+    let col_bucket_name = get_column_index(env, &cursor, "bucket_display_name")?;
+
+    loop {
+        let id = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_id)])
+            .map_err(|e| format!("Failed to get id: {:?}", e))?
+            .j()
+            .map_err(|e| format!("Failed to get long: {:?}", e))?;
+
+        let path = get_cursor_string(env, &cursor, col_data)?;
+        let name = get_cursor_string(env, &cursor, col_name)?;
+
+        let size = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_size)])
+            .map_err(|e| format!("Failed to get size: {:?}", e))?
+            .j()
+            .map_err(|e| format!("Failed to get long: {:?}", e))?;
+
+        let width = get_cursor_int_optional(env, &cursor, col_width)?;
+        let height = get_cursor_int_optional(env, &cursor, col_height)?;
+
+        let date_modified = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_date)])
+            .map_err(|e| format!("Failed to get date: {:?}", e))?
+            .j()
+            .map_err(|e| format!("Failed to get long: {:?}", e))?;
+
+        let mime_type = get_cursor_string(env, &cursor, col_mime)?;
+
+        let content_uri = format!("content://media/external/images/media/{}", id);
+
+        images.push(AndroidImageInfo {
+            id,
+            path: path.clone(),
+            content_uri,
+            name,
+            size,
+            width,
+            height,
+            date_modified,
+            mime_type,
+        });
+
+        if col_bucket_id >= 0 {
+            let bucket_id = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_bucket_id)])
+                .map_err(|e| format!("Failed to get bucket_id: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?;
+
+            let bucket_name = get_cursor_string(env, &cursor, col_bucket_name)?;
+
+            let cover_path = if path.is_empty() { None } else { Some(path.clone()) };
+
+            let folder_path = if !path.is_empty() {
+                if let Some(last_slash) = path.rfind('/') {
+                    path[..last_slash].to_string()
+                } else {
+                    path.clone()
+                }
+            } else {
+                String::new()
+            };
+
+            let entry = folder_map.entry(bucket_id).or_insert_with(|| FolderData {
+                name: bucket_name,
+                path: folder_path,
+                count: 0,
+                cover_image_path: None,
+                cover_image_id: None,
+                max_date_modified: -1,
+            });
+            entry.count += 1;
+
+            if date_modified > entry.max_date_modified {
+                entry.max_date_modified = date_modified;
+                entry.cover_image_path = cover_path;
+                entry.cover_image_id = Some(id);
+            }
+        }
+
+        let has_next = env.call_method(&cursor, "moveToNext", "()Z", &[])
+            .map_err(|e| format!("Failed to move to next: {:?}", e))?
+            .z()
+            .map_err(|e| format!("Failed to get boolean: {:?}", e))?;
+
+        if !has_next {
+            break;
+        }
+    }
+
+    let _ = env.call_method(&cursor, "close", "()V", &[]);
+
+    let folders: Vec<AndroidFolderInfo> = folder_map
+        .into_iter()
+        .map(|(id, data)| AndroidFolderInfo {
+            id,
+            name: data.name,
+            path: data.path,
+            image_count: data.count,
+            cover_image_path: data.cover_image_path,
+            cover_image_id: data.cover_image_id,
+        })
+        .collect();
+
+    Ok(AndroidScanAllResult { images, folders })
+}
+
+fn get_column_index(env: &mut JNIEnv, cursor: &JObject, column: &str) -> Result<i32, String> {
+    let col_str = env.new_string(column).map_err(|e| format!("Failed to create string: {:?}", e))?;
+    let index = env.call_method(cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
+        .map_err(|e| format!("Failed to get column index: {:?}", e))?
+        .i()
+        .map_err(|e| format!("Failed to get int: {:?}", e))?;
+    Ok(index)
+}
+
 pub fn scan_device_images<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> Result<Vec<AndroidImageInfo>, String> {
     env.ensure_local_capacity(256)
         .map_err(|e| format!("Failed to ensure local capacity: {:?}", e))?;

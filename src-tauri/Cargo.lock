@@ -342,6 +342,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "fast_image_resize",
+ "flate2",
  "fs_extra",
  "futures",
  "futures-util",

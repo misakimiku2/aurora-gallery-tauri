@@ -82,52 +82,54 @@ strip = true
 server: {
   port: 14422,
   strictPort: true,
-  host: '0.0.0.0',  // 监听所有网络接口
+  host: '0.0.0.0',  // 监听所有网络接口（允许 Android 设备连接）
   hmr: {
     protocol: 'ws',
-    host: 'localhost',
+    host: '0.0.0.0',  // HMR 也使用 0.0.0.0（Android 设备无法连接 localhost）
     port: 14422,
   },
   watch: {
     ignored: ['**/src-tauri/**'],
+  },
+  headers: {
+    'Cache-Control': 'no-store',  // 防止 Android WebView 缓存旧代码
   },
 },
 ```
 
 ## 二、项目结构调整
 
-### 2.1 新增目录结构
+### 2.1 实际目录结构
+
+> **重要**：Android 代码直接集成在现有项目结构中，未使用独立的 `mobile/` 目录。Android 专属代码通过 `#[cfg(target_os = "android")]` 条件编译区分。
 
 ```
 aurora-gallery-tauri/
-├── mobile/                          # Android 前端代码
-│   └── src/
-│       ├── api/
-│       │   └── adapters/
-│       │       └── AndroidAdapter.ts    # Android API 适配器
-│       ├── components/
-│       │   ├── MobileImageViewer.tsx    # 图片查看器
-│       │   ├── PhoneLayout.tsx          # 手机布局
-│       │   └── TabletLayout.tsx         # 平板布局
-│       ├── hooks/
-│       │   └── useVirtualScroll.ts      # 虚拟滚动 Hook
-│       ├── styles/
-│       │   └── mobile.css               # 移动端样式
-│       ├── utils/
-│       │   ├── performanceMonitor.ts    # 性能监控
-│       │   └── platform.ts              # 平台检测
-│       ├── App.mobile.tsx               # Android 入口组件
-│       └── types.ts                     # 类型定义
+├── src/                          # 前端代码（桌面端 + Android 共用）
+│   ├── api/
+│   │   └── tauri-bridge.ts       # Tauri API 桥接（含 Android 缩略图逻辑）
+│   ├── utils/
+│   │   └── androidPlatform.ts    # Android 平台适配（权限、扫描、回调）
+│   ├── hooks/
+│   │   └── useAppInit.ts         # 应用初始化（含 Android 分支）
+│   ├── components/
+│   │   ├── ImageThumbnail.tsx    # 缩略图组件（含 mediaStoreId）
+│   │   ├── FileGrid.tsx          # 文件网格（传递 mediaStoreId）
+│   │   ├── FileListItem.tsx      # 文件列表项（传递 mediaStoreId）
+│   │   └── SettingsModal.tsx     # 设置面板（Android 特殊处理）
+│   ├── types.ts                  # 类型定义（含 contentUri, mediaStoreId）
+│   └── App.tsx                   # 应用入口
 │
-└── src-tauri/
+└── src-tauri/                    # Rust 后端（桌面端 + Android 共用）
     └── src/
-        ├── android/                     # Android Rust 模块
-        │   ├── mod.rs                   # 模块入口
-        │   ├── media_store.rs           # MediaStore JNI 调用
-        │   ├── thumbnail.rs             # 缩略图生成
-        │   └── memory_pool.rs           # 内存池管理
-        ├── lib.rs                       # 库入口 (新增)
-        └── main.rs                      # 桌面端入口 (重构)
+        ├── android/              # Android 专属 Rust 模块
+        │   ├── mod.rs            # 模块导出
+        │   ├── media_store.rs    # MediaStore JNI 扫描
+        │   ├── thumbnail.rs      # 缩略图生成（系统缩略图 + 文件解码）
+        │   └── memory_pool.rs    # 内存池
+        ├── system_commands.rs    # 系统命令（含 Android JNI 路径获取）
+        ├── window_commands.rs    # 窗口命令（Android DB 路径修复）
+        └── lib.rs                # 主入口（含 Android 条件编译命令）
 ```
 
 ## 三、核心代码实现
@@ -169,42 +171,41 @@ aurora-gallery-tauri/
 
 ### 3.2 前端代码
 
-#### 3.2.1 AndroidAdapter.ts
+#### 3.2.1 androidPlatform.ts（Android 平台适配）
 
-实现了 Android 平台的 API 适配器：
-- 图片 URL 转换
-- 文件操作封装
-- 缩略图获取
+实现了 Android 平台的核心适配逻辑：
+- `isAndroidPlatform()` — 异步平台检测（带缓存）
+- `initAndroidPermissionListener()` — 注册权限回调监听
+- `waitForAndroidPermission()` — 等待权限结果（含时序修复）
+- `ensureAndroidPermissionAndScan()` — 完整的权限获取+扫描流程
+- `scanAndroidMedia()` / `scanAndroidImages()` — 调用 Rust 端扫描并转换为 FileNode
 
-#### 3.2.2 平台检测 (platform.ts)
+#### 3.2.2 tauri-bridge.ts（API 桥接）
 
-实现了设备类型检测：
-- 区分桌面、平板、手机
-- 获取设备屏幕信息
-- 自动选择合适的 API 适配器
+实现了 Android 缩略图加载逻辑：
+- `_isAndroid` 标记 + `setAndroidPlatform()` 设置
+- `_globalCacheRoot` + `setGlobalCacheRoot()` 缓存路径管理
+- Android 分支直接调用 `android_get_thumbnail`（替代桌面端的 `ThumbnailBatcher`）
+- `getAssetUrl` 支持 `contentUri` 参数
 
-#### 3.2.3 布局组件
+#### 3.2.3 组件适配
 
-**TabletLayout.tsx**:
-- 三栏布局：侧边栏 + 主内容 + 元数据面板
-- 适配大屏幕设备
+**ImageThumbnail.tsx**:
+- 新增 `mediaStoreId` 属性，传递给 `getThumbnail()`
 
-**PhoneLayout.tsx**:
-- 单栏布局
-- 抽屉式导航
-- 底部操作栏
+**FileGrid.tsx / FileListItem.tsx**:
+- 传递 `file.mediaStoreId` 到 `ImageThumbnail`
 
-#### 3.2.4 性能优化
+**SettingsModal.tsx**:
+- Android 上隐藏 `resourceRoot` 设置
+- 显示 `cacheRoot`（来自应用私有目录）
 
-**useVirtualScroll.ts**:
-- 虚拟滚动实现
-- 根据滚动状态调整缩略图质量
-- 减少内存占用
+#### 3.2.4 初始化逻辑
 
-**performanceMonitor.ts**:
-- 帧率监控
-- 掉帧检测
-- 性能统计
+**useAppInit.ts**:
+- Android 强制使用 `defaults` 中的路径（`resourceRoot`, `cacheRoot`, `appDataDir`）
+- `!savedData` 分支创建完整导航状态（tabs, currentFolderId, expandedFolderIds）
+- 过滤 `android_media_store` 虚拟根目录
 
 ## 四、条件编译
 
@@ -304,10 +305,13 @@ adb logcat -s AuroraGallery
 ## 八、后续工作
 
 - [ ] 完善手势操作（缩放、滑动切换）
-- [ ] 实现图片编辑功能
-- [ ] 添加分享功能
-- [ ] 优化大图库加载性能
-- [ ] 实现离线缓存
+- [ ] 缩略图批量请求（并发控制）
+- [ ] 虚拟滚动优化（大量图片性能）
+- [ ] 图片查看器触摸适配
+- [ ] 移除调试日志（`console.error('[Thumbnail]...')`）
+- [ ] 设置界面隐藏桌面端特有选项
+- [ ] 实现局域网连接功能
+- [ ] 实现上传下载功能
 
 ## 九、相关文件清单
 
@@ -315,30 +319,36 @@ adb logcat -s AuroraGallery
 
 | 文件路径 | 说明 |
 |---------|------|
-| `mobile/src/types.ts` | 类型定义 |
-| `mobile/src/utils/platform.ts` | 平台检测 |
-| `mobile/src/utils/performanceMonitor.ts` | 性能监控 |
-| `mobile/src/api/adapters/AndroidAdapter.ts` | API 适配器 |
-| `mobile/src/hooks/useVirtualScroll.ts` | 虚拟滚动 |
-| `mobile/src/styles/mobile.css` | 移动端样式 |
-| `mobile/src/App.mobile.tsx` | 入口组件 |
-| `mobile/src/components/TabletLayout.tsx` | 平板布局 |
-| `mobile/src/components/PhoneLayout.tsx` | 手机布局 |
-| `mobile/src/components/MobileImageViewer.tsx` | 图片查看器 |
-| `src-tauri/src/lib.rs` | 库入口 |
+| `src/utils/androidPlatform.ts` | Android 平台适配（权限、扫描、回调） |
 | `src-tauri/src/android/mod.rs` | Android 模块入口 |
-| `src-tauri/src/android/media_store.rs` | MediaStore 交互 |
-| `src-tauri/src/android/thumbnail.rs` | 缩略图生成 |
+| `src-tauri/src/android/media_store.rs` | MediaStore JNI 扫描 |
+| `src-tauri/src/android/thumbnail.rs` | 缩略图生成（系统缩略图 + 文件解码） |
 | `src-tauri/src/android/memory_pool.rs` | 内存池 |
+| `src-tauri/capabilities/default-android.json` | Android 专用能力配置 |
+| `src-tauri/.cargo/config.toml` | Android NDK linker 配置 |
 
 ### 修改文件
 
 | 文件路径 | 修改内容 |
 |---------|---------|
 | `src-tauri/tauri.conf.json` | 添加 Android 配置 |
-| `src-tauri/Cargo.toml` | 添加库目标和 Android 依赖 |
-| `vite.config.ts` | 修改服务器监听地址 |
-| `src-tauri/src/main.rs` | 重构为桌面端入口 |
+| `src-tauri/Cargo.toml` | 添加库目标和 Android 依赖；reqwest 切换为 rustls-tls；桌面端依赖条件编译 |
+| `vite.config.ts` | HMR host 改为 `0.0.0.0`；添加 `Cache-Control: no-store` |
+| `src-tauri/src/lib.rs` | 从 main.rs 迁移应用逻辑；添加 `mobile_entry_point`；Android 条件编译命令 |
+| `src-tauri/src/main.rs` | 简化为仅调用 `aurora_gallery_lib::run()` |
+| `src-tauri/src/system_commands.rs` | 新增 `get_platform` 命令；Android JNI 路径获取 |
+| `src-tauri/src/window_commands.rs` | Android DB 路径修复；条件编译 |
+| `src-tauri/src/android/media_store.rs` | JNI 调用修复；添加 contentUri 和 mediaStoreId |
+| `src-tauri/src/android/thumbnail.rs` | 完全重写：系统缩略图 + 文件解码；`#[serde(rename_all = "camelCase")]` |
+| `src/api/tauri-bridge.ts` | Android 缩略图逻辑；`_isAndroid`；`_globalCacheRoot` |
+| `src/utils/androidPlatform.ts` | 权限回调时序修复；`_lastPermissionResult` 缓存 |
+| `src/hooks/useAppInit.ts` | Android 初始化分支；强制默认路径；完整导航状态 |
+| `src/components/ImageThumbnail.tsx` | 新增 `mediaStoreId` 属性 |
+| `src/components/FileGrid.tsx` | 传递 `mediaStoreId` |
+| `src/components/FileListItem.tsx` | 传递 `mediaStoreId` |
+| `src/components/SettingsModal.tsx` | Android 特殊处理 |
+| `src/types.ts` | 新增 `contentUri`, `mediaStoreId` 字段 |
+| `src/App.tsx` | 移除重复 Android 代码（统一到 androidPlatform.ts） |
 
 ---
 
@@ -1013,8 +1023,8 @@ adb -s <device_id> logcat -d --pid=$(adb -s <device_id> shell pidof com.aurora.g
 - [x] Android 14+ 部分权限支持
 
 **已知问题**：
-- [ ] 缩略图未显示（图片列表中无缩略图预览）
-- [ ] 图片查看器可能需要适配触摸手势
+- [x] ~~缩略图未显示（图片列表中无缩略图预览）~~ 已修复（见第五阶段）
+- [ ] 图片查看器需要适配触摸手势
 - [ ] 设置界面仍显示桌面端特有选项（如 CLIP、LAN 共享等）
 - [ ] 大量图片（2万+）时的性能和内存优化
 - [ ] 外置 SD 卡图片的完整访问（取决于 Android 版本和权限）
@@ -1028,3 +1038,347 @@ adb -s <device_id> logcat -d --pid=$(adb -s <device_id> shell pidof com.aurora.g
 | `src-tauri/src/android/media_store.rs` | `scan_device_images`/`scan_device_folders` 添加 `ensure_local_capacity(256)` |
 | `src-tauri/src/lib.rs` | `android_scan_images`/`android_scan_folders` 添加日志输出 |
 | `src-tauri/gen/android/app/src/main/java/com/aurora/gallery/MainActivity.kt` | `notifyPermissionResultWithRetry` WebView 回调重试；Android 14+ 部分权限支持；`checkMediaPermissions` 区分完整/部分授权 |
+
+---
+
+## 第五阶段：缩略图系统重构与修复
+
+**开发日期**：2026年4月19日
+
+### 一、问题分析
+
+第四阶段完成后，图片列表可以正常显示，但缩略图位置显示的是开裂的占位符图标。经过深入分析，发现根本原因是 Android Scoped Storage 下的文件访问机制与桌面端完全不同：
+
+#### 1.1 资源根目录配置错误
+
+设置界面显示：
+- 资源根目录：`/storage/emulated/0/Pictures/AuroraGallery`
+- 缓存目录：`/storage/emulated/o/Pictures/AuroraGallery/.Aurora_Cache`
+
+这些路径在 Android 10+ 的 Scoped Storage 下不可写，应用无法在这些位置创建缩略图缓存。
+
+#### 1.2 桌面端缩略图逻辑不适用
+
+桌面端使用 `ThumbnailBatcher` 批量生成缩略图，通过文件系统直接读取图片文件。但在 Android 上：
+- 应用无法直接读取 `/storage/emulated/0/` 下的文件（Scoped Storage 限制）
+- 需要使用 `ContentResolver.loadThumbnail()` API 获取系统缩略图
+- 缩略图缓存必须存放在应用私有目录
+
+#### 1.3 缩略图数据结构缺少关键字段
+
+`AndroidImageInfo` 缺少 `content_uri` 和 `media_store_id`，导致前端无法传递必要的参数给缩略图生成命令。
+
+### 二、修复方案
+
+#### 2.1 后端路径管理重构
+
+**文件路径**: `src-tauri/src/system_commands.rs`
+
+通过 JNI 获取应用私有目录，替代硬编码的公共目录路径：
+
+```rust
+#[cfg(target_os = "android")]
+fn get_android_path(method: &str) -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }?;
+    let mut env = vm.attach_current_thread()?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+    // 调用 activity.getCacheDir() 或 getFilesDir()
+    let dir_file = env.call_method(&activity_obj, method, "()Ljava/io/File;", &[])?.l()?;
+    let path_str = env.call_method(&dir_file, "getAbsolutePath", "()Ljava/lang/String;", &[])?.l()?;
+    let result: String = env.get_string(&path_str.into())?.into();
+    Ok(result)
+}
+```
+
+**路径映射**：
+| 键 | 值 | 说明 |
+|---|---|---|
+| `resourceRoot` | `android_media_store` | 虚拟根目录，表示使用 MediaStore |
+| `cacheRoot` | `{cacheDir}/thumbnails` | 如 `/data/user/0/com.aurora.gallery/cache/thumbnails` |
+| `appDataDir` | `{filesDir}` | 如 `/data/user/0/com.aurora.gallery/files` |
+
+#### 2.2 系统缩略图获取实现
+
+**文件路径**: `src-tauri/src/android/thumbnail.rs`
+
+完全重写缩略图生成逻辑，使用 Android 10+ 的 `ContentResolver.loadThumbnail()` API：
+
+```rust
+pub fn get_android_system_thumbnail<'a>(
+    env: &mut jni::JNIEnv<'a>,
+    activity: &jni::objects::JObject<'a>,
+    image_id: i64,
+    cache_dir: &Path,
+) -> Result<Option<String>, String> {
+    // 1. 检查缓存：{cacheDir}/sys_{imageId}.jpg
+    // 2. 获取 ContentResolver
+    // 3. 构建 content URI: content://media/external/images/media/{id}
+    //    使用 ContentUris.withAppendedId()
+    // 4. 创建 android.util.Size(256, 256)
+    // 5. 调用 ContentResolver.loadThumbnail(uri, size, null) 获取 Bitmap
+    // 6. 使用 Bitmap.compress(JPEG, 80, ByteArrayOutputStream) 获取字节数据
+    // 7. 通过 get_byte_array_region 提取字节
+    // 8. 写入缓存文件
+}
+```
+
+**JNI 调用注意事项**（踩过的坑）：
+
+1. **`get_int_array_elements` 不存在**：`jni` crate 0.21 不支持此方法，改用 `Bitmap.compress()` + `ByteArrayOutputStream` 方案提取 Bitmap 数据
+
+2. **`jbyte` 是 `i8` 不是 `u8`**：
+   ```rust
+   let buf: Vec<i8> = vec![0i8; len];
+   env.get_byte_array_region(&byte_array, 0, &mut buf)?;
+   let jpeg_data: Vec<u8> = buf.iter().map(|&b| b as u8).collect();
+   ```
+
+3. **`JObject` 不实现 `AsJArrayRaw`**：需要将 `JObject` 转换为 `JByteArray`
+   ```rust
+   let byte_array: JByteArray = byte_array.into();
+   let len = env.get_array_length(&byte_array)?;
+   ```
+
+4. **`JpegEncoder::new_with_quality` 需要 `&mut writer`**：注意传引用而非移动
+
+#### 2.3 序列化字段名修复（关键 Bug）
+
+**文件路径**: `src-tauri/src/android/thumbnail.rs`
+
+**问题**：Rust 的 `ThumbnailResult` 结构体序列化时字段名为 `thumbnail_path`（snake_case），但前端检查的是 `thumbnailPath`（camelCase），导致 `result?.thumbnailPath` 永远为 `undefined`。
+
+**修复**：添加 `#[serde(rename_all = "camelCase")]`
+
+```rust
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]  // 关键！
+pub struct ThumbnailResult {
+    pub path: String,
+    pub thumbnail_path: Option<String>,  // 序列化为 thumbnailPath
+    pub width: u32,
+    pub height: u32,
+}
+```
+
+**这是缩略图不显示的直接原因**——后端成功生成了缩略图并返回了路径，但前端因为字段名不匹配而忽略了结果。
+
+#### 2.4 前端缩略图加载路径
+
+**文件路径**: `src/api/tauri-bridge.ts`
+
+Android 上直接调用 `android_get_thumbnail`，替代桌面端的 `ThumbnailBatcher`：
+
+```typescript
+let _isAndroid: boolean = false;
+let _globalCacheRoot: string | null = null;
+
+export function setAndroidPlatform(isAndroid: boolean) { _isAndroid = isAndroid; }
+export function setGlobalCacheRoot(cacheRoot: string) { _globalCacheRoot = cacheRoot; }
+
+// getThumbnail 中的 Android 分支
+if (_isAndroid) {
+    const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number } | null>(
+        'android_get_thumbnail',
+        { filePath, cacheRoot: cachePath, imageId: mediaStoreId ?? null }
+    );
+    if (result?.thumbnailPath) {
+        return convertFileSrc(result.thumbnailPath);
+    }
+    return null;
+}
+```
+
+#### 2.5 MediaStore 数据结构增强
+
+**文件路径**: `src-tauri/src/android/media_store.rs`
+
+为 `AndroidImageInfo` 添加 `content_uri` 字段：
+
+```rust
+pub struct AndroidImageInfo {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub folder_id: i64,
+    pub date_added: i64,
+    pub size: i64,
+    pub mime_type: String,
+    pub width: i32,
+    pub height: i32,
+    pub content_uri: String,  // 新增：content://media/external/images/media/{id}
+}
+```
+
+#### 2.6 前端组件适配
+
+**文件路径**: `src/components/ImageThumbnail.tsx`, `FileGrid.tsx`, `FileListItem.tsx`
+
+新增 `mediaStoreId` 属性传递链：
+
+```typescript
+// ImageThumbnail.tsx
+interface ImageThumbnailProps {
+    // ...
+    mediaStoreId?: number;  // 新增
+}
+
+// FileGrid.tsx / FileListItem.tsx
+<ImageThumbnail
+    // ...
+    mediaStoreId={file.mediaStoreId}
+/>
+```
+
+#### 2.7 初始化逻辑修复
+
+**文件路径**: `src/hooks/useAppInit.ts`
+
+多个关键修复：
+
+1. **Android 强制使用默认路径**：`savedData.settings.paths` 会覆盖新的 `cacheRoot`，Android 上强制使用 `defaults`
+   ```typescript
+   ...(isAndroidNow ? {
+       resourceRoot: defaults.resourceRoot,
+       cacheRoot: defaults.cacheRoot,
+       appDataDir: defaults.appDataDir,
+   } : {})
+   ```
+
+2. **新安装完整导航状态**：`!savedData` 分支补充了 `tabs`、`currentFolderId`、`expandedFolderIds`
+
+3. **过滤虚拟根目录**：`pathsToScan` 中过滤掉 `"android_media_store"`
+
+4. **提前设置平台标记**：在合并设置前调用 `setAndroidPlatform()` 和 `setGlobalCacheRoot()`
+
+### 三、其他修复的 Bug
+
+#### 3.1 颜色数据库崩溃
+
+**文件路径**: `src-tauri/src/window_commands.rs`
+
+**问题**：`get_initial_db_paths` 尝试在 SD 卡路径（`/storage/4A21-0000/...`）上创建颜色数据库，导致 `unable to open database file` 崩溃。
+
+**修复**：Android 上强制使用应用私有目录（`appDataDir`）存放数据库。
+
+#### 3.2 权限回调时序修复
+
+**文件路径**: `src/utils/androidPlatform.ts`
+
+**问题**：Kotlin 在 JS Promise 创建之前就调用了 `window.__onAndroidPermissionResult`，导致 `waitForAndroidPermission` 永远超时。
+
+**修复**：添加 `_lastPermissionResult` 缓存，`waitForAndroidPermission` 先检查缓存再创建 Promise。
+
+```typescript
+let _lastPermissionResult: string | null = null;
+
+window.__onAndroidPermissionResult = (result: string) => {
+    _lastPermissionResult = result;  // 先缓存
+    if (_androidPermissionResolve) {
+        _androidPermissionResolve(result);  // 也尝试 resolve 现有 Promise
+        _androidPermissionResolve = null;
+    }
+};
+
+export function waitForAndroidPermission(): Promise<string> {
+    if (_lastPermissionResult) {
+        const result = _lastPermissionResult;
+        _lastPermissionResult = null;
+        return Promise.resolve(result);  // 直接返回缓存结果
+    }
+    // ... 创建 Promise 等待
+}
+```
+
+#### 3.3 App.tsx 重复 Android 代码
+
+**问题**：`App.tsx` 中有约 180 行 Android 代码与 `androidPlatform.ts` 中的代码重复，两个 `initAndroidPermissionListener` 互相覆盖 `window.__onAndroidPermissionResult`。
+
+**修复**：删除 `App.tsx` 中的重复代码，统一使用 `androidPlatform.ts` 的导出。
+
+#### 3.4 Vite HMR 无法连接
+
+**文件路径**: `vite.config.ts`
+
+**问题**：`hmr.host` 为 `'localhost'`，Android 设备无法访问电脑的 localhost。
+
+**修复**：改为 `'0.0.0.0'`，同时添加 `Cache-Control: no-store` 防止 WebView 缓存旧代码。
+
+#### 3.5 `dist` 目录缺失导致编译错误
+
+**问题**：清理缓存时误删 `dist` 目录，`tauri::generate_context!()` 宏需要 `frontendDist` 路径存在。
+
+**修复**：运行 `npm run build` 重建 `dist` 目录。**开发流程中应始终先 build 再 `npx tauri android dev`**。
+
+### 四、调试过程
+
+#### 4.1 代码更新不部署问题
+
+这是最耗时的调试过程。修改了前端代码后，设备上始终运行旧代码。根因是：
+
+1. **Vite HMR host 为 localhost**：Android 设备无法连接
+2. **WebView 缓存**：即使连接成功，也会缓存旧的 JS 文件
+3. **dist 目录嵌入 APK**：HMR 失败时回退到 APK 中嵌入的旧 `dist` 内容
+
+修复后，开发流程变为：
+```bash
+npm run build          # 确保 dist 最新
+npx tauri android dev  # 启动开发模式
+```
+
+#### 4.2 Chrome DevTools 远程调试
+
+通过 Chrome `chrome://inspect` 连接设备 WebView，可以查看：
+- `[Thumbnail] Android invoke` — 缩略图请求发出
+- `[Thumbnail] Android result` — 缩略图结果返回（含 `thumbnailPath` 值）
+- `[Thumbnail] Android convertFileSrc` — 路径转换
+- `[Android] Image-folder matching` — 图片-文件夹匹配统计
+
+#### 4.3 关键日志发现
+
+最终发现缩略图不显示的直接证据：
+```
+[Thumbnail] Android result: {path: '...', thumbnail_path: '/data/user/0/com.aurora.gallery/cache/thumbnails/sys_1000039178.jpg', width: 0, height: 0}
+```
+
+后端返回的是 `thumbnail_path`（snake_case），但前端检查的是 `thumbnailPath`（camelCase），导致 `result?.thumbnailPath` 为 `undefined`。
+
+### 五、当前状态
+
+**已实现**：
+- [x] Android 缩略图正确显示
+- [x] 系统缩略图获取（`ContentResolver.loadThumbnail()`）
+- [x] 文件解码缩略图（回退方案）
+- [x] 缩略图缓存（`sys_{id}.jpg` + MD5 缓存键）
+- [x] Android 路径管理（JNI 获取应用私有目录）
+- [x] 序列化字段名修复（`#[serde(rename_all = "camelCase")]`）
+- [x] 权限回调时序修复
+- [x] Vite HMR Android 设备连接
+- [x] 颜色数据库路径修复
+
+**已知问题**：
+- [ ] 图片查看器需要适配触摸手势
+- [ ] 设置界面仍显示桌面端特有选项
+- [ ] 大量图片（2万+）时的性能和内存优化
+- [ ] 缩略图逐个请求，需要并发控制
+- [ ] 外置 SD 卡图片的完整访问
+
+### 六、本次修改文件清单
+
+| 文件路径 | 修改内容 |
+|---------|---------|
+| `src-tauri/src/system_commands.rs` | 新增 `get_android_path()` JNI 函数；Android 分支使用 `getCacheDir()`/`getFilesDir()`；`resourceRoot = "android_media_store"`；`cacheRoot = "{cacheDir}/thumbnails"` |
+| `src-tauri/src/android/thumbnail.rs` | 完全重写：`get_android_system_thumbnail()` 使用 `ContentResolver.loadThumbnail()` + `Bitmap.compress()`；`ThumbnailResult` 添加 `#[serde(rename_all = "camelCase")]` |
+| `src-tauri/src/android/media_store.rs` | `AndroidImageInfo` 新增 `content_uri` 字段 |
+| `src-tauri/src/lib.rs` | `android_get_thumbnail` 命令新增 `image_id` 参数；添加调试日志 |
+| `src-tauri/src/window_commands.rs` | `get_initial_db_paths` Android 强制使用 app 私有目录 |
+| `src/api/tauri-bridge.ts` | 新增 `_isAndroid`、`_globalCacheRoot`、`setAndroidPlatform()`、`setGlobalCacheRoot()`；Android 分支直接调用 `android_get_thumbnail`；`getAssetUrl` 支持 `contentUri` |
+| `src/utils/androidPlatform.ts` | 新增 `_lastPermissionResult` 缓存修复权限回调时序；`scanAndroidMedia` 含图片-文件夹匹配和 `mediaStoreId` |
+| `src/hooks/useAppInit.ts` | Android 强制使用默认路径；新安装完整导航状态；过滤 `android_media_store`；提前设置平台标记 |
+| `src/components/ImageThumbnail.tsx` | 新增 `mediaStoreId` 属性 |
+| `src/components/FileGrid.tsx` | 传递 `mediaStoreId` |
+| `src/components/FileListItem.tsx` | 传递 `mediaStoreId` |
+| `src/components/SettingsModal.tsx` | Android 隐藏 `resourceRoot`，显示 `cacheRoot` |
+| `src/types.ts` | `FileNode` 新增 `contentUri`、`mediaStoreId` 字段 |
+| `src/App.tsx` | 移除约 180 行重复 Android 代码，统一使用 `androidPlatform.ts` |
+| `vite.config.ts` | `hmr.host` 改为 `'0.0.0.0'`；添加 `Cache-Control: no-store` |

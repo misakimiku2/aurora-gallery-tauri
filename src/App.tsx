@@ -457,15 +457,13 @@ export const App: React.FC = () => {
   // ... (keep welcome modal logic)
   useEffect(() => {
     if (!isLoading) {
-      // 锟斤拷锟斤拷什么锟斤拷锟斤拷锟斤拷锟绞硷拷锟斤拷锟缴猴拷要锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
       setTimeout(() => {
         setShowSplash(false);
-      }, 500);
+      }, 100);
 
       if (state.roots.length === 0) {
         const hasOnboarded = localStorage.getItem('aurora_onboarded');
         if (!hasOnboarded) {
-          // 锟斤拷示锟斤拷迎锟斤拷锟斤拷
           setShowWelcome(true);
         }
       }

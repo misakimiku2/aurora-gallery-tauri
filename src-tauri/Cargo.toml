@@ -84,6 +84,7 @@ jni = "0.21"
 ndk = "0.8"
 ndk-sys = "0.5"
 ndk-context = "0.1"
+flate2 = "1"
 
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem

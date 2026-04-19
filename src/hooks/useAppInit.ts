@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { AppState, FileNode, FileType, Person, Topic, TabState } from '../types';
 import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
-import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages } from '../utils/androidPlatform';
+import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages, loadFolderCache, loadScanCache, saveScanCache } from '../utils/androidPlatform';
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
@@ -215,7 +215,54 @@ export const useAppInit = ({
                 const hasPermission = await ensureAndroidPermission();
                 if (!hasPermission) {
                   setIsLoading(false);
-                  setTimeout(() => setShowSplash(false), 500);
+                  setShowSplash(false);
+                  return;
+                }
+
+                const appDataDir = defaults.appDataDir;
+
+                const folderCachedResult = appDataDir ? await loadFolderCache(appDataDir) : null;
+                if (folderCachedResult) {
+                  const virtualRootId = '__android_folders_root__';
+                  const defaultTab: TabState = {
+                    ...DUMMY_TAB,
+                    id: 'tab-default',
+                    folderId: virtualRootId,
+                    viewMode: 'folders-overview',
+                  };
+                  defaultTab.history = { stack: [{ folderId: virtualRootId, viewingId: null, viewMode: 'folders-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+
+                  setState(prev => ({
+                    ...prev,
+                    settings: finalSettings,
+                    files: folderCachedResult.files,
+                    roots: folderCachedResult.roots,
+                    expandedFolderIds: folderCachedResult.roots,
+                    tabs: [defaultTab],
+                    activeTabId: defaultTab.id,
+                    currentFolderId: virtualRootId,
+                  }));
+
+                  setIsLoading(false);
+                  setShowSplash(false);
+
+                  (async () => {
+                    setState(prev => ({ ...prev, isScanning: true }));
+                    const imageResult = await scanAndroidImages();
+                    if (imageResult) {
+                      setState(prev => ({
+                        ...prev,
+                        files: imageResult.files,
+                        roots: imageResult.roots,
+                        isScanning: false,
+                      }));
+                      if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
+                        saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                      }
+                    } else {
+                      setState(prev => ({ ...prev, isScanning: false }));
+                    }
+                  })();
                   return;
                 }
 
@@ -242,7 +289,7 @@ export const useAppInit = ({
                   }));
 
                   setIsLoading(false);
-                  setTimeout(() => setShowSplash(false), 300);
+                  setShowSplash(false);
 
                   (async () => {
                     setState(prev => ({ ...prev, isScanning: true }));
@@ -254,13 +301,16 @@ export const useAppInit = ({
                         roots: imageResult.roots,
                         isScanning: false,
                       }));
+                      if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
+                        saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                      }
                     } else {
                       setState(prev => ({ ...prev, isScanning: false }));
                     }
                   })();
                 } else {
                   setIsLoading(false);
-                  setTimeout(() => setShowSplash(false), 500);
+                  setShowSplash(false);
                 }
               } else {
                 setState(prev => ({ ...prev, settings: finalSettings }));
@@ -279,7 +329,60 @@ export const useAppInit = ({
               const hasPermission = await ensureAndroidPermission();
               if (!hasPermission) {
                 setIsLoading(false);
-                setTimeout(() => setShowSplash(false), 500);
+                setShowSplash(false);
+                savedDataLoadedRef.current = true;
+                setSavedDataLoaded(true);
+                return;
+              }
+
+              const appDataDir = defaults.appDataDir;
+              const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+
+              const folderCachedResult = appDataDir ? await loadFolderCache(appDataDir) : null;
+              if (folderCachedResult) {
+                const virtualRootId = '__android_folders_root__';
+                const defaultTab: TabState = {
+                  ...DUMMY_TAB,
+                  id: 'tab-default',
+                  folderId: virtualRootId,
+                  viewMode: 'folders-overview',
+                  layoutMode: globalLayoutSettings.layoutMode as any
+                };
+                defaultTab.history = { stack: [{ folderId: virtualRootId, viewingId: null, viewMode: 'folders-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+
+                setState(prev => ({
+                  ...prev,
+                  files: folderCachedResult.files,
+                  roots: folderCachedResult.roots,
+                  expandedFolderIds: folderCachedResult.roots,
+                  tabs: [defaultTab],
+                  activeTabId: defaultTab.id,
+                  currentFolderId: virtualRootId,
+                }));
+
+                setIsLoading(false);
+                setShowSplash(false);
+
+                (async () => {
+                  setState(prev => ({ ...prev, isScanning: true }));
+                  const imageResult = await scanAndroidImages();
+                  if (imageResult) {
+                    setState(prev => ({
+                      ...prev,
+                      files: imageResult.files,
+                      roots: imageResult.roots,
+                      sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
+                      sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
+                      isScanning: false,
+                    }));
+                    if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
+                      saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                    }
+                  } else {
+                    setState(prev => ({ ...prev, isScanning: false }));
+                  }
+                })();
+
                 savedDataLoadedRef.current = true;
                 setSavedDataLoaded(true);
                 return;
@@ -288,7 +391,6 @@ export const useAppInit = ({
               const folderResult = await scanAndroidFolders();
               if (folderResult) {
                 const virtualRootId = '__android_folders_root__';
-                const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
 
                 const defaultTab: TabState = {
                   ...DUMMY_TAB,
@@ -310,7 +412,7 @@ export const useAppInit = ({
                 }));
 
                 setIsLoading(false);
-                setTimeout(() => setShowSplash(false), 300);
+                setShowSplash(false);
 
                 (async () => {
                   setState(prev => ({ ...prev, isScanning: true }));
@@ -324,13 +426,16 @@ export const useAppInit = ({
                       sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
                       isScanning: false,
                     }));
+                    if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
+                      saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                    }
                   } else {
                     setState(prev => ({ ...prev, isScanning: false }));
                   }
                 })();
               } else {
                 setIsLoading(false);
-                setTimeout(() => setShowSplash(false), 500);
+                setShowSplash(false);
               }
 
               savedDataLoadedRef.current = true;
