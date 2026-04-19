@@ -19,7 +19,7 @@ export const useNavigation = (
     (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
   }, []);
 
-  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
+  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
     // preserve original behaviour: set timestamp BEFORE state update
     (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
 
@@ -168,11 +168,12 @@ export const useNavigation = (
   }, [setState]);
 
   const handleNewTab = useCallback(() => {
-    const folderId = state.roots[0] || '';
+    const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
+    const folderId = isAndroid ? '__android_folders_root__' : (state.roots[0] || '');
+    const viewMode = isAndroid ? 'folders-overview' as const : 'browser' as const;
 
-    // Check for folder-specific settings, otherwise use global defaults
-    const savedFolderSettings = state.folderSettings[folderId];
     const globalSettings = state.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
+    const savedFolderSettings = !isAndroid ? state.folderSettings[folderId] : undefined;
 
     const layoutMode = savedFolderSettings?.layoutMode || globalSettings.layoutMode;
     const sortBy = savedFolderSettings?.sortBy || globalSettings.sortBy;
@@ -183,11 +184,11 @@ export const useNavigation = (
       ...DUMMY_TAB,
       id: Math.random().toString(36).substr(2, 9),
       folderId: folderId,
+      viewMode,
       layoutMode: layoutMode as any
     };
-    newTab.history = { stack: [{ folderId: newTab.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+    newTab.history = { stack: [{ folderId: newTab.folderId, viewingId: null, viewMode, searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
-    // Apply groupBy if setter is provided
     if (setGroupBy) {
       setGroupBy(groupBySetting as GroupByOption);
     }
@@ -199,7 +200,7 @@ export const useNavigation = (
       sortBy: sortBy,
       sortDirection: sortDirection
     }));
-  }, [setState, state.roots, state.folderSettings, state.settings.defaultLayoutSettings, setGroupBy]);
+  }, [setState, state.roots, state.folderSettings, state.settings.defaultLayoutSettings, state.settings.paths.resourceRoot, setGroupBy]);
 
   const handleOpenCompareInNewTab = useCallback((imageIds: string[]) => {
     // 生成新的画布名称

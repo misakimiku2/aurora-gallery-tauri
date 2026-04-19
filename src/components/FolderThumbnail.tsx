@@ -2,11 +2,10 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { FileNode, FileType, LayoutMode } from '../types';
 import { useInView } from '../hooks/useInView';
-import { Folder3DIcon } from './Folder3DIcon';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { Folder, ImageIcon } from 'lucide-react';
 
-// Helper to find images deeply
 const findImagesDeeply = (
     rootFolder: FileNode, 
     allFiles: Record<string, FileNode>, 
@@ -40,7 +39,32 @@ const findImagesDeeply = (
         .slice(0, limit);
 };
 
+const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ file }) => {
+  const count = file.children?.length ?? file.imageCount ?? 0;
+  return (
+    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-800 dark:to-gray-750">
+      <Folder size={48} className="text-gray-400 dark:text-gray-500" strokeWidth={1.2} />
+      {count > 0 && (
+        <div className="mt-1 flex items-center gap-0.5 text-gray-400 dark:text-gray-500">
+          <ImageIcon size={10} />
+          <span className="text-[10px]">{count}</span>
+        </div>
+      )}
+    </div>
+  );
+});
+
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
+  const isAndroid = resourceRoot === 'android_media_store';
+
+  if (isAndroid) {
+    return (
+      <div className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
+        <AndroidFolderPlaceholder file={file} />
+      </div>
+    );
+  }
+
   const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
   
   const imageChildren = useMemo(() => {
@@ -123,6 +147,8 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
       };
     }
   }, [isInView, wasInView, loaded, imageChildren, resourceRoot, previewSrcs.length]);
+
+  const { Folder3DIcon } = require('./Folder3DIcon');
 
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">

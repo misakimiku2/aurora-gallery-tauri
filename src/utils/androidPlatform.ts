@@ -7,12 +7,9 @@ export async function isAndroidPlatform(): Promise<boolean> {
   if (_isAndroidCached !== null) return _isAndroidCached;
   try {
     const platform = await invoke<string>('get_platform');
-    console.error('[Android] get_platform returned:', platform);
     _isAndroidCached = platform === 'android';
   } catch (e) {
-    console.error('[Android] get_platform failed:', e);
     _isAndroidCached = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
-    console.error('[Android] fallback userAgent detection:', _isAndroidCached, 'userAgent:', navigator?.userAgent);
   }
   return _isAndroidCached;
 }
@@ -24,7 +21,6 @@ let _lastPermissionResult: string | null = null;
 export function initAndroidPermissionListener() {
   if (typeof window === 'undefined') return;
   (window as any).__onAndroidPermissionResult = (result: string) => {
-    console.error('[Android] Permission result received:', result);
     _lastPermissionResult = result;
     if (_androidPermissionResolve) {
       _androidPermissionResolve(result);
@@ -57,26 +53,20 @@ export function waitForAndroidPermission(): Promise<string> {
 export async function ensureAndroidPermissionAndScan(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
   try {
     _lastPermissionResult = null;
-    console.error('[Android] ensureAndroidPermissionAndScan: checking permissions...');
     let permStatus = await invoke<string>('check_android_permissions');
-    console.error('[Android] check_android_permissions result:', permStatus);
     if (permStatus === 'granted' || permStatus === 'granted_partial') {
       return await scanAndroidMedia();
     }
 
-    console.error('[Android] Waiting for permission callback from Kotlin...');
     const permissionResult = await waitForAndroidPermission();
-    console.error('[Android] Permission callback result:', permissionResult);
     if (permissionResult === 'granted' || permissionResult === 'granted_partial') {
       return await scanAndroidMedia();
     }
 
     if (permissionResult === 'denied' || permissionResult === 'denied_permanently' || permissionResult === 'timeout') {
-      console.error('[Android] Permission not granted, trying to request again...');
       try {
         await invoke<string>('request_android_permissions');
         const retryResult = await waitForAndroidPermission();
-        console.error('[Android] Re-request permission result:', retryResult);
         if (retryResult === 'granted' || retryResult === 'granted_partial') {
           return await scanAndroidMedia();
         }
@@ -85,19 +75,16 @@ export async function ensureAndroidPermissionAndScan(): Promise<{ files: Record<
       }
     }
 
-    console.error('[Android] Falling back to polling permission status...');
     for (let i = 0; i < 5; i++) {
       await new Promise(r => setTimeout(r, 1000));
       try {
         permStatus = await invoke<string>('check_android_permissions');
-        console.error(`[Android] Poll ${i + 1}: permission status =`, permStatus);
         if (permStatus === 'granted' || permStatus === 'granted_partial') {
           return await scanAndroidMedia();
         }
       } catch {}
     }
 
-    console.error('[Android] All permission attempts failed');
     return null;
   } catch (e) {
     console.error('[Android] ensureAndroidPermissionAndScan failed:', e);
@@ -105,14 +92,58 @@ export async function ensureAndroidPermissionAndScan(): Promise<{ files: Record<
   }
 }
 
-export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
+export async function ensureAndroidPermission(): Promise<boolean> {
   try {
-    console.error('[Android] scanAndroidMedia: invoking android_scan_folders...');
-    const folders = await invoke<Array<{ id: number; name: string; path: string; image_count: number }>>('android_scan_folders');
-    console.error('[Android] scanAndroidMedia: got', folders.length, 'folders');
-    console.error('[Android] scanAndroidMedia: invoking android_scan_images...');
-    const images = await invoke<Array<{ id: number; path: string; content_uri: string; name: string; size: number; width: number | null; height: number | null; date_modified: number; mime_type: string }>>('android_scan_images');
-    console.error('[Android] scanAndroidMedia: got', images.length, 'images');
+    _lastPermissionResult = null;
+    let permStatus = await invoke<string>('check_android_permissions');
+    if (permStatus === 'granted' || permStatus === 'granted_partial') {
+      return true;
+    }
+
+    const permissionResult = await waitForAndroidPermission();
+    if (permissionResult === 'granted' || permissionResult === 'granted_partial') {
+      return true;
+    }
+
+    if (permissionResult === 'denied' || permissionResult === 'denied_permanently' || permissionResult === 'timeout') {
+      try {
+        await invoke<string>('request_android_permissions');
+        const retryResult = await waitForAndroidPermission();
+        if (retryResult === 'granted' || retryResult === 'granted_partial') {
+          return true;
+        }
+      } catch (e) {
+        console.error('[Android] Re-request permissions failed:', e);
+      }
+    }
+
+    for (let i = 0; i < 5; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        permStatus = await invoke<string>('check_android_permissions');
+        if (permStatus === 'granted' || permStatus === 'granted_partial') {
+          return true;
+        }
+      } catch {}
+    }
+
+    return false;
+  } catch (e) {
+    console.error('[Android] ensureAndroidPermission failed:', e);
+    return false;
+  }
+}
+
+export async function scanAndroidFolders(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
+  try {
+    const folders = await invoke<Array<{
+      id: number;
+      name: string;
+      path: string;
+      image_count: number;
+      cover_image_path: string | null;
+      cover_image_id: number | null;
+    }>>('android_scan_folders');
 
     const files: Record<string, any> = {};
     const roots: string[] = [];
@@ -127,6 +158,58 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
         path: folder.path,
         children: [] as string[],
         tags: [],
+        imageCount: folder.image_count,
+        coverImagePath: folder.cover_image_path || undefined,
+        coverImageMediaStoreId: folder.cover_image_id || undefined,
+      };
+      roots.push(folderId);
+    }
+
+    return (roots.length > 0) ? { files, roots } : null;
+  } catch (e) {
+    console.error('[Android] scanAndroidFolders failed:', e);
+    return null;
+  }
+}
+
+export async function scanAndroidImages(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
+  try {
+    const folders = await invoke<Array<{
+      id: number;
+      name: string;
+      path: string;
+      image_count: number;
+      cover_image_path: string | null;
+      cover_image_id: number | null;
+    }>>('android_scan_folders');
+    const images = await invoke<Array<{
+      id: number;
+      path: string;
+      content_uri: string;
+      name: string;
+      size: number;
+      width: number | null;
+      height: number | null;
+      date_modified: number;
+      mime_type: string;
+    }>>('android_scan_images');
+
+    const files: Record<string, any> = {};
+    const roots: string[] = [];
+
+    for (const folder of folders) {
+      const folderId = generateId(folder.path || `folder_${folder.id}`);
+      files[folderId] = {
+        id: folderId,
+        parentId: null,
+        name: folder.name,
+        type: 'folder',
+        path: folder.path,
+        children: [] as string[],
+        tags: [],
+        imageCount: folder.image_count,
+        coverImagePath: folder.cover_image_path || undefined,
+        coverImageMediaStoreId: folder.cover_image_id || undefined,
       };
       roots.push(folderId);
     }
@@ -138,23 +221,10 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
       }
     }
 
-    let matchedCount = 0;
-    let unmatchedCount = 0;
-    let firstUnmatchedDirs: string[] = [];
-
     for (const img of images) {
       const fileId = generateId(img.path);
       const parentDir = img.path.substring(0, img.path.lastIndexOf('/'));
       const parentId = folderMap.get(parentDir);
-
-      if (parentId) {
-        matchedCount++;
-      } else {
-        unmatchedCount++;
-        if (firstUnmatchedDirs.length < 5) {
-          firstUnmatchedDirs.push(parentDir);
-        }
-      }
 
       files[fileId] = {
         id: fileId,
@@ -177,16 +247,6 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
       }
     }
 
-    console.error('[Android] Image-folder matching: matched=', matchedCount, 'unmatched=', unmatchedCount, 'firstUnmatchedDirs=', firstUnmatchedDirs);
-
-    const foldersWithChildren = roots.filter(id => files[id]?.children?.length > 0).length;
-    console.error('[Android] Folders with children:', foldersWithChildren, 'out of', roots.length);
-    if (folders.length > 0) {
-      const sampleFolder = folders[0];
-      const sampleFolderId = generateId(sampleFolder.path || `folder_${sampleFolder.id}`);
-      console.error('[Android] Sample folder: path=', sampleFolder.path, 'id=', sampleFolderId, 'children=', files[sampleFolderId]?.children?.length);
-    }
-
     if (images.length > 0 && roots.length === 0) {
       const defaultFolderId = generateId('android_all_images');
       files[defaultFolderId] = {
@@ -207,12 +267,15 @@ export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; 
       }
     }
 
-    console.error('[Android] scanAndroidMedia: returning', Object.keys(files).length, 'files,', roots.length, 'roots');
     return (roots.length > 0 && Object.keys(files).length > 0) ? { files, roots } : null;
   } catch (e) {
-    console.error('[Android] scanAndroidMedia failed:', e);
+    console.error('[Android] scanAndroidImages failed:', e);
     return null;
   }
+}
+
+export async function scanAndroidMedia(): Promise<{ files: Record<string, any>; roots: string[] } | null> {
+  return scanAndroidImages();
 }
 
 initAndroidPermissionListener();

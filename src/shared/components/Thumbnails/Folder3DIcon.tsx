@@ -1,5 +1,31 @@
 import React from 'react';
-import { Book, Film, Folder } from 'lucide-react';
+import { Book, Film, Folder, ImageIcon } from 'lucide-react';
+
+function isAndroid(): boolean {
+  try {
+    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+      return (window as any).__TAURI_INTERNALS?.platform === 'android' || 
+             typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const _isAndroid = isAndroid();
+
+const AndroidLightweight: React.FC<{ count?: number }> = ({ count }) => (
+  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-800 dark:to-gray-750">
+    <Folder size={48} className="text-gray-400 dark:text-gray-500" strokeWidth={1.2} />
+    {count !== undefined && count > 0 && (
+      <div className="mt-1 flex items-center gap-0.5 text-gray-400 dark:text-gray-500">
+        <ImageIcon size={10} />
+        <span className="text-[10px]">{count}</span>
+      </div>
+    )}
+  </div>
+);
 
 export interface Folder3DIconProps {
   previewSrcs?: string[];
@@ -22,6 +48,10 @@ export const Folder3DIcon: React.FC<Folder3DIconProps> = ({
   className = '',
   onImageError,
 }) => {
+  if (_isAndroid) {
+    return <AndroidLightweight count={count} />;
+  }
+
   const style = styles[category] || styles.general;
   const Icon = category === 'book' ? Book : category === 'sequence' ? Film : Folder;
   const images = (previewSrcs || []).filter((src): src is string => !!src);

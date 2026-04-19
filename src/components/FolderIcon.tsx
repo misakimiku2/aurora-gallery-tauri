@@ -1,5 +1,5 @@
-﻿import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
-import { Folder, Book, Film } from 'lucide-react';
+import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
+import { Folder, Book, Film, ImageIcon } from 'lucide-react';
 import { FileNode, LayoutMode, FileType } from '../types';
 
 // Intersection Observer 单例管理�?
@@ -202,7 +202,30 @@ export const FolderPreviewImages = memo(({
   );
 });
 
-// 完整�?D文件夹图标组�?- 保持原有设计但优化性能
+function isAndroid(): boolean {
+  try {
+    if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+      return (window as any).__TAURI_INTERNALS?.platform === 'android' || 
+             typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent);
+    }
+    return false;
+  } catch { return false; }
+}
+const _isAndroid = isAndroid();
+
+const AndroidLightweightIcon: React.FC<{ count?: number }> = ({ count }) => (
+  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-800 dark:to-gray-750">
+    <Folder size={48} className="text-gray-400 dark:text-gray-500" strokeWidth={1.2} />
+    {count !== undefined && count > 0 && (
+      <div className="mt-1 flex items-center gap-0.5 text-gray-400 dark:text-gray-500">
+        <ImageIcon size={10} />
+        <span className="text-[10px]">{count}</span>
+      </div>
+    )}
+  </div>
+);
+
+// 完整3D文件夹图标组件 - 保持原有设计但优化性能
 export const Folder3DIcon = memo(({
   previewSrcs,
   count,
@@ -216,6 +239,9 @@ export const Folder3DIcon = memo(({
   className?: string,
   onImageError?: (index: number) => void
 }) => {
+  if (_isAndroid) {
+    return <AndroidLightweightIcon count={count} />;
+  }
   const styles: any = {
     general: { back: 'text-blue-600 dark:text-blue-500', front: 'text-blue-400 dark:text-blue-400' },
     book: { back: 'text-amber-600 dark:text-amber-500', front: 'text-amber-400 dark:text-amber-400' },

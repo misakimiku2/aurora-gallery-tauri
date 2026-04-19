@@ -66,6 +66,9 @@ export interface FileNode {
 
   contentUri?: string;
   mediaStoreId?: number;
+  imageCount?: number;
+  coverImagePath?: string;
+  coverImageMediaStoreId?: number;
 
   createdAt?: string;
   updatedAt?: string;
@@ -368,7 +371,7 @@ export interface FileGroup {
 export interface HistoryItem {
   folderId: string;
   viewingId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview';
   searchQuery: string;
   searchScope: SearchScope;
   activeTags: string[];
@@ -385,7 +388,7 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;

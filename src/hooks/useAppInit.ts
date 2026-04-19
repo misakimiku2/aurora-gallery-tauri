@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { AppState, FileNode, FileType, Person, Topic, TabState } from '../types';
 import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
-import { isAndroidPlatform, ensureAndroidPermissionAndScan } from '../utils/androidPlatform';
+import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages } from '../utils/androidPlatform';
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
@@ -211,29 +211,56 @@ export const useAppInit = ({
               if (isAndroid) {
                 localStorage.setItem('aurora_onboarded', 'true');
                 setState(prev => ({ ...prev, settings: finalSettings }));
-                setIsLoading(false);
-                setTimeout(() => setShowSplash(false), 500);
 
-                const result = await ensureAndroidPermissionAndScan();
-                if (result) {
-                  const initialFolder = result.roots[0];
+                const hasPermission = await ensureAndroidPermission();
+                if (!hasPermission) {
+                  setIsLoading(false);
+                  setTimeout(() => setShowSplash(false), 500);
+                  return;
+                }
+
+                const folderResult = await scanAndroidFolders();
+                if (folderResult) {
+                  const virtualRootId = '__android_folders_root__';
                   const defaultTab: TabState = {
                     ...DUMMY_TAB,
                     id: 'tab-default',
-                    folderId: initialFolder,
+                    folderId: virtualRootId,
+                    viewMode: 'folders-overview',
                   };
-                  defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+                  defaultTab.history = { stack: [{ folderId: virtualRootId, viewingId: null, viewMode: 'folders-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
                   setState(prev => ({
                     ...prev,
                     settings: finalSettings,
-                    files: result.files,
-                    roots: result.roots,
-                    expandedFolderIds: result.roots,
+                    files: folderResult.files,
+                    roots: folderResult.roots,
+                    expandedFolderIds: folderResult.roots,
                     tabs: [defaultTab],
                     activeTabId: defaultTab.id,
-                    currentFolderId: initialFolder,
+                    currentFolderId: virtualRootId,
                   }));
+
+                  setIsLoading(false);
+                  setTimeout(() => setShowSplash(false), 300);
+
+                  (async () => {
+                    setState(prev => ({ ...prev, isScanning: true }));
+                    const imageResult = await scanAndroidImages();
+                    if (imageResult) {
+                      setState(prev => ({
+                        ...prev,
+                        files: imageResult.files,
+                        roots: imageResult.roots,
+                        isScanning: false,
+                      }));
+                    } else {
+                      setState(prev => ({ ...prev, isScanning: false }));
+                    }
+                  })();
+                } else {
+                  setIsLoading(false);
+                  setTimeout(() => setShowSplash(false), 500);
                 }
               } else {
                 setState(prev => ({ ...prev, settings: finalSettings }));
@@ -248,42 +275,62 @@ export const useAppInit = ({
 
             if (isAndroid) {
               setState(prev => ({ ...prev, settings: finalSettings }));
-              setIsLoading(false);
-              setTimeout(() => setShowSplash(false), 500);
 
-              console.error('[AppInit] Android branch: calling ensureAndroidPermissionAndScan...');
-              const result = await ensureAndroidPermissionAndScan();
-              console.error('[AppInit] Android scan result:', result ? `files=${Object.keys(result.files).length}, roots=${result.roots.length}` : 'null');
-              if (result) {
+              const hasPermission = await ensureAndroidPermission();
+              if (!hasPermission) {
+                setIsLoading(false);
+                setTimeout(() => setShowSplash(false), 500);
+                savedDataLoadedRef.current = true;
+                setSavedDataLoaded(true);
+                return;
+              }
+
+              const folderResult = await scanAndroidFolders();
+              if (folderResult) {
+                const virtualRootId = '__android_folders_root__';
                 const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
-                const initialFolder = result.roots[0];
-                const savedForRoot = (savedData && savedData.folderSettings && typeof savedData.folderSettings === 'object') ? savedData.folderSettings[initialFolder] : undefined;
-                const layoutMode = savedForRoot?.layoutMode || globalLayoutSettings.layoutMode;
-                const sortBy = savedForRoot?.sortBy || globalLayoutSettings.sortBy;
-                const sortDirection = savedForRoot?.sortDirection || globalLayoutSettings.sortDirection;
 
                 const defaultTab: TabState = {
                   ...DUMMY_TAB,
                   id: 'tab-default',
-                  folderId: initialFolder,
-                  layoutMode: layoutMode as any
+                  folderId: virtualRootId,
+                  viewMode: 'folders-overview',
+                  layoutMode: globalLayoutSettings.layoutMode as any
                 };
-                defaultTab.history = { stack: [{ folderId: initialFolder, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
+                defaultTab.history = { stack: [{ folderId: virtualRootId, viewingId: null, viewMode: 'folders-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 };
 
                 setState(prev => ({
                   ...prev,
-                  files: result.files,
-                  roots: result.roots,
-                  expandedFolderIds: result.roots,
+                  files: folderResult.files,
+                  roots: folderResult.roots,
+                  expandedFolderIds: folderResult.roots,
                   tabs: [defaultTab],
                   activeTabId: defaultTab.id,
-                  currentFolderId: initialFolder,
-                  sortBy,
-                  sortDirection,
+                  currentFolderId: virtualRootId,
                 }));
 
-                savedDataLoadedRef.current = true;
-                setSavedDataLoaded(true);
+                setIsLoading(false);
+                setTimeout(() => setShowSplash(false), 300);
+
+                (async () => {
+                  setState(prev => ({ ...prev, isScanning: true }));
+                  const imageResult = await scanAndroidImages();
+                  if (imageResult) {
+                    setState(prev => ({
+                      ...prev,
+                      files: imageResult.files,
+                      roots: imageResult.roots,
+                      sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
+                      sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
+                      isScanning: false,
+                    }));
+                  } else {
+                    setState(prev => ({ ...prev, isScanning: false }));
+                  }
+                })();
+              } else {
+                setIsLoading(false);
+                setTimeout(() => setShowSplash(false), 500);
               }
 
               savedDataLoadedRef.current = true;

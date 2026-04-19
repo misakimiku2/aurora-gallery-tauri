@@ -22,6 +22,8 @@ pub struct AndroidFolderInfo {
     pub name: String,
     pub path: String,
     pub image_count: i32,
+    pub cover_image_path: Option<String>,
+    pub cover_image_id: Option<i64>,
 }
 
 pub fn scan_device_images<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> Result<Vec<AndroidImageInfo>, String> {
@@ -72,7 +74,11 @@ pub fn scan_device_folders<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> 
         "bucket_id",
         "bucket_display_name",
         "_data",
+        "_id",
+        "date_modified",
     ];
+    
+    let sort_order = "date_modified DESC";
     
     let uri = get_images_uri(env)?;
     let proj_array = create_string_array(env, &projection)?;
@@ -86,7 +92,7 @@ pub fn scan_device_folders<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> 
             JValue::Object(&proj_array),
             JValue::Object(&JObject::null()),
             JValue::Object(&JObject::null()),
-            JValue::Object(&JObject::null()),
+            JValue::Object(&env.new_string(sort_order).map_err(|e| format!("Failed to create string: {:?}", e))?.into()),
         ],
     ).map_err(|e| format!("Failed to query: {:?}", e))?;
     
@@ -266,7 +272,16 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
 }
 
 fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidFolderInfo>, String> {
-    let mut folder_map: HashMap<i64, (String, String, i32)> = HashMap::new();
+    struct FolderData {
+        name: String,
+        path: String,
+        count: i32,
+        cover_image_path: Option<String>,
+        cover_image_id: Option<i64>,
+        max_date_modified: i64,
+    }
+    
+    let mut folder_map: HashMap<i64, FolderData> = HashMap::new();
     
     let has_next = env.call_method(&cursor, "moveToFirst", "()Z", &[])
         .map_err(|e| format!("Failed to move to first: {:?}", e))?
@@ -301,6 +316,22 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             .map_err(|e| format!("Failed to get int: {:?}", e))?
     };
 
+    let id_index = {
+        let col_str = env.new_string("_id").map_err(|e| format!("Failed to create string: {:?}", e))?;
+        env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
+            .map_err(|e| format!("Failed to get column index: {:?}", e))?
+            .i()
+            .map_err(|e| format!("Failed to get int: {:?}", e))?
+    };
+
+    let date_modified_index = {
+        let col_str = env.new_string("date_modified").map_err(|e| format!("Failed to create string: {:?}", e))?;
+        env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
+            .map_err(|e| format!("Failed to get column index: {:?}", e))?
+            .i()
+            .map_err(|e| format!("Failed to get int: {:?}", e))?
+    };
+
     loop {
         let bucket_id = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(bucket_id_index)])
             .map_err(|e| format!("Failed to get bucket_id: {:?}", e))?
@@ -309,6 +340,26 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
         
         let bucket_name = get_cursor_string(env, &cursor, bucket_name_index)?;
         let data_path = get_cursor_string(env, &cursor, data_index)?;
+        
+        let image_id = if id_index >= 0 {
+            Some(env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(id_index)])
+                .map_err(|e| format!("Failed to get image id: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?)
+        } else {
+            None
+        };
+
+        let date_modified = if date_modified_index >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(date_modified_index)])
+                .map_err(|e| format!("Failed to get date_modified: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?
+        } else {
+            0
+        };
+        
+        let cover_path = if data_path.is_empty() { None } else { Some(data_path.clone()) };
         
         let folder_path = if !data_path.is_empty() {
             if let Some(last_slash) = data_path.rfind('/') {
@@ -320,8 +371,21 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             String::new()
         };
         
-        let entry = folder_map.entry(bucket_id).or_insert((bucket_name.clone(), folder_path, 0));
-        entry.2 += 1;
+        let entry = folder_map.entry(bucket_id).or_insert_with(|| FolderData {
+            name: bucket_name.clone(),
+            path: folder_path,
+            count: 0,
+            cover_image_path: None,
+            cover_image_id: None,
+            max_date_modified: -1,
+        });
+        entry.count += 1;
+
+        if date_modified > entry.max_date_modified {
+            entry.max_date_modified = date_modified;
+            entry.cover_image_path = cover_path;
+            entry.cover_image_id = image_id;
+        }
         
         let has_next = env.call_method(&cursor, "moveToNext", "()Z", &[])
             .map_err(|e| format!("Failed to move to next: {:?}", e))?
@@ -337,11 +401,13 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
     
     let results: Vec<AndroidFolderInfo> = folder_map
         .into_iter()
-        .map(|(id, (name, path, count))| AndroidFolderInfo {
+        .map(|(id, data)| AndroidFolderInfo {
             id,
-            name,
-            path,
-            image_count: count,
+            name: data.name,
+            path: data.path,
+            image_count: data.count,
+            cover_image_path: data.cover_image_path,
+            cover_image_id: data.cover_image_id,
         })
         .collect();
     

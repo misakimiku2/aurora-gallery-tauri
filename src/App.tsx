@@ -13,6 +13,7 @@ import { InlineRenameInput } from './components/InlineRenameInput';
 import { ImageThumbnail } from './components/ImageThumbnail';
 import EmptyFolderPlaceholder from './components/EmptyFolderPlaceholder';
 import { TopicModule } from './components/TopicModule';
+import { FoldersOverview } from './components/FoldersOverview';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
@@ -1465,12 +1466,24 @@ export const App: React.FC = () => {
       if (currentTopic) handleNavigateTopic(currentTopic.parentId || null);
     } else if (activeTab.activePersonId) {
       enterPeopleOverview();
+    } else if (activeTab.viewMode === 'folders-overview') {
+      return;
     } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
-      enterFolder(activeTab.folderId);
+      const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
+      if (isAndroid) {
+        pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
+      } else {
+        enterFolder(activeTab.folderId);
+      }
     } else {
       const current = state.files[activeTab.folderId];
       if (current && current.parentId) {
         enterFolder(current.parentId);
+      } else {
+        const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
+        if (isAndroid && activeTab.viewMode === 'browser') {
+          pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
+        }
       }
     }
   };
@@ -2030,7 +2043,7 @@ export const App: React.FC = () => {
             )}
 
             <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-900 overflow-hidden">
-              {activeTab.viewMode !== 'topics-overview' && (
+              {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && (
                 <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/50 backdrop-blur shrink-0 relative z-20">
                   {activeTab.viewMode === 'tags-overview' ? (
                     <div className="flex items-center w-full">
@@ -2092,7 +2105,18 @@ export const App: React.FC = () => {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative" id="main-content-area">
-                {activeTab.viewMode === 'topics-overview' ? (
+                {activeTab.viewMode === 'folders-overview' ? (
+                  <FoldersOverview
+                    roots={state.roots}
+                    files={state.files}
+                    resourceRoot={state.settings.paths.resourceRoot}
+                    cachePath={state.settings.paths.cacheRoot}
+                    onFolderClick={(folderId) => enterFolder(folderId)}
+                    thumbnailSize={state.thumbnailSize}
+                    t={t}
+                    isLoadingImages={state.isScanning}
+                  />
+                ) : activeTab.viewMode === 'topics-overview' ? (
                   <TopicModule
                     topics={state.topics}
                     files={state.files}
