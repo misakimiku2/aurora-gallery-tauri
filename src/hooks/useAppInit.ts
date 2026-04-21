@@ -248,16 +248,30 @@ export const useAppInit = ({
 
                   (async () => {
                     setState(prev => ({ ...prev, isScanning: true }));
-                    const imageResult = await scanAndroidImages();
-                    if (imageResult) {
+                    const fullCachedResult = appDataDir ? await loadScanCache(appDataDir) : null;
+                    if (fullCachedResult) {
                       setState(prev => ({
                         ...prev,
-                        files: imageResult.files,
-                        roots: imageResult.roots,
-                        isScanning: false,
+                        files: fullCachedResult.files,
+                        roots: fullCachedResult.roots,
                       }));
-                      if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
-                        saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                    }
+                    const cacheTs = folderCachedResult.cacheTimestamp ? Math.floor(folderCachedResult.cacheTimestamp / 1000) : undefined;
+                    const incrementalResult = await scanAndroidImages(undefined, cacheTs);
+                    if (incrementalResult && incrementalResult.rawImages && incrementalResult.rawImages.length > 0) {
+                      const fullResult = await scanAndroidImages();
+                      if (fullResult) {
+                        setState(prev => ({
+                          ...prev,
+                          files: fullResult.files,
+                          roots: fullResult.roots,
+                          isScanning: false,
+                        }));
+                        if (appDataDir && fullResult.rawFolders && fullResult.rawImages) {
+                          saveScanCache(appDataDir, fullResult.rawFolders, fullResult.rawImages);
+                        }
+                      } else {
+                        setState(prev => ({ ...prev, isScanning: false }));
                       }
                     } else {
                       setState(prev => ({ ...prev, isScanning: false }));
@@ -365,18 +379,32 @@ export const useAppInit = ({
 
                 (async () => {
                   setState(prev => ({ ...prev, isScanning: true }));
-                  const imageResult = await scanAndroidImages();
-                  if (imageResult) {
+                  const fullCachedResult = appDataDir ? await loadScanCache(appDataDir) : null;
+                  if (fullCachedResult) {
                     setState(prev => ({
                       ...prev,
-                      files: imageResult.files,
-                      roots: imageResult.roots,
-                      sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
-                      sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
-                      isScanning: false,
+                      files: fullCachedResult.files,
+                      roots: fullCachedResult.roots,
                     }));
-                    if (appDataDir && imageResult.rawFolders && imageResult.rawImages) {
-                      saveScanCache(appDataDir, imageResult.rawFolders, imageResult.rawImages);
+                  }
+                  const cacheTs = folderCachedResult.cacheTimestamp ? Math.floor(folderCachedResult.cacheTimestamp / 1000) : undefined;
+                  const incrementalResult = await scanAndroidImages(undefined, cacheTs);
+                  if (incrementalResult && incrementalResult.rawImages && incrementalResult.rawImages.length > 0) {
+                    const fullResult = await scanAndroidImages();
+                    if (fullResult) {
+                      setState(prev => ({
+                        ...prev,
+                        files: fullResult.files,
+                        roots: fullResult.roots,
+                        sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
+                        sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
+                        isScanning: false,
+                      }));
+                      if (appDataDir && fullResult.rawFolders && fullResult.rawImages) {
+                        saveScanCache(appDataDir, fullResult.rawFolders, fullResult.rawImages);
+                      }
+                    } else {
+                      setState(prev => ({ ...prev, isScanning: false }));
                     }
                   } else {
                     setState(prev => ({ ...prev, isScanning: false }));

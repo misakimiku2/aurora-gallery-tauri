@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FileNode } from '../types';
 import { useInView } from '../hooks/useInView';
-import { getThumbnail } from '../api/tauri-bridge';
+import { getThumbnail, isThumbnailUpgrading } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem } from './useLayoutHook';
 import { Folder, Loader2, ImageIcon } from 'lucide-react';
@@ -33,8 +33,11 @@ const FolderCard = React.memo(({
   const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
   const [coverSrc, setCoverSrc] = useState<string | null>(null);
   const [coverLoaded, setCoverLoaded] = useState(false);
+  const [upgrading, setUpgrading] = useState(false);
 
   const imageCount = folder.imageCount ?? folder.children?.length ?? 0;
+  const coverImagePathRef = useRef(folder.coverImagePath);
+  coverImagePathRef.current = folder.coverImagePath;
 
   useEffect(() => {
     if (!(isInView || wasInView)) return;
@@ -46,6 +49,9 @@ const FolderCard = React.memo(({
         const cached = cache.get(folder.coverImagePath);
         if (cached) {
           setCoverSrc(cached);
+          if (isThumbnailUpgrading(folder.coverImagePath)) {
+            setUpgrading(true);
+          }
           setCoverLoaded(true);
           return;
         }
@@ -63,6 +69,9 @@ const FolderCard = React.memo(({
           if (url) {
             cache.set(folder.coverImagePath, url);
             setCoverSrc(url);
+            if (isThumbnailUpgrading(folder.coverImagePath)) {
+              setUpgrading(true);
+            }
           }
         } catch (e) {
           // ignore
@@ -73,6 +82,62 @@ const FolderCard = React.memo(({
 
     loadCover();
   }, [isInView, wasInView, coverLoaded, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { filePath, thumbnailSrc } = (e as CustomEvent).detail;
+      if (filePath === coverImagePathRef.current) {
+        console.log('[FolderCard] aurora:thumbnail-upgraded:', filePath, 'thumbnailSrc=', thumbnailSrc);
+        setCoverSrc(thumbnailSrc);
+        setUpgrading(false);
+      }
+    };
+    const failHandler = (e: Event) => {
+      const { filePath } = (e as CustomEvent).detail;
+      if (filePath === coverImagePathRef.current) {
+        setUpgrading(false);
+      }
+    };
+    window.addEventListener('aurora:thumbnail-upgraded', handler);
+    window.addEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+    return () => {
+      window.removeEventListener('aurora:thumbnail-upgraded', handler);
+      window.removeEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!upgrading || !folder.coverImagePath || !resourceRoot) return;
+    let cancelled = false;
+    let retryCount = 0;
+    const maxRetries = 3;
+    const retryDelay = 5000;
+
+    const checkUpgrade = async () => {
+      if (cancelled || retryCount >= maxRetries) return;
+      retryCount++;
+      await new Promise<void>(resolve => setTimeout(resolve, retryDelay));
+      if (cancelled) return;
+      try {
+        const { getThumbnail: getThumb, isThumbnailUpgrading: isUpgrading } = await import('../api/tauri-bridge');
+        const thumbnail = await getThumb(folder.coverImagePath!, undefined, resourceRoot, undefined, undefined, undefined, folder.coverImageMediaStoreId);
+        if (cancelled) return;
+        if (thumbnail && !isUpgrading(folder.coverImagePath!)) {
+          const cache = getGlobalCache();
+          cache.set(folder.coverImagePath!, thumbnail);
+          setCoverSrc(thumbnail);
+          setUpgrading(false);
+        } else if (isUpgrading(folder.coverImagePath!)) {
+          checkUpgrade();
+        }
+      } catch {
+        if (!cancelled) checkUpgrade();
+      }
+    };
+
+    checkUpgrade();
+    return () => { cancelled = true; };
+  }, [upgrading, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
 
   return (
     <div
@@ -101,6 +166,15 @@ const FolderCard = React.memo(({
                 <span className="text-[10px]">{imageCount}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {upgrading && (
+          <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
+            <svg className="animate-spin h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
           </div>
         )}
 

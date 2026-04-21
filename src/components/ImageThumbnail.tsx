@@ -4,6 +4,7 @@ import { Image as ImageIcon } from 'lucide-react';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { isThumbnailUpgrading } from '../api/tauri-bridge';
 
 export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath, mediaStoreId }: { 
   src: string; 
@@ -29,6 +30,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   
   const [animSrc, setAnimSrc] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(!thumbnailSrc);
+  const [upgrading, setUpgrading] = React.useState(() => filePath ? isThumbnailUpgrading(filePath) : false);
 
   const hitRecordedRef = useRef(false);
 
@@ -66,6 +68,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
                 cache.set(key, thumbnail);
                 setThumbnailSrc(thumbnail);
             }
+            setUpgrading(isThumbnailUpgrading(filePath));
           }
         } catch (error) {
           if (!controller.signal.aborted) {
@@ -85,6 +88,62 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       };
     }
   }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc]);
+
+  React.useEffect(() => {
+    if (!filePath) return;
+    const handler = (e: Event) => {
+      const { filePath: upgradedPath, thumbnailSrc: upgradedSrc } = (e as CustomEvent).detail;
+      if (upgradedPath === filePath && upgradedSrc !== thumbnailSrc) {
+        setThumbnailSrc(upgradedSrc);
+        setUpgrading(false);
+      }
+    };
+    const failHandler = (e: Event) => {
+      const { filePath: failedPath } = (e as CustomEvent).detail;
+      if (failedPath === filePath) {
+        setUpgrading(false);
+      }
+    };
+    window.addEventListener('aurora:thumbnail-upgraded', handler);
+    window.addEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+    return () => {
+      window.removeEventListener('aurora:thumbnail-upgraded', handler);
+      window.removeEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+    };
+  }, [filePath, thumbnailSrc]);
+
+  React.useEffect(() => {
+    if (!upgrading || !filePath || !resourceRoot) return;
+    let cancelled = false;
+    let retryCount = 0;
+    const maxRetries = 3;
+    const retryDelay = 5000;
+
+    const checkUpgrade = async () => {
+      if (cancelled || retryCount >= maxRetries) return;
+      retryCount++;
+      await new Promise<void>(resolve => setTimeout(resolve, retryDelay));
+      if (cancelled) return;
+      try {
+        const { getThumbnail, isThumbnailUpgrading: isUpgrading } = await import('../api/tauri-bridge');
+        const thumbnail = await getThumbnail(filePath, modified, resourceRoot, undefined, undefined, cachePath, mediaStoreId);
+        if (cancelled) return;
+        if (thumbnail && !isUpgrading(filePath)) {
+          const cache = getGlobalCache();
+          cache.set(filePath, thumbnail);
+          setThumbnailSrc(thumbnail);
+          setUpgrading(false);
+        } else if (isUpgrading(filePath)) {
+          checkUpgrade();
+        }
+      } catch {
+        if (!cancelled) checkUpgrade();
+      }
+    };
+
+    checkUpgrade();
+    return () => { cancelled = true; };
+  }, [upgrading, filePath, resourceRoot, modified, cachePath, mediaStoreId]);
 
   React.useEffect(() => {
     let isMounted = true;
@@ -151,6 +210,14 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
         )}
       </div>
+      {upgrading && finalSrc && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
+          <svg className="animate-spin h-6 w-6 text-white/80" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+          </svg>
+        </div>
+      )}
     </div>
   );
 });

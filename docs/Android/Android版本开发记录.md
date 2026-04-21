@@ -1382,3 +1382,360 @@ npx tauri android dev  # 启动开发模式
 | `src/types.ts` | `FileNode` 新增 `contentUri`、`mediaStoreId` 字段 |
 | `src/App.tsx` | 移除约 180 行重复 Android 代码，统一使用 `androidPlatform.ts` |
 | `vite.config.ts` | `hmr.host` 改为 `'0.0.0.0'`；添加 `Cache-Control: no-store` |
+
+---
+
+## 第六阶段：文件夹总览视图与启动速度优化
+
+**开发日期**：2026年4月19日 ~ 2026年4月20日
+
+### 一、问题背景
+
+| 问题 | 描述 |
+|------|------|
+| 启动进入单一文件夹 | Android 初始化后直接进入第一个根文件夹的 `browser` 视图，而非文件夹列表 |
+| 启动时白屏 | `setIsLoading(false)` 在扫描完成前就执行，splash 提前消失 |
+| 3D 文件夹图标性能差 | `Folder3DIcon`（SVG + 3D 变换）在 Android 上渲染导致严重性能问题 |
+| 启动速度慢 | 每次启动全量扫描 20k+ 图片，耗时 3~6 秒才能看到主界面 |
+
+### 二、架构变更
+
+#### 2.1 新增 viewMode 类型
+
+```typescript
+// types.ts
+viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview';
+```
+
+#### 2.2 新增 FileNode 字段
+
+```typescript
+// types.ts - FileNode 接口
+imageCount?: number;           // 文件夹内图片数量
+coverImagePath?: string;       // 封面图片路径
+coverImageMediaStoreId?: number; // 封面图片 MediaStore ID
+```
+
+#### 2.3 虚拟根目录
+
+Android 使用虚拟根目录 `__android_folders_root__` 作为 folders-overview 的 folderId：
+
+```
+folders-overview (folderId: __android_folders_root__)
+    ├── 点击某文件夹 → browser (folderId: 实际文件夹ID)
+    ├── 按 ↑ 返回 → folders-overview (folderId: __android_folders_root__)
+    └── 按 ← 返回 → 不操作（已是最顶层）
+```
+
+### 三、FoldersOverview 组件
+
+#### 3.1 布局引擎
+
+复用与 FileGrid 相同的 `useLayout` hook + Web Worker 绝对定位布局，ResizeObserver 监听容器宽度变化，CSS transition 实现平滑换行动画。
+
+#### 3.2 FolderCard 样式
+
+采用**圆角矩形 + 底部渐变叠加文字**样式：
+
+```
+┌─────────────────────┐
+│                     │
+│   [封面图 / 占位符]  │  rounded-lg, overflow-hidden
+│                     │
+│ ░░░░░░░░░░░░░░░░░░░│  bg-gradient-to-t from-black/70
+│ ▎ 文件夹名称        │  text-white text-xs font-medium
+│ ▎ 1234 项            │  text-white/70 text-[10px]
+└─────────────────────┘
+```
+
+#### 3.3 封面图片加载策略
+
+- 使用 `useInView`（rootMargin: 200px）仅在可见区域附近加载
+- 优先检查内存缓存 (`getGlobalCache`)
+- 缓存未命中则调用 `getThumbnail(resourceRoot, mediaStoreId)`
+- 无封面时显示轻量占位符（CSS 渐变 + lucide-react Folder 图标）
+
+#### 3.4 缩略图升级事件监听
+
+当低质量缩略图（MINI_KIND < 200px）在后台升级为高质量缩略图后，`FolderCard` 需要自动更新显示：
+
+- **upgrading 状态追踪**：加载缩略图时通过 `isThumbnailUpgrading()` 检测是否正在升级
+- **DOM 事件监听**：监听 `aurora:thumbnail-upgraded` 和 `aurora:thumbnail-upgrade-failed` 事件
+- **升级中过渡效果**：半透明黑色遮罩 + 旋转 spinner
+- **re-request 安全网**：事件丢失时 5 秒后自动重新请求（最多 3 次）
+
+### 四、Rust 后端：MediaStore 扫描优化
+
+#### 4.1 Kotlin 端聚合扫描（减少 JNI 调用）
+
+在 `MainActivity.kt` 中新增 `scanAllAsJson(sinceTimestamp: Long)` 方法，在 Kotlin 层完成 Cursor 遍历 + 文件夹聚合，返回 JSON 字符串给 Rust。
+
+**收益**：JNI 调用从 26~32 万次降到 2~3 次，后台扫描从 5 秒降到 ~1.9 秒。
+
+#### 4.2 增量/差异扫描
+
+`android_scan_all` 命令支持 `since_timestamp` 参数，Kotlin 端使用 `WHERE date_modified > ?` 过滤，只返回新增/修改的图片。
+
+**收益**：日常启动时后台扫描从 5 秒降到 **< 100ms**（无新图片时）。
+
+#### 4.3 分层缓存
+
+| 缓存文件 | 内容 | 加载时间 | 用途 |
+|----------|------|---------|------|
+| `scan_cache_folders.json.gz` | 仅 109 个文件夹 | ~45ms | 启动时即时显示文件夹总览 |
+| `scan_cache.json.gz` | 109 文件夹 + 21,749 图片 | ~1.4s | 后台加载，让用户可浏览图片 |
+
+#### 4.4 Android 原生闪屏
+
+使用 `androidx.core:core-splashscreen:1.0.1`，用户点击图标 → 立即看到深色背景 + Aurora 图标 → WebView 加载完成后无缝过渡到主界面。
+
+### 五、Folder3DIcon 替代方案
+
+项目中有 3 个独立的 `Folder3DIcon` 实现，每个都包含 SVG 3D 透视变换路径和 DFS 遍历。21,744 张图片的设备上快速滚动时帧率暴跌。
+
+**解决方案**：三处同步添加 Android 检测，在 Android 上返回纯 CSS 渐变背景 + lucide-react Folder 图标的轻量占位符。
+
+### 六、启动速度优化效果
+
+| 场景 | 优化前 | 优化后 |
+|------|--------|--------|
+| 首次启动 | 5~10 秒 | **1~2 秒** |
+| 非首次启动（有缓存） | 3~6 秒 | **< 0.1 秒**（文件夹可见）→ **~1.4 秒**（图片可浏览） |
+| 后台扫描（无新图片） | 5~8 秒 | **< 0.1 秒**（增量扫描） |
+| 后台扫描（有新图片） | 5~8 秒 | **~1.9 秒**（Kotlin 聚合） |
+
+### 七、修改文件清单
+
+| 文件 | 修改类型 | 说明 |
+|------|---------|------|
+| `src/types.ts` | 修改 | 添加 `folders-overview` viewMode，扩展 FileNode |
+| `src-tauri/src/android/media_store.rs` | 修改 | 文件夹扫描返回封面图片信息；新增 `scan_device_all`；新增 `scan_device_all_via_kotlin` |
+| `src/utils/androidPlatform.ts` | 修改 | 拆分扫描为文件夹优先 + 图片后台加载；分层缓存；增量扫描支持 |
+| `src/components/FoldersOverview.tsx` | **新增** | 文件夹总览组件（圆角矩形+渐变叠加文字+缩略图升级监听） |
+| `src/hooks/useAppInit.ts` | 修改 | Android 启动流程：缓存优先 → 文件夹即时显示 → 后台加载完整数据 → 增量扫描 |
+| `src/hooks/useNavigation.ts` | 修改 | 支持 folders-overview 的导航/历史/新标签页 |
+| `src/App.tsx` | 修改 | 渲染分支 + 返回导航逻辑；闪屏延迟从 500ms 减至 100ms |
+| `src/components/TopBar.tsx` | 修改 | folders-overview 工具栏适配 |
+| `src/components/FolderThumbnail.tsx` | 修改 | Android 上跳过 Folder3DIcon |
+| `src/components/Folder3DIcon.tsx` | 修改 | Android 上降级为轻量占位符 |
+| `src/shared/components/Thumbnails/Folder3DIcon.tsx` | 修改 | 同上（MetadataPanel 使用） |
+| `src/components/FolderIcon.tsx` | 修改 | 同上（自带副本） |
+| `src-tauri/src/lib.rs` | 修改 | 新增 `android_scan_all`、`android_save_scan_cache`、`android_load_scan_cache` 命令 |
+| `src-tauri/Cargo.toml` | 修改 | Android 依赖新增 `flate2`（gzip 压缩缓存） |
+| `src-tauri/gen/android/.../MainActivity.kt` | 修改 | 新增 `scanAllAsJson()` Kotlin 聚合扫描方法；Android 原生闪屏 |
+
+> 详细实现文档参见 [FoldersOverview-Implementation.md](./FoldersOverview-Implementation.md)
+
+---
+
+## 第七阶段：缩略图后台升级问题修复
+
+**开发日期**：2026年4月22日
+
+### 一、问题描述
+
+在 Android 端主界面滚动时，文件夹预览图使用了模糊的 MINI_KIND 缩略图作为封面。当 MINI_KIND 返回的缩略图尺寸小于 200px 时，系统会在后台生成高质量缩略图，但生成完成后：
+
+1. **文件夹预览图不会自动更新** — 即使缩略图已生成，主界面的文件夹封面仍然显示模糊的图片
+2. **没有升级过渡效果** — 在后台生成缩略图期间，没有加载动画提示用户
+3. **重启软件后恢复正常** — 重启后文件夹预览图变清晰，说明缩略图确实已生成并缓存
+
+### 二、问题分析
+
+#### 2.1 日志分析
+
+通过 adb logcat 前端日志发现：
+
+```
+[Thumbnail] Android result: {..., upgrading: true}
+[Thumbnail] Received android:thumbnail-upgraded: {...}
+[Thumbnail] Upgrade: ... changed= true
+```
+
+`android:thumbnail-upgraded` 事件确实到达了前端，缓存也正确更新了。问题不在事件传递，而在渲染层。
+
+#### 2.2 根本原因
+
+Android 主界面使用的是 `FoldersOverview.tsx` 中的 `FolderCard` 组件，**不是** `FolderThumbnail` 或 `Folder3DIcon` 组件。
+
+`FolderCard` 完全没有监听 `aurora:thumbnail-upgraded` 事件，且 `coverLoaded` 设置为 `true` 后不再重新加载缩略图。
+
+| 组件 | 使用场景 | Android 主界面是否使用 |
+|------|---------|---------------------|
+| `FoldersOverview.tsx` → `FolderCard` | Android 主界面文件夹总览 | ✅ **是** |
+| `FolderThumbnail.tsx` → `Folder3DIcon` | 桌面端文件夹预览 | ❌ 否 |
+| `FolderIcon.tsx` → `Folder3DIcon`（内嵌） | 桌面端优化文件夹缩略图 | ❌ 否 |
+| `shared/Folder3DIcon.tsx` | MetadataPanel 等 | ❌ 否 |
+
+#### 2.3 之前的错误诊断
+
+最初误以为问题出在 `Folder3DIcon.tsx` 组件（在 Android 上忽略 `previewSrcs` 只显示文件夹图标），但实际上 `Folder3DIcon` 和 `FolderThumbnail` 是桌面端组件，在 Android 主界面上根本不会被使用。
+
+### 三、修复方案
+
+**文件**: `src/components/FoldersOverview.tsx`
+
+在 `FolderCard` 组件中添加以下功能：
+
+#### 3.1 upgrading 状态追踪
+
+```tsx
+const [upgrading, setUpgrading] = useState(false);
+const coverImagePathRef = useRef(folder.coverImagePath);
+coverImagePathRef.current = folder.coverImagePath;
+```
+
+加载缩略图时，通过 `isThumbnailUpgrading()` 检测是否正在升级。
+
+#### 3.2 监听 DOM 事件
+
+```tsx
+useEffect(() => {
+  const handler = (e: Event) => {
+    const { filePath, thumbnailSrc } = (e as CustomEvent).detail;
+    if (filePath === coverImagePathRef.current) {
+      setCoverSrc(thumbnailSrc);
+      setUpgrading(false);
+    }
+  };
+  const failHandler = (e: Event) => {
+    const { filePath } = (e as CustomEvent).detail;
+    if (filePath === coverImagePathRef.current) {
+      setUpgrading(false);
+    }
+  };
+  window.addEventListener('aurora:thumbnail-upgraded', handler);
+  window.addEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+  return () => {
+    window.removeEventListener('aurora:thumbnail-upgraded', handler);
+    window.removeEventListener('aurora:thumbnail-upgrade-failed', failHandler);
+  };
+}, []);
+```
+
+#### 3.3 升级中过渡效果
+
+```tsx
+{upgrading && (
+  <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
+    <svg className="animate-spin h-5 w-5 text-white/70" ...>...</svg>
+  </div>
+)}
+```
+
+#### 3.4 re-request 安全网
+
+当事件丢失时，5 秒后自动重新请求缩略图（最多重试 3 次）。
+
+### 四、完整升级流程
+
+```
+FolderCard 加载封面
+  │
+  ├─ getThumbnail() 返回 upgrading: true
+  │   ├─ 显示模糊 MINI_KIND 缩略图
+  │   ├─ 设置 upgrading=true → 显示 spinner 遮罩
+  │   └─ 启动 re-request 安全网
+  │
+  ├─ [事件] aurora:thumbnail-upgraded
+  │   ├─ 更新 coverSrc 为高质量缩略图
+  │   └─ 设置 upgrading=false → 移除 spinner
+  │
+  └─ [事件] aurora:thumbnail-upgrade-failed
+      └─ 设置 upgrading=false → 移除 spinner
+```
+
+### 五、修改文件清单
+
+| 文件路径 | 修改内容 |
+|---------|---------|
+| `src/components/FoldersOverview.tsx` | FolderCard 添加 `aurora:thumbnail-upgraded` 事件监听、upgrading 状态、过渡效果、re-request 安全网；导入 `isThumbnailUpgrading` |
+
+### 六、经验总结
+
+1. **确认组件使用场景** — 修复前必须确认哪个组件才是实际渲染的组件。Android 主界面使用的是 `FolderCard`，而非 `FolderThumbnail` 或 `Folder3DIcon`。修改错误的组件不会产生任何效果。
+
+2. **日志是调试的关键** — 通过日志确认事件确实到达前端（`[Thumbnail] Upgrade: changed= true`），但缺少 `[FolderCard]` 日志，说明 `FolderCard` 没有监听事件。
+
+3. **平台组件差异** — Android 和桌面端使用不同的组件渲染文件夹预览图，需要分别确保核心功能在两端都能正常工作。
+
+> 详细修复记录参见 [缩略图后台升级问题修复记录.md](./缩略图后台升级问题修复记录.md)
+
+---
+
+## 附录 A：安卓相册扫描机制解析
+
+### A.1 核心机制：依赖系统"媒体库"
+
+绝大多数正规相册 App，都是通过与系统内置的 `MediaStore`（媒体库）交互来获取图片的。
+
+- **工作原理**：Android 系统内置了 `MediaScannerService`（媒体扫描服务），会在特定时机（如开机、文件变化时）自动扫描设备中的媒体文件，将文件名、路径、大小等信息存入系统数据库 `MediaStore` 中。
+- **应用调用**：相册 App 通过 `ContentResolver`（内容解析器）查询 `MediaStore` 数据库，即可高效获取图片信息，避免了耗时耗能的文件目录遍历，性能极高。
+- **文件更新**：当你添加或删除图片文件后，系统并不会立即刷新数据库。App 需要主动通知系统进行扫描，数据库才能更新。
+
+### A.2 如何通知系统扫描新文件
+
+| 通知方式 | 实现方法 | 特点与版本限制 |
+|:---|:---|:---|
+| **发送广播** | 发送 `ACTION_MEDIA_SCANNER_SCAN_FILE` 广播，并附上文件路径 | ⚠️ 从 Android 4.4 起受限：普通 App 发送 `ACTION_MEDIA_MOUNTED` 这类全局广播会被禁止。但发送单个文件的扫描广播通常仍被允许 |
+| **调用 API** | 使用 `MediaScannerConnection.scanFile()` 方法，指定待扫描的文件路径 | ✅ 推荐方式：官方标准做法，安全可靠，无需担心版本兼容问题，并且可以只扫描单个文件，效率更高 |
+
+### A.3 高级策略：超越系统数据库
+
+一些功能强大的相册 App（如 Google 相册）在系统数据库基础上进行深度处理：
+
+- **自建数据库与缓存**：App 会创建自己的数据库，存储 `MediaStore` 中没有的数据（如人脸分组、地点标签等），并通过 `LruCache` 等技术建立缩略图和图片数据的多级缓存
+- **文件监控**：使用 `FileObserver` 类监听特定目录的文件变化事件，无需频繁全盘扫描即可实现近乎实时的更新
+- **自定义扫描**：对于保存在 App 私有目录或用户指定目录中的文件，编写自己的扫描逻辑
+
+### A.4 权限与隐私：Android 版本的影响
+
+| Android 版本 | 权限要求 | 访问范围 |
+|:---|:---|:---|
+| Android 10 及以下 | `READ_EXTERNAL_STORAGE` + `WRITE_EXTERNAL_STORAGE` | 几乎所有公共目录的媒体文件 |
+| Android 10+（分区存储） | 通过 `MediaStore` API | 只能访问自己创建的和其他 App 创建的媒体文件；非媒体文件需使用 SAF |
+| Android 13+ | `READ_MEDIA_IMAGES` / `READ_MEDIA_VIDEO` / `READ_MEDIA_AUDIO` | 细粒度媒体权限 |
+| Android 14+ | 额外 `READ_MEDIA_VISUAL_USER_SELECTED` | 用户选择的照片和视频（部分授权） |
+
+### A.5 性能优化策略
+
+Aurora Gallery 在 Android 上的优化实践：
+
+| 策略 | 实现方式 | 收益 |
+|:---|:---|:---|
+| **异步处理** | 所有扫描、数据库查询、图片解码在后台线程 | 避免主线程卡顿 |
+| **增量扫描** | 记录上次扫描时间戳，`WHERE date_modified > ?` | 日常启动扫描 < 100ms |
+| **缩略图优先** | MINI_KIND 系统缩略图 → 后台升级高质量缩略图 | 即时显示 + 后台升级 |
+| **分层缓存** | 文件夹缓存（~45ms）+ 完整缓存（~1.4s） | 启动时 < 100ms 看到文件夹 |
+| **Kotlin 聚合扫描** | `scanAllAsJson()` 一次 JNI 调用 | JNI 调用从 26~32 万次降到 2~3 次 |
+| **gzip 压缩缓存** | `scan_cache.json.gz` + `scan_cache_folders.json.gz` | 减少磁盘占用 |
+
+### A.6 Aurora Gallery 的扫描架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Aurora Gallery Android                  │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  启动流程:                                                │
+│  1. loadFolderCache() ─── 文件夹缓存 (~45ms)              │
+│     └─ scan_cache_folders.json.gz                        │
+│  2. setShowSplash(false) ─── 显示主界面                    │
+│  3. [异步] loadScanCache() ─── 完整缓存 (~1.4s)           │
+│     └─ scan_cache.json.gz                                │
+│  4. [异步] scanAndroidImages(incremental) ─── 增量扫描     │
+│     └─ android_scan_all(sinceTimestamp)                   │
+│        └─ Kotlin: scanAllAsJson() → WHERE date_modified >?│
+│  5. [异步] saveScanCache() ─── 保存缓存                   │
+│                                                          │
+│  缩略图流程:                                              │
+│  1. getThumbnail() → android_get_thumbnail                │
+│  2. Phase 1: 检查文件解码缓存                              │
+│  3. Phase 2: ContentResolver.loadThumbnail() (MINI_KIND)  │
+│  4. min_dim < 200px → 返回 upgrading=true + 入队后台任务   │
+│  5. 后台 Worker: generate_thumbnail()                     │
+│  6. emit "android:thumbnail-upgraded"                     │
+│  7. FolderCard / ImageThumbnail 监听事件 → 更新 UI        │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+```

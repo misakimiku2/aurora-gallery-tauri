@@ -1,8 +1,12 @@
 use image::DynamicImage;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufReader, BufWriter, Read};
+use std::num::NonZeroU32;
 use std::path::Path;
 use serde::Serialize;
+use fast_image_resize as fr;
+use image::codecs::jpeg::{JpegDecoder, JpegEncoder};
+use image::ImageFormat;
 
 const THUMBNAIL_SIZE: u32 = 256;
 const JPEG_QUALITY: u8 = 80;
@@ -14,6 +18,22 @@ pub struct ThumbnailResult {
     pub thumbnail_path: Option<String>,
     pub width: u32,
     pub height: u32,
+    pub upgrading: bool,
+}
+
+pub fn check_thumbnail_cache(image_path: &str, cache_dir: &Path) -> Option<String> {
+    let cache_key = compute_cache_key(image_path).ok()?;
+    let jpg_filename = format!("{}_q{}.jpg", &cache_key, JPEG_QUALITY);
+    let jpg_path = cache_dir.join(&jpg_filename);
+    if jpg_path.exists() {
+        return Some(jpg_path.to_string_lossy().to_string());
+    }
+    let webp_filename = format!("{}_q{}.webp", &cache_key, JPEG_QUALITY);
+    let webp_path = cache_dir.join(&webp_filename);
+    if webp_path.exists() {
+        return Some(webp_path.to_string_lossy().to_string());
+    }
+    None
 }
 
 pub fn generate_thumbnail(
@@ -26,7 +46,7 @@ pub fn generate_thumbnail(
     }
 
     let cache_key = compute_cache_key(image_path)?;
-    let cache_filename = format!("{}.jpg", &cache_key);
+    let cache_filename = format!("{}_q{}.jpg", &cache_key, JPEG_QUALITY);
     let cache_path = cache_dir.join(&cache_filename);
 
     if cache_path.exists() {
@@ -35,6 +55,7 @@ pub fn generate_thumbnail(
             thumbnail_path: Some(cache_path.to_string_lossy().to_string()),
             width: 0,
             height: 0,
+            upgrading: false,
         });
     }
 
@@ -46,26 +67,100 @@ pub fn generate_thumbnail(
     let img = load_image(path)?;
     let (width, height) = (img.width(), img.height());
 
-    let thumbnail = resize_image(&img, THUMBNAIL_SIZE);
+    let (dst_width, dst_height) = compute_thumbnail_size(width, height, THUMBNAIL_SIZE);
+    let has_alpha = img.color().has_alpha();
 
-    let file = File::create(&cache_path)
-        .map_err(|e| format!("Failed to create cache file {:?}: {}", cache_path, e))?;
-    let mut writer = BufWriter::new(file);
+    if has_alpha {
+        let src_image = fr::Image::from_vec_u8(
+            NonZeroU32::new(width).ok_or("Invalid width")?,
+            NonZeroU32::new(height).ok_or("Invalid height")?,
+            img.to_rgba8().into_raw(),
+            fr::PixelType::U8x4,
+        ).map_err(|e| format!("Failed to create src image: {:?}", e))?;
 
-    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
-    encoder.encode(
-        thumbnail.as_bytes(),
-        thumbnail.width(),
-        thumbnail.height(),
-        image::ColorType::Rgb8.into(),
-    ).map_err(|e| format!("Failed to encode: {}", e))?;
+        let mut dst_image = fr::Image::new(
+            NonZeroU32::new(dst_width).ok_or("Invalid dst width")?,
+            NonZeroU32::new(dst_height).ok_or("Invalid dst height")?,
+            src_image.pixel_type(),
+        );
+        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer.resize(&src_image.view(), &mut dst_image.view_mut())
+            .map_err(|e| format!("Failed to resize: {:?}", e))?;
+
+        let pixels = dst_image.buffer();
+        let has_actual_transparency = pixels.chunks_exact(4).any(|p| p[3] < 255);
+
+        if has_actual_transparency {
+            let webp_cache_filename = format!("{}_q{}.webp", &cache_key, JPEG_QUALITY);
+            let webp_cache_path = cache_dir.join(&webp_cache_filename);
+            let resized_img = image::DynamicImage::ImageRgba8(
+                image::ImageBuffer::from_raw(dst_width, dst_height, dst_image.buffer().to_vec())
+                    .ok_or("Failed to create image buffer")?
+            );
+            let cache_file = File::create(&webp_cache_path)
+                .map_err(|e| format!("Failed to create cache file: {:?}", e))?;
+            let mut writer = BufWriter::new(cache_file);
+            resized_img.write_to(&mut writer, ImageFormat::WebP)
+                .map_err(|e| format!("Failed to encode WebP: {}", e))?;
+
+            return Ok(ThumbnailResult {
+                path: image_path.to_string(),
+                thumbnail_path: Some(webp_cache_path.to_string_lossy().to_string()),
+                width,
+                height,
+                upgrading: false,
+            });
+        }
+
+        let rgb_buffer: Vec<u8> = pixels.chunks_exact(4).flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let file = File::create(&cache_path)
+            .map_err(|e| format!("Failed to create cache file {:?}: {}", cache_path, e))?;
+        let mut writer = BufWriter::new(file);
+        let mut encoder = JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
+        encoder.encode(&rgb_buffer, dst_width, dst_height, image::ColorType::Rgb8.into())
+            .map_err(|e| format!("Failed to encode: {}", e))?;
+    } else {
+        let src_image = fr::Image::from_vec_u8(
+            NonZeroU32::new(width).ok_or("Invalid width")?,
+            NonZeroU32::new(height).ok_or("Invalid height")?,
+            img.to_rgb8().into_raw(),
+            fr::PixelType::U8x3,
+        ).map_err(|e| format!("Failed to create src image: {:?}", e))?;
+
+        let mut dst_image = fr::Image::new(
+            NonZeroU32::new(dst_width).ok_or("Invalid dst width")?,
+            NonZeroU32::new(dst_height).ok_or("Invalid dst height")?,
+            src_image.pixel_type(),
+        );
+        let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
+        resizer.resize(&src_image.view(), &mut dst_image.view_mut())
+            .map_err(|e| format!("Failed to resize: {:?}", e))?;
+
+        let file = File::create(&cache_path)
+            .map_err(|e| format!("Failed to create cache file {:?}: {}", cache_path, e))?;
+        let mut writer = BufWriter::new(file);
+        let mut encoder = JpegEncoder::new_with_quality(&mut writer, JPEG_QUALITY);
+        encoder.encode(dst_image.buffer(), dst_width, dst_height, image::ColorType::Rgb8.into())
+            .map_err(|e| format!("Failed to encode: {}", e))?;
+    }
 
     Ok(ThumbnailResult {
         path: image_path.to_string(),
         thumbnail_path: Some(cache_path.to_string_lossy().to_string()),
         width,
         height,
+        upgrading: false,
     })
+}
+
+fn compute_thumbnail_size(width: u32, height: u32, target_size: u32) -> (u32, u32) {
+    if width < height {
+        let ratio = height as f32 / width as f32;
+        (target_size, (target_size as f32 * ratio) as u32)
+    } else {
+        let ratio = width as f32 / height as f32;
+        ((target_size as f32 * ratio) as u32, target_size)
+    }
 }
 
 fn compute_cache_key(image_path: &str) -> Result<String, String> {
@@ -83,31 +178,35 @@ fn compute_cache_key(image_path: &str) -> Result<String, String> {
 }
 
 fn load_image(path: &Path) -> Result<DynamicImage, String> {
-    let file = File::open(path)
+    let mut file = File::open(path)
         .map_err(|e| format!("Failed to open file {:?}: {}", path, e))?;
-    let reader = BufReader::new(file);
+    let mut buffer = [0u8; 4096];
+    let bytes_read = file.read(&mut buffer)
+        .map_err(|e| format!("Failed to read file {:?}: {}", path, e))?;
 
-    let mut image_reader = image::io::Reader::new(reader);
-    image_reader = image_reader.with_guessed_format()
-        .map_err(|e| format!("Failed to guess format: {:?}", e))?;
+    let format = image::guess_format(&buffer[..bytes_read]).ok();
 
-    image_reader.decode()
-        .map_err(|e| format!("Failed to decode {:?}: {}", path, e))
-}
-
-fn resize_image(img: &DynamicImage, target_size: u32) -> DynamicImage {
-    let (width, height) = (img.width(), img.height());
-
-    let (new_width, new_height) = if width < height {
-        let ratio = height as f32 / width as f32;
-        (target_size, (target_size as f32 * ratio) as u32)
+    if format == Some(ImageFormat::Jpeg) {
+        let file = File::open(path)
+            .map_err(|e| format!("Failed to open file {:?}: {}", path, e))?;
+        let reader = BufReader::new(file);
+        let mut decoder = JpegDecoder::new(reader)
+            .map_err(|e| format!("Failed to create JPEG decoder: {}", e))?;
+        decoder.scale(THUMBNAIL_SIZE as u16, THUMBNAIL_SIZE as u16)
+            .map_err(|e| format!("Failed to set JPEG scale: {}", e))?;
+        DynamicImage::from_decoder(decoder)
+            .map_err(|e| format!("Failed to decode JPEG {:?}: {}", path, e))
     } else {
-        let ratio = width as f32 / height as f32;
-        ((target_size as f32 * ratio) as u32, target_size)
-    };
-
-    let resized = img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3);
-    DynamicImage::ImageRgb8(resized.to_rgb8())
+        let file = File::open(path)
+            .map_err(|e| format!("Failed to open file {:?}: {}", path, e))?;
+        let reader = BufReader::new(file);
+        let mut image_reader = image::io::Reader::new(reader);
+        image_reader = image_reader.with_guessed_format()
+            .map_err(|e| format!("Failed to guess format: {:?}", e))?;
+        image_reader.no_limits();
+        image_reader.decode()
+            .map_err(|e| format!("Failed to decode {:?}: {}", path, e))
+    }
 }
 
 pub fn generate_thumbnails_batch(
@@ -129,6 +228,7 @@ pub fn generate_thumbnails_batch(
                     thumbnail_path: None,
                     width: 0,
                     height: 0,
+                    upgrading: false,
                 });
             }
         }
@@ -145,17 +245,17 @@ pub fn get_android_system_thumbnail<'a>(
     activity: &jni::objects::JObject<'a>,
     image_id: i64,
     cache_dir: &Path,
-) -> Result<Option<String>, String> {
+) -> Result<Option<(String, u32, u32)>, String> {
     if !cache_dir.exists() {
         std::fs::create_dir_all(cache_dir)
             .map_err(|e| format!("Failed to create cache dir: {}", e))?;
     }
 
-    let cache_filename = format!("sys_{}.jpg", image_id);
+    let cache_filename = format!("sys_{}_q{}.jpg", image_id, JPEG_QUALITY);
     let cache_path = cache_dir.join(&cache_filename);
 
     if cache_path.exists() {
-        return Ok(Some(cache_path.to_string_lossy().to_string()));
+        return Ok(Some((cache_path.to_string_lossy().to_string(), 0, 0)));
     }
 
     let content_resolver = env.call_method(
@@ -163,43 +263,22 @@ pub fn get_android_system_thumbnail<'a>(
     ).map_err(|e| format!("Failed to get content resolver: {:?}", e))?
     .l().map_err(|e| format!("Failed to convert: {:?}", e))?;
 
-    let uri_class = env.find_class("android/content/ContentUris")
-        .map_err(|e| format!("Failed to find ContentUris: {:?}", e))?;
+    let thumbnails_class = env.find_class("android/provider/MediaStore$Images$Thumbnails")
+        .map_err(|e| format!("Failed to find Thumbnails class: {:?}", e))?;
 
-    let media_class = env.find_class("android/provider/MediaStore$Images$Media")
-        .map_err(|e| format!("Failed to find MediaStore class: {:?}", e))?;
+    let mini_kind = env.get_static_field(
+        &thumbnails_class, "MINI_KIND", "I",
+    ).map_err(|e| format!("Failed to get MINI_KIND: {:?}", e))?
+    .i().unwrap_or(1);
 
-    let content_uri = env.get_static_field(
-        media_class, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;"
-    ).map_err(|e| format!("Failed to get EXTERNAL_CONTENT_URI: {:?}", e))?
-    .l().map_err(|e| format!("Failed to convert URI: {:?}", e))?;
-
-    let image_uri = env.call_static_method(
-        &uri_class,
-        "withAppendedId",
-        "(Landroid/net/Uri;J)Landroid/net/Uri;",
+    let thumbnail_result = env.call_static_method(
+        &thumbnails_class,
+        "getThumbnail",
+        "(Landroid/content/ContentResolver;JILandroid/graphics/BitmapFactory$Options;)Landroid/graphics/Bitmap;",
         &[
-            jni::objects::JValue::Object(&content_uri),
+            jni::objects::JValue::Object(&content_resolver),
             jni::objects::JValue::Long(image_id),
-        ],
-    ).map_err(|e| format!("Failed to append id: {:?}", e))?
-    .l().map_err(|e| format!("Failed to convert: {:?}", e))?;
-
-    let size_class = env.find_class("android/util/Size")
-        .map_err(|e| format!("Failed to find Size class: {:?}", e))?;
-    let size_obj = env.new_object(
-        &size_class,
-        "(II)V",
-        &[jni::objects::JValue::Int(256), jni::objects::JValue::Int(256)],
-    ).map_err(|e| format!("Failed to create Size: {:?}", e))?;
-
-    let thumbnail_result = env.call_method(
-        &content_resolver,
-        "loadThumbnail",
-        "(Landroid/net/Uri;Landroid/util/Size;Landroid/os/CancellationSignal;)Landroid/graphics/Bitmap;",
-        &[
-            jni::objects::JValue::Object(&image_uri),
-            jni::objects::JValue::Object(&size_obj),
+            jni::objects::JValue::Int(mini_kind),
             jni::objects::JValue::Object(&jni::objects::JObject::null()),
         ],
     );
@@ -210,8 +289,15 @@ pub fn get_android_system_thumbnail<'a>(
                 .map_err(|e| format!("Failed to get bitmap: {:?}", e))?;
 
             if bitmap.is_null() {
+                log::warn!("[Thumbnail] MINI_KIND bitmap is null: imageId={}", image_id);
                 return Ok(None);
             }
+
+            let bmp_width = env.call_method(&bitmap, "getWidth", "()I", &[])
+                .map(|v| v.i().unwrap_or(0)).unwrap_or(0);
+            let bmp_height = env.call_method(&bitmap, "getHeight", "()I", &[])
+                .map(|v| v.i().unwrap_or(0)).unwrap_or(0);
+            log::info!("[Thumbnail] MINI_KIND bitmap size: {}x{} for imageId={}", bmp_width, bmp_height, image_id);
 
             let baos_class = env.find_class("java/io/ByteArrayOutputStream")
                 .map_err(|e| format!("Failed to find ByteArrayOutputStream: {:?}", e))?;
@@ -267,7 +353,7 @@ pub fn get_android_system_thumbnail<'a>(
             std::fs::write(&cache_path, &jpeg_data)
                 .map_err(|e| format!("Failed to write cache file: {}", e))?;
 
-            Ok(Some(cache_path.to_string_lossy().to_string()))
+            Ok(Some((cache_path.to_string_lossy().to_string(), bmp_width as u32, bmp_height as u32)))
         }
         Err(_) => Ok(None),
     }

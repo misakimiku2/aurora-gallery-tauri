@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { AppState, TabState, SearchScope, AiSearchFilter, GroupByOption } from '../types';
 import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from '../constants';
+import { androidThumbnailNavigate } from '../api/tauri-bridge';
 
 type Refs = {
   selectionRef: React.RefObject<HTMLElement | null>;
@@ -69,6 +70,7 @@ export const useNavigation = (
   }, [selectionRef, setState]);
 
   const goBack = useCallback(() => {
+    androidThumbnailNavigate();
     setNavigationTimestamp();
     const currentScroll = selectionRef.current?.scrollTop || 0;
     setState(prev => {
@@ -139,6 +141,7 @@ export const useNavigation = (
   }, [selectionRef, setNavigationTimestamp, setState]);
 
   const enterFolder = useCallback((folderId: string, options?: { scrollToItemId?: string, resetScroll?: boolean }) => {
+    androidThumbnailNavigate();
     const scroll = selectionRef.current?.scrollTop || 0;
     const nextScroll = options?.resetScroll ? 0 : 0;
     pushHistory(folderId, null, 'browser', '', 'all', [], null, nextScroll, null, null, [], [], options?.scrollToItemId);

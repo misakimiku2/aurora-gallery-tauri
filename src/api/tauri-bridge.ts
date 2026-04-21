@@ -7,8 +7,10 @@ import { listen } from '@tauri-apps/api/event';
 import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { getGlobalCache } from '../utils/thumbnailCache';
 
 let _globalCacheRoot: string | null = null;
+const _upgradingThumbnails = new Set<string>();
 let _isAndroid: boolean = false;
 
 export function setGlobalCacheRoot(cacheRoot: string) {
@@ -21,6 +23,45 @@ export function getGlobalCacheRoot(): string | null {
 
 export function setAndroidPlatform(isAndroid: boolean) {
   _isAndroid = isAndroid;
+  if (isAndroid) {
+    initAndroidThumbnailUpgradeListener();
+  }
+}
+
+function initAndroidThumbnailUpgradeListener() {
+  console.log('[Thumbnail] Registering android:thumbnail-upgraded listener');
+  listen<{ filePath: string; thumbnailPath: string }>('android:thumbnail-upgraded', (event) => {
+    console.log('[Thumbnail] Received android:thumbnail-upgraded:', event.payload);
+    const { filePath, thumbnailPath } = event.payload;
+    const newSrc = convertFileSrc(thumbnailPath);
+    const cache = getGlobalCache();
+    const currentSrc = cache.get(filePath);
+    _upgradingThumbnails.delete(filePath);
+    console.log('[Thumbnail] Upgrade: filePath=', filePath, 'newSrc=', newSrc, 'currentSrc=', currentSrc, 'changed=', currentSrc !== newSrc);
+    if (currentSrc !== newSrc) {
+      cache.set(filePath, newSrc);
+      window.dispatchEvent(new CustomEvent('aurora:thumbnail-upgraded', {
+        detail: { filePath, thumbnailSrc: newSrc }
+      }));
+    }
+  }).catch(err => {
+    console.error('[Thumbnail] Failed to register android:thumbnail-upgraded listener:', err);
+  });
+
+  listen<{ filePath: string; error: string }>('android:thumbnail-upgrade-failed', (event) => {
+    console.warn('[Thumbnail] Received android:thumbnail-upgrade-failed:', event.payload);
+    const { filePath } = event.payload;
+    _upgradingThumbnails.delete(filePath);
+    window.dispatchEvent(new CustomEvent('aurora:thumbnail-upgrade-failed', {
+      detail: { filePath }
+    }));
+  }).catch(err => {
+    console.error('[Thumbnail] Failed to register android:thumbnail-upgrade-failed listener:', err);
+  });
+}
+
+export function isThumbnailUpgrading(filePath: string): boolean {
+  return _upgradingThumbnails.has(filePath);
 }
 
 export function isAndroidPlatformCached(): boolean {
@@ -491,6 +532,13 @@ const thumbnailBatcher = new ThumbnailBatcher();
  * @param cachePathOverride 缓存目录路径覆盖（可选，Android 端使用后端返回的 cacheRoot）
  * @returns 缩略图 Asset URL，如果失败则返回 null
  */
+export const androidThumbnailNavigate = async (): Promise<void> => {
+  if (!_isAndroid) return;
+  try {
+    await invoke('android_thumbnail_navigate');
+  } catch {}
+};
+
 export const getThumbnail = async (filePath: string, modified?: string, rootPath?: string, signal?: AbortSignal, onColors?: (colors: DominantColor[] | null) => void, cachePathOverride?: string, mediaStoreId?: number): Promise<string | null> => {
   if (!filePath || filePath.trim() === '') return null;
 
@@ -509,19 +557,22 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   if (_isAndroid) {
     const timerId = performanceMonitor.start('getThumbnail', undefined, false);
     try {
-      console.error('[Thumbnail] Android invoke: filePath=', filePath, 'cacheRoot=', cachePath, 'imageId=', mediaStoreId);
-      const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number } | null>(
+      console.log('[Thumbnail] Android invoke: filePath=', filePath, 'cacheRoot=', cachePath, 'imageId=', mediaStoreId);
+      const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number; upgrading: boolean } | null>(
         'android_get_thumbnail',
         { filePath, cacheRoot: cachePath, imageId: mediaStoreId ?? null }
       );
-      console.error('[Thumbnail] Android result:', result, 'thumbnailPath=', result?.thumbnailPath, 'path=', result?.path);
+      console.log('[Thumbnail] Android result:', result, 'thumbnailPath=', result?.thumbnailPath, 'path=', result?.path, 'upgrading=', result?.upgrading);
       if (result?.thumbnailPath) {
         const src = convertFileSrc(result.thumbnailPath);
-        console.error('[Thumbnail] Android convertFileSrc:', result.thumbnailPath, '->', src);
+        console.log('[Thumbnail] Android convertFileSrc:', result.thumbnailPath, '->', src);
+        if (result.upgrading) {
+          _upgradingThumbnails.add(filePath);
+        }
         performanceMonitor.end(timerId, 'getThumbnail', { success: true });
         return src;
       }
-      console.error('[Thumbnail] Android: thumbnailPath is null/empty, returning null');
+      console.warn('[Thumbnail] Android: thumbnailPath is null/empty, returning null');
       performanceMonitor.end(timerId, 'getThumbnail', { success: false });
       return null;
     } catch (err) {

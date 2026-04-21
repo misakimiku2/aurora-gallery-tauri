@@ -32,6 +32,59 @@ pub struct AndroidScanAllResult {
     pub folders: Vec<AndroidFolderInfo>,
 }
 
+pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>, since_timestamp: i64) -> Result<AndroidScanAllResult, String> {
+    let json_str = env.call_method(
+        activity,
+        "scanAllAsJson",
+        "(J)Ljava/lang/String;",
+        &[JValue::Long(since_timestamp)],
+    ).map_err(|e| format!("Failed to call scanAllAsJson: {:?}", e))?;
+
+    let jstr: JString = json_str.l()
+        .map_err(|e| format!("Failed to get string result: {:?}", e))?
+        .into();
+
+    let json: String = env.get_string(&jstr)
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+
+    let raw: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to parse JSON: {:?}", e))?;
+
+    let mut images = Vec::new();
+    if let Some(images_arr) = raw.get("images").and_then(|v| v.as_array()) {
+        for img in images_arr {
+            images.push(AndroidImageInfo {
+                id: img.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                path: img.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                content_uri: img.get("content_uri").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                name: img.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                size: img.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
+                width: img.get("width").and_then(|v| v.as_i64()).map(|v| v as i32),
+                height: img.get("height").and_then(|v| v.as_i64()).map(|v| v as i32),
+                date_modified: img.get("date_modified").and_then(|v| v.as_i64()).unwrap_or(0),
+                mime_type: img.get("mime_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            });
+        }
+    }
+
+    let mut folders = Vec::new();
+    if let Some(folders_arr) = raw.get("folders").and_then(|v| v.as_array()) {
+        for folder in folders_arr {
+            folders.push(AndroidFolderInfo {
+                id: folder.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
+                name: folder.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                path: folder.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                image_count: folder.get("image_count").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+                cover_image_path: folder.get("cover_image_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                cover_image_id: folder.get("cover_image_id").and_then(|v| v.as_i64()),
+            });
+        }
+    }
+
+    Ok(AndroidScanAllResult { images, folders })
+}
+
 pub fn scan_device_all<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> Result<AndroidScanAllResult, String> {
     env.ensure_local_capacity(256)
         .map_err(|e| format!("Failed to ensure local capacity: {:?}", e))?;

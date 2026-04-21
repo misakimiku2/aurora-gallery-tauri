@@ -98,7 +98,7 @@ async fn android_scan_folders() -> Result<Vec<AndroidFolderInfo>, String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
-async fn android_scan_all() -> Result<AndroidScanAllResult, String> {
+async fn android_scan_all(since_timestamp: Option<i64>) -> Result<AndroidScanAllResult, String> {
     let start = std::time::Instant::now();
     let activity = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
@@ -106,10 +106,25 @@ async fn android_scan_all() -> Result<AndroidScanAllResult, String> {
     let mut env = vm.attach_current_thread()
         .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
     let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
-    let result = scan_device_all(&mut env, &activity_obj);
+
+    let since = since_timestamp.unwrap_or(0);
+    let result = match crate::android::scan_device_all_via_kotlin(&mut env, &activity_obj, since) {
+        Ok(r) => Ok(r),
+        Err(e) => {
+            log::warn!("android_scan_all: Kotlin method failed ({}), falling back to JNI cursor", e);
+            crate::android::scan_device_all(&mut env, &activity_obj)
+        }
+    };
+
     let elapsed = start.elapsed();
     match &result {
-        Ok(r) => log::info!("android_scan_all: found {} images, {} folders in {:.2}s ({:.0} img/s)", r.images.len(), r.folders.len(), elapsed.as_secs_f64(), r.images.len() as f64 / elapsed.as_secs_f64().max(0.001)),
+        Ok(r) => {
+            if since > 0 {
+                log::info!("android_scan_all (incremental, since={}): found {} images, {} folders in {:.2}s", since, r.images.len(), r.folders.len(), elapsed.as_secs_f64());
+            } else {
+                log::info!("android_scan_all: found {} images, {} folders in {:.2}s ({:.0} img/s)", r.images.len(), r.folders.len(), elapsed.as_secs_f64(), r.images.len() as f64 / elapsed.as_secs_f64().max(0.001));
+            }
+        }
         Err(e) => log::error!("android_scan_all: failed in {:.2}s: {}", elapsed.as_secs_f64(), e),
     }
     result
@@ -161,78 +176,220 @@ async fn android_load_scan_cache(app_data_dir: String, cache_type: Option<String
 }
 
 #[cfg(target_os = "android")]
+use std::collections::VecDeque;
+
+#[cfg(target_os = "android")]
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+#[cfg(target_os = "android")]
+use std::sync::Mutex;
+
+#[cfg(target_os = "android")]
+use tauri::Emitter;
+
+#[cfg(target_os = "android")]
+static THUMBNAIL_QUEUE: Mutex<VecDeque<(String, String, u64)>> = Mutex::new(VecDeque::new());
+
+#[cfg(target_os = "android")]
+static THUMBNAIL_SESSION: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "android")]
+static THUMBNAIL_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_os = "android")]
+const MAX_THUMBNAIL_WORKERS: usize = 6;
+
+#[cfg(target_os = "android")]
+fn enqueue_thumbnail_job(app: &tauri::AppHandle, file_path: String, cache_dir: String) {
+    let session_id = THUMBNAIL_SESSION.load(Ordering::SeqCst);
+    log::info!("[ThumbnailWorker] Enqueuing job: session={}, queue_len_before={}", session_id, {
+        let queue = THUMBNAIL_QUEUE.lock().unwrap();
+        queue.len()
+    });
+    {
+        let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+        queue.push_back((file_path, cache_dir, session_id));
+    }
+    spawn_workers_if_needed(app);
+}
+
+#[cfg(target_os = "android")]
+fn spawn_workers_if_needed(app: &tauri::AppHandle) {
+    let active = THUMBNAIL_ACTIVE_COUNT.load(Ordering::SeqCst);
+    if active >= MAX_THUMBNAIL_WORKERS {
+        return;
+    }
+    let queue_len = {
+        let queue = THUMBNAIL_QUEUE.lock().unwrap();
+        queue.len()
+    };
+    if queue_len == 0 {
+        return;
+    }
+    let to_spawn = MAX_THUMBNAIL_WORKERS.saturating_sub(active).min(queue_len);
+    log::info!("[ThumbnailWorker] Spawning {} workers (active={}, queue={})", to_spawn, active, queue_len);
+    for _ in 0..to_spawn {
+        THUMBNAIL_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
+        let app = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            thumbnail_worker(&app);
+            THUMBNAIL_ACTIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
+            spawn_workers_if_needed(&app);
+        });
+    }
+}
+
+#[cfg(target_os = "android")]
+fn thumbnail_worker(app: &tauri::AppHandle) {
+    loop {
+        let job = {
+            let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+            queue.pop_front()
+        };
+
+        match job {
+            Some((file_path, cache_dir, session_id)) => {
+                let current_session = THUMBNAIL_SESSION.load(Ordering::SeqCst);
+                if session_id != current_session {
+                    log::info!("[ThumbnailWorker] Skipping job (session mismatch): job_session={}, current_session={}", session_id, current_session);
+                    continue;
+                }
+
+                log::info!("[ThumbnailWorker] Processing: {}", file_path);
+                let result = crate::android::generate_thumbnail(&file_path, std::path::Path::new(&cache_dir));
+                match result {
+                    Ok(r) => {
+                        if let Some(thumb_path) = r.thumbnail_path {
+                            let current_session = THUMBNAIL_SESSION.load(Ordering::SeqCst);
+                            if session_id == current_session {
+                                log::info!("[ThumbnailWorker] Emitting upgrade event: {} -> {}", file_path, thumb_path);
+                                if let Err(e) = app.emit("android:thumbnail-upgraded", serde_json::json!({
+                                    "filePath": file_path,
+                                    "thumbnailPath": thumb_path,
+                                })) {
+                                    log::warn!("[ThumbnailWorker] Failed to emit event: {}", e);
+                                }
+                            } else {
+                                log::info!("[ThumbnailWorker] Session changed before emit: job_session={}, current_session={}", session_id, current_session);
+                            }
+                        } else {
+                            log::warn!("[ThumbnailWorker] No thumbnail_path in result for: {}", file_path);
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("[ThumbnailWorker] generate_thumbnail FAILED for {}: {}", file_path, e);
+                        if session_id == THUMBNAIL_SESSION.load(Ordering::SeqCst) {
+                            if let Err(emit_err) = app.emit("android:thumbnail-upgrade-failed", serde_json::json!({
+                                "filePath": file_path,
+                                "error": e,
+                            })) {
+                                log::warn!("[ThumbnailWorker] Failed to emit failure event: {}", emit_err);
+                            }
+                        }
+                    }
+                }
+            }
+            None => break,
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 #[tauri::command]
 async fn android_get_thumbnail(
+    app: tauri::AppHandle,
     file_path: String,
     cache_root: String,
     image_id: Option<i64>,
 ) -> Result<ThumbnailResult, String> {
-    log::info!("[Thumbnail] Request: path={}, cache_root={}, image_id={:?}", file_path, cache_root, image_id);
     let cache_path = std::path::Path::new(&cache_root).to_path_buf();
-    let file_path_clone = file_path.clone();
-    let cache_path_clone = cache_path.clone();
 
+    // Phase 1: Check file-decoded cache (instant if cached)
+    {
+        let fp = file_path.clone();
+        let cp = cache_path.clone();
+        let cached = tauri::async_runtime::spawn_blocking(move || {
+            crate::android::check_thumbnail_cache(&fp, &cp)
+        }).await.map_err(|e| e.to_string())?;
+
+        if let Some(cached_path) = cached {
+            return Ok(ThumbnailResult {
+                path: file_path,
+                thumbnail_path: Some(cached_path),
+                width: 0,
+                height: 0,
+                upgrading: false,
+            });
+        }
+    }
+
+    // Phase 2: Get MINI_KIND system thumbnail (fast, pre-cached by MediaStore)
     if let Some(id) = image_id {
+        let cp = cache_path.clone();
         let result = tauri::async_runtime::spawn_blocking(move || {
             let activity = ndk_context::android_context();
-            let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
-                .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
-            let mut env = vm.attach_current_thread()
-                .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+            let vm = match unsafe { jni::JavaVM::from_raw(activity.vm().cast()) } {
+                Ok(vm) => vm,
+                Err(_) => return None,
+            };
+            let mut env = match vm.attach_current_thread() {
+                Ok(env) => env,
+                Err(_) => return None,
+            };
             let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
-
-            match crate::android::get_android_system_thumbnail(&mut env, &activity_obj, id, &cache_path) {
-                Ok(Some(thumb_path)) => {
-                    log::info!("[Thumbnail] System thumbnail OK: {}", thumb_path);
-                    Ok(ThumbnailResult {
-                        path: file_path_clone,
-                        thumbnail_path: Some(thumb_path),
-                        width: 0,
-                        height: 0,
-                    })
-                }
-                Ok(None) => {
-                    log::info!("[Thumbnail] System thumbnail returned None, falling back to file decode");
-                    android_generate_thumbnail(&file_path_clone, &cache_path)
-                }
-                Err(e) => {
-                    log::warn!("[Thumbnail] System thumbnail error: {}, falling back to file decode", e);
-                    android_generate_thumbnail(&file_path_clone, &cache_path)
-                }
+            match crate::android::get_android_system_thumbnail(&mut env, &activity_obj, id, &cp) {
+                Ok(Some(tuple)) => Some(tuple),
+                _ => None,
             }
         }).await;
 
         match result {
-            Ok(Ok(r)) => {
-                log::info!("[Thumbnail] Final result: path={}, thumb={:?}", r.path, r.thumbnail_path);
-                return Ok(r);
+            Ok(Some((thumb_path, bmp_w, bmp_h))) => {
+                let min_dim = bmp_w.min(bmp_h);
+                if min_dim >= 200 {
+                    return Ok(ThumbnailResult {
+                        path: file_path,
+                        thumbnail_path: Some(thumb_path),
+                        width: bmp_w,
+                        height: bmp_h,
+                        upgrading: false,
+                    });
+                }
+                // MINI_KIND too small: return it for immediate display, enqueue background upgrade
+                enqueue_thumbnail_job(&app, file_path.clone(), cache_root.clone());
+                return Ok(ThumbnailResult {
+                    path: file_path,
+                    thumbnail_path: Some(thumb_path),
+                    width: bmp_w,
+                    height: bmp_h,
+                    upgrading: true,
+                });
             }
-            Ok(Err(e)) => {
-                log::error!("[Thumbnail] Generation failed: {}", e);
-                return Err(e);
-            }
-            Err(e) => {
-                log::error!("[Thumbnail] Task join error: {}", e);
-                return Err(e.to_string());
-            }
+            Ok(None) | Err(_) => {}
         }
     }
 
-    log::info!("[Thumbnail] No image_id, using file path fallback");
+    // Fallback: synchronous file decode (no MINI_KIND available)
+    let fp = file_path.clone();
+    let cp = cache_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        android_generate_thumbnail(&file_path, &cache_path_clone)
+        crate::android::generate_thumbnail(&fp, &cp)
     }).await;
+
     match result {
-        Ok(Ok(r)) => {
-            log::info!("[Thumbnail] File decode result: path={}, thumb={:?}", r.path, r.thumbnail_path);
-            Ok(r)
-        }
-        Ok(Err(e)) => {
-            log::error!("[Thumbnail] File decode failed: {}", e);
-            Err(e)
-        }
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => Err(e),
         Err(e) => Err(e.to_string()),
     }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_thumbnail_navigate() -> Result<(), String> {
+    THUMBNAIL_SESSION.fetch_add(1, Ordering::SeqCst);
+    let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+    queue.clear();
+    Ok(())
 }
 
 #[cfg(target_os = "android")]
@@ -307,6 +464,18 @@ pub fn run() {
     #[cfg(not(target_os = "android"))]
     let builder = builder.plugin(tauri_plugin_drag::init());
     
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(
+        tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Debug)
+            .targets([
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+            ])
+            .build()
+    );
+    
+    #[cfg(not(target_os = "android"))]
     let builder = builder.plugin(
         tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Info)
@@ -477,6 +646,7 @@ pub fn run() {
         android_save_scan_cache,
         android_load_scan_cache,
         android_get_thumbnail,
+        android_thumbnail_navigate,
         check_android_permissions,
         request_android_permissions,
     ]);

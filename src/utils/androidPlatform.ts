@@ -257,7 +257,7 @@ function attachImageNodes(
   }
 }
 
-export async function loadFolderCache(appDataDir: string): Promise<{ files: Record<string, any>; roots: string[] } | null> {
+export async function loadFolderCache(appDataDir: string): Promise<{ files: Record<string, any>; roots: string[]; cacheTimestamp?: number } | null> {
   try {
     const t0 = performance.now();
     const jsonStr = await invoke<string>('android_load_scan_cache', { appDataDir, cacheType: 'folders' });
@@ -271,7 +271,7 @@ export async function loadFolderCache(appDataDir: string): Promise<{ files: Reco
     console.log(`[Perf] loadFolderCache: ${cache.folders.length} folders in ${(performance.now() - t0).toFixed(0)}ms`);
 
     const { files, roots } = buildFolderNodes(cache.folders);
-    return (roots.length > 0) ? { files, roots } : null;
+    return (roots.length > 0) ? { files, roots, cacheTimestamp: cache.timestamp } : null;
   } catch (e) {
     console.log('[Android] No folder cache available');
     return null;
@@ -341,7 +341,8 @@ export async function scanAndroidFolders(): Promise<{ files: Record<string, any>
 }
 
 export async function scanAndroidImages(
-  existingFolders?: AndroidFolderRaw[]
+  existingFolders?: AndroidFolderRaw[],
+  sinceTimestamp?: number
 ): Promise<{ files: Record<string, any>; roots: string[]; rawFolders?: AndroidFolderRaw[]; rawImages?: AndroidImageRaw[] } | null> {
   try {
     const t0 = performance.now();
@@ -349,7 +350,12 @@ export async function scanAndroidImages(
     let folders: AndroidFolderRaw[];
     let images: AndroidImageRaw[];
 
-    if (existingFolders) {
+    if (sinceTimestamp && sinceTimestamp > 0) {
+      const result = await invoke<AndroidScanAllRaw>('android_scan_all', { sinceTimestamp });
+      folders = result.folders;
+      images = result.images;
+      console.log(`[Perf] scanAndroidImages (incremental, since ${new Date(sinceTimestamp * 1000).toLocaleTimeString()}): ${images.length} new images, ${folders.length} folders in ${(performance.now() - t0).toFixed(0)}ms`);
+    } else if (existingFolders) {
       folders = existingFolders;
       images = await invoke<AndroidImageRaw[]>('android_scan_images');
       console.log(`[Perf] scanAndroidImages (reusing folders): ${images.length} images in ${(performance.now() - t0).toFixed(0)}ms`);
