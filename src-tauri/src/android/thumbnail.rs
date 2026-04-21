@@ -255,7 +255,9 @@ pub fn get_android_system_thumbnail<'a>(
     let cache_path = cache_dir.join(&cache_filename);
 
     if cache_path.exists() {
-        return Ok(Some((cache_path.to_string_lossy().to_string(), 0, 0)));
+        let (w, h) = image::image_dimensions(&cache_path).unwrap_or((0u32, 0u32));
+        log::info!("[Thumbnail] System cache hit: imageId={}, dimensions={}x{}", image_id, w, h);
+        return Ok(Some((cache_path.to_string_lossy().to_string(), w, h)));
     }
 
     let content_resolver = env.call_method(
