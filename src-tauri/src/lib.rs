@@ -202,7 +202,7 @@ const MAX_THUMBNAIL_WORKERS: usize = 6;
 #[cfg(target_os = "android")]
 fn enqueue_thumbnail_job(app: &tauri::AppHandle, file_path: String, cache_dir: String) {
     let session_id = THUMBNAIL_SESSION.load(Ordering::SeqCst);
-    log::info!("[ThumbnailWorker] Enqueuing job: session={}, queue_len_before={}", session_id, {
+    log::info!("[ThumbnailWorker] Enqueuing job (LIFO): session={}, queue_len_before={}", session_id, {
         let queue = THUMBNAIL_QUEUE.lock().unwrap();
         queue.len()
     });
@@ -244,7 +244,7 @@ fn thumbnail_worker(app: &tauri::AppHandle) {
     loop {
         let job = {
             let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
-            queue.pop_front()
+            queue.pop_back()
         };
 
         match job {

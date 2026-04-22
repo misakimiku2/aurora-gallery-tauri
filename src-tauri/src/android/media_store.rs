@@ -12,6 +12,7 @@ pub struct AndroidImageInfo {
     pub size: i64,
     pub width: Option<i32>,
     pub height: Option<i32>,
+    pub date_added: i64,
     pub date_modified: i64,
     pub mime_type: String,
 }
@@ -24,6 +25,8 @@ pub struct AndroidFolderInfo {
     pub image_count: i32,
     pub cover_image_path: Option<String>,
     pub cover_image_id: Option<i64>,
+    pub cover_image_width: Option<i32>,
+    pub cover_image_height: Option<i32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -62,6 +65,7 @@ pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'
                 size: img.get("size").and_then(|v| v.as_i64()).unwrap_or(0),
                 width: img.get("width").and_then(|v| v.as_i64()).map(|v| v as i32),
                 height: img.get("height").and_then(|v| v.as_i64()).map(|v| v as i32),
+                date_added: img.get("date_added").and_then(|v| v.as_i64()).unwrap_or(0),
                 date_modified: img.get("date_modified").and_then(|v| v.as_i64()).unwrap_or(0),
                 mime_type: img.get("mime_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             });
@@ -78,6 +82,8 @@ pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'
                 image_count: folder.get("image_count").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
                 cover_image_path: folder.get("cover_image_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
                 cover_image_id: folder.get("cover_image_id").and_then(|v| v.as_i64()),
+                cover_image_width: folder.get("cover_image_width").and_then(|v| v.as_i64()).map(|v| v as i32),
+                cover_image_height: folder.get("cover_image_height").and_then(|v| v.as_i64()).map(|v| v as i32),
             });
         }
     }
@@ -97,6 +103,7 @@ pub fn scan_device_all<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> Resu
         "_size",
         "width",
         "height",
+        "date_added",
         "date_modified",
         "mime_type",
         "bucket_id",
@@ -133,6 +140,8 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
         count: i32,
         cover_image_path: Option<String>,
         cover_image_id: Option<i64>,
+        cover_image_width: Option<i32>,
+        cover_image_height: Option<i32>,
         max_date_modified: i64,
     }
 
@@ -155,6 +164,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
     let col_size = get_column_index(env, &cursor, "_size")?;
     let col_width = get_column_index(env, &cursor, "width")?;
     let col_height = get_column_index(env, &cursor, "height")?;
+    let col_date_added = get_column_index(env, &cursor, "date_added")?;
     let col_date = get_column_index(env, &cursor, "date_modified")?;
     let col_mime = get_column_index(env, &cursor, "mime_type")?;
     let col_bucket_id = get_column_index(env, &cursor, "bucket_id")?;
@@ -177,6 +187,15 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
         let width = get_cursor_int_optional(env, &cursor, col_width)?;
         let height = get_cursor_int_optional(env, &cursor, col_height)?;
 
+        let date_added = if col_date_added >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_date_added)])
+                .map_err(|e| format!("Failed to get date_added: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?
+        } else {
+            0
+        };
+
         let date_modified = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(col_date)])
             .map_err(|e| format!("Failed to get date: {:?}", e))?
             .j()
@@ -194,6 +213,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
             size,
             width,
             height,
+            date_added,
             date_modified,
             mime_type,
         });
@@ -224,6 +244,8 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
                 count: 0,
                 cover_image_path: None,
                 cover_image_id: None,
+                cover_image_width: None,
+                cover_image_height: None,
                 max_date_modified: -1,
             });
             entry.count += 1;
@@ -232,6 +254,8 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
                 entry.max_date_modified = date_modified;
                 entry.cover_image_path = cover_path;
                 entry.cover_image_id = Some(id);
+                entry.cover_image_width = width;
+                entry.cover_image_height = height;
             }
         }
 
@@ -256,6 +280,8 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
             image_count: data.count,
             cover_image_path: data.cover_image_path,
             cover_image_id: data.cover_image_id,
+            cover_image_width: data.cover_image_width,
+            cover_image_height: data.cover_image_height,
         })
         .collect();
 
@@ -283,6 +309,7 @@ pub fn scan_device_images<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> R
         "_size",
         "width",
         "height",
+        "date_added",
         "date_modified",
         "mime_type",
     ];
@@ -320,6 +347,8 @@ pub fn scan_device_folders<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'a>) -> 
         "bucket_display_name",
         "_data",
         "_id",
+        "width",
+        "height",
         "date_modified",
     ];
     
@@ -383,6 +412,7 @@ struct ColumnIndices {
     size: i32,
     width: i32,
     height: i32,
+    date_added: i32,
     date_modified: i32,
     mime_type: i32,
 }
@@ -404,6 +434,7 @@ fn get_column_indices(env: &mut JNIEnv, cursor: &JObject) -> Result<ColumnIndice
         size: get_index("_size")?,
         width: get_index("width")?,
         height: get_index("height")?,
+        date_added: get_index("date_added")?,
         date_modified: get_index("date_modified")?,
         mime_type: get_index("mime_type")?,
     })
@@ -480,6 +511,15 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
         let width = get_cursor_int_optional(env, &cursor, column_indices.width)?;
         let height = get_cursor_int_optional(env, &cursor, column_indices.height)?;
         
+        let date_added = if column_indices.date_added >= 0 {
+            env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(column_indices.date_added)])
+                .map_err(|e| format!("Failed to get date_added: {:?}", e))?
+                .j()
+                .map_err(|e| format!("Failed to get long: {:?}", e))?
+        } else {
+            0
+        };
+
         let date_modified = env.call_method(&cursor, "getLong", "(I)J", &[JValue::Int(column_indices.date_modified)])
             .map_err(|e| format!("Failed to get date: {:?}", e))?
             .j()
@@ -497,6 +537,7 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
             size,
             width,
             height,
+            date_added,
             date_modified,
             mime_type,
         });
@@ -523,20 +564,22 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
         count: i32,
         cover_image_path: Option<String>,
         cover_image_id: Option<i64>,
+        cover_image_width: Option<i32>,
+        cover_image_height: Option<i32>,
         max_date_modified: i64,
     }
-    
+
     let mut folder_map: HashMap<i64, FolderData> = HashMap::new();
-    
+
     let has_next = env.call_method(&cursor, "moveToFirst", "()Z", &[])
         .map_err(|e| format!("Failed to move to first: {:?}", e))?
         .z()
         .map_err(|e| format!("Failed to get boolean: {:?}", e))?;
-    
+
     if !has_next {
         return Ok(Vec::new());
     }
-    
+
     let bucket_id_index = {
         let col_str = env.new_string("bucket_id").map_err(|e| format!("Failed to create string: {:?}", e))?;
         env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
@@ -544,7 +587,7 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             .i()
             .map_err(|e| format!("Failed to get int: {:?}", e))?
     };
-    
+
     let bucket_name_index = {
         let col_str = env.new_string("bucket_display_name").map_err(|e| format!("Failed to create string: {:?}", e))?;
         env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
@@ -563,6 +606,22 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
 
     let id_index = {
         let col_str = env.new_string("_id").map_err(|e| format!("Failed to create string: {:?}", e))?;
+        env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
+            .map_err(|e| format!("Failed to get column index: {:?}", e))?
+            .i()
+            .map_err(|e| format!("Failed to get int: {:?}", e))?
+    };
+
+    let width_index = {
+        let col_str = env.new_string("width").map_err(|e| format!("Failed to create string: {:?}", e))?;
+        env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
+            .map_err(|e| format!("Failed to get column index: {:?}", e))?
+            .i()
+            .map_err(|e| format!("Failed to get int: {:?}", e))?
+    };
+
+    let height_index = {
+        let col_str = env.new_string("height").map_err(|e| format!("Failed to create string: {:?}", e))?;
         env.call_method(&cursor, "getColumnIndex", "(Ljava/lang/String;)I", &[JValue::Object(&col_str)])
             .map_err(|e| format!("Failed to get column index: {:?}", e))?
             .i()
@@ -603,9 +662,12 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
         } else {
             0
         };
-        
+
+        let img_width = get_cursor_int_optional(env, &cursor, width_index)?;
+        let img_height = get_cursor_int_optional(env, &cursor, height_index)?;
+
         let cover_path = if data_path.is_empty() { None } else { Some(data_path.clone()) };
-        
+
         let folder_path = if !data_path.is_empty() {
             if let Some(last_slash) = data_path.rfind('/') {
                 data_path[..last_slash].to_string()
@@ -615,13 +677,15 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
         } else {
             String::new()
         };
-        
+
         let entry = folder_map.entry(bucket_id).or_insert_with(|| FolderData {
             name: bucket_name.clone(),
             path: folder_path,
             count: 0,
             cover_image_path: None,
             cover_image_id: None,
+            cover_image_width: None,
+            cover_image_height: None,
             max_date_modified: -1,
         });
         entry.count += 1;
@@ -630,6 +694,8 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             entry.max_date_modified = date_modified;
             entry.cover_image_path = cover_path;
             entry.cover_image_id = image_id;
+            entry.cover_image_width = img_width;
+            entry.cover_image_height = img_height;
         }
         
         let has_next = env.call_method(&cursor, "moveToNext", "()Z", &[])
@@ -653,6 +719,8 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             image_count: data.count,
             cover_image_path: data.cover_image_path,
             cover_image_id: data.cover_image_id,
+            cover_image_width: data.cover_image_width,
+            cover_image_height: data.cover_image_height,
         })
         .collect();
     

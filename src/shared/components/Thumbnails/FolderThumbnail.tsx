@@ -22,7 +22,7 @@ export const FolderThumbnail: React.FC<FolderThumbnailProps> = ({
   onClick,
   onDoubleClick,
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
   const [previewSrcs, setPreviewSrcs] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
 

@@ -257,6 +257,8 @@ export const App: React.FC = () => {
   // Topic layout mode: controlled by TopBar when viewing topics overview
   const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
   const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) { } };
+  const [folderLayoutMode, setFolderLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_folder_layout_mode') as LayoutMode) || 'grid'));
+  const handleFolderLayoutModeChange = (mode: LayoutMode) => { setFolderLayoutMode(mode); try { localStorage.setItem('aurora_folder_layout_mode', mode); } catch (e) { } };
   const [rememberExitChoice, setRememberExitChoice] = useState(false);
   // Ref to store the latest exit action preference (to avoid closure issues)
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
@@ -1898,6 +1900,8 @@ export const App: React.FC = () => {
               // Topic layout control (used when in topics-overview)
               topicLayoutMode={topicLayoutMode}
               onTopicLayoutModeChange={handleTopicLayoutModeChange}
+              folderLayoutMode={folderLayoutMode}
+              onFolderLayoutModeChange={handleFolderLayoutModeChange}
               hasFolderSettings={activeTab.viewMode === 'browser' ? !!state.folderSettings[activeTab.folderId] : false}
               // People view sort and group
               personSortBy={personSortBy}
@@ -2041,7 +2045,7 @@ export const App: React.FC = () => {
             )}
 
             <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-900 overflow-hidden">
-              {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && (
+              {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && state.settings.paths.resourceRoot !== 'android_media_store' && (
                 <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/50 backdrop-blur shrink-0 relative z-20">
                   {activeTab.viewMode === 'tags-overview' ? (
                     <div className="flex items-center w-full">
@@ -2113,6 +2117,8 @@ export const App: React.FC = () => {
                     thumbnailSize={state.thumbnailSize}
                     t={t}
                     isLoadingImages={state.isScanning}
+                    layoutMode={folderLayoutMode}
+                    onLayoutModeChange={handleFolderLayoutModeChange}
                   />
                 ) : activeTab.viewMode === 'topics-overview' ? (
                   <TopicModule

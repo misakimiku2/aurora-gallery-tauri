@@ -5,6 +5,7 @@ export interface AndroidImageInfo {
   size: number;
   width?: number;
   height?: number;
+  date_added: number;
   date_modified: number;
   mime_type: string;
 }
@@ -14,6 +15,8 @@ export interface AndroidFolderInfo {
   name: string;
   path: string;
   image_count: number;
+  cover_image_width?: number;
+  cover_image_height?: number;
 }
 
 export interface AndroidThumbnailResult {

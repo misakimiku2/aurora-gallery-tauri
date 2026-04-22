@@ -26,7 +26,7 @@ export const ImageThumbnail: React.FC<ImageThumbnailProps> = ({
   onClick,
   onDoubleClick,
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
     return thumbnailCache.get(path) || null;
   });

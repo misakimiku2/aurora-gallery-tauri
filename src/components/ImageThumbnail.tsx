@@ -1,10 +1,10 @@
 
-import React, { useRef } from 'react';
-import { Image as ImageIcon } from 'lucide-react';
+import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
-import { isThumbnailUpgrading } from '../api/tauri-bridge';
+import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
+import { Image as ImageIcon } from 'lucide-react';
 
 export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath, mediaStoreId }: { 
   src: string; 
@@ -19,77 +19,83 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   cachePath?: string;
   mediaStoreId?: number;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' }); 
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' }); 
   
-  const [thumbnailSrc, setThumbnailSrc] = React.useState<string | null>(() => {
+  const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
       if (!filePath) return null;
-      const key = filePath; 
       const cache = getGlobalCache();
-      return cache.get(key) || null;
+      return cache.get(filePath) || null;
   });
   
-  const [animSrc, setAnimSrc] = React.useState<string | null>(null);
-  const [loading, setLoading] = React.useState(!thumbnailSrc);
-  const [upgrading, setUpgrading] = React.useState(() => filePath ? isThumbnailUpgrading(filePath) : false);
+  const [animSrc, setAnimSrc] = useState<string | null>(null);
+  const [upgrading, setUpgrading] = useState(() => filePath ? isThumbnailUpgrading(filePath) : false);
+  const [scrollState, setScrollState] = useState(getGlobalScrollState());
 
   const hitRecordedRef = useRef(false);
+  const isAndroid = resourceRoot === 'android_media_store';
 
-  React.useEffect(() => {
+  useEffect(() => {
+    if (!isAndroid) return;
+    return subscribeScrollState(setScrollState);
+  }, [isAndroid]);
+
+  useEffect(() => {
     if (thumbnailSrc && !hitRecordedRef.current) {
       performanceMonitor.increment('thumbnailCacheHit');
       hitRecordedRef.current = true;
     }
   }, [thumbnailSrc]);
 
-  React.useEffect(() => {
-    if ((isInView || wasInView) && filePath && resourceRoot) {
-      const cache = getGlobalCache();
-      const key = filePath; 
+  useEffect(() => {
+    if (!(isInView || wasInView) || !filePath || !resourceRoot) return;
 
-      if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
-          if (!hitRecordedRef.current) {
-              performanceMonitor.increment('thumbnailCacheHit');
-              hitRecordedRef.current = true;
-          }
-          return;
-      }
+    const cache = getGlobalCache();
+    const key = filePath; 
 
-      const controller = new AbortController();
-      const loadThumbnail = async () => {
-        if (!thumbnailSrc) setLoading(true);
-        
-        try {
-          const { getThumbnail } = await import('../api/tauri-bridge');
-
-          const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, undefined, cachePath, mediaStoreId);
-          
-          if (!controller.signal.aborted && thumbnail) {
-            if (cache.get(key) !== thumbnail) {
-                cache.set(key, thumbnail);
-                setThumbnailSrc(thumbnail);
-            }
-            setUpgrading(isThumbnailUpgrading(filePath));
-          }
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            console.error('Failed to load thumbnail:', error);
-          }
-        } finally {
-          if (!controller.signal.aborted) {
-            setLoading(false);
-          }
+    if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
+        if (!hitRecordedRef.current) {
+            performanceMonitor.increment('thumbnailCacheHit');
+            hitRecordedRef.current = true;
         }
-      };
-
-      loadThumbnail();
-
-      return () => {
-        controller.abort();
-      };
+        return;
     }
-  }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc]);
 
-  React.useEffect(() => {
+    if (isAndroid && scrollState === 'fast') return;
+
+    const controller = new AbortController();
+    const loadThumbnail = async () => {
+      try {
+        const { getThumbnail } = await import('../api/tauri-bridge');
+
+        const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, undefined, cachePath, mediaStoreId);
+        
+        if (!controller.signal.aborted && thumbnail) {
+          if (cache.get(key) !== thumbnail) {
+              cache.set(key, thumbnail);
+              setThumbnailSrc(thumbnail);
+          }
+          setUpgrading(isThumbnailUpgrading(filePath));
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error('Failed to load thumbnail:', error);
+        }
+      }
+    };
+
+    if (isAndroid && scrollState === 'scrolling') {
+      const timer = setTimeout(loadThumbnail, 200);
+      return () => { clearTimeout(timer); controller.abort(); };
+    }
+
+    loadThumbnail();
+
+    return () => {
+      controller.abort();
+    };
+  }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc, isAndroid, scrollState]);
+
+  useEffect(() => {
     if (!filePath) return;
     const handler = (e: Event) => {
       const { filePath: upgradedPath, thumbnailSrc: upgradedSrc } = (e as CustomEvent).detail;
@@ -112,7 +118,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     };
   }, [filePath, thumbnailSrc]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!upgrading || !filePath || !resourceRoot) return;
     let cancelled = false;
     let retryCount = 0;
@@ -145,7 +151,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     return () => { cancelled = true; };
   }, [upgrading, filePath, resourceRoot, modified, cachePath, mediaStoreId]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     let isMounted = true;
 
     const loadAnimation = async () => {
@@ -195,10 +201,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   return (
     <div ref={ref} className="w-full h-full relative overflow-hidden">
-      <div className="absolute inset-0 bg-gray-200 dark:bg-gray-800 flex items-center justify-center pointer-events-none">
-        {loading && !thumbnailSrc ? (
-          <ImageIcon className="text-gray-400 dark:text-gray-600 animate-pulse" size={24} />
-        ) : finalSrc ? (
+      <div className="absolute inset-0 bg-gray-100 dark:bg-gray-800 pointer-events-none">
+        {finalSrc ? (
           <img 
             src={finalSrc} 
             alt={alt} 
@@ -207,10 +211,12 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
             draggable="false"
           />
         ) : (
-          <ImageIcon className="text-gray-400 dark:text-gray-600" size={24} />
+          <div className="w-full h-full flex items-center justify-center">
+            <ImageIcon className="w-6 h-6 text-gray-400 dark:text-gray-600" />
+          </div>
         )}
       </div>
-      {upgrading && finalSrc && (
+      {upgrading && finalSrc && (scrollState === 'idle' || !isAndroid) && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
           <svg className="animate-spin h-6 w-6 text-white/80" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />

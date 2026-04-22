@@ -22,7 +22,7 @@ export interface LayoutWorkerInput {
     layoutMode: LayoutMode;
     containerWidth: number;
     thumbnailSize: number;
-    viewMode: 'browser' | 'tags-overview' | 'people-overview';
+    viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'folders-overview';
     groupedTags?: Record<string, string[]>;
     searchQuery?: string;
     // People view grouping
@@ -311,6 +311,97 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
             });
             const rows = Math.ceil(items.length / cols);
             totalHeight = PADDING + rows * (itemHeight + GAP);
+        }
+    } else if (viewMode === 'folders-overview') {
+        const FOLDER_GAP = 10;
+        const FOLDER_TEXT_HEIGHT = 28;
+        if (layoutMode === 'grid') {
+            const minColWidth = thumbnailSize;
+            const cols = Math.max(1, Math.floor((finalAvailableWidth + FOLDER_GAP) / (minColWidth + FOLDER_GAP)));
+            const itemWidth = (finalAvailableWidth - (cols - 1) * FOLDER_GAP) / cols;
+            const itemHeight = itemWidth + FOLDER_TEXT_HEIGHT;
+
+            items.forEach((id, index) => {
+                const row = Math.floor(index / cols);
+                const col = index % cols;
+                layout.push({
+                    id,
+                    x: PADDING + col * (itemWidth + FOLDER_GAP),
+                    y: PADDING + row * (itemHeight + FOLDER_GAP),
+                    width: itemWidth,
+                    height: itemHeight
+                });
+            });
+            const rows = Math.ceil(items.length / cols);
+            totalHeight = PADDING + rows * (itemHeight + FOLDER_GAP);
+        } else if (layoutMode === 'masonry') {
+            const minColWidth = thumbnailSize;
+            const cols = Math.max(1, Math.floor((finalAvailableWidth + FOLDER_GAP) / (minColWidth + FOLDER_GAP)));
+            const colWidth = (finalAvailableWidth - (cols - 1) * FOLDER_GAP) / cols;
+            const colHeights = new Array(cols).fill(PADDING);
+
+            items.forEach((id) => {
+                const ratio = aspectRatios[id] || 1;
+                const imgHeight = ratio > 0 ? colWidth / ratio : colWidth;
+                const itemHeight = imgHeight + FOLDER_TEXT_HEIGHT;
+
+                let minCol = 0;
+                for (let i = 1; i < cols; i++) {
+                    if (colHeights[i] < colHeights[minCol]) minCol = i;
+                }
+
+                const x = PADDING + minCol * (colWidth + FOLDER_GAP);
+                const y = colHeights[minCol];
+
+                layout.push({ id, x, y, width: colWidth, height: itemHeight });
+
+                colHeights[minCol] += itemHeight + FOLDER_GAP;
+            });
+
+            totalHeight = Math.max(...colHeights);
+        } else if (layoutMode === 'adaptive') {
+            let currentRow: { id: string, w: number }[] = [];
+            let currentWidth = 0;
+            const targetHeight = thumbnailSize;
+            let y = PADDING;
+
+            items.forEach((id, index) => {
+                const ratio = aspectRatios[id] || 1;
+                const w = targetHeight * ratio;
+
+                currentRow.push({ id, w });
+                currentWidth += w;
+
+                const gaps = Math.max(0, currentRow.length - 1) * FOLDER_GAP;
+
+                if (currentWidth + gaps >= finalAvailableWidth || index === items.length - 1) {
+                    let scale = (finalAvailableWidth - gaps) / currentWidth;
+
+                    if (index === items.length - 1 && currentWidth + gaps < finalAvailableWidth / 2) {
+                        scale = 1;
+                    }
+
+                    const rowHeight = targetHeight * scale;
+                    let x = PADDING;
+
+                    currentRow.forEach(item => {
+                        const finalW = item.w * scale;
+                        layout.push({
+                            id: item.id,
+                            x,
+                            y,
+                            width: finalW,
+                            height: rowHeight + FOLDER_TEXT_HEIGHT
+                        });
+                        x += finalW + FOLDER_GAP;
+                    });
+
+                    y += rowHeight + FOLDER_TEXT_HEIGHT + FOLDER_GAP;
+                    currentRow = [];
+                    currentWidth = 0;
+                }
+            });
+            totalHeight = y;
         }
     }
     

@@ -4,7 +4,7 @@ import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGr
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import md5 from 'md5';
-import { startDragToExternal } from '../api/tauri-bridge';
+import { startDragToExternal, setGlobalScrollState } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLayout, LayoutItem } from './useLayoutHook';
@@ -60,6 +60,7 @@ const FileCard = React.memo(({
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
+  const isAndroid = effectiveResourceRoot === 'android_media_store';
 
   const handleDragStart = (e: React.DragEvent) => {
     e.stopPropagation();
@@ -383,7 +384,11 @@ const FileCard = React.memo(({
             top: `${y}px`,
             width: `${width}px`,
             height: `${height}px`,
-            willChange: 'transform'
+            willChange: 'transform',
+            ...(!isAndroid && {
+              contentVisibility: 'auto' as const,
+              containIntrinsicSize: `${width}px ${height}px`
+            })
         }}
         draggable={renamingId !== file.id}
         onDragStart={handleDragStart}
@@ -591,9 +596,7 @@ const GroupContent = React.memo(({
 
   // 根据全局滚动位置，动态计算当前分组内容中可见的项目
   const visibleItems = useMemo(() => {
-      // 降低渲染缓冲区，从 800px 减少到 400px
-      const buffer = 400; 
-      // 计算相对于当前分组坐标系的视口范围
+      const buffer = Math.max(1200, (containerRect.height || 0) * 2);
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
       
@@ -840,11 +843,15 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // Fallback to settings if direct props are missing
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
+  const isAndroid = effectiveResourceRoot === 'android_media_store';
 
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
 
-  // 节流处理滚动位置同步到全局状态，减少全局重绘
+  const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollTimeRef = useRef(0);
+  const lastScrollTopRef = useRef(0);
+
   const throttledOnScrollTopChange = useMemo(() => 
     onScrollTopChange ? throttle(onScrollTopChange, 100) : undefined
   , [onScrollTopChange]);
@@ -989,22 +996,37 @@ export const FileGrid: React.FC<FileGridProps> = ({
     // Use a stable handler ref or check current status inside handler
     const handleScroll = () => {
         if (containerRef.current) {
-            // Skip reporting scroll updates if we are in the middle of restoring
-            // or if layout is likely invalid (width 0)
             if (isRestoringScrollRef.current || containerRef.current.clientWidth === 0) {
                 return;
             }
 
             const currentScroll = containerRef.current.scrollTop;
-            const targetScroll = targetScrollRef.current; // Use ref to avoid closure trap
+            const targetScroll = targetScrollRef.current;
 
-            // Defense against clamping:
-            // If we haven't successfully restored yet, and the current scroll is significantly smaller
-            // than the target scroll, it's likely due to container height being insufficient (clamped).
-            // In this case, we should NOT update the parent state, so the original target remains for
-            // subsequent attempts (e.g. after layout resize).
             if (!hasRestoredRef.current && targetScroll > 0 && currentScroll < targetScroll - 100) {
                  return;
+            }
+
+            const now = Date.now();
+            const dt = now - lastScrollTimeRef.current;
+            const dy = Math.abs(currentScroll - lastScrollTopRef.current);
+            lastScrollTimeRef.current = now;
+            lastScrollTopRef.current = currentScroll;
+
+            if (isAndroid && dt > 0) {
+                const velocity = dy / dt;
+                if (velocity > 3 || dt < 32) {
+                    setGlobalScrollState('fast');
+                } else if (velocity > 0.5 || dt < 150) {
+                    setGlobalScrollState('scrolling');
+                } else {
+                    setGlobalScrollState('idle');
+                }
+
+                if (scrollStateTimerRef.current) clearTimeout(scrollStateTimerRef.current);
+                scrollStateTimerRef.current = setTimeout(() => {
+                    setGlobalScrollState('idle');
+                }, 300);
             }
 
             setScrollTop(currentScroll);
@@ -1124,9 +1146,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
-      // 降低渲染缓冲区，从 800px 减少到 400px (约 2 排缩略图)
-      // 这能显著减少冗余渲染，同时保持滚动时的视觉连贯性
-      const buffer = 400; 
+      const buffer = Math.max(1200, containerRect.height * 2);
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
@@ -1293,7 +1313,9 @@ export const FileGrid: React.FC<FileGridProps> = ({
   return (
       <div
           ref={containerRef}
+          id={isAndroid ? 'file-grid-scroll' : 'file-grid-container'}
           className={`relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
+          style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
           onContextMenu={onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
@@ -1305,6 +1327,9 @@ export const FileGrid: React.FC<FileGridProps> = ({
               allFolders.forEach(el => el.classList.remove('drop-target-active'));
           }}
       >
+          {isAndroid && (
+              <style dangerouslySetInnerHTML={{ __html: '#file-grid-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />
+          )}
           <div className="absolute inset-0 pointer-events-none z-50">
               {selectionBox && (
                   <div

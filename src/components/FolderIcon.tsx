@@ -308,7 +308,7 @@ export const OptimizedFolderThumbnail = memo(({
   enablePreview?: boolean
 }) => {
   // 使用useInView实现延迟加载
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
   
   // 简化的图片查找逻辑 - 使用缓存
   const imageChildren = useMemo(() => {

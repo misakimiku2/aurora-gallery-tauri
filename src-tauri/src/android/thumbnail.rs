@@ -256,7 +256,6 @@ pub fn get_android_system_thumbnail<'a>(
 
     if cache_path.exists() {
         let (w, h) = image::image_dimensions(&cache_path).unwrap_or((0u32, 0u32));
-        log::info!("[Thumbnail] System cache hit: imageId={}, dimensions={}x{}", image_id, w, h);
         return Ok(Some((cache_path.to_string_lossy().to_string(), w, h)));
     }
 
@@ -291,7 +290,6 @@ pub fn get_android_system_thumbnail<'a>(
                 .map_err(|e| format!("Failed to get bitmap: {:?}", e))?;
 
             if bitmap.is_null() {
-                log::warn!("[Thumbnail] MINI_KIND bitmap is null: imageId={}", image_id);
                 return Ok(None);
             }
 
@@ -299,7 +297,6 @@ pub fn get_android_system_thumbnail<'a>(
                 .map(|v| v.i().unwrap_or(0)).unwrap_or(0);
             let bmp_height = env.call_method(&bitmap, "getHeight", "()I", &[])
                 .map(|v| v.i().unwrap_or(0)).unwrap_or(0);
-            log::info!("[Thumbnail] MINI_KIND bitmap size: {}x{} for imageId={}", bmp_width, bmp_height, image_id);
 
             let baos_class = env.find_class("java/io/ByteArrayOutputStream")
                 .map_err(|e| format!("Failed to find ByteArrayOutputStream: {:?}", e))?;

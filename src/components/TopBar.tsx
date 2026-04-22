@@ -44,6 +44,9 @@ interface TopBarProps {
   // --- Topic view specific controls ---
   topicLayoutMode?: LayoutMode;
   onTopicLayoutModeChange?: (mode: LayoutMode) => void;
+  // --- Folders overview specific controls ---
+  folderLayoutMode?: LayoutMode;
+  onFolderLayoutModeChange?: (mode: LayoutMode) => void;
   // --- Pagination ---
   totalResults?: number;
   pageSize?: number;
@@ -535,6 +538,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   // Topic view props
   topicLayoutMode,
   onTopicLayoutModeChange,
+  // Folders overview props
+  folderLayoutMode,
+  onFolderLayoutModeChange,
   // People view props
   personSortBy = 'count',
   personSortDirection = 'desc',
@@ -1032,7 +1038,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && (
           <div className="relative">
              <button 
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
@@ -1121,6 +1127,64 @@ export const TopBar: React.FC<TopBarProps> = ({
               title={t('layout.masonry')}
               onClick={() => onTopicLayoutModeChange('masonry')}
             ><LayoutTemplate size={16} /></button>
+          </div>
+        )}
+
+        {/* Folders overview layout menu */}
+        {activeTab.viewMode === 'folders-overview' && onFolderLayoutModeChange && (
+          <div className="relative">
+             <button
+               onClick={() => setViewMenuOpen(!viewMenuOpen)}
+               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${viewMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               title={t('layout.mode')}
+             >
+               {folderLayoutMode === 'grid' && <Grid size={18} />}
+               {folderLayoutMode === 'adaptive' && <LayoutGrid size={18} />}
+               {folderLayoutMode === 'masonry' && <LayoutTemplate size={18} />}
+             </button>
+             {viewMenuOpen && (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                    <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
+                    {[
+                      { id: 'grid', icon: Grid, label: t('layout.grid') },
+                      { id: 'adaptive', icon: LayoutGrid, label: t('layout.adaptive') },
+                      { id: 'masonry', icon: LayoutTemplate, label: t('layout.masonry') }
+                    ].map(opt => (
+                      <button
+                        key={opt.id}
+                        onClick={() => { onFolderLayoutModeChange!(opt.id as LayoutMode); setViewMenuOpen(false); }}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      >
+                        <div className="flex items-center">
+                          <opt.icon size={16} className="mr-2 opacity-70"/> {opt.label}
+                        </div>
+                        {folderLayoutMode === opt.id && <Check size={14} className="text-blue-500" />}
+                      </button>
+                    ))}
+
+                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="px-4 py-2">
+                       <div className="flex justify-between text-xs text-gray-500 mb-1">
+                          <span>{t('layout.small')}</span>
+                          <span>{t('layout.large')}</span>
+                       </div>
+                       <input
+                         type="range"
+                         id="thumbnail-size-slider"
+                         name="thumbnail-size-slider"
+                         min={100}
+                         max={480}
+                         step="20"
+                         value={state.thumbnailSize}
+                         onChange={(e) => onThumbnailSizeChange(parseInt(e.target.value))}
+                         className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                       />
+                    </div>
+                 </div>
+               </>
+             )}
           </div>
         )}
 

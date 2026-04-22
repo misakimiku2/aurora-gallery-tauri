@@ -149,15 +149,16 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     }).map(f => f.id);
   }, [allFiles, searchCriteria, state.files, state.topics]);
 
-  // 4. 分页切片逻辑
-  const pageSize = 1000;
+  const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
+  const pageSize = isAndroid ? allMatchingFileIds.length : 1000;
   const currentPage = activeTab.currentPage || 1;
   const totalResults = allMatchingFileIds.length;
   
   const displayFileIds = useMemo(() => {
+    if (isAndroid) return allMatchingFileIds;
     const start = (currentPage - 1) * pageSize;
     return allMatchingFileIds.slice(start, start + pageSize);
-  }, [allMatchingFileIds, currentPage]);
+  }, [allMatchingFileIds, currentPage, isAndroid, pageSize]);
 
   const toggleGroup = (groupId: string) => {
     setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));

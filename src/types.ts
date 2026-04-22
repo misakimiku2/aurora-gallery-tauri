@@ -69,6 +69,8 @@ export interface FileNode {
   imageCount?: number;
   coverImagePath?: string;
   coverImageMediaStoreId?: number;
+  coverImageWidth?: number;
+  coverImageHeight?: number;
 
   createdAt?: string;
   updatedAt?: string;

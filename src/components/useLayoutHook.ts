@@ -23,22 +23,27 @@ export const useLayout = (
   layoutMode: LayoutMode,
   containerWidth: number,
   thumbnailSize: number,
-  viewMode: 'browser' | 'tags-overview' | 'people-overview',
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'folders-overview',
   groupedTags?: Record<string, string[]>,
   people?: Record<string, Person>,
   searchQuery?: string,
   groupedPeople?: PersonGroup[],
   collapsedGroups?: Record<string, boolean>
 ) => {
-  // Compute aspect ratios efficiently (memoized)
   const aspectRatios = useMemo(() => {
     const ratios: Record<string, number> = {};
-    if (viewMode === 'browser') {
+    if (viewMode === 'browser' || viewMode === 'folders-overview') {
       items.forEach(id => {
         const file = files[id];
-        ratios[id] = file?.meta?.width && file?.meta?.height 
-          ? file.meta.width / file.meta.height 
-          : (file?.type === FileType.FOLDER ? 1 : 1);
+        if (viewMode === 'folders-overview' && file?.type === FileType.FOLDER) {
+          ratios[id] = file.coverImageWidth && file.coverImageHeight
+            ? file.coverImageWidth / file.coverImageHeight
+            : 1;
+        } else {
+          ratios[id] = file?.meta?.width && file?.meta?.height
+            ? file.meta.width / file.meta.height
+            : (file?.type === FileType.FOLDER ? 1 : 1);
+        }
       });
     }
     return ratios;

@@ -29,39 +29,52 @@ export function setAndroidPlatform(isAndroid: boolean) {
 }
 
 function initAndroidThumbnailUpgradeListener() {
-  console.log('[Thumbnail] Registering android:thumbnail-upgraded listener');
   listen<{ filePath: string; thumbnailPath: string }>('android:thumbnail-upgraded', (event) => {
-    console.log('[Thumbnail] Received android:thumbnail-upgraded:', event.payload);
     const { filePath, thumbnailPath } = event.payload;
     const newSrc = convertFileSrc(thumbnailPath);
     const cache = getGlobalCache();
     const currentSrc = cache.get(filePath);
     _upgradingThumbnails.delete(filePath);
-    console.log('[Thumbnail] Upgrade: filePath=', filePath, 'newSrc=', newSrc, 'currentSrc=', currentSrc, 'changed=', currentSrc !== newSrc);
     if (currentSrc !== newSrc) {
       cache.set(filePath, newSrc);
       window.dispatchEvent(new CustomEvent('aurora:thumbnail-upgraded', {
         detail: { filePath, thumbnailSrc: newSrc }
       }));
     }
-  }).catch(err => {
-    console.error('[Thumbnail] Failed to register android:thumbnail-upgraded listener:', err);
-  });
+  }).catch(() => {});
 
   listen<{ filePath: string; error: string }>('android:thumbnail-upgrade-failed', (event) => {
-    console.warn('[Thumbnail] Received android:thumbnail-upgrade-failed:', event.payload);
     const { filePath } = event.payload;
     _upgradingThumbnails.delete(filePath);
     window.dispatchEvent(new CustomEvent('aurora:thumbnail-upgrade-failed', {
       detail: { filePath }
     }));
-  }).catch(err => {
-    console.error('[Thumbnail] Failed to register android:thumbnail-upgrade-failed listener:', err);
-  });
+  }).catch(() => {});
 }
 
 export function isThumbnailUpgrading(filePath: string): boolean {
   return _upgradingThumbnails.has(filePath);
+}
+
+type ScrollState = 'idle' | 'scrolling' | 'fast';
+let _globalScrollState: ScrollState = 'idle';
+const _scrollStateListeners = new Set<(state: ScrollState) => void>();
+
+export function setGlobalScrollState(state: ScrollState) {
+  if (_globalScrollState === state) return;
+  _globalScrollState = state;
+  for (const listener of _scrollStateListeners) {
+    try { listener(state); } catch {}
+  }
+}
+
+export function getGlobalScrollState(): ScrollState {
+  return _globalScrollState;
+}
+
+export function subscribeScrollState(listener: (state: ScrollState) => void): () => void {
+  _scrollStateListeners.add(listener);
+  return () => { _scrollStateListeners.delete(listener); };
 }
 
 export function isAndroidPlatformCached(): boolean {
@@ -557,26 +570,21 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   if (_isAndroid) {
     const timerId = performanceMonitor.start('getThumbnail', undefined, false);
     try {
-      console.log('[Thumbnail] Android invoke: filePath=', filePath, 'cacheRoot=', cachePath, 'imageId=', mediaStoreId);
       const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number; upgrading: boolean } | null>(
         'android_get_thumbnail',
         { filePath, cacheRoot: cachePath, imageId: mediaStoreId ?? null }
       );
-      console.log('[Thumbnail] Android result:', result, 'thumbnailPath=', result?.thumbnailPath, 'path=', result?.path, 'upgrading=', result?.upgrading);
       if (result?.thumbnailPath) {
         const src = convertFileSrc(result.thumbnailPath);
-        console.log('[Thumbnail] Android convertFileSrc:', result.thumbnailPath, '->', src);
         if (result.upgrading) {
           _upgradingThumbnails.add(filePath);
         }
         performanceMonitor.end(timerId, 'getThumbnail', { success: true });
         return src;
       }
-      console.warn('[Thumbnail] Android: thumbnailPath is null/empty, returning null');
       performanceMonitor.end(timerId, 'getThumbnail', { success: false });
       return null;
     } catch (err) {
-      console.error('[Thumbnail] Android error:', err);
       performanceMonitor.end(timerId, 'getThumbnail', { success: false, error: true });
       return null;
     }

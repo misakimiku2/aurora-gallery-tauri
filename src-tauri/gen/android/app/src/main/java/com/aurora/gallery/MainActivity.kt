@@ -101,6 +101,7 @@ class MainActivity : TauriActivity() {
       MediaStore.Images.Media.SIZE,
       MediaStore.Images.Media.WIDTH,
       MediaStore.Images.Media.HEIGHT,
+      MediaStore.Images.Media.DATE_ADDED,
       MediaStore.Images.Media.DATE_MODIFIED,
       MediaStore.Images.Media.MIME_TYPE,
       MediaStore.Images.Media.BUCKET_ID,
@@ -125,6 +126,7 @@ class MainActivity : TauriActivity() {
       val colSize = it.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
       val colWidth = it.getColumnIndexOrThrow(MediaStore.Images.Media.WIDTH)
       val colHeight = it.getColumnIndexOrThrow(MediaStore.Images.Media.HEIGHT)
+      val colDateAdded = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
       val colDate = it.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_MODIFIED)
       val colMime = it.getColumnIndexOrThrow(MediaStore.Images.Media.MIME_TYPE)
       val colBucketId = it.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_ID)
@@ -137,6 +139,7 @@ class MainActivity : TauriActivity() {
         val size = it.getLong(colSize)
         val width = it.getInt(colWidth)
         val height = it.getInt(colHeight)
+        val dateAdded = it.getLong(colDateAdded)
         val dateModified = it.getLong(colDate)
         val mimeType = it.getString(colMime) ?: ""
         val bucketId = it.getLong(colBucketId)
@@ -152,6 +155,7 @@ class MainActivity : TauriActivity() {
           put("size", size)
           put("width", if (width > 0) width else JSONObject.NULL)
           put("height", if (height > 0) height else JSONObject.NULL)
+          put("date_added", dateAdded)
           put("date_modified", dateModified)
           put("mime_type", mimeType)
         }
@@ -171,6 +175,8 @@ class MainActivity : TauriActivity() {
             put("image_count", 1)
             put("cover_image_path", if (path.isNotEmpty()) path else JSONObject.NULL)
             put("cover_image_id", id)
+            put("cover_image_width", if (width > 0) width else JSONObject.NULL)
+            put("cover_image_height", if (height > 0) height else JSONObject.NULL)
             put("max_date_modified", dateModified)
           }
         } else {
@@ -179,6 +185,8 @@ class MainActivity : TauriActivity() {
             existing.put("max_date_modified", dateModified)
             existing.put("cover_image_path", if (path.isNotEmpty()) path else JSONObject.NULL)
             existing.put("cover_image_id", id)
+            existing.put("cover_image_width", if (width > 0) width else JSONObject.NULL)
+            existing.put("cover_image_height", if (height > 0) height else JSONObject.NULL)
           }
         }
       }

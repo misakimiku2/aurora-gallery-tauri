@@ -6,7 +6,7 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
-import { isThumbnailUpgrading } from '../api/tauri-bridge';
+import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 
 const findImagesDeeply = (
     rootFolder: FileNode, 
@@ -58,7 +58,7 @@ const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ fil
 
 export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const isAndroid = resourceRoot === 'android_media_store';
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '400px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
   
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
@@ -80,6 +80,13 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
     });
     return set;
   });
+
+  const [scrollState, setScrollState] = useState(getGlobalScrollState());
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    return subscribeScrollState(setScrollState);
+  }, [isAndroid]);
 
   const previewCountedRef = useRef<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(previewSrcs.length > 0);
@@ -258,7 +265,7 @@ export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, ca
             count={file.children?.length}
             category={file.category}
          />
-         {hasUpgrading && (
+         {hasUpgrading && (scrollState === 'idle' || !isAndroid) && (
            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
              <svg className="animate-spin h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none">
                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />

@@ -141,6 +141,8 @@ interface AndroidFolderRaw {
   image_count: number;
   cover_image_path: string | null;
   cover_image_id: number | null;
+  cover_image_width: number | null;
+  cover_image_height: number | null;
 }
 
 interface AndroidImageRaw {
@@ -151,6 +153,7 @@ interface AndroidImageRaw {
   size: number;
   width: number | null;
   height: number | null;
+  date_added: number;
   date_modified: number;
   mime_type: string;
 }
@@ -173,8 +176,8 @@ interface FolderScanCache {
   folders: AndroidFolderRaw[];
 }
 
-const SCAN_CACHE_VERSION = 2;
-const FOLDER_CACHE_VERSION = 1;
+const SCAN_CACHE_VERSION = 3;
+const FOLDER_CACHE_VERSION = 2;
 
 function buildFolderNodes(folders: AndroidFolderRaw[]): { files: Record<string, any>; roots: string[]; folderPathMap: Map<string, string> } {
   const files: Record<string, any> = {};
@@ -194,6 +197,8 @@ function buildFolderNodes(folders: AndroidFolderRaw[]): { files: Record<string, 
       imageCount: folder.image_count,
       coverImagePath: folder.cover_image_path || undefined,
       coverImageMediaStoreId: folder.cover_image_id || undefined,
+      coverImageWidth: folder.cover_image_width || undefined,
+      coverImageHeight: folder.cover_image_height || undefined,
     };
     roots.push(folderId);
     if (folder.path) {
@@ -229,6 +234,16 @@ function attachImageNodes(
       dateModified: img.date_modified,
       mimeType: img.mime_type,
       tags: [],
+      meta: {
+        width: img.width || 0,
+        height: img.height || 0,
+        sizeKb: img.size > 0 ? Math.round(img.size / 1024) : 0,
+        created: img.date_added > 0 ? new Date(img.date_added * 1000).toISOString() : '',
+        modified: img.date_modified > 0 ? new Date(img.date_modified * 1000).toISOString() : '',
+        format: img.mime_type ? img.mime_type.split('/')[1] || '' : '',
+      },
+      createdAt: img.date_added > 0 ? new Date(img.date_added * 1000).toISOString() : undefined,
+      updatedAt: img.date_modified > 0 ? new Date(img.date_modified * 1000).toISOString() : undefined,
     };
 
     if (parentId && files[parentId]) {

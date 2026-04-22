@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { FileNode } from '../types';
+import { FileNode, LayoutMode } from '../types';
 import { useInView } from '../hooks/useInView';
-import { getThumbnail, isThumbnailUpgrading } from '../api/tauri-bridge';
+import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem } from './useLayoutHook';
-import { Folder, Loader2, ImageIcon } from 'lucide-react';
+import { Folder } from 'lucide-react';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -15,6 +15,8 @@ interface FoldersOverviewProps {
   thumbnailSize: number;
   t: (key: string) => string;
   isLoadingImages?: boolean;
+  layoutMode?: LayoutMode;
+  onLayoutModeChange?: (mode: LayoutMode) => void;
 }
 
 const FolderCard = React.memo(({
@@ -22,6 +24,7 @@ const FolderCard = React.memo(({
   resourceRoot,
   onClick,
   thumbnailSize,
+  layoutMode,
 }: {
   folder: FileNode;
   files: Record<string, FileNode>;
@@ -29,19 +32,25 @@ const FolderCard = React.memo(({
   cachePath?: string;
   onClick: () => void;
   thumbnailSize: number;
+  layoutMode?: LayoutMode;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '200px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
   const [coverSrc, setCoverSrc] = useState<string | null>(null);
-  const [coverLoaded, setCoverLoaded] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
+  const [scrollState, setScrollState] = useState(getGlobalScrollState());
 
+  const isAndroid = resourceRoot === 'android_media_store';
   const imageCount = folder.imageCount ?? folder.children?.length ?? 0;
   const coverImagePathRef = useRef(folder.coverImagePath);
   coverImagePathRef.current = folder.coverImagePath;
 
   useEffect(() => {
+    if (!isAndroid) return;
+    return subscribeScrollState(setScrollState);
+  }, [isAndroid]);
+
+  useEffect(() => {
     if (!(isInView || wasInView)) return;
-    if (coverLoaded) return;
 
     const loadCover = async () => {
       if (folder.coverImagePath && resourceRoot) {
@@ -52,9 +61,10 @@ const FolderCard = React.memo(({
           if (isThumbnailUpgrading(folder.coverImagePath)) {
             setUpgrading(true);
           }
-          setCoverLoaded(true);
           return;
         }
+
+        if (isAndroid && scrollState === 'fast') return;
 
         try {
           const url = await getThumbnail(
@@ -77,17 +87,20 @@ const FolderCard = React.memo(({
           // ignore
         }
       }
-      setCoverLoaded(true);
     };
 
+    if (isAndroid && scrollState === 'scrolling') {
+      const timer = setTimeout(loadCover, 200);
+      return () => { clearTimeout(timer); };
+    }
+
     loadCover();
-  }, [isInView, wasInView, coverLoaded, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
+  }, [isInView, wasInView, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot, isAndroid, scrollState]);
 
   useEffect(() => {
     const handler = (e: Event) => {
       const { filePath, thumbnailSrc } = (e as CustomEvent).detail;
       if (filePath === coverImagePathRef.current) {
-        console.log('[FolderCard] aurora:thumbnail-upgraded:', filePath, 'thumbnailSrc=', thumbnailSrc);
         setCoverSrc(thumbnailSrc);
         setUpgrading(false);
       }
@@ -139,16 +152,21 @@ const FolderCard = React.memo(({
     return () => { cancelled = true; };
   }, [upgrading, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
 
+  const isGridMode = !layoutMode || layoutMode === 'grid';
+
   return (
     <div
       ref={ref}
-      className="file-item group cursor-pointer select-none"
+      className="file-item group cursor-pointer select-none flex flex-col items-center px-1"
       data-id={folder.id}
       onClick={onClick}
     >
       <div
         className="relative overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 shadow-sm hover:shadow-md transition-shadow duration-200"
-        style={{ width: thumbnailSize, height: thumbnailSize }}
+        style={isGridMode
+          ? { width: thumbnailSize, height: thumbnailSize }
+          : { width: '100%', height: '100%' }
+        }
       >
         {coverSrc ? (
           <img
@@ -160,16 +178,10 @@ const FolderCard = React.memo(({
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-800 dark:to-gray-750">
             <Folder size={thumbnailSize * 0.3} className="text-gray-400 dark:text-gray-500" strokeWidth={1.2} />
-            {imageCount > 0 && (
-              <div className="mt-1 flex items-center gap-0.5 text-gray-400 dark:text-gray-500">
-                <ImageIcon size={10} />
-                <span className="text-[10px]">{imageCount}</span>
-              </div>
-            )}
           </div>
         )}
 
-        {upgrading && (
+        {upgrading && (scrollState === 'idle' || !isAndroid) && (
           <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
             <svg className="animate-spin h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
@@ -178,13 +190,23 @@ const FolderCard = React.memo(({
           </div>
         )}
 
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent pt-8 pb-2 px-2">
-          <div className="text-white text-xs font-medium truncate leading-tight">
-            {folder.name}
-          </div>
-          <div className="text-white/70 text-[10px] mt-0.5">
-            {imageCount} 项
-          </div>
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent pt-8 pb-2 px-2" />
+
+        <div className="absolute bottom-2 right-2 z-20 flex flex-col items-end gap-1">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400 drop-shadow-sm">
+            <path d="M2 6a2 2 0 012-2h5l2 2h9a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+          </svg>
+          {imageCount > 0 && (
+            <span className="bg-black/30 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm leading-none">
+              {imageCount}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-1 w-full text-center px-1">
+        <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate leading-tight" title={folder.name}>
+          {folder.name}
         </div>
       </div>
     </div>
@@ -200,9 +222,18 @@ export const FoldersOverview: React.FC<FoldersOverviewProps> = ({
   thumbnailSize,
   t,
   isLoadingImages,
+  layoutMode = 'grid',
+  onLayoutModeChange,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [containerHeight, setContainerHeight] = useState(0);
+
+  const isAndroid = resourceRoot === 'android_media_store';
+  const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastScrollTimeRef = useRef(0);
+  const lastScrollTopRef = useRef(0);
 
   const folderNodes = useMemo(() => {
     return roots
@@ -223,78 +254,111 @@ export const FoldersOverview: React.FC<FoldersOverviewProps> = ({
   const { layout, totalHeight } = useLayout(
     sortedFolderIds,
     files,
-    'grid',
+    layoutMode,
     containerWidth,
     thumbnailSize,
-    'browser' as any
+    'folders-overview'
   );
 
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         setContainerWidth(entry.contentRect.width);
+        setContainerHeight(entry.contentRect.height);
       }
     });
 
     if (containerRef.current) {
       observer.observe(containerRef.current);
       setContainerWidth(containerRef.current.clientWidth);
+      setContainerHeight(containerRef.current.clientHeight);
     }
 
-    return () => observer.disconnect();
-  }, []);
+    const handleScroll = () => {
+      if (containerRef.current) {
+        const currentScroll = containerRef.current.scrollTop;
+        setScrollTop(currentScroll);
 
-  const itemMap = useMemo(() => {
-    const map = new Map<string, LayoutItem>();
-    for (const item of layout) {
-      map.set(item.id, item);
-    }
-    return map;
-  }, [layout]);
+        if (isAndroid) {
+          const now = Date.now();
+          const dt = now - lastScrollTimeRef.current;
+          const dy = Math.abs(currentScroll - lastScrollTopRef.current);
+          lastScrollTimeRef.current = now;
+          lastScrollTopRef.current = currentScroll;
+
+          if (dt > 0) {
+            const velocity = dy / dt;
+            if (velocity > 3 || dt < 32) {
+              setGlobalScrollState('fast');
+            } else if (velocity > 0.5 || dt < 150) {
+              setGlobalScrollState('scrolling');
+            } else {
+              setGlobalScrollState('idle');
+            }
+          }
+
+          if (scrollStateTimerRef.current) clearTimeout(scrollStateTimerRef.current);
+          scrollStateTimerRef.current = setTimeout(() => {
+            setGlobalScrollState('idle');
+          }, 300);
+        }
+      }
+    };
+    containerRef.current?.addEventListener('scroll', handleScroll, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      containerRef.current?.removeEventListener('scroll', handleScroll);
+      if (scrollStateTimerRef.current) clearTimeout(scrollStateTimerRef.current);
+    };
+  }, [isAndroid]);
+
+  const visibleItems = useMemo(() => {
+      const buffer = Math.max(1200, containerHeight * 2);
+      const minY = scrollTop - buffer;
+      const maxY = scrollTop + containerHeight + buffer;
+      return layout.filter(item => item.y < maxY && item.y + item.height > minY);
+  }, [layout, scrollTop, containerHeight]);
 
   return (
     <div
+      id="folders-scroll"
       ref={containerRef}
-      className="w-full h-full overflow-y-auto overflow-x-hidden p-4 relative"
+      className="w-full h-full overflow-y-auto overflow-x-hidden relative"
+      style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
     >
-      {isLoadingImages && (
-        <div className="flex items-center gap-2 px-2 mb-3 text-xs text-gray-500 dark:text-gray-400 z-10 relative">
-          <Loader2 size={14} className="animate-spin" />
-          <span>{t('loading.images') || '正在加载图片...'}</span>
-        </div>
-      )}
-
+      <style dangerouslySetInnerHTML={{ __html: '#folders-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />
       <div
         className="relative w-full"
         style={{ height: totalHeight > 0 ? totalHeight : 'auto', minHeight: '100%' }}
       >
-        {sortedFolderIds.map(id => {
-          const pos = itemMap.get(id);
-          if (!pos) return null;
-
-          return (
+        {visibleItems.map(pos => (
             <div
-              key={id}
+              key={pos.id}
               className="absolute transition-all duration-300 ease-out"
               style={{
                 left: pos.x,
                 top: pos.y,
                 width: pos.width,
                 height: pos.height,
+                ...(!isAndroid && {
+                  contentVisibility: 'auto' as const,
+                  containIntrinsicSize: `${pos.width}px ${pos.height}px`
+                })
               }}
             >
               <FolderCard
-                key={id}
-                folder={files[id]}
+                key={pos.id}
+                folder={files[pos.id]}
                 files={files}
                 resourceRoot={resourceRoot}
                 cachePath={cachePath}
-                onClick={() => onFolderClick(id)}
-                thumbnailSize={Math.min(pos.width - 8, pos.height - 40)}
+                onClick={() => onFolderClick(pos.id)}
+                thumbnailSize={Math.min(pos.width - 2, pos.height - 28)}
+                layoutMode={layoutMode}
               />
             </div>
-          );
-        })}
+        ))}
       </div>
 
       {sortedFolderIds.length === 0 && !isLoadingImages && (
