@@ -375,17 +375,17 @@ const FileCard = React.memo(({
     <div
         data-id={file.id}
         className={`
-            file-item group cursor-pointer transition-all duration-300 ease-out flex flex-col items-center rounded-xl
+            file-item group cursor-pointer flex flex-col items-center rounded-xl
             ${isSelected ? 'z-10' : 'z-0 hover:scale-[1.01]'}
             ${isDragging ? 'opacity-50 scale-95 drop-shadow-lg' : ''}
         `}
         style={{
             position: 'absolute',
-            left: `${x}px`,
-            top: `${y}px`,
+            transform: `translate(${x}px, ${y}px)`,
             width: `${width}px`,
             height: `${height}px`,
             willChange: 'transform',
+            transition: 'transform 300ms ease-out',
             ...(!isAndroid && {
               contentVisibility: 'auto' as const,
               containIntrinsicSize: `${width}px ${height}px`
@@ -617,8 +617,7 @@ const GroupContent = React.memo(({
                 key={file.id} 
                 className="absolute"
                 style={{ 
-                    top: item.y, 
-                    left: item.x, 
+                    transform: `translate(${item.x}px, ${item.y}px)`,
                     width: item.width, 
                     height: item.height 
                 }}
@@ -1429,8 +1428,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                 key={file.id} 
                                 className="absolute"
                                 style={{ 
-                                    top: item.y, 
-                                    left: item.x, 
+                                    transform: `translate(${item.x}px, ${item.y}px)`,
                                     width: item.width, 
                                     height: item.height 
                                 }}

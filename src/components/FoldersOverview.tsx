@@ -374,13 +374,13 @@ const FoldersOverview = React.memo(({
         {visibleItems.map(pos => (
             <div
               key={pos.id}
-              className="absolute transition-all duration-300 ease-out"
+              className="absolute"
               style={{
-                left: pos.x,
-                top: pos.y,
+                transform: `translate(${pos.x}px, ${pos.y}px)`,
                 width: pos.width,
                 height: pos.height,
                 willChange: 'transform',
+                transition: 'transform 300ms ease-out',
                 ...(!isAndroid && {
                   contentVisibility: 'auto' as const,
                   containIntrinsicSize: `${pos.width}px ${pos.height}px`

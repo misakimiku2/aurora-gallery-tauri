@@ -1362,26 +1362,38 @@ chrome://inspect
 
 **当前状态**：已实施，保留。
 
-### 13.2 未解决的关键问题
+### 13.2 已解决的关键问题
 
-#### 13.2.1 主界面帧率低于文件夹内部
+#### 13.2.1 主界面帧率低于文件夹内部 — 已解决（2026-04-24）
 
 **现象**：
 - 主界面（FoldersOverview，~100 个文件夹卡片）滚动时帧率明显低于文件夹内部（FileGrid，可能数千张图片）
 - 120Hz 屏幕上主界面滚动感觉只有 ~60fps 或更低
 - 文件夹内部滚动接近满帧
 
-**可能原因**：
-1. **FolderCard DOM 复杂度**：每个 FolderCard 包含多层绝对定位元素（渐变遮罩、图标、数量标签、文字），比 FileGrid 的 ImageThumbnail 更重
-2. **CSS 渐变 + backdrop-blur**：`bg-gradient-to-t from-black/70` 和 `backdrop-blur-sm` 在 120Hz 下每帧都需要重绘
-3. **React 重渲染**：`files` 对象引用频繁变化导致 FoldersOverview 重渲染（未用 `React.memo` 包裹）
-4. **布局计算**：Web Worker 返回布局后，React 需要为每个可见项设置绝对定位样式
+**根因分析**：
+1. **FolderCard DOM 复杂度**：每个 FolderCard 包含 `backdrop-blur-sm`（极贵）、半透明渐变叠加层、阴影过渡动画、`animate-spin` SVG 旋转动画
+2. **React 重渲染**：`FoldersOverview` 未用 `React.memo` 包裹，App.tsx 回调每次渲染创建新函数
+3. **升级遮罩未感知滚动状态**：滚动中仍显示 `animate-spin`，持续触发 DOM 重绘
+4. **缺少 GPU 合成层优化**：无 `will-change: transform` 或 `contain` 属性
 
-**待验证方向**：
-- 使用 Chrome DevTools Performance 面板分析主线程瓶颈
-- 尝试简化 FolderCard DOM 结构（移除渐变遮罩、backdrop-blur）
-- 用 `React.memo` 包裹 FoldersOverview 组件
-- 考虑使用 CSS `will-change: transform` 提升合成层
+**解决方案**（2026-04-24 实施）：
+
+| 优化项 | 之前 | 之后 |
+|--------|------|------|
+| `backdrop-blur-sm` | 数量标签使用模糊背景 | 改为 `bg-black/50` 纯色半透明 |
+| 渐变叠加层 | `bg-gradient-to-t from-black/70 via-black/30 to-transparent` | 移除 |
+| 阴影过渡 | `shadow-sm hover:shadow-md transition-shadow duration-200` | 移除 |
+| 升级遮罩 | 滚动中始终显示 `animate-spin` | 仅在 `scrollState === 'idle'` 时显示 |
+| GPU 合成层 | 无 | `willChange: 'transform'` + `contain: 'paint'` |
+| React.memo | FoldersOverview 未包裹 | `React.memo` 包裹 |
+| 回调稳定化 | App.tsx 每次渲染创建新函数 | `useCallback` 稳定化 |
+| `group` 类 | 保留（触摸屏无 hover 意义） | 移除 |
+| scrollbar CSS | `dangerouslySetInnerHTML` 每次渲染注入 | `useEffect` + `document.head.appendChild` 一次性注入 |
+
+**修改文件**：
+- `src/components/FoldersOverview.tsx`：FolderCard 极简化 + React.memo + 滚动状态感知 + CSS 优化
+- `src/App.tsx`：`useCallback` 稳定化 `onFolderClick` 和 `onScrollTopChange`
 
 #### 13.2.2 快速滚动时仍能看到占位符
 
