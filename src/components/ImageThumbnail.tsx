@@ -19,7 +19,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   cachePath?: string;
   mediaStoreId?: number;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' }); 
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '2000px' }); 
   
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
       if (!filePath) return null;
@@ -29,15 +29,9 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   
   const [animSrc, setAnimSrc] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(() => filePath ? isThumbnailUpgrading(filePath) : false);
-  const [scrollState, setScrollState] = useState(getGlobalScrollState());
 
-  const hitRecordedRef = useRef(false);
   const isAndroid = resourceRoot === 'android_media_store';
-
-  useEffect(() => {
-    if (!isAndroid) return;
-    return subscribeScrollState(setScrollState);
-  }, [isAndroid]);
+  const hitRecordedRef = useRef(false);
 
   useEffect(() => {
     if (thumbnailSrc && !hitRecordedRef.current) {
@@ -60,8 +54,6 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         return;
     }
 
-    if (isAndroid && scrollState === 'fast') return;
-
     const controller = new AbortController();
     const loadThumbnail = async () => {
       try {
@@ -83,17 +75,12 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       }
     };
 
-    if (isAndroid && scrollState === 'scrolling') {
-      const timer = setTimeout(loadThumbnail, 200);
-      return () => { clearTimeout(timer); controller.abort(); };
-    }
-
     loadThumbnail();
 
     return () => {
       controller.abort();
     };
-  }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc, isAndroid, scrollState]);
+  }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc]);
 
   useEffect(() => {
     if (!filePath) return;
@@ -199,24 +186,45 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   const finalSrc = animSrc || thumbnailSrc;
 
+  const renderThumbnail = () => {
+    if (animSrc) {
+      return (
+        <img 
+          src={animSrc} 
+          alt={alt} 
+          className="absolute inset-0 w-full h-full object-cover" 
+          loading="eager" 
+          draggable="false"
+        />
+      );
+    }
+
+    if (finalSrc) {
+      return (
+        <img 
+          src={finalSrc} 
+          alt={alt} 
+          className="absolute inset-0 w-full h-full object-cover" 
+          decoding="async"
+          loading="eager" 
+          draggable="false"
+        />
+      );
+    }
+
+    return (
+      <div className="w-full h-full flex items-center justify-center">
+        <ImageIcon className="w-6 h-6 text-gray-400 dark:text-gray-600" />
+      </div>
+    );
+  };
+
   return (
     <div ref={ref} className="w-full h-full relative overflow-hidden">
       <div className="absolute inset-0 bg-gray-100 dark:bg-gray-800 pointer-events-none">
-        {finalSrc ? (
-          <img 
-            src={finalSrc} 
-            alt={alt} 
-            className="absolute inset-0 w-full h-full object-cover" 
-            loading="eager" 
-            draggable="false"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <ImageIcon className="w-6 h-6 text-gray-400 dark:text-gray-600" />
-          </div>
-        )}
+        {renderThumbnail()}
       </div>
-      {upgrading && finalSrc && (scrollState === 'idle' || !isAndroid) && (
+      {upgrading && finalSrc && (
         <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10">
           <svg className="animate-spin h-6 w-6 text-white/80" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />

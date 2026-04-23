@@ -143,6 +143,7 @@ interface AndroidFolderRaw {
   cover_image_id: number | null;
   cover_image_width: number | null;
   cover_image_height: number | null;
+  cover_thumbnail_path?: string | null;
 }
 
 interface AndroidImageRaw {
@@ -156,6 +157,7 @@ interface AndroidImageRaw {
   date_added: number;
   date_modified: number;
   mime_type: string;
+  thumbnail_path?: string | null;
 }
 
 interface AndroidScanAllRaw {
@@ -179,6 +181,37 @@ interface FolderScanCache {
 const SCAN_CACHE_VERSION = 3;
 const FOLDER_CACHE_VERSION = 2;
 
+function prefillThumbnailCache(
+  folders: AndroidFolderRaw[],
+  images: AndroidImageRaw[]
+): void {
+  try {
+    const { getGlobalCache } = require('./thumbnailCache');
+    const { convertFileSrc } = require('@tauri-apps/api/core');
+    const cache = getGlobalCache();
+
+    for (const folder of folders) {
+      if (folder.cover_thumbnail_path && folder.cover_image_path) {
+        if (!cache.has(folder.cover_image_path)) {
+          try {
+            const src = convertFileSrc(folder.cover_thumbnail_path);
+            cache.set(folder.cover_image_path, src);
+          } catch {}
+        }
+      }
+    }
+
+    for (const img of images) {
+      if (img.thumbnail_path && !cache.has(img.path)) {
+        try {
+          const src = convertFileSrc(img.thumbnail_path);
+          cache.set(img.path, src);
+        } catch {}
+      }
+    }
+  } catch {}
+}
+
 function buildFolderNodes(folders: AndroidFolderRaw[]): { files: Record<string, any>; roots: string[]; folderPathMap: Map<string, string> } {
   const files: Record<string, any> = {};
   const roots: string[] = [];
@@ -199,6 +232,7 @@ function buildFolderNodes(folders: AndroidFolderRaw[]): { files: Record<string, 
       coverImageMediaStoreId: folder.cover_image_id || undefined,
       coverImageWidth: folder.cover_image_width || undefined,
       coverImageHeight: folder.cover_image_height || undefined,
+      coverThumbnailPath: folder.cover_thumbnail_path || undefined,
     };
     roots.push(folderId);
     if (folder.path) {
@@ -383,6 +417,7 @@ export async function scanAndroidImages(
 
     const { files, roots, folderPathMap } = buildFolderNodes(folders);
     attachImageNodes(files, images, folderPathMap, roots);
+    prefillThumbnailCache(folders, images);
 
     return (roots.length > 0 && Object.keys(files).length > 0) ? { files, roots, rawFolders: folders, rawImages: images } : null;
   } catch (e) {

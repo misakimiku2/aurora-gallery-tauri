@@ -14,6 +14,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import android.graphics.Bitmap
+import java.io.File
+import java.io.FileOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -159,6 +162,13 @@ class MainActivity : TauriActivity() {
           put("date_modified", dateModified)
           put("mime_type", mimeType)
         }
+
+        val imgCacheFilename = "sys_${id}_q80.jpg"
+        val imgCacheFile = File(cacheDir, imgCacheFilename)
+        if (imgCacheFile.exists()) {
+          imgObj.put("thumbnail_path", imgCacheFile.absolutePath)
+        }
+
         images.put(imgObj)
 
         val folderPath = if (path.isNotEmpty()) {
@@ -195,12 +205,102 @@ class MainActivity : TauriActivity() {
     val folders = JSONArray()
     folderMap.values.forEach { folder ->
       folder.remove("max_date_modified")
+
+      val coverId = folder.optLong("cover_image_id", -1)
+      if (coverId > 0) {
+        val cacheFilename = "sys_${coverId}_q80.jpg"
+        val cacheFile = File(cacheDir, cacheFilename)
+        if (cacheFile.exists()) {
+          folder.put("cover_thumbnail_path", cacheFile.absolutePath)
+        } else {
+          try {
+            val thumbnail = MediaStore.Images.Thumbnails.getThumbnail(
+              contentResolver, coverId, MediaStore.Images.Thumbnails.MINI_KIND, null
+            )
+            if (thumbnail != null) {
+              val fos = FileOutputStream(cacheFile)
+              thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, fos)
+              fos.flush()
+              fos.close()
+              thumbnail.recycle()
+              folder.put("cover_thumbnail_path", cacheFile.absolutePath)
+            } else {
+              folder.put("cover_thumbnail_path", JSONObject.NULL)
+            }
+          } catch (e: Exception) {
+            folder.put("cover_thumbnail_path", JSONObject.NULL)
+          }
+        }
+      } else {
+        folder.put("cover_thumbnail_path", JSONObject.NULL)
+      }
+
       folders.put(folder)
     }
 
     val result = JSONObject().apply {
       put("images", images)
       put("folders", folders)
+    }
+
+    return result.toString()
+  }
+
+  fun batchGetThumbnailPaths(imageIds: String): String {
+    val ids = imageIds.split(",").mapNotNull { it.trim().toLongOrNull() }
+    val result = JSONArray()
+    val cacheDir = this.cacheDir
+
+    for (id in ids) {
+      try {
+        val cacheFilename = "sys_${id}_q80.jpg"
+        val cacheFile = File(cacheDir, cacheFilename)
+
+        if (cacheFile.exists()) {
+          val opts = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+          android.graphics.BitmapFactory.decodeFile(cacheFile.absolutePath, opts)
+          result.put(JSONObject().apply {
+            put("id", id)
+            put("thumbnailPath", cacheFile.absolutePath)
+            put("width", opts.outWidth)
+            put("height", opts.outHeight)
+          })
+          continue
+        }
+
+        val thumbnail = MediaStore.Images.Thumbnails.getThumbnail(
+          contentResolver, id, MediaStore.Images.Thumbnails.MINI_KIND, null
+        )
+
+        if (thumbnail != null) {
+          val bmpWidth = thumbnail.width
+          val bmpHeight = thumbnail.height
+
+          val fos = FileOutputStream(cacheFile)
+          thumbnail.compress(Bitmap.CompressFormat.JPEG, 80, fos)
+          fos.flush()
+          fos.close()
+          thumbnail.recycle()
+
+          result.put(JSONObject().apply {
+            put("id", id)
+            put("thumbnailPath", cacheFile.absolutePath)
+            put("width", bmpWidth)
+            put("height", bmpHeight)
+          })
+        } else {
+          result.put(JSONObject().apply {
+            put("id", id)
+            put("thumbnailPath", JSONObject.NULL)
+          })
+        }
+      } catch (e: Exception) {
+        result.put(JSONObject().apply {
+          put("id", id)
+          put("thumbnailPath", JSONObject.NULL)
+          put("error", e.message ?: "unknown")
+        })
+      }
     }
 
     return result.toString()

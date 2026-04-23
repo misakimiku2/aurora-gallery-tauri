@@ -12,6 +12,7 @@ import { PersonGrid } from './PersonGrid';
 import { TagsList, TagIndexBar } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
+import { getThumbnailPrefetcher } from '../utils/thumbnailPrefetch';
 import { throttle } from '../utils/debounce';
 import { useInView } from '../hooks/useInView';
 import { Folder3DIcon } from './Folder3DIcon';
@@ -596,7 +597,7 @@ const GroupContent = React.memo(({
 
   // 根据全局滚动位置，动态计算当前分组内容中可见的项目
   const visibleItems = useMemo(() => {
-      const buffer = Math.max(1200, (containerRect.height || 0) * 2);
+      const buffer = Math.max(3000, (containerRect.height || 0) * 3);
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
       
@@ -1146,7 +1147,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
-      const buffer = Math.max(1200, containerRect.height * 2);
+      const buffer = Math.max(3000, containerRect.height * 3);
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
@@ -1178,6 +1179,20 @@ export const FileGrid: React.FC<FileGridProps> = ({
       // expose a simple / authoritative boolean
       win.__AURORA_RENDER_COUNTS__.fileGridUsingVirtualization = !!(logicalWindowSmaller || domMuchSmaller || (Array.isArray(layout) && layout.length < totalLogical));
   }, [visibleItems.length, displayFileIds.length, layout]);
+
+  useEffect(() => {
+    if (!isAndroid || visibleItems.length === 0) return;
+    const prefetcher = getThumbnailPrefetcher();
+    const visible = visibleItems.map(item => {
+      const file = files[item.id];
+      return {
+        mediaStoreId: file?.mediaStoreId,
+        filePath: item.id,
+      };
+    }).filter(v => v.mediaStoreId != null);
+    const buffer = visible;
+    prefetcher.updateVisibleIds(visible, buffer);
+  }, [visibleItems, isAndroid, files]);
 
   const sortedKeys = useMemo(() => {
       if (!groupedTags) return [];

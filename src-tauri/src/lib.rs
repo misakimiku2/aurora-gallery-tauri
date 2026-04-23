@@ -394,6 +394,130 @@ async fn android_thumbnail_navigate() -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
+async fn android_batch_get_thumbnails(
+    app: tauri::AppHandle,
+    image_ids: Vec<i64>,
+    cache_root: String,
+) -> Result<Vec<crate::android::ThumbnailResult>, String> {
+    use crate::android::{get_android_system_thumbnail, batch_get_system_thumbnails};
+    use std::path::Path;
+
+    let cache_path = Path::new(&cache_root);
+    let mut results: Vec<crate::android::ThumbnailResult> = Vec::new();
+    let mut uncached_ids: Vec<i64> = Vec::new();
+
+    for id in &image_ids {
+        let cache_filename = format!("sys_{}_q80.jpg", id);
+        let cache_file = cache_path.join(&cache_filename);
+        if cache_file.exists() {
+            results.push(crate::android::ThumbnailResult {
+                path: String::new(),
+                thumbnail_path: Some(cache_file.to_string_lossy().to_string()),
+                width: 0,
+                height: 0,
+                upgrading: false,
+            });
+        } else {
+            uncached_ids.push(*id);
+        }
+    }
+
+    if !uncached_ids.is_empty() {
+        let uncached_ids_clone = uncached_ids.clone();
+        let batch_result = tauri::async_runtime::spawn_blocking(move || {
+            let activity = ndk_context::android_context();
+            let vm = match unsafe { jni::JavaVM::from_raw(activity.vm().cast()) } {
+                Ok(vm) => vm,
+                Err(e) => return Err(format!("Failed to get JavaVM: {:?}", e)),
+            };
+            let mut env = match vm.attach_current_thread() {
+                Ok(env) => env,
+                Err(e) => return Err(format!("Failed to attach thread: {:?}", e)),
+            };
+            let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+            batch_get_system_thumbnails(&mut env, &activity_obj, &uncached_ids_clone)
+        }).await.map_err(|e| e.to_string())?;
+
+        match batch_result {
+            Ok(items) => {
+                for item in items {
+                    let min_dim = item.width.min(item.height);
+                    let upgrading = min_dim > 0 && min_dim < 200;
+
+                    if upgrading {
+                        if item.thumbnail_path.is_some() {
+                            let file_path = format!("media_store_id:{}", item.id);
+                            enqueue_thumbnail_job(&app, file_path, cache_root.clone());
+                        }
+                    }
+
+                    results.push(crate::android::ThumbnailResult {
+                        path: String::new(),
+                        thumbnail_path: item.thumbnail_path,
+                        width: item.width,
+                        height: item.height,
+                        upgrading,
+                    });
+                }
+            }
+            Err(e) => {
+                log::warn!("[BatchThumbnail] Kotlin batch failed ({}), falling back to individual", e);
+                for id in uncached_ids {
+                    let cp = cache_path.to_path_buf();
+                    let individual_result = tauri::async_runtime::spawn_blocking(move || {
+                        let activity = ndk_context::android_context();
+                        let vm = match unsafe { jni::JavaVM::from_raw(activity.vm().cast()) } {
+                            Ok(vm) => vm,
+                            Err(_) => return None,
+                        };
+                        let mut env = match vm.attach_current_thread() {
+                            Ok(env) => env,
+                            Err(_) => return None,
+                        };
+                        let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+                        match get_android_system_thumbnail(&mut env, &activity_obj, id, &cp) {
+                            Ok(Some(tuple)) => Some(tuple),
+                            _ => None,
+                        }
+                    }).await;
+
+                    match individual_result {
+                        Ok(Some((thumb_path, bmp_w, bmp_h))) => {
+                            let min_dim = bmp_w.min(bmp_h);
+                            let upgrading = min_dim > 0 && min_dim < 200;
+                            if upgrading {
+                                let file_path = format!("media_store_id:{}", id);
+                                enqueue_thumbnail_job(&app, file_path, cache_root.clone());
+                            }
+                            results.push(crate::android::ThumbnailResult {
+                                path: String::new(),
+                                thumbnail_path: Some(thumb_path),
+                                width: bmp_w,
+                                height: bmp_h,
+                                upgrading,
+                            });
+                        }
+                        _ => {
+                            results.push(crate::android::ThumbnailResult {
+                                path: String::new(),
+                                thumbnail_path: None,
+                                width: 0,
+                                height: 0,
+                                upgrading: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
 async fn check_android_permissions() -> Result<String, String> {
     let activity = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
@@ -646,6 +770,7 @@ pub fn run() {
         android_save_scan_cache,
         android_load_scan_cache,
         android_get_thumbnail,
+        android_batch_get_thumbnails,
         android_thumbnail_navigate,
         check_android_permissions,
         request_android_permissions,

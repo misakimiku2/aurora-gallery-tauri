@@ -1248,7 +1248,241 @@ chrome://inspect
 
 ---
 
-**文档版本**: 3.0  
+## 十三、2026-04-23 性能优化迭代记录
+
+本节记录了 2026-04-23 当天进行的多轮性能优化尝试、结果分析和当前状态。
+
+### 13.1 优化方向与实施内容
+
+#### 13.1.1 优化一：Web Worker 离屏图片解码 (ImageBitmap) — 已回退
+
+**目标**：在 Worker 中使用 `createImageBitmap` 预解码缩略图，通过 Transferable Object 传回主线程，用 Canvas 渲染替代 `<img>` 解码。
+
+**实施内容**：
+- 新建 `src/workers/image-decode.worker.ts`：Worker 线程中 fetch + createImageBitmap 解码
+- 新建 `src/utils/imageDecodeWorker.ts`：Worker 池管理器（2 个 Worker，round-robin 分配）
+- 修改 `ImageThumbnail.tsx`：Android 平台走 Worker 解码 + Canvas 渲染路径
+- 修改 `FoldersOverview.tsx`：FolderCard 封面图同样走 Worker 解码 + Canvas 渲染
+
+**回退原因**：Canvas/Worker 路径比原生 `<img>` 更慢，实测帧率从 60fps 降至 ~30fps。
+
+| 对比项 | `<img>` 原生路径 | Canvas/Worker 路径 |
+|--------|-----------------|-------------------|
+| 解码线程 | 浏览器 GPU 合成器（`decoding="async"`） | Worker 线程 `createImageBitmap` |
+| 渲染 | GPU 合成，零主线程开销 | 主线程 `canvas.drawImage` |
+| React 渲染次数 | 1 次（设置 src） | 2-3 次（初始→Worker回调→Canvas绘制） |
+| HTTP 缓存 | 浏览器自动复用 | 每次都需 fetch |
+| DOM 复杂度 | `<img>` 一个元素 | `<canvas>` + `drawImage` + 状态管理 |
+
+**结论**：WebView 中 `<img decoding="async">` 是最优解，Canvas/Worker 增加了不必要的开销。
+
+**当前状态**：已回退。`image-decode.worker.ts` 和 `imageDecodeWorker.ts` 文件保留但不再被引用。
+
+#### 13.1.2 优化二：内存压力感知与 LRU 动态缩放 — 已实施
+
+**目标**：利用 `performance.memory` API 监控 Android WebView 堆内存，当内存接近临界值时自动调整 LRU 缓存大小并释放 ImageBitmap 资源。
+
+**实施内容**：
+- 新建 `src/utils/memoryPressureMonitor.ts`：三级压力监控（normal <70% / warning 70-85% / critical >85%），2 秒检测间隔
+- 修改 `src/utils/thumbnailCache.ts`：LRUCache 升级为内存感知版本
+  - `maxSize` 从常量变为动态可调（1000→500→200）
+  - 新增 `imageBitmaps` Map 跟踪 ImageBitmap 资源（为后续优化预留）
+  - 新增 `adjustSize(level)` 响应内存压力
+  - 新增 `registerBitmap/unregisterBitmap` 位图生命周期管理
+  - 新增 `releaseNonVisibleBitmaps()` 释放不可见位图
+  - 淘汰缓存条目时同时释放关联的 ImageBitmap（`.close()`）
+- 修改 `src/shared/utils/cache.ts`：同步升级，支持 `adjustSize()`
+- 修改 `src/hooks/useAppInit.ts`：Android 启动时初始化内存监控，订阅压力变化自动调整 LRU
+- 修改 `src/shared/components/Thumbnails/ImageThumbnail.tsx` 和 `FolderThumbnail.tsx`：替换无限制 `Map` 为 `LRUCache(200)`
+
+**当前状态**：已实施，保留。
+
+#### 13.1.3 优化三：批量缩略图路径预取（压缩 JNI 边界）— 已实施
+
+**目标**：减少 Rust 与 Android 原生层的通信频次，一次性获取视口周边 50 张图的系统缩略图路径。
+
+**实施内容**：
+- 修改 `MainActivity.kt`：新增 `batchGetThumbnailPaths()` 方法，一次 JNI 调用获取多张缩略图
+- 修改 `media_store.rs`：新增 `batch_get_system_thumbnails()` JNI 封装和 `BatchThumbnailItem` 结构体
+- 修改 `lib.rs`：新增 `android_batch_get_thumbnails` Tauri 命令，先检查磁盘缓存，未命中的 ID 批量调用 Kotlin，失败时回退到逐个获取
+- 新建 `src/utils/thumbnailPrefetch.ts`：批量预取调度器，视口变化时提取 `mediaStoreId` 列表，每次批量获取 50 张
+- 修改 `tauri-bridge.ts`：`setGlobalCacheRoot` 时同步设置预取器的缓存根目录
+- 修改 `FileGrid.tsx` 和 `FoldersOverview.tsx`：`visibleItems` 变化时触发批量预取
+
+**当前状态**：已实施，保留。但实际效果有限，因为预取仍然需要 IPC 调用。
+
+#### 13.1.4 优化四：scanAllAsJson 预查询缩略图路径 — 已实施
+
+**目标**：模仿 Android 原生相册的策略，在扫描阶段就把所有缩略图路径准备好，渲染时直接从内存缓存读取。
+
+**实施内容**：
+- 修改 `MainActivity.kt` `scanAllAsJson()`：
+  - 对每个文件夹封面调用 `getThumbnail()` + `compress` + `write`，将路径嵌入 `cover_thumbnail_path` 字段
+  - 对每张图片，如果磁盘缓存已存在缩略图文件，将路径嵌入 `thumbnail_path` 字段
+- 修改 `media_store.rs`：
+  - `AndroidFolderInfo` 新增 `cover_thumbnail_path: Option<String>` 字段
+  - `AndroidImageInfo` 新增 `thumbnail_path: Option<String>` 字段
+  - JSON 解析新增对应字段提取
+- 修改 `androidPlatform.ts`：
+  - 接口定义新增 `cover_thumbnail_path` 和 `thumbnail_path` 字段
+  - 新增 `prefillThumbnailCache()` 函数：扫描完成后将所有预查询的缩略图路径通过 `convertFileSrc()` 转换后批量写入 LRU 缓存
+  - `buildFolderNodes` 新增 `coverThumbnailPath` 字段映射
+- 修改 `FoldersOverview.tsx`：`FolderCard` 初始化时直接从 LRU 缓存读取缩略图 URL
+
+**当前状态**：已实施。第二次启动时效果明显（缓存命中率高），首次启动时效果有限（需要等待扫描+预查询完成）。
+
+#### 13.1.5 优化五：FoldersOverview 保持挂载 + 滚动位置恢复 — 已实施
+
+**目标**：从文件夹返回主界面时不再重新加载。
+
+**实施内容**：
+- 修改 `App.tsx`：将 FoldersOverview 从条件渲染改为 CSS `display: none/contents` 隐藏
+- 修改 `FoldersOverview.tsx`：
+  - 新增 `isVisible`、`scrollTop`、`onScrollTopChange` props
+  - 新增 `hasRestoredRef` 和 `isRestoringScrollRef` 实现滚动位置恢复
+  - 滚动事件中调用 `onScrollTopChange` 保存位置到 Tab 状态
+  - `isVisible` 变为 false 时重置 `hasRestoredRef`
+
+**当前状态**：已实施，保留。解决了返回主界面时重新加载的问题。
+
+#### 13.1.6 优化六：虚拟滚动缓冲区调整 — 已实施
+
+**实施内容**：
+- 缓冲区从 `Math.max(1200, containerHeight * 2)` 增至 `Math.max(3000, containerHeight * 3)`
+- `useInView` rootMargin 从 1200px 增至 2000px
+- 移除了 "200项以下全渲染" 优化（该优化导致 100 个 FolderCard 同时渲染，反而更慢）
+
+**当前状态**：已实施，保留。
+
+#### 13.1.7 优化七：`<img decoding="async">` — 已实施
+
+**实施内容**：
+- 所有缩略图 `<img>` 标签添加 `decoding="async"` 属性，让浏览器在独立线程解码图片
+- 使用 `loading="eager"` 而非 `loading="lazy"`（因为 LRU 缓存已有 URL，应立即加载）
+
+**当前状态**：已实施，保留。
+
+### 13.2 未解决的关键问题
+
+#### 13.2.1 主界面帧率低于文件夹内部
+
+**现象**：
+- 主界面（FoldersOverview，~100 个文件夹卡片）滚动时帧率明显低于文件夹内部（FileGrid，可能数千张图片）
+- 120Hz 屏幕上主界面滚动感觉只有 ~60fps 或更低
+- 文件夹内部滚动接近满帧
+
+**可能原因**：
+1. **FolderCard DOM 复杂度**：每个 FolderCard 包含多层绝对定位元素（渐变遮罩、图标、数量标签、文字），比 FileGrid 的 ImageThumbnail 更重
+2. **CSS 渐变 + backdrop-blur**：`bg-gradient-to-t from-black/70` 和 `backdrop-blur-sm` 在 120Hz 下每帧都需要重绘
+3. **React 重渲染**：`files` 对象引用频繁变化导致 FoldersOverview 重渲染（未用 `React.memo` 包裹）
+4. **布局计算**：Web Worker 返回布局后，React 需要为每个可见项设置绝对定位样式
+
+**待验证方向**：
+- 使用 Chrome DevTools Performance 面板分析主线程瓶颈
+- 尝试简化 FolderCard DOM 结构（移除渐变遮罩、backdrop-blur）
+- 用 `React.memo` 包裹 FoldersOverview 组件
+- 考虑使用 CSS `will-change: transform` 提升合成层
+
+#### 13.2.2 快速滚动时仍能看到占位符
+
+**现象**：快速向下滚动时，新进入视口的 FolderCard 先显示 ImageIcon 占位符，然后才加载缩略图。
+
+**根因分析**：
+- 即使 LRU 缓存已预填充（第二次启动），`convertFileSrc()` 返回的 URL 仍需 WebView 发起 HTTP 请求获取图片数据
+- `<img decoding="async">` 虽然不阻塞主线程，但图片解码仍需时间
+- 虚拟滚动在缓冲区外的项目不渲染，进入缓冲区后才创建 DOM
+
+**Android 原生相册为什么没有这个问题**：
+- 原生 `RecyclerView` 使用 `Glide` 库，内存中维护 Bitmap LRU 缓存
+- Bitmap 已解码，渲染时直接 `drawBitmap`，无需再次解码
+- `Glide` 的缓存策略：活跃资源 → LRU 内存 → 磁盘 → 网络
+- 原生渲染无需 WebView 的 HTTP 请求 → 解码 → GPU 上传流程
+
+**WebView 的根本限制**：
+- `<img src>` 必须经过 HTTP 请求 → 下载 → 解码 → GPU 上传的完整流程
+- 即使 Tauri 的 `convertFileSrc()` 走本地协议，WebView 仍需完整流程
+- 没有类似 Glide 的"已解码 Bitmap 直接渲染"机制
+
+#### 13.2.3 首次启动卡顿
+
+**现象**：首次安装后打开应用，主界面操作帧率极低。
+
+**根因**：
+- `scanAllAsJson` 预查询缩略图增加了扫描时间
+- 首次启动时没有任何磁盘缓存，所有缩略图都需要实时获取
+- 100 个 FolderCard 同时请求缩略图，IPC 通道拥堵
+
+### 13.3 修改文件完整清单（2026-04-23）
+
+| 文件 | 操作 | 说明 |
+|------|------|------|
+| `src/workers/image-decode.worker.ts` | 新建 | Worker 离屏解码（已回退，文件保留） |
+| `src/utils/imageDecodeWorker.ts` | 新建 | Worker 池管理器（已回退，文件保留） |
+| `src/utils/memoryPressureMonitor.ts` | 新建 | 内存压力监控器 |
+| `src/utils/thumbnailPrefetch.ts` | 新建 | 批量预取调度器 |
+| `src/utils/thumbnailCache.ts` | 修改 | LRU 升级为内存感知版本 |
+| `src/shared/utils/cache.ts` | 修改 | 同步升级 LRU |
+| `src/hooks/useAppInit.ts` | 修改 | 初始化内存监控 |
+| `src/shared/components/Thumbnails/ImageThumbnail.tsx` | 修改 | 替换 Map 为 LRU |
+| `src/shared/components/Thumbnails/FolderThumbnail.tsx` | 修改 | 替换 Map 为 LRU |
+| `src/components/ImageThumbnail.tsx` | 修改 | 回退 Canvas/Worker，使用 `<img decoding="async">` |
+| `src/components/FoldersOverview.tsx` | 修改 | 回退 Canvas/Worker；CSS 隐藏保持挂载；滚动位置恢复；`<img decoding="async">` |
+| `src/components/FileGrid.tsx` | 修改 | 虚拟滚动缓冲区调整；预取调度集成 |
+| `src/api/tauri-bridge.ts` | 修改 | 预取器缓存根目录设置 |
+| `src-tauri/gen/android/.../MainActivity.kt` | 修改 | `scanAllAsJson` 预查询缩略图路径；新增 `batchGetThumbnailPaths()` |
+| `src-tauri/src/android/media_store.rs` | 修改 | 新增 `thumbnail_path`/`cover_thumbnail_path` 字段；新增 `batch_get_system_thumbnails()` |
+| `src-tauri/src/lib.rs` | 修改 | 新增 `android_batch_get_thumbnails` 命令 |
+| `src/App.tsx` | 修改 | FoldersOverview CSS 隐藏而非卸载 |
+
+### 13.4 Tauri 命令更新
+
+| 命令 | 参数 | 返回值 | 说明 |
+|------|------|-------|------|
+| `android_batch_get_thumbnails` | `imageIds: Vec<i64>`, `cacheRoot: String` | `Vec<ThumbnailResult>` | 批量获取缩略图路径，先检查磁盘缓存，未命中批量调用 Kotlin，失败回退逐个获取 |
+
+### 13.5 数据结构更新
+
+```rust
+// media_store.rs - 新增字段
+pub struct AndroidImageInfo {
+    // ... 原有字段 ...
+    #[serde(default)]
+    pub thumbnail_path: Option<String>,  // 新增：预查询的缩略图磁盘路径
+}
+
+pub struct AndroidFolderInfo {
+    // ... 原有字段 ...
+    #[serde(default)]
+    pub cover_thumbnail_path: Option<String>,  // 新增：预查询的封面缩略图磁盘路径
+}
+```
+
+```typescript
+// androidPlatform.ts - 新增字段
+interface AndroidFolderRaw {
+    // ... 原有字段 ...
+    cover_thumbnail_path?: string | null;  // 新增
+}
+
+interface AndroidImageRaw {
+    // ... 原有字段 ...
+    thumbnail_path?: string | null;  // 新增
+}
+
+// FileNode 新增字段
+coverThumbnailPath?: string;  // 新增：预查询的封面缩略图路径
+```
+
+### 13.6 经验教训
+
+1. **Canvas/Worker 在 WebView 中不是性能优化**：`<img decoding="async">` + GPU 合成器是 WebView 中最优的图片渲染路径，Canvas/Worker 增加了不必要的开销
+2. **"全渲染"优化适得其反**：100 个 FolderCard 同时渲染比虚拟滚动更慢，因为 DOM 节点数和 React 渲染开销远大于虚拟滚动的过滤计算
+3. **预查询缩略图路径是正确方向**：但效果受限于 WebView 的 `<img>` 渲染流程（HTTP 请求 → 解码 → GPU 上传），无法像原生应用那样直接使用已解码的 Bitmap
+4. **WebView 的根本性能瓶颈**：与原生应用相比，WebView 的图片渲染多了一个完整的 HTTP + 解码流程，这是架构层面的限制
+
+---
+
+**文档版本**: 4.0  
 **创建日期**: 2026-04-19  
 **更新日期**: 2026-04-23  
 **维护者**: Aurora Gallery Team

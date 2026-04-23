@@ -5,6 +5,8 @@ import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/enviro
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages, loadFolderCache, loadScanCache, saveScanCache } from '../utils/androidPlatform';
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { memoryPressureMonitor } from '../utils/memoryPressureMonitor';
+import { getGlobalCache } from '../utils/thumbnailCache';
 import { aiService } from '../services/aiService';
 import { setGlobalCacheRoot, setAndroidPlatform } from '../api/tauri-bridge';
 import {
@@ -62,6 +64,13 @@ export const useAppInit = ({
 
             const isAndroidNow = await isAndroidPlatform();
             setAndroidPlatform(isAndroidNow);
+
+            if (isAndroidNow && memoryPressureMonitor.isAvailable()) {
+              memoryPressureMonitor.start();
+              memoryPressureMonitor.subscribe((level) => {
+                getGlobalCache().adjustSize(level);
+              });
+            }
 
             let finalSettings = {
               ...state.settings,

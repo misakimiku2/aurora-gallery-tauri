@@ -8,6 +8,7 @@ import { FileNode, FileType, DominantColor } from '../types';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/environment';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { getThumbnailPrefetcher } from '../utils/thumbnailPrefetch';
 
 let _globalCacheRoot: string | null = null;
 const _upgradingThumbnails = new Set<string>();
@@ -15,6 +16,7 @@ let _isAndroid: boolean = false;
 
 export function setGlobalCacheRoot(cacheRoot: string) {
   _globalCacheRoot = cacheRoot;
+  getThumbnailPrefetcher().setCacheRoot(cacheRoot);
 }
 
 export function getGlobalCacheRoot(): string | null {

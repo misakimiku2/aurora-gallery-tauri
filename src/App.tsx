@@ -258,7 +258,7 @@ export const App: React.FC = () => {
   const [topicLayoutMode, setTopicLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_topic_layout_mode') as LayoutMode) || 'grid'));
   const handleTopicLayoutModeChange = (mode: LayoutMode) => { setTopicLayoutMode(mode); try { localStorage.setItem('aurora_topic_layout_mode', mode); } catch (e) { } };
   const [folderLayoutMode, setFolderLayoutMode] = useState<LayoutMode>(() => ((localStorage.getItem('aurora_folder_layout_mode') as LayoutMode) || 'grid'));
-  const handleFolderLayoutModeChange = (mode: LayoutMode) => { setFolderLayoutMode(mode); try { localStorage.setItem('aurora_folder_layout_mode', mode); } catch (e) { } };
+  const handleFolderLayoutModeChange = useCallback((mode: LayoutMode) => { setFolderLayoutMode(mode); try { localStorage.setItem('aurora_folder_layout_mode', mode); } catch (e) { } }, []);
   const [rememberExitChoice, setRememberExitChoice] = useState(false);
   // Ref to store the latest exit action preference (to avoid closure issues)
   const exitActionRef = useRef<'ask' | 'minimize' | 'exit'>('ask');
@@ -303,6 +303,8 @@ export const App: React.FC = () => {
       })
     }));
   }, []);
+
+  const handleFolderScrollTopChange = useCallback((scrollTop: number) => { updateActiveTab({ scrollTop }); }, [updateActiveTab]);
 
   const updateTabById = useCallback((tabId: string, updates: Partial<TabState> | ((prev: TabState) => Partial<TabState>)) => {
     setState(prev => ({
@@ -2107,20 +2109,24 @@ export const App: React.FC = () => {
                 </div>
               )}
               <div className="flex-1 overflow-hidden relative" id="main-content-area">
-                {activeTab.viewMode === 'folders-overview' ? (
+                <div style={{ display: activeTab.viewMode === 'folders-overview' ? 'contents' : 'none' }}>
                   <FoldersOverview
                     roots={state.roots}
                     files={state.files}
                     resourceRoot={state.settings.paths.resourceRoot}
                     cachePath={state.settings.paths.cacheRoot}
-                    onFolderClick={(folderId) => enterFolder(folderId)}
+                    onFolderClick={enterFolder}
                     thumbnailSize={state.thumbnailSize}
                     t={t}
                     isLoadingImages={state.isScanning}
                     layoutMode={folderLayoutMode}
                     onLayoutModeChange={handleFolderLayoutModeChange}
+                    isVisible={activeTab.viewMode === 'folders-overview'}
+                    scrollTop={activeTab.viewMode === 'folders-overview' ? activeTab.scrollTop : undefined}
+                    onScrollTopChange={handleFolderScrollTopChange}
                   />
-                ) : activeTab.viewMode === 'topics-overview' ? (
+                </div>
+                {activeTab.viewMode === 'topics-overview' ? (
                   <TopicModule
                     topics={state.topics}
                     files={state.files}

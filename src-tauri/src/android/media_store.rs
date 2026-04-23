@@ -15,6 +15,8 @@ pub struct AndroidImageInfo {
     pub date_added: i64,
     pub date_modified: i64,
     pub mime_type: String,
+    #[serde(default)]
+    pub thumbnail_path: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -27,6 +29,8 @@ pub struct AndroidFolderInfo {
     pub cover_image_id: Option<i64>,
     pub cover_image_width: Option<i32>,
     pub cover_image_height: Option<i32>,
+    #[serde(default)]
+    pub cover_thumbnail_path: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -68,6 +72,7 @@ pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'
                 date_added: img.get("date_added").and_then(|v| v.as_i64()).unwrap_or(0),
                 date_modified: img.get("date_modified").and_then(|v| v.as_i64()).unwrap_or(0),
                 mime_type: img.get("mime_type").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                thumbnail_path: img.get("thumbnail_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
             });
         }
     }
@@ -84,6 +89,7 @@ pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'
                 cover_image_id: folder.get("cover_image_id").and_then(|v| v.as_i64()),
                 cover_image_width: folder.get("cover_image_width").and_then(|v| v.as_i64()).map(|v| v as i32),
                 cover_image_height: folder.get("cover_image_height").and_then(|v| v.as_i64()).map(|v| v as i32),
+                cover_thumbnail_path: folder.get("cover_thumbnail_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
             });
         }
     }
@@ -216,6 +222,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
             date_added,
             date_modified,
             mime_type,
+            thumbnail_path: None,
         });
 
         if col_bucket_id >= 0 {
@@ -282,6 +289,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
             cover_image_id: data.cover_image_id,
             cover_image_width: data.cover_image_width,
             cover_image_height: data.cover_image_height,
+            cover_thumbnail_path: None,
         })
         .collect();
 
@@ -540,6 +548,7 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
             date_added,
             date_modified,
             mime_type,
+            thumbnail_path: None,
         });
         
         let has_next = env.call_method(&cursor, "moveToNext", "()Z", &[])
@@ -554,6 +563,74 @@ fn parse_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidImageInf
     
     let _ = env.call_method(&cursor, "close", "()V", &[]);
     
+    Ok(results)
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct BatchThumbnailItem {
+    pub id: i64,
+    pub thumbnail_path: Option<String>,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn batch_get_system_thumbnails<'a>(
+    env: &mut JNIEnv<'a>,
+    activity: &JObject<'a>,
+    image_ids: &[i64],
+) -> Result<Vec<BatchThumbnailItem>, String> {
+    let ids_str = image_ids.iter()
+        .map(|id| id.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let java_string = env.new_string(&ids_str)
+        .map_err(|e| format!("Failed to create Java string: {:?}", e))?;
+
+    let json_result = env.call_method(
+        activity,
+        "batchGetThumbnailPaths",
+        "(Ljava/lang/String;)Ljava/lang/String;",
+        &[JValue::Object(&java_string)],
+    ).map_err(|e| format!("Failed to call batchGetThumbnailPaths: {:?}", e))?;
+
+    let jstr: JString = json_result.l()
+        .map_err(|e| format!("Failed to get string result: {:?}", e))?
+        .into();
+
+    let json: String = env.get_string(&jstr)
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+
+    let raw_array: Vec<serde_json::Value> = serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to parse batch thumbnail JSON: {}", e))?;
+
+    let mut results = Vec::new();
+    for item in raw_array {
+        let id = item.get("id")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+
+        let thumbnail_path = item.get("thumbnailPath")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let width = item.get("width")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        let height = item.get("height")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32;
+
+        results.push(BatchThumbnailItem {
+            id,
+            thumbnail_path,
+            width,
+            height,
+        });
+    }
+
     Ok(results)
 }
 
@@ -721,6 +798,7 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             cover_image_id: data.cover_image_id,
             cover_image_width: data.cover_image_width,
             cover_image_height: data.cover_image_height,
+            cover_thumbnail_path: None,
         })
         .collect();
     

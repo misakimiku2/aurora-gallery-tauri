@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Folder3DIcon } from './Folder3DIcon';
 import { useInView } from '../../hooks/useInView';
 import { ImageApi, BrowseItem } from '../../api/types';
+import { createCache } from '../../utils/cache';
 
-const thumbnailCache = new Map<string, string>();
+const thumbnailCache = createCache<string>(200);
 
 export interface FolderThumbnailProps {
   folder: BrowseItem;

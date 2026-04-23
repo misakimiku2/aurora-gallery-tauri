@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import { useInView } from '../../hooks/useInView';
 import { ImageApi } from '../../api/types';
+import { createCache } from '../../utils/cache';
 
-const thumbnailCache = new Map<string, string>();
+const thumbnailCache = createCache<string>(200);
 
 export interface ImageThumbnailProps {
   path: string;
