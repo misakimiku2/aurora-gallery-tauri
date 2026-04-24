@@ -19,6 +19,7 @@ import java.io.File
 import java.io.FileOutputStream
 import org.json.JSONArray
 import org.json.JSONObject
+import androidx.activity.OnBackPressedCallback
 
 class MainActivity : TauriActivity() {
   private val permissionLauncher = registerForActivityResult(
@@ -45,6 +46,23 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     splashScreen.setKeepOnScreenCondition { false }
     requestMediaPermissions()
+    setupBackPressedHandler()
+  }
+
+  private fun setupBackPressedHandler() {
+    onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+      override fun handleOnBackPressed() {
+        val webView = findWebView(window.decorView)
+        if (webView != null) {
+          webView.evaluateJavascript(
+            "window.dispatchEvent(new Event('android-back-press'));",
+            null
+          )
+        } else {
+          finish()
+        }
+      }
+    })
   }
 
   private fun getRequiredPermissions(): Array<String> {

@@ -1645,6 +1645,67 @@ export const App: React.FC = () => {
     isReferenceMode
   });
 
+  const goBackRef = useRef(goBack);
+  goBackRef.current = goBack;
+  const activeTabRef2 = useRef(activeTab);
+  activeTabRef2.current = activeTab;
+  const closeViewerRef = useRef(closeViewer);
+  closeViewerRef.current = closeViewer;
+  const exitActionRef2 = useRef(exitActionRef.current);
+  exitActionRef2.current = exitActionRef.current;
+
+  useEffect(() => {
+    const handleAndroidBackPress = () => {
+      const tab = activeTabRef2.current;
+
+      if (state.activeModal.type !== null) {
+        setState(s => ({ ...s, activeModal: { type: null } }));
+        return;
+      }
+
+      if (state.isSettingsOpen) {
+        setState(s => ({ ...s, isSettingsOpen: false }));
+        return;
+      }
+
+      if (showCloseConfirmation) {
+        setShowCloseConfirmation(false);
+        return;
+      }
+
+      if (tab.viewingFileId) {
+        closeViewerRef.current();
+        return;
+      }
+
+      if (tab.isCompareMode) {
+        setState(prev => ({
+          ...prev,
+          tabs: prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, isCompareMode: false } : t)
+        }));
+        setIsReferenceMode(false);
+        return;
+      }
+
+      if (tab.history.currentIndex > 0) {
+        goBackRef.current();
+        return;
+      }
+
+      const exitAction = exitActionRef2.current;
+      if (exitAction === 'minimize') {
+        hideWindow();
+      } else if (exitAction === 'exit') {
+        exitApp();
+      } else {
+        setShowCloseConfirmation(true);
+      }
+    };
+
+    window.addEventListener('android-back-press', handleAndroidBackPress);
+    return () => window.removeEventListener('android-back-press', handleAndroidBackPress);
+  }, [state.activeModal.type, state.isSettingsOpen, showCloseConfirmation, setState, setIsReferenceMode]);
+
   const handleCloseAllTabs = () => { /* ... */ };
   const handleCloseOtherTabs = (id: string) => { /* ... */ };
 
@@ -2117,6 +2178,7 @@ export const App: React.FC = () => {
                     cachePath={state.settings.paths.cacheRoot}
                     onFolderClick={enterFolder}
                     thumbnailSize={state.thumbnailSize}
+                    onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
                     t={t}
                     isLoadingImages={state.isScanning}
                     layoutMode={folderLayoutMode}

@@ -15,6 +15,7 @@ body {
   background-color: #ffffff;
   color: #1e293b;
   user-select: none;
+  touch-action: manipulation;
 }
 
 #root {

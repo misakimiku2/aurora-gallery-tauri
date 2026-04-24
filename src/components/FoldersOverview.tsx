@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { FileNode, LayoutMode } from '../types';
 import { useInView } from '../hooks/useInView';
+import { usePinchZoom } from '../hooks/usePinchZoom';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem } from './useLayoutHook';
@@ -13,6 +14,7 @@ interface FoldersOverviewProps {
   cachePath?: string;
   onFolderClick: (folderId: string) => void;
   thumbnailSize: number;
+  onThumbnailSizeChange?: (size: number) => void;
   t: (key: string) => string;
   isLoadingImages?: boolean;
   layoutMode?: LayoutMode;
@@ -218,6 +220,7 @@ const FoldersOverview = React.memo(({
   cachePath,
   onFolderClick,
   thumbnailSize,
+  onThumbnailSizeChange,
   t,
   isLoadingImages,
   layoutMode = 'grid',
@@ -238,6 +241,21 @@ const FoldersOverview = React.memo(({
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+
+  const pinchStartSizeRef = useRef(thumbnailSize);
+
+  usePinchZoom(containerRef, {
+    onPinchStart: useCallback(() => {
+      pinchStartSizeRef.current = thumbnailSize;
+    }, [thumbnailSize]),
+    onPinchZoom: useCallback((totalScale: number) => {
+      if (!onThumbnailSizeChange) return;
+      const maxLimit = 480;
+      const minLimit = 100;
+      const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
+      onThumbnailSizeChange(newSize);
+    }, [onThumbnailSizeChange]),
+  });
 
   const folderNodes = useMemo(() => {
     return roots

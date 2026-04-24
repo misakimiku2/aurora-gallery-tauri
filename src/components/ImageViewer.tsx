@@ -1,9 +1,10 @@
-﻿import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
 import { ColorPickerPopover } from './ColorPickerPopover';
+import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
@@ -377,9 +378,34 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [scopeMenuPos, setScopeMenuPos] = useState({ top: 0, left: 0 });
 
   const [isWheeling, setIsWheeling] = useState(false);
+  const [swipeState, setSwipeState] = useState<{
+    direction: -1 | 1;
+    outgoingUrl: string;
+    incomingUrl: string;
+    offset: number;
+    animating: boolean;
+  } | null>(null);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const swipeStateRef = useRef(swipeState);
+  const swipeOutImgRef = useRef<HTMLImageElement | null>(null);
+  const swipeInImgRef = useRef<HTMLImageElement | null>(null);
   const wheelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const lastFileIdRef = useRef(file.id);
+
+  const onNextRef = useRef(onNext);
+  const onPrevRef = useRef(onPrev);
+  const sortedFileIdsRef = useRef(sortedFileIds);
+  const filesRef = useRef(files);
+  const fileIdRef = useRef(file.id);
+
+  useEffect(() => { onNextRef.current = onNext; }, [onNext]);
+  useEffect(() => { onPrevRef.current = onPrev; }, [onPrev]);
+  useEffect(() => { sortedFileIdsRef.current = sortedFileIds; }, [sortedFileIds]);
+  useEffect(() => { filesRef.current = files; }, [files]);
+  useEffect(() => { fileIdRef.current = file.id; }, [file.id]);
+  useEffect(() => { swipeStateRef.current = swipeState; }, [swipeState]);
 
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -454,6 +480,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { slideshowActiveRef.current = slideshowActive; }, [slideshowActive]);
   useEffect(() => { slideshowTransitionRef.current = slideshowConfig.transition; }, [slideshowConfig.transition]);
   useEffect(() => { displayUrlRef.current = displayUrl; }, [displayUrl]);
+
+  const swipeAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (swipeState?.animating) {
+      swipeAnimTimerRef.current = setTimeout(() => {
+        setSwipeState(null);
+      }, 280);
+    }
+    return () => {
+      if (swipeAnimTimerRef.current) clearTimeout(swipeAnimTimerRef.current);
+    };
+  }, [swipeState?.animating]);
 
   // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
@@ -816,6 +855,364 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   }, [slideshowActive]);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container || slideshowActive) return;
+
+    let initialDistance = 0;
+    let isPinching = false;
+    let pinchStartScale = 1;
+    let pinchStartPos = { x: 0, y: 0 };
+
+    const getTouchDistance = (t1: Touch, t2: Touch): number => {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+  }, [slideshowActive]);
+
+  const getAdjacentImageUrl = (direction: -1 | 1): string | null => {
+    const currentSortedIds = sortedFileIdsRef.current;
+    const currentFiles = filesRef.current;
+    const currentFileId = fileIdRef.current;
+
+    if (!currentSortedIds || currentSortedIds.length === 0) return null;
+
+    const currentIdx = currentSortedIds.indexOf(currentFileId);
+    if (currentIdx === -1) return null;
+
+    const nextIdx = direction < 0
+      ? (currentIdx + 1) % currentSortedIds.length
+      : (currentIdx - 1 + currentSortedIds.length) % currentSortedIds.length;
+    const adjacentFile = currentFiles[currentSortedIds[nextIdx]];
+    if (!adjacentFile?.path) return null;
+
+    const cachedUrl = getBlobCacheSync(adjacentFile.path);
+    return cachedUrl || convertFileSrc(adjacentFile.path);
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || slideshowActive) return;
+
+    let initialDistance = 0;
+    let isPinching = false;
+    let pinchStartScale = 1;
+    let pinchStartPos = { x: 0, y: 0 };
+
+    const getTouchDistance = (t1: Touch, t2: Touch): number => {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        const dist = getTouchDistance(e.touches[0], e.touches[1]);
+        if (dist > 10) {
+          e.preventDefault();
+          isPinching = true;
+          initialDistance = dist;
+          pinchStartScale = scaleRef.current;
+          pinchStartPos = { ...positionRef.current };
+          if (positionAnimRef.current) {
+            cancelAnimationFrame(positionAnimRef.current);
+            positionAnimRef.current = null;
+          }
+        }
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (!isPinching || e.touches.length !== 2) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (!imgRef.current || !containerRef.current) return;
+
+      const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
+      if (currentDistance < 10) return;
+
+      const totalScale = currentDistance / initialDistance;
+
+      const rect = container.getBoundingClientRect();
+      const { naturalWidth, naturalHeight } = imgRef.current;
+      if (!naturalWidth || !naturalHeight) return;
+
+      const containerW = rect.width;
+      const containerH = rect.height;
+      const fitScale = Math.min(containerW / naturalWidth, containerH / naturalHeight);
+
+      const startLogicalW = naturalWidth * fitScale * pinchStartScale;
+      const startLogicalH = naturalHeight * fitScale * pinchStartScale;
+      const centerX = containerW / 2;
+      const centerY = containerH / 2;
+
+      const startImgCenterX = centerX + pinchStartPos.x;
+      const startImgCenterY = centerY + pinchStartPos.y;
+
+      const startImgLeft = startImgCenterX - startLogicalW / 2;
+      const startImgTop = startImgCenterY - startLogicalH / 2;
+      const startImgRight = startImgCenterX + startLogicalW / 2;
+      const startImgBottom = startImgCenterY + startLogicalH / 2;
+
+      const pinchCenterX = ((e.touches[0].clientX + e.touches[1].clientX) / 2) - rect.left;
+      const pinchCenterY = ((e.touches[0].clientY + e.touches[1].clientY) / 2) - rect.top;
+      const anchorX = Math.min(Math.max(pinchCenterX, startImgLeft), startImgRight);
+      const anchorY = Math.min(Math.max(pinchCenterY, startImgTop), startImgBottom);
+
+      let newScale = pinchStartScale * totalScale;
+      newScale = Math.max(0.01, Math.min(newScale, 15));
+
+      const scaleFactor = newScale / pinchStartScale;
+
+      const vecX = anchorX - startImgCenterX;
+      const vecY = anchorY - startImgCenterY;
+
+      const targetX = pinchStartPos.x + vecX * (1 - scaleFactor);
+      const targetY = pinchStartPos.y + vecY * (1 - scaleFactor);
+
+      setIsWheeling(true);
+      if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
+      wheelTimeoutRef.current = setTimeout(() => setIsWheeling(false), 350);
+
+      setScale(newScale);
+      setPosition({ x: targetX, y: targetY });
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (isPinching && e.touches.length < 2) {
+        isPinching = false;
+        initialDistance = 0;
+      }
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: false });
+    container.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [slideshowActive]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || slideshowActive) return;
+
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchStartTime = 0;
+    let isSingleTouchDragging = false;
+    let isSwipingImage = false;
+    let hasMoved = false;
+    let lastTouchX = 0;
+    let lastTouchY = 0;
+    let lastTapTime = 0;
+    let lastTapX = 0;
+    let lastTapY = 0;
+    let isDoubleTap = false;
+
+    const SWIPE_THRESHOLD = 30;
+    const SWIPE_VELOCITY = 0.2;
+    const MOVE_THRESHOLD = 8;
+    const DOUBLE_TAP_DELAY = 300;
+    const DOUBLE_TAP_DISTANCE = 30;
+
+    let zoomMode: 'fit' | 'original' | 'fill' = 'fit';
+
+    const isNotFitMode = () => Math.abs(scaleRef.current - 1) > 0.02;
+
+    const handleDoubleTap = (clientX: number, clientY: number) => {
+      if (!imgRef.current || !containerRef.current) return;
+      const { naturalWidth, naturalHeight } = imgRef.current;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const containerWidth = containerRect.width;
+      const containerHeight = containerRect.height;
+      if (!naturalWidth || !naturalHeight) return;
+
+      const scaleX = containerWidth / naturalWidth;
+      const scaleY = containerHeight / naturalHeight;
+      const fitScale = Math.min(scaleX, scaleY);
+      const originalScale = 1 / fitScale;
+      const fillScale = 1 / Math.max(scaleX, scaleY);
+
+      const current = scaleRef.current;
+      const isFit = Math.abs(current - 1) < 0.05;
+      const isOriginal = Math.abs(current - originalScale) < 0.05;
+      const isFill = Math.abs(current - fillScale) < 0.05;
+
+      if (isFit) zoomMode = 'fit';
+      else if (isOriginal) zoomMode = 'original';
+      else if (isFill) zoomMode = 'fill';
+
+      let nextMode: 'fit' | 'original' | 'fill';
+      if (zoomMode === 'fit') nextMode = 'original';
+      else if (zoomMode === 'original') nextMode = 'fill';
+      else nextMode = 'fit';
+      zoomMode = nextMode;
+
+      let targetScale: number;
+      if (nextMode === 'fit') targetScale = 1;
+      else if (nextMode === 'original') targetScale = originalScale;
+      else targetScale = fillScale;
+
+      const centerX = containerWidth / 2;
+      const centerY = containerHeight / 2;
+      const dx = clientX - (containerRect.left + centerX);
+      const dy = clientY - (containerRect.top + centerY);
+
+      if (nextMode === 'fit') {
+        animateTransformTo(targetScale, 0, 0, 300);
+      } else {
+        const targetX = dx * (1 - targetScale);
+        const targetY = dy * (1 - targetScale);
+        animateTransformTo(targetScale, targetX, targetY, 300);
+      }
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const touch = e.touches[0];
+
+      const now = Date.now();
+      const tapDx = touch.clientX - lastTapX;
+      const tapDy = touch.clientY - lastTapY;
+      const tapDist = Math.sqrt(tapDx * tapDx + tapDy * tapDy);
+
+      if (now - lastTapTime < DOUBLE_TAP_DELAY && tapDist < DOUBLE_TAP_DISTANCE) {
+        e.preventDefault();
+        isDoubleTap = true;
+        handleDoubleTap(touch.clientX, touch.clientY);
+        lastTapTime = 0;
+        return;
+      }
+
+      lastTapTime = now;
+      lastTapX = touch.clientX;
+      lastTapY = touch.clientY;
+      isDoubleTap = false;
+
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      lastTouchX = touch.clientX;
+      lastTouchY = touch.clientY;
+      touchStartTime = now;
+      hasMoved = false;
+      isSingleTouchDragging = false;
+      isSwipingImage = false;
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      if (isDoubleTap) return;
+      const touch = e.touches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      const totalDist = Math.sqrt(dx * dx + dy * dy);
+
+      if (!hasMoved && totalDist > MOVE_THRESHOLD) {
+        hasMoved = true;
+        if (isNotFitMode()) {
+          isSingleTouchDragging = true;
+          if (positionAnimRef.current) {
+            cancelAnimationFrame(positionAnimRef.current);
+            positionAnimRef.current = null;
+          }
+          setIsDragging(true);
+        } else {
+          isSwipingImage = true;
+          setIsSwiping(true);
+        }
+      }
+
+      if (hasMoved && isSingleTouchDragging) {
+        e.preventDefault();
+        const moveX = touch.clientX - lastTouchX;
+        const moveY = touch.clientY - lastTouchY;
+        setPosition(prev => ({ x: prev.x + moveX, y: prev.y + moveY }));
+      }
+
+      if (hasMoved && isSwipingImage) {
+        e.preventDefault();
+        const direction = dx < 0 ? -1 : 1;
+        const incomingUrl = getAdjacentImageUrl(direction);
+        if (incomingUrl) {
+          setSwipeState({
+            direction,
+            outgoingUrl: displayUrlRef.current,
+            incomingUrl,
+            offset: dx,
+            animating: false,
+          });
+        } else {
+          setSwipeOffset(dx);
+        }
+      }
+
+      lastTouchX = touch.clientX;
+      lastTouchY = touch.clientY;
+    };
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length > 0) return;
+
+      if (isDoubleTap) {
+        isDoubleTap = false;
+        return;
+      }
+
+      if (isSingleTouchDragging) {
+        setIsDragging(false);
+        isSingleTouchDragging = false;
+        return;
+      }
+
+      if (isSwipingImage) {
+        const dx = lastTouchX - touchStartX;
+        const elapsed = Date.now() - touchStartTime;
+        const velocity = elapsed > 0 ? Math.abs(dx) / elapsed : 0;
+
+        if (swipeStateRef.current && (Math.abs(dx) > SWIPE_THRESHOLD || velocity > SWIPE_VELOCITY)) {
+          const direction = swipeStateRef.current.direction;
+
+          setSwipeState(prev => {
+            return prev ? { ...prev, animating: true } : null;
+          });
+
+          if (direction < 0) {
+            onNextRef.current();
+          } else {
+            onPrevRef.current();
+          }
+        } else {
+          setSwipeState(null);
+          setSwipeOffset(0);
+        }
+
+        isSwipingImage = false;
+        return;
+      }
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [slideshowActive]);
+
+  useEffect(() => {
     let intervalId: ReturnType<typeof setTimeout>;
     if (slideshowActive) {
       intervalId = setInterval(() => {
@@ -877,8 +1274,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         return;
       }
 
-      if (e.key === 'ArrowRight') handleNext();
-      if (e.key === 'ArrowLeft') handlePrev();
+      if (e.key === 'ArrowRight') onNextRef.current();
+      if (e.key === 'ArrowLeft') onPrevRef.current();
       if (e.key === 'Escape') {
         if (showSearch) setShowSearch(false);
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
@@ -1353,6 +1750,60 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             />
           )}
 
+          {/* 滑动翻页过渡：新图片滑入 */}
+          {!slideshowActive && swipeState && (() => {
+            const cw = containerRef.current?.getBoundingClientRect().width || window.innerWidth;
+            const inOffset = swipeState.animating ? 0 : swipeState.offset - swipeState.direction * cw;
+            return (
+              <img
+                ref={swipeInImgRef}
+                key={`swipe-in-${swipeState.incomingUrl}`}
+                src={swipeState.incomingUrl}
+                alt=""
+                className="max-w-none absolute inset-0 m-auto"
+                loading="eager"
+                decoding="sync"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  pointerEvents: 'none',
+                  zIndex: 1,
+                  transform: `translate(${inOffset}px, 0)`,
+                  transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
+                }}
+                draggable={false}
+              />
+            );
+          })()}
+
+          {/* 滑动翻页过渡：旧图片滑出 */}
+          {!slideshowActive && swipeState && (() => {
+            const cw = containerRef.current?.getBoundingClientRect().width || window.innerWidth;
+            const outOffset = swipeState.animating ? swipeState.direction * cw : swipeState.offset;
+            return (
+              <img
+                ref={swipeOutImgRef}
+                key={`swipe-out-${swipeState.outgoingUrl}`}
+                src={swipeState.outgoingUrl}
+                alt=""
+                className="max-w-none absolute inset-0 m-auto"
+                loading="eager"
+                decoding="sync"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  objectFit: 'contain',
+                  pointerEvents: 'none',
+                  zIndex: 3,
+                  transform: `translate(${outOffset}px, 0)`,
+                  transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
+                }}
+                draggable={false}
+              />
+            );
+          })()}
+
           {/* 当前图片 */}
           <img
             ref={imgRef}
@@ -1372,14 +1823,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               width: '100%',
               height: '100%',
               objectFit: 'contain',
-              // 普通模式或幻灯片无过渡时的 transform
               ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
-                transform: slideshowActive && slideshowConfig.enableZoom ? undefined : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                transition: (isDragging || isWheeling) ? 'none' : 'transform 0.1s linear',
+                transform: slideshowActive && slideshowConfig.enableZoom
+                  ? undefined
+                  : `translate(${position.x + swipeOffset}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                transition: (isDragging || isWheeling || isSwiping) ? 'none' : 'transform 0.1s linear',
               } : {}),
               pointerEvents: slideshowActive ? 'none' : 'auto',
               transformOrigin: 'center center',
-              zIndex: 2,
+              zIndex: swipeState ? 0 : 2,
+              opacity: swipeState ? 0 : 1,
               ...filterStyle
             }}
             draggable={false}

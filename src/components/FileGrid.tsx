@@ -15,6 +15,7 @@ import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { getThumbnailPrefetcher } from '../utils/thumbnailPrefetch';
 import { throttle } from '../utils/debounce';
 import { useInView } from '../hooks/useInView';
+import { usePinchZoom } from '../hooks/usePinchZoom';
 import { Folder3DIcon } from './Folder3DIcon';
 import { ImageThumbnail } from './ImageThumbnail';
 import { FolderThumbnail } from './FolderThumbnail';
@@ -844,6 +845,21 @@ export const FileGrid: React.FC<FileGridProps> = ({
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
   const isAndroid = effectiveResourceRoot === 'android_media_store';
+
+  const pinchStartSizeRef = useRef(thumbnailSize);
+
+  usePinchZoom(containerRef, {
+    onPinchStart: useCallback(() => {
+      pinchStartSizeRef.current = thumbnailSize;
+    }, [thumbnailSize]),
+    onPinchZoom: useCallback((totalScale: number) => {
+      if (!onThumbnailSizeChange) return;
+      const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
+      const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 100;
+      const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
+      onThumbnailSizeChange(newSize);
+    }, [onThumbnailSizeChange, activeTab.viewMode]),
+  });
 
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);

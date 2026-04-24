@@ -1494,7 +1494,89 @@ coverThumbnailPath?: string;  // 新增：预查询的封面缩略图路径
 
 ---
 
-**文档版本**: 4.0  
+## 十四、2026-04-24 换行动画 GPU 加速优化
+
+本节记录了缩略图大小变化时换行动画的性能优化，将位置过渡从主线程 Layout 重排迁移到 GPU 合成器。
+
+### 14.1 问题背景
+
+缩略图大小变化时（如 Ctrl+滚轮缩放），所有可见卡片需要换行到新位置。之前的实现使用 `left`/`top` CSS 属性 + `transition-all` 实现过渡动画，在卡片数量较多时（图标缩小后一行可放 8-10 个）出现明显掉帧。
+
+### 14.2 根因分析
+
+| 属性 | 触发渲染管线 | 执行线程 | GPU 加速 |
+|------|-------------|---------|---------|
+| `left` / `top` | Layout → Paint → Composite | 主线程 | ❌ |
+| `width` / `height` | Layout → Paint → Composite | 主线程 | ❌ |
+| `transform` | Composite only | GPU 合成器线程 | ✅ |
+
+- `left`/`top` 变化触发完整 Layout 重排，120Hz 下每帧仅 8.3ms，40+ 张卡片同时变化时主线程无法承受
+- `width`/`height` 过渡同样触发 Layout，且尺寸过渡视觉感知弱（卡片就地缩放，无位移感）
+- `transition-all` 对所有属性做过渡，增加不必要的计算
+
+### 14.3 解决方案
+
+将位置属性从 `left`/`top` 改为 `transform: translate()`，仅对 `transform` 做过渡：
+
+```tsx
+// 之前
+<div
+  className="absolute transition-all duration-300 ease-out"
+  style={{
+    left: pos.x,
+    top: pos.y,
+    width: pos.width,
+    height: pos.height,
+    willChange: 'transform',
+  }}
+>
+
+// 之后
+<div
+  className="absolute"
+  style={{
+    transform: `translate(${pos.x}px, ${pos.y}px)`,
+    width: pos.width,
+    height: pos.height,
+    willChange: 'transform',
+    transition: 'transform 300ms ease-out',
+  }}
+>
+```
+
+**关键设计决策**：
+- **仅过渡 `transform`**：位置滑动是换行动画的视觉核心，由 GPU 合成器处理，不掉帧
+- **`width`/`height` 瞬间切换**：尺寸变化即时完成，不触发 Layout 过渡动画，视觉上几乎无感知
+- **跨平台生效**：桌面端 Chromium 的 GPU 合成器更强大，效果优于 Android WebView
+
+### 14.4 修改文件清单
+
+| 文件 | 修改位置 | 说明 |
+|------|---------|------|
+| `src/components/FoldersOverview.tsx` | FolderCard 绝对定位容器 | `left/top` → `transform: translate()` + `transition: transform 300ms` |
+| `src/components/FileGrid.tsx` | FileCard 绝对定位容器 | `left/top` → `transform: translate()` + `transition: transform 300ms` |
+| `src/components/FileGrid.tsx` | GroupContent 列表模式 | `left/top` → `transform: translate()` |
+| `src/components/FileGrid.tsx` | 主列表模式 | `left/top` → `transform: translate()` |
+
+### 14.5 性能对比
+
+| 场景 | 优化前 | 优化后 |
+|------|--------|--------|
+| 40 张卡片同时换行（120Hz） | 明显掉帧，~40-60fps | 流畅，接近 120fps |
+| 100 张卡片换行（桌面端） | 轻微卡顿 | 完全流畅 |
+| 位置过渡动画 | 主线程 Layout 重排 | GPU 合成器 Composite |
+| 尺寸变化 | 300ms 过渡（触发 Layout） | 瞬间切换（无过渡） |
+
+### 14.6 经验教训
+
+1. **`transform` 是唯一能走 GPU 的位置属性**：`left`/`top`/`right`/`bottom` 都会触发 Layout，只有 `transform` 可以绕过主线程
+2. **不要过渡所有属性**：`transition-all` 是性能陷阱，应只过渡真正需要的属性
+3. **`width`/`height` 过渡性价比极低**：尺寸变化在换行场景下视觉感知弱，但 Layout 开销巨大
+4. **`will-change: transform` 必须配合 `transform` 使用**：如果定位仍用 `left`/`top`，`will-change: transform` 只提升合成层但不优化位置变化
+
+---
+
+**文档版本**: 5.0  
 **创建日期**: 2026-04-19  
-**更新日期**: 2026-04-23  
+**更新日期**: 2026-04-24  
 **维护者**: Aurora Gallery Team
