@@ -51,7 +51,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 #[cfg(target_os = "android")]
-use jni::objects::{JObject, JString};
+use jni::objects::{JObject, JString, JValue};
 
 #[cfg(not(target_os = "android"))]
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
@@ -801,6 +801,27 @@ async fn request_android_permissions() -> Result<String, String> {
     Ok("requested".to_string())
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn set_android_status_bar(is_dark: bool) -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    env.call_method(
+        &activity_obj,
+        "setStatusBarStyle",
+        "(Z)V",
+        &[JValue::Bool(if is_dark { 1 } else { 0 })],
+    ).map_err(|e| format!("Failed to call setStatusBarStyle: {:?}", e))?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -1000,6 +1021,7 @@ pub fn run() {
         android_get_native_preview,
         check_android_permissions,
         request_android_permissions,
+        set_android_status_bar,
     ]);
     
     builder

@@ -10,6 +10,8 @@ import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
+import android.view.WindowInsetsController
+import android.graphics.Color
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -698,5 +700,34 @@ class MainActivity : TauriActivity() {
       }
     }
     return null
+  }
+
+  fun setStatusBarStyle(isDark: Boolean) {
+    runOnUiThread {
+      val window = this.window
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val controller = window.insetsController
+        if (controller != null) {
+          if (isDark) {
+            controller.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+          } else {
+            controller.setSystemBarsAppearance(
+              WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+              WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+            )
+          }
+        }
+      } else {
+        val decorView = window.decorView
+        var systemUiVisibility = decorView.systemUiVisibility
+        systemUiVisibility = if (isDark) {
+          systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+        } else {
+          systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+        decorView.systemUiVisibility = systemUiVisibility
+      }
+      window.statusBarColor = if (isDark) Color.parseColor("#171717") else Color.parseColor("#E5E5E5")
+    }
   }
 }
