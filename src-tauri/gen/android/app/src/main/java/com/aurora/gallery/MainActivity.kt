@@ -15,13 +15,46 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.content.ComponentCallbacks2
+import android.content.res.Configuration
+import android.util.DisplayMetrics
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.Semaphore
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONArray
 import org.json.JSONObject
 import androidx.activity.OnBackPressedCallback
 
 class MainActivity : TauriActivity() {
+  private val previewSemaphore = Semaphore(1)
+  private val memoryPressureLow = AtomicBoolean(false)
+  private val memoryPressureCritical = AtomicBoolean(false)
+
+  private val componentCallbacks = object : ComponentCallbacks2 {
+    override fun onTrimMemory(level: Int) {
+      when {
+        level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+          memoryPressureLow.set(true)
+        }
+        level >= ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
+          memoryPressureCritical.set(true)
+          memoryPressureLow.set(true)
+        }
+        level >= ComponentCallbacks2.TRIM_MEMORY_MODERATE -> {
+          memoryPressureCritical.set(true)
+          memoryPressureLow.set(true)
+        }
+      }
+    }
+    override fun onLowMemory() {
+      memoryPressureCritical.set(true)
+      memoryPressureLow.set(true)
+    }
+    override fun onConfigurationChanged(newConfig: Configuration) {}
+  }
+
   private val permissionLauncher = registerForActivityResult(
     ActivityResultContracts.RequestMultiplePermissions()
   ) { permissions ->
@@ -47,6 +80,7 @@ class MainActivity : TauriActivity() {
     splashScreen.setKeepOnScreenCondition { false }
     requestMediaPermissions()
     setupBackPressedHandler()
+    registerComponentCallbacks(componentCallbacks)
   }
 
   private fun setupBackPressedHandler() {
@@ -345,6 +379,307 @@ class MainActivity : TauriActivity() {
           notifyPermissionResultWithRetry(result, retryCount + 1)
         }, 500)
       }
+    }
+  }
+
+  fun getScreenMaxDimension(): Int {
+    val displayMetrics = resources.displayMetrics
+    val maxScreenDim = maxOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
+    return (maxScreenDim * 1.5).toInt().coerceIn(1080, 2560)
+  }
+
+  fun generateImagePreview(imagePath: String, cacheDir: String, maxDimension: Int): String {
+    val result = JSONObject()
+    try {
+      if (memoryPressureCritical.get()) {
+        result.put("previewPath", imagePath)
+        result.put("originalWidth", 0)
+        result.put("originalHeight", 0)
+        result.put("isDownsampled", false)
+        result.put("isAnimatedWebp", false)
+        result.put("memoryPressure", true)
+        return result.toString()
+      }
+
+      previewSemaphore.acquire()
+      try {
+        return generateImagePreviewInternal(imagePath, cacheDir, maxDimension)
+      } finally {
+        previewSemaphore.release()
+      }
+    } catch (e: Exception) {
+      result.put("error", e.message ?: "unknown")
+      result.put("previewPath", imagePath)
+    }
+    return result.toString()
+  }
+
+  private fun generateImagePreviewInternal(imagePath: String, cacheDir: String, maxDimension: Int): String {
+    val result = JSONObject()
+    val sourceFile = File(imagePath)
+    if (!sourceFile.exists()) {
+      result.put("error", "File not found: $imagePath")
+      return result.toString()
+    }
+
+    val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(imagePath, options)
+    val originalWidth = options.outWidth
+    val originalHeight = options.outHeight
+
+    if (originalWidth <= 0 || originalHeight <= 0) {
+      result.put("previewPath", imagePath)
+      result.put("originalWidth", 0)
+      result.put("originalHeight", 0)
+      result.put("isDownsampled", false)
+      result.put("isAnimatedWebp", false)
+      return result.toString()
+    }
+
+    val isAnimatedWebp = isAnimatedWebp(imagePath)
+    val effectiveMaxDim = if (maxDimension <= 0) getScreenMaxDimension() else maxDimension
+
+    val needsDownsample = originalWidth > effectiveMaxDim || originalHeight > effectiveMaxDim
+
+    if (isAnimatedWebp) {
+      result.put("previewPath", imagePath)
+      result.put("originalWidth", originalWidth)
+      result.put("originalHeight", originalHeight)
+      result.put("isDownsampled", false)
+      result.put("isAnimatedWebp", true)
+      return result.toString()
+    }
+
+    if (!needsDownsample) {
+      result.put("previewPath", imagePath)
+      result.put("originalWidth", originalWidth)
+      result.put("originalHeight", originalHeight)
+      result.put("isDownsampled", false)
+      result.put("isAnimatedWebp", false)
+      return result.toString()
+    }
+
+    val size = sourceFile.length().toString() + "-" + sourceFile.lastModified() + "-" + imagePath.hashCode()
+    val hash = Integer.toHexString(size.hashCode()).take(16)
+    val previewFile = File(cacheDir, "nprev_$hash.jpg")
+
+    if (previewFile.exists()) {
+      result.put("previewPath", previewFile.absolutePath)
+      result.put("originalWidth", originalWidth)
+      result.put("originalHeight", originalHeight)
+      result.put("isDownsampled", needsDownsample)
+      result.put("isAnimatedWebp", isAnimatedWebp)
+      return result.toString()
+    }
+
+    val decodeOptions = BitmapFactory.Options()
+    if (needsDownsample) {
+      var inSampleSize = 1
+      val maxDim = maxOf(originalWidth, originalHeight)
+      while (maxDim / (inSampleSize * 2) >= effectiveMaxDim) {
+        inSampleSize *= 2
+      }
+      decodeOptions.inSampleSize = inSampleSize
+    }
+
+    val bitmap = BitmapFactory.decodeFile(imagePath, decodeOptions)
+    if (bitmap == null) {
+      result.put("previewPath", imagePath)
+      result.put("originalWidth", originalWidth)
+      result.put("originalHeight", originalHeight)
+      result.put("isDownsampled", false)
+      result.put("isAnimatedWebp", isAnimatedWebp)
+      return result.toString()
+    }
+
+    var finalBitmap = bitmap
+    if (needsDownsample && (bitmap.width > effectiveMaxDim || bitmap.height > effectiveMaxDim)) {
+      val ratio = minOf(
+        effectiveMaxDim.toFloat() / bitmap.width,
+        effectiveMaxDim.toFloat() / bitmap.height
+      )
+      val newWidth = (bitmap.width * ratio).toInt()
+      val newHeight = (bitmap.height * ratio).toInt()
+      finalBitmap = Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+      if (finalBitmap !== bitmap) {
+        bitmap.recycle()
+      }
+    }
+
+    try {
+      val fos = FileOutputStream(previewFile)
+      finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+      fos.flush()
+      fos.close()
+    } catch (e: Exception) {
+      result.put("previewPath", imagePath)
+      result.put("originalWidth", originalWidth)
+      result.put("originalHeight", originalHeight)
+      result.put("isDownsampled", false)
+      result.put("isAnimatedWebp", isAnimatedWebp)
+      finalBitmap.recycle()
+      return result.toString()
+    }
+    finalBitmap.recycle()
+
+    memoryPressureLow.set(false)
+    memoryPressureCritical.set(false)
+
+    result.put("previewPath", previewFile.absolutePath)
+    result.put("originalWidth", originalWidth)
+    result.put("originalHeight", originalHeight)
+    result.put("isDownsampled", needsDownsample)
+    result.put("isAnimatedWebp", isAnimatedWebp)
+    return result.toString()
+  }
+
+  private fun isAnimatedWebp(path: String): Boolean {
+    try {
+      val file = File(path)
+      if (!file.exists() || file.length() < 21) return false
+      if (!path.lowercase().endsWith(".webp") && !path.lowercase().endsWith(".gif")) return false
+      if (path.lowercase().endsWith(".gif")) return true
+
+      val bytes = file.inputStream().use { it.readNBytes(21) }
+      if (bytes.size < 21) return false
+      if (!bytes.sliceArray(0..3).contentEquals(byteArrayOf(0x52, 0x49, 0x46, 0x46))) return false
+      if (!bytes.sliceArray(8..11).contentEquals(byteArrayOf(0x57, 0x45, 0x42, 0x50))) return false
+      val chunkType = bytes.sliceArray(12..15)
+      if (chunkType.contentEquals(byteArrayOf(0x56, 0x50, 0x38, 0x20))) return false
+      if (chunkType.contentEquals(byteArrayOf(0x56, 0x50, 0x38, 0x4C))) return false
+      if (chunkType.contentEquals(byteArrayOf(0x56, 0x50, 0x38, 0x58))) {
+        val flags = bytes[20]
+        return (flags.toInt() and 0x02) != 0
+      }
+      return false
+    } catch (_: Exception) {
+      return false
+    }
+  }
+
+  private val thumbnailSemaphore = Semaphore(2)
+
+  fun generateThumbnail(imagePath: String, cacheDir: String): String {
+    val result = JSONObject()
+    try {
+      thumbnailSemaphore.acquire()
+      try {
+        return generateThumbnailInternal(imagePath, cacheDir)
+      } finally {
+        thumbnailSemaphore.release()
+      }
+    } catch (e: Exception) {
+      result.put("error", e.message ?: "unknown")
+    }
+    return result.toString()
+  }
+
+  private fun generateThumbnailInternal(imagePath: String, cacheDir: String): String {
+    val result = JSONObject()
+    try {
+      val sourceFile = File(imagePath)
+      if (!sourceFile.exists()) {
+        result.put("error", "File not found")
+        return result.toString()
+      }
+
+      val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      BitmapFactory.decodeFile(imagePath, options)
+      val originalWidth = options.outWidth
+      val originalHeight = options.outHeight
+
+      if (originalWidth <= 0 || originalHeight <= 0) {
+        result.put("error", "Cannot decode image dimensions")
+        return result.toString()
+      }
+
+      val size = sourceFile.length().toString() + "-" + sourceFile.lastModified() + "-" + imagePath.hashCode()
+      val hash = Integer.toHexString(size.hashCode()).take(16)
+
+      val hasAlpha = options.outMimeType?.contains("png", true) == true ||
+                     options.outMimeType?.contains("webp", true) == true ||
+                     options.outMimeType?.contains("gif", true) == true
+
+      val ext = if (hasAlpha) "webp" else "jpg"
+      val cacheFilename = "${hash}_q85.$ext"
+      val cacheFile = File(cacheDir, cacheFilename)
+
+      if (cacheFile.exists()) {
+        result.put("thumbnailPath", cacheFile.absolutePath)
+        result.put("width", originalWidth)
+        result.put("height", originalHeight)
+        return result.toString()
+      }
+
+      val targetSize = 256
+      var inSampleSize = 1
+      val maxDim = maxOf(originalWidth, originalHeight)
+      while (maxDim / (inSampleSize * 2) >= targetSize * 2) {
+        inSampleSize *= 2
+      }
+
+      val decodeOptions = BitmapFactory.Options().apply {
+        this.inSampleSize = inSampleSize
+      }
+
+      val bitmap = BitmapFactory.decodeFile(imagePath, decodeOptions)
+      if (bitmap == null) {
+        result.put("error", "Failed to decode bitmap")
+        return result.toString()
+      }
+
+      val (dstWidth, dstHeight) = computeThumbnailSize(bitmap.width, bitmap.height, targetSize)
+
+      val finalBitmap = if (bitmap.width != dstWidth || bitmap.height != dstHeight) {
+        val scaled = Bitmap.createScaledBitmap(bitmap, dstWidth, dstHeight, true)
+        if (scaled !== bitmap) bitmap.recycle()
+        scaled
+      } else {
+        bitmap
+      }
+
+      if (!cacheDir.startsWith("/")) {
+        val dir = File(cacheDir)
+        if (!dir.exists()) dir.mkdirs()
+      }
+
+      try {
+        val fos = FileOutputStream(cacheFile)
+        if (hasAlpha) {
+          val hasActualAlpha = finalBitmap.hasAlpha()
+          if (hasActualAlpha) {
+            finalBitmap.compress(Bitmap.CompressFormat.WEBP, 85, fos)
+          } else {
+            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+          }
+        } else {
+          finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+        }
+        fos.flush()
+        fos.close()
+      } catch (e: Exception) {
+        result.put("error", "Failed to write cache: ${e.message}")
+        finalBitmap.recycle()
+        return result.toString()
+      }
+      finalBitmap.recycle()
+
+      result.put("thumbnailPath", cacheFile.absolutePath)
+      result.put("width", originalWidth)
+      result.put("height", originalHeight)
+    } catch (e: Exception) {
+      result.put("error", e.message ?: "unknown")
+    }
+    return result.toString()
+  }
+
+  private fun computeThumbnailSize(width: Int, height: Int, targetSize: Int): Pair<Int, Int> {
+    return if (width < height) {
+      val ratio = height.toFloat() / width.toFloat()
+      Pair(targetSize, (targetSize.toFloat() * ratio).toInt())
+    } else {
+      val ratio = width.toFloat() / height.toFloat()
+      Pair((targetSize.toFloat() * ratio).toInt(), targetSize)
     }
   }
 

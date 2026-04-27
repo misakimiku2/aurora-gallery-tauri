@@ -3,13 +3,33 @@ import { FileType } from '../types';
 import { generateId } from './pathUtils';
 
 let _isAndroidCached: boolean | null = null;
+let _isAndroidSyncCached: boolean | null = null;
+
+export function isAndroidSync(): boolean {
+  if (_isAndroidSyncCached !== null) return _isAndroidSyncCached;
+  if (typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '')) {
+    _isAndroidSyncCached = true;
+    return true;
+  }
+  if (typeof window !== 'undefined' && (window as any).__TAURI__) {
+    const platform = (window as any).__TAURI__?.os?.platform;
+    if (platform === 'android') {
+      _isAndroidSyncCached = true;
+      return true;
+    }
+  }
+  return false;
+}
+
 export async function isAndroidPlatform(): Promise<boolean> {
   if (_isAndroidCached !== null) return _isAndroidCached;
   try {
     const platform = await invoke<string>('get_platform');
     _isAndroidCached = platform === 'android';
+    _isAndroidSyncCached = _isAndroidCached;
   } catch (e) {
     _isAndroidCached = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent || '');
+    _isAndroidSyncCached = _isAndroidCached;
   }
   return _isAndroidCached;
 }

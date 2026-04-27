@@ -1098,6 +1098,7 @@ export const exitApp = async (): Promise<void> => {
  * @returns 主色调数组，如果失败则返回空数组
  */
 export const getDominantColors = async (filePath: string, count: number = 8, thumbnailPath?: string): Promise<DominantColor[]> => {
+  if (isAndroidPlatformCached()) return [];
   try {
     // 特殊处理 AVIF：如果后端尚不支持从原图提取，优先尝试前端降级生成
     if (filePath.toLowerCase().endsWith('.avif') && !thumbnailPath) {
@@ -1121,6 +1122,7 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
  * @returns 是否成功暂停
  */
 export const pauseColorExtraction = async (): Promise<boolean> => {
+  if (isAndroidPlatformCached()) return true;
   try {
     const result = await invoke<boolean>('pause_color_extraction');
     return result;
@@ -1135,6 +1137,7 @@ export const pauseColorExtraction = async (): Promise<boolean> => {
  * @returns 是否成功恢复
  */
 export const resumeColorExtraction = async (): Promise<boolean> => {
+  if (isAndroidPlatformCached()) return true;
   try {
     const result = await invoke<boolean>('resume_color_extraction');
     return result;
@@ -1150,6 +1153,7 @@ export const resumeColorExtraction = async (): Promise<boolean> => {
  * @returns 实际添加的文件数量
  */
 export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => {
+  if (isAndroidPlatformCached()) return 0;
   try {
     const result = await invoke<number>('add_pending_files_to_db', { filePaths });
     return result;

@@ -197,7 +197,16 @@ static THUMBNAIL_SESSION: AtomicU64 = AtomicU64::new(0);
 static THUMBNAIL_ACTIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(target_os = "android")]
+static THUMBNAIL_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "android")]
+static VIEWER_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "android")]
 const MAX_THUMBNAIL_WORKERS: usize = 6;
+
+#[cfg(target_os = "android")]
+const VIEWER_OPEN_MAX_WORKERS: usize = 2;
 
 #[cfg(target_os = "android")]
 fn enqueue_thumbnail_job(app: &tauri::AppHandle, file_path: String, cache_dir: String) {
@@ -215,8 +224,16 @@ fn enqueue_thumbnail_job(app: &tauri::AppHandle, file_path: String, cache_dir: S
 
 #[cfg(target_os = "android")]
 fn spawn_workers_if_needed(app: &tauri::AppHandle) {
+    if THUMBNAIL_PAUSED.load(Ordering::SeqCst) {
+        return;
+    }
+    let max_workers = if VIEWER_OPEN.load(Ordering::SeqCst) {
+        VIEWER_OPEN_MAX_WORKERS
+    } else {
+        MAX_THUMBNAIL_WORKERS
+    };
     let active = THUMBNAIL_ACTIVE_COUNT.load(Ordering::SeqCst);
-    if active >= MAX_THUMBNAIL_WORKERS {
+    if active >= max_workers {
         return;
     }
     let queue_len = {
@@ -226,8 +243,8 @@ fn spawn_workers_if_needed(app: &tauri::AppHandle) {
     if queue_len == 0 {
         return;
     }
-    let to_spawn = MAX_THUMBNAIL_WORKERS.saturating_sub(active).min(queue_len);
-    log::info!("[ThumbnailWorker] Spawning {} workers (active={}, queue={})", to_spawn, active, queue_len);
+    let to_spawn = max_workers.saturating_sub(active).min(queue_len);
+    log::info!("[ThumbnailWorker] Spawning {} workers (active={}, queue={}, viewer_open={}, max={})", to_spawn, active, queue_len, VIEWER_OPEN.load(Ordering::SeqCst), max_workers);
     for _ in 0..to_spawn {
         THUMBNAIL_ACTIVE_COUNT.fetch_add(1, Ordering::SeqCst);
         let app = app.clone();
@@ -242,6 +259,35 @@ fn spawn_workers_if_needed(app: &tauri::AppHandle) {
 #[cfg(target_os = "android")]
 fn thumbnail_worker(app: &tauri::AppHandle) {
     loop {
+        if THUMBNAIL_PAUSED.load(Ordering::SeqCst) {
+            let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+            if let Some(job) = queue.pop_back() {
+                queue.push_front(job);
+            }
+            drop(queue);
+            log::info!("[ThumbnailWorker] Worker exiting due to pause, will respawn on resume");
+            return;
+        }
+
+        let memory_pressure = crate::android::MemoryPressureMonitor::check();
+        match memory_pressure {
+            crate::android::MemoryPressure::Critical => {
+                log::warn!("[ThumbnailWorker] Critical memory pressure, pausing");
+                let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+                if queue.len() > 10 {
+                    let drain_count = queue.len() - 10;
+                    queue.drain(..drain_count);
+                    log::warn!("[ThumbnailWorker] Drained {} jobs from queue due to memory pressure", drain_count);
+                }
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                continue;
+            }
+            crate::android::MemoryPressure::Warning => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            crate::android::MemoryPressure::Normal => {}
+        }
+
         let job = {
             let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
             queue.pop_back()
@@ -251,29 +297,56 @@ fn thumbnail_worker(app: &tauri::AppHandle) {
             Some((file_path, cache_dir, session_id)) => {
                 let current_session = THUMBNAIL_SESSION.load(Ordering::SeqCst);
                 if session_id != current_session {
-                    log::info!("[ThumbnailWorker] Skipping job (session mismatch): job_session={}, current_session={}", session_id, current_session);
                     continue;
                 }
 
-                log::info!("[ThumbnailWorker] Processing: {}", file_path);
-                let result = crate::android::generate_thumbnail(&file_path, std::path::Path::new(&cache_dir));
+                if THUMBNAIL_PAUSED.load(Ordering::SeqCst) {
+                    let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
+                    queue.push_front((file_path, cache_dir, session_id));
+                    log::info!("[ThumbnailWorker] Worker exiting due to pause during job, will respawn on resume");
+                    return;
+                }
+
+                let start = std::time::Instant::now();
+                let result = match call_kotlin_generate_thumbnail(&file_path, &cache_dir) {
+                    Ok(Some(thumb_path)) => {
+                        log::info!("[ThumbnailWorker] Kotlin thumbnail for {} in {:.0}ms", 
+                            file_path.split('/').last().unwrap_or(&file_path), start.elapsed().as_millis());
+                        Ok(crate::android::ThumbnailResult {
+                            path: file_path.clone(),
+                            thumbnail_path: Some(thumb_path),
+                            width: 0,
+                            height: 0,
+                            upgrading: false,
+                        })
+                    }
+                    Ok(None) => {
+                        Ok(crate::android::ThumbnailResult {
+                            path: file_path.clone(),
+                            thumbnail_path: None,
+                            width: 0,
+                            height: 0,
+                            upgrading: false,
+                        })
+                    }
+                    Err(e) => {
+                        log::warn!("[ThumbnailWorker] Kotlin thumbnail failed for {}: {}, falling back to Rust", 
+                            file_path.split('/').last().unwrap_or(&file_path), e);
+                        crate::android::generate_thumbnail(&file_path, std::path::Path::new(&cache_dir))
+                    }
+                };
                 match result {
                     Ok(r) => {
                         if let Some(thumb_path) = r.thumbnail_path {
                             let current_session = THUMBNAIL_SESSION.load(Ordering::SeqCst);
                             if session_id == current_session {
-                                log::info!("[ThumbnailWorker] Emitting upgrade event: {} -> {}", file_path, thumb_path);
                                 if let Err(e) = app.emit("android:thumbnail-upgraded", serde_json::json!({
                                     "filePath": file_path,
                                     "thumbnailPath": thumb_path,
                                 })) {
                                     log::warn!("[ThumbnailWorker] Failed to emit event: {}", e);
                                 }
-                            } else {
-                                log::info!("[ThumbnailWorker] Session changed before emit: job_session={}, current_session={}", session_id, current_session);
                             }
-                        } else {
-                            log::warn!("[ThumbnailWorker] No thumbnail_path in result for: {}", file_path);
                         }
                     }
                     Err(e) => {
@@ -390,6 +463,168 @@ async fn android_thumbnail_navigate() -> Result<(), String> {
     let mut queue = THUMBNAIL_QUEUE.lock().unwrap();
     queue.clear();
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_get_image_preview(
+    file_path: String,
+    cache_root: String,
+) -> Result<crate::android::ImagePreviewResult, String> {
+    let cache_path = std::path::Path::new(&cache_root).to_path_buf();
+    let fp = file_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::android::generate_image_preview(&fp, &cache_path)
+    }).await;
+
+    match result {
+        Ok(Ok(r)) => Ok(r),
+        Ok(Err(e)) => Err(e),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_pause_thumbnail_workers() -> Result<(), String> {
+    THUMBNAIL_PAUSED.store(true, Ordering::SeqCst);
+    VIEWER_OPEN.store(true, Ordering::SeqCst);
+    log::info!("[ThumbnailWorker] Viewer opened, paused thumbnail workers");
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn call_kotlin_generate_thumbnail(file_path: &str, cache_dir: &str) -> Result<Option<String>, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+    let j_path = env.new_string(file_path)
+        .map_err(|e| format!("Failed to create path string: {:?}", e))?;
+    let j_cache = env.new_string(cache_dir)
+        .map_err(|e| format!("Failed to create cache string: {:?}", e))?;
+
+    let json_result = env.call_method(
+        &activity_obj,
+        "generateThumbnail",
+        "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;",
+        &[
+            jni::objects::JValue::Object(&j_path),
+            jni::objects::JValue::Object(&j_cache),
+        ],
+    ).map_err(|e| format!("Failed to call generateThumbnail: {:?}", e))?;
+
+    let jstr: jni::objects::JString = json_result.l()
+        .map_err(|e| format!("Failed to get result: {:?}", e))?
+        .into();
+    let json: String = env.get_string(&jstr)
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+
+    let parsed: serde_json::Value = serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+    if let Some(error) = parsed.get("error").and_then(|v| v.as_str()) {
+        return Err(error.to_string());
+    }
+
+    let thumb_path = parsed.get("thumbnailPath").and_then(|v| v.as_str()).map(|s| s.to_string());
+    Ok(thumb_path)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_resume_thumbnail_workers(app: tauri::AppHandle) -> Result<(), String> {
+    THUMBNAIL_PAUSED.store(false, Ordering::SeqCst);
+    VIEWER_OPEN.store(false, Ordering::SeqCst);
+    log::info!("[ThumbnailWorker] Viewer closed, resumed all workers");
+    spawn_workers_if_needed(&app);
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NativePreviewResult {
+    preview_path: String,
+    original_width: i32,
+    original_height: i32,
+    is_downsampled: bool,
+    is_animated_webp: bool,
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_get_native_preview(
+    file_path: String,
+    cache_root: String,
+    max_dimension: i32,
+) -> Result<NativePreviewResult, String> {
+    let start = std::time::Instant::now();
+    let fp = file_path.clone();
+    let fp_for_log = file_path.clone();
+    let cr = cache_root.clone();
+    let md = max_dimension;
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<NativePreviewResult, String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+        let j_path = env.new_string(&fp)
+            .map_err(|e| format!("Failed to create path string: {:?}", e))?;
+        let j_cache = env.new_string(&cr)
+            .map_err(|e| format!("Failed to create cache string: {:?}", e))?;
+
+        let json_result = env.call_method(
+            &activity_obj,
+            "generateImagePreview",
+            "(Ljava/lang/String;Ljava/lang/String;I)Ljava/lang/String;",
+            &[
+                jni::objects::JValue::Object(&j_path),
+                jni::objects::JValue::Object(&j_cache),
+                jni::objects::JValue::Int(md),
+            ],
+        ).map_err(|e| format!("Failed to call generateImagePreview: {:?}", e))?;
+
+        let jstr: jni::objects::JString = json_result.l()
+            .map_err(|e| format!("Failed to get result: {:?}", e))?
+            .into();
+        let json: String = env.get_string(&jstr)
+            .map_err(|e| format!("Failed to get string: {:?}", e))?
+            .into();
+
+        let parsed: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
+        if let Some(error) = parsed.get("error").and_then(|v| v.as_str()) {
+            return Err(error.to_string());
+        }
+
+        Ok(NativePreviewResult {
+            preview_path: parsed.get("previewPath").and_then(|v| v.as_str()).unwrap_or(&fp).to_string(),
+            original_width: parsed.get("originalWidth").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            original_height: parsed.get("originalHeight").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
+            is_downsampled: parsed.get("isDownsampled").and_then(|v| v.as_bool()).unwrap_or(false),
+            is_animated_webp: parsed.get("isAnimatedWebp").and_then(|v| v.as_bool()).unwrap_or(false),
+        })
+    }).await;
+
+    let elapsed = start.elapsed();
+    match &result {
+        Ok(Ok(r)) => log::info!("[NativePreview] {} in {:.0}ms (downsampled={}, animated={})",
+            fp_for_log.split('/').last().unwrap_or(&fp_for_log), elapsed.as_millis(), r.is_downsampled, r.is_animated_webp),
+        Ok(Err(e)) => log::warn!("[NativePreview] {} FAILED in {:.0}ms: {}", fp_for_log.split('/').last().unwrap_or(&fp_for_log), elapsed.as_millis(), e),
+        Err(e) => log::error!("[NativePreview] {} JOIN ERROR: {}", fp_for_log.split('/').last().unwrap_or(&fp_for_log), e),
+    }
+
+    result.map_err(|e| e.to_string())?
 }
 
 #[cfg(target_os = "android")]
@@ -715,12 +950,6 @@ pub fn run() {
     let builder = builder.invoke_handler(tauri::generate_handler![
         db_commands::save_user_data,
         db_commands::load_user_data,
-        search_by_palette,
-        search_by_color,
-        scanner::scan_directory,
-        file_operations::db_copy_file_metadata,
-        scanner::force_rescan,
-        color_commands::add_pending_files_to_db,
         system_commands::get_platform,
         system_commands::get_default_paths,
         get_thumbnail,
@@ -744,9 +973,6 @@ pub fn run() {
         window_commands::show_window,
         window_commands::set_window_min_size,
         window_commands::exit_app,
-        color_commands::get_dominant_colors,
-        color_worker::pause_color_extraction,
-        color_worker::resume_color_extraction,
         db_commands::force_wal_checkpoint,
         db_commands::get_wal_info,
         db_commands::db_get_all_people,
@@ -759,10 +985,6 @@ pub fn run() {
         db_commands::db_upsert_file_metadata,
         db_commands::db_get_all_file_metadata,
         db_commands::switch_root_database,
-        db_commands::get_color_db_stats,
-        db_commands::get_color_db_error_files,
-        db_commands::retry_color_extraction,
-        db_commands::delete_color_db_error_files,
         system_commands::proxy_http_request,
         android_scan_images,
         android_scan_folders,
@@ -772,6 +994,10 @@ pub fn run() {
         android_get_thumbnail,
         android_batch_get_thumbnails,
         android_thumbnail_navigate,
+        android_get_image_preview,
+        android_pause_thumbnail_workers,
+        android_resume_thumbnail_workers,
+        android_get_native_preview,
         check_android_permissions,
         request_android_permissions,
     ]);
@@ -946,6 +1172,7 @@ pub fn run() {
                 });
             }
             
+            #[cfg(not(target_os = "android"))]
             tauri::async_runtime::spawn(async move {
                 color_worker::color_extraction_worker(
                     pool_arc,

@@ -14,6 +14,7 @@ export function TabletLayout() {
   const [selectedImageIndex, setSelectedImageIndex] = useState<number>(-1);
   const [isLoading, setIsLoading] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [cacheRoot, setCacheRoot] = useState<string>('');
 
   const api = new AndroidAdapter({
     invoke,
@@ -22,7 +23,19 @@ export function TabletLayout() {
 
   useEffect(() => {
     loadFolders();
+    loadCacheRoot();
   }, []);
+
+  const loadCacheRoot = async () => {
+    try {
+      const paths = await invoke<Record<string, string>>('get_default_paths');
+      if (paths?.cacheRoot) {
+        setCacheRoot(paths.cacheRoot);
+      }
+    } catch (e) {
+      console.warn('Failed to get cache root:', e);
+    }
+  };
 
   const loadFolders = async () => {
     setIsLoading(true);
@@ -141,6 +154,7 @@ export function TabletLayout() {
                     src={api.getImageUrl(img.path)}
                     alt={img.name}
                     loading="lazy"
+                    decoding="async"
                   />
                   <div className="image-name">{img.name}</div>
                 </div>
@@ -150,15 +164,16 @@ export function TabletLayout() {
         </div>
       </main>
       
-      {selectedImage && (
+      {selectedImage && cacheRoot && (
         <MobileImageViewer
           image={selectedImage}
-          imageUrl={api.getImageUrl(selectedImage.path)}
           onClose={handleCloseViewer}
           onPrev={selectedImageIndex > 0 ? handlePrevImage : undefined}
           onNext={selectedImageIndex < images.length - 1 ? handleNextImage : undefined}
           currentIndex={selectedImageIndex + 1}
           totalCount={images.length}
+          images={images}
+          cacheRoot={cacheRoot}
         />
       )}
     </div>

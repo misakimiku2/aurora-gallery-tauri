@@ -1,7 +1,8 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
 import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
+import { isAndroidSync } from '../utils/androidPlatform';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 
 interface TabBarProps {
@@ -51,8 +52,10 @@ export const TabBar: React.FC<TabBarProps> = ({
   const isUltraCompact = windowWidth < 260;
 
   useEffect(() => {
-    // Only show custom window controls on Linux for Tauri.
-    // Windows uses titleBarOverlay (native controls), macOS uses traffic lights.
+    if (isAndroidSync()) {
+      setShowControls(false);
+      return;
+    }
     if (isTauriEnvironment()) {
       const platform = (window as any).__TAURI__?.os?.platform || 'linux';
       if (platform === 'linux') {
@@ -61,7 +64,6 @@ export const TabBar: React.FC<TabBarProps> = ({
         setShowControls(false);
       }
     } else {
-      // Not Tauri (web mode), usually don't show window controls as browser has its own.
       setShowControls(false);
     }
   }, []);
@@ -321,6 +323,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   }, []);
 
   const shouldShowTabBar = !isReferenceMode || isHoveringTabBar;
+  const isAndroid = isAndroidSync();
 
   return (
     <div
@@ -328,7 +331,7 @@ export const TabBar: React.FC<TabBarProps> = ({
         isReferenceMode ? 'absolute top-0 left-0 right-0' : 'relative'
       } ${
         shouldShowTabBar ? 'translate-y-0' : '-translate-y-full'
-      }`}
+      } ${isAndroid ? 'android-safe-area-top' : ''}`}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
       onMouseDown={handleDragStart}
@@ -409,7 +412,7 @@ export const TabBar: React.FC<TabBarProps> = ({
                     onClick={() => onSwitchTab(tab.id)}
                     data-no-drag
                     className={`
-                        group relative flex items-center min-w-[80px] max-w-[160px] h-9 px-4 rounded-t-lg text-xs cursor-pointer select-none transition-all duration-200
+                        group relative flex items-center ${isAndroid ? 'min-w-[230px] max-w-[330px]' : 'min-w-[80px] max-w-[160px]'} h-9 px-4 rounded-t-lg ${isAndroid ? 'text-sm' : 'text-xs'} cursor-pointer select-none transition-all duration-200
                         ${tab.id === activeTabId
                         ? 'bg-white dark:bg-gray-800 text-blue-600 dark:text-blue-400 font-bold shadow-[0_-2px_10px_rgba(0,0,0,0.05)] z-10 -mb-px'
                         : 'bg-transparent text-gray-500 dark:text-gray-300 dark:bg-gray-900 hover:bg-gray-300 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300 mt-1'
@@ -426,19 +429,19 @@ export const TabBar: React.FC<TabBarProps> = ({
                     <span className="truncate flex-1">{getTabTitle(tab)}</span>
                     <button
                       onClick={(e) => onCloseTab(e, tab.id)}
-                      className={`ml-1 p-0.5 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 opacity-0 group-hover:opacity-100 ${tabs.length === 1 ? 'hidden' : ''}`}
+                      className={`ml-1 ${isAndroid ? 'p-1' : 'p-0.5'} rounded-full hover:bg-gray-200 dark:hover:bg-gray-600 ${isAndroid ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} ${tabs.length === 1 ? 'hidden' : ''}`}
                     >
-                      <X size={10} />
+                      <X size={isAndroid ? 14 : 10} />
                     </button>
                   </div>
                 ))}
                 <button
                   onClick={onNewTab}
-                  className="p-1.5 rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 mb-1 transition-colors"
+                  className={`${isAndroid ? 'p-2 self-center' : 'p-1.5 mb-1'} rounded hover:bg-gray-300 dark:hover:bg-gray-700 text-gray-500 transition-colors`}
                   title={t('context.newTab')}
                   style={{ WebkitAppRegion: 'no-drag' } as any}
                 >
-                  <Plus size={14} />
+                  <Plus size={isAndroid ? 18 : 14} />
                 </button>
               </>
             )}
@@ -484,7 +487,7 @@ export const TabBar: React.FC<TabBarProps> = ({
 
             {/* Spacer for Native Controls on Windows (approx 140px) if we want to push tabs away, but native controls overlay on top anyway.
                   Keeping the area empty is enough. */}
-            {!showControls && isTauriEnvironment() && showWindowControls && (
+            {!showControls && isTauriEnvironment() && showWindowControls && !isAndroidSync() && (
               <div className="w-[140px] h-full shrink-0"></div>
             )}
           </>

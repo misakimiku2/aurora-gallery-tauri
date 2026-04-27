@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
+import { isAndroidPlatformCached, getGlobalCacheRoot } from '../api/tauri-bridge';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
@@ -16,12 +17,39 @@ import {
 
 // 全局高分辨率图片 Blob 缓存 - 增大容量�?200 �?
 const blobCache = new Map<string, string>();
-const MAX_CACHE_SIZE = 200;
+const MAX_CACHE_SIZE = 50;
+const MAX_ANDROID_CACHE_SIZE = 30;
 
-// 正在加载中的 Promise 缓存，防止重复请�?
 const loadingPromises = new Map<string, Promise<string>>();
 
-// 同步获取缓存（如果存在）- 用于无闪烁切�?
+const getAndroidMaxCacheSize = (): number => {
+  if (typeof navigator !== 'undefined' && 'deviceMemory' in navigator) {
+    const mem = (navigator as any).deviceMemory as number;
+    if (mem <= 2) return 15;
+    if (mem <= 4) return 20;
+  }
+  return MAX_ANDROID_CACHE_SIZE;
+};
+
+const getMaxCacheSize = (): number => {
+  return isAndroidPlatformCached() ? getAndroidMaxCacheSize() : MAX_CACHE_SIZE;
+};
+
+const evictBlobCache = (): void => {
+  const maxSize = getMaxCacheSize();
+  while (blobCache.size > maxSize) {
+    const firstKey = blobCache.keys().next().value;
+    if (firstKey) {
+      const url = blobCache.get(firstKey);
+      blobCache.delete(firstKey);
+      if (url && url.startsWith('blob:')) {
+        try { URL.revokeObjectURL(url); } catch {}
+      }
+    }
+  }
+};
+
+// 同步获取缓存（如果存在）- 用于无闪烁切换
 export const getBlobCacheSync = (path: string): string | null => {
   if (blobCache.has(path)) {
     const url = blobCache.get(path)!;
@@ -38,41 +66,86 @@ export const hasBlobCache = (path: string): boolean => {
   return blobCache.has(path);
 };
 
+const PERF = {
+  mark: (label: string) => { if (isAndroidPlatformCached()) performance.mark(label); },
+  measure: (name: string, start: string, end?: string) => {
+    if (!isAndroidPlatformCached()) return;
+    try {
+      if (end) performance.measure(name, start, end);
+      else performance.measure(name, start);
+      const entries = performance.getEntriesByName(name);
+      const last = entries[entries.length - 1];
+      if (last) console.log('[PERF] ' + name + ': ' + last.duration.toFixed(1) + 'ms');
+    } catch {}
+  },
+  log: (...args: any[]) => { if (isAndroidPlatformCached()) console.log('[PERF]', ...args); },
+  ms: (start: number) => isAndroidPlatformCached() ? (performance.now() - start).toFixed(1) + 'ms' : '',
+};
+
 const loadToCache = async (path: string): Promise<string> => {
-  // 如果已在缓存中，直接返回
   const cached = getBlobCacheSync(path);
   if (cached) return cached;
 
-  // 如果已经在加载中，等待现有的 Promise
   if (loadingPromises.has(path)) {
     return loadingPromises.get(path)!;
   }
 
-  // 创建新的加载 Promise
+  const t0 = performance.now();
   const loadPromise = (async () => {
     try {
-      // 对于 JXL 和 AVIF 文件，调用后端转码指令以提高性能和稳定性
       if (path.toLowerCase().endsWith('.jxl')) {
         const previewUrl = await invoke<string>('get_jxl_preview', { path });
         blobCache.set(path, previewUrl);
+        evictBlobCache();
         return previewUrl;
       }
 
       if (path.toLowerCase().endsWith('.avif')) {
         const previewUrl = await invoke<string>('get_avif_preview', { path });
         blobCache.set(path, previewUrl);
+        evictBlobCache();
         return previewUrl;
       }
 
-      // 其他格式直接使用 convertFileSrc 返回的 URL，不需要 fetch
-      const url = convertFileSrc(path);
+      if (isAndroidPlatformCached()) {
+        const cacheRoot = getGlobalCacheRoot();
+        if (cacheRoot) {
+          try {
+            const result = await invoke<{
+              previewPath: string;
+              originalWidth: number;
+              originalHeight: number;
+              isDownsampled: boolean;
+              isAnimatedWebp: boolean;
+            }>('android_get_native_preview', {
+              filePath: path,
+              cacheRoot,
+              maxDimension: 0,
+            });
 
-      // 缓存 URL（虽然不是 blob，但仍然可以重用）
+            const previewUrl = result.previewPath.startsWith('/')
+              ? convertFileSrc(result.previewPath)
+              : result.previewPath.startsWith('http')
+                ? result.previewPath
+                : convertFileSrc(result.previewPath);
+
+            blobCache.set(path, previewUrl);
+            evictBlobCache();
+            PERF.log('loadToCache native preview', path.split('/').pop(), PERF.ms(t0), 'downsampled=' + result.isDownsampled, 'animated=' + result.isAnimatedWebp);
+            return previewUrl;
+          } catch (e) {
+            PERF.log('loadToCache native preview FAILED', path.split('/').pop(), String(e));
+          }
+        }
+      }
+
+      const url = convertFileSrc(path);
       blobCache.set(path, url);
+      evictBlobCache();
+      PERF.log('loadToCache convertFileSrc', path.split('/').pop(), PERF.ms(t0));
       return url;
     } catch (e) {
       console.error("Failed to load image to cache", path, e);
-      // 出错时也返回 convertFileSrc URL
       return convertFileSrc(path);
     } finally {
       loadingPromises.delete(path);
@@ -84,9 +157,32 @@ const loadToCache = async (path: string): Promise<string> => {
 };
 
 // 预加载图片到缓存（静默，不返回结果）
-export const preloadToCache = (path: string): void => {
+const isAnimatedFile = (path: string): boolean => {
+  const ext = path.toLowerCase();
+  return ext.endsWith('.webp') || ext.endsWith('.gif');
+};
+
+export const preloadToCache = (path: string, priority: 'high' | 'low' = 'low'): void => {
+  const fileName = path.split('/').pop() || path;
   if (!blobCache.has(path) && !loadingPromises.has(path)) {
-    loadToCache(path).catch(() => { });
+    if (priority === 'low' && isAndroidPlatformCached()) {
+      const doPreload = () => {
+        if (!blobCache.has(path) && !loadingPromises.has(path)) {
+          PERF.log('preload idle', fileName);
+          loadToCache(path).catch(() => {});
+        }
+      };
+      if ('requestIdleCallback' in window) {
+        (window as any).requestIdleCallback(doPreload, { timeout: 3000 });
+      } else {
+        setTimeout(doPreload, 200);
+      }
+    } else {
+      PERF.log('preload MISS', fileName);
+      loadToCache(path).catch(() => {});
+    }
+  } else if (isAndroidPlatformCached()) {
+    PERF.log('preload HIT', fileName);
   }
 };
 
@@ -118,6 +214,8 @@ export const hasPaletteCache = (path: string): boolean => {
 
 // 加载调色板到缓存
 const loadPaletteToCache = async (path: string, existingPalette?: string[]): Promise<string[]> => {
+  if (isAndroidPlatformCached()) return [];
+
   // 如果已在缓存中，直接返回
   const cached = getPaletteCacheSync(path);
   if (cached) return cached;
@@ -178,6 +276,7 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
 
 // 预加载调色板到缓存（静默，不返回结果）
 export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
+  if (isAndroidPlatformCached()) return;
   if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
     loadPaletteToCache(path, existingPalette).catch(() => { });
   }
@@ -454,14 +553,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [displayUrl, setDisplayUrl] = useState<string>(() => {
     if (file.path) {
       const cached = getBlobCacheSync(file.path);
-      if (cached) return cached;
+      if (cached) {
+        PERF.log('init displayUrl: CACHE HIT', file.path.split('/').pop());
+        return cached;
+      }
     }
+    PERF.log('init displayUrl: EMPTY');
     return '';
   });
-  // 追踪当前显示的文件路径（用于验证）
   const displayPathRef = useRef<string>(file.path || '');
-  // 追踪正在加载的文件路径
   const loadingPathRef = useRef<string>('');
+  const viewerOpenTimeRef = useRef(performance.now());
+
+  useEffect(() => {
+    if (isAndroidPlatformCached()) {
+      PERF.log('=== VIEWER OPEN ===', file.path.split('/').pop(), 'sinceMount=' + PERF.ms(viewerOpenTimeRef.current));
+      invoke('android_pause_thumbnail_workers').catch(() => {});
+    }
+    return () => {
+      if (isAndroidPlatformCached()) {
+        PERF.log('=== VIEWER CLOSE ===');
+        invoke('android_resume_thumbnail_workers').catch(() => {});
+      }
+    };
+  }, []);
 
   // 幻灯片模式专用：前一张图片的 URL（用于过渡效果）
   const [prevDisplayUrl, setPrevDisplayUrl] = useState<string>('');
@@ -503,11 +618,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
 
     const path = file.path;
+    const fileName = path.split('/').pop() || path;
+    const switchT0 = performance.now();
+    PERF.log('--- SWITCH START ---', fileName);
 
-    // 尝试同步获取缓存
     const cachedUrl = getBlobCacheSync(path);
 
     if (cachedUrl) {
+      PERF.log('switch: CACHE HIT', fileName, 'lookup=' + PERF.ms(switchT0));
       // 幻灯片模式下，保存当前图片作为过渡的起始图
       const shouldTransition = slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none';
 
@@ -537,20 +655,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }, 600); // 与 CSS 过渡时长一致
       }
 
-      // 缓存命中：立即切换，无需等待
       setDisplayUrl(cachedUrl);
       displayPathRef.current = path;
       loadingPathRef.current = '';
     } else {
-      // 缓存未命中：保留当前图片，异步加载新图
+      PERF.log('switch: CACHE MISS', fileName);
       loadingPathRef.current = path;
 
       loadToCache(path).then(url => {
-        // 只有当这仍然是我们想要的图片时才更新
         if (loadingPathRef.current === path) {
-          // 幻灯片模式下的过渡处理
           if (slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none') {
-            // 捕获当前图片的最后变换状态
             if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
               const currentImg = imgRef.current;
               if (currentImg) {
@@ -575,6 +689,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           setDisplayUrl(url);
           displayPathRef.current = path;
           loadingPathRef.current = '';
+          PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
         }
       });
     }
@@ -592,53 +707,56 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   // --- Calculate Preload Nodes ---
   const preloadImages = useMemo(() => {
-    if (!sortedFileIds || sortedFileIds.length === 0) return [];
+    if (!sortedFileIds || sortedFileIds.length === 0) return { immediate: [], nearby: [] };
 
     const currentIdx = sortedFileIds.indexOf(file.id);
-    if (currentIdx === -1) return [];
+    if (currentIdx === -1) return { immediate: [], nearby: [] };
 
     const getNeighbor = (offset: number) => {
       const idx = (currentIdx + offset + sortedFileIds.length) % sortedFileIds.length;
       return files[sortedFileIds[idx]];
     };
 
-    const nodes = [];
-    // 预加载范围到 +/- 5 张
-    for (let i = 1; i <= 5; i++) {
-      nodes.push(getNeighbor(-i));
-      nodes.push(getNeighbor(i));
+    const isAndroid = isAndroidPlatformCached();
+    const immediateRange = isAndroid ? 1 : 3;
+    const nearbyRange = isAndroid ? 3 : 5;
+
+    const immediate: FileNode[] = [];
+    for (let i = 1; i <= immediateRange; i++) {
+      const prev = getNeighbor(-i);
+      const next = getNeighbor(i);
+      if (prev?.path) immediate.push(prev);
+      if (next?.path) immediate.push(next);
     }
 
-    return nodes.filter(node => node && node.path && node.id !== file.id);
+    const nearby: FileNode[] = [];
+    for (let i = immediateRange + 1; i <= nearbyRange; i++) {
+      const prev = getNeighbor(-i);
+      const next = getNeighbor(i);
+      if (prev?.path) nearby.push(prev);
+      if (next?.path) nearby.push(next);
+    }
+
+    return { immediate, nearby };
   }, [file.id, sortedFileIds, files]);
 
-  // Preload neighbors into Blob Cache - 使用优化后的静默预加载
+  // Preload neighbors into Blob Cache - 分级预加载策略
   useEffect(() => {
-    // 优先预加载前后各3张（最可能被访问的）
-    const priorityCount = 3;
-    const priorityNodes = preloadImages.slice(0, priorityCount * 2);
-    const restNodes = preloadImages.slice(priorityCount * 2);
+    const { immediate, nearby } = preloadImages;
 
-    // 立即预加载优先级高的图片和调色板
-    priorityNodes.forEach(node => {
+    immediate.forEach(node => {
       if (node.path) {
-        preloadToCache(node.path);
-        // 同时预加载调色板（使用文件已有的 palette 数据，如果有的话）
+        preloadToCache(node.path, 'high');
         preloadPaletteToCache(node.path, node.meta?.palette);
       }
     });
 
-    // 延迟预加载其余图片和调色板，避免阻塞
-    const timeoutId = setTimeout(() => {
-      restNodes.forEach(node => {
-        if (node.path) {
-          preloadToCache(node.path);
-          preloadPaletteToCache(node.path, node.meta?.palette);
-        }
-      });
-    }, 100);
-
-    return () => clearTimeout(timeoutId);
+    nearby.forEach(node => {
+      if (node.path) {
+        preloadToCache(node.path, 'low');
+        preloadPaletteToCache(node.path, node.meta?.palette);
+      }
+    });
   }, [preloadImages]);
   // ------------------------------
 
@@ -888,7 +1006,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     if (!adjacentFile?.path) return null;
 
     const cachedUrl = getBlobCacheSync(adjacentFile.path);
-    return cachedUrl || convertFileSrc(adjacentFile.path);
+    if (cachedUrl) return cachedUrl;
+
+    if (isAndroidPlatformCached() && !loadingPromises.has(adjacentFile.path)) {
+      loadToCache(adjacentFile.path).catch(() => {});
+    }
+
+    return null;
   };
 
   useEffect(() => {
@@ -1762,7 +1886,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 alt=""
                 className="max-w-none absolute inset-0 m-auto"
                 loading="eager"
-                decoding="sync"
+                decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
                 style={{
                   width: '100%',
                   height: '100%',
@@ -1771,6 +1895,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   zIndex: 1,
                   transform: `translate(${inOffset}px, 0)`,
                   transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
+                  ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
                 }}
                 draggable={false}
               />
@@ -1789,7 +1914,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 alt=""
                 className="max-w-none absolute inset-0 m-auto"
                 loading="eager"
-                decoding="sync"
+                decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
                 style={{
                   width: '100%',
                   height: '100%',
@@ -1798,18 +1923,29 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   zIndex: 3,
                   transform: `translate(${outOffset}px, 0)`,
                   transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
+                  ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
                 }}
                 draggable={false}
               />
             );
           })()}
 
-          {/* 当前图片 */}
           <img
             ref={imgRef}
             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
             src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
             alt={file.name}
+            onLoad={() => {
+              if (isAndroidPlatformCached() && displayUrl) {
+                const img = imgRef.current as any;
+                PERF.log('img onload', file.path.split('/').pop(), 'size=' + (img?.naturalWidth || 0) + 'x' + (img?.naturalHeight || 0));
+              }
+            }}
+            onError={() => {
+              if (isAndroidPlatformCached()) {
+                PERF.log('img onerror', file.path.split('/').pop());
+              }
+            }}
             className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
               } ${slideshowActive && isTransitioning && slideshowConfig.transition === 'fade'
                 ? 'animate-slideshow-fade-in'
@@ -1818,7 +1954,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   : ''
               }`}
             loading="eager"
-            decoding="sync"
+            decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
             style={{
               width: '100%',
               height: '100%',
@@ -1833,6 +1969,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               transformOrigin: 'center center',
               zIndex: swipeState ? 0 : 2,
               opacity: swipeState ? 0 : 1,
+              ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
               ...filterStyle
             }}
             draggable={false}

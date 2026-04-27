@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection } from '../types';
 import { debounce } from '../utils/debounce';
+import { isAndroidSync } from '../utils/androidPlatform';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { 
   Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw, 
@@ -565,6 +566,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [tagsMenuOpen, setTagsMenuOpen] = useState(false);
   const [personSortMenuOpen, setPersonSortMenuOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchToggleRef = useRef(false);
   
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -573,6 +575,52 @@ export const TopBar: React.FC<TopBarProps> = ({
   
   // CLIP Search State
   const [isClipSearching, setIsClipSearching] = useState(false);
+
+  const isAndroid = isAndroidSync();
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isCompactMode, setIsCompactMode] = useState(false);
+
+  const getFolderDisplayName = () => {
+    if (activeTab.viewMode === 'tags-overview') return t('sidebar.allTags');
+    if (activeTab.viewMode === 'topics-overview') {
+      if (activeTab.activeTopicId) return (state.topics as any)?.[activeTab.activeTopicId]?.name || t('sidebar.topics');
+      return t('sidebar.topics');
+    }
+    if (activeTab.viewMode === 'people-overview') {
+      if (activeTab.activePersonId) return (state.people as any)?.[activeTab.activePersonId]?.name || t('context.allPeople');
+      return t('context.allPeople');
+    }
+    if (activeTab.isCompareMode) return activeTab.sessionName || '画布01';
+    if (activeTab.viewingFileId) {
+      const file = state.files[activeTab.viewingFileId];
+      if (file && file.parentId) {
+        const parent = state.files[file.parentId];
+        if (parent?.category === 'book' || parent?.category === 'sequence') return parent.name;
+      }
+      return file?.name || t('app.viewing');
+    }
+    if (activeTab.activeTags.length > 0) return `${activeTab.activeTags.length} ${t('app.filters')}`;
+    return state.files[activeTab.folderId]?.name || '相册';
+  };
+
+  useEffect(() => {
+    if (isAndroid && isSearchOpen && searchInputRef.current) {
+      searchInputRef.current.focus();
+    }
+  }, [isAndroid, isSearchOpen]);
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    const handleCloseSearch = () => {
+      if (isSearchOpen) {
+        onSetToolbarQuery('');
+        setIsSearchOpen(false);
+        setIsCompactMode(false);
+      }
+    };
+    window.addEventListener('close-android-search', handleCloseSearch);
+    return () => window.removeEventListener('close-android-search', handleCloseSearch);
+  }, [isAndroid, isSearchOpen, onSetToolbarQuery]);
 
   useEffect(() => {
     if (!isColorPickerOpen) return;
@@ -683,31 +731,123 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <div className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 z-30 space-x-4">
+    <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 z-30 space-x-4 ${isAndroid ? 'android-topbar' : ''}`}>
       {/* Left: Navigation */}
       <div className="flex items-center space-x-2 min-w-fit">
-        <button onClick={onToggleSidebar} className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
+        <button onClick={onToggleSidebar} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center' : 'p-2'} rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
           <Sidebar size={18} />
         </button>
-        <div className="flex space-x-1">
-          <button onClick={onGoBack} disabled={activeTab.history.currentIndex <= 0} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300">
-            <ChevronLeft size={18} />
-          </button>
-          <button onClick={onGoForward} disabled={activeTab.history.currentIndex >= activeTab.history.stack.length - 1} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300">
-            <ChevronRight size={18} />
-          </button>
-          <button onClick={onNavigateUp} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('viewer.up')}>
-            <ArrowUp size={18} />
-          </button>
-        </div>
-        <button onClick={() => onRefresh()} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('context.refresh')}>
-          <RefreshCw size={16} />
+        <button onClick={onGoBack} disabled={activeTab.history.currentIndex <= 0} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center' : 'p-2'} rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300 ${isCompactMode ? 'hidden' : ''}`}>
+          <ChevronLeft size={18} />
         </button>
+        {!isAndroid && (
+          <>
+            <button onClick={onGoForward} disabled={activeTab.history.currentIndex >= activeTab.history.stack.length - 1} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300">
+              <ChevronRight size={18} />
+            </button>
+            <button onClick={onNavigateUp} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('viewer.up')}>
+              <ArrowUp size={18} />
+            </button>
+            <button onClick={() => onRefresh()} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('context.refresh')}>
+              <RefreshCw size={16} />
+            </button>
+          </>
+        )}
+        {isAndroid && !isCompactMode && (
+          <>
+            <button onClick={() => {
+              if (!isSearchOpen) {
+                const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
+                const anyPanelOpen = state.layout.isSidebarVisible || state.layout.isMetadataVisible;
+                if (isPortrait && anyPanelOpen) {
+                  setIsCompactMode(true);
+                }
+                searchToggleRef.current = true;
+                setIsSearchOpen(true);
+              }
+            }} className={`w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
+              <Search size={18} />
+            </button>
+            {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && !isCompactMode && (
+              <div className="relative">
+                <button
+                  onClick={() => setSortMenuOpen(!sortMenuOpen)}
+                  className={`w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${sortMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+                  title={t('sort.sortBy')}
+                >
+                  <ArrowDownUp size={18} />
+                </button>
+                {sortMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
+                    <div className="absolute top-full left-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                      <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
+                      {[
+                        { id: 'name', label: t('sort.name') },
+                        { id: 'date', label: t('sort.date') },
+                        { id: 'size', label: t('sort.size') }
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => { onSortOptionChange(opt.id as SortOption); }}
+                          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        >
+                          {opt.label}
+                          {state.sortBy === opt.id && <Check size={14} className="text-blue-500" />}
+                        </button>
+                      ))}
+                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                      <button
+                        onClick={onSortDirectionChange}
+                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      >
+                        {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
+                        <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
+                      </button>
+                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                      <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
+                      {[
+                        { id: 'none', label: t('groupBy.none') },
+                        { id: 'type', label: t('groupBy.type') },
+                        { id: 'date', label: t('groupBy.date') },
+                        { id: 'size', label: t('groupBy.size') }
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => onGroupByChange(opt.id as GroupByOption)}
+                          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        >
+                          {opt.label}
+                          {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Center: Search */}
-      <div className="flex-1 max-w-2xl relative">
-        <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
+      {/* Center: Search or Folder Name */}
+      {isAndroid && !isSearchOpen ? (
+        <div className="flex-1 flex items-center justify-center px-4">
+          <span className={`text-sm font-medium text-gray-700 dark:text-gray-300 truncate text-center ${
+            typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches
+              ? state.layout.isMetadataVisible
+                ? 'max-w-[3em]'
+                : state.layout.isSidebarVisible
+                  ? 'max-w-[8em]'
+                  : 'max-w-full'
+              : 'max-w-full'
+          }`}>
+            {getFolderDisplayName()}
+          </span>
+        </div>
+      ) : (
+      <div className={`flex-1 ${isAndroid ? 'max-w-none' : 'max-w-2xl'} relative flex items-center`}>
+        <div className={`flex-1 flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
             ? 'border-blue-500 shadow-sm'
             : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
@@ -753,6 +893,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
 
           <div className="relative" ref={colorPickerContainerRef}>
+             {!isAndroid && (
+               <>
              {isColorSearching ? (
                 <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />
              ) : (
@@ -760,20 +902,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                   onClick={() => setIsColorPickerOpen(!isColorPickerOpen)}
                   className={`mr-2 flex-shrink-0 cursor-pointer hover:text-blue-500 transition-colors ${isAISearchEnabled ? 'text-purple-500' : 'text-gray-400'} flex items-center`}
                   title={t('search.byColor')}
-                  >
+                >
                   <Palette size={16} />
                 </button>
              )}
-             
+
              {isColorPickerOpen && (
                 <div className="absolute top-full left-0 mt-2 z-50">
-                    <ColorPickerPopover 
+                    <ColorPickerPopover
                        onChange={handleColorSelect}
                        onClose={() => setIsColorPickerOpen(false)}
                        initialColor={pickerInitialColor}
                       t={t}
                     />
                 </div>
+             )}
+               </>
              )}
           </div>
           
@@ -834,10 +978,29 @@ export const TopBar: React.FC<TopBarProps> = ({
               }
             }}
             onKeyDown={handleKeyDown}
+            onBlur={() => {
+              if (isAndroid && !toolbarQuery && !searchToggleRef.current) {
+                setIsSearchOpen(false);
+                setIsCompactMode(false);
+              }
+              searchToggleRef.current = false;
+            }}
           />
 
           <div className="flex items-center space-x-1 ml-2 flex-shrink-0">
-             {toolbarQuery && (
+             {isAndroid && isSearchOpen && (
+                <button
+                  onClick={() => {
+                    onSetToolbarQuery('');
+                    setIsSearchOpen(false);
+                    setIsCompactMode(false);
+                  }}
+                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0"
+                >
+                  <X size={16} />
+                </button>
+             )}
+             {!isAndroid && toolbarQuery && (
                 <button
                   onClick={() => {
                     if (activeTab.viewMode === 'tags-overview') {
@@ -857,7 +1020,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 </button>
              )}
              
-             {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
+             {!isAndroid && activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
                <button
                  onClick={() => {
                    if (!clipEnabled) {
@@ -871,12 +1034,12 @@ export const TopBar: React.FC<TopBarProps> = ({
                  }}
                  disabled={isClipSearching}
                  className={`flex-shrink-0 cursor-pointer transition-colors flex items-center ${
-                   !clipEnabled 
-                     ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500' 
+                   !clipEnabled
+                     ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500'
                      : clipModelName === 'WD-EVA02-Large-Tagger-V3'
                        ? 'text-gray-300 dark:text-gray-600 hover:text-gray-400 dark:hover:text-gray-500'
-                       : isClipSearchEnabled 
-                         ? 'text-green-500 hover:text-green-600' 
+                       : isClipSearchEnabled
+                         ? 'text-green-500 hover:text-green-600'
                          : 'text-gray-400 hover:text-green-500'
                  }`}
                  title={
@@ -899,6 +1062,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         </div>
       </div>
+      )}
 
       {/* Right: Tools & Settings */}
       <div className="flex items-center space-x-2 min-w-fit">
@@ -963,8 +1127,8 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         )}
         
-        {/* Sort & Group Menu (hidden on topics view and people view) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
+        {/* Sort & Group Menu (hidden on topics view, people view, and Android) */}
+        {!isAndroid && activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
         <div className="relative">
            <button 
              onClick={() => setSortMenuOpen(!sortMenuOpen)}
@@ -1038,7 +1202,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && !isCompactMode && (
           <div className="relative">
              <button 
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
@@ -1110,7 +1274,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </div>
         )}
 
-        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && (
+        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && (
           <div className="flex items-center space-x-2 mr-2">
             <button
               className={`p-2 rounded ${topicLayoutMode === 'grid' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
@@ -1131,7 +1295,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Folders overview layout menu */}
-        {activeTab.viewMode === 'folders-overview' && onFolderLayoutModeChange && (
+        {activeTab.viewMode === 'folders-overview' && onFolderLayoutModeChange && !isCompactMode && (
           <div className="relative">
              <button
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
@@ -1189,7 +1353,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Date Filter (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && (
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
         <div className="relative">
            <button 
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
@@ -1214,7 +1378,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* All Tags Widget (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && (
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
         <div className="relative">
            <button 
              onClick={() => setTagsMenuOpen(!tagsMenuOpen)}

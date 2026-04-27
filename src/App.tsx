@@ -28,7 +28,7 @@ import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder
 import { aiService } from './services/aiService';
 import md5 from 'md5';
 
-import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener } from './utils/androidPlatform';
+import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener, isAndroidSync } from './utils/androidPlatform';
 
 // Helper: normalize path to use forward slashes consistently
 const normalizePath = (path: string) => path.replace(/\\/g, '/');
@@ -87,8 +87,17 @@ declare global {
 let isAppInitialized = false;
 
 export const App: React.FC = () => {
+  const getInitialLayout = () => {
+    const isAndroid = isAndroidSync();
+    if (isAndroid) {
+      const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
+      return { isSidebarVisible: !isPortrait, isMetadataVisible: false };
+    }
+    return { isSidebarVisible: true, isMetadataVisible: true };
+  };
+
   const [state, setState] = useState<AppState>({
-    roots: [], files: {}, people: {}, topics: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: { isSidebarVisible: true, isMetadataVisible: true },
+    roots: [], files: {}, people: {}, topics: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: getInitialLayout(),
     slideshowConfig: { interval: 3000, transition: 'fade', isRandom: false, enableZoom: true },
     settings: {
       theme: 'system',
@@ -629,6 +638,23 @@ export const App: React.FC = () => {
     mediaQuery.addEventListener('change', handleChange);
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, [state.settings.theme]);
+
+  useEffect(() => {
+    if (!isAndroidSync()) return;
+    const orientationQuery = window.matchMedia('(orientation: portrait)');
+    const handleOrientationChange = (e: MediaQueryListEvent) => {
+      const isPortrait = e.matches;
+      setState(prev => ({
+        ...prev,
+        layout: {
+          ...prev.layout,
+          isSidebarVisible: !isPortrait,
+        }
+      }));
+    };
+    orientationQuery.addEventListener('change', handleOrientationChange);
+    return () => orientationQuery.removeEventListener('change', handleOrientationChange);
+  }, []);
 
   useEffect(() => { setToolbarQuery(activeTab.searchQuery); }, [activeTab.id, activeTab.searchQuery]);
 
@@ -1323,12 +1349,20 @@ export const App: React.FC = () => {
   // Toggle helpers for sidebars
   const toggleSidebar = () => {
     const next = !state.layout.isSidebarVisible;
-    setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
+    if (isAndroidSync() && next && typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches && state.layout.isMetadataVisible) {
+      setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next, isMetadataVisible: false } }));
+    } else {
+      setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
+    }
   };
 
   const toggleMetadata = () => {
     const next = !state.layout.isMetadataVisible;
-    setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
+    if (isAndroidSync() && next && typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches && state.layout.isSidebarVisible) {
+      setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next, isSidebarVisible: false } }));
+    } else {
+      setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
+    }
   };
 
   const onLayoutToggle = (part: 'sidebar' | 'metadata') => {
@@ -1645,8 +1679,8 @@ export const App: React.FC = () => {
     isReferenceMode
   });
 
-  const goBackRef = useRef(goBack);
-  goBackRef.current = goBack;
+  const pushHistoryRef = useRef(pushHistory);
+  pushHistoryRef.current = pushHistory;
   const activeTabRef2 = useRef(activeTab);
   activeTabRef2.current = activeTab;
   const closeViewerRef = useRef(closeViewer);
@@ -1665,6 +1699,12 @@ export const App: React.FC = () => {
 
       if (state.isSettingsOpen) {
         setState(s => ({ ...s, isSettingsOpen: false }));
+        return;
+      }
+
+      const searchInput = document.querySelector<HTMLInputElement>('#toolbar-search-input');
+      if (searchInput && document.activeElement === searchInput) {
+        window.dispatchEvent(new Event('close-android-search'));
         return;
       }
 
@@ -1687,8 +1727,13 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (tab.history.currentIndex > 0) {
-        goBackRef.current();
+      if (tab.viewMode === 'folders-overview') {
+        // Already at main screen, fall through to exit behavior
+      } else if (tab.viewMode === 'browser') {
+        pushHistoryRef.current('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
+        return;
+      } else {
+        pushHistoryRef.current('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
         return;
       }
 
