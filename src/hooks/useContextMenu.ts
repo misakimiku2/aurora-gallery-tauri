@@ -73,12 +73,20 @@ export const useContextMenu = ({
       }
     };
 
+    const handleTouchMove = () => {
+      if (contextMenu.visible) {
+        closeContextMenu();
+      }
+    };
+
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('wheel', handleWheel, true);
+    document.addEventListener('touchmove', handleTouchMove, true);
 
     return () => {
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('wheel', handleWheel, true);
+      document.removeEventListener('touchmove', handleTouchMove, true);
     };
   }, [contextMenu.visible, closeContextMenu]);
 

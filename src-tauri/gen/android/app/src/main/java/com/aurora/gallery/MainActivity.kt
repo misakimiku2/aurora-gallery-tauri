@@ -80,9 +80,16 @@ class MainActivity : TauriActivity() {
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     splashScreen.setKeepOnScreenCondition { false }
+    applyInitialStatusBarStyle()
     requestMediaPermissions()
     setupBackPressedHandler()
     registerComponentCallbacks(componentCallbacks)
+  }
+
+  private fun applyInitialStatusBarStyle() {
+    val currentNightMode = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
+    val isDark = currentNightMode == android.content.res.Configuration.UI_MODE_NIGHT_YES
+    setStatusBarStyle(isDark)
   }
 
   private fun setupBackPressedHandler() {

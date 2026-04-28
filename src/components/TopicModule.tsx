@@ -162,6 +162,7 @@ const TopicFileGrid = React.memo(({
     onFileClick,
     onOpenFile,
     onContextMenu,
+    onFileLongPress,
     resourceRoot,
     cachePath,
     scrollTop,
@@ -178,6 +179,7 @@ const TopicFileGrid = React.memo(({
     onFileClick?: (e: React.MouseEvent, id: string) => void,
     onOpenFile?: (id: string) => void,
     onContextMenu?: (e: React.MouseEvent, id: string) => void,
+    onFileLongPress?: (id: string) => void,
     resourceRoot?: string,
     cachePath?: string,
     scrollTop?: number,
@@ -199,6 +201,10 @@ const TopicFileGrid = React.memo(({
 
     const gridRef = useRef<HTMLDivElement>(null);
     const [offsetTop, setOffsetTop] = useState(0);
+    const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const longPressTriggeredRef = useRef(false);
+    const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+    const isLocalAndroid = resourceRoot === 'android_media_store';
 
     useLayoutEffect(() => {
         if (gridRef.current) {
@@ -251,22 +257,49 @@ const TopicFileGrid = React.memo(({
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                                 e.stopPropagation();
-                                // Delegate click handling to parent when available so it can implement multi-select (ctrl/shift)
+                                if (isLocalAndroid && longPressTriggeredRef.current) {
+                                    longPressTriggeredRef.current = false;
+                                    return;
+                                }
                                 if (onFileClick) {
                                     onFileClick(e, file.id);
                                 } else {
-                                    // Fallback to single selection
                                     (typeof (onContextMenu) !== 'undefined') && onContextMenu(e, file.id);
                                 }
                             }}
-                            onDoubleClick={(e) => {
+                            onDoubleClick={isLocalAndroid && (selectedFileIds || []).length > 0 ? undefined : ((e) => {
                                 e.stopPropagation();
                                 onOpenFile?.(file.id);
-                            }}
-                            onContextMenu={(e) => {
+                            })}
+                            onContextMenu={isLocalAndroid ? undefined : ((e: React.MouseEvent) => {
                                 e.stopPropagation();
                                 onContextMenu && onContextMenu(e, file.id);
-                            }}
+                            })}
+                            onTouchStart={isLocalAndroid ? ((e: React.TouchEvent) => {
+                                longPressTriggeredRef.current = false;
+                                touchStartPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                                longPressTimerRef.current = setTimeout(() => {
+                                    longPressTriggeredRef.current = true;
+                                    if (onFileLongPress) onFileLongPress(file.id);
+                                }, 500);
+                            }) : undefined}
+                            onTouchMove={isLocalAndroid ? ((e: React.TouchEvent) => {
+                                if (!touchStartPosRef.current) return;
+                                const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+                                const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+                                if (dx > 10 || dy > 10) {
+                                    if (longPressTimerRef.current) {
+                                        clearTimeout(longPressTimerRef.current);
+                                        longPressTimerRef.current = null;
+                                    }
+                                }
+                            }) : undefined}
+                            onTouchEnd={isLocalAndroid ? (() => {
+                                if (longPressTimerRef.current) {
+                                    clearTimeout(longPressTimerRef.current);
+                                    longPressTimerRef.current = null;
+                                }
+                            }) : undefined}
                         >
                             {/* Inner scaled container: handles hover scale and clipping of the image only */}
                             <div className="w-full h-full bg-cover bg-center overflow-hidden relative rounded-lg">
@@ -337,6 +370,7 @@ interface TopicModuleProps {
     resourceRoot?: string;
     cachePath?: string;
     onOpenFile?: (fileId: string) => void;
+    onFileLongPress?: (fileId: string) => void;
     t: (key: string) => string;
     scrollTop?: number;
     onScrollTopChange?: (scrollTop: number) => void;
@@ -352,7 +386,7 @@ interface TopicModuleProps {
 export const TopicModule: React.FC<TopicModuleProps> = ({
     topics, files, people, currentTopicId, selectedTopicIds, selectedFileIds = [], selectedPersonIds = [], lastSelectedId = null,
     onNavigateTopic, onUpdateTopic, onCreateTopic, onDeleteTopic, onSelectTopics, onSelectFiles,
-    onSelectPeople, onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, t,
+    onSelectPeople, onSelectPerson, onNavigatePerson, onOpenTopicInNewTab, onOpenPersonInNewTab, onOpenFileInNewTab, onOpenFileFolder, resourceRoot, cachePath, onOpenFile, onFileLongPress, t,
     scrollTop, onScrollTopChange, isVisible = true, topicLayoutMode, onTopicLayoutModeChange, onShowToast,
     hoverPlayingId, onSetHoverPlayingId, onSmartCreateTopic
 }) => {
@@ -1243,17 +1277,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             setContextMenu(null);
         };
 
+        const handleTouchMove = () => {
+            setContextMenu(null);
+        };
+
         if (contextMenu) {
-            // Use mousedown and capture phase to ensure we catch the event before stopPropagation()
-            // Add slight delay to avoid catching the same event that opened the menu
             const timeoutId = setTimeout(() => {
                 document.addEventListener('mousedown', handleClickOutside, true);
                 document.addEventListener('scroll', handleScroll, true);
+                document.addEventListener('touchmove', handleTouchMove, true);
             }, 0);
             return () => {
                 clearTimeout(timeoutId);
                 document.removeEventListener('mousedown', handleClickOutside, true);
                 document.removeEventListener('scroll', handleScroll, true);
+                document.removeEventListener('touchmove', handleTouchMove, true);
             };
         }
     }, [contextMenu]);
@@ -1771,6 +1809,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             e.stopPropagation();
             if (isSelecting) return;
 
+            const isLocalAndroid = resourceRoot === 'android_media_store';
+            if (isLocalAndroid) {
+                if ((selectedFileIds || []).length > 0) {
+                    if ((selectedFileIds || []).includes(id)) {
+                        const rect = (e.target as HTMLElement).getBoundingClientRect();
+                        setContextMenu({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, type: 'file', fileId: id });
+                    } else {
+                        onSelectFiles([...(selectedFileIds || []), id], id);
+                    }
+                } else {
+                    if (onOpenFile) onOpenFile(id);
+                }
+                return;
+            }
+
             // When selecting a file, clear people selection and local single-click state
             if (typeof onSelectPeople === 'function') onSelectPeople([]);
             setClickedOncePerson(null);
@@ -2076,6 +2129,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                 onFileClick={handleFileClickLocal}
                                 onOpenFile={handleOpenFileLocal}
                                 onContextMenu={handleFileContextMenu}
+                                onFileLongPress={onFileLongPress}
                                 resourceRoot={resourceRoot}
                                 cachePath={cachePath}
                                 scrollTop={scrollTop}

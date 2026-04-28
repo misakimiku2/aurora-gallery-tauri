@@ -8,6 +8,7 @@ import { ImageViewer } from './components/ImageViewer';
 import { ImageComparer } from './components/ImageComparer';
 import { TabBar } from './components/TabBar';
 import { TopBar } from './components/TopBar';
+import { AndroidSelectionBar } from './components/AndroidSelectionBar';
 import { FileGrid } from './components/FileGrid';
 import { InlineRenameInput } from './components/InlineRenameInput';
 import { ImageThumbnail } from './components/ImageThumbnail';
@@ -278,6 +279,9 @@ export const App: React.FC = () => {
   });
   // State for reference mode - controls TabBar visibility with hover detection
   const [isReferenceMode, setIsReferenceMode] = useState(false);
+  const [isAndroidSelectionMode, setIsAndroidSelectionMode] = useState(false);
+  const isAndroidSelectionModeRef = useRef(false);
+  useEffect(() => { isAndroidSelectionModeRef.current = isAndroidSelectionMode; }, [isAndroidSelectionMode]);
   // State for tracking if user is hovering over the top bar area
   const [isHoveringTopBar, setIsHoveringTopBar] = useState(false);
   // Use ref to store the setter to avoid re-renders causing issues
@@ -697,8 +701,10 @@ export const App: React.FC = () => {
   }, []);
 
   // 锟叫断讹拷锟斤拷锟角凤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷示锟斤拷息锟斤拷模态锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷
+  const isAndroidDevice = state.settings.paths.resourceRoot === 'android_media_store';
+
   const isModalOpen = state.activeModal.type !== null || state.isSettingsOpen;
-  const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen;
+  const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen && !isAndroidDevice;
 
   const {
     isSelecting,
@@ -738,8 +744,33 @@ export const App: React.FC = () => {
     allFiles
   } = useFileSearch({ state, activeTab, groupBy, t });
 
-  const { handleFileClick } = useFileSelection({
+  const handleEnterAndroidSelectionMode = useCallback((id: string) => {
+    setIsAndroidSelectionMode(true);
+    updateActiveTab({ selectedFileIds: [id], lastSelectedId: id });
+  }, [updateActiveTab]);
+
+  const handleExitAndroidSelectionMode = useCallback(() => {
+    setIsAndroidSelectionMode(false);
+    updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
+  }, [updateActiveTab]);
+
+  const handleDeselectAllAndroid = useCallback(() => {
+    updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
+  }, [updateActiveTab]);
+
+  const handleShowContextMenuForFile = useCallback((id: string, x: number, y: number) => {
+    const file = state.files[id];
+    if (!file) return;
+    const menuType = file.type === FileType.FOLDER ? 'folder-single' : 'file-single';
+    setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
+  }, [state.files, setContextMenu]);
+
+  const { handleFileClick, handleFileLongPress, handleAndroidRangeSelect } = useFileSelection({
     activeTab, displayFileIds, closeContextMenu, isSelecting, updateActiveTab,
+    isAndroid: isAndroidDevice,
+    isAndroidSelectionMode,
+    onOpenFile: (id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id),
+    onEnterAndroidSelectionMode: handleEnterAndroidSelectionMode,
   });
 
 
@@ -1714,6 +1745,11 @@ export const App: React.FC = () => {
         return;
       }
 
+      if (isAndroidSelectionModeRef.current) {
+        handleExitAndroidSelectionMode();
+        return;
+      }
+
       if (tab.viewingFileId) {
         closeViewerRef.current();
         return;
@@ -1911,6 +1947,40 @@ export const App: React.FC = () => {
             </div>
           ))}
           <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
+            {isAndroidDevice && isAndroidSelectionMode ? (
+              <AndroidSelectionBar
+                selectedCount={activeTab.selectedFileIds.length}
+                totalCount={displayFileIds.length}
+                selectedFileIds={activeTab.selectedFileIds}
+                files={state.files}
+                activeTab={activeTab}
+                tabs={state.tabs}
+                peopleWithDisplayCounts={peopleWithDisplayCounts}
+                aiConnectionStatus={state.aiConnectionStatus}
+                displayFileIds={displayFileIds}
+                clipSettings={state.settings.clip}
+                t={t}
+                onSelectAll={() => updateActiveTab({ selectedFileIds: displayFileIds })}
+                onClearSelection={handleExitAndroidSelectionMode}
+                onDeselectAll={handleDeselectAllAndroid}
+                onDelete={requestDelete}
+                handleOpenInNewTab={handleOpenInNewTab}
+                handleViewInExplorer={handleViewInExplorer}
+                enterFolder={enterFolder}
+                setModal={(type, data) => setState(s => ({ ...s, activeModal: { type: type as any, data } }))}
+                startRename={startRename}
+                handleAIAnalysis={handleAIAnalysis}
+                handleClearPersonInfo={handleClearPersonInfo}
+                handleCopyTags={handleCopyTags}
+                handlePasteTags={handlePasteTags}
+                showToast={showToast}
+                handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+                handleAddToCompareCanvas={handleAddToCompareCanvas}
+                handleCopyImageToClipboard={handleCopyImageToClipboard}
+                handleSearchSimilarImages={handleSearchSimilarImages}
+                openClipSettings={openClipSettings}
+              />
+            ) : (
             <TopBar
               activeTab={activeTab}
               state={state}
@@ -2028,6 +2098,7 @@ export const App: React.FC = () => {
               onOpenClipSettings={openClipSettings}
               showToast={showToast}
             />
+            )}
             {/* ... (Filter UI, same as before) ... */}
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
               <div className="flex items-center px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-x-2 overflow-x-auto shrink-0 z-20">
@@ -2275,6 +2346,7 @@ export const App: React.FC = () => {
                     resourceRoot={state.settings.paths.resourceRoot}
                     cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
                     onOpenFile={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
+                    onFileLongPress={handleFileLongPress}
                     t={t}
                     scrollTop={activeTab.scrollTop}
                     onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
@@ -2347,6 +2419,10 @@ export const App: React.FC = () => {
                     isDraggingInternal={isDraggingInternal}
                     setIsDraggingInternal={setIsDraggingInternal}
                     setDraggedFilePaths={setDraggedFilePaths}
+                    onFileLongPress={handleFileLongPress}
+                    onShowContextMenuForFile={handleShowContextMenuForFile}
+                    isAndroidSelectionMode={isAndroidSelectionMode}
+                    onAndroidRangeSelect={handleAndroidRangeSelect}
                     personSortBy={personSortBy}
                     personSortDirection={personSortDirection}
                     personGroupBy={personGroupBy}

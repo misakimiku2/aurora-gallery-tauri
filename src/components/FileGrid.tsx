@@ -21,6 +21,7 @@ import { ImageThumbnail } from './ImageThumbnail';
 import { FolderThumbnail } from './FolderThumbnail';
 import { InlineRenameInput } from './InlineRenameInput';
 import { FileListItem } from './FileListItem';
+import { CircularProgressOverlay } from './CircularProgressOverlay';
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
     if (a === '#') return -1;
@@ -51,9 +52,23 @@ const FileCard = React.memo(({
   onDragEnd,
   thumbnailSize,
   setIsDraggingInternal,
-  setDraggedFilePaths
+  setDraggedFilePaths,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  isAndroidSelectionMode,
+  onAndroidRangeSelect
 }: any) => {
   const [isDragging, setIsDragging] = useState(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contextMenuTriggeredRef = useRef(false);
+  const rangeSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rangeSelectTriggeredRef = useRef(false);
+  const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
+  const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
   if (!file) return null;
 
   // Extract layout positioning
@@ -392,10 +407,10 @@ const FileCard = React.memo(({
               containIntrinsicSize: `${width}px ${height}px`
             })
         }}
-        draggable={renamingId !== file.id}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-        onMouseDown={async (e) => {
+        draggable={!isAndroid && renamingId !== file.id}
+        onDragStart={isAndroid ? undefined : handleDragStart}
+        onDragEnd={isAndroid ? undefined : handleDragEnd}
+        onMouseDown={isAndroid ? undefined : async (e) => {
             if (e.button === 0) {
                 e.stopPropagation();
                 
@@ -453,13 +468,110 @@ const FileCard = React.memo(({
         }}
         onClick={(e) => {
             e.stopPropagation();
+            if (isAndroid && longPressTriggeredRef.current) {
+              longPressTriggeredRef.current = false;
+              return;
+            }
+            if (isAndroid && contextMenuTriggeredRef.current) {
+              contextMenuTriggeredRef.current = false;
+              return;
+            }
+            if (isAndroid && rangeSelectTriggeredRef.current) {
+              rangeSelectTriggeredRef.current = false;
+              return;
+            }
             onFileClick(e, file.id);
         }}
-        onDoubleClick={(e) => {
+        onDoubleClick={isAndroid && selectedFileIds && selectedFileIds.length > 0 ? undefined : ((e) => {
             e.stopPropagation();
             onFileDoubleClick(file.id);
-        }}
-        onContextMenu={(e) => onContextMenu(e, file.id)}
+        })}
+        onContextMenu={isAndroid ? undefined : ((e: React.MouseEvent) => onContextMenu(e, file.id))}
+        onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+            longPressTriggeredRef.current = false;
+            contextMenuTriggeredRef.current = false;
+            rangeSelectTriggeredRef.current = false;
+            const touchX = e.touches[0].clientX;
+            const touchY = e.touches[0].clientY;
+            touchStartPosRef.current = { x: touchX, y: touchY };
+            if (isSelected && selectedFileIds && selectedFileIds.length > 0) {
+                animShowTimerRef.current = setTimeout(() => {
+                    setContextMenuAnimPos({ x: touchX, y: touchY });
+                    setShowContextMenuAnim(true);
+                }, 150);
+                contextMenuTimerRef.current = setTimeout(() => {
+                    contextMenuTriggeredRef.current = true;
+                    if (onShowContextMenuForFile) {
+                        onShowContextMenuForFile(file.id, touchX, touchY);
+                    }
+                    requestAnimationFrame(() => {
+                        setShowContextMenuAnim(false);
+                    });
+                }, 500);
+            } else if (isAndroidSelectionMode && !isSelected) {
+                animShowTimerRef.current = setTimeout(() => {
+                    setContextMenuAnimPos({ x: touchX, y: touchY });
+                    setShowContextMenuAnim(true);
+                }, 150);
+                rangeSelectTimerRef.current = setTimeout(() => {
+                    rangeSelectTriggeredRef.current = true;
+                    if (onAndroidRangeSelect) {
+                        onAndroidRangeSelect(file.id);
+                    }
+                    requestAnimationFrame(() => {
+                        setShowContextMenuAnim(false);
+                    });
+                }, 500);
+            } else {
+                longPressTimerRef.current = setTimeout(() => {
+                    longPressTriggeredRef.current = true;
+                    if (onFileLongPress) onFileLongPress(file.id);
+                }, 500);
+            }
+        }) : undefined}
+        onTouchMove={isAndroid ? ((e: React.TouchEvent) => {
+            if (!touchStartPosRef.current) return;
+            const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+            const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+            if (dx > 10 || dy > 10) {
+                if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                }
+                if (contextMenuTimerRef.current) {
+                    clearTimeout(contextMenuTimerRef.current);
+                    contextMenuTimerRef.current = null;
+                }
+                if (rangeSelectTimerRef.current) {
+                    clearTimeout(rangeSelectTimerRef.current);
+                    rangeSelectTimerRef.current = null;
+                }
+                if (animShowTimerRef.current) {
+                    clearTimeout(animShowTimerRef.current);
+                    animShowTimerRef.current = null;
+                }
+                setShowContextMenuAnim(false);
+            }
+        }) : undefined}
+        onTouchEnd={isAndroid ? (() => {
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+            }
+            if (contextMenuTimerRef.current) {
+                clearTimeout(contextMenuTimerRef.current);
+                contextMenuTimerRef.current = null;
+            }
+            if (rangeSelectTimerRef.current) {
+                clearTimeout(rangeSelectTimerRef.current);
+                rangeSelectTimerRef.current = null;
+            }
+            if (animShowTimerRef.current) {
+                clearTimeout(animShowTimerRef.current);
+                animShowTimerRef.current = null;
+            }
+            setShowContextMenuAnim(false);
+        }) : undefined}
         onMouseEnter={() => {
             // 锟斤拷锟侥硷拷锟斤拷锟斤拷取锟斤拷式锟斤拷为fallback
             const fileName = file.name;
@@ -543,6 +655,13 @@ const FileCard = React.memo(({
             </div>
             )}
         </div>
+        {isAndroid && showContextMenuAnim && (
+            <CircularProgressOverlay
+                x={contextMenuAnimPos.x}
+                y={contextMenuAnimPos.y}
+                duration={350}
+            />
+        )}
     </div>
   );
 });
@@ -570,7 +689,11 @@ const GroupContent = React.memo(({
   onDragStart,
   onDragEnd,
   setIsDraggingInternal,
-  setDraggedFilePaths
+  setDraggedFilePaths,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  isAndroidSelectionMode,
+  onAndroidRangeSelect
 }: any) => {
   const groupRef = useRef<HTMLDivElement>(null);
   const [offsetTop, setOffsetTop] = useState(0);
@@ -643,6 +766,10 @@ const GroupContent = React.memo(({
                       thumbnailSize={thumbnailSize}
                       setIsDraggingInternal={setIsDraggingInternal}
                       setDraggedFilePaths={setDraggedFilePaths}
+                      onFileLongPress={onFileLongPress}
+                      onShowContextMenuForFile={onShowContextMenuForFile}
+                      isAndroidSelectionMode={isAndroidSelectionMode}
+                      onAndroidRangeSelect={onAndroidRangeSelect}
                   />
               </div>
             );
@@ -688,6 +815,10 @@ const GroupContent = React.memo(({
                 thumbnailSize={thumbnailSize}
                 setIsDraggingInternal={setIsDraggingInternal}
                 setDraggedFilePaths={setDraggedFilePaths}
+                onFileLongPress={onFileLongPress}
+                onShowContextMenuForFile={onShowContextMenuForFile}
+                isAndroidSelectionMode={isAndroidSelectionMode}
+                onAndroidRangeSelect={onAndroidRangeSelect}
             />
             );
           })}
@@ -772,6 +903,10 @@ interface FileGridProps {
   setDraggedFilePaths?: (paths: string[]) => void;
   isVisible?: boolean;
   onConsumeScrollToItem?: () => void;
+  onFileLongPress?: (id: string) => void;
+  onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
+  isAndroidSelectionMode?: boolean;
+  onAndroidRangeSelect?: (id: string) => void;
   // People view sort and group
   personSortBy?: import('../types').PersonSortOption;
   personSortDirection?: import('../types').SortDirection;
@@ -831,6 +966,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
   setDraggedFilePaths,
   isVisible = true,
   onConsumeScrollToItem,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  isAndroidSelectionMode,
+  onAndroidRangeSelect,
   // People view sort and group
   personSortBy = 'count',
   personSortDirection = 'desc',
@@ -1227,7 +1366,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   ref={containerRef}
                   id="file-grid-container"
                   className="flex-1 overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
-                  onContextMenu={onBackgroundContextMenu}
+                  onContextMenu={isAndroid ? undefined : onBackgroundContextMenu}
                   onMouseDown={handleMouseDownInternal}
                   onMouseMove={onMouseMove}
                   onMouseUp={onMouseUp}
@@ -1346,13 +1485,13 @@ export const FileGrid: React.FC<FileGridProps> = ({
           id={isAndroid ? 'file-grid-scroll' : 'file-grid-container'}
           className={`relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
           style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
-          onContextMenu={onBackgroundContextMenu}
+          onContextMenu={isAndroid ? undefined : onBackgroundContextMenu}
           onMouseDown={onMouseDown}
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
-          onDragOver={handleDragOver}
-          onDrop={handleDrop}
-          onDragLeave={() => {
+          onDragOver={isAndroid ? undefined : handleDragOver}
+          onDrop={isAndroid ? undefined : handleDrop}
+          onDragLeave={isAndroid ? undefined : () => {
               const allFolders = document.querySelectorAll('.file-item[data-id]');
               allFolders.forEach(el => el.classList.remove('drop-target-active'));
           }}
@@ -1428,6 +1567,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                   onDragEnd={onDragEnd}
                                   setIsDraggingInternal={setIsDraggingInternal}
                                   setDraggedFilePaths={setDraggedFilePaths}
+                                  onFileLongPress={onFileLongPress}
+                                  onShowContextMenuForFile={onShowContextMenuForFile}
+                                  isAndroidSelectionMode={isAndroidSelectionMode}
+                                  onAndroidRangeSelect={onAndroidRangeSelect}
                               />
                           )}
                       </div>
@@ -1469,6 +1612,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       thumbnailSize={thumbnailSize}
                                       setIsDraggingInternal={setIsDraggingInternal}
                                       setDraggedFilePaths={setDraggedFilePaths}
+                                      onFileLongPress={onFileLongPress}
+                                      onShowContextMenuForFile={onShowContextMenuForFile}
+                                      isAndroidSelectionMode={isAndroidSelectionMode}
+                                      onAndroidRangeSelect={onAndroidRangeSelect}
                                   />
                               </div>
                           );
@@ -1518,6 +1665,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                                       thumbnailSize={thumbnailSize}
                                       setIsDraggingInternal={setIsDraggingInternal}
                                       setDraggedFilePaths={setDraggedFilePaths}
+                                      onFileLongPress={onFileLongPress}
+                                      onShowContextMenuForFile={onShowContextMenuForFile}
+                                      isAndroidSelectionMode={isAndroidSelectionMode}
+                                      onAndroidRangeSelect={onAndroidRangeSelect}
                                   />
                               );
                           })}

@@ -171,6 +171,7 @@ export const translations = {
       allTagsOverview: '所有标签概览',
       filtered: '(已筛选)',
       selectAll: '全选',
+      deselectAll: '取消全选',
       deletedItems: '已删除 {count} 项',
       undo: '撤销',
       copyColor: '复制颜色值',

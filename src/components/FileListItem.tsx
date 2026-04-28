@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Folder, Image as ImageIcon, Book, Film } from 'lucide-react';
 import { FileNode, FileType } from '../types';
 import { formatSize } from '../utils/mockFileSystem';
@@ -8,6 +8,7 @@ import { startDragToExternal } from '../api/tauri-bridge';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { ImageThumbnail } from './ImageThumbnail';
 import { InlineRenameInput } from './InlineRenameInput';
+import { CircularProgressOverlay } from './CircularProgressOverlay';
 
 export const FileListItem = React.memo(({
   file,
@@ -28,10 +29,26 @@ export const FileListItem = React.memo(({
   onDragEnd,
   thumbnailSize,
   setIsDraggingInternal,
-  setDraggedFilePaths
+  setDraggedFilePaths,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  isAndroidSelectionMode,
+  onAndroidRangeSelect
 }: any) => {
   if (!file) return null;
   
+  const isAndroid = resourceRoot === 'android_media_store';
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contextMenuTriggeredRef = useRef(false);
+  const rangeSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rangeSelectTriggeredRef = useRef(false);
+  const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
+  const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
+
   // Drag handler for list view
   const handleDragStart = (e: React.DragEvent) => {
     e.stopPropagation();
@@ -275,7 +292,7 @@ export const FileListItem = React.memo(({
             ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 border-l-4 shadow-md' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
             ${isExternalDragging ? 'opacity-50' : ''}
         `}
-        onMouseDown={async (e) => {
+        onMouseDown={isAndroid ? undefined : async (e) => {
             if (e.button === 0) {
                 e.stopPropagation();
                 
@@ -327,16 +344,113 @@ export const FileListItem = React.memo(({
         }}
         onClick={(e) => {
             e.stopPropagation();
+            if (isAndroid && longPressTriggeredRef.current) {
+              longPressTriggeredRef.current = false;
+              return;
+            }
+            if (isAndroid && contextMenuTriggeredRef.current) {
+              contextMenuTriggeredRef.current = false;
+              return;
+            }
+            if (isAndroid && rangeSelectTriggeredRef.current) {
+              rangeSelectTriggeredRef.current = false;
+              return;
+            }
             onFileClick(e, file.id);
         }}
-        onDoubleClick={(e) => {
+        onDoubleClick={isAndroid && selectedFileIds && selectedFileIds.length > 0 ? undefined : ((e) => {
             e.stopPropagation();
             onFileDoubleClick(file.id);
-        }}
-        onContextMenu={(e) => onContextMenu(e, file.id)}
-        draggable={renamingId !== file.id}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}>
+        })}
+        onContextMenu={isAndroid ? undefined : ((e: React.MouseEvent) => onContextMenu(e, file.id))}
+        onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+            longPressTriggeredRef.current = false;
+            contextMenuTriggeredRef.current = false;
+            rangeSelectTriggeredRef.current = false;
+            const touchX = e.touches[0].clientX;
+            const touchY = e.touches[0].clientY;
+            touchStartPosRef.current = { x: touchX, y: touchY };
+            if (isSelected && selectedFileIds && selectedFileIds.length > 0) {
+                animShowTimerRef.current = setTimeout(() => {
+                    setContextMenuAnimPos({ x: touchX, y: touchY });
+                    setShowContextMenuAnim(true);
+                }, 150);
+                contextMenuTimerRef.current = setTimeout(() => {
+                    contextMenuTriggeredRef.current = true;
+                    if (onShowContextMenuForFile) {
+                        onShowContextMenuForFile(file.id, touchX, touchY);
+                    }
+                    requestAnimationFrame(() => {
+                        setShowContextMenuAnim(false);
+                    });
+                }, 500);
+            } else if (isAndroidSelectionMode && !isSelected) {
+                animShowTimerRef.current = setTimeout(() => {
+                    setContextMenuAnimPos({ x: touchX, y: touchY });
+                    setShowContextMenuAnim(true);
+                }, 150);
+                rangeSelectTimerRef.current = setTimeout(() => {
+                    rangeSelectTriggeredRef.current = true;
+                    if (onAndroidRangeSelect) {
+                        onAndroidRangeSelect(file.id);
+                    }
+                    requestAnimationFrame(() => {
+                        setShowContextMenuAnim(false);
+                    });
+                }, 500);
+            } else {
+                longPressTimerRef.current = setTimeout(() => {
+                    longPressTriggeredRef.current = true;
+                    if (onFileLongPress) onFileLongPress(file.id);
+                }, 500);
+            }
+        }) : undefined}
+        onTouchMove={isAndroid ? ((e: React.TouchEvent) => {
+            if (!touchStartPosRef.current) return;
+            const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+            const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+            if (dx > 10 || dy > 10) {
+                if (longPressTimerRef.current) {
+                    clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                }
+                if (contextMenuTimerRef.current) {
+                    clearTimeout(contextMenuTimerRef.current);
+                    contextMenuTimerRef.current = null;
+                }
+                if (rangeSelectTimerRef.current) {
+                    clearTimeout(rangeSelectTimerRef.current);
+                    rangeSelectTimerRef.current = null;
+                }
+                if (animShowTimerRef.current) {
+                    clearTimeout(animShowTimerRef.current);
+                    animShowTimerRef.current = null;
+                }
+                setShowContextMenuAnim(false);
+            }
+        }) : undefined}
+        onTouchEnd={isAndroid ? (() => {
+            if (longPressTimerRef.current) {
+                clearTimeout(longPressTimerRef.current);
+                longPressTimerRef.current = null;
+            }
+            if (contextMenuTimerRef.current) {
+                clearTimeout(contextMenuTimerRef.current);
+                contextMenuTimerRef.current = null;
+            }
+            if (rangeSelectTimerRef.current) {
+                clearTimeout(rangeSelectTimerRef.current);
+                rangeSelectTimerRef.current = null;
+            }
+            if (animShowTimerRef.current) {
+                clearTimeout(animShowTimerRef.current);
+                animShowTimerRef.current = null;
+            }
+            setShowContextMenuAnim(false);
+        }) : undefined}
+        draggable={!isAndroid && renamingId !== file.id}
+        onDragStart={isAndroid ? undefined : handleDragStart}
+        onDragEnd={isAndroid ? undefined : handleDragEnd}>
         <div className="flex-1 flex items-center overflow-hidden min-w-0 pointer-events-none">
             {file.type === FileType.FOLDER ? (
                 file.category === 'book' ? (
@@ -403,6 +517,13 @@ export const FileListItem = React.memo(({
                 ? formatSize(file.meta?.sizeKb || 0) 
                 : (file.type === FileType.FOLDER ? `${file.children?.length || 0} ${t('meta.items')}` : '-')}
         </div>
+        {isAndroid && showContextMenuAnim && (
+            <CircularProgressOverlay
+                x={contextMenuAnimPos.x}
+                y={contextMenuAnimPos.y}
+                duration={350}
+            />
+        )}
     </div>
   );
 });
