@@ -23,7 +23,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -758,12 +758,84 @@ export const App: React.FC = () => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
 
+  const handleFolderSelect = useCallback((id: string) => {
+    if (!isAndroidSelectionMode) return;
+    if (activeTab.selectedFileIds.includes(id)) {
+      updateActiveTab({
+        selectedFileIds: activeTab.selectedFileIds.filter(fileId => fileId !== id),
+        lastSelectedId: id
+      });
+    } else {
+      updateActiveTab({
+        selectedFileIds: [...activeTab.selectedFileIds, id],
+        lastSelectedId: id
+      });
+    }
+  }, [isAndroidSelectionMode, activeTab, updateActiveTab]);
+
+  const handleFolderLongPress = useCallback((id: string) => {
+    if (!isAndroidDevice) return;
+    handleEnterAndroidSelectionMode(id);
+  }, [isAndroidDevice, handleEnterAndroidSelectionMode]);
+
+  const handleFolderAndroidRangeSelect = useCallback((id: string) => {
+    if (!isAndroidDevice || !isAndroidSelectionMode) return;
+    const folderIds = state.roots
+      .map(rid => state.files[rid])
+      .filter((f): f is typeof state.files[string] => !!f && f.type === 'folder')
+      .sort((a, b) => {
+        const countA = a.imageCount ?? a.children?.length ?? 0;
+        const countB = b.imageCount ?? b.children?.length ?? 0;
+        return countB - countA;
+      })
+      .map(f => f.id);
+    if (activeTab.lastSelectedId && activeTab.selectedFileIds.length > 0) {
+      const lastIndex = folderIds.indexOf(activeTab.lastSelectedId);
+      const currentIndex = folderIds.indexOf(id);
+      if (lastIndex !== -1 && currentIndex !== -1) {
+        const start = Math.min(lastIndex, currentIndex);
+        const end = Math.max(lastIndex, currentIndex);
+        const rangeIds = folderIds.slice(start, end + 1);
+        const merged = [...new Set([...activeTab.selectedFileIds, ...rangeIds])];
+        updateActiveTab({
+          selectedFileIds: merged,
+          lastSelectedId: id
+        });
+      } else {
+        updateActiveTab({
+          selectedFileIds: [...activeTab.selectedFileIds, id],
+          lastSelectedId: id
+        });
+      }
+    } else {
+      updateActiveTab({
+        selectedFileIds: [...activeTab.selectedFileIds, id],
+        lastSelectedId: id
+      });
+    }
+  }, [isAndroidDevice, isAndroidSelectionMode, state.roots, state.files, activeTab, updateActiveTab]);
+
   const handleShowContextMenuForFile = useCallback((id: string, x: number, y: number) => {
     const file = state.files[id];
     if (!file) return;
-    const menuType = file.type === FileType.FOLDER ? 'folder-single' : 'file-single';
-    setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
-  }, [state.files, setContextMenu]);
+
+    if (activeTab.selectedFileIds.includes(id) && activeTab.selectedFileIds.length > 1) {
+      const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
+      const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
+      const allAreFiles = selectedItems.every(item => item && item.type !== FileType.FOLDER);
+
+      let menuType: 'file-multi' | 'folder-multi';
+      if (allAreFolders) {
+        menuType = 'folder-multi';
+      } else {
+        menuType = 'file-multi';
+      }
+      setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
+    } else {
+      const menuType = file.type === FileType.FOLDER ? 'folder-single' : 'file-single';
+      setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
+    }
+  }, [state.files, activeTab.selectedFileIds, setContextMenu]);
 
   const { handleFileClick, handleFileLongPress, handleAndroidRangeSelect } = useFileSelection({
     activeTab, displayFileIds, closeContextMenu, isSelecting, updateActiveTab,
@@ -1381,7 +1453,7 @@ export const App: React.FC = () => {
   // Toggle helpers for sidebars
   const toggleSidebar = () => {
     const next = !state.layout.isSidebarVisible;
-    if (isAndroidSync() && next && typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches && state.layout.isMetadataVisible) {
+    if (isAndroidSync() && next && state.layout.isMetadataVisible) {
       setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next, isMetadataVisible: false } }));
     } else {
       setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
@@ -1390,7 +1462,7 @@ export const App: React.FC = () => {
 
   const toggleMetadata = () => {
     const next = !state.layout.isMetadataVisible;
-    if (isAndroidSync() && next && typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches && state.layout.isSidebarVisible) {
+    if (isAndroidSync() && next && state.layout.isSidebarVisible) {
       setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next, isSidebarVisible: false } }));
     } else {
       setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
@@ -1574,9 +1646,15 @@ export const App: React.FC = () => {
         lastProgress: task.current,
         lastEstimatedTimeUpdate: now
       });
+      if (isAndroidPlatformCached()) {
+        androidUpdateTaskNotification(task.current || 0, task.total || 0, false);
+      }
     } else {
       await pauseColorExtraction();
       updateTask(id, { status: 'paused' });
+      if (isAndroidPlatformCached()) {
+        androidUpdateTaskNotification(task.current || 0, task.total || 0, true);
+      }
     }
   };
 
@@ -1950,35 +2028,35 @@ export const App: React.FC = () => {
             {isAndroidDevice && isAndroidSelectionMode ? (
               <AndroidSelectionBar
                 selectedCount={activeTab.selectedFileIds.length}
-                totalCount={displayFileIds.length}
+                totalCount={activeTab.viewMode === 'folders-overview' ? state.roots.filter(rid => state.files[rid]?.type === 'folder').length : displayFileIds.length}
                 selectedFileIds={activeTab.selectedFileIds}
                 files={state.files}
                 activeTab={activeTab}
-                tabs={state.tabs}
                 peopleWithDisplayCounts={peopleWithDisplayCounts}
-                aiConnectionStatus={state.aiConnectionStatus}
-                displayFileIds={displayFileIds}
-                clipSettings={state.settings.clip}
                 t={t}
-                onSelectAll={() => updateActiveTab({ selectedFileIds: displayFileIds })}
+                onSelectAll={() => {
+                  if (activeTab.viewMode === 'folders-overview') {
+                    const folderIds = state.roots.filter(rid => state.files[rid]?.type === 'folder');
+                    updateActiveTab({ selectedFileIds: folderIds });
+                  } else {
+                    updateActiveTab({ selectedFileIds: displayFileIds });
+                  }
+                }}
                 onClearSelection={handleExitAndroidSelectionMode}
                 onDeselectAll={handleDeselectAllAndroid}
                 onDelete={requestDelete}
-                handleOpenInNewTab={handleOpenInNewTab}
-                handleViewInExplorer={handleViewInExplorer}
-                enterFolder={enterFolder}
-                setModal={(type, data) => setState(s => ({ ...s, activeModal: { type: type as any, data } }))}
-                startRename={startRename}
-                handleAIAnalysis={handleAIAnalysis}
-                handleClearPersonInfo={handleClearPersonInfo}
-                handleCopyTags={handleCopyTags}
-                handlePasteTags={handlePasteTags}
-                showToast={showToast}
-                handleOpenCompareInNewTab={handleOpenCompareInNewTab}
-                handleAddToCompareCanvas={handleAddToCompareCanvas}
-                handleCopyImageToClipboard={handleCopyImageToClipboard}
-                handleSearchSimilarImages={handleSearchSimilarImages}
-                openClipSettings={openClipSettings}
+                onShowContextMenu={(x: number, y: number) => {
+                  const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
+                  const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
+                  let menuType: 'file-single' | 'file-multi' | 'folder-single' | 'folder-multi';
+                  if (activeTab.selectedFileIds.length === 1) {
+                    const file = state.files[activeTab.selectedFileIds[0]];
+                    menuType = file?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
+                  } else {
+                    menuType = allAreFolders ? 'folder-multi' : 'file-multi';
+                  }
+                  setContextMenu({ visible: true, x, y, type: menuType, targetId: activeTab.selectedFileIds[0] });
+                }}
               />
             ) : (
             <TopBar
@@ -2303,6 +2381,12 @@ export const App: React.FC = () => {
                     isVisible={activeTab.viewMode === 'folders-overview'}
                     scrollTop={activeTab.viewMode === 'folders-overview' ? activeTab.scrollTop : undefined}
                     onScrollTopChange={handleFolderScrollTopChange}
+                    isAndroidSelectionMode={isAndroidSelectionMode}
+                    selectedFileIds={activeTab.selectedFileIds}
+                    onFileLongPress={handleFolderLongPress}
+                    onShowContextMenuForFile={handleShowContextMenuForFile}
+                    onAndroidRangeSelect={handleFolderAndroidRangeSelect}
+                    onFolderSelect={handleFolderSelect}
                   />
                 </div>
                 {activeTab.viewMode === 'topics-overview' ? (
@@ -2468,10 +2552,20 @@ export const App: React.FC = () => {
             if (!task) return;
             if (task.status === 'running') {
               updateTask(taskId, { status: 'paused' });
-              if (type === 'color') await pauseColorExtraction();
+              if (type === 'color') {
+                await pauseColorExtraction();
+                if (isAndroidPlatformCached()) {
+                  androidUpdateTaskNotification(task.current || 0, task.total || 0, true);
+                }
+              }
             } else {
               updateTask(taskId, { status: 'running' });
-              if (type === 'color') await resumeColorExtraction();
+              if (type === 'color') {
+                await resumeColorExtraction();
+                if (isAndroidPlatformCached()) {
+                  androidUpdateTaskNotification(task.current || 0, task.total || 0, false);
+                }
+              }
             }
           }}
         />
@@ -2553,6 +2647,7 @@ export const App: React.FC = () => {
         aiConnectionStatus={state.aiConnectionStatus}
         displayFileIds={displayFileIds}
         clipSettings={state.settings.clip}
+        isAndroid={isAndroidDevice}
         t={t}
         closeContextMenu={closeContextMenu}
         handleOpenInNewTab={handleOpenInNewTab}

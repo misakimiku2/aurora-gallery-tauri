@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Minus, Pause, Loader2 } from 'lucide-react';
 import { TaskProgress } from '../types';
+import { isAndroidPlatformCached } from '../api/tauri-bridge';
 
 interface TaskProgressModalProps {
     tasks: TaskProgress[];
@@ -45,35 +46,44 @@ export const TaskProgressModal: React.FC<TaskProgressModalProps> = ({ tasks, onM
         }
     };
 
+    const isAndroid = isAndroidPlatformCached();
+    const iconSize = isAndroid ? 18 : 14;
+    const smallIconSize = isAndroid ? 16 : 12;
+    const btnPad = isAndroid ? 'p-2' : 'p-1';
+    const titleClass = isAndroid ? 'font-bold text-base' : 'font-bold text-sm';
+    const textClass = isAndroid ? 'text-sm' : 'text-xs';
+    const progressH = isAndroid ? 'h-3' : 'h-1.5';
+    const modalW = isAndroid ? 'w-[28rem]' : 'w-96';
+
     return (
         <div className={`fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] transition-all duration-300 ease-in-out origin-bottom ${isMinimizing ? 'scale-75 opacity-0 translate-y-full' : 'scale-100 opacity-100'}`}>
-            <div className="w-96 bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-slide-up">
-                <div className="bg-gray-100 dark:bg-gray-900 px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"><span className="font-bold text-sm text-gray-700 dark:text-gray-200">{t('sidebar.tasks')} ({activeTasks.length})</span><div className="flex space-x-1"><button onClick={handleMinimize} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"><Minus size={14} /></button></div></div>
-                <div className="max-h-64 overflow-y-auto p-4 space-y-4">{activeTasks.map((task) => (
+            <div className={`${modalW} bg-white dark:bg-gray-800 rounded-lg shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-slide-up`}>
+                <div className="bg-gray-100 dark:bg-gray-900 px-4 py-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center"><span className={`${titleClass} text-gray-700 dark:text-gray-200`}>{t('sidebar.tasks')} ({activeTasks.length})</span><div className="flex space-x-1"><button onClick={handleMinimize} className={`${btnPad} hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500`}><Minus size={iconSize} /></button></div></div>
+                <div className={`max-h-64 overflow-y-auto ${isAndroid ? 'p-5' : 'p-4'} space-y-4`}>{activeTasks.map((task) => (
                     <div key={task.id} className="space-y-1">
                         <div className="flex justify-between items-center">
-                            <span className="truncate pr-2 text-xs text-gray-600 dark:text-gray-400 flex-1">{task.title}</span>
+                            <span className={`truncate pr-2 ${textClass} text-gray-600 dark:text-gray-400 flex-1`}>{task.title}</span>
                             <div className="flex items-center space-x-2">
-                                <span className="text-xs text-gray-600 dark:text-gray-400">{Math.round((task.current / Math.max(task.total, 1)) * 100)}%</span>
+                                <span className={`${textClass} text-gray-600 dark:text-gray-400`}>{Math.round((task.current / Math.max(task.total, 1)) * 100)}%</span>
                                 {task.type === 'color' && (
                                     <button
                                         onClick={() => handlePauseResumeClick(task.id, task.type)}
-                                        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500"
+                                        className={`${btnPad} hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-500`}
                                         title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
                                     >
-                                        {task.status === 'paused' ? <Loader2 size={12} className="animate-spin" /> : <Pause size={12} />}
+                                        {task.status === 'paused' ? <Loader2 size={smallIconSize} className="animate-spin" /> : <Pause size={smallIconSize} />}
                                     </button>
                                 )}
                             </div>
                         </div>
-                        {task.currentStep && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentStep}</div>}
-                        {task.currentFile && <div className="text-xs text-gray-500 dark:text-gray-500 truncate">{task.currentFile}</div>}
+                        {task.currentStep && <div className={`${textClass} text-gray-500 dark:text-gray-500 truncate`}>{task.currentStep}</div>}
+                        {task.currentFile && <div className={`${textClass} text-gray-500 dark:text-gray-500 truncate`}>{task.currentFile}</div>}
                         {task.estimatedTime && task.estimatedTime > 0 && (
-                            <div className="text-xs text-gray-500 dark:text-gray-500 truncate">
+                            <div className={`${textClass} text-gray-500 dark:text-gray-500 truncate`}>
                                 剩余时间: {formatEstimatedTime(task.estimatedTime)}
                             </div>
                         )}
-                        <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                        <div className={`w-full bg-gray-200 dark:bg-gray-700 ${progressH} rounded-full overflow-hidden`}>
                             <div
                                 className={`h-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`}
                                 style={{ width: `${(task.current / Math.max(task.total, 1)) * 100}%` }}

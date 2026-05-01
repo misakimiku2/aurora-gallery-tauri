@@ -19,6 +19,7 @@ import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.content.ComponentCallbacks2
+import android.content.Intent
 import android.content.res.Configuration
 import android.util.DisplayMetrics
 import java.io.File
@@ -84,6 +85,7 @@ class MainActivity : TauriActivity() {
     requestMediaPermissions()
     setupBackPressedHandler()
     registerComponentCallbacks(componentCallbacks)
+    ColorExtractionService.createChannel(this)
   }
 
   private fun applyInitialStatusBarStyle() {
@@ -609,17 +611,6 @@ class MainActivity : TauriActivity() {
                      options.outMimeType?.contains("webp", true) == true ||
                      options.outMimeType?.contains("gif", true) == true
 
-      val ext = if (hasAlpha) "webp" else "jpg"
-      val cacheFilename = "${hash}_q85.$ext"
-      val cacheFile = File(cacheDir, cacheFilename)
-
-      if (cacheFile.exists()) {
-        result.put("thumbnailPath", cacheFile.absolutePath)
-        result.put("width", originalWidth)
-        result.put("height", originalHeight)
-        return result.toString()
-      }
-
       val targetSize = 256
       var inSampleSize = 1
       val maxDim = maxOf(originalWidth, originalHeight)
@@ -647,6 +638,19 @@ class MainActivity : TauriActivity() {
         bitmap
       }
 
+      val hasActualAlpha = hasAlpha && finalBitmap.hasAlpha()
+      val ext = if (hasActualAlpha) "webp" else "jpg"
+      val cacheFilename = "${hash}_q85.$ext"
+      val cacheFile = File(cacheDir, cacheFilename)
+
+      if (cacheFile.exists()) {
+        result.put("thumbnailPath", cacheFile.absolutePath)
+        result.put("width", originalWidth)
+        result.put("height", originalHeight)
+        finalBitmap.recycle()
+        return result.toString()
+      }
+
       if (!cacheDir.startsWith("/")) {
         val dir = File(cacheDir)
         if (!dir.exists()) dir.mkdirs()
@@ -654,13 +658,8 @@ class MainActivity : TauriActivity() {
 
       try {
         val fos = FileOutputStream(cacheFile)
-        if (hasAlpha) {
-          val hasActualAlpha = finalBitmap.hasAlpha()
-          if (hasActualAlpha) {
-            finalBitmap.compress(Bitmap.CompressFormat.WEBP, 85, fos)
-          } else {
-            finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
-          }
+        if (hasActualAlpha) {
+          finalBitmap.compress(Bitmap.CompressFormat.WEBP, 85, fos)
         } else {
           finalBitmap.compress(Bitmap.CompressFormat.JPEG, 85, fos)
         }
@@ -707,6 +706,49 @@ class MainActivity : TauriActivity() {
       }
     }
     return null
+  }
+
+  fun showExtractionNotification(title: String, current: Int, total: Int) {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        requestPostNotificationPermission()
+      }
+    }
+    val intent = Intent(this, ColorExtractionService::class.java).apply {
+      action = ColorExtractionService.ACTION_START
+      putExtra(ColorExtractionService.EXTRA_TITLE, title)
+      putExtra(ColorExtractionService.EXTRA_CURRENT, current)
+      putExtra(ColorExtractionService.EXTRA_TOTAL, total)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      startForegroundService(intent)
+    } else {
+      startService(intent)
+    }
+  }
+
+  fun updateExtractionNotification(current: Int, total: Int, isPaused: Boolean) {
+    ColorExtractionService.updateProgress(current, total, isPaused)
+    ColorExtractionService.notifyUpdate(this)
+  }
+
+  fun hideExtractionNotification() {
+    val intent = Intent(this, ColorExtractionService::class.java).apply {
+      action = ColorExtractionService.ACTION_STOP
+    }
+    startService(intent)
+  }
+
+  private var notificationPermissionLauncher: (() -> Unit)? = null
+
+  private fun requestPostNotificationPermission() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        try {
+          permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        } catch (_: Exception) {}
+      }
+    }
   }
 
   fun setStatusBarStyle(isDark: Boolean) {

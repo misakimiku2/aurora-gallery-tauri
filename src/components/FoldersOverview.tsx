@@ -5,7 +5,8 @@ import { usePinchZoom } from '../hooks/usePinchZoom';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem } from './useLayoutHook';
-import { Folder } from 'lucide-react';
+import { Folder, Check } from 'lucide-react';
+import { CircularProgressOverlay } from './CircularProgressOverlay';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -22,6 +23,12 @@ interface FoldersOverviewProps {
   isVisible?: boolean;
   scrollTop?: number;
   onScrollTopChange?: (scrollTop: number) => void;
+  isAndroidSelectionMode?: boolean;
+  selectedFileIds?: string[];
+  onFileLongPress?: (id: string) => void;
+  onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
+  onAndroidRangeSelect?: (id: string) => void;
+  onFolderSelect?: (id: string) => void;
 }
 
 const FolderCard = React.memo(({
@@ -30,6 +37,12 @@ const FolderCard = React.memo(({
   onClick,
   thumbnailSize,
   layoutMode,
+  isSelected,
+  isAndroidSelectionMode,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  onAndroidRangeSelect,
+  onFolderSelect,
 }: {
   folder: FileNode;
   files: Record<string, FileNode>;
@@ -38,6 +51,12 @@ const FolderCard = React.memo(({
   onClick: () => void;
   thumbnailSize: number;
   layoutMode?: LayoutMode;
+  isSelected?: boolean;
+  isAndroidSelectionMode?: boolean;
+  onFileLongPress?: (id: string) => void;
+  onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
+  onAndroidRangeSelect?: (id: string) => void;
+  onFolderSelect?: (id: string) => void;
 }) => {
   const [ref, isInView, wasInView] = useInView({ rootMargin: '2000px' });
   const [coverSrc, setCoverSrc] = useState<string | null>(() => {
@@ -54,6 +73,17 @@ const FolderCard = React.memo(({
   const imageCount = folder.imageCount ?? folder.children?.length ?? 0;
   const coverImagePathRef = useRef(folder.coverImagePath);
   coverImagePathRef.current = folder.coverImagePath;
+
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const contextMenuTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const contextMenuTriggeredRef = useRef(false);
+  const rangeSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rangeSelectTriggeredRef = useRef(false);
+  const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
+  const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
 
   useEffect(() => {
     if (!isAndroid) return;
@@ -151,19 +181,113 @@ const FolderCard = React.memo(({
 
   const isGridMode = !layoutMode || layoutMode === 'grid';
 
+  const clearAllTimers = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (contextMenuTimerRef.current) {
+      clearTimeout(contextMenuTimerRef.current);
+      contextMenuTimerRef.current = null;
+    }
+    if (rangeSelectTimerRef.current) {
+      clearTimeout(rangeSelectTimerRef.current);
+      rangeSelectTimerRef.current = null;
+    }
+    if (animShowTimerRef.current) {
+      clearTimeout(animShowTimerRef.current);
+      animShowTimerRef.current = null;
+    }
+    setShowContextMenuAnim(false);
+  }, []);
+
   return (
     <div
       ref={ref}
       className="file-item cursor-pointer select-none flex flex-col items-center px-1"
       data-id={folder.id}
-      onClick={onClick}
+      onClick={(e) => {
+        if (isAndroid && longPressTriggeredRef.current) {
+          longPressTriggeredRef.current = false;
+          return;
+        }
+        if (isAndroid && contextMenuTriggeredRef.current) {
+          contextMenuTriggeredRef.current = false;
+          return;
+        }
+        if (isAndroid && rangeSelectTriggeredRef.current) {
+          rangeSelectTriggeredRef.current = false;
+          return;
+        }
+        if (isAndroid && isAndroidSelectionMode && onFolderSelect) {
+          onFolderSelect(folder.id);
+          return;
+        }
+        onClick();
+      }}
+      onContextMenu={isAndroid ? undefined : undefined}
+      onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+        longPressTriggeredRef.current = false;
+        contextMenuTriggeredRef.current = false;
+        rangeSelectTriggeredRef.current = false;
+        const touchX = e.touches[0].clientX;
+        const touchY = e.touches[0].clientY;
+        touchStartPosRef.current = { x: touchX, y: touchY };
+        if (isSelected && isAndroidSelectionMode) {
+          animShowTimerRef.current = setTimeout(() => {
+            setContextMenuAnimPos({ x: touchX, y: touchY });
+            setShowContextMenuAnim(true);
+          }, 150);
+          contextMenuTimerRef.current = setTimeout(() => {
+            contextMenuTriggeredRef.current = true;
+            if (onShowContextMenuForFile) {
+              onShowContextMenuForFile(folder.id, touchX, touchY);
+            }
+            requestAnimationFrame(() => {
+              setShowContextMenuAnim(false);
+            });
+          }, 500);
+        } else if (isAndroidSelectionMode && !isSelected) {
+          animShowTimerRef.current = setTimeout(() => {
+            setContextMenuAnimPos({ x: touchX, y: touchY });
+            setShowContextMenuAnim(true);
+          }, 150);
+          rangeSelectTimerRef.current = setTimeout(() => {
+            rangeSelectTriggeredRef.current = true;
+            if (onAndroidRangeSelect) {
+              onAndroidRangeSelect(folder.id);
+            }
+            requestAnimationFrame(() => {
+              setShowContextMenuAnim(false);
+            });
+          }, 500);
+        } else {
+          longPressTimerRef.current = setTimeout(() => {
+            longPressTriggeredRef.current = true;
+            if (onFileLongPress) onFileLongPress(folder.id);
+          }, 500);
+        }
+      }) : undefined}
+      onTouchMove={isAndroid ? ((e: React.TouchEvent) => {
+        if (!touchStartPosRef.current) return;
+        const dx = Math.abs(e.touches[0].clientX - touchStartPosRef.current.x);
+        const dy = Math.abs(e.touches[0].clientY - touchStartPosRef.current.y);
+        if (dx > 10 || dy > 10) {
+          clearAllTimers();
+        }
+      }) : undefined}
+      onTouchEnd={isAndroid ? (() => {
+        clearAllTimers();
+      }) : undefined}
       style={{
         willChange: 'transform',
         contain: 'paint',
       }}
     >
       <div
-        className="relative overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800"
+        className={`relative overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 transition-all duration-300 ${
+          isSelected ? 'border-2 border-blue-500 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : 'border-2 border-transparent'
+        }`}
         style={isGridMode
           ? { width: thumbnailSize, height: thumbnailSize }
           : { width: '100%', height: '100%' }
@@ -192,6 +316,16 @@ const FolderCard = React.memo(({
           </div>
         )}
 
+        <div className={`absolute top-2 left-2 transition-opacity duration-200 z-20 ${isSelected ? 'opacity-100' : isAndroidSelectionMode ? 'opacity-0' : 'opacity-0'}`}>
+          {isSelected ? (
+            <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center border-2 border-white shadow-lg ring-2 ring-blue-400/50">
+              <Check size={14} className="text-white" strokeWidth={3} />
+            </div>
+          ) : isAndroidSelectionMode ? (
+            <div className="w-5 h-5 bg-black/30 hover:bg-black/50 rounded-full border border-white/50 backdrop-blur-sm"></div>
+          ) : null}
+        </div>
+
         <div className="absolute bottom-1.5 right-1.5 z-20 flex flex-col items-end gap-0.5">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-blue-400">
             <path d="M2 6a2 2 0 012-2h5l2 2h9a2 2 0 012 2v10a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
@@ -209,6 +343,14 @@ const FolderCard = React.memo(({
           {folder.name}
         </div>
       </div>
+
+      {isAndroid && showContextMenuAnim && (
+        <CircularProgressOverlay
+          x={contextMenuAnimPos.x}
+          y={contextMenuAnimPos.y}
+          duration={350}
+        />
+      )}
     </div>
   );
 });
@@ -228,6 +370,12 @@ const FoldersOverview = React.memo(({
   isVisible = true,
   scrollTop: targetScrollTop,
   onScrollTopChange,
+  isAndroidSelectionMode,
+  selectedFileIds,
+  onFileLongPress,
+  onShowContextMenuForFile,
+  onAndroidRangeSelect,
+  onFolderSelect,
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -414,6 +562,12 @@ const FoldersOverview = React.memo(({
                 onClick={() => stableOnFolderClick(pos.id)}
                 thumbnailSize={Math.min(pos.width - 2, pos.height - 28)}
                 layoutMode={layoutMode}
+                isSelected={selectedFileIds?.includes(pos.id)}
+                isAndroidSelectionMode={isAndroidSelectionMode}
+                onFileLongPress={onFileLongPress}
+                onShowContextMenuForFile={onShowContextMenuForFile}
+                onAndroidRangeSelect={onAndroidRangeSelect}
+                onFolderSelect={onFolderSelect}
               />
             </div>
         ))}

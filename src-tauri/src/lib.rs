@@ -203,7 +203,16 @@ static THUMBNAIL_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 static VIEWER_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(target_os = "android")]
+static ANDROID_COLOR_PAUSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "android")]
+static ANDROID_COLOR_CANCELLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "android")]
 const MAX_THUMBNAIL_WORKERS: usize = 6;
+
+#[cfg(target_os = "android")]
+const MAX_COLOR_WORKERS: usize = 6;
 
 #[cfg(target_os = "android")]
 const VIEWER_OPEN_MAX_WORKERS: usize = 2;
@@ -543,6 +552,566 @@ async fn android_resume_thumbnail_workers(app: tauri::AppHandle) -> Result<(), S
     log::info!("[ThumbnailWorker] Viewer closed, resumed all workers");
     spawn_workers_if_needed(&app);
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn android_pause_color_extraction(app: tauri::AppHandle) -> bool {
+    ANDROID_COLOR_PAUSED.store(true, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Paused");
+    let _ = app.emit("color-extraction-notification-action", serde_json::json!({"action": "pause"}));
+    true
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn android_resume_color_extraction(app: tauri::AppHandle) -> bool {
+    ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
+    ANDROID_COLOR_CANCELLED.store(false, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Resumed");
+    let _ = app.emit("color-extraction-notification-action", serde_json::json!({"action": "resume"}));
+    true
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+fn android_cancel_color_extraction(app: tauri::AppHandle) -> bool {
+    ANDROID_COLOR_CANCELLED.store(true, Ordering::SeqCst);
+    ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Cancelled");
+    let _ = app.emit("color-extraction-notification-action", serde_json::json!({"action": "cancel"}));
+    let _ = call_kotlin_hide_notification();
+    true
+}
+
+#[cfg(target_os = "android")]
+static ANDROID_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_aurora_gallery_ColorExtractionService_nativePauseColorExtraction(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    ANDROID_COLOR_PAUSED.store(true, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Paused from notification");
+    match ANDROID_APP_HANDLE.get() {
+        Some(app) => {
+            if let Err(e) = app.emit("color-extraction-notification-action", serde_json::json!({"action": "pause"})) {
+                log::error!("[ColorExtract-Android] Failed to emit pause action: {:?}", e);
+            } else {
+                log::info!("[ColorExtract-Android] Emitted pause action event");
+            }
+        }
+        None => {
+            log::error!("[ColorExtract-Android] ANDROID_APP_HANDLE not set when pausing from notification");
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_aurora_gallery_ColorExtractionService_nativeResumeColorExtraction(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
+    ANDROID_COLOR_CANCELLED.store(false, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Resumed from notification");
+    match ANDROID_APP_HANDLE.get() {
+        Some(app) => {
+            if let Err(e) = app.emit("color-extraction-notification-action", serde_json::json!({"action": "resume"})) {
+                log::error!("[ColorExtract-Android] Failed to emit resume action: {:?}", e);
+            } else {
+                log::info!("[ColorExtract-Android] Emitted resume action event");
+            }
+        }
+        None => {
+            log::error!("[ColorExtract-Android] ANDROID_APP_HANDLE not set when resuming from notification");
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "C" fn Java_com_aurora_gallery_ColorExtractionService_nativeCancelColorExtraction(
+    _env: jni::JNIEnv,
+    _class: jni::objects::JClass,
+) {
+    ANDROID_COLOR_CANCELLED.store(true, Ordering::SeqCst);
+    ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Cancelled from notification");
+    match ANDROID_APP_HANDLE.get() {
+        Some(app) => {
+            if let Err(e) = app.emit("color-extraction-notification-action", serde_json::json!({"action": "cancel"})) {
+                log::error!("[ColorExtract-Android] Failed to emit cancel action: {:?}", e);
+            } else {
+                log::info!("[ColorExtract-Android] Emitted cancel action event");
+            }
+        }
+        None => {
+            log::error!("[ColorExtract-Android] ANDROID_APP_HANDLE not set when cancelling from notification");
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+fn call_kotlin_show_notification(title: &str, current: i32, total: i32) -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+    let j_title = env.new_string(title)
+        .map_err(|e| format!("Failed to create title string: {:?}", e))?;
+
+    env.call_method(
+        &activity_obj,
+        "showExtractionNotification",
+        "(Ljava/lang/String;II)V",
+        &[
+            jni::objects::JValue::Object(&j_title),
+            jni::objects::JValue::Int(current),
+            jni::objects::JValue::Int(total),
+        ],
+    ).map_err(|e| format!("Failed to call showExtractionNotification: {:?}", e))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn call_kotlin_update_notification(current: i32, total: i32, is_paused: bool) -> Result<(), String> {
+    log::info!("[ColorExtract-Android] call_kotlin_update_notification: current={} total={} is_paused={}", current, total, is_paused);
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+    env.call_method(
+        &activity_obj,
+        "updateExtractionNotification",
+        "(IIZ)V",
+        &[
+            jni::objects::JValue::Int(current),
+            jni::objects::JValue::Int(total),
+            jni::objects::JValue::Bool(if is_paused { 1 } else { 0 }),
+        ],
+    ).map_err(|e| format!("Failed to call updateExtractionNotification: {:?}", e))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn call_kotlin_hide_notification() -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { jni::objects::JObject::from_raw(activity.context().cast()) };
+
+    env.call_method(
+        &activity_obj,
+        "hideExtractionNotification",
+        "()V",
+        &[],
+    ).map_err(|e| format!("Failed to call hideExtractionNotification: {:?}", e))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_show_task_notification(
+    app: tauri::AppHandle,
+    title: String,
+    current: i32,
+    total: i32,
+) -> Result<(), String> {
+    let _ = ANDROID_APP_HANDLE.set(app);
+    tokio::task::spawn_blocking(move || {
+        call_kotlin_show_notification(&title, current, total)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_update_task_notification(
+    current: i32,
+    total: i32,
+    is_paused: bool,
+) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        call_kotlin_update_notification(current, total, is_paused)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_hide_task_notification() -> Result<(), String> {
+    tokio::task::spawn_blocking(move || {
+        call_kotlin_hide_notification()
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_get_dominant_colors(
+    app: tauri::AppHandle,
+    file_path: String,
+    count: usize,
+    cache_root: String,
+) -> Result<Vec<crate::color_extractor::ColorResult>, String> {
+    use std::sync::Arc;
+
+    let pool = app.state::<Arc<crate::color_db::ColorDbPool>>().inner().clone();
+    let file_path_for_db = file_path.clone();
+
+    let db_result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        crate::color_db::get_colors_by_file_path(&mut conn, &file_path_for_db)
+    }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
+
+    if let Ok(Some(colors)) = db_result {
+        if !colors.is_empty() {
+            return Ok(colors);
+        }
+    }
+
+    log::info!("[ColorExtract-Android] No cached colors for {}, extracting from thumbnail", file_path);
+
+    let cache_path = std::path::Path::new(&cache_root).to_path_buf();
+    let fp = file_path.clone();
+    let cp = cache_path.clone();
+
+    let thumb_path = tokio::task::spawn_blocking(move || {
+        if let Some(cached_path) = crate::android::check_thumbnail_cache(&fp, &cp) {
+            log::info!("[ColorExtract-Android] Found cached thumbnail for {}", fp);
+            return Ok::<String, String>(cached_path);
+        }
+
+        log::info!("[ColorExtract-Android] No cached thumbnail, generating via Kotlin for {}", fp);
+        match call_kotlin_generate_thumbnail(&fp, &cp.to_string_lossy()) {
+            Ok(Some(tp)) => {
+                log::info!("[ColorExtract-Android] Kotlin generated thumbnail for {}", fp);
+                Ok(tp)
+            }
+            Ok(None) => {
+                log::warn!("[ColorExtract-Android] Kotlin returned no thumbnail, trying Rust fallback for {}", fp);
+                match crate::android::generate_thumbnail(&fp, &cp) {
+                    Ok(result) => result.thumbnail_path.ok_or_else(|| format!("No thumbnail generated for {}", fp)),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => {
+                log::warn!("[ColorExtract-Android] Kotlin thumbnail failed ({}), trying Rust fallback for {}", e, fp);
+                match crate::android::generate_thumbnail(&fp, &cp) {
+                    Ok(result) => result.thumbnail_path.ok_or_else(|| format!("No thumbnail generated for {}", fp)),
+                    Err(e2) => Err(format!("Kotlin: {}, Rust: {}", e, e2)),
+                }
+            }
+        }
+    }).await.map_err(|e| e.to_string())??;
+
+    let count_for_extract = count;
+    let results = tokio::task::spawn_blocking(move || {
+        let img = crate::android::open_image_with_fallback(&thumb_path)?;
+        let colors = crate::color_extractor::get_dominant_colors(&img, count_for_extract);
+        Ok::<Vec<crate::color_extractor::ColorResult>, String>(colors)
+    }).await.map_err(|e| e.to_string())??;
+
+    if !results.is_empty() {
+        let pool = app.state::<Arc<crate::color_db::ColorDbPool>>().inner().clone();
+        let file_path_for_save = file_path.clone();
+        let colors_clone = results.clone();
+
+        let _ = tokio::task::spawn_blocking(move || {
+            {
+                let mut conn = pool.get_connection();
+                match crate::color_db::get_colors_by_file_path(&mut conn, &file_path_for_save) {
+                    Ok(None) => {
+                        let _ = crate::color_db::add_pending_files(&mut conn, &[file_path_for_save.clone()]);
+                    },
+                    _ => {}
+                }
+            }
+
+            if let Err(e) = pool.save_colors(&file_path_for_save, &colors_clone) {
+                log::error!("[ColorExtract-Android] Failed to save colors for {}: {}", file_path_for_save, e);
+            }
+        }).await;
+    }
+
+    Ok(results)
+}
+
+#[cfg(target_os = "android")]
+fn try_get_thumbnail(file_path: &str, cache_dir: &std::path::Path) -> Result<String, String> {
+    if let Some(cached_path) = crate::android::check_thumbnail_cache(file_path, cache_dir) {
+        return Ok(cached_path);
+    }
+
+    let is_jpeg = file_path.to_lowercase().ends_with(".jpg")
+        || file_path.to_lowercase().ends_with(".jpeg");
+
+    if is_jpeg {
+        match crate::android::generate_thumbnail(file_path, cache_dir) {
+            Ok(r) if r.thumbnail_path.is_some() => return Ok(r.thumbnail_path.unwrap()),
+            Ok(_) | Err(_) => {
+                log::warn!("[ColorExtract-Android] Rust JPEG thumbnail failed, trying Kotlin for: {}", file_path);
+            }
+        }
+    }
+
+    match call_kotlin_generate_thumbnail(file_path, &cache_dir.to_string_lossy()) {
+        Ok(Some(tp)) => return Ok(tp),
+        Ok(None) => {
+            log::warn!("[ColorExtract-Android] Kotlin returned no thumbnail, trying Rust fallback for: {}", file_path);
+        }
+        Err(e) => {
+            log::warn!("[ColorExtract-Android] Kotlin thumbnail failed ({}), trying Rust fallback for: {}", e, file_path);
+        }
+    }
+
+    crate::android::generate_thumbnail(file_path, cache_dir)?
+        .thumbnail_path
+        .ok_or_else(|| format!("No thumbnail for {}", file_path))
+}
+
+#[cfg(target_os = "android")]
+fn process_one_thumbnail(
+    file_path: &str,
+    cache_dir: &std::path::Path,
+) -> Result<Vec<crate::color_extractor::ColorResult>, String> {
+    let thumb_path = try_get_thumbnail(file_path, cache_dir)?;
+
+    if thumb_path.is_empty() {
+        return Err(format!("Empty thumbnail path for {}", file_path));
+    }
+
+    let img = crate::android::open_image_with_fallback(&thumb_path)?;
+    let colors = crate::color_extractor::get_dominant_colors(&img, 8);
+
+    if colors.is_empty() {
+        Err(format!("No colors extracted from {}", file_path))
+    } else {
+        Ok(colors)
+    }
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_batch_extract_colors(
+    app: tauri::AppHandle,
+    file_paths: Vec<String>,
+    cache_root: String,
+) -> Result<usize, String> {
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let pool = app.state::<Arc<crate::color_db::ColorDbPool>>().inner().clone();
+    let all_count = file_paths.len();
+    if all_count == 0 { return Ok(0); }
+
+    ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
+    ANDROID_COLOR_CANCELLED.store(false, Ordering::SeqCst);
+
+    let _ = ANDROID_APP_HANDLE.set(app.clone());
+
+    log::info!("[ColorExtract-Android] Starting parallel batch extraction for {} files ({} workers)", all_count, MAX_COLOR_WORKERS);
+
+    let paths_clone = file_paths.clone();
+    let pool_for_add = pool.clone();
+    let added = tokio::task::spawn_blocking(move || {
+        let mut conn = pool_for_add.get_connection();
+        crate::color_db::add_pending_files(&mut conn, &paths_clone).unwrap_or(0)
+    }).await.map_err(|e| e.to_string())?;
+
+    log::info!("[ColorExtract-Android] Added {} pending files to database", added);
+
+    let pool_for_query = pool.clone();
+    let pending_files = tokio::task::spawn_blocking(move || {
+        let mut conn = pool_for_query.get_connection();
+        crate::color_db::get_pending_files(&mut conn, 500_000)
+    }).await.map_err(|e| e.to_string())??;
+
+    let progress_total = pending_files.len();
+    if progress_total == 0 {
+        log::info!("[ColorExtract-Android] No pending files to process");
+        return Ok(0);
+    }
+
+    log::info!("[ColorExtract-Android] Will process {} pending files (skipping {} already extracted)", progress_total, all_count - progress_total);
+
+    let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let results_queue: Arc<Mutex<Vec<(String, Vec<crate::color_extractor::ColorResult>)>>> = Arc::new(Mutex::new(Vec::new()));
+    let is_done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let was_paused_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    let reporter_app = app.clone();
+    let reporter_completed = completed.clone();
+    let reporter_queue = results_queue.clone();
+    let reporter_done = is_done.clone();
+    let reporter_pool = pool.clone();
+    let reporter_total = progress_total;
+    let reporter_was_paused = was_paused_flag.clone();
+
+    let reporter_handle = std::thread::spawn(move || {
+        let mut last_reported: usize = 0;
+        let reporter_interval = std::time::Duration::from_secs(1);
+
+        loop {
+            std::thread::sleep(reporter_interval);
+
+            let is_cancelled = ANDROID_COLOR_CANCELLED.load(Ordering::SeqCst);
+            let is_paused = ANDROID_COLOR_PAUSED.load(Ordering::SeqCst);
+
+            if is_cancelled {
+                let current = reporter_completed.load(Ordering::SeqCst);
+                if current > last_reported || last_reported == 0 {
+                    let _ = reporter_app.emit("color-extraction-progress", serde_json::json!({
+                        "batchId": 1,
+                        "current": current,
+                        "total": reporter_total,
+                        "pending": reporter_total - current,
+                        "currentFile": "",
+                        "batchCompleted": true,
+                        "cancelled": true
+                    }));
+                    let _ = call_kotlin_hide_notification();
+                }
+                break;
+            }
+
+            let current = reporter_completed.load(Ordering::SeqCst);
+
+            let all_done = reporter_done.load(Ordering::SeqCst) && current >= reporter_total;
+
+            let has_pause_change = if is_paused {
+                let was = reporter_was_paused.swap(true, Ordering::SeqCst);
+                !was
+            } else {
+                let was = reporter_was_paused.swap(false, Ordering::SeqCst);
+                was
+            };
+
+            if current != last_reported || has_pause_change || all_done {
+                let _ = reporter_app.emit("color-extraction-progress", serde_json::json!({
+                    "batchId": 1,
+                    "current": current,
+                    "total": reporter_total,
+                    "pending": reporter_total - current,
+                    "currentFile": "",
+                    "batchCompleted": all_done,
+                    "isPaused": is_paused
+                }));
+
+                let _ = call_kotlin_update_notification(current as i32, reporter_total as i32, is_paused);
+                last_reported = current;
+            }
+
+            {
+                let mut queue = reporter_queue.lock().unwrap();
+                if !queue.is_empty() {
+                    let batch: Vec<(&str, &[crate::color_extractor::ColorResult])> = queue
+                        .iter()
+                        .map(|(path, colors)| (path.as_str(), colors.as_slice()))
+                        .collect();
+                    if let Err(e) = reporter_pool.batch_save_colors(&batch) {
+                        log::error!("[ColorExtract-Android] Reporter failed to batch save: {}", e);
+                    }
+                    queue.clear();
+                }
+            }
+
+            if all_done {
+                let _ = call_kotlin_hide_notification();
+                break;
+            }
+        }
+    });
+
+    let cache_root_for_extract = cache_root.clone();
+
+    let completed_for_rayon = completed.clone();
+    let results_queue_for_rayon = results_queue.clone();
+
+    let rayon_result = tokio::task::spawn_blocking(move || {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(MAX_COLOR_WORKERS)
+            .build()
+            .map_err(|e| format!("Failed to build rayon pool: {}", e))?;
+
+        let _ = call_kotlin_show_notification("主色调提取", 0, progress_total as i32);
+
+        pool.install(|| {
+            rayon::scope(|s| {
+                for fp in &pending_files {
+                    if ANDROID_COLOR_CANCELLED.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    let fp = fp.clone();
+                    let completed = completed_for_rayon.clone();
+                    let results_queue = results_queue_for_rayon.clone();
+                    let cache_dir = std::path::Path::new(&cache_root_for_extract).to_path_buf();
+                    let fp_for_error = fp.clone();
+
+                    s.spawn(move |_| {
+                        loop {
+                            if ANDROID_COLOR_CANCELLED.load(Ordering::SeqCst) {
+                                completed.fetch_add(1, Ordering::SeqCst);
+                                return;
+                            }
+
+                            if !ANDROID_COLOR_PAUSED.load(Ordering::SeqCst) {
+                                break;
+                            }
+
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
+
+                        if ANDROID_COLOR_CANCELLED.load(Ordering::SeqCst) {
+                            completed.fetch_add(1, Ordering::SeqCst);
+                            return;
+                        }
+
+                        match process_one_thumbnail(&fp, &cache_dir) {
+                            Ok(colors) => {
+                                let mut queue = results_queue.lock().unwrap();
+                                queue.push((fp, colors));
+                            }
+                            Err(e) => {
+                                log::warn!("[ColorExtract-Android] Worker failed for {}: {}", fp_for_error, e);
+                            }
+                        }
+
+                        completed.fetch_add(1, Ordering::SeqCst);
+                    });
+                }
+            });
+        });
+
+        Ok::<(), String>(())
+    }).await;
+
+    is_done.store(true, Ordering::SeqCst);
+    let _ = reporter_handle.join();
+
+    match rayon_result {
+        Ok(Ok(())) => {},
+        Ok(Err(e)) => log::error!("[ColorExtract-Android] Rayon pool error: {}", e),
+        Err(e) => log::error!("[ColorExtract-Android] Batch extraction task panicked: {:?}", e),
+    }
+
+    let final_count = completed.load(Ordering::SeqCst);
+    log::info!("[ColorExtract-Android] Batch extraction completed: {}/{} files processed", final_count, progress_total);
+
+    Ok(added)
 }
 
 #[cfg(target_os = "android")]
@@ -1022,6 +1591,19 @@ pub fn run() {
         check_android_permissions,
         request_android_permissions,
         set_android_status_bar,
+        android_get_dominant_colors,
+        android_batch_extract_colors,
+        android_pause_color_extraction,
+        android_resume_color_extraction,
+        android_cancel_color_extraction,
+        android_show_task_notification,
+        android_update_task_notification,
+        android_hide_task_notification,
+        color_commands::add_pending_files_to_db,
+        db_commands::get_color_db_stats,
+        db_commands::get_color_db_error_files,
+        db_commands::retry_color_extraction,
+        db_commands::delete_color_db_error_files,
     ]);
     
     builder

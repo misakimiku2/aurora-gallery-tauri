@@ -11,6 +11,23 @@ use image::ImageFormat;
 const THUMBNAIL_SIZE: u32 = 256;
 const JPEG_QUALITY: u8 = 80;
 
+pub fn open_image_with_fallback(path: &str) -> Result<DynamicImage, String> {
+    match image::open(path) {
+        Ok(img) => Ok(img),
+        Err(_) => {
+            let file = File::open(path)
+                .map_err(|e| format!("Failed to open file {}: {}", path, e))?;
+            let reader = BufReader::new(file);
+            let mut image_reader = image::io::Reader::new(reader);
+            image_reader = image_reader.with_guessed_format()
+                .map_err(|e| format!("Failed to guess format for {}: {:?}", path, e))?;
+            image_reader.no_limits();
+            image_reader.decode()
+                .map_err(|e| format!("Failed to decode {}: {}", path, e))
+        }
+    }
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThumbnailResult {

@@ -49,6 +49,7 @@ import { useAIRename } from '../hooks/useAIRename';
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
 import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
+import { isAndroidPlatformCached } from '../api/tauri-bridge';
 
 interface MetadataProps {
     files: Record<string, FileNode>;
@@ -636,7 +637,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             }
 
             // Extract palette colors when file is selected
-            if (file.type === FileType.IMAGE && (file.path || file.url)) {
+            // 安卓端不自动提取主色调，需要手动触发
+            if (!isAndroidPlatformCached() && file.type === FileType.IMAGE && (file.path || file.url)) {
                 const currentPalette = file.meta?.palette;
                 let shouldExtract = false;
 
@@ -2006,16 +2008,18 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         onContextMenu={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            // 计算菜单宽度（根据菜单项内容估算�?
                                             const menuWidth = 180;
-                                            // 对于最右边的色块，将菜单显示在鼠标左边
-                                            const isRightmost = i === 7; // 最后一个色�?
+                                            const isRightmost = i === 7;
                                             const x = isRightmost ? e.clientX - menuWidth : e.clientX;
                                             setPaletteMenu({ visible: true, x, y: e.clientY, color });
                                         }}
                                         title={color}
                                     />
                                 ))
+                            ) : isAndroidPlatformCached() ? (
+                                <div className="w-full text-center py-2">
+                                    <p className="text-xs text-gray-400 dark:text-gray-500">{t('meta.noColorExtracted')}</p>
+                                </div>
                             ) : (
                                 Array.from({ length: 8 }).map((_, i) => (
                                     <div

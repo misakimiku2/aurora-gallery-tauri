@@ -1107,9 +1107,18 @@ export const exitApp = async (): Promise<void> => {
  * @returns 主色调数组，如果失败则返回空数组
  */
 export const getDominantColors = async (filePath: string, count: number = 8, thumbnailPath?: string): Promise<DominantColor[]> => {
-  if (isAndroidPlatformCached()) return [];
+  if (isAndroidPlatformCached()) {
+    try {
+      const cacheRoot = _globalCacheRoot || '';
+      if (!cacheRoot) return [];
+      const result = await invoke('android_get_dominant_colors', { filePath, count, cacheRoot });
+      return result as DominantColor[];
+    } catch (error) {
+      console.error('Failed to get dominant colors (Android):', error);
+      return [];
+    }
+  }
   try {
-    // 特殊处理 AVIF：如果后端尚不支持从原图提取，优先尝试前端降级生成
     if (filePath.toLowerCase().endsWith('.avif') && !thumbnailPath) {
       const cachedPath = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__?.get(filePath);
       if (cachedPath) {
@@ -1131,7 +1140,14 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
  * @returns 是否成功暂停
  */
 export const pauseColorExtraction = async (): Promise<boolean> => {
-  if (isAndroidPlatformCached()) return true;
+  if (isAndroidPlatformCached()) {
+    try {
+      return await invoke<boolean>('android_pause_color_extraction');
+    } catch (error) {
+      console.error('Failed to pause color extraction (Android):', error);
+      return false;
+    }
+  }
   try {
     const result = await invoke<boolean>('pause_color_extraction');
     return result;
@@ -1146,7 +1162,14 @@ export const pauseColorExtraction = async (): Promise<boolean> => {
  * @returns 是否成功恢复
  */
 export const resumeColorExtraction = async (): Promise<boolean> => {
-  if (isAndroidPlatformCached()) return true;
+  if (isAndroidPlatformCached()) {
+    try {
+      return await invoke<boolean>('android_resume_color_extraction');
+    } catch (error) {
+      console.error('Failed to resume color extraction (Android):', error);
+      return false;
+    }
+  }
   try {
     const result = await invoke<boolean>('resume_color_extraction');
     return result;
@@ -1156,19 +1179,68 @@ export const resumeColorExtraction = async (): Promise<boolean> => {
   }
 };
 
+export const cancelColorExtraction = async (): Promise<boolean> => {
+  if (isAndroidPlatformCached()) {
+    try {
+      return await invoke<boolean>('android_cancel_color_extraction');
+    } catch (error) {
+      console.error('Failed to cancel color extraction (Android):', error);
+      return false;
+    }
+  }
+  return true;
+};
+
 /**
  * 批量添加文件到 pending 表（用于首次扫描）
  * @param filePaths 文件路径列表
  * @returns 实际添加的文件数量
  */
 export const addPendingFilesToDb = async (filePaths: string[]): Promise<number> => {
-  if (isAndroidPlatformCached()) return 0;
   try {
     const result = await invoke<number>('add_pending_files_to_db', { filePaths });
     return result;
   } catch (error) {
     console.error('Failed to add pending files to database:', error);
     return 0;
+  }
+};
+
+export const androidBatchExtractColors = async (filePaths: string[], cacheRoot: string): Promise<number> => {
+  if (!isAndroidPlatformCached()) return 0;
+  try {
+    const result = await invoke<number>('android_batch_extract_colors', { filePaths, cacheRoot });
+    return result;
+  } catch (error) {
+    console.error('Failed to batch extract colors (Android):', error);
+    return 0;
+  }
+};
+
+export const androidShowTaskNotification = async (title: string, current: number, total: number): Promise<void> => {
+  if (!isAndroidPlatformCached()) return;
+  try {
+    await invoke('android_show_task_notification', { title, current, total });
+  } catch (error) {
+    console.error('Failed to show task notification (Android):', error);
+  }
+};
+
+export const androidUpdateTaskNotification = async (current: number, total: number, isPaused: boolean): Promise<void> => {
+  if (!isAndroidPlatformCached()) return;
+  try {
+    await invoke('android_update_task_notification', { current, total, isPaused });
+  } catch (error) {
+    console.error('Failed to update task notification (Android):', error);
+  }
+};
+
+export const androidHideTaskNotification = async (): Promise<void> => {
+  if (!isAndroidPlatformCached()) return;
+  try {
+    await invoke('android_hide_task_notification');
+  } catch (error) {
+    console.error('Failed to hide task notification (Android):', error);
   }
 };
 

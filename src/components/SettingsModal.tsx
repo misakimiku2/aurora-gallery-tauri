@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag, Tags, Loader2, Wifi } from 'lucide-react';
+import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor, WifiOff, Download, Upload, Brain, Activity, Zap, Server, ChevronRight, XCircle, LogOut, HelpCircle, Languages, BarChart2, RefreshCw, FileText, MemoryStick, Timer, Save, PlusCircle, Trash2, LayoutGrid, List, Grid, LayoutTemplate, ArrowUp, ArrowDown, Type, Calendar, HardDrive, Layers, AlertCircle, ChevronDown, ChevronUp, Play, Pause, Square, Image, Eye, Trash, FolderOpen, X, Info, Github, ExternalLink, RefreshCw as RefreshCwIcon, Heart, Code2, Shield, FileCode, Sparkles, Cpu, Search, Tag, Tags, Loader2, Wifi } from 'lucide-react';
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption, FileType } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
 import { LanSharePanel } from './settings/LanSharePanel';
@@ -1705,6 +1705,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
   // 主色调提取任务状态
   const [isColorExtracting, setIsColorExtracting] = useState(false);
+  const [isColorPaused, setIsColorPaused] = useState(false);
   const [colorExtractProgress, setColorExtractProgress] = useState<{
     current: number;
     total: number;
@@ -1713,6 +1714,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const colorExtractStartTimeRef = useRef<number>(0);
   const colorExtractLastUpdateRef = useRef<number>(0);
   const colorExtractLastProgressRef = useRef<number>(0);
+  const androidColorExtractCancelledRef = useRef<boolean>(false);
 
   const [editingPresetName, setEditingPresetName] = useState('');
 
@@ -1887,16 +1889,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           pending: number;
           currentFile: string;
           batchCompleted: boolean;
+          cancelled?: boolean;
+          isPaused?: boolean;
         };
 
         if (progress.total === 0) return;
 
+        if (isAndroidPlatformCached() && androidColorExtractCancelledRef.current) {
+          if (progress.batchCompleted) {
+            androidColorExtractCancelledRef.current = false;
+            loadColorDbStats();
+          }
+          return;
+        }
+
         setIsColorExtracting(true);
+        
+        if (progress.isPaused === true) {
+          setIsColorPaused(true);
+        } else if (progress.isPaused === false) {
+          setIsColorPaused(false);
+        }
         
         const now = Date.now();
         let estimatedTime: number | undefined = undefined;
 
-        // 计算预估剩余时间
         if (progress.current > 0 && colorExtractStartTimeRef.current > 0) {
           const elapsed = now - colorExtractStartTimeRef.current;
           const speed = progress.current / elapsed;
@@ -1912,10 +1929,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           estimatedTime
         });
 
-        // 检测批次完成
         if (progress.batchCompleted) {
           setTimeout(() => {
             setIsColorExtracting(false);
+            setIsColorPaused(false);
             setColorExtractProgress(null);
             colorExtractStartTimeRef.current = 0;
             loadColorDbStats();
@@ -1931,16 +1948,49 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     };
   }, []);
 
-  // 开始主色调提取任务
+  // 监听通知栏操作事件（暂停/恢复/取消），确保按钮状态即时同步
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+
+    const setupListener = async () => {
+      unlisten = await listen('color-extraction-notification-action', (event: any) => {
+        const { action } = event.payload as { action: string };
+
+        if (action === 'pause') {
+          setIsColorPaused(true);
+          setIsColorExtracting(true);
+        } else if (action === 'resume') {
+          setIsColorPaused(false);
+          setIsColorExtracting(true);
+        } else if (action === 'cancel') {
+          setIsColorExtracting(false);
+          setIsColorPaused(false);
+          setColorExtractProgress(null);
+          colorExtractStartTimeRef.current = 0;
+          androidColorExtractCancelledRef.current = true;
+          loadColorDbStats();
+        }
+      });
+    };
+
+    setupListener();
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
   const handleStartColorExtraction = useCallback(async () => {
-    if (isColorExtracting) {
-      // 如果正在提取，则暂停
-      await pauseColorExtraction();
-      setIsColorExtracting(false);
+    if (isColorPaused) {
+      await resumeColorExtraction();
+      setIsColorPaused(false);
       return;
     }
 
-    // 收集当前目录下所有图片文件路径
+    if (isColorExtracting) {
+      return;
+    }
+
     const imagePaths = Object.values(state.files || {})
       .filter(f => f.type === FileType.IMAGE)
       .map(f => f.path);
@@ -1950,33 +2000,75 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       return;
     }
 
-    // 记录开始时间
     colorExtractStartTimeRef.current = Date.now();
+    androidColorExtractCancelledRef.current = false;
     setIsColorExtracting(true);
-    // 使用图片总数作为初始总数，后续会从进度事件中更新
+    setIsColorPaused(false);
     setColorExtractProgress({ current: 0, total: imagePaths.length });
 
     try {
-      // 添加文件到待处理队列（已存在的文件会被忽略，新文件会被添加为 pending 状态）
-      const addedCount = await addPendingFilesToDb(imagePaths);
-      
-      // 如果没有新添加的文件且没有待处理的文件，说明全部已完成
-      if (addedCount === 0 && colorDbStats && colorDbStats.pending === 0) {
-        setIsColorExtracting(false);
-        setColorExtractProgress(null);
-        onShowToast?.(t('settings.colorExtractionNoPendingHint') || '当前目录所有图片的主色调已提取完成');
-        return;
+      if (isAndroidPlatformCached()) {
+        const cacheRoot = getGlobalCacheRoot() || '';
+        if (!cacheRoot) {
+          setIsColorExtracting(false);
+          setColorExtractProgress(null);
+          onShowToast?.(t('settings.colorExtractionStartFailed') || '启动主色调提取失败');
+          return;
+        }
+        await androidBatchExtractColors(imagePaths, cacheRoot);
+      } else {
+        const addedCount = await addPendingFilesToDb(imagePaths);
+        
+        if (addedCount === 0 && colorDbStats && colorDbStats.pending === 0) {
+          setIsColorExtracting(false);
+          setColorExtractProgress(null);
+          onShowToast?.(t('settings.colorExtractionNoPendingHint') || '当前目录所有图片的主色调已提取完成');
+          return;
+        }
+        
+        await resumeColorExtraction();
       }
-      
-      // 启动后台提取任务
-      await resumeColorExtraction();
     } catch (error) {
       console.error('Failed to start color extraction:', error);
       setIsColorExtracting(false);
+      setIsColorPaused(false);
       setColorExtractProgress(null);
       onShowToast?.(t('settings.colorExtractionStartFailed') || '启动主色调提取失败');
     }
-  }, [isColorExtracting, state.files, colorDbStats, t, onShowToast]);
+  }, [isColorExtracting, isColorPaused, state.files, colorDbStats, t, onShowToast]);
+
+  const handlePauseColorExtraction = useCallback(async () => {
+    if (!isColorExtracting || isColorPaused) return;
+    await pauseColorExtraction();
+    if (isAndroidPlatformCached()) {
+      androidUpdateTaskNotification(0, 0, true);
+    }
+    setIsColorPaused(true);
+  }, [isColorExtracting, isColorPaused]);
+
+  const handleResumeColorExtraction = useCallback(async () => {
+    if (!isColorPaused) return;
+    await resumeColorExtraction();
+    if (isAndroidPlatformCached()) {
+      androidUpdateTaskNotification(0, 0, false);
+    }
+    setIsColorPaused(false);
+  }, [isColorPaused]);
+
+  const handleStopColorExtraction = useCallback(async () => {
+    if (!isColorExtracting) return;
+    if (isAndroidPlatformCached()) {
+      await cancelColorExtraction();
+      androidHideTaskNotification();
+      androidColorExtractCancelledRef.current = true;
+    } else {
+      await pauseColorExtraction();
+    }
+    setIsColorExtracting(false);
+    setIsColorPaused(false);
+    setColorExtractProgress(null);
+    colorExtractStartTimeRef.current = 0;
+  }, [isColorExtracting]);
 
   // 格式化预估时间
   const formatEstimatedTimeMs = (ms: number | undefined): string => {
@@ -2777,27 +2869,45 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.colorExtractionTask')}</span>
-                        <button
-                          onClick={handleStartColorExtraction}
-                          disabled={isColorExtracting && !colorExtractProgress}
-                          className={`text-sm flex items-center px-3 py-1.5 rounded-lg transition-colors ${
-                            isColorExtracting
-                              ? 'bg-yellow-100 dark:bg-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-700 text-yellow-700 dark:text-yellow-300'
-                              : 'bg-blue-500 hover:bg-blue-600 text-white'
-                          }`}
-                        >
-                          {isColorExtracting ? (
-                            <>
+                        <div className="flex items-center space-x-2">
+                          {isColorExtracting && !isColorPaused && (
+                            <button
+                              onClick={handlePauseColorExtraction}
+                              className="text-sm flex items-center px-3 py-1.5 bg-yellow-100 dark:bg-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-700 text-yellow-700 dark:text-yellow-300 rounded-lg transition-colors"
+                            >
                               <Pause size={14} className="mr-1" />
+                              {t('settings.pauseColorExtraction')}
+                            </button>
+                          )}
+                          {isColorPaused && (
+                            <button
+                              onClick={handleResumeColorExtraction}
+                              className="text-sm flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
+                            >
+                              <Play size={14} className="mr-1" />
+                              {t('settings.resumeColorExtraction')}
+                            </button>
+                          )}
+                          {isColorExtracting && (
+                            <button
+                              onClick={handleStopColorExtraction}
+                              className="text-sm flex items-center px-3 py-1.5 bg-red-100 dark:bg-red-800 hover:bg-red-200 dark:hover:bg-red-700 text-red-700 dark:text-red-300 rounded-lg transition-colors"
+                            >
+                              <Square size={14} className="mr-1" />
                               {t('settings.stopColorExtraction')}
-                            </>
-                          ) : (
-                            <>
+                            </button>
+                          )}
+                          {!isColorExtracting && (
+                            <button
+                              onClick={handleStartColorExtraction}
+                              disabled={!colorExtractProgress && Object.values(state.files || {}).filter(f => f.type === FileType.IMAGE).length === 0}
+                              className="text-sm flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
                               <Play size={14} className="mr-1" />
                               {t('settings.startColorExtraction')}
-                            </>
+                            </button>
                           )}
-                        </button>
+                        </div>
                       </div>
 
                       {/* 进度显示 */}
@@ -2819,7 +2929,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           )}
                           <div className="w-full bg-gray-200 dark:bg-gray-600 h-2 rounded-full overflow-hidden">
                             <div
-                              className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                              className={`h-full rounded-full transition-all duration-300 ${isColorPaused ? 'bg-yellow-500' : 'bg-blue-500'}`}
                               style={{ width: `${(colorExtractProgress.current / Math.max(colorExtractProgress.total, 1)) * 100}%` }}
                             />
                           </div>

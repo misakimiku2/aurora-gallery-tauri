@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { FileNode, FileType, TaskProgress, Person, PersonSortOption, SortDirection } from '../types';
 import { ChevronRight, ChevronDown, Folder, HardDrive, Tag as TagIcon, Plus, User, Check, Copy, Settings, WifiOff, Wifi, Loader2, Maximize2, Brain, Book, Film, Network, ImageIcon, Pause, Layout, ArrowUpDown, Clock, SortAsc, SortDesc, Scan, Download } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { pauseColorExtraction, resumeColorExtraction, getThumbnail } from '../api/tauri-bridge';
+import { pauseColorExtraction, resumeColorExtraction, getThumbnail, isAndroidPlatformCached } from '../api/tauri-bridge';
 import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { PeopleCanvas } from './PeopleCanvas';
@@ -1523,44 +1523,81 @@ export const Sidebar: React.FC<{
         <div className="flex-1" />
       </div>
       
-      {minimizedTasks.length > 0 && (
+      {minimizedTasks.length > 0 && (() => {
+          const isAndroid = isAndroidPlatformCached();
+          const taskLabelClass = isAndroid ? 'text-xs text-gray-400 uppercase font-bold mb-1.5 px-1' : 'text-[10px] text-gray-400 uppercase font-bold mb-1 px-1';
+          const actionBtnPad = isAndroid ? 'p-1.5' : 'p-1';
+          const actionIconSize = isAndroid ? 16 : 10;
+          const restoreBtnClass = isAndroid
+            ? `${actionBtnPad} hover:bg-black/10 dark:hover:bg-white/10 rounded text-gray-500`
+            : `${actionBtnPad} hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity`;
+          return (
           <div className="border-t border-gray-200 dark:border-gray-800 p-2 bg-gray-50 dark:bg-gray-900/50">
-             <div className="text-[10px] text-gray-400 uppercase font-bold mb-1 px-1">{t('sidebar.tasks')}</div>
+             <div className={taskLabelClass}>{t('sidebar.tasks')}</div>
              <div className="space-y-1">
                  {minimizedTasks.map(task => {
                     const percent = Math.round((task.current / task.total) * 100);
+                    const progressColor = task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500';
+                    const progressColorLight = task.status === 'paused' ? 'rgba(234,179,8,0.15)' : 'rgba(59,130,246,0.15)';
+                    const progressColorMid = task.status === 'paused' ? 'rgba(234,179,8,0.35)' : 'rgba(59,130,246,0.35)';
                     return (
-                        <div key={task.id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in" onClick={() => onRestoreTask(task.id)}>
-                           <div className="flex justify-between items-center mb-1">
-                               <span className="font-medium text-gray-700 dark:text-gray-200 truncate pr-2 flex-1">{task.title}</span>
+                        <div key={task.id}
+                          className={isAndroid
+                            ? 'relative overflow-hidden border border-gray-200 dark:border-gray-800 rounded shadow-sm transition-colors animate-fade-in h-[53px] flex items-center cursor-pointer'
+                            : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in cursor-pointer'
+                          }
+                          onClick={() => onRestoreTask(task.id)}
+                        >
+                           {isAndroid && (
+                             <>
+                               <div
+                                 className={`absolute inset-0 ${progressColor} transition-all duration-300`}
+                                 style={{ width: `${percent}%` }}
+                               />
+                               <div
+                                 className="absolute inset-y-0 left-0 w-1/3 animate-progress-wave"
+                                 style={{
+                                   background: `linear-gradient(90deg, transparent 0%, ${progressColorMid} 50%, transparent 100%)`,
+                                 }}
+                               />
+                             </>
+                           )}
+                           <div className={`relative z-10 flex justify-between items-center w-full ${isAndroid ? 'px-3 text-sm' : 'p-2 text-xs'}`}>
+                               <span className={isAndroid ? 'font-medium text-gray-800 dark:text-white truncate pr-1' : 'font-medium text-gray-700 dark:text-gray-200 truncate pr-2 flex-1'}>
+                                 {task.title}
+                               </span>
+                               {isAndroid && <span className="text-gray-700 dark:text-gray-300 shrink-0">{percent}%</span>}
                                <div className="flex items-center space-x-1">
                                    {task.type === 'color' && (
                                      <button 
                                        onClick={(e) => { e.stopPropagation(); handlePauseResume(task.id, task.type); }}
-                                       className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500"
+                                       className={`${isAndroid ? 'p-1.5 hover:bg-black/10 dark:hover:bg-white/10' : 'p-1 hover:bg-gray-200 dark:hover:bg-gray-600'} rounded text-gray-500`}
                                        title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
                                      >
-                                       {task.status === 'paused' ? <Loader2 size={10} className="animate-spin" /> : <Pause size={10} />}
+                                       {task.status === 'paused' ? <Loader2 size={actionIconSize} className="animate-spin" /> : <Pause size={actionIconSize} />}
                                      </button>
                                    )}
                                    <button 
                                      onClick={(e) => { e.stopPropagation(); onRestoreTask(task.id); }}
-                                     className="p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                     className={restoreBtnClass}
                                      title={t('tasks.restore')}
                                    >
-                                     <Maximize2 size={10} />
+                                     <Maximize2 size={actionIconSize} />
                                    </button>
                                </div>
                            </div>
+                           {!isAndroid && (
                            <div className="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
-                               <div className={`h-full rounded-full transition-all duration-300 ${task.status === 'paused' ? 'bg-yellow-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                               <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${percent}%` }}></div>
                            </div>
+                           )}
                         </div>
                     );
                  })}
              </div>
           </div>
-      )}
+          );
+      })()}
 
       {modelDownloads.length > 0 && (
         <div className="p-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">

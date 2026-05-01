@@ -158,6 +158,8 @@ export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStat
                         pending: number;
                         currentFile: string;
                         batchCompleted: boolean;
+                        cancelled?: boolean;
+                        isPaused?: boolean;
                     };
 
                     // 忽略 total 为 0 的无效进度
@@ -269,6 +271,15 @@ export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStat
                             totalProcessedTime: newTotalProcessedTime
                         };
 
+                        if (progress.isPaused === true) {
+                            taskUpdates.status = 'paused';
+                            taskUpdates.estimatedTime = undefined;
+                        } else if (progress.isPaused === false) {
+                            taskUpdates.status = 'running';
+                            taskUpdates.lastProgressUpdate = Date.now();
+                            taskUpdates.lastEstimatedTimeUpdate = Date.now();
+                        }
+
                         if (shouldUpdateEstimatedTime) {
                             taskUpdates.lastEstimatedTimeUpdate = lastEstimatedTimeUpdate;
                         }
@@ -279,19 +290,28 @@ export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStat
 
                         // 检测批次完成
                         if (progress.batchCompleted) {
-                            updateTask(taskId, { status: 'completed' });
-
-                            // 延迟1秒后关闭任务窗口
-                            const currentTaskId = colorTaskIdRef.current;
-                            setTimeout(() => {
-                                if (isMounted && currentTaskId) {
+                            if (progress.cancelled) {
+                                const currentTaskId = colorTaskIdRef.current;
+                                if (currentTaskId) {
                                     setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== currentTaskId) }));
-                                    // 只有当当前任务ID未变化时才清除引用
                                     if (colorTaskIdRef.current === currentTaskId) {
                                         colorTaskIdRef.current = null;
                                     }
                                 }
-                            }, 1000);
+                                colorBatchIdRef.current = -1;
+                            } else {
+                                updateTask(taskId, { status: 'completed' });
+                                const currentTaskId = colorTaskIdRef.current;
+                                setTimeout(() => {
+                                    if (isMounted && currentTaskId) {
+                                        setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== currentTaskId) }));
+                                        if (colorTaskIdRef.current === currentTaskId) {
+                                            colorTaskIdRef.current = null;
+                                        }
+                                    }
+                                }, 1000);
+                                colorBatchIdRef.current = -1;
+                            }
                         }
                     }
                 });
@@ -309,7 +329,53 @@ export const useTasks = (state: AppState, setState: React.Dispatch<React.SetStat
             isMounted = false;
             unlistenPromise.then(unlistenFn => unlistenFn()).catch(console.error);
         };
-    }, [startTask, updateTask, t]); // Add startTask, updateTask, and t to dependencies
+    }, [startTask, updateTask, t]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const listenNotificationAction = async () => {
+            try {
+                const unlisten = await listen('color-extraction-notification-action', (event: any) => {
+                    if (!isMounted) return;
+
+                    const { action } = event.payload as { action: string };
+                    const taskId = colorTaskIdRef.current;
+                    if (!taskId) return;
+
+                    if (action === 'pause') {
+                        updateTask(taskId, { status: 'paused' });
+                    } else if (action === 'resume') {
+                        updateTask(taskId, {
+                            status: 'running',
+                            estimatedTime: undefined,
+                            lastProgressUpdate: Date.now(),
+                            lastEstimatedTimeUpdate: Date.now()
+                        });
+                    } else if (action === 'cancel') {
+                        setState(prev => ({
+                            ...prev,
+                            tasks: prev.tasks.filter(t => t.id !== taskId)
+                        }));
+                        colorTaskIdRef.current = null;
+                        colorBatchIdRef.current = -1;
+                    }
+                });
+
+                return unlisten;
+            } catch (error) {
+                console.error('Failed to listen for notification action:', error);
+                return () => {};
+            }
+        };
+
+        const unlistenPromise = listenNotificationAction();
+
+        return () => {
+            isMounted = false;
+            unlistenPromise.then(unlistenFn => unlistenFn()).catch(console.error);
+        };
+    }, [updateTask, setState]);
 
     return { startTask, updateTask };
 };

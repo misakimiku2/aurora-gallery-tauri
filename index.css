@@ -370,3 +370,16 @@ input[type=range]::-webkit-slider-runnable-track {
 .animate-fade-in {
   animation: fade-in 0.2s ease-out forwards;
 }
+
+@keyframes progress-wave {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(200%);
+  }
+}
+
+.animate-progress-wave {
+  animation: progress-wave 2.5s infinite ease-in-out;
+}
