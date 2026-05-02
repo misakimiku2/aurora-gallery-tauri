@@ -568,7 +568,7 @@ class MainActivity : TauriActivity() {
     }
   }
 
-  private val thumbnailSemaphore = Semaphore(2)
+  private val thumbnailSemaphore = Semaphore(4)
 
   fun generateThumbnail(imagePath: String, cacheDir: String): String {
     val result = JSONObject()

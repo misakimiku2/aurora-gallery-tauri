@@ -2116,8 +2116,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       const count = await retryColorExtraction(specificFiles);
       if (count > 0) {
         setRetrySuccess(t('settings.colorDbRetrySuccess').replace('{count}', count.toString()));
-        // 3秒后清除成功消息
         setTimeout(() => setRetrySuccess(null), 3000);
+
+        if (isAndroidPlatformCached() && specificFiles && specificFiles.length > 0) {
+          const cacheRoot = getGlobalCacheRoot() || '';
+          if (cacheRoot) {
+            await androidBatchExtractColors(specificFiles, cacheRoot);
+          }
+        }
 
         // 轮询检查处理状态，直到所有文件处理完成
         const checkProcessingStatus = async () => {

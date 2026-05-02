@@ -942,23 +942,26 @@ pub fn add_pending_files(conn: &mut Connection, file_paths: &[String]) -> Result
     
     let mut added_count = 0usize;
     
-    for path in file_paths {
-        let normalized = path.replace("\\", "/");
-        let result = tx.execute(
+    {
+        let mut stmt = tx.prepare(
             "INSERT OR IGNORE INTO dominant_colors 
              (file_path, colors, created_at, updated_at, status) 
-             VALUES (?, ?, ?, ?, ?)",
-            params![
+             VALUES (?, ?, ?, ?, ?)"
+        ).map_err(|e| e.to_string())?;
+        
+        for path in file_paths {
+            let normalized = path.replace("\\", "/");
+            let result = stmt.execute(params![
                 &normalized,
                 "[]",
                 current_ts,
                 current_ts,
                 "pending"
-            ],
-        ).map_err(|e| e.to_string())?;
-        
-        if result > 0 {
-            added_count += 1;
+            ]).map_err(|e| e.to_string())?;
+            
+            if result > 0 {
+                added_count += 1;
+            }
         }
     }
     

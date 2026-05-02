@@ -637,8 +637,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             }
 
             // Extract palette colors when file is selected
-            // 安卓端不自动提取主色调，需要手动触发
-            if (!isAndroidPlatformCached() && file.type === FileType.IMAGE && (file.path || file.url)) {
+            if (file.type === FileType.IMAGE && (file.path || file.url)) {
                 const currentPalette = file.meta?.palette;
                 let shouldExtract = false;
 

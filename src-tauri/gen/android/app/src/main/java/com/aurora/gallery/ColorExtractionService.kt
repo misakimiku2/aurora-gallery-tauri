@@ -46,6 +46,7 @@ class ColorExtractionService : Service() {
             private set
         private var pendingNotifyRunnable: Runnable? = null
         private var wakeLock: PowerManager.WakeLock? = null
+        private var stopped = false
 
         fun createChannel(context: Context) {
             val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -154,7 +155,12 @@ class ColorExtractionService : Service() {
         fun notifyUpdate(context: Context) {
             val threadName = Thread.currentThread().name
             val isMainThread = Looper.myLooper() == Looper.getMainLooper()
-            Log.d(TAG, "notifyUpdate called: thread=$threadName isMain=$isMainThread isPaused=$isPaused")
+            Log.d(TAG, "notifyUpdate called: thread=$threadName isMain=$isMainThread isPaused=$isPaused stopped=$stopped")
+
+            if (stopped) {
+                Log.d(TAG, "notifyUpdate: service is stopped, skipping")
+                return
+            }
 
             if (isMainThread) {
                 pendingNotifyRunnable?.let { mainHandler.removeCallbacks(it) }
@@ -200,6 +206,7 @@ class ColorExtractionService : Service() {
                 currentProgress = intent?.getIntExtra(EXTRA_CURRENT, 0) ?: 0
                 currentTotal = intent?.getIntExtra(EXTRA_TOTAL, 0) ?: 0
                 isPaused = false
+                stopped = false
                 Log.d(TAG, "ACTION_START: title=$currentTitle total=$currentTotal")
                 acquireWakeLock(applicationContext)
                 startForegroundNotification()
@@ -220,6 +227,9 @@ class ColorExtractionService : Service() {
             }
             ACTION_STOP -> {
                 Log.d(TAG, "ACTION_STOP")
+                stopped = true
+                pendingNotifyRunnable?.let { mainHandler.removeCallbacks(it) }
+                pendingNotifyRunnable = null
                 releaseWakeLock()
                 nativeCancelColorExtraction()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

@@ -773,16 +773,18 @@ async fn android_get_dominant_colors(
 
     let db_result = tokio::task::spawn_blocking(move || {
         let mut conn = pool.get_connection();
+        log::info!("[ColorExtract-Android] getDominantColors: querying DB for {}", file_path_for_db);
         crate::color_db::get_colors_by_file_path(&mut conn, &file_path_for_db)
     }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
 
     if let Ok(Some(colors)) = db_result {
         if !colors.is_empty() {
+            log::info!("[ColorExtract-Android] getDominantColors: found {} cached colors for {}", colors.len(), file_path);
             return Ok(colors);
         }
     }
 
-    log::info!("[ColorExtract-Android] No cached colors for {}, extracting from thumbnail", file_path);
+    log::info!("[ColorExtract-Android] getDominantColors: no cached colors for {}, extracting from thumbnail", file_path);
 
     let cache_path = std::path::Path::new(&cache_root).to_path_buf();
     let fp = file_path.clone();
@@ -917,6 +919,8 @@ async fn android_batch_extract_colors(
     let all_count = file_paths.len();
     if all_count == 0 { return Ok(0); }
 
+    let total_start = std::time::Instant::now();
+
     ANDROID_COLOR_PAUSED.store(false, Ordering::SeqCst);
     ANDROID_COLOR_CANCELLED.store(false, Ordering::SeqCst);
 
@@ -957,12 +961,16 @@ async fn android_batch_extract_colors(
     let reporter_queue = results_queue.clone();
     let reporter_done = is_done.clone();
     let reporter_pool = pool.clone();
+    let pool_for_final_checkpoint = pool.clone();
     let reporter_total = progress_total;
     let reporter_was_paused = was_paused_flag.clone();
 
     let reporter_handle = std::thread::spawn(move || {
         let mut last_reported: usize = 0;
         let reporter_interval = std::time::Duration::from_secs(1);
+        let mut total_saved: usize = 0;
+        let mut total_failed: usize = 0;
+        let mut drained_queue: Vec<(String, Vec<crate::color_extractor::ColorResult>)> = Vec::new();
 
         loop {
             std::thread::sleep(reporter_interval);
@@ -1010,25 +1018,55 @@ async fn android_batch_extract_colors(
                     "isPaused": is_paused
                 }));
 
-                let _ = call_kotlin_update_notification(current as i32, reporter_total as i32, is_paused);
+                if !all_done {
+                    let _ = call_kotlin_update_notification(current as i32, reporter_total as i32, is_paused);
+                }
                 last_reported = current;
             }
 
             {
                 let mut queue = reporter_queue.lock().unwrap();
                 if !queue.is_empty() {
-                    let batch: Vec<(&str, &[crate::color_extractor::ColorResult])> = queue
-                        .iter()
-                        .map(|(path, colors)| (path.as_str(), colors.as_slice()))
-                        .collect();
-                    if let Err(e) = reporter_pool.batch_save_colors(&batch) {
-                        log::error!("[ColorExtract-Android] Reporter failed to batch save: {}", e);
-                    }
-                    queue.clear();
+                    drained_queue = std::mem::take(&mut *queue);
                 }
             }
 
+            if !drained_queue.is_empty() {
+                let (success_items, error_items): (Vec<_>, Vec<_>) = drained_queue
+                    .iter()
+                    .partition(|(_, colors)| !colors.is_empty());
+
+                if !success_items.is_empty() {
+                    let batch: Vec<(&str, &[crate::color_extractor::ColorResult])> = success_items
+                        .iter()
+                        .map(|(path, colors)| (path.as_str(), colors.as_slice()))
+                        .collect();
+                    let save_start = std::time::Instant::now();
+                    if let Err(e) = reporter_pool.batch_save_colors(&batch) {
+                        log::error!("[ColorExtract-Android] Reporter failed to batch save ({} items, {:?}): {}", batch.len(), save_start.elapsed(), e);
+                        total_failed += batch.len();
+                    } else {
+                        log::info!("[ColorExtract-Android] Reporter saved {} colors to DB in {:?}", batch.len(), save_start.elapsed());
+                        total_saved += batch.len();
+                    }
+                }
+
+                if !error_items.is_empty() {
+                    let mut conn = reporter_pool.get_connection();
+                    for (path, _) in &error_items {
+                        if let Err(e) = crate::color_db::update_status(&mut *conn, path, "error") {
+                            log::error!("[ColorExtract-Android] Reporter failed to mark error for {}: {}", path, e);
+                        }
+                    }
+                    total_failed += error_items.len();
+                    log::info!("[ColorExtract-Android] Reporter marked {} files as error", error_items.len());
+                }
+                drained_queue.clear();
+            }
+
             if all_done {
+                let remaining_in_queue = reporter_queue.lock().unwrap().len();
+                log::info!("[ColorExtract-Android] Extraction done: {} saved, {} failed, {} items left in queue, hiding notification", total_saved, total_failed, remaining_in_queue);
                 let _ = call_kotlin_hide_notification();
                 break;
             }
@@ -1080,13 +1118,20 @@ async fn android_batch_extract_colors(
                             return;
                         }
 
+                        let worker_start = std::time::Instant::now();
                         match process_one_thumbnail(&fp, &cache_dir) {
                             Ok(colors) => {
+                                let elapsed = worker_start.elapsed();
+                                if elapsed.as_millis() > 500 {
+                                    log::info!("[ColorExtract-Android] Worker processed {} ({:?}), {} colors", fp_for_error, elapsed, colors.len());
+                                }
                                 let mut queue = results_queue.lock().unwrap();
                                 queue.push((fp, colors));
                             }
                             Err(e) => {
-                                log::warn!("[ColorExtract-Android] Worker failed for {}: {}", fp_for_error, e);
+                                log::warn!("[ColorExtract-Android] Worker failed for {} ({:?}): {}", fp_for_error, worker_start.elapsed(), e);
+                                let mut queue = results_queue.lock().unwrap();
+                                queue.push((fp, vec![]));
                             }
                         }
 
@@ -1109,7 +1154,14 @@ async fn android_batch_extract_colors(
     }
 
     let final_count = completed.load(Ordering::SeqCst);
-    log::info!("[ColorExtract-Android] Batch extraction completed: {}/{} files processed", final_count, progress_total);
+    log::info!("[ColorExtract-Android] Batch extraction completed: {}/{} files processed in {:?}", final_count, progress_total, total_start.elapsed());
+
+    let _ = tokio::task::spawn_blocking(move || {
+        let pool = pool_for_final_checkpoint;
+        let mut conn = pool.get_connection();
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        log::info!("[ColorExtract-Android] Final WAL checkpoint complete");
+    }).await;
 
     Ok(added)
 }
