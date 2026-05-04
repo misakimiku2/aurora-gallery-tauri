@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { FileNode, LayoutMode } from '../types';
+import { FileNode, LayoutMode, SortOption, SortDirection, FileType } from '../types';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
@@ -29,6 +29,8 @@ interface FoldersOverviewProps {
   onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
   onAndroidRangeSelect?: (id: string) => void;
   onFolderSelect?: (id: string) => void;
+  sortBy?: SortOption;
+  sortDirection?: SortDirection;
 }
 
 const FolderCard = React.memo(({
@@ -43,6 +45,8 @@ const FolderCard = React.memo(({
   onShowContextMenuForFile,
   onAndroidRangeSelect,
   onFolderSelect,
+  coverOverridePath,
+  coverOverrideMediaStoreId,
 }: {
   folder: FileNode;
   files: Record<string, FileNode>;
@@ -57,22 +61,27 @@ const FolderCard = React.memo(({
   onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
   onAndroidRangeSelect?: (id: string) => void;
   onFolderSelect?: (id: string) => void;
+  coverOverridePath?: string;
+  coverOverrideMediaStoreId?: number;
 }) => {
+  const effectiveCoverPath = coverOverridePath || folder.coverImagePath;
+  const effectiveCoverMediaStoreId = coverOverrideMediaStoreId ?? folder.coverImageMediaStoreId;
+
   const [ref, isInView, wasInView] = useInView({ rootMargin: '2000px' });
   const [coverSrc, setCoverSrc] = useState<string | null>(() => {
-    if (!folder.coverImagePath) return null;
+    if (!effectiveCoverPath) return null;
     const cache = getGlobalCache();
-    return cache.get(folder.coverImagePath) || null;
+    return cache.get(effectiveCoverPath) || null;
   });
   const [upgrading, setUpgrading] = useState(() =>
-    folder.coverImagePath ? isThumbnailUpgrading(folder.coverImagePath) : false
+    effectiveCoverPath ? isThumbnailUpgrading(effectiveCoverPath) : false
   );
   const [scrollState, setScrollState] = useState(getGlobalScrollState());
 
   const isAndroid = resourceRoot === 'android_media_store';
   const imageCount = folder.imageCount ?? folder.children?.length ?? 0;
-  const coverImagePathRef = useRef(folder.coverImagePath);
-  coverImagePathRef.current = folder.coverImagePath;
+  const coverImagePathRef = useRef(effectiveCoverPath);
+  coverImagePathRef.current = effectiveCoverPath;
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggeredRef = useRef(false);
@@ -92,10 +101,10 @@ const FolderCard = React.memo(({
 
   useEffect(() => {
     if (!(isInView || wasInView)) return;
-    if (!folder.coverImagePath || !resourceRoot) return;
+    if (!effectiveCoverPath || !resourceRoot) return;
 
     const cache = getGlobalCache();
-    const cached = cache.get(folder.coverImagePath);
+    const cached = cache.get(effectiveCoverPath);
     if (cached) {
       if (cached !== coverSrc) setCoverSrc(cached);
       return;
@@ -105,25 +114,25 @@ const FolderCard = React.memo(({
     const loadCover = async () => {
       try {
         const url = await getThumbnail(
-          folder.coverImagePath!,
+          effectiveCoverPath,
           undefined,
           resourceRoot,
           undefined,
           undefined,
           undefined,
-          folder.coverImageMediaStoreId
+          effectiveCoverMediaStoreId
         );
         if (!cancelled && url) {
-          cache.set(folder.coverImagePath!, url);
+          cache.set(effectiveCoverPath, url);
           setCoverSrc(url);
-          setUpgrading(isThumbnailUpgrading(folder.coverImagePath!));
+          setUpgrading(isThumbnailUpgrading(effectiveCoverPath));
         }
       } catch {}
     };
 
     loadCover();
     return () => { cancelled = true; };
-  }, [isInView, wasInView, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
+  }, [isInView, wasInView, effectiveCoverPath, effectiveCoverMediaStoreId, resourceRoot]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -148,7 +157,7 @@ const FolderCard = React.memo(({
   }, [coverSrc]);
 
   useEffect(() => {
-    if (!upgrading || !folder.coverImagePath || !resourceRoot) return;
+    if (!upgrading || !effectiveCoverPath || !resourceRoot) return;
     let cancelled = false;
     let retryCount = 0;
     const maxRetries = 3;
@@ -160,14 +169,14 @@ const FolderCard = React.memo(({
       await new Promise<void>(resolve => setTimeout(resolve, retryDelay));
       if (cancelled) return;
       try {
-        const thumbnail = await getThumbnail(folder.coverImagePath!, undefined, resourceRoot, undefined, undefined, undefined, folder.coverImageMediaStoreId);
+        const thumbnail = await getThumbnail(effectiveCoverPath, undefined, resourceRoot, undefined, undefined, undefined, effectiveCoverMediaStoreId);
         if (cancelled) return;
-        if (thumbnail && !isThumbnailUpgrading(folder.coverImagePath!)) {
+        if (thumbnail && !isThumbnailUpgrading(effectiveCoverPath)) {
           const cache = getGlobalCache();
-          cache.set(folder.coverImagePath!, thumbnail);
+          cache.set(effectiveCoverPath, thumbnail);
           setCoverSrc(thumbnail);
           setUpgrading(false);
-        } else if (isThumbnailUpgrading(folder.coverImagePath!)) {
+        } else if (isThumbnailUpgrading(effectiveCoverPath)) {
           checkUpgrade();
         }
       } catch {
@@ -177,7 +186,7 @@ const FolderCard = React.memo(({
 
     checkUpgrade();
     return () => { cancelled = true; };
-  }, [upgrading, folder.coverImagePath, folder.coverImageMediaStoreId, resourceRoot]);
+  }, [upgrading, effectiveCoverPath, effectiveCoverMediaStoreId, resourceRoot]);
 
   const isGridMode = !layoutMode || layoutMode === 'grid';
 
@@ -204,7 +213,7 @@ const FolderCard = React.memo(({
   return (
     <div
       ref={ref}
-      className="file-item cursor-pointer select-none flex flex-col items-center px-1"
+      className="file-item cursor-pointer select-none flex flex-col items-center px-1 h-full"
       data-id={folder.id}
       onClick={(e) => {
         if (isAndroid && longPressTriggeredRef.current) {
@@ -290,7 +299,7 @@ const FolderCard = React.memo(({
         }`}
         style={isGridMode
           ? { width: thumbnailSize, height: thumbnailSize }
-          : { width: '100%', height: '100%' }
+          : { width: '100%', flex: 1 }
         }
       >
         {coverSrc ? (
@@ -376,6 +385,8 @@ const FoldersOverview = React.memo(({
   onShowContextMenuForFile,
   onAndroidRangeSelect,
   onFolderSelect,
+  sortBy = 'name',
+  sortDirection = 'asc',
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -414,12 +425,45 @@ const FoldersOverview = React.memo(({
   const sortedFolderIds = useMemo(() => {
     return [...folderNodes]
       .sort((a, b) => {
-        const countA = a.imageCount ?? a.children?.length ?? 0;
-        const countB = b.imageCount ?? b.children?.length ?? 0;
-        return countB - countA;
+        let res = 0;
+        if (sortBy === 'date') {
+          res = (a.createdAt || '').localeCompare(b.createdAt || '');
+        } else if (sortBy === 'size') {
+          res = (a.size || 0) - (b.size || 0);
+        } else {
+          res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+        }
+        return res * (sortDirection === 'asc' ? 1 : -1);
       })
       .map(f => f.id);
-  }, [folderNodes]);
+  }, [folderNodes, sortBy, sortDirection]);
+
+  const sortCoverOverrides = useMemo(() => {
+    const overrides: Record<string, { path: string; mediaStoreId?: number }> = {};
+    for (const folder of folderNodes) {
+      const children = (folder.children || [])
+        .map(id => files[id])
+        .filter((f): f is FileNode => !!f && f.type === FileType.IMAGE);
+      if (children.length === 0) continue;
+      const sorted = [...children].sort((a, b) => {
+        let res = 0;
+        if (sortBy === 'date') {
+          res = (a.createdAt || '').localeCompare(b.createdAt || '');
+        } else if (sortBy === 'size') {
+          res = (a.size || 0) - (b.size || 0);
+        } else {
+          res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+        }
+        return res * (sortDirection === 'asc' ? 1 : -1);
+      });
+      const firstImage = sorted[0];
+      overrides[folder.id] = {
+        path: firstImage.path,
+        mediaStoreId: firstImage.mediaStoreId,
+      };
+    }
+    return overrides;
+  }, [folderNodes, files, sortBy, sortDirection]);
 
   const { layout, totalHeight } = useLayout(
     sortedFolderIds,
@@ -568,6 +612,8 @@ const FoldersOverview = React.memo(({
                 onShowContextMenuForFile={onShowContextMenuForFile}
                 onAndroidRangeSelect={onAndroidRangeSelect}
                 onFolderSelect={onFolderSelect}
+                coverOverridePath={sortCoverOverrides[pos.id]?.path}
+                coverOverrideMediaStoreId={sortCoverOverrides[pos.id]?.mediaStoreId}
               />
             </div>
         ))}

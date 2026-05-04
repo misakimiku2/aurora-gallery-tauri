@@ -1,5 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 
 // 辅助函数：深度查找文件夹内的图片
 const findImagesDeeply = (
@@ -577,6 +577,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     // Cache to prevent infinite re-extraction loops for the same file ID
     const extractedCache = useRef<Set<string>>(new Set());
+    const currentExtractFileRef = useRef<string | null>(null);
 
     const systemTags = useMemo(() => {
         const tags = new Set<string>();
@@ -681,8 +682,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 // Only run if we haven't already processed this file in this session
                 if (shouldExtract && !extractedCache.current.has(file.id) && file.path) {
-                    extractedCache.current.add(file.id); // Mark as processing/processed
-                    // Use direct file path for palette extraction (bypass URL parsing issues)
+                    const fileId = file.id;
+                    extractedCache.current.add(fileId);
+                    currentExtractFileRef.current = fileId;
+                    setLoadingPalette(true);
                     (async () => {
                         try {
 
@@ -730,6 +733,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                             }
                         } catch (err) {
                             console.error('[Auto-extract] Failed to extract palette:', err);
+                        } finally {
+                            if (currentExtractFileRef.current === fileId) {
+                                setLoadingPalette(false);
+                            }
                         }
                     })();
                 }
@@ -799,9 +806,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     // 使用状态来存储颜色，以便能响应缓存更新
     const [colors, setColors] = useState<string[]>([]);
+    const [loadingPalette, setLoadingPalette] = useState(false);
 
     // 当文件变化时，检查缓存和文件数据来获取调色板
-    useEffect(() => {
+    // useLayoutEffect 确保在浏览器绘制前同步更新，避免首帧闪烁
+    useLayoutEffect(() => {
         if (!file) {
             setColors([]);
             return;
@@ -2016,9 +2025,47 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     />
                                 ))
                             ) : isAndroidPlatformCached() ? (
-                                <div className="w-full text-center py-2">
-                                    <p className="text-xs text-gray-400 dark:text-gray-500">{t('meta.noColorExtracted')}</p>
-                                </div>
+                                loadingPalette ? (
+                                    Array.from({ length: 8 }).map((_, i) => (
+                                        <div
+                                            key={i}
+                                            className="w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-800 animate-pulse ring-1 ring-black/5 dark:ring-white/5"
+                                        />
+                                    ))
+                                ) : (
+                                    <button
+                                        onClick={async () => {
+                                            if (!file?.path) return;
+                                            const fileId = file.id;
+                                            currentExtractFileRef.current = fileId;
+                                            setLoadingPalette(true);
+                                            try {
+                                                const { getDominantColors } = await import('../api/tauri-bridge');
+                                                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                                let thumbnailPath: string | undefined = undefined;
+                                                if (pathCache?.get) {
+                                                    thumbnailPath = pathCache.get(file.path);
+                                                }
+                                                const result = await getDominantColors(file.path, 8, thumbnailPath);
+                                                if (result && result.length > 0) {
+                                                    const hexColors = result.map(c => c.hex);
+                                                    onUpdate(file.id, {
+                                                        meta: { ...file.meta!, palette: hexColors }
+                                                    });
+                                                }
+                                            } catch (err) {
+                                                console.error('[Single-extract] Failed to extract palette:', err);
+                                            } finally {
+                                                if (currentExtractFileRef.current === fileId) {
+                                                    setLoadingPalette(false);
+                                                }
+                                            }
+                                        }}
+                                        className="px-4 py-1.5 text-xs font-medium rounded-full border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
+                                    >
+                                        {t('meta.extractColor')}
+                                    </button>
+                                )
                             ) : (
                                 Array.from({ length: 8 }).map((_, i) => (
                                     <div

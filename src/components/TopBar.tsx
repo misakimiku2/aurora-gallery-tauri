@@ -1203,6 +1203,22 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {/* View Mode Menu (or topic mode buttons) */}
         {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && !isCompactMode && (
+          <>
+          {isAndroid ? (
+            <button
+              className="p-2 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+              title={t('layout.mode')}
+              onClick={() => {
+                const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
+                const idx = cycle.indexOf(activeTab.layoutMode);
+                onLayoutModeChange(cycle[(idx + 1) % cycle.length]);
+              }}
+            >
+              {activeTab.layoutMode === 'grid' && <Grid size={16} />}
+              {activeTab.layoutMode === 'adaptive' && <LayoutGrid size={16} />}
+              {activeTab.layoutMode === 'masonry' && <LayoutTemplate size={16} />}
+            </button>
+          ) : (
           <div className="relative">
              <button 
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
@@ -1272,6 +1288,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                </>
              )}
           </div>
+          )}
+          </>
         )}
 
         {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && (
@@ -1296,6 +1314,22 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         {/* Folders overview layout menu */}
         {activeTab.viewMode === 'folders-overview' && onFolderLayoutModeChange && !isCompactMode && (
+          <>
+          {isAndroid ? (
+            <button
+              className="p-2 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+              title={t('layout.mode')}
+              onClick={() => {
+                const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
+                const idx = cycle.indexOf(folderLayoutMode || 'grid');
+                onFolderLayoutModeChange(cycle[(idx + 1) % cycle.length]);
+              }}
+            >
+              {folderLayoutMode === 'grid' && <Grid size={16} />}
+              {folderLayoutMode === 'adaptive' && <LayoutGrid size={16} />}
+              {folderLayoutMode === 'masonry' && <LayoutTemplate size={16} />}
+            </button>
+          ) : (
           <div className="relative">
              <button
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
@@ -1350,6 +1384,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                </>
              )}
           </div>
+          )}
+          </>
         )}
 
         {/* Date Filter (hidden on topics view) */}

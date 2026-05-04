@@ -2387,6 +2387,8 @@ export const App: React.FC = () => {
                     onShowContextMenuForFile={handleShowContextMenuForFile}
                     onAndroidRangeSelect={handleFolderAndroidRangeSelect}
                     onFolderSelect={handleFolderSelect}
+                    sortBy={state.sortBy}
+                    sortDirection={state.sortDirection}
                   />
                 </div>
                 {activeTab.viewMode === 'topics-overview' ? (
