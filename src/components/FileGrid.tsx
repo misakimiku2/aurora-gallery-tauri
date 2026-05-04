@@ -721,7 +721,7 @@ const GroupContent = React.memo(({
 
   // 根据全局滚动位置，动态计算当前分组内容中可见的项目
   const visibleItems = useMemo(() => {
-      const buffer = Math.max(3000, (containerRect.height || 0) * 3);
+      const buffer = 400;
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
       
@@ -1301,7 +1301,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
-      const buffer = Math.max(3000, containerRect.height * 3);
+      const buffer = 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);

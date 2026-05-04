@@ -564,7 +564,7 @@ const FoldersOverview = React.memo(({
   }, [isAndroid, onScrollTopChange]);
 
   const visibleItems = useMemo(() => {
-      const buffer = Math.max(3000, containerHeight * 3);
+      const buffer = 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerHeight + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
