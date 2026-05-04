@@ -826,7 +826,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                 }`}
                             >
                                 <Folder size={18} className="mr-2" />
-                                <span className="text-sm font-medium">{t('sidebar.folders') || '文件目录'}</span>
+                                <span className="text-sm font-medium">{t('sidebar.folders') || '本地相册'}</span>
                             </button>
                             <button
                                 onClick={() => handleCategoryChange('topics')}

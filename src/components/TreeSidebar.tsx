@@ -57,7 +57,7 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
 
 interface TreeProps {
   node: FileNode;
-  nodeId: string; // keep id for legacy uses
+  nodeId: string;
   currentFolderId: string;
   expandedSet?: Set<string>;
   hasFolderChildren?: boolean;
@@ -66,9 +66,11 @@ interface TreeProps {
   onContextMenu: (e: React.MouseEvent, type: 'file' | 'tag' | 'root-folder', id: string) => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   depth?: number;
+  useFolderIcon?: boolean;
 }
 
-const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, expandedSet, hasFolderChildren, onToggle, onNavigate, onContextMenu, onDropOnFolder, depth = 0 }) => {
+const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, expandedSet, hasFolderChildren, onToggle, onNavigate, onContextMenu, onDropOnFolder, depth = 0, useFolderIcon }) => {
+  const isAndroid = isAndroidPlatformCached();
   const [isDragOverNode, setIsDragOverNode] = useState(false);
   const isDragOverRef = useRef(false);
   
@@ -131,9 +133,11 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
     }
   };
 
-  const Icon = isRoot 
-    ? HardDrive 
-    : (node.category === 'book' ? Book : node.category === 'sequence' ? Film : Folder);
+  const Icon = useFolderIcon
+    ? (node.category === 'book' ? Book : node.category === 'sequence' ? Film : Folder)
+    : isRoot 
+      ? HardDrive 
+      : (node.category === 'book' ? Book : node.category === 'sequence' ? Film : Folder);
 
   const iconColorClass = isSelected ? 'text-white' : (
       node.category === 'book' ? 'text-amber-500' :
@@ -144,11 +148,11 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
   return (
     <div className="select-none text-sm text-gray-600 dark:text-gray-300">
       <div 
-        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative
+        className={`flex items-center px-2 cursor-pointer transition-colors border border-transparent group relative
           ${isDragOverNode ? 'bg-blue-500/30 dark:bg-blue-900/50 border-2 border-blue-400 dark:border-blue-500 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : ''}
-          ${isSelected && !isDragOverNode ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : !isDragOverNode ? 'hover:bg-gray-200 dark:hover:bg-gray-800' : ''}
+          ${isSelected && !isDragOverNode ? 'bg-blue-600 text-white rounded-lg' : !isDragOverNode ? 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg' : ''}
         `}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        style={{ paddingLeft: `${depth * 12 + 8}px`, ...(isAndroid ? { height: '35px' } : {}), margin: '0 10px' }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onDragOver={handleDragOver}
@@ -212,6 +216,14 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
   expanded, onToggleExpand, listHeight, scrollTop, isHovered, roots
 }) => {
+  const isAndroid = isAndroidPlatformCached();
+  const iconSize = isAndroid ? 18 : 14;
+  const sortIconSize = isAndroid ? 18 : 14;
+  const plusIconSize = isAndroid ? 16 : 14;
+  const textClass = isAndroid ? 'text-sm' : 'text-xs';
+  const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
+  const chevronMr = isAndroid ? 'mr-1.5' : 'mr-1';
+  const sortPad = isAndroid ? 'p-1.5' : 'p-1';
   const [sidebarSortBy, setSidebarSortBy] = useState<PersonSortOption>(() => {
     try {
       const saved = localStorage.getItem('aurora_sidebar_people_sort_by');
@@ -367,8 +379,8 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   return (
       <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
         <div 
-          className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
-          style={isSelected ? { backgroundColor: '#a855f7', borderLeftColor: 'rgba(168,85,247,0.35)' } : undefined}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#a855f7' } : {}) }}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest('.expand-icon')) {
                 e.stopPropagation();
@@ -378,16 +390,16 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
               }
             }}
         >
-          <div className="expand-icon p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded">
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <div className={`expand-icon p-1 ${chevronMr} hover:bg-black/10 dark:hover:bg-white/10 rounded`}>
+            {expanded ? <ChevronDown size={iconSize} /> : <ChevronRight size={iconSize} />}
           </div>
           <div className="flex items-center flex-1">
-            <Brain size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-purple-500 dark:text-purple-400'}`} />
-            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.people')} ({sortedPeopleList.length})</span>
+            <Brain size={iconSize} className={`${iconMr} ${isSelected ? 'text-white' : 'text-purple-500 dark:text-purple-400'}`} />
+            <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.people')} ({sortedPeopleList.length})</span>
           </div>
           {expanded && (
             <div 
-              className={`p-1 flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-purple-500'}`}
+              className={`${sortPad} flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-purple-500'}`}
               onClick={(e) => {
                 e.stopPropagation();
                 handleTogglePersonSort();
@@ -395,11 +407,11 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
               title={getSortTitle()}
             >
               {sidebarSortBy === 'name' ? (
-                sidebarSortDirection === 'asc' ? <SortAsc size={14} /> : <SortDesc size={14} />
+                sidebarSortDirection === 'asc' ? <SortAsc size={sortIconSize} /> : <SortDesc size={sortIconSize} />
               ) : sidebarSortBy === 'count' ? (
-                sidebarSortDirection === 'asc' ? <ArrowUpDown size={14} className="rotate-180" /> : <ArrowUpDown size={14} />
+                sidebarSortDirection === 'asc' ? <ArrowUpDown size={sortIconSize} className="rotate-180" /> : <ArrowUpDown size={sortIconSize} />
               ) : (
-                <Clock size={14} className={sidebarSortDirection === 'asc' ? 'rotate-180' : ''} />
+                <Clock size={sortIconSize} className={sidebarSortDirection === 'asc' ? 'rotate-180' : ''} />
               )}
             </div>
           )}
@@ -408,14 +420,14 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
            onClick={(e) => { e.stopPropagation(); onCreatePerson(); }}
            title={t('context.newPerson')}
           >
-           <Plus size={14} className={`${isSelected ? 'text-white' : ''}`} />
+           <Plus size={plusIconSize} className={`${isSelected ? 'text-white' : ''}`} />
           </button>
         </div>
 
           {expanded && (
            <div 
              ref={containerRef}
-             className="pl-6 pr-2 pb-2 mt-1 overflow-y-auto scrollbar-thin min-h-0 bg-white dark:bg-gray-900"
+             className={`pl-6 pr-2 pb-2 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0 bg-white dark:bg-gray-900`}
              style={{ 
                maxHeight: `${availableHeight}px`,
              }}
@@ -486,13 +498,20 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
 
   const availableHeight = Math.max(200, listHeight - 180);
 
+  const isAndroid = isAndroidPlatformCached();
+  const iconSize = isAndroid ? 18 : 14;
+  const plusIconSize = isAndroid ? 16 : 14;
+  const textClass = isAndroid ? 'text-sm' : 'text-xs';
+  const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
+  const chevronMr = isAndroid ? 'mr-1.5' : 'mr-1';
+
   // Performance Optimization: Freeze sidebar rendering when not hovered
   const frozenScrollTop = useRef(scrollTop);
   useEffect(() => {
-    if (isHovered) {
+    if (isAndroid || isHovered) {
       frozenScrollTop.current = scrollTop;
     }
-  }, [scrollTop, isHovered]);
+  }, [scrollTop, isHovered, isAndroid]);
 
   // Force update when roots change (indicates a database switch)
   useEffect(() => {
@@ -601,7 +620,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
     }
 
     // Force real scrollTop if currently creating a tag to ensure the new input and list stay in sync
-    const currentST = (isHovered || isCreatingTag) ? scrollTop : frozenScrollTop.current;
+    const currentST = (isAndroid || isHovered || isCreatingTag) ? scrollTop : frozenScrollTop.current;
 
     if (FixedSizeListComp) {
       return (
@@ -734,33 +753,33 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
         <div style={{ height: bottomHeight }} />
       </div>
     );
-  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, (isHovered || isCreatingTag ? scrollTop : null), sortedTags.length]);
+  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, (isAndroid || isHovered || isCreatingTag ? scrollTop : null), sortedTags.length]);
 
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
        <div 
-        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
-        style={isSelected ? { backgroundColor: '#5391f6', borderLeftColor: 'rgba(83,145,246,0.28)' } : undefined}
+        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
+        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#5391f6' } : {}) }}
       >
-         <div className="p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded" onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}>
-           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+         <div className={`p-1 ${chevronMr} hover:bg-black/10 dark:hover:bg-white/10 rounded`} onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}>
+           {expanded ? <ChevronDown size={iconSize} /> : <ChevronRight size={iconSize} />}
         </div>
         <div className="flex items-center flex-1" onClick={onNavigateAllTags}>
-          <TagIcon size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
-          <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.allTags')} ({sortedTags.length})</span>
+          <TagIcon size={iconSize} className={`${iconMr} ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
+          <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.allTags')} ({sortedTags.length})</span>
         </div>
         <button 
            className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onStartCreateTag(); }}
            title={t('context.newTag')}
         >
-           <Plus size={14} className={`${isSelected ? 'text-white' : ''}`} />
+           <Plus size={plusIconSize} className={`${isSelected ? 'text-white' : ''}`} />
         </button>
       </div>
 
       {expanded && (
         <div 
-          className="pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto scrollbar-thin"
+          className={`pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'}`}
           style={{ 
             maxHeight: `${availableHeight}px`,
             contentVisibility: 'auto'
@@ -831,26 +850,31 @@ interface TopicSectionProps {
 }
 
 const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics, onCreateTopic, t, isSelected }) => {
+  const isAndroid = isAndroidPlatformCached();
+  const iconSize = isAndroid ? 18 : 14;
+  const plusIconSize = isAndroid ? 16 : 14;
+  const textClass = isAndroid ? 'text-sm' : 'text-xs';
+  const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
       <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
         <div
-          className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
-          style={isSelected ? { backgroundColor: '#ee5ea5', borderLeftColor: 'rgba(238,94,165,0.32)' } : undefined}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#ee5ea5' } : {}) }}
           onClick={onNavigateTopics}
         >
-          <div className="p-1 mr-1 rounded w-[22px] h-[22px] flex items-center justify-center opacity-0">
-            <ChevronRight size={14} />
+          <div className={`p-1 rounded w-[${isAndroid ? 26 : 22}px] h-[${isAndroid ? 26 : 22}px] flex items-center justify-center opacity-0`}>
+            <ChevronRight size={iconSize} />
           </div>
           <div className="flex items-center flex-1">
-            <Layout size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-pink-500 dark:text-pink-400'}`} />
-            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.topics')}</span>
+            <Layout size={iconSize} className={`${iconMr} ${isSelected ? 'text-white' : 'text-pink-500 dark:text-pink-400'}`} />
+            <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.topics')}</span>
           </div>
           <button
            className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onCreateTopic(); }}
            title={t('context.newTopic')}
           >
-           <Plus size={14} className={`${isSelected ? 'text-white' : ''}`} />
+           <Plus size={plusIconSize} className={`${isSelected ? 'text-white' : ''}`} />
           </button>
         </div>
       </div>
@@ -864,19 +888,23 @@ interface CanvasSectionProps {
 }
 
 const CanvasSection: React.FC<CanvasSectionProps> = React.memo(({ onOpenCanvas, t, isSelected }) => {
+  const isAndroid = isAndroidPlatformCached();
+  const iconSize = isAndroid ? 18 : 14;
+  const textClass = isAndroid ? 'text-sm' : 'text-xs';
+  const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
       <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
         <div 
-          className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 ${isSelected ? 'text-white border-l-4 shadow-md' : 'hover:bg-gray-200 dark:hover:bg-gray-800'}`}
-          style={isSelected ? { backgroundColor: '#10b981', borderLeftColor: 'rgba(16,185,129,0.32)' } : undefined}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#10b981' } : {}) }}
           onClick={onOpenCanvas}
         >
-          <div className="p-1 mr-1 rounded w-[22px] h-[22px] flex items-center justify-center opacity-0">
-            <ChevronRight size={14} />
+          <div className={`p-1 rounded w-[${isAndroid ? 26 : 22}px] h-[${isAndroid ? 26 : 22}px] flex items-center justify-center opacity-0`}>
+            <ChevronRight size={iconSize} />
           </div>
           <div className="flex items-center flex-1">
-            <Scan size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-emerald-500 dark:text-emerald-400'}`} />
-            <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.canvas')}</span>
+            <Scan size={iconSize} className={`${iconMr} ${isSelected ? 'text-white' : 'text-emerald-500 dark:text-emerald-400'}`} />
+            <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.canvas')}</span>
           </div>
         </div>
       </div>
@@ -907,17 +935,25 @@ interface FolderSectionProps {
   sortMode?: 'name' | 'date';
   sortOrder?: 'asc' | 'desc';
   onToggleSort?: () => void;
+  onNavigateHome?: () => void;
 }
 
 const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   visibleNodes, files, roots, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder,
   expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered,
-  sortMode = 'name', sortOrder = 'asc', onToggleSort
+  sortMode = 'name', sortOrder = 'asc', onToggleSort, onNavigateHome
 }) => {
   const isSingleRoot = roots.length === 1;
   const rootId = roots[0];
   const rootNode = files[rootId];
   const isSelected = isSingleRoot && currentFolderId === rootId;
+  const isAndroid = isAndroidPlatformCached();
+  const iconSize = isAndroid ? 18 : 14;
+  const sortIconSize = isAndroid ? 18 : 14;
+  const textClass = isAndroid ? 'text-sm' : 'text-xs';
+  const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
+  const chevronMr = isAndroid ? 'mr-1.5' : 'mr-1';
+  const sortPad = isAndroid ? 'p-1.5' : 'p-1';
 
   const displayNodes = useMemo(() => {
     if (isSingleRoot) {
@@ -933,14 +969,10 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     if ((e.target as HTMLElement).closest('.expand-icon')) {
       e.stopPropagation();
       onToggleExpand();
-    } else if (isSingleRoot) {
-      onNavigate(rootId, { resetScroll: true });
-      if (!expanded) {
-        onToggleExpand();
-        if (!expandedSet.has(rootId)) onToggle(rootId);
-      }
+    } else if (onNavigateHome) {
+      onNavigateHome();
     } else {
-      onToggleExpand();
+      onNavigate(rootId, { resetScroll: true });
     }
   };
 
@@ -967,13 +999,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   // Performance Optimization: Freeze sidebar rendering when not hovered to improve main grid scroll performance
   const frozenScrollTop = useRef(scrollTop);
   useEffect(() => {
-    if (isHovered) {
+    if (isAndroid || isHovered) {
       frozenScrollTop.current = scrollTop;
     }
-  }, [scrollTop, isHovered]);
+  }, [scrollTop, isHovered, isAndroid]);
 
   // Force update scroll position when roots change (e.g. after a root directory switch)
-  // this ensures the UI refreshes immediately without waiting for mouse hover
   useEffect(() => {
     frozenScrollTop.current = scrollTop;
   }, [roots]);
@@ -988,7 +1019,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
       );
     }
 
-    const currentST = isHovered ? scrollTop : frozenScrollTop.current;
+    const currentST = (isAndroid || isHovered) ? scrollTop : frozenScrollTop.current;
 
     if (FixedSizeListComp) {
       return (
@@ -998,7 +1029,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
           itemSize={rowHeight}
           width={'100%'}
           initialScrollOffset={currentST}
-          itemData={{ visibleNodes: displayNodes, files, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder }}
+          itemData={{ visibleNodes: displayNodes, files, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder, useFolderIcon: isAndroid }}
         >
           {({ index, style, data }: any) => {
             const nodeItem = data.visibleNodes[index];
@@ -1015,6 +1046,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
                   onContextMenu={data.onContextMenu}
                   onDropOnFolder={data.onDropOnFolder}
                   depth={nodeItem.depth}
+                  useFolderIcon={data.useFolderIcon}
                 />
               </div>
             );
@@ -1049,6 +1081,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
               onContextMenu={onContextMenu}
               onDropOnFolder={onDropOnFolder}
               depth={nodeItem.depth}
+              useFolderIcon={isAndroid}
             />
           </div>
         ))}
@@ -1058,33 +1091,34 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   }, [
     expanded, displayNodes, rowHeight, availableHeight, FixedSizeListComp, 
     currentFolderId, expandedSet, t, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-    (isHovered ? scrollTop : null), displayNodes.length // Ensure re-memoize when node count changes even if frozen
+    (isAndroid || isHovered ? scrollTop : null), displayNodes.length
   ]);
 
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
       <div 
-        className={`flex items-center py-1 px-2 cursor-pointer transition-colors border border-transparent group relative mt-2 
+        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1
           ${isDragOver ? 'bg-blue-500/30 border-2 border-blue-400 ring-2 ring-blue-300/50' : ''}
-          ${isSelected && !isDragOver ? 'bg-blue-600 text-white border-l-4 border-blue-300 shadow-md' : !isDragOver ? 'hover:bg-gray-200 dark:hover:bg-gray-800' : ''}`}
+          ${isSelected && !isDragOver ? 'bg-blue-600 text-white rounded-lg' : !isDragOver ? 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg' : ''}`}
+        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px' }}
         onClick={handleHeaderClick}
         onContextMenu={(e) => isSingleRoot && onContextMenu(e, 'root-folder', rootId)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        <div className="expand-icon p-1 mr-1 hover:bg-black/10 dark:hover:bg-white/10 rounded">
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+        <div className={`expand-icon p-1 ${chevronMr} hover:bg-black/10 dark:hover:bg-white/10 rounded`}>
+          {expanded ? <ChevronDown size={iconSize} /> : <ChevronRight size={iconSize} />}
         </div>
         <div className="flex items-center flex-1">
-          <HardDrive size={14} className={`mr-2 ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
-          <span className={`font-bold text-xs uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>
-            {isSingleRoot && rootNode ? rootNode.name : "文件目录"}
+          <HardDrive size={iconSize} className={`${iconMr} ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
+          <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>
+            {isSingleRoot && rootNode ? rootNode.name : "本地相册"}
           </span>
         </div>
         {onToggleSort && (
           <div 
-            className={`p-1 flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-blue-500'}`}
+            className={`${sortPad} flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-blue-500'}`}
             onClick={(e) => {
               e.stopPropagation();
               onToggleSort();
@@ -1092,9 +1126,9 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
             title={sortMode === 'name' ? (sortOrder === 'asc' ? 'A-Z' : 'Z-A') : (sortOrder === 'desc' ? t('sort.newest') : t('sort.oldest'))}
           >
             {sortMode === 'name' ? (
-               sortOrder === 'asc' ? <SortAsc size={14} /> : <SortDesc size={14} />
+               sortOrder === 'asc' ? <SortAsc size={sortIconSize} /> : <SortDesc size={sortIconSize} />
             ) : (
-               <Clock size={14} className={sortOrder === 'asc' ? 'rotate-180' : ''} />
+               <Clock size={sortIconSize} className={sortOrder === 'asc' ? 'rotate-180' : ''} />
             )}
           </div>
         )}
@@ -1104,7 +1138,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
         <div 
           ref={containerRef} 
           onScroll={onScroll} 
-          className="overflow-y-auto scrollbar-thin min-h-0"
+          className={`overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0`}
           style={{ 
             maxHeight: `${availableHeight}px`,
             contentVisibility: 'auto'
@@ -1145,11 +1179,12 @@ export const Sidebar: React.FC<{
   onCreateTopic: () => void;
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   onOpenCanvas?: () => void;
+  onNavigateHome?: () => void;
   t: (key: string) => string;
   aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
   activeViewMode?: string;
   filesVersion?: number;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, onNavigateHome, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -1285,7 +1320,7 @@ export const Sidebar: React.FC<{
   const containerRef = useRef<HTMLDivElement>(null);
   const sidebarHeightRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
-  const rowHeight = 32; // px per row
+  const rowHeight = isAndroidPlatformCached() ? 35 : 32;
   const [scrollTop, setScrollTop] = useState(0);
   const rafRef = useRef<number | null>(null);
   const bufferRows = 2;
@@ -1427,10 +1462,12 @@ export const Sidebar: React.FC<{
       onMouseEnter={handleMouseEnterSidebar}
       onMouseLeave={handleMouseLeaveSidebar}
     >
-      <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
-        {t('sidebar.catalog')}
-      </div>
-      <div ref={sidebarHeightRef} className="flex-1 flex flex-col overflow-hidden pb-4">
+      {!isAndroidPlatformCached() && (
+        <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
+          {t('sidebar.catalog')}
+        </div>
+      )}
+      <div ref={sidebarHeightRef} className="flex-1 flex flex-col overflow-hidden pb-4 pt-2.5">
           <TopicSection 
             onNavigateTopics={handleNavigateTopics}
             onCreateTopic={onCreateTopic}
@@ -1467,6 +1504,7 @@ export const Sidebar: React.FC<{
              sortMode={folderSortMode}
              sortOrder={folderSortOrder}
              onToggleSort={handleToggleFolderSort}
+             onNavigateHome={onNavigateHome}
           />
 
           <PeopleSection

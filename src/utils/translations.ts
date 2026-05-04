@@ -30,7 +30,7 @@ export const translations = {
     sidebar: {
       catalog: '资源目录',
       localSupport: '本地磁盘 & 局域网支持',
-      folders: '文件目录',
+      folders: '本地相册',
       tags: '标签',
       people: '人物',
       allTags: '所有标签',
@@ -887,7 +887,7 @@ export const translations = {
     sidebar: {
       catalog: 'CATALOG',
       localSupport: 'Local Disk & LAN Support',
-      folders: 'Folders',
+      folders: 'Local Album',
       tags: 'Tags',
       people: 'PEOPLE',
       allTags: 'ALL TAGS',
