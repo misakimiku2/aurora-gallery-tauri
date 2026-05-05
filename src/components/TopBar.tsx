@@ -581,6 +581,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isCompactMode, setIsCompactMode] = useState(false);
 
   const getFolderDisplayName = () => {
+    if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
     if (activeTab.viewMode === 'tags-overview') return t('sidebar.allTags');
     if (activeTab.viewMode === 'topics-overview') {
       if (activeTab.activeTopicId) return (state.topics as any)?.[activeTab.activeTopicId]?.name || t('sidebar.topics');
@@ -804,6 +805,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                         {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                         <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                       </button>
+                      {activeTab.viewMode !== 'folders-overview' && (
+                      <>
                       <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                       {[
@@ -821,6 +824,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                           {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
                         </button>
                       ))}
+                      </>
+                      )}
                     </div>
                   </>
                 )}
@@ -1165,6 +1170,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                   </button>
                   
+                  {activeTab.viewMode !== 'folders-overview' && (
+                  <>
                   <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                   {[
@@ -1182,6 +1189,8 @@ export const TopBar: React.FC<TopBarProps> = ({
                       {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
                     </button>
                   ))}
+                  </>
+                  )}
                   {onRememberFolderSettings && (
                     <>
                       <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>

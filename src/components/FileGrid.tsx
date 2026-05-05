@@ -572,8 +572,7 @@ const FileCard = React.memo(({
             }
             setShowContextMenuAnim(false);
         }) : undefined}
-        onMouseEnter={() => {
-            // 锟斤拷锟侥硷拷锟斤拷锟斤拷取锟斤拷式锟斤拷为fallback
+        onMouseEnter={!isAndroid ? (() => {
             const fileName = file.name;
             const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
             const isAnimationFormat = (file.meta?.format === 'gif' || file.meta?.format === 'webp') || (fileExt === 'gif' || fileExt === 'webp');
@@ -581,10 +580,10 @@ const FileCard = React.memo(({
             if (settings?.animateOnHover && isAnimationFormat) {
                 onSetHoverPlayingId(file.id);
             }
-        }}
-        onMouseLeave={() => {
+        }) : undefined}
+        onMouseLeave={!isAndroid ? (() => {
             onSetHoverPlayingId(null);
-        }}>
+        }) : undefined}>
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
@@ -605,7 +604,15 @@ const FileCard = React.memo(({
                 filePath={file.path}
                 modified={file.updatedAt}
                 size={file.size}
-                isHovering={hoverPlayingId === file.id}
+                isHovering={(() => {
+                    if (isAndroid) {
+                        if (!settings?.animateOnHover || !isAndroidSelectionMode || !isSelected) return false;
+                        const ext = file.name.substring(file.name.lastIndexOf('.') + 1).toLowerCase();
+                        const isAnim = (file.meta?.format === 'gif' || file.meta?.format === 'webp') || (ext === 'gif' || ext === 'webp');
+                        return isAnim;
+                    }
+                    return hoverPlayingId === file.id;
+                })()}
                 fileMeta={file.meta}
                 resourceRoot={effectiveResourceRoot}
                 cachePath={effectiveCachePath}

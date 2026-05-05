@@ -1,6 +1,6 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
-import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin } from 'lucide-react';
+import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin, HardDrive } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -114,6 +114,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   };
 
   const getTabTitle = (tab: TabState) => {
+    if (tab.viewMode === 'folders-overview') return t('sidebar.folders');
     if (tab.viewMode === 'tags-overview') return t('sidebar.allTags');
 
     if (tab.viewMode === 'topics-overview') {
@@ -146,6 +147,7 @@ export const TabBar: React.FC<TabBarProps> = ({
   };
 
   const getTabIcon = (tab: TabState) => {
+    if (tab.viewMode === 'folders-overview') return <HardDrive size={12} className="mr-1 text-blue-500" />;
     if (tab.viewMode === 'tags-overview') return <Tag size={12} className="mr-1 text-purple-500" />;
 
     if (tab.viewMode === 'topics-overview') return <Layout size={12} className="mr-1 text-pink-500 dark:text-pink-400" />;

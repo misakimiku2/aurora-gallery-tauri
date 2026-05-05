@@ -760,6 +760,59 @@ async fn android_hide_task_notification() -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
+async fn android_get_cache_size(cache_root: String) -> Result<u64, String> {
+    tokio::task::spawn_blocking(move || {
+        let cache_path = std::path::Path::new(&cache_root);
+        if !cache_path.exists() {
+            return Ok(0u64);
+        }
+        let mut total_size: u64 = 0;
+        fn dir_size(path: &std::path::Path, total: &mut u64) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let meta = entry.metadata()?;
+                if meta.is_dir() {
+                    dir_size(&entry.path(), total)?;
+                } else {
+                    *total += meta.len();
+                }
+            }
+            Ok(())
+        }
+        dir_size(cache_path, &mut total_size).map_err(|e| e.to_string())?;
+        Ok(total_size)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_clear_thumbnail_cache(cache_root: String) -> Result<u64, String> {
+    tokio::task::spawn_blocking(move || {
+        let cache_path = std::path::Path::new(&cache_root);
+        if !cache_path.exists() {
+            return Ok(0u64);
+        }
+        let mut freed: u64 = 0;
+        fn dir_remove(path: &std::path::Path, freed: &mut u64) -> std::io::Result<()> {
+            for entry in std::fs::read_dir(path)? {
+                let entry = entry?;
+                let meta = entry.metadata()?;
+                if meta.is_dir() {
+                    dir_remove(&entry.path(), freed)?;
+                } else {
+                    *freed += meta.len();
+                    std::fs::remove_file(entry.path())?;
+                }
+            }
+            Ok(())
+        }
+        dir_remove(cache_path, &mut freed).map_err(|e| e.to_string())?;
+        Ok(freed)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
 async fn android_get_dominant_colors(
     app: tauri::AppHandle,
     file_path: String,
@@ -1651,6 +1704,8 @@ pub fn run() {
         android_show_task_notification,
         android_update_task_notification,
         android_hide_task_notification,
+        android_get_cache_size,
+        android_clear_thumbnail_cache,
         color_commands::add_pending_files_to_db,
         db_commands::get_color_db_stats,
         db_commands::get_color_db_error_files,

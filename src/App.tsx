@@ -1172,6 +1172,15 @@ export const App: React.FC = () => {
     }));
   }, [state.files, state.folderSettings, state.settings.defaultLayoutSettings, setState]);
 
+  const handleNavigateToFile = useCallback((filePath: string) => {
+    const fileEntry = Object.values(state.files).find(f => f.path === filePath);
+    if (!fileEntry) return;
+    const folderId = fileEntry.parentId || fileEntry.id;
+    const fileId = fileEntry.id;
+    setState(prev => ({ ...prev, isSettingsOpen: false }));
+    pushHistory(folderId, null, 'browser', '', 'all', [], null, 0, null, null, [], [], fileId);
+  }, [state.files, setState, pushHistory]);
+
   const handleOpenTopicInNewTab = useCallback((topicId: string) => {
     const newTab: TabState = {
       ...DUMMY_TAB,
@@ -2393,6 +2402,7 @@ export const App: React.FC = () => {
                     onFolderSelect={handleFolderSelect}
                     sortBy={state.sortBy}
                     sortDirection={state.sortDirection}
+                    dateFilter={activeTab.dateFilter}
                   />
                 </div>
                 {activeTab.viewMode === 'topics-overview' ? (
@@ -2638,6 +2648,7 @@ export const App: React.FC = () => {
         onCheckUpdate={() => checkUpdate(true)}
         isCheckingUpdate={isCheckingUpdate}
         onRefreshTags={handleRefreshTags}
+        onNavigateToFile={handleNavigateToFile}
         handleSmartCreatePerson={handleSmartCreatePerson}
         handleSmartAddToPerson={handleSmartAddToPerson}
         handleSmartCreateTopic={handleSmartCreateTopic}

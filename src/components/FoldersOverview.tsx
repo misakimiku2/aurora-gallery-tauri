@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { FileNode, LayoutMode, SortOption, SortDirection, FileType } from '../types';
+import { FileNode, LayoutMode, SortOption, SortDirection, FileType, DateFilter } from '../types';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
@@ -31,6 +31,7 @@ interface FoldersOverviewProps {
   onFolderSelect?: (id: string) => void;
   sortBy?: SortOption;
   sortDirection?: SortDirection;
+  dateFilter?: DateFilter;
 }
 
 const FolderCard = React.memo(({
@@ -387,6 +388,7 @@ const FoldersOverview = React.memo(({
   onFolderSelect,
   sortBy = 'name',
   sortDirection = 'asc',
+  dateFilter,
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -417,10 +419,37 @@ const FoldersOverview = React.memo(({
   });
 
   const folderNodes = useMemo(() => {
-    return roots
+    const nodes = roots
       .map(id => files[id])
       .filter((f): f is FileNode => !!f && f.type === 'folder');
-  }, [roots, files]);
+
+    if (!dateFilter?.start || !dateFilter?.end) return nodes;
+
+    const start = new Date(dateFilter.start).getTime();
+    const end = new Date(dateFilter.end).getTime();
+    const min = Math.min(start, end);
+    const max = Math.max(start, end) + 86400000;
+
+    const hasMatchingChild = (folder: FileNode): boolean => {
+      const children = folder.children || [];
+      for (const childId of children) {
+        const child = files[childId];
+        if (!child) continue;
+        if (child.type === FileType.FOLDER) {
+          if (hasMatchingChild(child)) return true;
+        } else {
+          const dStr = dateFilter.mode === 'created' ? child.createdAt : child.updatedAt;
+          if (dStr) {
+            const t = new Date(dStr).getTime();
+            if (t >= min && t < max) return true;
+          }
+        }
+      }
+      return false;
+    };
+
+    return nodes.filter(hasMatchingChild);
+  }, [roots, files, dateFilter]);
 
   const sortedFolderIds = useMemo(() => {
     return [...folderNodes]

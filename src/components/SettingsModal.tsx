@@ -7,7 +7,8 @@ import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification } from '../api/tauri-bridge';
+import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
 import { LanSharePanel } from './settings/LanSharePanel';
@@ -1673,9 +1674,10 @@ interface SettingsModalProps {
   onShowToast?: (msg: string, duration?: number) => void;
   onClipSearchDisabled?: () => void;
   onRefresh?: () => void;
+  onNavigateToFile?: (filePath: string) => void;
 }
 
-export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh }) => {
+export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile }) => {
   const [isAndroid, setIsAndroid] = useState(false);
 
   useEffect(() => {
@@ -1717,6 +1719,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const androidColorExtractCancelledRef = useRef<boolean>(false);
 
   const [editingPresetName, setEditingPresetName] = useState('');
+  const [androidCacheSize, setAndroidCacheSize] = useState<number | null>(null);
+  const [isDeletingCache, setIsDeletingCache] = useState(false);
+
+  useEffect(() => {
+    if (isAndroid && state.settings.paths.cacheRoot) {
+      androidGetCacheSize(state.settings.paths.cacheRoot).then(setAndroidCacheSize);
+    }
+  }, [isAndroid, state.settings.paths.cacheRoot]);
 
   useEffect(() => {
     const currentPreset = state.settings.ai.promptPresets?.find(p => p.id === state.settings.ai.currentPresetId);
@@ -2252,6 +2262,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
   // 在文件管理器中打开
   const openInExplorer = (path: string) => {
+    if (isAndroid && onNavigateToFile) {
+      onClose();
+      onNavigateToFile(path);
+      return;
+    }
     import('../api/tauri-bridge').then(({ openPath }) => {
       openPath(path, true);
     });
@@ -2292,8 +2307,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
-  const handleExportData = () => {
-    // 过滤专题信息，只保留基本属性、子专题结构和人物关联，剔除文件关联
+  const handleExportData = async () => {
     const simplifiedTopics: Record<string, any> = {};
     Object.values(state.topics || {}).forEach(topic => {
       simplifiedTopics[topic.id] = {
@@ -2311,15 +2325,44 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
       people: state.people,
       topics: simplifiedTopics
     };
-    const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `aurora_metadata_backup_${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const jsonStr = JSON.stringify(dataToExport, null, 2);
+    const fileName = `aurora_metadata_backup_${new Date().toISOString().split('T')[0]}.json`;
+
+    if (isAndroid) {
+      try {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(jsonStr);
+        const downloadsDir = '/storage/emulated/0/Download';
+        const filePath = `${downloadsDir}/${fileName}`;
+        await writeFileFromBytes(filePath, new Uint8Array(bytes));
+        onShowToast?.(`已导出到 ${filePath}`);
+      } catch (error) {
+        console.error('Failed to export data on Android:', error);
+        try {
+          const cacheRoot = state.settings.paths.cacheRoot;
+          if (cacheRoot) {
+            const encoder = new TextEncoder();
+            const bytes = encoder.encode(jsonStr);
+            const filePath = `${cacheRoot}/../${fileName}`;
+            await writeFileFromBytes(filePath, new Uint8Array(bytes));
+            onShowToast?.(`已导出到 ${filePath}`);
+          }
+        } catch (fallbackError) {
+          console.error('Fallback export also failed:', fallbackError);
+          onShowToast?.(t('settings.exportError') || '导出失败');
+        }
+      }
+    } else {
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2365,7 +2408,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
       <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl border border-gray-100 dark:border-gray-700 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
 
         <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col">
@@ -2379,42 +2422,51 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'general' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'general' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Sliders size={18} className="mr-3" /> {t('settings.catGeneral')}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'storage' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'storage' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Database size={18} className="mr-3" /> {t('settings.catStorage')}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'ai' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'ai' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Brain size={18} className="mr-3" /> {t('settings.catAi')}
             </button>
-            <button
-              onClick={() => onUpdateSettings({ settingsCategory: 'aiVision' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'aiVision' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
-            >
-              <Sparkles size={18} className="mr-3" /> AI视觉
-            </button>
+            {!isAndroid && (
+              <button
+                onClick={() => onUpdateSettings({ settingsCategory: 'aiVision' })}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'aiVision' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              >
+                <Sparkles size={18} className="mr-3" /> AI视觉
+              </button>
+            )}
+            {!isAndroid && (
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'performance' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'performance' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
             >
               <BarChart2 size={18} className="mr-3" /> {t('settings.catPerformance')}
             </button>
+            )}
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'lanShare' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'lanShare' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Wifi size={18} className="mr-3" /> {t('settings.catLanShare') || '局域网共享'}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'about' })}
               className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'about' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Info size={18} className="mr-3" /> {t('settings.catAbout')}
             </button>
@@ -2429,7 +2481,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-8">
+        <div id="settings-scroll" className="flex-1 overflow-y-auto p-8" style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}>
+          {isAndroid && <style dangerouslySetInnerHTML={{ __html: '#settings-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />}
           {state.settingsCategory === 'general' && (
             /* ... General Settings Content ... */
             <div className="space-y-8 animate-fade-in">
@@ -2453,26 +2506,28 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
-                    <div className="flex items-center justify-between mb-3">
-                      <div>
-                        <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoStart')}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.autoStartDesc')}</div>
+                    {!isAndroid && (
+                      <div className="flex items-center justify-between mb-3" style={isAndroid ? { height: '55px' } : undefined}>
+                        <div>
+                          <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoStart')}</div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.autoStartDesc')}</div>
+                        </div>
+                        <button
+                          onClick={() => {
+                            const newValue = !state.settings.autoStart;
+                            onUpdateSettingsData({ autoStart: newValue });
+                          }}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${state.settings.autoStart ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${state.settings.autoStart ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
                       </div>
-                      <button
-                        onClick={() => {
-                          const newValue = !state.settings.autoStart;
-                          onUpdateSettingsData({ autoStart: newValue });
-                        }}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${state.settings.autoStart ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${state.settings.autoStart ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
+                    )}
 
-                    <div className="flex items-center justify-between mb-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-t border-gray-200 dark:border-gray-700' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
                       <div>
-                        <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.animateOnHover')}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.animateOnHoverDesc')}</div>
+                        <div className="font-bold text-gray-800 dark:text-gray-200">{isAndroid ? t('settings.animateOnSelect') : t('settings.animateOnHover')}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{isAndroid ? t('settings.animateOnSelectDesc') : t('settings.animateOnHoverDesc')}</div>
                       </div>
                       <button
                         onClick={() => {
@@ -2485,20 +2540,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </button>
                     </div>
 
-                    <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-gray-800 dark:text-gray-200">{t('settings.exitAction')}</span>
-                        <select
-                          value={state.settings.exitAction || 'ask'}
-                          onChange={(e) => onUpdateSettingsData({ exitAction: e.target.value as any })}
-                          className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
-                        >
-                          <option value="ask">{t('settings.exitActionAsk')}</option>
-                          <option value="minimize">{t('settings.exitActionMinimize')}</option>
-                          <option value="exit">{t('settings.exitActionExit')}</option>
-                        </select>
+                    {!isAndroid && (
+                      <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-gray-800 dark:text-gray-200">{t('settings.exitAction')}</span>
+                          <select
+                            value={state.settings.exitAction || 'ask'}
+                            onChange={(e) => onUpdateSettingsData({ exitAction: e.target.value as any })}
+                            className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          >
+                            <option value="ask">{t('settings.exitActionAsk')}</option>
+                            <option value="minimize">{t('settings.exitActionMinimize')}</option>
+                            <option value="exit">{t('settings.exitActionExit')}</option>
+                          </select>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </section>
@@ -2703,7 +2760,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
                   )}
                   <div>
-                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.cacheRoot')}</label>
+                    <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{isAndroid ? t('settings.cacheRootAndroid') : t('settings.cacheRoot')}</label>
                     <div className="flex items-center">
                       <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
                         {isAndroid
@@ -2711,23 +2768,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           : (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet'))
                         }
                       </div>
-                      <button
-                        onClick={() => {
-                          const cachePath = isAndroid
-                            ? (state.settings.paths.cacheRoot || '')
-                            : (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '');
-                          if (cachePath) {
-                            import('../api/tauri-bridge').then(({ openPath }) => {
-                              openPath(cachePath);
-                            });
-                          }
-                        }}
-                        disabled={isAndroid ? !state.settings.paths.cacheRoot : !state.settings.paths.resourceRoot}
-                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
-                      >
-                        打开
-                      </button>
+                      {isAndroid ? (
+                        <button
+                          onClick={async () => {
+                            if (!state.settings.paths.cacheRoot) return;
+                            if (!confirm(t('settings.deleteCacheConfirm'))) return;
+                            setIsDeletingCache(true);
+                            try {
+                              const freed = await androidClearThumbnailCache(state.settings.paths.cacheRoot);
+                              if (freed >= 0) {
+                                getGlobalCache().clear();
+                                getThumbnailPathCache().clear();
+                                setAndroidCacheSize(0);
+                                onRefresh?.();
+                                onShowToast?.(t('settings.cacheDeleted'));
+                              } else {
+                                onShowToast?.(t('settings.cacheDeleteFailed'));
+                              }
+                            } catch {
+                              onShowToast?.(t('settings.cacheDeleteFailed'));
+                            } finally {
+                              setIsDeletingCache(false);
+                            }
+                          }}
+                          disabled={isDeletingCache || !state.settings.paths.cacheRoot}
+                          className="bg-red-600 hover:bg-red-500 disabled:bg-red-400 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-red-600"
+                        >
+                          {isDeletingCache ? '...' : t('settings.deleteCache')}
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            const cachePath = state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : '';
+                            if (cachePath) {
+                              import('../api/tauri-bridge').then(({ openPath }) => {
+                                openPath(cachePath);
+                              });
+                            }
+                          }}
+                          disabled={!state.settings.paths.resourceRoot}
+                          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 text-sm font-medium rounded-r border border-l-0 border-blue-600"
+                        >
+                          打开
+                        </button>
+                      )}
                     </div>
+                    {isAndroid && (
+                      <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                        {t('settings.cacheSize')}：{androidCacheSize !== null ? formatFileSize(androidCacheSize) : '...'}
+                      </div>
+                    )}
                   </div>
                 </div>
               </section>
@@ -2770,10 +2860,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
                   <button
                     onClick={async () => {
-                      // 先加载错误文件列表（会触发清理不存在的文件）
+                      setIsLoadingStats(true);
+                      const startTime = Date.now();
                       await loadErrorFiles();
-                      // 然后再加载统计信息
                       await loadColorDbStats();
+                      setIsLoadingStats(true);
+                      const elapsed = Date.now() - startTime;
+                      if (elapsed < 600) {
+                        await new Promise(r => setTimeout(r, 600 - elapsed));
+                      }
+                      setIsLoadingStats(false);
                     }}
                     disabled={isLoadingStats}
                     className="text-sm flex items-center px-3 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-700 dark:text-gray-200"
@@ -2908,6 +3004,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               onClick={handleStartColorExtraction}
                               disabled={!colorExtractProgress && Object.values(state.files || {}).filter(f => f.type === FileType.IMAGE).length === 0}
                               className="text-sm flex items-center px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={isAndroid ? { height: '55px' } : undefined}
                             >
                               <Play size={14} className="mr-1" />
                               {t('settings.startColorExtraction')}
@@ -3024,7 +3121,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     type="checkbox"
                                     checked={selectedFiles.size === errorFiles.length && errorFiles.length > 0}
                                     onChange={toggleSelectAll}
-                                    className="mr-2 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                    className={`mr-2 text-red-600 focus:ring-red-500 ${isAndroid ? 'rounded-full appearance-none w-5 h-5 border-2 border-gray-300 checked:bg-red-600 checked:border-red-600 relative after:content-[\'✓\'] after:absolute after:text-white after:text-xs after:top-0 after:left-0.5 after:opacity-0 checked:after:opacity-100' : 'rounded border-gray-300'}`}
                                   />
                                   {t('settings.selectAll')} ({selectedFiles.size}/{errorFiles.length})
                                 </label>
@@ -3035,16 +3132,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                   <button
                                     onClick={() => setViewMode('list')}
                                     className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                    style={isAndroid ? { width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                     title={t('layout.list')}
                                   >
-                                    <List size={14} />
+                                    <List size={isAndroid ? 20 : 14} />
                                   </button>
                                   <button
                                     onClick={() => setViewMode('grid')}
                                     className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                    style={isAndroid ? { width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                     title={t('layout.grid')}
                                   >
-                                    <Grid size={14} />
+                                    <Grid size={isAndroid ? 20 : 14} />
                                   </button>
                                 </div>
                                 {/* 删除选中按钮 */}
@@ -3100,33 +3199,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                           e.stopPropagation();
                                           toggleFileSelection(file.path);
                                         }}
-                                        className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                        className={`text-red-600 focus:ring-red-500 ${isAndroid ? 'rounded-full appearance-none w-5 h-5 border-2 border-gray-300 checked:bg-red-600 checked:border-red-600 relative after:content-[\'✓\'] after:absolute after:text-white after:text-xs after:top-0 after:left-0.5 after:opacity-0 checked:after:opacity-100' : 'rounded border-gray-300'}`}
                                       />
                                     </div>
 
                                     {/* 操作按钮 */}
-                                    <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openPreview(file);
-                                        }}
-                                        className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                                        title={t('settings.preview')}
-                                      >
-                                        <Eye size={12} className="text-gray-600 dark:text-gray-400" />
-                                      </button>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          openInExplorer(file.path);
-                                        }}
-                                        className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                                        title={t('context.openFolder')}
-                                      >
-                                        <FolderOpen size={12} className="text-gray-600 dark:text-gray-400" />
-                                      </button>
-                                    </div>
+                                    {!isAndroid && (
+                                      <div className="absolute top-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPreview(file);
+                                          }}
+                                          className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                          title={t('settings.preview')}
+                                        >
+                                          <Eye size={12} className="text-gray-600 dark:text-gray-400" />
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            openInExplorer(file.path);
+                                          }}
+                                          className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                          title={t('context.openFolder')}
+                                        >
+                                          <FolderOpen size={12} className="text-gray-600 dark:text-gray-400" />
+                                        </button>
+                                      </div>
+                                    )}
 
                                     {/* 文件名 */}
                                     <div className="p-2 bg-white dark:bg-gray-800">
@@ -3146,7 +3247,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       type="checkbox"
                                       checked={selectedFiles.has(file.path)}
                                       onChange={() => toggleFileSelection(file.path)}
-                                      className="mr-3 rounded border-gray-300 text-red-600 focus:ring-red-500"
+                                      className={`mr-3 text-red-600 focus:ring-red-500 ${isAndroid ? 'rounded-full appearance-none w-5 h-5 border-2 border-gray-300 checked:bg-red-600 checked:border-red-600 relative after:content-[\'✓\'] after:absolute after:text-white after:text-xs after:top-0 after:left-0.5 after:opacity-0 checked:after:opacity-100' : 'rounded border-gray-300'}`}
                                     />
                                     <div className="flex-1 min-w-0 mr-2">
                                       <div className="text-xs text-gray-600 dark:text-gray-300 truncate" title={file.path}>
@@ -3160,32 +3261,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       <button
                                         onClick={() => openPreview(file)}
                                         className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                        style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('settings.preview')}
                                       >
-                                        <Eye size={14} />
+                                        <Eye size={isAndroid ? 18 : 14} />
                                       </button>
                                       <button
                                         onClick={() => openInExplorer(file.path)}
                                         className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                        style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('context.openFolder')}
                                       >
-                                        <FolderOpen size={14} />
+                                        <FolderOpen size={isAndroid ? 18 : 14} />
                                       </button>
                                       <button
                                         onClick={() => handleRetryErrors([file.path])}
                                         disabled={isRetrying}
                                         className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
+                                        style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('settings.colorDbRetrySingle')}
                                       >
-                                        <Play size={14} />
+                                        <Play size={isAndroid ? 18 : 14} />
                                       </button>
                                       <button
                                         onClick={() => handleDeleteSingle(file)}
                                         disabled={isDeleting}
                                         className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors"
+                                        style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('context.delete')}
                                       >
-                                        <Trash size={14} />
+                                        <Trash size={isAndroid ? 18 : 14} />
                                       </button>
                                     </div>
                                   </div>
@@ -3639,7 +3744,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </div>
 
                 <div className="mt-6 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiAutoTag')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, autoTag: !state.settings.ai.autoTag } })}
@@ -3648,7 +3753,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${state.settings.ai.autoTag ? 'translate-x-5' : 'translate-x-1'}`} />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiAutoDescription')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, autoDescription: !state.settings.ai.autoDescription } })}
@@ -3657,7 +3762,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${state.settings.ai.autoDescription ? 'translate-x-5' : 'translate-x-1'}`} />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800">
+                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className={`text-sm font-medium ${state.settings.ai.autoDescription ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>{t('settings.aiEnhancePersonDesc')}</span>
                     <button
                       onClick={() => {
@@ -3670,7 +3775,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${state.settings.ai.enhancePersonDescription ? 'translate-x-5' : 'translate-x-1'}`} />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiFaceRec')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, enableFaceRecognition: !state.settings.ai.enableFaceRecognition } })}
@@ -3680,7 +3785,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800">
+                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiAutoAddPeople')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, autoAddPeople: !state.settings.ai.autoAddPeople } })}
@@ -3690,7 +3795,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiEnableOCR')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, enableOCR: !state.settings.ai.enableOCR } })}
@@ -3700,7 +3805,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiEnableTranslation')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, enableTranslation: !state.settings.ai.enableTranslation } })}
@@ -3711,7 +3816,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   {state.settings.ai.enableTranslation && (
-                    <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800 animate-fade-in">
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800 animate-fade-in" style={isAndroid ? { height: '55px' } : undefined}>
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiTargetLang')}</span>
                       <div className="flex space-x-2">
                         {[
@@ -3756,7 +3861,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             </div>
           )}
 
-          {state.settingsCategory === 'aiVision' && (
+          {!isAndroid && state.settingsCategory === 'aiVision' && (
             <AIVisionPanel
               t={t}
               settings={state.settings.clip}
@@ -4076,7 +4181,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
                 {/* 性能监控控制 */}
                 <div className="mt-8 space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.enabled')}</span>
                     <button
                       onClick={() => {
@@ -4089,7 +4194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.memoryMonitoring')}</span>
                     <button
                       onClick={() => {
@@ -4103,8 +4208,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   <div className="space-y-4 pt-4">
-                    {/* 自动刷新频率 */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.refreshInterval')}</span>
                       <select
                         value={refreshInterval / 1000}

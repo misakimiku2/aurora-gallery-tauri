@@ -96,6 +96,7 @@ interface AppModalsProps {
   onCheckUpdate: () => void;
   isCheckingUpdate: boolean;
   onRefreshTags?: () => void;
+  onNavigateToFile?: (filePath: string) => void;
   handleSmartCreatePerson?: (name: string, coverFileId: string, matchedFileIds: string[], faceBox?: { x: number; y: number; w: number; h: number }, characterTagName?: string, characterTagIndex?: number) => void;
   handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
   handleSmartCreateTopic?: (topics: Topic[], people: Person[]) => Promise<void>;
@@ -154,6 +155,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   onCheckUpdate,
   isCheckingUpdate,
   onRefreshTags,
+  onNavigateToFile,
   handleSmartCreatePerson,
   handleSmartAddToPerson,
   handleSmartCreateTopic,
@@ -165,7 +167,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
     <>
       {/* Main Modal Overlay */}
       {state.activeModal.type && (
-        <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4">
           {state.activeModal.type === 'alert' && state.activeModal.data && (
             <AlertModalComp
               message={state.activeModal.data.message}
@@ -555,6 +557,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
           onShowToast={showToast}
           onClipSearchDisabled={onClipSearchDisabled}
           onRefresh={onRefreshTags}
+          onNavigateToFile={onNavigateToFile}
         />
       )}
 

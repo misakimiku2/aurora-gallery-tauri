@@ -244,16 +244,16 @@ const TopicFileGrid = React.memo(({
                                 width: item.width,
                                 height: item.height
                             }}
-                            onMouseEnter={() => {
+                            onMouseEnter={!isLocalAndroid ? (() => {
                                 if (onSetHoverPlayingId && (file.name.toLowerCase().endsWith('.gif') || file.name.toLowerCase().endsWith('.webp'))) {
                                     onSetHoverPlayingId(file.id);
                                 }
-                            }}
-                            onMouseLeave={() => {
+                            }) : undefined}
+                            onMouseLeave={!isLocalAndroid ? (() => {
                                 if (onSetHoverPlayingId) {
                                     onSetHoverPlayingId(null);
                                 }
-                            }}
+                            }) : undefined}
                             onMouseDown={(e) => e.stopPropagation()}
                             onClick={(e) => {
                                 e.stopPropagation();
@@ -312,7 +312,13 @@ const TopicFileGrid = React.memo(({
                                             filePath={file.path}
                                             modified={file.updatedAt}
                                             size={undefined}
-                                            isHovering={hoverPlayingId === file.id}
+                                            isHovering={(() => {
+                                                if (isLocalAndroid) {
+                                                    if (!isSelected || (selectedFileIds || []).length === 0) return false;
+                                                    return file.name.toLowerCase().endsWith('.gif') || file.name.toLowerCase().endsWith('.webp');
+                                                }
+                                                return hoverPlayingId === file.id;
+                                            })()}
                                             fileMeta={file.meta}
                                             resourceRoot={resourceRoot}
                                             cachePath={cachePath}

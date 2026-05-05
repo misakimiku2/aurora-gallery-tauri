@@ -237,7 +237,7 @@ export const AutoGenerateTagsModal: React.FC<AutoGenerateTagsModalProps> = ({
   type CellProps = Record<string, never>;
   
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50">
+    <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/50">
       <div 
         ref={modalRef}
         className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full flex flex-col overflow-hidden"

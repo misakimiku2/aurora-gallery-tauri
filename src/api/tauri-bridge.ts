@@ -1244,6 +1244,28 @@ export const androidHideTaskNotification = async (): Promise<void> => {
   }
 };
 
+export const androidGetCacheSize = async (cacheRoot: string): Promise<number> => {
+  if (!isAndroidPlatformCached()) return 0;
+  try {
+    const result = await invoke<number>('android_get_cache_size', { cacheRoot });
+    return result;
+  } catch (error) {
+    console.error('Failed to get cache size (Android):', error);
+    return 0;
+  }
+};
+
+export const androidClearThumbnailCache = async (cacheRoot: string): Promise<number> => {
+  if (!isAndroidPlatformCached()) return 0;
+  try {
+    const result = await invoke<number>('android_clear_thumbnail_cache', { cacheRoot });
+    return result;
+  } catch (error) {
+    console.error('Failed to clear thumbnail cache (Android):', error);
+    return 0;
+  }
+};
+
 /**
  * 生成拖拽预览图（用于外部拖拽时显示）
  * @param thumbnailPaths 缩略图路径数组（最多3个）

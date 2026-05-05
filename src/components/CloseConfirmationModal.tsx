@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+import React, { useState } from 'react';
 import { X } from 'lucide-react';
 
 interface CloseConfirmationModalProps {
@@ -15,7 +15,7 @@ export const CloseConfirmationModal: React.FC<CloseConfirmationModalProps> = ({ 
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
+    <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
       <div 
         className="bg-white dark:bg-gray-800 rounded-xl w-[400px] shadow-2xl border border-gray-200 dark:border-gray-700 animate-zoom-in"
         onClick={e => e.stopPropagation()}
