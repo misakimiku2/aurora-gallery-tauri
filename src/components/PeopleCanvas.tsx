@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useMemo, useCallback } from 'react';
 import { Person, FileNode } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { isAndroidPlatformCached } from '../api/tauri-bridge';
 
 interface PersonLayout {
   id: string;
@@ -309,6 +310,7 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
+    if (isAndroidPlatformCached()) return;
     const personId = getPersonAtPosition(e.clientX, e.clientY);
     if (personId) {
       onPersonContextMenu(e, personId);

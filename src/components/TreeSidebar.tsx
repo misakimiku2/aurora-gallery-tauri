@@ -91,6 +91,7 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
   };
 
   const handleContextMenu = (e: React.MouseEvent) => {
+    if (isAndroid) return;
     onContextMenu(e, isRoot ? 'root-folder' : 'file', nodeId);
   };
 
@@ -644,7 +645,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                 className="relative group"
                 onMouseEnter={(e) => data.handleMouseEnter(e, tag)}
                 onMouseLeave={data.handleMouseLeave}
-                onContextMenu={(e) => data.onContextMenu(e, 'tag', tag)}
+                onContextMenu={(e) => !isAndroid && data.onContextMenu(e, 'tag', tag)}
               >
                 <div 
                   className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
@@ -709,7 +710,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
             style={{ height: rowHeight }}
             onMouseEnter={(e) => handleMouseEnter(e, tag)}
             onMouseLeave={handleMouseLeave}
-            onContextMenu={(e) => onContextMenu(e, 'tag', tag)}
+            onContextMenu={(e) => !isAndroid && onContextMenu(e, 'tag', tag)}
           >
             <div 
               className={`py-1 px-2 rounded cursor-pointer flex items-center justify-between transition-colors
@@ -786,6 +787,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
           }}
           onScroll={onScroll}
           onContextMenu={(e) => { 
+            if (isAndroid) return;
             e.preventDefault(); 
             e.stopPropagation(); 
             onContextMenu(e, 'tag-background', ''); 
@@ -1102,7 +1104,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
           ${isSelected && !isDragOver ? 'bg-blue-600 text-white rounded-lg' : !isDragOver ? 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg' : ''}`}
         style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px' }}
         onClick={handleHeaderClick}
-        onContextMenu={(e) => isSingleRoot && onContextMenu(e, 'root-folder', rootId)}
+        onContextMenu={(e) => !isAndroid && isSingleRoot && onContextMenu(e, 'root-folder', rootId)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
