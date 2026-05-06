@@ -1813,6 +1813,11 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const handleAndroidBackPress = () => {
+      if ((window as any).__androidBackHandled) {
+        (window as any).__androidBackHandled = false;
+        return;
+      }
+
       const tab = activeTabRef2.current;
 
       if (state.activeModal.type !== null) {

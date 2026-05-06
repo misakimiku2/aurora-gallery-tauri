@@ -50,7 +50,7 @@ const FolderCard = React.memo(({
   coverOverrideMediaStoreId,
 }: {
   folder: FileNode;
-  files: Record<string, FileNode>;
+  files?: Record<string, FileNode>;
   resourceRoot?: string;
   cachePath?: string;
   onClick: () => void;
@@ -402,6 +402,9 @@ const FoldersOverview = React.memo(({
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+  const prevSortedIdsRef = useRef<string[]>([]);
+  const prevAspectRatiosRef = useRef<Record<string, number>>({});
+  const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0, filesCount: 0 });
 
   const pinchStartSizeRef = useRef(thumbnailSize);
 
@@ -467,8 +470,29 @@ const FoldersOverview = React.memo(({
       .map(f => f.id);
   }, [folderNodes, sortBy, sortDirection]);
 
+  if (isAndroid) {
+    const prev = prevSortedIdsRef.current;
+    if (prev.length !== sortedFolderIds.length || prev.some((id, i) => id !== sortedFolderIds[i])) {
+      const added = sortedFolderIds.filter(id => !prev.includes(id));
+      const removed = prev.filter(id => !sortedFolderIds.includes(id));
+      const moved: string[] = [];
+      if (added.length === 0 && removed.length === 0 && prev.length === sortedFolderIds.length) {
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i] !== sortedFolderIds[i]) {
+            moved.push(`${files[prev[i]]?.name || prev[i]}→${files[sortedFolderIds[i]]?.name || sortedFolderIds[i]}`);
+          }
+        }
+      }
+      console.log(`[FoldersOverview] sortedFolderIds CHANGED: ${prev.length}→${sortedFolderIds.length}, sortBy=${sortBy}, sortDir=${sortDirection}, layout=${layoutMode}, filesCount=${Object.keys(files).length}` +
+        (added.length > 0 ? `, added=${added.length}` : '') +
+        (removed.length > 0 ? `, removed=${removed.length}` : '') +
+        (moved.length > 0 ? `, orderChanged=${moved.length}` : ''));
+      prevSortedIdsRef.current = sortedFolderIds;
+    }
+  }
+
   const sortCoverOverrides = useMemo(() => {
-    const overrides: Record<string, { path: string; mediaStoreId?: number }> = {};
+    const overrides: Record<string, { path: string; mediaStoreId?: number; width?: number; height?: number }> = {};
     for (const folder of folderNodes) {
       const children = (folder.children || [])
         .map(id => files[id])
@@ -489,10 +513,61 @@ const FoldersOverview = React.memo(({
       overrides[folder.id] = {
         path: firstImage.path,
         mediaStoreId: firstImage.mediaStoreId,
+        width: firstImage.meta?.width || undefined,
+        height: firstImage.meta?.height || undefined,
       };
     }
     return overrides;
   }, [folderNodes, files, sortBy, sortDirection]);
+
+  const folderAspectRatios = useMemo(() => {
+    const ratios: Record<string, number> = {};
+    for (const folder of folderNodes) {
+      if (folder.coverImageWidth && folder.coverImageHeight) {
+        ratios[folder.id] = folder.coverImageWidth / folder.coverImageHeight;
+      } else {
+        const override = sortCoverOverrides[folder.id];
+        if (override?.width && override?.height) {
+          ratios[folder.id] = override.width / override.height;
+        } else {
+          ratios[folder.id] = 1;
+        }
+      }
+    }
+    return ratios;
+  }, [folderNodes, sortCoverOverrides]);
+
+  if (isAndroid) {
+    const prev = prevAspectRatiosRef.current;
+    const changedIds = Object.keys(folderAspectRatios).filter(id => prev[id] !== folderAspectRatios[id]);
+    const newIds = Object.keys(folderAspectRatios).filter(id => !(id in prev));
+    const removedIds = Object.keys(prev).filter(id => !(id in folderAspectRatios));
+    if (changedIds.length > 0 || newIds.length > 0 || removedIds.length > 0) {
+      console.log(`[FoldersOverview] aspectRatios CHANGED: ${Object.keys(prev).length}→${Object.keys(folderAspectRatios).length}` +
+        `, changed=${changedIds.length}` +
+        `, new=${newIds.length}` +
+        `, removed=${removedIds.length}` +
+        (changedIds.length > 0 && changedIds.length <= 5 ? ` [${changedIds.map(id => `${files[id]?.name}:${prev[id]?.toFixed(2)}→${folderAspectRatios[id]?.toFixed(2)}`).join(', ')}]` : ''));
+      prevAspectRatiosRef.current = folderAspectRatios;
+    }
+  }
+
+  if (isAndroid) {
+    const prev = prevLayoutInputsRef.current;
+    const curr = { containerWidth, thumbnailSize, layoutMode, sortBy, sortDirection, folderCount: sortedFolderIds.length, filesCount: Object.keys(files).length };
+    if (prev.containerWidth !== curr.containerWidth || prev.thumbnailSize !== curr.thumbnailSize || prev.layoutMode !== curr.layoutMode || prev.sortBy !== curr.sortBy || prev.sortDirection !== curr.sortDirection || prev.folderCount !== curr.folderCount || prev.filesCount !== curr.filesCount) {
+      const changes: string[] = [];
+      if (prev.containerWidth !== curr.containerWidth) changes.push(`width=${prev.containerWidth}→${curr.containerWidth}`);
+      if (prev.thumbnailSize !== curr.thumbnailSize) changes.push(`thumbSize=${prev.thumbnailSize}→${curr.thumbnailSize}`);
+      if (prev.layoutMode !== curr.layoutMode) changes.push(`layout=${prev.layoutMode}→${curr.layoutMode}`);
+      if (prev.sortBy !== curr.sortBy) changes.push(`sortBy=${prev.sortBy}→${curr.sortBy}`);
+      if (prev.sortDirection !== curr.sortDirection) changes.push(`sortDir=${prev.sortDirection}→${curr.sortDirection}`);
+      if (prev.folderCount !== curr.folderCount) changes.push(`folders=${prev.folderCount}→${curr.folderCount}`);
+      if (prev.filesCount !== curr.filesCount) changes.push(`files=${prev.filesCount}→${curr.filesCount}`);
+      console.log(`[FoldersOverview] LAYOUT INPUTS CHANGED: ${changes.join(', ')}`);
+      prevLayoutInputsRef.current = curr;
+    }
+  }
 
   const { layout, totalHeight } = useLayout(
     sortedFolderIds,
@@ -500,7 +575,13 @@ const FoldersOverview = React.memo(({
     layoutMode,
     containerWidth,
     thumbnailSize,
-    'folders-overview'
+    'folders-overview',
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    folderAspectRatios
   );
 
   const stableOnFolderClick = useCallback((folderId: string) => {
@@ -629,7 +710,6 @@ const FoldersOverview = React.memo(({
               <FolderCard
                 key={pos.id}
                 folder={files[pos.id]}
-                files={files}
                 resourceRoot={resourceRoot}
                 cachePath={cachePath}
                 onClick={() => stableOnFolderClick(pos.id)}
@@ -641,8 +721,8 @@ const FoldersOverview = React.memo(({
                 onShowContextMenuForFile={onShowContextMenuForFile}
                 onAndroidRangeSelect={onAndroidRangeSelect}
                 onFolderSelect={onFolderSelect}
-                coverOverridePath={sortCoverOverrides[pos.id]?.path}
-                coverOverrideMediaStoreId={sortCoverOverrides[pos.id]?.mediaStoreId}
+                coverOverridePath={isAndroid ? undefined : sortCoverOverrides[pos.id]?.path}
+                coverOverrideMediaStoreId={isAndroid ? undefined : sortCoverOverrides[pos.id]?.mediaStoreId}
               />
             </div>
         ))}

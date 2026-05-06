@@ -324,6 +324,28 @@ function attachImageNodes(
       files[defaultFolderId].children.push(fileId);
     }
   }
+
+  for (const rootId of roots) {
+    const folder = files[rootId];
+    if (!folder || folder.type !== 'folder') continue;
+    let earliestCreated: string | undefined;
+    let latestUpdated: string | undefined;
+    let totalSize = 0;
+    for (const childId of folder.children || []) {
+      const child = files[childId];
+      if (!child) continue;
+      if (child.createdAt && (!earliestCreated || child.createdAt < earliestCreated)) {
+        earliestCreated = child.createdAt;
+      }
+      if (child.updatedAt && (!latestUpdated || child.updatedAt > latestUpdated)) {
+        latestUpdated = child.updatedAt;
+      }
+      if (child.size) totalSize += child.size;
+    }
+    folder.createdAt = earliestCreated;
+    folder.updatedAt = latestUpdated;
+    folder.size = totalSize;
+  }
 }
 
 export async function loadFolderCache(appDataDir: string): Promise<{ files: Record<string, any>; roots: string[]; cacheTimestamp?: number } | null> {

@@ -657,6 +657,23 @@ export const TopBar: React.FC<TopBarProps> = ({
     return () => window.removeEventListener('mouseup', handleMouseUp);
   }, [onGoBack, onGoForward, activeTab.history.currentIndex, activeTab.history.stack.length]);
 
+  useEffect(() => {
+    if (!isAndroid) return;
+    const handleAndroidBack = () => {
+      const openMenus = [sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen];
+      if (openMenus.some(Boolean)) {
+        setSortMenuOpen(false);
+        setFilterMenuOpen(false);
+        setTagsMenuOpen(false);
+        setScopeMenuOpen(false);
+        setViewMenuOpen(false);
+        (window as any).__androidBackHandled = true;
+      }
+    };
+    window.addEventListener('android-back-press', handleAndroidBack);
+    return () => window.removeEventListener('android-back-press', handleAndroidBack);
+  }, [isAndroid, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen]);
+
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const isPaletteSearchQuery = useMemo(() => toolbarQuery.startsWith('palette:'), [toolbarQuery]);
   const currentSearchColor = useMemo(() => {

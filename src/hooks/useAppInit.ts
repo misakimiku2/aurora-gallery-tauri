@@ -253,7 +253,6 @@ export const useAppInit = ({
                   }));
 
                   setIsLoading(false);
-                  setShowSplash(false);
 
                   (async () => {
                     setState(prev => ({ ...prev, isScanning: true }));
@@ -285,6 +284,7 @@ export const useAppInit = ({
                     } else {
                       setState(prev => ({ ...prev, isScanning: false }));
                     }
+                    setShowSplash(false);
                   })();
                   return;
                 }
@@ -312,7 +312,6 @@ export const useAppInit = ({
                   }));
 
                   setIsLoading(false);
-                  setShowSplash(false);
 
                   (async () => {
                     setState(prev => ({ ...prev, isScanning: true }));
@@ -330,6 +329,7 @@ export const useAppInit = ({
                     } else {
                       setState(prev => ({ ...prev, isScanning: false }));
                     }
+                    setShowSplash(false);
                   })();
                 } else {
                   setIsLoading(false);
@@ -381,10 +381,11 @@ export const useAppInit = ({
                   tabs: [defaultTab],
                   activeTabId: defaultTab.id,
                   currentFolderId: virtualRootId,
+                  sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
+                  sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
                 }));
 
                 setIsLoading(false);
-                setShowSplash(false);
 
                 (async () => {
                   setState(prev => ({ ...prev, isScanning: true }));
@@ -394,6 +395,8 @@ export const useAppInit = ({
                       ...prev,
                       files: fullCachedResult.files,
                       roots: fullCachedResult.roots,
+                      sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
+                      sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
                     }));
                   }
                   const cacheTs = folderCachedResult.cacheTimestamp ? Math.floor(folderCachedResult.cacheTimestamp / 1000) : undefined;
@@ -418,6 +421,7 @@ export const useAppInit = ({
                   } else {
                     setState(prev => ({ ...prev, isScanning: false }));
                   }
+                  setShowSplash(false);
                 })();
 
                 savedDataLoadedRef.current = true;
@@ -449,7 +453,6 @@ export const useAppInit = ({
                 }));
 
                 setIsLoading(false);
-                setShowSplash(false);
 
                 (async () => {
                   setState(prev => ({ ...prev, isScanning: true }));
@@ -469,6 +472,7 @@ export const useAppInit = ({
                   } else {
                     setState(prev => ({ ...prev, isScanning: false }));
                   }
+                  setShowSplash(false);
                 })();
               } else {
                 setIsLoading(false);

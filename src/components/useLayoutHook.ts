@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { LayoutMode, FileNode, FileType, Person } from '../types';
 // @ts-ignore
 import LayoutWorker from '../workers/layout.worker?worker';
@@ -28,9 +28,13 @@ export const useLayout = (
   people?: Record<string, Person>,
   searchQuery?: string,
   groupedPeople?: PersonGroup[],
-  collapsedGroups?: Record<string, boolean>
+  collapsedGroups?: Record<string, boolean>,
+  aspectRatiosOverride?: Record<string, number>
 ) => {
   const aspectRatios = useMemo(() => {
+    if (aspectRatiosOverride && Object.keys(aspectRatiosOverride).length > 0) {
+      return aspectRatiosOverride;
+    }
     const ratios: Record<string, number> = {};
     if (viewMode === 'browser' || viewMode === 'folders-overview') {
       items.forEach(id => {
@@ -47,7 +51,7 @@ export const useLayout = (
       });
     }
     return ratios;
-  }, [items, files, viewMode]);
+  }, [items, files, viewMode, aspectRatiosOverride]);
 
   const [layoutState, setLayoutState] = useState<{ layout: LayoutItem[], totalHeight: number }>({
       layout: [],
@@ -55,12 +59,16 @@ export const useLayout = (
   });
 
   const workerRef = useRef<Worker | null>(null);
+  const lastPostedKeyRef = useRef<string>('');
 
   // Initialize worker
   useEffect(() => {
     workerRef.current = new LayoutWorker();
     if (workerRef.current) {
         workerRef.current.onmessage = (e: MessageEvent) => {
+            if (e.data?.layout?.length > 0 && e.data.layout[0]?.id && viewMode === 'folders-overview') {
+              console.log(`[useLayout] Worker result: ${e.data.layout.length} items, totalHeight=${e.data.totalHeight?.toFixed(0)}`);
+            }
             setLayoutState(e.data);
         }; 
     }
@@ -76,9 +84,21 @@ export const useLayout = (
       // If container width is 0, don't calculate yet
       if (containerWidth <= 0) return;
 
+      const itemsKey = items.join(',');
+      const ratiosKey = Object.entries(aspectRatios).map(([k, v]) => `${k}:${v.toFixed(4)}`).join('|');
+      const collapsedKey = collapsedGroups ? Object.entries(collapsedGroups).map(([k, v]) => `${k}:${v}`).join('|') : '';
+      const postKey = `${itemsKey}|${ratiosKey}|${layoutMode}|${containerWidth}|${thumbnailSize}|${viewMode}|${searchQuery || ''}|${collapsedKey}`;
+
+      if (postKey === lastPostedKeyRef.current) return;
+      lastPostedKeyRef.current = postKey;
+
+      if (viewMode === 'folders-overview') {
+        console.log(`[useLayout] Posting to worker: items=${items.length}, aspectRatios=${Object.keys(aspectRatios).length}, layout=${layoutMode}, width=${containerWidth}, thumbSize=${thumbnailSize}`);
+      }
+
       workerRef.current.postMessage({
           items,
-          aspectRatios, // Send pre-computed ratios (lightweight) instead of full files map
+          aspectRatios,
           layoutMode,
           containerWidth,
           thumbnailSize,
