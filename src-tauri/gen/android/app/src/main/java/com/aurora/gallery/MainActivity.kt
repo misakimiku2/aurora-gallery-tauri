@@ -779,4 +779,38 @@ class MainActivity : TauriActivity() {
       window.statusBarColor = if (isDark) Color.parseColor("#171717") else Color.parseColor("#E5E5E5")
     }
   }
+
+  fun setImmersiveMode(immersive: Boolean) {
+    runOnUiThread {
+      val window = this.window
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val controller = window.insetsController
+        if (controller != null) {
+          if (immersive) {
+            controller.hide(android.view.WindowInsets.Type.systemBars())
+            controller.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+          } else {
+            controller.show(android.view.WindowInsets.Type.systemBars())
+          }
+        }
+      } else {
+        val decorView = window.decorView
+        if (immersive) {
+          decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            or View.SYSTEM_UI_FLAG_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+          )
+        } else {
+          decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+      }
+      if (immersive) {
+        window.statusBarColor = Color.TRANSPARENT
+      }
+    }
+  }
 }

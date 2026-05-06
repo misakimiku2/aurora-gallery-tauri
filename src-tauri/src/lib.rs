@@ -1496,6 +1496,27 @@ async fn set_android_status_bar(is_dark: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn set_android_immersive_mode(immersive: bool) -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    env.call_method(
+        &activity_obj,
+        "setImmersiveMode",
+        "(Z)V",
+        &[JValue::Bool(if immersive { 1 } else { 0 })],
+    ).map_err(|e| format!("Failed to call setImmersiveMode: {:?}", e))?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -1696,6 +1717,7 @@ pub fn run() {
         check_android_permissions,
         request_android_permissions,
         set_android_status_bar,
+        set_android_immersive_mode,
         android_get_dominant_colors,
         android_batch_extract_colors,
         android_pause_color_extraction,

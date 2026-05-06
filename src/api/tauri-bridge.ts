@@ -92,6 +92,15 @@ export async function setAndroidStatusBar(isDark: boolean): Promise<void> {
   }
 }
 
+export async function setAndroidImmersiveMode(immersive: boolean): Promise<void> {
+  if (!_isAndroid) return;
+  try {
+    await invoke('set_android_immersive_mode', { immersive });
+  } catch (e) {
+    console.warn('Failed to set Android immersive mode:', e);
+  }
+}
+
 /**
  * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
  * @param filePath 文件路径

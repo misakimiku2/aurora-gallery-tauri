@@ -1962,8 +1962,10 @@ export const App: React.FC = () => {
           setShowCloseConfirmation(true);
         }
       }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
-      <div className="flex-1 flex overflow-hidden relative transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]">
-        <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}>
+      <div className="flex-1 flex overflow-hidden relative"
+        style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
+        <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}
+          style={{ transition: 'width 300ms ease-out, transform 300ms ease-out, opacity 300ms ease-out' }}>
           <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} />
         </div>
 
@@ -2537,7 +2539,8 @@ export const App: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-850 border-l border-gray-200 dark:border-gray-800 flex flex-col transition-all duration-300 shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}>
+        <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-850 border-l border-gray-200 dark:border-gray-800 flex flex-col shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}
+          style={{ transition: 'width 300ms ease-out, transform 300ms ease-out, opacity 300ms ease-out' }}>
           <MetadataPanel
             files={state.files}
             selectedFileIds={activeTab.selectedFileIds}

@@ -1,9 +1,9 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { isAndroidPlatformCached, getGlobalCacheRoot } from '../api/tauri-bridge';
+import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode } from '../api/tauri-bridge';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
@@ -472,6 +472,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const [slideshowActive, setSlideshowActive] = useState(false);
   const [showSlideshowSettings, setShowSlideshowSettings] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isImmersiveMode, setIsImmersiveMode] = useState(false);
+  const [immersiveFlip, setImmersiveFlip] = useState<{
+    oldCenterX: number;
+    oldCenterY: number;
+  } | null>(null);
+  const [isFlipAnimating, setIsFlipAnimating] = useState(false);
+  const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number; h: number } | null>(null);
+  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [scopeMenuPos, setScopeMenuPos] = useState({ top: 0, left: 0 });
@@ -505,6 +513,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { fileIdRef.current = file.id; }, [file.id]);
   useEffect(() => { swipeStateRef.current = swipeState; }, [swipeState]);
+
+  const isImmersiveModeRef = useRef(isImmersiveMode);
+  useEffect(() => { isImmersiveModeRef.current = isImmersiveMode; }, [isImmersiveMode]);
 
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -564,6 +575,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const displayPathRef = useRef<string>(file.path || '');
   const loadingPathRef = useRef<string>('');
   const viewerOpenTimeRef = useRef(performance.now());
+
+  const [outgoingUrl, setOutgoingUrl] = useState<string>('');
+  const outgoingUrlRef = useRef<string>('');
+  const outgoingFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (isAndroidPlatformCached()) {
@@ -655,6 +670,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }, 600); // 与 CSS 过渡时长一致
       }
 
+      if (isAndroidPlatformCached() && displayUrlRef.current && displayUrlRef.current !== cachedUrl) {
+        setOutgoingUrl(displayUrlRef.current);
+        outgoingUrlRef.current = displayUrlRef.current;
+        if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+      }
+
       setDisplayUrl(cachedUrl);
       displayPathRef.current = path;
       loadingPathRef.current = '';
@@ -686,6 +707,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             }, 600);
           }
 
+          if (isAndroidPlatformCached() && displayUrlRef.current && displayUrlRef.current !== url) {
+            setOutgoingUrl(displayUrlRef.current);
+            outgoingUrlRef.current = displayUrlRef.current;
+            if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+          }
+
           setDisplayUrl(url);
           displayPathRef.current = path;
           loadingPathRef.current = '';
@@ -701,16 +728,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (transitionTimerRef.current) {
         clearTimeout(transitionTimerRef.current);
       }
+      if (outgoingFadeTimerRef.current) {
+        clearTimeout(outgoingFadeTimerRef.current);
+      }
     };
   }, []);
 
 
   // --- Calculate Preload Nodes ---
   const preloadImages = useMemo(() => {
-    if (!sortedFileIds || sortedFileIds.length === 0) return { immediate: [], nearby: [] };
+    if (!sortedFileIds || sortedFileIds.length === 0) return { immediate: [] as FileNode[], nearby: [] as FileNode[], key: '' };
 
     const currentIdx = sortedFileIds.indexOf(file.id);
-    if (currentIdx === -1) return { immediate: [], nearby: [] };
+    if (currentIdx === -1) return { immediate: [] as FileNode[], nearby: [] as FileNode[], key: '' };
 
     const getNeighbor = (offset: number) => {
       const idx = (currentIdx + offset + sortedFileIds.length) % sortedFileIds.length;
@@ -722,27 +752,28 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const nearbyRange = isAndroid ? 3 : 5;
 
     const immediate: FileNode[] = [];
+    const pathKeys: string[] = [];
     for (let i = 1; i <= immediateRange; i++) {
       const prev = getNeighbor(-i);
       const next = getNeighbor(i);
-      if (prev?.path) immediate.push(prev);
-      if (next?.path) immediate.push(next);
+      if (prev?.path) { immediate.push(prev); pathKeys.push(prev.path); }
+      if (next?.path) { immediate.push(next); pathKeys.push(next.path); }
     }
 
     const nearby: FileNode[] = [];
     for (let i = immediateRange + 1; i <= nearbyRange; i++) {
       const prev = getNeighbor(-i);
       const next = getNeighbor(i);
-      if (prev?.path) nearby.push(prev);
-      if (next?.path) nearby.push(next);
+      if (prev?.path) { nearby.push(prev); pathKeys.push(prev.path); }
+      if (next?.path) { nearby.push(next); pathKeys.push(next.path); }
     }
 
-    return { immediate, nearby };
+    return { immediate, nearby, key: pathKeys.join('|') };
   }, [file.id, sortedFileIds, files]);
 
-  // Preload neighbors into Blob Cache - 分级预加载策略
   useEffect(() => {
     const { immediate, nearby } = preloadImages;
+    if (!preloadImages.key) return;
 
     immediate.forEach(node => {
       if (node.path) {
@@ -757,7 +788,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         preloadPaletteToCache(node.path, node.meta?.palette);
       }
     });
-  }, [preloadImages]);
+  }, [preloadImages.key]);
   // ------------------------------
 
   useEffect(() => {
@@ -841,13 +872,54 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => {
     if (lastFileIdRef.current !== file.id) {
-      // 重置视图状态（缩放、旋转、位置）
       setRotation(0);
       setPosition({ x: 0, y: 0 });
       setScale(1);
+      setImgNaturalSize(null);
       lastFileIdRef.current = file.id;
     }
   }, [file.id]);
+
+  useEffect(() => {
+    if (!isAndroidPlatformCached() || !containerRef.current) return;
+    const el = containerRef.current;
+    const update = () => {
+      const rect = el.getBoundingClientRect();
+      setContainerSize({ w: rect.width, h: rect.height });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!immersiveFlip || !containerRef.current) return;
+
+    const rect = containerRef.current.getBoundingClientRect();
+    setContainerSize({ w: rect.width, h: rect.height });
+
+    const newCenterX = rect.left + rect.width / 2;
+    const newCenterY = rect.top + rect.height / 2;
+
+    const offsetX = immersiveFlip.oldCenterX - newCenterX;
+    const offsetY = immersiveFlip.oldCenterY - newCenterY;
+
+    const newPos = { x: offsetX, y: offsetY };
+    setPosition(newPos);
+    positionRef.current = newPos;
+    setScale(1);
+    scaleRef.current = 1;
+    setImmersiveFlip(null);
+    setIsFlipAnimating(true);
+
+    requestAnimationFrame(() => {
+      animateTransformTo(1, 0, 0, 200, 'smooth');
+      setTimeout(() => {
+        setIsFlipAnimating(false);
+      }, 220);
+    });
+  }, [immersiveFlip]);
 
   useEffect(() => {
     if (!isColorPickerOpen) return;
@@ -1144,10 +1216,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const SWIPE_THRESHOLD = 30;
     const SWIPE_VELOCITY = 0.2;
     const MOVE_THRESHOLD = 8;
-    const DOUBLE_TAP_DELAY = 300;
+    const DOUBLE_TAP_DELAY = 200;
     const DOUBLE_TAP_DISTANCE = 30;
 
     let zoomMode: 'fit' | 'original' | 'fill' = 'fit';
+    let tapTimer: ReturnType<typeof setTimeout> | null = null;
 
     const isNotFitMode = () => Math.abs(scaleRef.current - 1) > 0.02;
 
@@ -1211,6 +1284,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (now - lastTapTime < DOUBLE_TAP_DELAY && tapDist < DOUBLE_TAP_DISTANCE) {
         e.preventDefault();
         isDoubleTap = true;
+        if (tapTimer) {
+          clearTimeout(tapTimer);
+          tapTimer = null;
+        }
         handleDoubleTap(touch.clientX, touch.clientY);
         lastTapTime = 0;
         return;
@@ -1321,6 +1398,26 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         isSwipingImage = false;
         return;
       }
+
+      if (isAndroidPlatformCached() && !hasMoved) {
+        if (tapTimer) clearTimeout(tapTimer);
+        const tapX = touchStartX;
+        tapTimer = setTimeout(() => {
+          tapTimer = null;
+          if (!containerRef.current) return;
+          const rect = containerRef.current.getBoundingClientRect();
+          const relX = tapX - rect.left;
+          const thirdWidth = rect.width / 3;
+
+          if (relX < thirdWidth) {
+            onPrevRef.current();
+          } else if (relX > thirdWidth * 2) {
+            onNextRef.current();
+          } else {
+            toggleImmersiveModeRef.current();
+          }
+        }, DOUBLE_TAP_DELAY);
+      }
     };
 
     container.addEventListener('touchstart', handleTouchStart, { passive: false });
@@ -1333,6 +1430,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
       container.removeEventListener('touchcancel', handleTouchEnd);
+      if (tapTimer) clearTimeout(tapTimer);
     };
   }, [slideshowActive]);
 
@@ -1355,6 +1453,60 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       setIsFullscreen(false);
     }
   };
+
+  const immersivePrevLayoutRef = useRef<{ sidebar: boolean; metadata: boolean }>({ sidebar: false, metadata: false });
+
+  const toggleImmersiveMode = () => {
+    if (!isImmersiveModeRef.current) {
+      immersivePrevLayoutRef.current = {
+        sidebar: layout.isSidebarVisible,
+        metadata: layout.isMetadataVisible,
+      };
+
+      const imgRect = imgRef.current?.getBoundingClientRect();
+      if (imgRect) {
+        setImmersiveFlip({
+          oldCenterX: imgRect.left + imgRect.width / 2,
+          oldCenterY: imgRect.top + imgRect.height / 2,
+        });
+      }
+
+      setIsImmersiveMode(true);
+      setRotation(0);
+
+      if (isAndroidPlatformCached()) {
+        setAndroidImmersiveMode(true);
+      } else {
+        document.documentElement.requestFullscreen({ navigationUI: 'hide' } as FullscreenOptions).catch(() => {
+          rootRef.current?.requestFullscreen().catch(() => {});
+        });
+      }
+    } else {
+      const imgRect = imgRef.current?.getBoundingClientRect();
+      if (imgRect) {
+        setImmersiveFlip({
+          oldCenterX: imgRect.left + imgRect.width / 2,
+          oldCenterY: imgRect.top + imgRect.height / 2,
+        });
+      }
+
+      setIsImmersiveMode(false);
+
+      if (immersivePrevLayoutRef.current.sidebar && !layout.isSidebarVisible) onLayoutToggle('sidebar');
+      if (immersivePrevLayoutRef.current.metadata && !layout.isMetadataVisible) onLayoutToggle('metadata');
+
+      if (isAndroidPlatformCached()) {
+        setAndroidImmersiveMode(false);
+      } else {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    }
+  };
+
+  const toggleImmersiveModeRef = useRef(toggleImmersiveMode);
+  useEffect(() => { toggleImmersiveModeRef.current = toggleImmersiveMode; });
 
   const handleSearchSubmit = () => {
     onSearch(localQuery);
@@ -1401,6 +1553,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (e.key === 'ArrowRight') onNextRef.current();
       if (e.key === 'ArrowLeft') onPrevRef.current();
       if (e.key === 'Escape') {
+        if (isImmersiveModeRef.current) {
+          return;
+        }
         if (showSearch) setShowSearch(false);
         else if (showSlideshowSettings) setShowSlideshowSettings(false);
         else if (slideshowActive) stopSlideshow();
@@ -1541,8 +1696,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // If user exits fullscreen (usually via Esc), stop the slideshow immediately
   useEffect(() => {
     const onFullscreenChange = () => {
-      if (!document.fullscreenElement && slideshowActiveRef.current) {
-        stopSlideshow();
+      if (!document.fullscreenElement) {
+        if (slideshowActiveRef.current) {
+          stopSlideshow();
+        }
+        if (isImmersiveModeRef.current) {
+          setIsImmersiveMode(false);
+        }
       }
     };
     document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -1644,7 +1804,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   return (
     <div
       ref={rootRef}
-      className={`flex-1 flex flex-col h-full relative select-none overflow-hidden transition-colors duration-300 ${slideshowActive ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
+      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
       onClick={(e) => {
         setContextMenu({ ...contextMenu, visible: false });
         setIsColorPickerOpen(false);
@@ -1652,7 +1812,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     >
       {/* Preloading handled in useEffect now */}
 
-      <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
+      <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
 
         <div className="flex items-center space-x-2">
           <button
@@ -1830,13 +1990,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       <div
         ref={containerRef}
-        className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : 'bg-gray-200 dark:bg-gray-900'}`}
+        className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-gray-200 dark:bg-gray-900'}`}
+        style={{
+          ...(isAndroidPlatformCached() ? { contain: 'layout paint style' } : {}),
+          ...(slideshowActive ? { cursor: 'none' } : {}),
+        }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onContextMenu={handleContextMenu}
-        style={slideshowActive ? { cursor: 'none' } : {}}
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
         {!displayUrl && (
@@ -1847,7 +2010,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
         {/* 单图层渲染 - 简洁高效（普通模式） */}
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
-        <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
+        <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden"
+          style={isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style' } : {}}>
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
             <img
@@ -1930,6 +2094,26 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             );
           })()}
 
+          {!slideshowActive && !swipeState && outgoingUrl && (
+            <img
+              key={`outgoing-${outgoingUrl}`}
+              src={outgoingUrl}
+              alt=""
+              className="max-w-none absolute inset-0 m-auto"
+              loading="eager"
+              decoding="sync"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                pointerEvents: 'none',
+                zIndex: 1,
+                ...(isAndroidPlatformCached() ? { willChange: 'opacity', contain: 'layout paint style' } : {}),
+              }}
+              draggable={false}
+            />
+          )}
+
           <img
             ref={imgRef}
             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
@@ -1939,6 +2123,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               if (isAndroidPlatformCached() && displayUrl) {
                 const img = imgRef.current as any;
                 PERF.log('img onload', file.path.split('/').pop(), 'size=' + (img?.naturalWidth || 0) + 'x' + (img?.naturalHeight || 0));
+                if (img?.naturalWidth && img?.naturalHeight) {
+                  setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
+                }
+              }
+              if (outgoingUrlRef.current) {
+                if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+                outgoingFadeTimerRef.current = setTimeout(() => {
+                  setOutgoingUrl('');
+                  outgoingUrlRef.current = '';
+                  outgoingFadeTimerRef.current = null;
+                }, 80);
               }
             }}
             onError={() => {
@@ -1946,7 +2141,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 PERF.log('img onerror', file.path.split('/').pop());
               }
             }}
-            className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
+            className={`max-w-none absolute ${isAndroidPlatformCached() && imgNaturalSize && containerSize ? 'top-0 left-0' : 'inset-0 m-auto'} ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
               } ${slideshowActive && isTransitioning && slideshowConfig.transition === 'fade'
                 ? 'animate-slideshow-fade-in'
                 : slideshowActive && isTransitioning && slideshowConfig.transition === 'slide'
@@ -1956,17 +2151,32 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             loading="eager"
             decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
             style={{
-              width: '100%',
-              height: '100%',
-              objectFit: 'contain',
-              ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
-                transform: slideshowActive && slideshowConfig.enableZoom
-                  ? undefined
-                  : `translate(${position.x + swipeOffset}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                transition: (isDragging || isWheeling || isSwiping) ? 'none' : 'transform 0.1s linear',
-              } : {}),
+              ...(isAndroidPlatformCached() && imgNaturalSize && containerSize ? {
+                width: imgNaturalSize.w,
+                height: imgNaturalSize.h,
+                maxWidth: 'none',
+                objectFit: 'fill' as const,
+                transform: (() => {
+                  const fitScale = Math.min(containerSize.w / imgNaturalSize.w, containerSize.h / imgNaturalSize.h);
+                  const tx = position.x + swipeOffset + (containerSize.w - imgNaturalSize.w * fitScale) / 2;
+                  const ty = position.y + (containerSize.h - imgNaturalSize.h * fitScale) / 2;
+                  return `translate(${tx}px, ${ty}px) rotate(${rotation}deg) scale(${scale * fitScale})`;
+                })(),
+                transition: 'none',
+                transformOrigin: '0 0',
+              } : {
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain' as const,
+                ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
+                  transform: slideshowActive && slideshowConfig.enableZoom
+                    ? undefined
+                    : `translate(${position.x + swipeOffset}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
+                  transition: (isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'none' : 'transform 0.1s linear',
+                } : {}),
+                transformOrigin: 'center center',
+              }),
               pointerEvents: slideshowActive ? 'none' : 'auto',
-              transformOrigin: 'center center',
               zIndex: swipeState ? 0 : 2,
               opacity: swipeState ? 0 : 1,
               ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
@@ -1976,7 +2186,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           />
         </div>
 
-        {!slideshowActive && (
+        {!slideshowActive && !isAndroidPlatformCached() && (
           <>
             <div className="absolute inset-y-0 left-0 w-24 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-black/30 to-transparent z-10 pointer-events-auto">
               <button
