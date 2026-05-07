@@ -1,8 +1,9 @@
 import React, { useRef } from 'react';
 import {
-  X, CheckCheck, Trash2, MoreVertical, XCircle
+  X, CheckCheck, Trash2, MoreVertical, XCircle, Share2
 } from 'lucide-react';
 import { FileNode, TabState, Person } from '../types';
+import { androidShareImages } from '../api/tauri-bridge';
 
 interface AndroidSelectionBarProps {
   selectedCount: number;
@@ -45,6 +46,15 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
     }
   };
 
+  const handleShare = () => {
+    const imagePaths = selectedFileIds
+      .map(id => files[id]?.path)
+      .filter((p): p is string => !!p);
+    if (imagePaths.length > 0) {
+      androidShareImages(imagePaths);
+    }
+  };
+
   return (
     <div className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-3 justify-between shrink-0 z-30 android-topbar">
       <div className="flex items-center space-x-2 min-w-fit">
@@ -74,6 +84,14 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
           title={t('context.delete')}
         >
           <Trash2 size={20} />
+        </button>
+
+        <button
+          onClick={handleShare}
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+          title={t('viewer.share') || 'Share'}
+        >
+          <Share2 size={20} />
         </button>
 
         <button

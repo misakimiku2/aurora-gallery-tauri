@@ -21,6 +21,7 @@ import android.graphics.BitmapFactory
 import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
+import android.net.Uri
 import android.util.DisplayMetrics
 import java.io.File
 import java.io.FileOutputStream
@@ -810,6 +811,77 @@ class MainActivity : TauriActivity() {
       }
       if (immersive) {
         window.statusBarColor = Color.TRANSPARENT
+      }
+    }
+  }
+
+  fun shareImage(imagePath: String) {
+    runOnUiThread {
+      try {
+        val file = File(imagePath)
+        if (!file.exists()) {
+          android.util.Log.e("AuroraShare", "File not found: $imagePath")
+          return@runOnUiThread
+        }
+
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+          this,
+          "${packageName}.fileprovider",
+          file
+        )
+
+        android.util.Log.d("AuroraShare", "Sharing: $imagePath → $uri")
+
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+          type = "image/*"
+          putExtra(Intent.EXTRA_STREAM, uri)
+          addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+
+        startActivity(Intent.createChooser(shareIntent, null))
+      } catch (e: Exception) {
+        android.util.Log.e("AuroraShare", "Failed to share: $imagePath", e)
+      }
+    }
+  }
+
+  fun shareImages(imagePathsJson: String) {
+    runOnUiThread {
+      try {
+        val paths = org.json.JSONArray(imagePathsJson)
+        val uris = java.util.ArrayList<android.net.Uri>()
+        for (i in 0 until paths.length()) {
+          val file = java.io.File(paths.getString(i))
+          if (file.exists()) {
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+              this, "${packageName}.fileprovider", file
+            )
+            uris.add(uri)
+          }
+        }
+        if (uris.isEmpty()) {
+          android.util.Log.e("AuroraShare", "No valid files to share")
+          return@runOnUiThread
+        }
+
+        val shareIntent = if (uris.size == 1) {
+          Intent(Intent.ACTION_SEND).apply {
+            type = "image/*"
+            putExtra(Intent.EXTRA_STREAM, uris[0])
+          }
+        } else {
+          Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "image/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+          }
+        }
+        shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+        android.util.Log.d("AuroraShare", "Sharing ${uris.size} images")
+
+        startActivity(Intent.createChooser(shareIntent, null))
+      } catch (e: Exception) {
+        android.util.Log.e("AuroraShare", "Failed to share images", e)
       }
     }
   }

@@ -101,6 +101,24 @@ export async function setAndroidImmersiveMode(immersive: boolean): Promise<void>
   }
 }
 
+export async function androidShareImage(imagePath: string): Promise<void> {
+  if (!_isAndroid) return;
+  try {
+    await invoke('android_share_image', { imagePath });
+  } catch (e) {
+    console.warn('Failed to share image:', e);
+  }
+}
+
+export async function androidShareImages(imagePaths: string[]): Promise<void> {
+  if (!_isAndroid) return;
+  try {
+    await invoke('android_share_images', { imagePaths });
+  } catch (e) {
+    console.warn('Failed to share images:', e);
+  }
+}
+
 /**
  * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
  * @param filePath 文件路径

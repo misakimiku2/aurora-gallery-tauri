@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode } from '../api/tauri-bridge';
+import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode, androidShareImage } from '../api/tauri-bridge';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
@@ -11,7 +11,7 @@ import {
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette, Clipboard,
-  Scan
+  Scan, Share2, MoreVertical
 } from 'lucide-react';
 
 
@@ -321,6 +321,7 @@ interface ViewerProps {
   tabs?: TabState[];
   handleOpenCompareInNewTab?: (imageIds: string[]) => void;
   handleAddToCompareCanvas?: (tabId: string, imageIds: string[]) => void;
+  enterImmersiveOnMount?: boolean;
 }
 
 interface ContextMenuState {
@@ -366,7 +367,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   activeTab,
   tabs = [],
   handleOpenCompareInNewTab,
-  handleAddToCompareCanvas
+  handleAddToCompareCanvas,
+  enterImmersiveOnMount = false
 }) => {
   // 如果 file 不存在，关闭查看�?
   if (!file) {
@@ -478,6 +480,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     oldCenterY: number;
   } | null>(null);
   const [isFlipAnimating, setIsFlipAnimating] = useState(false);
+  const [isTransformAnimating, setIsTransformAnimating] = useState(false);
   const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
   const [showSearch, setShowSearch] = useState(false);
@@ -515,7 +518,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { swipeStateRef.current = swipeState; }, [swipeState]);
 
   const isImmersiveModeRef = useRef(isImmersiveMode);
-  useEffect(() => { isImmersiveModeRef.current = isImmersiveMode; }, [isImmersiveMode]);
+  useEffect(() => {
+    isImmersiveModeRef.current = isImmersiveMode;
+    (window as any).__isImmersive = isImmersiveMode;
+  }, [isImmersiveMode]);
 
   // Color Picker State
   const [isColorPickerOpen, setIsColorPickerOpen] = useState(false);
@@ -670,53 +676,105 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }, 600); // 与 CSS 过渡时长一致
       }
 
-      if (isAndroidPlatformCached() && displayUrlRef.current && displayUrlRef.current !== cachedUrl) {
-        setOutgoingUrl(displayUrlRef.current);
-        outgoingUrlRef.current = displayUrlRef.current;
-        if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-      }
-
-      setDisplayUrl(cachedUrl);
-      displayPathRef.current = path;
-      loadingPathRef.current = '';
+      loadingPathRef.current = path;
+      const preloadImg = new Image();
+      const oldDisplayUrl = displayUrlRef.current;
+      preloadImg.onload = () => {
+        if (loadingPathRef.current !== path) return;
+        setImgNaturalSize({ w: preloadImg.naturalWidth, h: preloadImg.naturalHeight });
+        if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
+          setOutgoingUrl(oldDisplayUrl);
+          outgoingUrlRef.current = oldDisplayUrl;
+          if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+        }
+        setDisplayUrl(cachedUrl);
+        displayPathRef.current = path;
+        loadingPathRef.current = '';
+        PERF.log('switch: displayed', fileName, PERF.ms(switchT0));
+      };
+      preloadImg.onerror = () => {
+        if (loadingPathRef.current !== path) return;
+        if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
+          setOutgoingUrl(oldDisplayUrl);
+          outgoingUrlRef.current = oldDisplayUrl;
+          if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+        }
+        setDisplayUrl(cachedUrl);
+        displayPathRef.current = path;
+        loadingPathRef.current = '';
+        PERF.log('switch: displayed (fallback)', fileName, PERF.ms(switchT0));
+      };
+      preloadImg.src = cachedUrl;
     } else {
       PERF.log('switch: CACHE MISS', fileName);
       loadingPathRef.current = path;
 
       loadToCache(path).then(url => {
         if (loadingPathRef.current === path) {
-          if (slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none') {
-            if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
-              const currentImg = imgRef.current;
-              if (currentImg) {
-                const computedStyle = window.getComputedStyle(currentImg);
-                setPrevTransform(computedStyle.transform);
+          const oldDisplayUrl = displayUrlRef.current;
+          const preloadImg2 = new Image();
+          preloadImg2.onload = () => {
+            if (loadingPathRef.current !== path) return;
+            setImgNaturalSize({ w: preloadImg2.naturalWidth, h: preloadImg2.naturalHeight });
+            if (slideshowActiveRef.current && oldDisplayUrl && slideshowTransitionRef.current !== 'none') {
+              if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
+                const currentImg = imgRef.current;
+                if (currentImg) {
+                  const computedStyle = window.getComputedStyle(currentImg);
+                  setPrevTransform(computedStyle.transform);
+                }
+              } else {
+                setPrevTransform('none');
               }
-            } else {
-              setPrevTransform('none');
+              setPrevDisplayUrl(oldDisplayUrl);
+              setIsTransitioning(true);
+              if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+              transitionTimerRef.current = setTimeout(() => {
+                setIsTransitioning(false);
+                setPrevDisplayUrl('');
+              }, 600);
             }
-
-            setPrevDisplayUrl(displayUrlRef.current);
-            setIsTransitioning(true);
-            if (transitionTimerRef.current) {
-              clearTimeout(transitionTimerRef.current);
+            if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== url) {
+              setOutgoingUrl(oldDisplayUrl);
+              outgoingUrlRef.current = oldDisplayUrl;
+              if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
             }
-            transitionTimerRef.current = setTimeout(() => {
-              setIsTransitioning(false);
-              setPrevDisplayUrl('');
-            }, 600);
-          }
-
-          if (isAndroidPlatformCached() && displayUrlRef.current && displayUrlRef.current !== url) {
-            setOutgoingUrl(displayUrlRef.current);
-            outgoingUrlRef.current = displayUrlRef.current;
-            if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-          }
-
-          setDisplayUrl(url);
-          displayPathRef.current = path;
-          loadingPathRef.current = '';
-          PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
+            setDisplayUrl(url);
+            displayPathRef.current = path;
+            loadingPathRef.current = '';
+            PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
+          };
+          preloadImg2.onerror = () => {
+            if (loadingPathRef.current !== path) return;
+            if (slideshowActiveRef.current && oldDisplayUrl && slideshowTransitionRef.current !== 'none') {
+              if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
+                const currentImg = imgRef.current;
+                if (currentImg) {
+                  const computedStyle = window.getComputedStyle(currentImg);
+                  setPrevTransform(computedStyle.transform);
+                }
+              } else {
+                setPrevTransform('none');
+              }
+              setPrevDisplayUrl(oldDisplayUrl);
+              setIsTransitioning(true);
+              if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+              transitionTimerRef.current = setTimeout(() => {
+                setIsTransitioning(false);
+                setPrevDisplayUrl('');
+              }, 600);
+            }
+            if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== url) {
+              setOutgoingUrl(oldDisplayUrl);
+              outgoingUrlRef.current = oldDisplayUrl;
+              if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
+            }
+            setDisplayUrl(url);
+            displayPathRef.current = path;
+            loadingPathRef.current = '';
+            PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
+          };
+          preloadImg2.src = url;
         }
       });
     }
@@ -875,7 +933,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       setRotation(0);
       setPosition({ x: 0, y: 0 });
       setScale(1);
-      setImgNaturalSize(null);
       lastFileIdRef.current = file.id;
     }
   }, [file.id]);
@@ -1202,6 +1259,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
     let touchStartX = 0;
     let touchStartY = 0;
+    let touchStartScreenY = 0;
     let touchStartTime = 0;
     let isSingleTouchDragging = false;
     let isSwipingImage = false;
@@ -1212,6 +1270,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     let lastTapX = 0;
     let lastTapY = 0;
     let isDoubleTap = false;
+    let isCancelled = false;
 
     const SWIPE_THRESHOLD = 30;
     const SWIPE_VELOCITY = 0.2;
@@ -1300,6 +1359,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       touchStartX = touch.clientX;
       touchStartY = touch.clientY;
+      touchStartScreenY = touch.screenY;
       lastTouchX = touch.clientX;
       lastTouchY = touch.clientY;
       touchStartTime = now;
@@ -1362,6 +1422,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const handleTouchEnd = (e: TouchEvent) => {
       if (e.touches.length > 0) return;
 
+      if (isCancelled) {
+        isCancelled = false;
+        setIsDragging(false);
+        isSingleTouchDragging = false;
+        isSwipingImage = false;
+        setSwipeState(null);
+        setSwipeOffset(0);
+        return;
+      }
+
       if (isDoubleTap) {
         isDoubleTap = false;
         return;
@@ -1400,6 +1470,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
 
       if (isAndroidPlatformCached() && !hasMoved) {
+        if (touchStartScreenY > window.screen.height - 80) return;
         if (tapTimer) clearTimeout(tapTimer);
         const tapX = touchStartX;
         tapTimer = setTimeout(() => {
@@ -1420,16 +1491,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
     };
 
+    const handleTouchCancel = () => { isCancelled = true; handleTouchEnd(new TouchEvent('touchcancel')); };
     container.addEventListener('touchstart', handleTouchStart, { passive: false });
     container.addEventListener('touchmove', handleTouchMove, { passive: false });
     container.addEventListener('touchend', handleTouchEnd, { passive: true });
-    container.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+    container.addEventListener('touchcancel', handleTouchCancel, { passive: true });
 
     return () => {
       container.removeEventListener('touchstart', handleTouchStart);
       container.removeEventListener('touchmove', handleTouchMove);
       container.removeEventListener('touchend', handleTouchEnd);
-      container.removeEventListener('touchcancel', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchCancel);
       if (tapTimer) clearTimeout(tapTimer);
     };
   }, [slideshowActive]);
@@ -1507,6 +1579,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   const toggleImmersiveModeRef = useRef(toggleImmersiveMode);
   useEffect(() => { toggleImmersiveModeRef.current = toggleImmersiveMode; });
+
+  useEffect(() => {
+    const handler = () => {
+      if (slideshowActiveRef.current) {
+        stopSlideshow();
+        (window as any).__androidBackHandled = true;
+      } else if (isImmersiveModeRef.current) {
+        toggleImmersiveModeRef.current();
+        (window as any).__androidBackHandled = true;
+      }
+    };
+    window.addEventListener('android-back-press', handler);
+    return () => window.removeEventListener('android-back-press', handler);
+  }, []);
+
+  const autoImmersiveDoneRef = useRef(false);
+  useEffect(() => {
+    if (!enterImmersiveOnMount || !imgNaturalSize || !displayUrl || isImmersiveMode || autoImmersiveDoneRef.current) return;
+    autoImmersiveDoneRef.current = true;
+    const timer = setTimeout(() => {
+      toggleImmersiveModeRef.current();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [enterImmersiveOnMount, imgNaturalSize, displayUrl, isImmersiveMode]);
 
   const handleSearchSubmit = () => {
     onSearch(localQuery);
@@ -1630,7 +1726,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       const el = document.querySelector('[data-testid="viewer-context-menu"]') as HTMLElement | null;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const margin = 8; // 保留一点间距
+      const margin = 10;
 
       let left = contextMenu.x;
       let top = contextMenu.y;
@@ -1661,8 +1757,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // Stop slideshow and ensure fullscreen / UI state is cleaned up immediately
   const stopSlideshow = async () => {
     try {
-      if (document.fullscreenElement) {
-        await document.exitFullscreen();
+      if (isAndroidPlatformCached()) {
+        if (isImmersiveModeRef.current) {
+          toggleImmersiveModeRef.current();
+        }
+      } else {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+        }
       }
     } catch (err) {
       // ignore
@@ -1677,13 +1779,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const toggleSlideshow = async () => {
     if (!slideshowActive) {
       setSlideshowActive(true);
-      // try to enter fullscreen when starting slideshow
-      if (!document.fullscreenElement) {
-        try {
-          await rootRef.current?.requestFullscreen();
-          setIsFullscreen(true);
-        } catch (err) {
-          // ignore
+      if (isAndroidPlatformCached()) {
+        if (!isImmersiveModeRef.current) {
+          toggleImmersiveModeRef.current();
+        }
+      } else {
+        if (!document.fullscreenElement) {
+          try {
+            await rootRef.current?.requestFullscreen();
+            setIsFullscreen(true);
+          } catch (err) {
+            // ignore
+          }
         }
       }
       setContextMenu(prev => ({ ...prev, visible: false }));
@@ -1697,10 +1804,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     const onFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        if (slideshowActiveRef.current) {
+        if (!isAndroidPlatformCached() && slideshowActiveRef.current) {
           stopSlideshow();
         }
-        if (isImmersiveModeRef.current) {
+        if (!isAndroidPlatformCached() && isImmersiveModeRef.current) {
           setIsImmersiveMode(false);
         }
       }
@@ -1831,13 +1938,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             >
               <ChevronLeft size={18} />
             </button>
-            <button
-              onClick={onNavigateForward} disabled={!canGoForward}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
-              title={t('viewer.forward')}
-            >
-              <ChevronRight size={18} />
-            </button>
+            {!isAndroidPlatformCached() && (
+              <button
+                onClick={onNavigateForward} disabled={!canGoForward}
+                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
+                title={t('viewer.forward')}
+              >
+                <ChevronRight size={18} />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1955,28 +2064,62 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             <Maximize size={14} className="text-gray-500" />
           </div>
 
-          <button onClick={handleOriginalSize} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.original')}>
-            <span className="text-xs font-bold">1:1</span>
-          </button>
-          <button onClick={handleReset} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.fit')}>
-            <Maximize size={18} />
-          </button>
-          <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1 hidden sm:block"></div>
-          <button onClick={() => rotate(-90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateLeft')}>
-            <RotateCcw size={18} />
-          </button>
-          <button onClick={() => rotate(90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateRight')}>
-            <RotateCw size={18} />
-          </button>
-          <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
-
-          <button
-            onClick={() => setShowSearch(!showSearch)}
-            className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
-            title={t('viewer.search')}
-          >
-            <Search size={18} />
-          </button>
+          {isAndroidPlatformCached() ? (
+            <>
+              <button
+                onClick={() => { setIsTransformAnimating(true); toggleOriginalFit(); setTimeout(() => setIsTransformAnimating(false), 320); }}
+                className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+                title={Math.abs(scale - 1) < 0.1 ? t('viewer.original') : t('viewer.fit')}
+              >
+                {Math.abs(scale - 1) < 0.1 ? <span className="text-xs font-bold">1:1</span> : <Maximize size={18} />}
+              </button>
+              <button onClick={() => { setIsTransformAnimating(true); rotate(90); setPosition({ x: 0, y: 0 }); setTimeout(() => setIsTransformAnimating(false), 320); }} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.rotateRight')}>
+                <RotateCw size={18} />
+              </button>
+              <button onClick={() => { console.log('[SHARE] Button clicked, file.path:', file.path); console.log('[SHARE] isAndroidPlatformCached:', isAndroidPlatformCached()); invoke('android_share_image', { imagePath: file.path }).then(() => console.log('[SHARE] invoke succeeded')).catch((e) => console.warn('[SHARE] invoke failed:', e)); }} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.share') || 'Share'}>
+                <Share2 size={18} />
+              </button>
+              <button onClick={() => onDelete(file.id)} className="p-2 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400" title={t('context.delete')}>
+                <Trash2 size={18} />
+              </button>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  setContextMenu({ x: rect.left, y: rect.bottom, visible: true });
+                  setMenuPos({ top: `${rect.bottom}px`, left: `${rect.left}px` });
+                }}
+                className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
+                title={t('viewer.more') || 'More'}
+              >
+                <MoreVertical size={18} />
+              </button>
+            </>
+          ) : (
+            <>
+              <button onClick={handleOriginalSize} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.original')}>
+                <span className="text-xs font-bold">1:1</span>
+              </button>
+              <button onClick={handleReset} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.fit')}>
+                <Maximize size={18} />
+              </button>
+              <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+              <button onClick={() => rotate(-90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateLeft')}>
+                <RotateCcw size={18} />
+              </button>
+              <button onClick={() => rotate(90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateRight')}>
+                <RotateCw size={18} />
+              </button>
+              <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
+              <button
+                onClick={() => setShowSearch(!showSearch)}
+                className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+                title={t('viewer.search')}
+              >
+                <Search size={18} />
+              </button>
+            </>
+          )}
 
           <button
             onClick={() => onLayoutToggle('metadata')}
@@ -1999,7 +2142,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onContextMenu={handleContextMenu}
+        onContextMenu={isAndroidPlatformCached() ? (e: React.MouseEvent) => { e.preventDefault(); } : handleContextMenu}
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
         {!displayUrl && (
@@ -2120,13 +2263,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
             alt={file.name}
             onLoad={() => {
-              if (isAndroidPlatformCached() && displayUrl) {
-                const img = imgRef.current as any;
-                PERF.log('img onload', file.path.split('/').pop(), 'size=' + (img?.naturalWidth || 0) + 'x' + (img?.naturalHeight || 0));
-                if (img?.naturalWidth && img?.naturalHeight) {
-                  setImgNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-                }
-              }
               if (outgoingUrlRef.current) {
                 if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
                 outgoingFadeTimerRef.current = setTimeout(() => {
@@ -2158,11 +2294,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 objectFit: 'fill' as const,
                 transform: (() => {
                   const fitScale = Math.min(containerSize.w / imgNaturalSize.w, containerSize.h / imgNaturalSize.h);
+                  const s = scale * fitScale;
                   const tx = position.x + swipeOffset + (containerSize.w - imgNaturalSize.w * fitScale) / 2;
                   const ty = position.y + (containerSize.h - imgNaturalSize.h * fitScale) / 2;
-                  return `translate(${tx}px, ${ty}px) rotate(${rotation}deg) scale(${scale * fitScale})`;
+                  const cx = imgNaturalSize.w * s / 2;
+                  const cy = imgNaturalSize.h * s / 2;
+                  return `translate(${tx}px, ${ty}px) translate(${cx}px, ${cy}px) rotate(${rotation}deg) translate(${-cx}px, ${-cy}px) scale(${s})`;
                 })(),
-                transition: 'none',
+                transition: isTransformAnimating ? 'transform 0.3s ease' : 'none',
                 transformOrigin: '0 0',
               } : {
                 width: '100%',
@@ -2208,7 +2347,22 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         )}
       </div>
 
-      {contextMenu.visible && (
+      {contextMenu.visible && (() => {
+        const isAndroid = isAndroidPlatformCached();
+        const menuItemClass = isAndroid
+          ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
+          : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+        const menuItemStyle = isAndroid ? { height: '50px', fontSize: '15px' } : undefined;
+        const iconSize = isAndroid ? 18 : 14;
+        const deleteItemClass = isAndroid
+          ? 'px-4 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center'
+          : 'px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center';
+        const purpleItemClass = isAndroid
+          ? 'px-4 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center'
+          : 'px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center';
+        const closeMenu = () => setContextMenu({ ...contextMenu, visible: false });
+
+        return (
         <div
           data-testid="viewer-context-menu"
           className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
@@ -2216,90 +2370,115 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             top: menuPos.top,
             left: menuPos.left,
             position: 'fixed',
-            zIndex: 60
+            zIndex: 60,
+            ...(isAndroid ? { fontSize: '15px' } : {})
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleOriginalSize(); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Maximize size={14} className="mr-2 opacity-70" /> {t('viewer.original')}
-          </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleFitWindow(); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Minimize size={14} className="mr-2 opacity-70" /> {t('viewer.fit')}
-          </div>
+          {!isAndroid && (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleOriginalSize(); closeMenu(); }}>
+              <Maximize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.original')}
+            </div>
+          )}
+          {!isAndroid && (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleFitWindow(); closeMenu(); }}>
+              <Minimize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.fit')}
+            </div>
+          )}
 
-          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+          {!isAndroid && (
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+          )}
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onViewInExplorer(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <ExternalLink size={14} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
-          </div>
+          {!isAndroid && (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { onViewInExplorer(file.id); closeMenu(); }}>
+              <ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
+            </div>
+          )}
           {(() => {
             const parentId = file.parentId;
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
+            if (isUnavailable) return null;
+            const cls = isAndroid
+              ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
+              : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
             return (
-              <div
-                className={`px-4 py-2 flex items-center ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'}`}
-                onClick={() => {
-                  if (!isUnavailable && parentId) {
-                    onNavigateToFolder(parentId, { targetId: file.id });
-                    setContextMenu({ ...contextMenu, visible: false });
-                  }
-                }}
-              >
-                <FolderOpen size={14} className={`mr-2 opacity-70 ${isUnavailable ? 'opacity-40' : 'opacity-70'}`} />
-                {t('context.openFolder')}
-              </div>
+              <>
+                <div
+                  className={cls}
+                  style={isAndroid ? menuItemStyle : undefined}
+                  onClick={() => {
+                    if (parentId) {
+                      onNavigateToFolder(parentId, { targetId: file.id });
+                      closeMenu();
+                    }
+                  }}
+                >
+                  <FolderOpen size={iconSize} className="mr-2 opacity-70" />
+                  {t('context.openFolder')}
+                </div>
+                <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+              </>
             );
           })()}
 
-          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onEditTags(); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Tag size={14} className="mr-2 opacity-70" /> {t('context.editTags')}
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onEditTags(); closeMenu(); }}>
+            <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.editTags')}
           </div>
 
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyTags(); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Tag size={14} className="mr-2 opacity-70" /> {t('context.copyTag')}
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onCopyTags(); closeMenu(); }}>
+            <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.copyTag')}
           </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onPasteTags(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Tag size={14} className="mr-2 opacity-70" /> {t('context.pasteTag')}
-          </div>
-
-          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { handleCopyImage(); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Clipboard size={14} className="mr-2 opacity-70" /> {t('context.copyImage')}
-          </div>
-
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onCopyToFolder(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Copy size={14} className="mr-2 opacity-70" /> {t('context.copyTo')}
-          </div>
-          <div className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onMoveToFolder(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Move size={14} className="mr-2 opacity-70" /> {t('context.moveTo')}
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onPasteTags(file.id); closeMenu(); }}>
+            <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.pasteTag')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className="px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center" onClick={() => { onAIAnalysis(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Sliders size={14} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
+          {!isAndroid && (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCopyImage(); closeMenu(); }}>
+              <Clipboard size={iconSize} className="mr-2 opacity-70" /> {t('context.copyImage')}
+            </div>
+          )}
+
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onCopyToFolder(file.id); closeMenu(); }}>
+            <Copy size={iconSize} className="mr-2 opacity-70" /> {t('context.copyTo')}
+          </div>
+          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onMoveToFolder(file.id); closeMenu(); }}>
+            <Move size={iconSize} className="mr-2 opacity-70" /> {t('context.moveTo')}
+          </div>
+
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+
+          <div className={purpleItemClass} style={menuItemStyle} onClick={() => { onAIAnalysis(file.id); closeMenu(); }}>
+            <Sliders size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
 
           {/* 图片对比菜单项 - 仅当有图片对比标签页时显示 */}
           {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === 'image' && (() => {
             const imageIds = [file.id];
             const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
-            const itemClass = canCompare ? 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center' : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
+            const compareCls = isAndroid
+              ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
+              : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+            const itemClass = canCompare
+              ? compareCls
+              : isAndroid
+                ? 'px-4 flex items-center text-gray-400 cursor-default opacity-60'
+                : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
 
             return (
               <>
                 <div
                   className={itemClass}
+                  style={canCompare ? menuItemStyle : undefined}
                   onMouseEnter={openCompareSubmenu}
                   onMouseLeave={closeCompareSubmenu}
                   ref={compareMenuItemRef}
                 >
-                  <Scan size={14} className="mr-2 opacity-70" />
+                  <Scan size={iconSize} className="mr-2 opacity-70" />
                   <div className="flex-1">{t('context.compareImages')}</div>
-                  <ChevronRight size={14} className="ml-2 opacity-70" />
+                  <ChevronRight size={iconSize} className="ml-2 opacity-70" />
                 </div>
                 {/* 二级菜单 - 使用 Portal 渲染到 body 避免被父容器裁剪 */}
                 {compareSubmenuOpen && createPortal(
@@ -2316,17 +2495,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                       const remainingSpace = maxCount - currentCount;
                       const canAdd = remainingSpace > 0 && imageIds.length <= remainingSpace;
                       const canvasName = tab.sessionName || `画布${tab.id.slice(0, 4)}`;
+                      const subCls = isAndroid
+                        ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between'
+                        : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between';
 
                       return (
                         <div
                           key={tab.id}
                           className={canAdd
-                            ? 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between'
-                            : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
+                            ? subCls
+                            : isAndroid
+                              ? 'px-4 flex items-center justify-between text-gray-400 cursor-default opacity-60'
+                              : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
                           }
+                          style={canAdd ? menuItemStyle : undefined}
                           onClick={canAdd ? () => {
                             handleAddToCompareCanvas(tab.id, imageIds);
-                            setContextMenu({ ...contextMenu, visible: false });
+                            closeMenu();
                             setCompareSubmenuOpen(false);
                           } : undefined}
                         >
@@ -2345,31 +2530,34 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
           <div
-            className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
-            onClick={() => { setShowSlideshowSettings(true); setContextMenu({ ...contextMenu, visible: false }); }}
+            className={menuItemClass}
+            style={menuItemStyle}
+            onClick={() => { setShowSlideshowSettings(true); closeMenu(); }}
           >
-            <div className="flex items-center">
-              <Settings size={14} className="mr-2" />
-              {t('context.slideshowSettings')}
-            </div>
+            <Settings size={iconSize} className="mr-2 opacity-70" />
+            {t('context.slideshowSettings')}
           </div>
           <div
-            className="px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between"
+            className={menuItemClass}
+            style={menuItemStyle}
             onClick={toggleSlideshow}
           >
-            <div className="flex items-center">
-              {slideshowActive ? <Square size={14} className="mr-2" /> : <Play size={14} className="mr-2" />}
-              {slideshowActive ? t('context.stopSlideshow') : t('context.startSlideshow')}
+            {slideshowActive ? <Square size={iconSize} className="mr-2" /> : <Play size={iconSize} className="mr-2" />}
+            {slideshowActive ? t('context.stopSlideshow') : t('context.startSlideshow')}
+          </div>
+
+          {!isAndroid && (
+            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+          )}
+
+          {!isAndroid && (
+            <div className={deleteItemClass} style={menuItemStyle} onClick={() => { onDelete(file.id); closeMenu(); }}>
+              <Trash2 size={iconSize} className="mr-2 opacity-70" /> {t('context.delete')}
             </div>
-          </div>
-
-          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-
-          <div className="px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center" onClick={() => { onDelete(file.id); setContextMenu({ ...contextMenu, visible: false }); }}>
-            <Trash2 size={14} className="mr-2 opacity-70" /> {t('context.delete')}
-          </div>
+          )}
         </div>
-      )}
+        );
+      })()}
 
       {scopeMenuOpen && (
         <>

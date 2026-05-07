@@ -106,6 +106,7 @@ export const App: React.FC = () => {
       autoStart: false,
       exitAction: 'ask',
       animateOnHover: true,
+      openInImmersiveByDefault: false,
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
@@ -1847,6 +1848,10 @@ export const App: React.FC = () => {
       }
 
       if (tab.viewingFileId) {
+        if ((window as any).__isImmersive) {
+          (window as any).__androidBackHandled = true;
+          return;
+        }
         closeViewerRef.current();
         return;
       }
@@ -2006,6 +2011,7 @@ export const App: React.FC = () => {
               tabs={state.tabs}
               handleOpenCompareInNewTab={handleOpenCompareInNewTab}
               handleAddToCompareCanvas={handleAddToCompareCanvas}
+              enterImmersiveOnMount={state.settings.openInImmersiveByDefault}
             />
           )}
           {state.tabs.map(tab => tab.isCompareMode && (

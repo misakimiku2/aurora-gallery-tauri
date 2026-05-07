@@ -1517,6 +1517,57 @@ async fn set_android_immersive_mode(immersive: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_share_image(image_path: String) -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    let path_jstring = env.new_string(&image_path)
+        .map_err(|e| format!("Failed to create Java string: {:?}", e))?;
+    
+    env.call_method(
+        &activity_obj,
+        "shareImage",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&path_jstring.into())],
+    ).map_err(|e| format!("Failed to call shareImage: {:?}", e))?;
+    
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_share_images(image_paths: Vec<String>) -> Result<(), String> {
+    let json = serde_json::to_string(&image_paths)
+        .map_err(|e| format!("Failed to serialize paths: {:?}", e))?;
+    
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    
+    let json_jstring = env.new_string(&json)
+        .map_err(|e| format!("Failed to create Java string: {:?}", e))?;
+    
+    env.call_method(
+        &activity_obj,
+        "shareImages",
+        "(Ljava/lang/String;)V",
+        &[JValue::Object(&json_jstring.into())],
+    ).map_err(|e| format!("Failed to call shareImages: {:?}", e))?;
+    
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -1728,6 +1779,8 @@ pub fn run() {
         android_hide_task_notification,
         android_get_cache_size,
         android_clear_thumbnail_cache,
+        android_share_image,
+        android_share_images,
         color_commands::add_pending_files_to_db,
         db_commands::get_color_db_stats,
         db_commands::get_color_db_error_files,

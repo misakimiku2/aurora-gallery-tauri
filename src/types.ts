@@ -311,6 +311,7 @@ export interface AppSettings {
   autoStart: boolean;
   exitAction: 'ask' | 'minimize' | 'exit';
   animateOnHover: boolean;
+  openInImmersiveByDefault: boolean;
   paths: {
     resourceRoot: string;
     cacheRoot: string;

@@ -186,7 +186,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 
           let x = contextMenu.x;
           if (x + menuWidth > screenWidth) {
-            x = screenWidth - menuWidth;
+            x = screenWidth - menuWidth - 10;
           }
           if (x < 0) {
             x = 0;
@@ -217,7 +217,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}</div>
         )}
         {contextMenu.type === 'file-single' && files[contextMenu.targetId!] && ((() => {
-          const file = files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; return (<div className={`px-4 flex items-center ${isAndroidDevice ? '' : 'py-2 '} ${isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 hover:text-white cursor-pointer'}`} style={isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined} onClick={() => { if (!isUnavailable && parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
+          const file = files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; if (isUnavailable) return null; return (<div className={isAndroidDevice ? 'px-4 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center' : 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'} style={isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined} onClick={() => { if (parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
             <FolderOpen size={iconSize} className="mr-2 opacity-70" />
             {t('context.openFolder')}
           </div>);
@@ -470,8 +470,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           </div>
         )}
 
-        <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
-        <div className={deleteItemClass} style={menuItemStyle} onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={iconSize} className="mr-2" /> {t('context.delete')}</div>
+        {!isAndroidDevice && (
+          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+        )}
+        {!isAndroidDevice && (
+          <div className={deleteItemClass} style={menuItemStyle} onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={iconSize} className="mr-2" /> {t('context.delete')}</div>
+        )}
       </>)}
       {contextMenu.type === 'root-folder' && contextMenu.targetId && (<> <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCreateFolder(contextMenu.targetId); closeContextMenu(); }}><FolderPlus size={iconSize} className="mr-2 opacity-70" /> {t('context.createSubfolder')}</div><div className={menuItemClass} style={menuItemStyle} onClick={() => { handleExpandAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsDown size={iconSize} className="mr-2 opacity-70" /> {t('context.expandAll')}</div><div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCollapseAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsUp size={iconSize} className="mr-2 opacity-70" /> {t('context.collapseAll')}</div> </>)}
       {(contextMenu.type === 'tag-single' || contextMenu.type === 'tag-multi') && contextMenu.targetId && (<>
