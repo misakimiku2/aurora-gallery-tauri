@@ -109,6 +109,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [blockInteraction, setBlockInteraction] = useState(true);
 
   useEffect(() => {
     return () => {
@@ -117,6 +118,27 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu.visible) {
+      setBlockInteraction(true);
+      return;
+    }
+
+    setBlockInteraction(true);
+
+    const handleTouchEnd = () => {
+      setTimeout(() => {
+        setBlockInteraction(false);
+      }, 100);
+    };
+
+    document.addEventListener('touchend', handleTouchEnd, { once: true });
+    return () => {
+      document.removeEventListener('touchend', handleTouchEnd);
+      setBlockInteraction(true);
+    };
+  }, [contextMenu.visible]);
 
   const openCompareSubmenu = () => {
     if (compareMenuTimeoutRef.current) {
@@ -174,8 +196,12 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         top: 0,
         position: 'fixed',
         zIndex: 1000,
-        ...(isAndroidDevice ? { fontSize: '15px' } : {})
+        ...(isAndroidDevice ? { fontSize: '15px' } : {}),
+        ...(isAndroidDevice && blockInteraction ? { pointerEvents: 'none' as const } : {})
       }}
+      onClickCapture={isAndroidDevice && blockInteraction ? (e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); } : undefined}
+      onMouseDownCapture={isAndroidDevice && blockInteraction ? (e: React.MouseEvent) => { e.stopPropagation(); e.preventDefault(); } : undefined}
+      onTouchStartCapture={isAndroidDevice && blockInteraction ? (e: React.TouchEvent) => { e.stopPropagation(); } : undefined}
       ref={(el) => {
         if (el) {
           const rect = el.getBoundingClientRect();
@@ -205,7 +231,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         }
       }}
     >
-      {(contextMenu.type === 'file-single' || contextMenu.type === 'file-multi' || contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi') && (<>
+      {contextMenu.type === 'file-single' || contextMenu.type === 'file-multi' || contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi' ? (<>
         {contextMenu.type !== 'file-multi' && contextMenu.type !== 'folder-multi' && (
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleOpenInNewTab(contextMenu.targetId!); closeContextMenu(); }}>
             <Layout size={iconSize} className="mr-2 opacity-70" />
@@ -476,7 +502,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         {!isAndroidDevice && (
           <div className={deleteItemClass} style={menuItemStyle} onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={iconSize} className="mr-2" /> {t('context.delete')}</div>
         )}
-      </>)}
+      </>) : null}
       {contextMenu.type === 'root-folder' && contextMenu.targetId && (<> <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCreateFolder(contextMenu.targetId); closeContextMenu(); }}><FolderPlus size={iconSize} className="mr-2 opacity-70" /> {t('context.createSubfolder')}</div><div className={menuItemClass} style={menuItemStyle} onClick={() => { handleExpandAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsDown size={iconSize} className="mr-2 opacity-70" /> {t('context.expandAll')}</div><div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCollapseAll(contextMenu.targetId!); closeContextMenu(); }}><ChevronsUp size={iconSize} className="mr-2 opacity-70" /> {t('context.collapseAll')}</div> </>)}
       {(contextMenu.type === 'tag-single' || contextMenu.type === 'tag-multi') && contextMenu.targetId && (<>
         {contextMenu.type === 'tag-multi' ? (

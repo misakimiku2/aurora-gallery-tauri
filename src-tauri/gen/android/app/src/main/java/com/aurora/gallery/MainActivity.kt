@@ -811,6 +811,8 @@ class MainActivity : TauriActivity() {
       }
       if (immersive) {
         window.statusBarColor = Color.TRANSPARENT
+      } else {
+        applyInitialStatusBarStyle()
       }
     }
   }

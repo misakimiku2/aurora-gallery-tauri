@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallba
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode, androidShareImage } from '../api/tauri-bridge';
+import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode, androidShareImage, setAndroidStatusBar } from '../api/tauri-bridge';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
@@ -1569,6 +1569,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       if (isAndroidPlatformCached()) {
         setAndroidImmersiveMode(false);
+        const isDark = document.documentElement.classList.contains('dark');
+        setAndroidStatusBar(isDark);
       } else {
         if (document.fullscreenElement) {
           document.exitFullscreen().catch(() => {});
@@ -1769,6 +1771,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     } catch (err) {
       // ignore
     } finally {
+      if (isAndroidPlatformCached()) {
+        const isDark = document.documentElement.classList.contains('dark');
+        setAndroidStatusBar(isDark);
+      }
       setIsFullscreen(false);
       setSlideshowActive(false);
       setContextMenu(prev => ({ ...prev, visible: false }));
