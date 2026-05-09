@@ -19,6 +19,7 @@ export const useContextMenu = ({
     y: number;
     type: 'file-single' | 'file-multi' | 'folder-single' | 'folder-multi' | 'tag-single' | 'tag-multi' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person' | null;
     targetId?: string;
+    source?: 'long-press' | null;
   }>({ visible: false, x: 0, y: 0, type: null });
 
   const closeContextMenu = useCallback(() => setContextMenu(prev => ({ ...prev, visible: false })), []);
@@ -79,16 +80,26 @@ export const useContextMenu = ({
       }
     };
 
+    const handleOrientationChange = () => {
+      if (contextMenu.visible && contextMenu.source === 'long-press') {
+        closeContextMenu();
+      }
+    };
+
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('wheel', handleWheel, true);
     document.addEventListener('touchmove', handleTouchMove, true);
+    window.addEventListener('orientationchange', handleOrientationChange);
+    screen.orientation?.addEventListener?.('change', handleOrientationChange);
 
     return () => {
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('wheel', handleWheel, true);
       document.removeEventListener('touchmove', handleTouchMove, true);
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      screen.orientation?.removeEventListener?.('change', handleOrientationChange);
     };
-  }, [contextMenu.visible, closeContextMenu]);
+  }, [contextMenu.visible, contextMenu.source, closeContextMenu]);
 
   return {
     contextMenu,

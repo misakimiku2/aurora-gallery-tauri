@@ -3,6 +3,8 @@ import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffe
 import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { PullToRefreshIndicator } from './PullToRefreshIndicator';
 import md5 from 'md5';
 import { startDragToExternal, setGlobalScrollState } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
@@ -918,6 +920,7 @@ interface FileGridProps {
   personSortBy?: import('../types').PersonSortOption;
   personSortDirection?: import('../types').SortDirection;
   personGroupBy?: import('../types').PersonGroupByOption;
+  onRefresh?: () => Promise<void>;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -980,7 +983,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   // People view sort and group
   personSortBy = 'count',
   personSortDirection = 'desc',
-  personGroupBy = 'none'
+  personGroupBy = 'none',
+  onRefresh
 }) => {
   // #region agent log
   // Removed debug logs
@@ -991,6 +995,17 @@ export const FileGrid: React.FC<FileGridProps> = ({
   const effectiveResourceRoot = resourceRoot || settings?.paths?.resourceRoot;
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
   const isAndroid = effectiveResourceRoot === 'android_media_store';
+
+  const {
+    pullDistance: pullRefreshDistance,
+    isRefreshing: isPullRefreshing,
+    canRefresh: canPullRefresh,
+    isComplete: isPullComplete,
+  } = usePullToRefresh({
+    containerRef: containerRef as React.RefObject<HTMLDivElement>,
+    onRefresh: onRefresh || (async () => {}),
+    enabled: isAndroid,
+  });
 
   const pinchStartSizeRef = useRef(thumbnailSize);
 
@@ -1378,6 +1393,14 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   onMouseMove={onMouseMove}
                   onMouseUp={onMouseUp}
               >
+                  {isAndroid && (pullRefreshDistance > 0 || isPullRefreshing || isPullComplete) && (
+                      <PullToRefreshIndicator
+                          pullDistance={pullRefreshDistance}
+                          isRefreshing={isPullRefreshing}
+                          canRefresh={canPullRefresh}
+                          isComplete={isPullComplete}
+                      />
+                  )}
                   <div className="absolute inset-0 pointer-events-none z-50">
                       {selectionBox && (
                           <div
@@ -1391,6 +1414,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
                           />
                       )}
                   </div>
+                  <div style={isAndroid && pullRefreshDistance > 0 ? {
+                      transform: `translateY(${pullRefreshDistance}px)`,
+                      transition: pullRefreshDistance === 0 && !isPullRefreshing && !isPullComplete ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)' : undefined,
+                  } : undefined}>
                   <TagsList
                       groupedTags={groupedTags || {}}
                       keys={sortedKeys}
@@ -1406,6 +1433,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                       containerHeight={containerRect.height}
                       resourceRoot={resourceRoot}
                   />
+                  </div>
               </div>
           </div>
       );
@@ -1506,6 +1534,14 @@ export const FileGrid: React.FC<FileGridProps> = ({
           {isAndroid && (
               <style dangerouslySetInnerHTML={{ __html: '#file-grid-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />
           )}
+          {isAndroid && (pullRefreshDistance > 0 || isPullRefreshing || isPullComplete) && (
+              <PullToRefreshIndicator
+                  pullDistance={pullRefreshDistance}
+                  isRefreshing={isPullRefreshing}
+                  canRefresh={canPullRefresh}
+                  isComplete={isPullComplete}
+              />
+          )}
           <div className="absolute inset-0 pointer-events-none z-50">
               {selectionBox && (
                   <div
@@ -1520,6 +1556,12 @@ export const FileGrid: React.FC<FileGridProps> = ({
               )}
           </div>
 
+          <div
+              style={isAndroid && pullRefreshDistance > 0 ? {
+                  transform: `translateY(${pullRefreshDistance}px)`,
+                  transition: pullRefreshDistance === 0 && !isPullRefreshing && !isPullComplete ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)' : undefined,
+              } : undefined}
+          >
           {activeTab.viewMode === 'people-overview' ? (
               <PersonGrid
                   people={people || {}}
@@ -1683,6 +1725,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   </div>
               </div>
           )}
+          </div>
       </div>
   );
 };

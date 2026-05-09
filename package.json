@@ -19,7 +19,8 @@
     "clean:build": "npm run clean && npm run build",
     "clean:dev": "npm run clean && npm run tauri:dev",
     "tauri": "tauri",
-    "tauri:dev": "concurrently -k \"npm run dev\" \"wait-on http://localhost:14422 && tauri dev\"",
+    "tauri:dev": "tauri dev",
+    "tauri:android:dev": "node scripts/android-dev.mjs",
     "tauri:build": "tauri build",
     "test": "vitest"
   },

@@ -2,11 +2,13 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { FileNode, LayoutMode, SortOption, SortDirection, FileType, DateFilter } from '../types';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem } from './useLayoutHook';
 import { Folder, Check } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
+import { PullToRefreshIndicator } from './PullToRefreshIndicator';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -32,6 +34,7 @@ interface FoldersOverviewProps {
   sortBy?: SortOption;
   sortDirection?: SortDirection;
   dateFilter?: DateFilter;
+  onRefresh?: () => Promise<void>;
 }
 
 const FolderCard = React.memo(({
@@ -389,6 +392,7 @@ const FoldersOverview = React.memo(({
   sortBy = 'name',
   sortDirection = 'asc',
   dateFilter,
+  onRefresh,
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -405,6 +409,17 @@ const FoldersOverview = React.memo(({
   const prevSortedIdsRef = useRef<string[]>([]);
   const prevAspectRatiosRef = useRef<Record<string, number>>({});
   const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0, filesCount: 0 });
+
+  const {
+    pullDistance: pullRefreshDistance,
+    isRefreshing: isPullRefreshing,
+    canRefresh: canPullRefresh,
+    isComplete: isPullComplete,
+  } = usePullToRefresh({
+    containerRef,
+    onRefresh: onRefresh || (async () => {}),
+    enabled: isAndroid,
+  });
 
   const pinchStartSizeRef = useRef(thumbnailSize);
 
@@ -687,9 +702,22 @@ const FoldersOverview = React.memo(({
       className="w-full h-full overflow-y-auto overflow-x-hidden relative"
       style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
     >
+      {isAndroid && (pullRefreshDistance > 0 || isPullRefreshing || isPullComplete) && (
+        <PullToRefreshIndicator
+          pullDistance={pullRefreshDistance}
+          isRefreshing={isPullRefreshing}
+          canRefresh={canPullRefresh}
+          isComplete={isPullComplete}
+        />
+      )}
       <div
         className="relative w-full"
-        style={{ height: totalHeight > 0 ? totalHeight : 'auto', minHeight: '100%' }}
+        style={{
+          height: totalHeight > 0 ? totalHeight : 'auto',
+          minHeight: '100%',
+          transform: isAndroid && pullRefreshDistance > 0 ? `translateY(${pullRefreshDistance}px)` : undefined,
+          transition: isAndroid && pullRefreshDistance === 0 && !isPullRefreshing && !isPullComplete ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)' : undefined,
+        }}
       >
         {visibleItems.map(pos => (
             <div

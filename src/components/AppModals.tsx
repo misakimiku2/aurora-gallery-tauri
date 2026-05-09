@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import {
   AppState,
   TabState,
@@ -10,6 +10,7 @@ import {
   DownloadProgress
 } from '../types';
 import { Trash2, FilePlus, Merge, AlertTriangle } from 'lucide-react';
+import { setAndroidStatusBar, isAndroidPlatformCached } from '../api/tauri-bridge';
 
 // Import from their original locations
 import { SettingsModal as SettingsModalComp } from './SettingsModal';
@@ -162,6 +163,20 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleConfirmCreatePerson,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
+
+  useEffect(() => {
+    if (!isAndroidPlatformCached()) return;
+    if (state.activeModal.type) {
+      setAndroidStatusBar(true);
+    } else {
+      const theme = state.settings.theme;
+      let isDark = false;
+      if (theme === 'dark') isDark = true;
+      else if (theme === 'light') isDark = false;
+      else isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      setAndroidStatusBar(isDark);
+    }
+  }, [state.activeModal.type, state.settings.theme]);
 
   return (
     <>

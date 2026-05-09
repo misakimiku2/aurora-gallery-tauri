@@ -17,6 +17,7 @@ interface ContextMenuProps {
     y: number;
     type: 'file-single' | 'file-multi' | 'folder-single' | 'folder-multi' | 'tag-single' | 'tag-multi' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person' | null;
     targetId?: string;
+    source?: 'long-press' | null;
   };
   files: Record<string, FileNode>;
   activeTab: TabState;

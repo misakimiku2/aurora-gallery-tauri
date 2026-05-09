@@ -1,0 +1,465 @@
+PS C:\Users\Misaki\Desktop\git\aurora-gallery-tauri> $env:TAURI_DEV_HOST = "192.168.31.87"
+PS C:\Users\Misaki\Desktop\git\aurora-gallery-tauri> npx tauri android dev
+        Info ANDROID_HOME not set, trying to locate Android SDK...
+        Info Using installed Android SDK: C:\Users\Misaki\AppData\Local\Android/Sdk
+        Info Using installed NDK: C:\Users\Misaki\AppData\Local\Android/Sdk\ndk\29.0.13846066
+ (SM-X808U) with target "aarch64-linux-android" Tab S8+
+        Info Using 26.99.118.56 to access the development server.
+        Info Replacing devUrl host with 26.99.118.56. If your frontend is not listening on that address, try configuring your development server to use the `TAURI_DEV_HOST` environment variable or 0.0.0.0 as host.
+     Running BeforeDevCommand (`npm run dev`)
+
+> aurora-gallery@1.1.3 dev
+> vite
+
+
+  VITE v5.4.21  ready in 207 ms
+
+  ➜  Local:   http://localhost:14422/
+  ➜  Network: http://26.99.118.56:14422/
+  ➜  Network: http://192.168.31.87:14422/
+warning: unused manifest key: target.aarch64-linux-android.linker
+warning: unused manifest key: target.armv7-linux-androideabi.linker
+warning: unused manifest key: target.i686-linux-android.linker
+warning: unused manifest key: target.x86_64-linux-android.linker
+warning: unused import: `std::process::Command`
+   --> src\system_commands.rs:245:9
+    |
+245 |     use std::process::Command;
+    |         ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::file_types::SavedWindowState`
+ --> src\window_commands.rs:1:5
+  |
+1 | use crate::file_types::SavedWindowState;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fs`
+ --> src\window_commands.rs:2:5
+  |
+2 | use std::fs;
+  |     ^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> src\window_commands.rs:3:5
+  |
+3 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fs`
+  --> src\lib.rs:48:5
+   |
+48 | use std::fs;
+   |     ^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src\lib.rs:1214:13
+     |
+1214 |         let mut conn = pool.get_connection();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `total_success_count` is never read
+   --> src\color_worker.rs:601:25
+    |
+601 |                         total_success_count += 1;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `total_error_count` is never read
+   --> src\color_worker.rs:604:25
+    |
+604 |                         total_error_count += 1;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `url`
+   --> src\system_commands.rs:244:33
+    |
+244 | pub async fn open_external_link(url: String) -> Result<(), String> {
+    |                                 ^^^ help: if this is intentional, prefix it with an underscore: `_url`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `app_handle`
+  --> src\window_commands.rs:85:26
+   |
+85 | pub async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+   |                          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `app_handle`
+  --> src\window_commands.rs:96:26
+   |
+96 | pub async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+   |                          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `app_handle`
+   --> src\window_commands.rs:107:34
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                  ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `width`
+   --> src\window_commands.rs:107:64
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_width`
+
+warning: unused variable: `height`
+   --> src\window_commands.rs:107:76
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                                                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_height`
+
+warning: unused variable: `batch_size`
+    --> src\lib.rs:1897:17
+     |
+1897 |             let batch_size = 50;
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_batch_size`
+
+warning: unused variable: `app_handle_arc`
+    --> src\lib.rs:1899:17
+     |
+1899 |             let app_handle_arc = Arc::new(app_handle_new);
+     |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle_arc`
+
+warning: unused variable: `cache_root`
+    --> src\lib.rs:1901:17
+     |
+1901 |             let cache_root = {
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_root`
+
+warning: fields `id` and `started` are never read
+  --> src\color_worker.rs:45:5
+   |
+44 | struct BatchState {
+   |        ---------- fields in this struct
+45 |     id: u64,
+   |     ^^
+...
+48 |     started: bool,
+   |     ^^^^^^^
+   |
+   = note: `BatchState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `process_single_file` is never used
+   --> src\color_worker.rs:804:10
+    |
+804 | async fn process_single_file(pool: Arc<ColorDbPool>, file_path: String) -> Result<(), String> {
+    |          ^^^^^^^^^^^^^^^^^^^
+
+warning: `aurora-gallery` (lib) generated 19 warnings (run `cargo fix --lib -p aurora-gallery` to apply 15 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.01s
+        Info symlinking lib "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" in jniLibs dir "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/arm64-v8a"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "liblog.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libandroid.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libdl.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libm.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libc.so"
+        Info symlink at "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/arm64-v8a\\libaurora_gallery_lib.so" points to "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so"
+        Info symlink at "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/armeabi-v7a\\libaurora_gallery_lib.so" points to "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\armv7-linux-androideabi\\release\\libaurora_gallery_lib.so"
+        Info symlink at "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/x86\\libaurora_gallery_lib.so" points to "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\i686-linux-android\\release\\libaurora_gallery_lib.so"
+        Info symlink at "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/x86_64\\libaurora_gallery_lib.so" points to "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\x86_64-linux-android\\release\\libaurora_gallery_lib.so"
+<===========--> 84% EXECUTING [2s]
+> :app:rustBuildArm64Debug
+> aurora-gallery@1.1.3 tauriote_addr=127.0.0.1:9612 conn_id=0
+> tauri android android-studio-script --target aarch64
+
+        Info Using installed NDK: C:\Users\Misaki\AppData\Local\Android/Sdk\ndk\29.0.13846066
+warning: unused manifest key: target.aarch64-linux-android.linker
+warning: unused manifest key: target.armv7-linux-androideabi.linker
+warning: unused manifest key: target.i686-linux-android.linker
+warning: unused manifest key: target.x86_64-linux-android.linker
+warning: unused import: `std::process::Command`
+   --> src\system_commands.rs:245:9
+    |
+245 |     use std::process::Command;
+    |         ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `crate::file_types::SavedWindowState`
+ --> src\window_commands.rs:1:5
+  |
+1 | use crate::file_types::SavedWindowState;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fs`
+ --> src\window_commands.rs:2:5
+  |
+2 | use std::fs;
+  |     ^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> src\window_commands.rs:3:5
+  |
+3 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::fs`
+  --> src\lib.rs:48:5
+   |
+48 | use std::fs;
+   |     ^^^^^^^
+
+warning: variable does not need to be mutable
+    --> src\lib.rs:1214:13
+     |
+1214 |         let mut conn = pool.get_connection();
+     |             ----^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `total_success_count` is never read
+   --> src\color_worker.rs:601:25
+    |
+601 |                         total_success_count += 1;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `total_error_count` is never read
+   --> src\color_worker.rs:604:25
+    |
+604 |                         total_error_count += 1;
+    |                         ^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: unused variable: `url`
+   --> src\system_commands.rs:244:33
+    |
+244 | pub async fn open_external_link(url: String) -> Result<(), String> {
+    |                                 ^^^ help: if this is intentional, prefix it with an underscore: `_url`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `app_handle`
+  --> src\window_commands.rs:85:26
+   |
+85 | pub async fn hide_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+   |                          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `app_handle`
+  --> src\window_commands.rs:96:26
+   |
+96 | pub async fn show_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+   |                          ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `app_handle`
+   --> src\window_commands.rs:107:34
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                  ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle`
+
+warning: unused variable: `width`
+   --> src\window_commands.rs:107:64
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_width`
+
+warning: unused variable: `height`
+   --> src\window_commands.rs:107:76
+    |
+107 | pub async fn set_window_min_size(app_handle: tauri::AppHandle, width: f64, height: f64) -> Result<(), String> {
+    |                                                                            ^^^^^^ help: if this is intentional, prefix it with an underscore: `_height`
+
+warning: unused variable: `batch_size`
+    --> src\lib.rs:1897:17
+     |
+1897 |             let batch_size = 50;
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_batch_size`
+
+warning: unused variable: `app_handle_arc`
+    --> src\lib.rs:1899:17
+     |
+1899 |             let app_handle_arc = Arc::new(app_handle_new);
+     |                 ^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_app_handle_arc`
+
+warning: unused variable: `cache_root`
+    --> src\lib.rs:1901:17
+     |
+1901 |             let cache_root = {
+     |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_cache_root`
+
+warning: fields `id` and `started` are never read
+  --> src\color_worker.rs:45:5
+   |
+44 | struct BatchState {
+   |        ---------- fields in this struct
+45 |     id: u64,
+   |     ^^
+...
+48 |     started: bool,
+   |     ^^^^^^^
+   |
+   = note: `BatchState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `process_single_file` is never used
+   --> src\color_worker.rs:804:10
+    |
+804 | async fn process_single_file(pool: Arc<ColorDbPool>, file_path: String) -> Result<(), String> {
+    |          ^^^^^^^^^^^^^^^^^^^
+
+warning: `aurora-gallery` (lib) generated 19 warnings (run `cargo fix --lib -p aurora-gallery` to apply 15 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.32s
+        Info symlinking lib "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" in jniLibs dir "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\gen/android\\app/src/main/jniLibs/arm64-v8a"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "liblog.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libandroid.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libdl.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libm.so"
+        Info "C:\\Users\\Misaki\\Desktop\\git\\aurora-gallery-tauri\\src-tauri\\target\\aarch64-linux-android\\debug\\libaurora_gallery_lib.so" requires shared lib "libc.so"
+
+[Incubating] Problems report is available at: file:///C:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.13/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+Performing Streamed Install
+Success
+Starting: Intent { cmp=com.aurora.gallery/.MainActivity }
+        Info Watching C:\Users\Misaki\Desktop\git\aurora-gallery-tauri\src-tauri for changes...
+--------- beginning of main
+05-10 04:26:34.418 31872 31872 I .aurora.gallery: Late-enabling -Xcheck:jni
+05-10 04:26:34.439 31872 31872 I .aurora.gallery: Using CollectorTypeCMC GC.
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: QUALCOMM build                   : 194d5e5755, I6561b7ccb3
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Build Date                       : 08/10/23
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: EV031.36.08.13
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Local Branch                     :
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Remote Branch                    :
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Remote Branch                    :
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Reconstruct Branch               :
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Build Config                     : S P 12.1.1 AArch64
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+05-10 04:26:34.700 31872 31910 I AdrenoGLES-0: Driver Version                   : 0615.0
+05-10 04:26:34.718 31872 31910 I AdrenoGLES-0: PFP: 0x01730155, ME: 0x00000000
+05-10 04:26:34.738 31872 31910 W Adreno-AppProfiles: Could not find QSPM HAL service. Skipping adreno profile processing.
+05-10 04:26:34.858 31872 31872 I DecorView: setWindowBackground: isPopOver=false color=ff121212 d=android.graphics.drawable.ColorDrawable@77f91a6
+05-10 04:26:34.872 31872 31872 I .aurora.gallery: hiddenapi: Accessing hidden method Landroid/view/ViewGroup;->makeOptionalFitsSystemWindows()V (runtime_flags=0, domain=platform, api=unsupported) from Landroidx/appcompat/widget/ViewUtils; (domain=app, TargetSdkVersion=36) using reflection: allowed
+05-10 04:26:34.883 31872 31872 W WindowOnBackDispatcher: OnBackInvokedCallback is not enabled for the application.
+05-10 04:26:34.883 31872 31872 W WindowOnBackDispatcher: Set 'android:enableOnBackInvokedCallback="true"' in the application manifest.
+05-10 04:26:34.890 31872 31872 W libc    : Access denied finding property "persist.dm.passive.display_brightness"
+05-10 04:26:34.890 31872 31872 W libc    : Access denied finding property "persist.dm.passive.ambient_brightness"
+05-10 04:26:34.901 31872 31872 I InsetsController: onStateChanged: host=com.aurora.gallery/com.aurora.gallery.MainActivity, from=android.view.ViewRootImpl.setView:1744, state=InsetsState: {mDisplayFrame=Rect(0, 0 - 2800, 1752), mDisplayCutout=DisplayCutout{insets=Rect(0, 0 - 0, 0) waterfall=Insets{left=0, top=0, right=0, bottom=0} boundingRect={Bounds=[Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0), Rect(0, 0 - 0, 0)]} cutoutPathParserInfo={CutoutPathParserInfo{displayWidth=0 displayHeight=0 physicalDisplayWidth=0 physicalDisplayHeight=0 density={0.0} cutoutSpec={} rotation={0} scale={0.0} physicalPixelDisplaySizeRatio={0.0}}}}, mRoundedCorners=RoundedCorners{[RoundedCorner{position=TopLeft, radius=28, center=Point(28, 28)}, RoundedCorner{position=TopRight, radius=28, center=Point(2772, 28)}, RoundedCorner{position=BottomRight, radius=28, center=Point(2772, 1724)}, RoundedCorner{position=BottomLeft, radius=28, center=Point(28, 1724)}]}  mRoundedCornerFrame=Rect(0, 0 - 2800, 1752), mPrivacyIndicatorBounds=PrivacyIndicatorBounds {static bounds=Rect(2706, 0 - 2800, 51) rotation=1}, mDisplayShape=DisplayShape{ spec=-219591279 displayWidth=1752 displayHeight=2800 physicalPixelDisplaySizeRatio=1.0 rotation=1 offsetX=0 offsetY=0 scale=1.0}, mSources= { InsetsSource: {a7580001 mType=navigationBars mFrame=[0,0][0,0] mVisible=true mFlags=[]}, InsetsSource: {a7580004 mType=systemGestures mFrame=[0,0][51,1752] mVisible=true mFlags=[]}, InsetsSource: {a7580005 mType=mandatorySystemGestures mFrame=[0,1709][2800,1752] mVisible=true mFlags=[]}, InsetsSource: {a7580006 mType=tappableElement mFrame=[0,0][0,0] mVisible=true mFlags=[]}, InsetsSource: {a7580024 mType=systemGestures mFrame=[2749,0][2800,1752] mVisible=true mFlags=[]}, InsetsSource: {3 mType=ime mFrame=[0,0][0,0] mVisible=false mFlags=[]}, InsetsSource: {f390000 mType=statusBars mFrame=[0,0][2800,51] mVisible=true mFlags=[]}, InsetsSource: {f390005 mType=mandatorySystemGestures mFrame=[0,0][2800,51] mVisible=true mFlags=[]}, InsetsSource: {f390006 mType=tappableElement mFrame=[0,0][2800,51] mVisible=true mFlags=[]} }
+05-10 04:26:34.901 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: synced displayState. AttachInfo displayState=2
+05-10 04:26:34.902 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: setView = com.android.internal.policy.DecorView@f979342 TM=true
+05-10 04:26:34.902 31872 31872 I IDS_TAG : Clearing training data of android.app.Application@973ff53
+05-10 04:26:34.903 31872 31872 I IDS_TAG : Starting IDS observe window
+05-10 04:26:34.903 31872 31872 I IDS_TAG : Getting Shared Preference for android.app.Application@973ff53 uid = 10497
+05-10 04:26:34.904 31872 31872 I IDS_TAG : App android.app.Application@973ff53 has not finished training
+05-10 04:26:34.907 31872 31872 I IDS_TAG : Closing IDS observe window
+05-10 04:26:34.907 31872 31872 I IDS_TAG : Getting Shared Preference for android.app.Application@973ff53 uid = 10497
+05-10 04:26:34.908 31872 31872 I IDS_TAG : IDS count updated to 1 for android.app.Application@973ff53
+05-10 04:26:34.923 31872 31872 I BLASTBufferQueue_Java: new BLASTBufferQueue, mName= ViewRootImpl@7e411b6[MainActivity] mNativeObject= 0xb40000751b272ef0 sc.mNativeObject= 0xb40000750b2572d0 caller= android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3015 android.view.ViewRootImpl.relayoutWindow:10048 android.view.ViewRootImpl.performTraversals:4092 android.view.ViewRootImpl.doTraversal:3275 android.view.ViewRootImpl$TraversalRunnable.run:11257 android.view.Choreographer$CallbackRecord.run:1650 android.view.Choreographer$CallbackRecord.run:1659 android.view.Choreographer.doCallbacks:1129 android.view.Choreographer.doFrame:1055 android.view.Choreographer$FrameDisplayEventReceiver.run:1622
+05-10 04:26:34.923 31872 31872 I BLASTBufferQueue_Java: update, w= 2800 h= 1752 mName = ViewRootImpl@7e411b6[MainActivity] mNativeObject= 0xb40000751b272ef0 sc.mNativeObject= 0xb40000750b2572d0 format= -1 caller= android.graphics.BLASTBufferQueue.<init>:89 android.view.ViewRootImpl.updateBlastSurfaceIfNeeded:3015 android.view.ViewRootImpl.relayoutWindow:10048 android.view.ViewRootImpl.performTraversals:4092 android.view.ViewRootImpl.doTraversal:3275 android.view.ViewRootImpl$TraversalRunnable.run:11257
+05-10 04:26:34.924 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: Relayout returned: old=(0,0,2800,1752) new=(0,0,2800,1752) relayoutAsync=false req=(2800,1752)0 dur=9 res=0x403 s={true 0xb40000747b277f00} ch=true seqId=0
+05-10 04:26:34.925 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: performConfigurationChange setNightDimText nightDimLevel=0
+05-10 04:26:34.928 31872 31940 I ViewRootImpl@7e411b6[MainActivity]: mWNT: t=0xb4000074cb2548d0 mBlastBufferQueue=0xb40000751b272ef0 fn= 1 caller= android.view.ViewRootImpl$8.onFrameDraw:13674 android.view.ThreadedRenderer$1.onFrameDraw:788 <bottom of call stack>
+05-10 04:26:34.956 31872 31910 I BLASTBufferQueue: [ViewRootImpl@7e411b6[MainActivity]#0](f:0,a:0,s:0) onFrameAvailable the first frame is available
+05-10 04:26:34.962 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: registerCallbackForPendingTransactions
+05-10 04:26:34.962 31872 31872 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=true, type=statusBars, host=com.aurora.gallery/com.aurora.gallery.MainActivity
+05-10 04:26:34.963 31872 31872 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=true, type=navigationBars, host=com.aurora.gallery/com.aurora.gallery.MainActivity
+05-10 04:26:34.984 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: handleWindowFocusChanged: 1 0 call from android.view.ViewRootImpl.-$$Nest$mhandleWindowFocusChanged:0
+05-10 04:26:34.985 31872 31872 I InputMethodManager: startInputInner - IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus
+05-10 04:26:35.001 31872 31872 I InsetsSourceConsumer: applyRequestedVisibilityToControl: visible=false, type=ime, host=com.aurora.gallery/com.aurora.gallery.MainActivity
+05-10 04:26:35.092 31872 31872 I WebViewFactory: Loading com.google.android.webview version 146.0.7680.119 (code 768011903)
+05-10 04:26:35.096 31872 31872 W .aurora.gallery: Loading /data/app/~~xy58jcYGBE182eWUhXM8EA==/com.google.android.webview-iGbKqJ8Pp-bOU6kjq9ZUXw==/oat/arm64/base.odex non-executable as it requires an image which we failed to load
+05-10 04:26:35.112 31872 31872 I cr_WVCFactoryProvider: version=146.0.7680.119 (768011903) minSdkVersion=29 multiprocess=true packageId=127 splits=<none>
+05-10 04:26:35.120 31872 31964 I chromium: [0510/042635.120043:INFO:android_webview/browser/variations/variations_seed_loader.cc:67] Failed to open file for reading.: No such file or directory (2)
+05-10 04:26:35.120 31872 31927 I RustStdoutStderr: [0510/042635.120043:INFO:android_webview/browser/variations/variations_seed_loader.cc:67] Failed to open file for reading.: No such file or directory (2)
+05-10 04:26:35.127 31872 31872 I cr_LibraryLoader: Successfully loaded native library
+05-10 04:26:35.128 31872 31872 I cr_CachingUmaRecorder: Flushed 20 samples from 19 histograms, 0 samples were dropped.
+05-10 04:26:35.130 31872 31872 I cr_ChildProcLH: ScopedServiceBindingBatch.tryActivate: false
+05-10 04:26:35.131 31872 31872 I cr_CombinedPProvider: #registerProvider() provider:WV.qk@47689d9 isPolicyCacheEnabled:false policyProvidersSize:0
+05-10 04:26:35.132 31872 31872 I cr_PolicyProvider: #setManagerAndSource() 0
+05-10 04:26:35.136 31872 31872 I cr_DisplayManager: Is Display Topology available: false
+05-10 04:26:35.150 31872 31872 I cr_CombinedPProvider: #linkNativeInternal() 1
+05-10 04:26:35.151 31872 31872 I cr_AppResProvider: #getApplicationRestrictionsFromUserManager() Bundle[EMPTY_PARCEL]
+05-10 04:26:35.151 31872 31872 I cr_PolicyProvider: #notifySettingsAvailable() 0
+05-10 04:26:35.151 31872 31872 I cr_CombinedPProvider: #onSettingsAvailable() 0
+05-10 04:26:35.151 31872 31872 I cr_CombinedPProvider: #flushPolicies()
+05-10 04:26:35.169 31872 31979 W chromium: [WARNING:net/dns/dns_config_service_android.cc:69] Failed to read DnsConfig.
+05-10 04:26:35.169 31872 31927 I RustStdoutStderr: [WARNING:net/dns/dns_config_service_android.cc:69] Failed to read DnsConfig.
+05-10 04:26:35.171 31872 31872 W chromium: [WARNING:android_webview/browser/network_service/net_helpers.cc:137] HTTP Cache size is: 20971520
+05-10 04:26:35.171 31872 31927 I RustStdoutStderr: [WARNING:android_webview/browser/network_service/net_helpers.cc:137] HTTP Cache size is: 20971520
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: Reset 0 files from 'processing' to 'pending' status
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: === get_db_file_sizes called ===
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: Database path from self.db_path: /data/user/0/com.aurora.gallery/colors.db
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: Resolved DB path: /data/user/0/com.aurora.gallery/colors.db
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: Resolved WAL path: /data/user/0/com.aurora.gallery/colors.db-wal
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: DB file metadata found, size: 839680 bytes
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: WAL file metadata found, size: 4173592 bytes
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: Database file sizes: DB=839680 bytes (0.80 MB), WAL=4173592 bytes (3.98 MB)
+05-10 04:26:35.225 31872 31927 I RustStdoutStderr: === get_db_file_sizes completed ===
+05-10 04:26:35.238 31872 31872 W Adreno-AppProfiles: Could not find QSPM HAL service. Skipping adreno profile processing.
+05-10 04:26:35.239 31872 31872 I AdrenoVK-0: ===== BEGIN DUMP OF OVERRIDDEN SETTINGS =====
+05-10 04:26:35.239 31872 31872 I AdrenoVK-0: ===== END DUMP OF OVERRIDDEN SETTINGS =====
+05-10 04:26:35.240 31872 32007 I CameraManagerGlobal: Connecting to camera service
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: QUALCOMM build          : 194d5e5755, I6561b7ccb3
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Build Date              : 08/10/23
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Shader Compiler Version : EV031.36.08.13
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Local Branch            :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Remote Branch           :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Remote Branch           :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Reconstruct Branch      :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Build Config            : S P 12.1.1 AArch64
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Driver Path             : /vendor/lib64/hw/vulkan.adreno.so
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Driver Version          : 0615.0
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: PFP                     : 0x01730155
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: ME                      : 0x00000000
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Application Name    :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Application Version : 0x00000001
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Engine Name         :
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Engine Version      : 0x00000001
+05-10 04:26:35.240 31872 31872 I AdrenoVK-0: Api Version         : 0x00403000
+05-10 04:26:35.249 31872 31941 I ViewRootImpl@7e411b6[MainActivity]: mWNT: t=0xb4000074cb281950 mBlastBufferQueue=0xb40000751b272ef0 fn= 2 caller= android.view.ViewRootImpl$6.onFrameDraw:5582 android.view.ViewRootImpl$2.onFrameDraw:2131 android.view.ThreadedRenderer$1.onFrameDraw:788
+05-10 04:26:35.260 31872 31984 W cr_media: BLUETOOTH_CONNECT permission is missing.
+05-10 04:26:35.264 31872 31984 W cr_media: getBluetoothAdapter() requires BLUETOOTH permission
+05-10 04:26:35.264 31872 31984 W cr_media: registerBluetoothIntentsIfNeeded: Requires BLUETOOTH permission
+05-10 04:26:35.273 31872 31947 I CameraManagerGlobal: Camera 0 facing CAMERA_FACING_BACK state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.273 31872 31947 I CameraManagerGlobal: Camera 1 facing CAMERA_FACING_FRONT state now CAMERA_STATE_CLOSED for client com.samsung.android.smartface API Level 2 User Id 0
+05-10 04:26:35.273 31872 31947 I CameraManagerGlobal: Camera 2 facing CAMERA_FACING_BACK state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.274 31872 31947 I CameraManagerGlobal: Camera 3 facing CAMERA_FACING_FRONT state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.274 31872 31947 I CameraManagerGlobal: Camera 4 facing CAMERA_FACING_FRONT state now CAMERA_STATE_CLOSED for client client.pid<1466> API Level 2 User Id 0
+05-10 04:26:35.274 31872 31947 I CameraManagerGlobal: Camera 56 facing CAMERA_FACING_BACK state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.274 31872 31947 I CameraManagerGlobal: Camera 58 facing CAMERA_FACING_BACK state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.274 31872 31947 I CameraManagerGlobal: Camera 90 facing CAMERA_FACING_FRONT state now CAMERA_STATE_CLOSED for client android.system API Level 2 User Id 0
+05-10 04:26:35.274 31872 32007 I CameraManager: registerAvailabilityCallback: Is device callback = false
+05-10 04:26:35.275 31872 32007 I CameraManagerGlobal: postSingleUpdate device: camera id 0 status STATUS_PRESENT
+05-10 04:26:35.275 31872 32007 I CameraManagerGlobal: postSingleUpdate device: camera id 1 status STATUS_PRESENT
+05-10 04:26:35.275 31872 32007 I CameraManagerGlobal: postSingleUpdate device: camera id 2 status STATUS_PRESENT
+05-10 04:26:35.275 31872 32007 I CameraManagerGlobal: postSingleUpdate device: camera id 3 status STATUS_PRESENT
+05-10 04:26:35.361 31872 32000 W AudioCapabilities: Unsupported mime audio/evrc
+05-10 04:26:35.362 31872 32000 W AudioCapabilities: Unsupported mime audio/evrc
+05-10 04:26:35.364 31872 32000 W AudioCapabilities: Unsupported mime audio/x-ima
+05-10 04:26:35.364 31872 32000 W AudioCapabilities: Unsupported mime audio/mpeg-L1
+05-10 04:26:35.364 31872 32000 W AudioCapabilities: Unsupported mime audio/mpeg-L2
+05-10 04:26:35.365 31872 32000 W AudioCapabilities: Unsupported mime audio/qcelp
+05-10 04:26:35.365 31872 32000 W AudioCapabilities: Unsupported mime audio/qcelp
+05-10 04:26:35.365 31872 32000 W VideoCapabilities: Unsupported mime video/wvc1
+05-10 04:26:35.366 31872 32000 W VideoCapabilities: Unsupported mime video/x-ms-wmv
+05-10 04:26:35.379 31872 31882 I .aurora.gallery: Compiler allocated 6711KB to compile void android.view.ViewRootImpl.performTraversals()
+05-10 04:26:35.400 31872 32000 W VideoCapabilities: Unsupported mime image/vnd.android.heic
+05-10 04:26:35.401 31872 32000 W VideoCapabilities: Unsupported mime image/vnd.android.heic
+05-10 04:26:48.571 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: ViewPostIme pointer 0
+05-10 04:26:48.641 31872 31883 W .aurora.gallery: userfaultfd: MOVE ioctl seems unsupported: Connection timed out
+05-10 04:26:48.686 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: ViewPostIme pointer 1
+05-10 04:26:48.876 31872 31872 I InputMethodManager: startInputInner - IInputMethodManagerGlobalInvoker.startInputOrWindowGainedFocus
+05-10 04:26:50.797 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: ViewPostIme pointer 0
+05-10 04:26:50.911 31872 31872 I ViewRootImpl@7e411b6[MainActivity]: ViewPostIme pointer 1
+05-10 04:27:05.337 31872 31981 E tauri::protocol::tauri: [tauri::protocol::tauri] Failed to request http://26.99.118.56:14422/: error sending request for url (http://26.99.118.56:14422/)
+05-10 04:27:35.546 31872 31980 E tauri::protocol::tauri: [tauri::protocol::tauri] Failed to request http://26.99.118.56:14422/favicon.ico: error sending request for url (http://26.99.118.56:14422/favicon.ico)

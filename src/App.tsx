@@ -831,10 +831,10 @@ export const App: React.FC = () => {
       } else {
         menuType = 'file-multi';
       }
-      setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
+      setContextMenu({ visible: true, x, y, type: menuType, targetId: id, source: 'long-press' });
     } else {
       const menuType = file.type === FileType.FOLDER ? 'folder-single' : 'file-single';
-      setContextMenu({ visible: true, x, y, type: menuType, targetId: id });
+      setContextMenu({ visible: true, x, y, type: menuType, targetId: id, source: 'long-press' });
     }
   }, [state.files, activeTab.selectedFileIds, setContextMenu]);
 
@@ -2416,6 +2416,7 @@ export const App: React.FC = () => {
                     sortBy={state.sortBy}
                     sortDirection={state.sortDirection}
                     dateFilter={activeTab.dateFilter}
+                    onRefresh={() => handleRefresh()}
                   />
                 </div>
                 {activeTab.viewMode === 'topics-overview' ? (
@@ -2539,6 +2540,7 @@ export const App: React.FC = () => {
                     personSortBy={personSortBy}
                     personSortDirection={personSortDirection}
                     personGroupBy={personGroupBy}
+                    onRefresh={() => handleRefresh(activeTab.folderId)}
                   />
                 )}
               </div>
