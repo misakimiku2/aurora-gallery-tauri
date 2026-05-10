@@ -21,6 +21,7 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:android:dev": "node scripts/android-dev.mjs",
+    "tauri:android:dev:reuse": "node scripts/android-dev-reuse.mjs",
     "tauri:build": "tauri build",
     "test": "vitest"
   },

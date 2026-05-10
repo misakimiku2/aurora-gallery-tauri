@@ -1,5 +1,7 @@
 import { execSync } from 'child_process';
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
 
 function getLocalIP() {
   const interfaces = os.networkInterfaces();
@@ -18,14 +20,20 @@ function getLocalIP() {
 }
 
 const ip = getLocalIP();
-console.log(`[android-dev] Using IP: ${ip}`);
+console.log(`[android-reuse] IP: ${ip} (reusing Vite at http://${ip}:14422)`);
+
 process.env.TAURI_DEV_HOST = ip;
 
-const cmd = `npx tauri android dev --host ${ip}`;
-console.log(`[android-dev] Running: ${cmd}`);
+const tmpConfig = path.resolve('src-tauri', '.tauri-reuse.json');
+const configOverride = { build: { beforeDevCommand: "" } };
+fs.writeFileSync(tmpConfig, JSON.stringify(configOverride, null, 2));
 
 try {
+  const cmd = `npx tauri android dev --host ${ip} --config ${tmpConfig}`;
+  console.log(`[android-reuse] Running: ${cmd}`);
   execSync(cmd, { stdio: 'inherit', env: process.env });
 } catch (e) {
   process.exit(e.status || 1);
+} finally {
+  try { fs.unlinkSync(tmpConfig); } catch {}
 }

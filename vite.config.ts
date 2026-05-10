@@ -22,13 +22,6 @@ function getLocalIP() {
   return privateIP || candidates[0] || 'localhost';
 }
 
-const isAndroid = process.env.TAURI_ENV_PLATFORM === 'android';
-const localIP = getLocalIP();
-
-if (isAndroid && localIP !== 'localhost') {
-  process.env.TAURI_DEV_HOST = localIP;
-}
-
 export default defineConfig({
   plugins: [react()],
   base: '/',
@@ -42,12 +35,10 @@ export default defineConfig({
     port: 14422,
     strictPort: true,
     host: '0.0.0.0',
-    ...(isAndroid ? {
-      hmr: {
-        host: localIP,
-        port: 14422,
-      }
-    } : {}),
+    hmr: {
+      host: getLocalIP(),
+      port: 14422,
+    },
     watch: {
       ignored: ['**/src-tauri/**'],
     },
