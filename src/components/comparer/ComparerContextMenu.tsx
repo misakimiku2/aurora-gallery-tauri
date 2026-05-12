@@ -17,9 +17,10 @@ interface ComparerContextMenuProps {
     onClose: () => void;
     options: Option[];
     compact?: boolean;
+    isAndroid?: boolean;
 }
 
-export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, onClose, options, compact = false }) => {
+export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, onClose, options, compact = false, isAndroid = false }) => {
     const menuRef = useRef<HTMLDivElement>(null);
     const [position, setPosition] = useState({ x, y });
     const [isVisible, setIsVisible] = useState(false);
@@ -44,31 +45,26 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    // Calculate isCompact based on window size and compact prop
     const isCompact = compact || windowSize.height < 350;
 
     useEffect(() => {
         if (menuRef.current) {
             const rect = menuRef.current.getBoundingClientRect();
-            const menuWidth = isCompact ? 176 : 224; // w-44 = 176px, w-56 = 224px
+            const menuWidth = isAndroid ? 208 : (isCompact ? 176 : 224);
             const menuHeight = rect.height;
             let newX = x;
             let newY = y;
 
-            // Check right boundary
             if (newX + menuWidth > window.innerWidth) {
                 newX = Math.max(10, newX - menuWidth);
             }
-            // Check left boundary
             if (newX < 0) {
                 newX = 10;
             }
 
-            // Check bottom boundary
             if (newY + menuHeight > window.innerHeight) {
                 newY = Math.max(10, newY - menuHeight);
             }
-            // Check top boundary
             if (newY < 0) {
                 newY = 10;
             }
@@ -76,7 +72,7 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
             setPosition({ x: newX, y: newY });
             setIsVisible(true);
         }
-    }, [x, y, isCompact]);
+    }, [x, y, isCompact, isAndroid]);
 
     const handleOptionClick = (e: React.MouseEvent, opt: Option) => {
         e.stopPropagation();
@@ -91,11 +87,27 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
 
     const renderOption = (opt: Option, index: number, isSubMenu = false) => {
         if (opt.divider) {
-            return <div key={index} className={`bg-gray-200 dark:bg-gray-700 ${isCompact ? 'my-0.5' : 'my-1'} ${isSubMenu ? 'h-px' : 'h-px'}`} />;
+            return <div key={index} className={`bg-gray-200 dark:bg-gray-700 ${isAndroid ? 'my-1' : (isCompact ? 'my-0.5' : 'my-1')} ${isSubMenu ? 'h-px' : 'h-px'}`} />;
         }
 
         const hasChildren = opt.children && opt.children.length > 0;
         const isExpanded = expandedGroup === opt.label;
+
+        const itemClass = isAndroid
+            ? `w-full text-left flex items-center transition-colors ${
+                opt.disabled
+                    ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500'
+                    : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
+              } px-4 space-x-3`
+            : `w-full text-left flex items-center transition-colors ${
+                opt.disabled
+                    ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500'
+                    : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
+              } ${
+                isCompact
+                    ? 'px-2 py-1 text-xs space-x-1.5'
+                    : 'px-4 py-2 text-sm space-x-2'
+              }`;
 
         return (
             <div key={index}>
@@ -103,28 +115,21 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={(e) => handleOptionClick(e, opt)}
                     disabled={opt.disabled}
-                    className={`w-full text-left flex items-center transition-colors ${
-                        opt.disabled
-                            ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500'
-                            : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
-                    } ${
-                        isCompact
-                            ? 'px-2 py-1 text-xs space-x-1.5'
-                            : 'px-4 py-2 text-sm space-x-2'
-                    }`}
+                    className={itemClass}
+                    style={isAndroid ? { height: 50, fontSize: 15 } : undefined}
                 >
                     {opt.icon && (
-                        <span className={`${opt.disabled ? 'opacity-40' : 'opacity-70'} ${isCompact ? 'scale-75' : ''}`}>
+                        <span className={`${opt.disabled ? 'opacity-40' : 'opacity-70'} ${isAndroid ? 'scale-110' : (isCompact ? 'scale-75' : '')}`}>
                             {opt.icon}
                         </span>
                     )}
                     <span className="truncate flex-1">{opt.label}</span>
                     {hasChildren && (
-                        <ChevronRight size={isCompact ? 12 : 14} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                        <ChevronRight size={isAndroid ? 18 : (isCompact ? 12 : 14)} className={`transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                     )}
                 </button>
                 {hasChildren && isExpanded && (
-                    <div className={`bg-gray-50 dark:bg-gray-800/50 ${isCompact ? 'py-0.5' : 'py-1'}`}>
+                    <div className={`bg-gray-50 dark:bg-gray-800/50 ${isAndroid ? 'py-1' : (isCompact ? 'py-0.5' : 'py-1')}`}>
                         {opt.children!.map((childOpt, childIndex) => renderOption(childOpt, childIndex, true))}
                     </div>
                 )}
@@ -135,10 +140,11 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
     return (
         <div
             ref={menuRef}
+            data-menu="true"
             className={`fixed z-[9999] bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden transition-opacity duration-100 ${
                 isVisible ? 'opacity-100' : 'opacity-0'
             } ${
-                isCompact ? 'w-44 py-0.5' : 'w-56 py-1'
+                isAndroid ? 'w-52 py-1' : (isCompact ? 'w-44 py-0.5' : 'w-56 py-1')
             }`}
             style={{ left: position.x, top: position.y, maxHeight: '90vh', overflowY: 'auto' }}
             onContextMenu={(e) => e.preventDefault()}

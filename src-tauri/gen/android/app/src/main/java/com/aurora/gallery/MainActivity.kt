@@ -65,6 +65,7 @@ class MainActivity : TauriActivity() {
     val allGranted = permissions.all { it.value }
     if (allGranted) {
       notifyPermissionResultWithRetry("granted")
+      requestAllFilesAccessIfNeeded()
     } else {
       val permanentlyDenied = permissions.any { (perm, granted) ->
         !granted && !shouldShowRequestPermissionRationale(perm)
@@ -74,6 +75,7 @@ class MainActivity : TauriActivity() {
       } else {
         notifyPermissionResultWithRetry("denied")
       }
+      requestAllFilesAccessIfNeeded()
     }
   }
 
@@ -111,6 +113,11 @@ class MainActivity : TauriActivity() {
     })
   }
 
+  override fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?) {
+    super.onActivityResult(requestCode, resultCode, data)
+    android.util.Log.d("AuroraDelete", "Delete permission result: request=$requestCode, result=$resultCode")
+  }
+
   private fun getRequiredPermissions(): Array<String> {
     return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
       arrayOf(
@@ -136,6 +143,7 @@ class MainActivity : TauriActivity() {
       permissionLauncher.launch(needed.toTypedArray())
     } else {
       notifyPermissionResultWithRetry("granted")
+      requestAllFilesAccessIfNeeded()
     }
   }
 
@@ -154,6 +162,39 @@ class MainActivity : TauriActivity() {
       if (partialAccess) return "granted_partial"
     }
     return "denied"
+  }
+
+  fun isExternalStorageManager(): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      android.os.Environment.isExternalStorageManager()
+    } else {
+      true
+    }
+  }
+
+  private fun requestAllFilesAccessIfNeeded() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      if (!android.os.Environment.isExternalStorageManager()) {
+        try {
+          val intent = Intent(
+            android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            android.net.Uri.parse("package:$packageName")
+          )
+          startActivity(intent)
+        } catch (e: Exception) {
+          try {
+            val intent = Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            startActivity(intent)
+          } catch (e2: Exception) {
+            android.util.Log.e("AuroraPermission", "Failed to open all files access settings", e2)
+          }
+        }
+      }
+    }
+  }
+
+  fun requestAllFilesAccess() {
+    requestAllFilesAccessIfNeeded()
   }
 
   fun scanAllAsJson(sinceTimestamp: Long): String {
@@ -885,6 +926,65 @@ class MainActivity : TauriActivity() {
       } catch (e: Exception) {
         android.util.Log.e("AuroraShare", "Failed to share images", e)
       }
+    }
+  }
+
+  fun deleteMediaByIds(jsonIds: String): String {
+    try {
+      val ids = org.json.JSONArray(jsonIds)
+      var deletedCount = 0
+      var failedCount = 0
+
+      for (i in 0 until ids.length()) {
+        val id = ids.getLong(i)
+        val uri = android.content.ContentUris.withAppendedId(
+          android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id
+        )
+        try {
+          val rowsDeleted = contentResolver.delete(uri, null, null)
+          if (rowsDeleted > 0) {
+            deletedCount++
+            val cacheFilename = "sys_${id}_q80.jpg"
+            val cacheFile = java.io.File(cacheDir, cacheFilename)
+            if (cacheFile.exists()) {
+              cacheFile.delete()
+            }
+          } else {
+            failedCount++
+          }
+        } catch (e: android.app.RecoverableSecurityException) {
+          android.util.Log.d("AuroraDelete", "RecoverableSecurityException for $id, requesting user consent")
+          runOnUiThread {
+            try {
+              startIntentSenderForResult(
+                e.userAction.actionIntent.intentSender,
+                10001 + (deletedCount + failedCount),
+                null, 0, 0, 0, null
+              )
+            } catch (e2: Exception) {
+              android.util.Log.e("AuroraDelete", "Failed to start recovery intent", e2)
+            }
+          }
+          failedCount++
+        } catch (e: Exception) {
+          android.util.Log.e("AuroraDelete", "Delete failed for $id", e)
+          failedCount++
+        }
+      }
+
+      val result = org.json.JSONObject().apply {
+        put("deleted", deletedCount)
+        put("failed", failedCount)
+      }
+      return result.toString()
+    } catch (e: Exception) {
+      android.util.Log.e("AuroraDelete", "Failed to delete media", e)
+      val result = org.json.JSONObject().apply {
+        put("deleted", 0)
+        put("failed", -1)
+        put("error", e.message ?: "unknown")
+      }
+      return result.toString()
     }
   }
 }

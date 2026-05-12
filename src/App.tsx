@@ -23,7 +23,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -758,6 +758,74 @@ export const App: React.FC = () => {
   const handleDeselectAllAndroid = useCallback(() => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
+
+  const handleAndroidDelete = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const filesToDelete = ids.map(id => state.files[id]).filter(Boolean);
+    if (filesToDelete.length === 0) return;
+
+    setState(prev => ({
+      ...prev,
+      activeModal: {
+        type: 'confirm-delete-file',
+        data: {
+          fileIds: ids,
+          files: filesToDelete,
+          onConfirm: async () => {
+            setState(s => {
+              const newFiles = { ...s.files };
+              const filePaths: string[] = [];
+
+              ids.forEach(id => {
+                const file = newFiles[id];
+                if (file) {
+                  if (file.path) filePaths.push(file.path);
+                  if (file.parentId && newFiles[file.parentId]) {
+                    const parent = newFiles[file.parentId];
+                    newFiles[file.parentId] = { ...parent, children: parent.children?.filter(cid => cid !== id) };
+                  }
+                  delete newFiles[id];
+                }
+              });
+
+              const updatedTabs = s.tabs.map(t => ({
+                ...t,
+                selectedFileIds: t.selectedFileIds.filter(fid => !ids.includes(fid)),
+                viewingFileId: t.viewingFileId && ids.includes(t.viewingFileId) ? null : t.viewingFileId
+              }));
+
+              (async () => {
+                try {
+                  for (const filePath of filePaths) {
+                    if (isTauriEnvironment()) {
+                      await deleteFile(filePath);
+                    }
+                  }
+                  try {
+                    const defaults = await tauriGetDefaultPaths();
+                    if (defaults.appDataDir) {
+                      await clearScanCache(defaults.appDataDir);
+                    }
+                  } catch (_) { /* cache clear is best-effort */ }
+                  showToast(t('context.deletedItems').replace('{count}', filesToDelete.length.toString()));
+                } catch (err) {
+                  console.error('Delete failed:', err);
+                  try { showToast(t('errors.deleteFailed') || 'Delete failed'); } catch (_) { showToast('Delete failed'); }
+                }
+              })();
+
+              return { ...s, files: newFiles, tabs: updatedTabs, activeModal: { type: null } };
+            });
+
+            handleExitAndroidSelectionMode();
+          },
+          onCancel: () => {
+            setState(s => ({ ...s, activeModal: { type: null } }));
+          }
+        }
+      }
+    }));
+  }, [state.files, t, showToast, handleExitAndroidSelectionMode]);
 
   const handleFolderSelect = useCallback((id: string) => {
     if (!isAndroidSelectionMode) return;
@@ -1990,7 +2058,7 @@ export const App: React.FC = () => {
               onNavigateForward={goForward}
               canGoBack={activeTab.history.currentIndex > 0}
               canGoForward={activeTab.history.currentIndex < activeTab.history.stack.length - 1}
-              onDelete={(id) => requestDelete([id])}
+              onDelete={(id) => isAndroidDevice ? handleAndroidDelete([id]) : requestDelete([id])}
               onViewInExplorer={handleViewInExplorer}
               onCopyToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }))}
               onMoveToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }))}
@@ -2070,7 +2138,7 @@ export const App: React.FC = () => {
                 }}
                 onClearSelection={handleExitAndroidSelectionMode}
                 onDeselectAll={handleDeselectAllAndroid}
-                onDelete={requestDelete}
+                onDelete={handleAndroidDelete}
                 onShowContextMenu={(x: number, y: number) => {
                   const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
                   const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
@@ -2602,7 +2670,7 @@ export const App: React.FC = () => {
           }}
         />
         <GlobalToasts
-          deletionTasks={deletionTasks}
+          deletionTasks={isAndroidDevice ? [] : deletionTasks}
           undoDelete={undoDelete}
           dismissDelete={dismissDelete}
           showDragHint={showDragHint}
@@ -2692,7 +2760,7 @@ export const App: React.FC = () => {
         handleAIAnalysis={handleAIAnalysis}
         handleClearPersonInfo={handleClearPersonInfo}
         handleGenerateThumbnails={handleGenerateThumbnails}
-        requestDelete={requestDelete}
+        requestDelete={isAndroidDevice ? handleAndroidDelete : requestDelete}
         handleCreateFolder={handleCreateFolder}
         handleExpandAll={handleExpandAll}
         handleCollapseAll={handleCollapseAll}

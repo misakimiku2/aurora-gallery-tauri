@@ -467,7 +467,7 @@ export interface AppState {
   settingsCategory: SettingsCategory;
   tasks: TaskProgress[];
   activeModal: {
-    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'create-person' | 'rename-topic' | 'smart-create-person' | 'smart-add-to-person' | 'smart-create-topic' | 'auto-generate-tags' | 'update' | null;
+    type: 'copy-to-folder' | 'move-to-folder' | 'rename-tag' | 'rename-person' | 'add-to-person' | 'add-to-topic' | 'confirm-delete-person' | 'confirm-delete-file' | 'edit-tags' | 'confirm-rename-file' | 'confirm-merge-folder' | 'confirm-extension-change' | 'alert' | 'confirm-delete-tag' | 'ai-analyzing' | 'batch-rename' | 'ai-batch-rename' | 'crop-avatar' | 'exit-confirm' | 'clear-person' | 'confirm-overwrite-file' | 'create-topic' | 'create-person' | 'rename-topic' | 'smart-create-person' | 'smart-add-to-person' | 'smart-create-topic' | 'auto-generate-tags' | 'update' | null;
     data?: any;
   };
   aiConnectionStatus: 'checking' | 'connected' | 'disconnected';

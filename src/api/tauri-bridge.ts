@@ -119,6 +119,25 @@ export async function androidShareImages(imagePaths: string[]): Promise<void> {
   }
 }
 
+export async function androidCheckStorageManager(): Promise<boolean> {
+  if (!_isAndroid) return true;
+  try {
+    return await invoke('android_check_storage_manager') as boolean;
+  } catch (e) {
+    console.warn('Failed to check storage manager:', e);
+    return false;
+  }
+}
+
+export async function androidRequestAllFilesAccess(): Promise<void> {
+  if (!_isAndroid) return;
+  try {
+    await invoke('android_request_all_files_access');
+  } catch (e) {
+    console.warn('Failed to request all files access:', e);
+  }
+}
+
 /**
  * 获取文件的资源 URL (用于直接在 img 标签中显示本地文件)
  * @param filePath 文件路径
@@ -944,6 +963,24 @@ export const deleteFile = async (path: string): Promise<void> => {
   } catch (error) {
     console.error('Failed to delete file:', error);
     throw error;
+  }
+};
+
+export const deleteAndroidFiles = async (mediaIds: number[]): Promise<{ deleted: number; failed: number; error?: string }> => {
+  try {
+    const result = await invoke('android_delete_files', { mediaIds: mediaIds.map(Number) });
+    return JSON.parse(result as string);
+  } catch (error) {
+    console.error('Failed to delete Android files:', error);
+    throw error;
+  }
+};
+
+export const clearScanCache = async (appDataDir: string): Promise<void> => {
+  try {
+    await invoke('android_clear_scan_cache', { appDataDir });
+  } catch (error) {
+    console.error('Failed to clear scan cache:', error);
   }
 };
 

@@ -322,6 +322,28 @@ export const AppModals: React.FC<AppModalsProps> = ({
             />
           )}
 
+          {state.activeModal.type === 'confirm-delete-file' && state.activeModal.data && (
+            <ConfirmModalComp
+              title={t('context.confirmDelete')}
+              message={state.activeModal.data.files.length === 1
+                ? `${t('context.confirmDelete')} "${state.activeModal.data.files[0].name}" ?`
+                : `${t('context.confirmDelete')} ${state.activeModal.data.files.length} ${t('context.items') || 'items'} ?`}
+              subMessage={state.activeModal.data.files.length <= 5
+                ? state.activeModal.data.files.map((f: any) => f.name).join(', ')
+                : state.activeModal.data.files.slice(0, 5).map((f: any) => f.name).join(', ') + ` ... (+${state.activeModal.data.files.length - 5})`}
+              confirmText={t('context.delete')}
+              confirmIcon={Trash2}
+              onClose={() => {
+                state.activeModal.data.onCancel?.();
+                closeModals();
+              }}
+              onConfirm={() => {
+                state.activeModal.data.onConfirm?.();
+              }}
+              t={t}
+            />
+          )}
+
           {state.activeModal.type === 'edit-tags' && state.activeModal.data && (
             <TagEditorComp
               file={state.files[state.activeModal.data.fileId]}

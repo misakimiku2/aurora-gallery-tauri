@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye } from 'lucide-react';
+import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye, MoreVertical } from 'lucide-react';
 import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../types';
 import { setWindowMinSize } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
+import { isAndroidSync } from '../utils/androidPlatform';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
@@ -62,12 +63,10 @@ interface MipmapCache {
 
 // 获取最适合当前缩放比例的缓存级别
 function getBestMipmapLevel(cache: MipmapCache, targetScale: number): HTMLImageElement | HTMLCanvasElement {
-  // 如果目标缩放比例 >= 0.8，使用原图以获得最佳清晰度
-  if (targetScale >= 0.8) {
+  if (targetScale >= 0.8 || cache.levels.length === 0) {
     return cache.original;
   }
 
-  // 找到最适合的缩小级别
   let bestLevel = cache.levels[0];
   let bestScore = Infinity;
 
@@ -84,10 +83,12 @@ function getBestMipmapLevel(cache: MipmapCache, targetScale: number): HTMLImageE
 }
 
 // 创建多级 Mipmap
-function createMipmapLevels(img: HTMLImageElement, originalWidth: number, originalHeight: number): MipmapCache['levels'] {
+function createMipmapLevels(img: HTMLImageElement, originalWidth: number, originalHeight: number, androidOptimized = false): MipmapCache['levels'] {
   const levels: MipmapCache['levels'] = [];
-  // 增加更多中间级别以改善显示质量
-  const scales = [0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0625];
+  // 安卓端减少级别数量以节省内存和创建时间
+  const scales = androidOptimized
+    ? [0.5, 0.25, 0.125, 0.0625]
+    : [0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0625];
 
   for (const scale of scales) {
     const canvas = document.createElement('canvas');
@@ -135,7 +136,26 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
 
   const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
+  const isAndroid = isAndroidSync();
+  const [isEditMode, setIsEditMode] = useState(false);
+  const isEditModeRef = useRef(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const touchStartPosRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const pinchStateRef = useRef<{
+    active: boolean;
+    initialDistance: number;
+    initialMidpoint: { x: number; y: number };
+    initialTransform: { x: number; y: number; scale: number };
+  }>({ active: false, initialDistance: 0, initialMidpoint: { x: 0, y: 0 }, initialTransform: { x: 0, y: 0, scale: 1 } });
+  const singleFingerDragRef = useRef<{
+    active: boolean;
+    startX: number;
+    startY: number;
+    initialTransform: { x: number; y: number; scale: number };
+  }>({ active: false, startX: 0, startY: 0, initialTransform: { x: 0, y: 0, scale: 1 } });
+  const lastTapRef = useRef<{ x: number; y: number; time: number; targetId: string | null } | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [activeImageIds, setActiveImageIds] = useState<string[]>([]);
   const [manualLayouts, setManualLayouts] = useState<Record<string, { x: number, y: number, width: number, height: number, rotation: number }>>({});
@@ -159,6 +179,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const [marquee, setMarquee] = useState<{ startX: number; startY: number; x: number; y: number; active: boolean } | null>(null);
   const potentialClearSelectionRef = useRef(false);
   const shouldAutoFitAfterLoadRef = useRef(false);
+
+  useEffect(() => {
+    if (isAndroid && activeImageIds.length === 0) {
+      setIsEditMode(false);
+      isEditModeRef.current = false;
+    }
+  }, [activeImageIds, isAndroid]);
   // Toast notifications
   const { toast, showToast } = useToasts();
   // Use internal state if props not provided, otherwise use props
@@ -182,6 +209,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   // 多级 Mipmap 缓存
   const imagesCache = useRef<Map<string, MipmapCache>>(new Map());
+  const loadingIdsRef = useRef<Set<string>>(new Set());
   const [loadedCount, setLoadedCount] = useState(0);
 
   // 使用 ref 存储 transform 以避免动画循环中的闭包问题
@@ -213,36 +241,82 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return () => observer.disconnect();
   }, []);
 
-  // Update container size on mount and resize
+  const prevContainerWidthRef = useRef<number>(0);
+  const prevMetadataVisibleRef = useRef<boolean | undefined>(layoutProp?.isMetadataVisible);
+  const prevSidebarVisibleRef = useRef<boolean | undefined>(layoutProp?.isSidebarVisible);
+  const activePanelTransitionRef = useRef<'metadata' | 'sidebar' | null>(null);
+  const panelTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    const currMeta = layoutProp?.isMetadataVisible;
+    const currSidebar = layoutProp?.isSidebarVisible;
+    const prevMeta = prevMetadataVisibleRef.current;
+    const prevSidebar = prevSidebarVisibleRef.current;
+    if (currMeta !== prevMeta || currSidebar !== prevSidebar) {
+      if (currMeta !== prevMeta) {
+        activePanelTransitionRef.current = 'metadata';
+      } else if (currSidebar !== prevSidebar) {
+        activePanelTransitionRef.current = 'sidebar';
+      }
+      if (panelTransitionTimerRef.current) clearTimeout(panelTransitionTimerRef.current);
+      panelTransitionTimerRef.current = setTimeout(() => {
+        activePanelTransitionRef.current = null;
+        prevMetadataVisibleRef.current = currMeta;
+        prevSidebarVisibleRef.current = currSidebar;
+      }, 350);
+    }
+    return () => {
+      if (panelTransitionTimerRef.current) clearTimeout(panelTransitionTimerRef.current);
+    };
+  }, [layoutProp?.isMetadataVisible, layoutProp?.isSidebarVisible, isAndroid]);
+
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
-        setContainerSize({
-          width: containerRef.current.clientWidth,
-          height: containerRef.current.clientHeight
-        });
+        const newWidth = containerRef.current.clientWidth;
+        const newHeight = containerRef.current.clientHeight;
+        const prev = prevContainerWidthRef.current;
+        if (prev && newWidth && prev !== newWidth && !isDraggingRef.current) {
+          const delta = newWidth - prev;
+          const transitionType = activePanelTransitionRef.current;
+          if (transitionType === 'metadata') {
+            setTransform(prevT => ({ ...prevT, x: prevT.x + delta }));
+          } else {
+            setTransform(prevT => ({ ...prevT, x: prevT.x + delta / 2 }));
+          }
+        }
+        setContainerSize({ width: newWidth, height: newHeight });
+        prevContainerWidthRef.current = newWidth;
       }
     };
     updateSize();
     let ro: ResizeObserver | null = null;
     if ((window as any).ResizeObserver && containerRef.current) {
-      ro = new ResizeObserver(() => updateSize());
+      if (isAndroid) {
+        let rafId: number | null = null;
+        ro = new ResizeObserver(() => {
+          if (rafId) cancelAnimationFrame(rafId);
+          rafId = requestAnimationFrame(() => {
+            updateSize();
+            rafId = null;
+          });
+        });
+      } else {
+        ro = new ResizeObserver(() => updateSize());
+      }
       ro.observe(containerRef.current);
     } else {
       window.addEventListener('resize', updateSize);
     }
-
     return () => {
       if (ro && containerRef.current) ro.unobserve(containerRef.current);
       if (!ro) window.removeEventListener('resize', updateSize);
     };
   }, []);
 
-  // Keep previous container width for panel toggle handling
-  const prevContainerWidthRef = useRef<number>(0);
-  const prevMetadataVisibleRef = useRef<boolean | undefined>(layoutProp?.isMetadataVisible);
-
   useEffect(() => {
+    if (isAndroid) return;
     const prev = prevContainerWidthRef.current;
     const curr = containerSize.width;
     if (prev && curr && prev !== curr && !isDragging) {
@@ -267,25 +341,116 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       .filter(file => file && file.path);
   }, [internalSelectedIds, files, sessionFiles]);
 
-  // Load images & create mipmap levels
+  // 基于实际缓存状态判断加载进度，loadedCount 作为触发器确保重渲染
+  const isLoadingCanvas = useMemo(() => {
+    if (imageFiles.length === 0) return false;
+    const cachedCount = imageFiles.filter(file => imagesCache.current.has(file.id)).length;
+    return cachedCount < imageFiles.length;
+  }, [imageFiles, loadedCount]);
+
+  // 同步 loadedCount 与实际缓存，避免计数器不同步导致加载覆盖层卡住
+  const realLoadedCount = useMemo(() => {
+    return imageFiles.filter(file => imagesCache.current.has(file.id)).length;
+  }, [imageFiles, loadedCount]);
+
+  // Load images & create mipmap levels (batch loading on Android)
   useEffect(() => {
-    imageFiles.forEach(file => {
-      if (!imagesCache.current.has(file.id)) {
+    const filesToLoad = imageFiles.filter(
+      file => !imagesCache.current.has(file.id) && !loadingIdsRef.current.has(file.id)
+    );
+
+    if (filesToLoad.length === 0) return;
+
+    const batchSize = isAndroid ? 4 : 8;
+    let loadIndex = 0;
+    let cancelled = false;
+    const pendingRafs: number[] = [];
+    const pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
+
+    const loadNextBatch = () => {
+      if (cancelled) return;
+      const batch = filesToLoad.slice(loadIndex, loadIndex + batchSize);
+      if (batch.length === 0) return;
+      loadIndex += batchSize;
+
+      batch.forEach(file => {
+        if (cancelled || loadingIdsRef.current.has(file.id)) return;
+        loadingIdsRef.current.add(file.id);
         const img = new Image();
+        const loadStart = performance.now();
         img.src = convertFileSrc(file.path);
         img.onload = () => {
+          if (cancelled) return;
           const w = file.meta?.width || img.width;
           const h = file.meta?.height || img.height;
-          const levels = createMipmapLevels(img, w, h);
+          const loadTime = performance.now() - loadStart;
 
-          imagesCache.current.set(file.id, {
-            original: img,
-            levels
-          });
+          if (isAndroid) {
+            console.log(`[Canvas] Image loaded: ${w}x${h} (${(w * h / 1000000).toFixed(1)}MP) in ${loadTime.toFixed(0)}ms - ${file.path.split('/').pop()}`);
+          }
+
+          if (isAndroid && w * h > 2000000) {
+            const cacheStart = performance.now();
+            const thumbScale = Math.min(256 / w, 256 / h, 1);
+            const thumbCanvas = document.createElement('canvas');
+            thumbCanvas.width = Math.round(w * thumbScale);
+            thumbCanvas.height = Math.round(h * thumbScale);
+            const thumbCtx = thumbCanvas.getContext('2d')!;
+            thumbCtx.imageSmoothingEnabled = true;
+            thumbCtx.imageSmoothingQuality = 'high';
+            thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
+            imagesCache.current.set(file.id, {
+              original: img,
+              levels: [{ canvas: thumbCanvas, scale: thumbScale }]
+            });
+            setLoadedCount(prev => prev + 1);
+            console.log(`[Canvas] Cache with thumbnail: ${thumbCanvas.width}x${thumbCanvas.height} in ${(performance.now() - cacheStart).toFixed(0)}ms`);
+            const rafId = requestAnimationFrame(() => {
+              if (cancelled) return;
+              const mipmapStart = performance.now();
+              const levels = createMipmapLevels(img, w, h, true);
+              const mipmapTime = performance.now() - mipmapStart;
+              console.log(`[Canvas] Mipmap created: ${levels.length} levels in ${mipmapTime.toFixed(0)}ms for ${w}x${h}`);
+              if (!cancelled && imagesCache.current.has(file.id)) {
+                imagesCache.current.set(file.id, { original: img, levels });
+              }
+            });
+            pendingRafs.push(rafId);
+          } else {
+            const cacheStart = performance.now();
+            const levels = createMipmapLevels(img, w, h, isAndroid);
+            imagesCache.current.set(file.id, {
+              original: img,
+              levels
+            });
+            if (isAndroid) {
+              console.log(`[Canvas] Cache with mipmap: ${levels.length} levels in ${(performance.now() - cacheStart).toFixed(0)}ms`);
+            }
+            setLoadedCount(prev => prev + 1);
+          }
+        };
+        img.onerror = () => {
+          if (cancelled) return;
+          console.warn(`[Canvas] Failed to load: ${file.path}`);
           setLoadedCount(prev => prev + 1);
         };
+      });
+
+      if (loadIndex < filesToLoad.length) {
+        const tid = setTimeout(loadNextBatch, isAndroid ? 200 : 50);
+        pendingTimeouts.push(tid);
       }
-    });
+    };
+
+    loadNextBatch();
+
+    return () => {
+      cancelled = true;
+      pendingRafs.forEach(id => cancelAnimationFrame(id));
+      pendingTimeouts.forEach(id => clearTimeout(id));
+      // 清理正在加载的ID，防止下次加载时跳过这些已被取消的图片
+      loadingIdsRef.current.clear();
+    };
   }, [imageFiles]);
 
   // Initialize internal selection and respond to external changes
@@ -316,6 +481,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     });
     setZOrderIds(selectedFileIds.slice());
     imagesCache.current.clear();
+    loadingIdsRef.current.clear();
     setLoadedCount(0);
     // 重置 onReady 状态，允许新的加载完成回调
     onReadyCalledRef.current = false;
@@ -323,18 +489,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   // Notify parent when all images are loaded
   useEffect(() => {
-    if (imageFiles.length > 0 && loadedCount >= imageFiles.length) {
+    if (imageFiles.length > 0 && !isLoadingCanvas) {
       if (!onReadyCalledRef.current) {
         onReadyCalledRef.current = true;
         onReady?.();
       }
     }
-  }, [loadedCount, imageFiles.length, onReady]);
+  }, [isLoadingCanvas, imageFiles.length, onReady]);
 
   // Layout calculation
   const layout = useMemo(() => {
     if (imageFiles.length === 0)
       return { items: [], totalWidth: 0, totalHeight: 0 };
+
+    const layoutStart = isAndroid ? performance.now() : 0;
 
     const spacing = 40;
     const items: ImageLayoutInfo[] = [];
@@ -435,6 +603,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       totalWidth: maxX - minX,
       totalHeight: maxY - minY
     };
+
+    if (isAndroid && layoutStart > 0) {
+      const layoutTime = performance.now() - layoutStart;
+      console.log(`[Canvas] Layout computed: ${items.length} items, ${maxX - minX}x${maxY - minY} in ${layoutTime.toFixed(1)}ms`);
+    }
   }, [imageFiles, manualLayouts]);
 
   // Persist computed layout positions
@@ -516,12 +689,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     // 标记为内部选择变化，避免触发 selectedFileIds 的 useEffect 重新初始化
     isInternalSelectionChangeRef.current = true;
     if (activeImageIds.length === 0) {
-      // 没有选中任何图片，清空 selectedFileIds，显示"选择一个文件以查看详情"
-      onSelectedFileIdsChange?.([]);
-    } else {
-      // 选中了一个或多个图片，更新 selectedFileIds
-      onSelectedFileIdsChange?.(activeImageIds);
+      // 取消选中时不发送空数组，避免覆盖 handleRemoveImage 等已发送的正确ID列表
+      // 父组件的 selectedFileIds 应代表对比列表，而非当前活跃选中
+      return;
     }
+    // 选中了一个或多个图片，更新 selectedFileIds
+    onSelectedFileIdsChange?.(activeImageIds);
   }, [activeImageIds]);
 
   const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
@@ -634,7 +807,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
 
     // 添加一些缓冲区域，避免边缘闪烁
-    const buffer = 100 / transform.scale;
+    const buffer = Math.min(100 / transform.scale, 5000);
     viewport.minX -= buffer;
     viewport.minY -= buffer;
     viewport.maxX += buffer;
@@ -653,6 +826,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const drawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || containerSize.width === 0) return;
+
+    const drawStart = isAndroid ? performance.now() : 0;
 
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
@@ -686,16 +861,18 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       gridSize *= step;
     }
 
-    ctx.fillStyle = dotColor;
-    const offsetX = transform.x % gridSize;
-    const offsetY = transform.y % gridSize;
-    const radius = transform.scale < 0.2 ? 1.5 : 1.2;
+    if (gridSize >= 8) {
+      ctx.fillStyle = dotColor;
+      const offsetX = transform.x % gridSize;
+      const offsetY = transform.y % gridSize;
+      const radius = transform.scale < 0.2 ? 1.5 : 1.2;
 
-    for (let x = offsetX; x < containerSize.width; x += gridSize) {
-      for (let y = offsetY; y < containerSize.height; y += gridSize) {
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fill();
+      for (let x = offsetX; x < containerSize.width; x += gridSize) {
+        for (let y = offsetY; y < containerSize.height; y += gridSize) {
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
 
@@ -721,18 +898,22 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       ctx.fillRect(0, 0, item.width, item.height);
 
       if (cache) {
-        // 根据当前缩放比例选择最佳 Mipmap 级别
-        const imageToDraw = getBestMipmapLevel(cache, transform.scale);
+        const imageToDraw = getBestMipmapLevel(cache, transform.scale * (window.devicePixelRatio || 1));
         ctx.drawImage(imageToDraw, 0, 0, item.width, item.height);
 
-        // 绘制边框
-        if (activeImageIds.includes(item.id)) {
+        if (transform.scale > 0.05) {
+          if (activeImageIds.includes(item.id)) {
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 4 / transform.scale;
+            ctx.strokeRect(0, 0, item.width, item.height);
+          } else {
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.lineWidth = 1 / transform.scale;
+            ctx.strokeRect(0, 0, item.width, item.height);
+          }
+        } else if (activeImageIds.includes(item.id)) {
           ctx.strokeStyle = '#3b82f6';
           ctx.lineWidth = 4 / transform.scale;
-          ctx.strokeRect(0, 0, item.width, item.height);
-        } else {
-          ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-          ctx.lineWidth = 1 / transform.scale;
           ctx.strokeRect(0, 0, item.width, item.height);
         }
       }
@@ -740,6 +921,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
 
     ctx.restore();
+
+    if (isAndroid && drawStart > 0) {
+      const drawTime = performance.now() - drawStart;
+      if (drawTime > 16) {
+        console.log(`[Canvas] drawCanvas: ${drawTime.toFixed(1)}ms, scale=${transform.scale.toFixed(4)}, visible=${visibleItems.length}/${layout.items.length}`);
+      }
+    }
   }, [transform, containerSize, isDarkMode, activeImageIds, zOrderIds, layoutItemMap, getVisibleItems, loadedCount]);
 
   // Canvas 绘制 effect
@@ -823,6 +1011,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
       setTransform(newTransform);
       autoZoomAppliedRef.current = true;
+
+      if (isAndroid) {
+        console.log(`[Canvas] Auto-zoom: scale=${initialScale.toFixed(4)}, content=${layout.totalWidth}x${layout.totalHeight}, container=${containerSize.width}x${containerSize.height}`);
+      }
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
 
@@ -851,7 +1043,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     // 直接更新 transform，不使用动画，以获得即时响应
     setTransform(prev => {
-      const newScale = Math.min(Math.max(prev.scale * factor, 0.04), 20);
+      const newScale = Math.min(Math.max(prev.scale * factor, 0.01), 20);
       const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
       const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
       return { x: newX, y: newY, scale: newScale };
@@ -919,6 +1111,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     else if (e.button === 1) {
       e.preventDefault();
       setIsDragging(true);
+      isDraggingRef.current = true;
       dragStartRef.current = { x: e.clientX, y: e.clientY };
     }
   };
@@ -950,6 +1143,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
   const handleMouseUp = (e?: React.MouseEvent) => {
     setIsDragging(false);
+    isDraggingRef.current = false;
 
     if (marquee && marquee.active) {
       const rect = containerRef.current?.getBoundingClientRect();
@@ -1002,6 +1196,294 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
   };
 
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  const getTouchDistance = (t1: React.Touch, t2: React.Touch): number => {
+    const dx = t1.clientX - t2.clientX;
+    const dy = t1.clientY - t2.clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const getTouchMidpoint = (t1: React.Touch, t2: React.Touch) => {
+    return {
+      x: (t1.clientX + t2.clientX) / 2,
+      y: (t1.clientY + t2.clientY) / 2
+    };
+  };
+
+  const isTouchOnMenuOrToolbar = (target: EventTarget): boolean => {
+    const el = target as HTMLElement;
+    return !!(el.closest?.('[data-menu]') || el.closest?.('#comparer-toolbar'));
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (isAddImageModalOpen) return;
+    if (pendingAnnotation) return;
+    if (isTouchOnMenuOrToolbar(e.target)) return;
+
+    if (e.touches.length === 2) {
+      clearLongPressTimer();
+      if (isEditMode) { setIsEditMode(false); isEditModeRef.current = false; }
+      singleFingerDragRef.current.active = false;
+
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = getTouchDistance(t1, t2);
+      const mid = getTouchMidpoint(t1, t2);
+      const rect = containerRef.current?.getBoundingClientRect();
+
+      pinchStateRef.current = {
+        active: true,
+        initialDistance: dist,
+        initialMidpoint: rect ? { x: mid.x - rect.left, y: mid.y - rect.top } : { x: mid.x, y: mid.y },
+        initialTransform: { ...transformRef.current }
+      };
+
+      e.preventDefault();
+      return;
+    }
+
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const mouseX = touch.clientX - rect.left;
+      const mouseY = touch.clientY - rect.top;
+
+      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY, time: Date.now() };
+
+      if (isAndroid) {
+        const worldX = (mouseX - transform.x) / transform.scale;
+        const worldY = (mouseY - transform.y) / transform.scale;
+
+        const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+        let touchedId: string | null = null;
+        for (let i = visible.length - 1; i >= 0; i--) {
+          const id = visible[i];
+          const it = layoutItemMap[id];
+          if (!it) continue;
+          if (pointInRotatedItem(worldX, worldY, it)) {
+            touchedId = id;
+            break;
+          }
+        }
+
+        if (isEditMode && touchedId && activeImageIds.includes(touchedId)) {
+          // In edit mode, don't start canvas drag
+        } else {
+          singleFingerDragRef.current = {
+            active: true,
+            startX: touch.clientX,
+            startY: touch.clientY,
+            initialTransform: { ...transformRef.current }
+          };
+        }
+
+        if (!isEditModeRef.current && activeImageIds.length > 0 && touchedId && activeImageIds.includes(touchedId)) {
+          clearLongPressTimer();
+          longPressTimerRef.current = setTimeout(() => {
+            if (!isEditModeRef.current) {
+              setIsEditMode(true);
+              isEditModeRef.current = true;
+              singleFingerDragRef.current.active = false;
+            }
+            longPressTimerRef.current = null;
+          }, 500);
+        }
+      }
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (isTouchOnMenuOrToolbar(e.target)) return;
+    if (pinchStateRef.current.active && e.touches.length === 2) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const currentDist = getTouchDistance(t1, t2);
+      const currentMid = getTouchMidpoint(t1, t2);
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+
+      const midX = currentMid.x - rect.left;
+      const midY = currentMid.y - rect.top;
+
+      const { initialDistance, initialMidpoint, initialTransform } = pinchStateRef.current;
+      const scaleRatio = currentDist / initialDistance;
+      const newScale = Math.min(Math.max(initialTransform.scale * scaleRatio, 0.01), 20);
+
+      const dx = midX - initialMidpoint.x;
+      const dy = midY - initialMidpoint.y;
+
+      const scaleChange = newScale / initialTransform.scale;
+      const newX = midX - (initialMidpoint.x - initialTransform.x) * scaleChange + dx;
+      const newY = midY - (initialMidpoint.y - initialTransform.y) * scaleChange + dy;
+
+      setTransform({ x: newX, y: newY, scale: newScale });
+      userInteractedRef.current = true;
+      return;
+    }
+
+    if (isAndroid && singleFingerDragRef.current.active && e.touches.length === 1) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - singleFingerDragRef.current.startX;
+      const dy = touch.clientY - singleFingerDragRef.current.startY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 5) {
+        clearLongPressTimer();
+        const { initialTransform } = singleFingerDragRef.current;
+        setTransform({
+          x: initialTransform.x + dx,
+          y: initialTransform.y + dy,
+          scale: initialTransform.scale
+        });
+        userInteractedRef.current = true;
+      }
+      return;
+    }
+
+    if (e.touches.length === 1 && touchStartPosRef.current) {
+      const dx = e.touches[0].clientX - touchStartPosRef.current.x;
+      const dy = e.touches[0].clientY - touchStartPosRef.current.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 10) {
+        clearLongPressTimer();
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    clearLongPressTimer();
+
+    if (e.touches.length < 2) {
+      pinchStateRef.current.active = false;
+    }
+
+    if (e.touches.length === 0 && touchStartPosRef.current) {
+      const wasSingleFingerDrag = singleFingerDragRef.current.active;
+      singleFingerDragRef.current.active = false;
+
+      const start = touchStartPosRef.current;
+      const elapsed = Date.now() - start.time;
+      const changedTouch = e.changedTouches[0];
+      const dx = changedTouch.clientX - start.x;
+      const dy = changedTouch.clientY - start.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 10 && elapsed < 300) {
+        const rect = containerRef.current?.getBoundingClientRect();
+        if (rect) {
+          const mouseX = changedTouch.clientX - rect.left;
+          const mouseY = changedTouch.clientY - rect.top;
+          const worldX = (mouseX - transform.x) / transform.scale;
+          const worldY = (mouseY - transform.y) / transform.scale;
+
+          const visible = zOrderIds.length ? zOrderIds.filter(id => layoutItemMap[id]) : layout.items.map(it => it.id);
+          let clickedId: string | null = null;
+          for (let i = visible.length - 1; i >= 0; i--) {
+            const id = visible[i];
+            const it = layoutItemMap[id];
+            if (!it) continue;
+            if (pointInRotatedItem(worldX, worldY, it)) {
+              clickedId = id;
+              break;
+            }
+          }
+
+          if (isAndroid) {
+            const now = Date.now();
+            const lastTap = lastTapRef.current;
+            const isDoubleTap = lastTap &&
+              Math.abs(changedTouch.clientX - lastTap.x) < 30 &&
+              Math.abs(changedTouch.clientY - lastTap.y) < 30 &&
+              (now - lastTap.time) < 400;
+
+            if (isDoubleTap) {
+              if (clickedId && lastTap?.targetId === clickedId) {
+                handleViewImageForId(clickedId);
+              } else {
+                handleViewAll();
+              }
+              lastTapRef.current = null;
+            } else {
+              lastTapRef.current = { x: changedTouch.clientX, y: changedTouch.clientY, time: now, targetId: clickedId };
+
+              if (clickedId) {
+                if (activeImageIds.includes(clickedId) && activeImageIds.length === 1) {
+                  // tap on already-selected single item
+                } else {
+                  setActiveImageIds([clickedId]);
+                  setIsEditMode(false);
+                  isEditModeRef.current = false;
+                }
+              } else {
+                setActiveImageIds([]);
+                setIsEditMode(false);
+                isEditModeRef.current = false;
+              }
+            }
+          } else {
+            if (clickedId) {
+              const isSelected = activeImageIds.includes(clickedId);
+              if (isSelected) {
+                setActiveImageIds(prev => {
+                  const others = prev.filter(id => id !== clickedId);
+                  return [...others, clickedId!];
+                });
+              } else {
+                setActiveImageIds([clickedId]);
+              }
+            } else {
+              if (potentialClearSelectionRef.current) {
+                setActiveImageIds([]);
+              }
+            }
+          }
+          potentialClearSelectionRef.current = false;
+        }
+      }
+
+      touchStartPosRef.current = null;
+    }
+  };
+
+  const touchHandlersRef = useRef({ handleTouchStart, handleTouchMove, handleTouchEnd });
+  touchHandlersRef.current = { handleTouchStart, handleTouchMove, handleTouchEnd };
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    const el = containerRef.current;
+    if (!el) return;
+
+    const opts: AddEventListenerOptions = { passive: false };
+
+    const onTouchStart = (e: TouchEvent) => touchHandlersRef.current.handleTouchStart(e as any);
+    const onTouchMove = (e: TouchEvent) => touchHandlersRef.current.handleTouchMove(e as any);
+    const onTouchEnd = (e: TouchEvent) => touchHandlersRef.current.handleTouchEnd(e as any);
+
+    el.addEventListener('touchstart', onTouchStart, opts);
+    el.addEventListener('touchmove', onTouchMove, opts);
+    el.addEventListener('touchend', onTouchEnd, opts);
+    el.addEventListener('touchcancel', onTouchEnd, opts);
+
+    const onContextMenu = (e: Event) => e.preventDefault();
+    el.addEventListener('contextmenu', onContextMenu);
+
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+      el.removeEventListener('contextmenu', onContextMenu);
+    };
+  }, [isAndroid]);
+
   // 窗口大小恢复相关
   const originalWindowStateRef = useRef<{ width: number; height: number; x: number; y: number } | null>(null);
   const windowResizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1012,6 +1494,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // 右键菜单逻辑
   const handleContextMenu = async (e: React.MouseEvent) => {
     e.preventDefault();
+
+    if (isAndroid) return;
 
     const rect = containerRef.current?.getBoundingClientRect();
     let targetId: string | null = null;
@@ -1114,6 +1598,17 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         } catch {}
       }, 300);
     }
+  };
+
+  const handleOpenAndroidMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (activeImageIds.length === 0) return;
+    const targetId = activeImageIds[activeImageIds.length - 1];
+    setMenuTargetId(targetId);
+    const btn = e.currentTarget as HTMLElement;
+    const rect = btn.getBoundingClientRect();
+    setContextMenu({ x: rect.right - 10, y: rect.bottom + 20 });
   };
 
   const getFileExtension = (filePath: string): string => {
@@ -1292,7 +1787,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             img.onload = () => {
               const w = newSessionFiles[id]?.meta?.width || img.width;
               const h = newSessionFiles[id]?.meta?.height || img.height;
-              const levels = createMipmapLevels(img, w, h);
+              const levels = createMipmapLevels(img, w, h, isAndroid);
               imagesCache.current.set(id, { original: img, levels });
               setLoadedCount(prev => prev + 1);
             };
@@ -1357,6 +1852,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       idsToRemove.forEach(id => delete next[id]);
       return next;
     });
+
+    // 标记为内部选择变化，避免 selectedFileIds useEffect 重新初始化（清空缓存）
+    isInternalSelectionChangeRef.current = true;
     setActiveImageIds([]);
     setMenuTargetId(null);
     setContextMenu(null);
@@ -1386,6 +1884,15 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
+      // 清理图片缓存，释放 GPU 内存
+      imagesCache.current.forEach(cache => {
+        cache.levels.forEach(level => {
+          level.canvas.width = 0;
+          level.canvas.height = 0;
+        });
+      });
+      imagesCache.current.clear();
+      loadingIdsRef.current.clear();
       Object.values(sessionFiles || {}).forEach(file => {
         if (file.path?.startsWith('blob:')) {
           URL.revokeObjectURL(file.path);
@@ -1467,6 +1974,39 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     userInteractedRef.current = true;
     setContextMenu(null);
     setMenuTargetId(null);
+  };
+
+  const handleViewImageForId = (targetId: string) => {
+    const targetItem = layoutItemMap[targetId];
+    if (!targetItem) return;
+
+    const imageCenterX = targetItem.x + targetItem.width / 2;
+    const imageCenterY = targetItem.y + targetItem.height / 2;
+
+    const padding = 60;
+    const scaleX = (containerSize.width - padding * 2) / targetItem.width;
+    const scaleY = (containerSize.height - padding * 2) / targetItem.height;
+    const newScale = Math.min(scaleX, scaleY, 1.2, 5.0);
+
+    const newX = containerSize.width / 2 - imageCenterX * newScale;
+    const newY = containerSize.height / 2 - imageCenterY * newScale;
+
+    const currentScale = transform.scale;
+    const scaleRatio = newScale / currentScale;
+
+    if (scaleRatio > 10 || scaleRatio < 0.1) {
+      const midScale = Math.sqrt(currentScale * newScale);
+      const midX = containerSize.width / 2 - imageCenterX * midScale;
+      const midY = containerSize.height / 2 - imageCenterY * midScale;
+      startAnimation({ x: midX, y: midY, scale: midScale });
+      setTimeout(() => {
+        startAnimation({ x: newX, y: newY, scale: newScale });
+      }, 50);
+    } else {
+      startAnimation({ x: newX, y: newY, scale: newScale });
+    }
+
+    userInteractedRef.current = true;
   };
 
   const handleReorder = (type: 'top' | 'bottom' | 'up' | 'down') => {
@@ -1590,6 +2130,26 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       });
     }
   };
+
+  const editOverlayLongPressRef = useRef<(worldX: number, worldY: number) => void>(() => {});
+  editOverlayLongPressRef.current = (worldX: number, worldY: number) => {
+    const targetId = activeImageIds.length > 0 ? activeImageIds[activeImageIds.length - 1] : null;
+    if (targetId) {
+      const target = layoutItemMap[targetId];
+      if (target) {
+        const local = worldToLocalPoint(worldX, worldY, target);
+        setPendingAnnotation({
+          imageId: targetId,
+          x: ((local.x - target.x) / target.width) * 100,
+          y: ((local.y - target.y) / target.height) * 100
+        });
+      }
+    }
+  };
+
+  const handleEditOverlayLongPress = useCallback((worldX: number, worldY: number) => {
+    editOverlayLongPressRef.current(worldX, worldY);
+  }, []);
 
   const handleReset = () => {
     setManualLayouts({});
@@ -1722,6 +2282,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setInternalSelectedIds(updatedIds);
     setZOrderIds(prev => [...prev, ...uniqueNewIds]);
 
+    // 标记为内部选择变化，避免 selectedFileIds useEffect 重新初始化（清空缓存）
+    isInternalSelectionChangeRef.current = true;
     // 通知父组件 selectedFileIds 已更改，以便右键菜单显示正确的数量
     onSelectedFileIdsChange?.(updatedIds);
 
@@ -1736,7 +2298,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         img.onload = () => {
           const w = file.meta?.width || img.width;
           const h = file.meta?.height || img.height;
-          const levels = createMipmapLevels(img, w, h);
+          const levels = createMipmapLevels(img, w, h, isAndroid);
           imagesCache.current.set(file.id, { original: img, levels });
           loadedImagesCount++;
           setLoadedCount(prev => prev + 1);
@@ -1939,6 +2501,38 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     return () => window.removeEventListener('mouseup', handleMouseUp, { capture: true });
   }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode]);
 
+  const backPressStateRef = useRef({ contextMenu: null as { x: number; y: number } | null, isEditMode: false, activeImageIds: [] as string[], onClose: onClose, onCloseTab: onCloseTab });
+  backPressStateRef.current = { contextMenu, isEditMode, activeImageIds, onClose, onCloseTab };
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    const handler = () => {
+      const state = backPressStateRef.current;
+      if (state.contextMenu) {
+        setContextMenu(null);
+        setMenuTargetId(null);
+        (window as any).__androidBackHandled = true;
+        return;
+      }
+      if (state.isEditMode && state.activeImageIds.length > 0) {
+        setIsEditMode(false);
+        isEditModeRef.current = false;
+        (window as any).__androidBackHandled = true;
+        return;
+      }
+      if (state.activeImageIds.length > 0) {
+        setActiveImageIds([]);
+        (window as any).__androidBackHandled = true;
+        return;
+      }
+      (window as any).__androidBackHandled = true;
+      if (state.onCloseTab) state.onCloseTab();
+      else state.onClose();
+    };
+    window.addEventListener('android-back-press', handler);
+    return () => window.removeEventListener('android-back-press', handler);
+  }, [isAndroid]);
+
   return (
     <div
       className="w-full h-full flex-1 flex flex-col overflow-hidden select-none relative z-[100]"
@@ -1949,9 +2543,28 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       onMouseLeave={handleMouseUp}
       onContextMenu={handleContextMenu}
     >
+      {/* Loading Overlay */}
+      {isLoadingCanvas && (
+        <div className="absolute inset-0 z-[500] flex flex-col items-center justify-center bg-white dark:bg-gray-900">
+          <div className="flex flex-col items-center space-y-4">
+            <div className="relative w-12 h-12">
+              <div className="absolute inset-0 rounded-full border-4 border-gray-200 dark:border-gray-700" />
+              <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-blue-500 animate-spin" />
+            </div>
+            <p className="text-sm font-medium text-gray-600 dark:text-gray-400">
+              正在加载图片...
+            </p>
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              {realLoadedCount} / {imageFiles.length}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header - hidden in reference mode */}
       {!isReferenceMode && (
       <div
+        id="comparer-toolbar"
         className={`bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 transition-transform duration-200 ease-out h-14 relative z-10`}
       >
         <div className="flex items-center space-x-2">
@@ -2024,6 +2637,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             <Eye size={18} className={isReferenceMode ? 'text-blue-500' : 'text-gray-400'} />
           </button>
 
+          {isAndroid && activeImageIds.length > 0 && (
+            <button
+              onMouseDown={handleOpenAndroidMenu}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title="更多"
+            >
+              <MoreVertical size={18} />
+            </button>
+          )}
+
           <button
             onClick={handleSaveSession}
             disabled={imageFiles.length === 0}
@@ -2081,7 +2704,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         <canvas
           ref={canvasRef}
           className="block absolute inset-0"
-          style={{ width: '100%', height: '100%' }}
+          style={{ width: '100%', height: '100%', willChange: isAndroid ? 'transform' : undefined }}
         />
 
         {/* Empty state message */}
@@ -2272,6 +2895,9 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           }}
           onRemoveItem={handleRemoveImage}
           isDarkMode={isDarkMode}
+          isEditMode={!isAndroid || isEditMode}
+          isAndroid={isAndroid}
+          onLongPress={isAndroid && isEditMode ? handleEditOverlayLongPress : undefined}
         />
 
         {/* Context Menu */}
@@ -2282,6 +2908,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             onClose={handleCloseContextMenu}
             options={menuOptions}
             compact={isReferenceMode}
+            isAndroid={isAndroid}
           />
         )}
 
@@ -2312,6 +2939,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             }
           }}
           onCancelPending={() => setPendingAnnotation(null)}
+          containerSize={containerSize}
         />
 
       </div>
@@ -2319,24 +2947,36 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       {/* Shortcuts Hint - hidden in reference mode */}
       {!isReferenceMode && (
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
-        <div className="flex items-center">
-          <Magnet size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
-          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">左键 选择 / 滚轮 缩放</span>
-        </div>
-
-        <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
-
-        <div className="flex items-center">
-          <Move size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
-          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">中键 拖拽</span>
-        </div>
-
-        <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
-
-        <div className="flex items-center">
-          <div className="flex items-center justify-center min-w-[32px] h-5 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-bold mr-1.5 text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 shadow-sm leading-none pt-0.5">ESC</div>
-          <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
-        </div>
+        {isAndroid ? (
+          <>
+            <div className="flex items-center">
+              <Magnet size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+              <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">点击 选择 / 双指 缩放</span>
+            </div>
+            <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
+            <div className="flex items-center">
+              <Move size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+              <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">单指 拖拽 / 长按 编辑</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center">
+              <Magnet size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+              <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">左键 选择 / 滚轮 缩放</span>
+            </div>
+            <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
+            <div className="flex items-center">
+              <Move size={14} className="mr-1.5 text-blue-500 dark:text-blue-400" />
+              <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">中键 拖拽</span>
+            </div>
+            <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
+            <div className="flex items-center">
+              <div className="flex items-center justify-center min-w-[32px] h-5 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-bold mr-1.5 text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 shadow-sm leading-none pt-0.5">ESC</div>
+              <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
+            </div>
+          </>
+        )}
       </div>
       )}
 

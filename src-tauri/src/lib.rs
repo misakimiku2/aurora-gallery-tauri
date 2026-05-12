@@ -79,6 +79,17 @@ async fn android_scan_images() -> Result<Vec<AndroidImageInfo>, String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
+async fn android_clear_scan_cache(app_data_dir: String) -> Result<(), String> {
+    let cache_path = std::path::Path::new(&app_data_dir).join("scan_cache.json");
+    let _ = std::fs::remove_file(&cache_path);
+    let folders_cache_path = std::path::Path::new(&app_data_dir).join("scan_cache_folders.json");
+    let _ = std::fs::remove_file(&folders_cache_path);
+    log::info!("android_clear_scan_cache: cleared caches in {}", app_data_dir);
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
 async fn android_scan_folders() -> Result<Vec<AndroidFolderInfo>, String> {
     let start = std::time::Instant::now();
     let activity = ndk_context::android_context();
@@ -1477,6 +1488,50 @@ async fn request_android_permissions() -> Result<String, String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
+async fn android_check_storage_manager() -> Result<bool, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+    let result = env.call_method(
+        &activity_obj,
+        "isExternalStorageManager",
+        "()Z",
+        &[],
+    ).map_err(|e| format!("Failed to call isExternalStorageManager: {:?}", e))?
+    .z()
+    .map_err(|e| format!("Failed to get boolean: {:?}", e))?;
+
+    Ok(result)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_request_all_files_access() -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+    env.call_method(
+        &activity_obj,
+        "requestAllFilesAccess",
+        "()V",
+        &[],
+    ).map_err(|e| format!("Failed to call requestAllFilesAccess: {:?}", e))?;
+
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
 async fn set_android_status_bar(is_dark: bool) -> Result<(), String> {
     let activity = ndk_context::android_context();
     let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
@@ -1566,6 +1621,45 @@ async fn android_share_images(image_paths: Vec<String>) -> Result<(), String> {
     ).map_err(|e| format!("Failed to call shareImages: {:?}", e))?;
     
     Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_delete_files(app: tauri::AppHandle, media_ids: Vec<i64>) -> Result<String, String> {
+    let json = serde_json::to_string(&media_ids)
+        .map_err(|e| format!("Failed to serialize ids: {:?}", e))?;
+
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+    let json_jstring = env.new_string(&json)
+        .map_err(|e| format!("Failed to create Java string: {:?}", e))?;
+
+    let result = env.call_method(
+        &activity_obj,
+        "deleteMediaByIds",
+        "(Ljava/lang/String;)Ljava/lang/String;",
+        &[JValue::Object(&json_jstring.into())],
+    ).map_err(|e| format!("Failed to call deleteMediaByIds: {:?}", e))?;
+
+    let result_str: String = env.get_string(&result.l().map_err(|e| format!("Failed to get result object: {:?}", e))?.into())
+        .map_err(|e| format!("Failed to get result string: {:?}", e))?
+        .into();
+
+    if let Ok(app_data_dir) = app.path().app_data_dir() {
+        let cache_path = app_data_dir.join("scan_cache.json");
+        let _ = std::fs::remove_file(&cache_path);
+        let folders_cache_path = app_data_dir.join("scan_cache_folders.json");
+        let _ = std::fs::remove_file(&folders_cache_path);
+        log::info!("android_delete_files: cleared scan caches in {}", app_data_dir.display());
+    }
+
+    Ok(result_str)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1759,6 +1853,7 @@ pub fn run() {
         android_scan_all,
         android_save_scan_cache,
         android_load_scan_cache,
+        android_clear_scan_cache,
         android_get_thumbnail,
         android_batch_get_thumbnails,
         android_thumbnail_navigate,
@@ -1768,6 +1863,8 @@ pub fn run() {
         android_get_native_preview,
         check_android_permissions,
         request_android_permissions,
+        android_check_storage_manager,
+        android_request_all_files_access,
         set_android_status_bar,
         set_android_immersive_mode,
         android_get_dominant_colors,
@@ -1782,6 +1879,7 @@ pub fn run() {
         android_clear_thumbnail_cache,
         android_share_image,
         android_share_images,
+        android_delete_files,
         color_commands::add_pending_files_to_db,
         db_commands::get_color_db_stats,
         db_commands::get_color_db_error_files,

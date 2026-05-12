@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Annotation, ComparisonItem } from './types';
 import { Trash2, Save } from 'lucide-react';
+import { isAndroidSync } from '../../utils/androidPlatform';
 
 interface AnnotationLayerProps {
     annotations: Annotation[];
@@ -12,6 +13,7 @@ interface AnnotationLayerProps {
     pendingAnnotation?: { imageId: string, x: number, y: number } | null;
     onSavePending: (text: string) => void;
     onCancelPending: () => void;
+    containerSize?: { width: number; height: number };
 }
 
 const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
@@ -43,12 +45,27 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
     onRemoveAnnotation,
     pendingAnnotation,
     onSavePending,
-    onCancelPending
+    onCancelPending,
+    containerSize
 }) => {
     const worldToScreen = (wx: number, wy: number) => ({
         x: wx * transform.scale + transform.x,
         y: wy * transform.scale + transform.y
     });
+
+    const getPopupPlacement = (screenX: number, screenY: number) => {
+        const cardWidth = isAndroidSync() ? 280 : 340;
+        const cardHeight = 260;
+        const margin = 16;
+        const cw = containerSize?.width || window.innerWidth;
+        const ch = containerSize?.height || window.innerHeight;
+        const placeRight = screenX + cardWidth + margin < cw;
+        const placeBelow = screenY + cardHeight + margin < ch;
+        return {
+            left: placeRight ? margin : -cardWidth - margin,
+            top: placeBelow ? margin : -cardHeight - margin
+        };
+    };
 
     const itemMap = React.useMemo(() => {
         const m: Record<string, ComparisonItem> = {};
@@ -85,6 +102,7 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                         key={anno.id}
                         annotation={anno}
                         position={screen}
+                        popupOffset={getPopupPlacement(screen.x, screen.y)}
                         onUpdate={(text) => onUpdateAnnotation(anno.id, text)}
                         onRemove={() => onRemoveAnnotation(anno.id)}
                     />
@@ -103,6 +121,7 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
                 return (
                     <PendingAnnotationItem
                         position={screen}
+                        popupOffset={getPopupPlacement(screen.x, screen.y)}
                         onSave={onSavePending}
                         onCancel={onCancelPending}
                     />
@@ -115,23 +134,27 @@ export const AnnotationLayer: React.FC<AnnotationLayerProps> = ({
 const AnnotationItem: React.FC<{
     annotation: Annotation;
     position: { x: number, y: number };
+    popupOffset: { left: number; top: number };
     onUpdate: (text: string) => void;
     onRemove: () => void;
-}> = ({ annotation, position, onUpdate, onRemove }) => {
+}> = ({ annotation, position, popupOffset, onUpdate, onRemove }) => {
     const [isHovered, setIsHovered] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
     const [isEditing, setIsEditing] = useState(false);
     const [isSticky, setIsSticky] = useState(false);
     const hoverTimer = useRef<any>(null);
+    const isAndroid = isAndroidSync();
 
     const handleMouseEnter = () => {
+        if (isAndroid) return;
         setIsHovered(true);
         hoverTimer.current = setTimeout(() => {
             setShowInfo(true);
-        }, 1000); // 1秒后显示
+        }, 1000);
     };
 
     const handleMouseLeave = () => {
+        if (isAndroid) return;
         setIsHovered(false);
         setShowInfo(false);
         if (hoverTimer.current) clearTimeout(hoverTimer.current);
@@ -144,6 +167,21 @@ const AnnotationItem: React.FC<{
         setIsSticky(false);
     };
 
+    const handleToggleSticky = (e: React.MouseEvent | React.TouchEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        if (isAndroid) {
+            if (isSticky && !isEditing) {
+                setIsEditing(true);
+            } else {
+                setIsSticky(prev => !prev);
+                setShowInfo(prev => !prev);
+            }
+        } else {
+            setIsSticky(prev => !prev);
+        }
+    };
+
     return (
         <div
             className={`absolute pointer-events-auto transition-transform duration-200 ${isHovered || isEditing || isSticky ? 'z-[130]' : 'z-[105]'}`}
@@ -151,22 +189,25 @@ const AnnotationItem: React.FC<{
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
             onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
+            onTouchStart={(e) => e.stopPropagation()}
+            onClick={isAndroid ? undefined : ((e) => {
                 e.stopPropagation();
                 setIsSticky(prev => !prev);
-            }}
+            })}
         >
-            {/* 注释点 */}
             <div
                 className={`w-3 h-3 rounded-full border border-white shadow-lg cursor-pointer transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200 ${isHovered || isSticky ? 'bg-blue-500 scale-125 opacity-100 animate-dot-pulse-active' : 'bg-gray-500/60 dark:bg-gray-400/60 opacity-80 animate-dot-pulse'
                     }`}
+                onClick={isAndroid ? (e) => { e.stopPropagation(); handleToggleSticky(e); } : undefined}
+                onTouchEnd={isAndroid ? (e) => { e.stopPropagation(); handleToggleSticky(e); } : undefined}
             />
 
-            {/* 信息/编辑窗口 */}
             {(showInfo || isEditing || isSticky) && (
                 <div
-                    className="absolute top-4 left-4 min-w-[320px] bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 overflow-hidden animate-zoom-in animate-fade-in"
+                    className={`absolute bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-xl shadow-2xl border ${isEditing ? 'border-blue-400/50' : 'border-gray-200 dark:border-gray-700'} overflow-hidden animate-zoom-in animate-fade-in ${isAndroid ? 'min-w-[260px]' : 'min-w-[320px]'}`}
+                    style={{ top: popupOffset.top, left: popupOffset.left }}
                     onClick={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
                 >
                     {isEditing ? (
                         <div className="p-4">
@@ -190,7 +231,7 @@ const AnnotationItem: React.FC<{
                                             setIsEditing(false);
                                             setIsSticky(false);
                                         }}
-                                        className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                                        className={`px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors ${isAndroid ? 'py-2.5 px-4 text-sm' : ''}`}
                                     >
                                         取消
                                     </button>
@@ -199,15 +240,17 @@ const AnnotationItem: React.FC<{
                                             const textarea = (e.currentTarget.parentElement?.parentElement?.previousElementSibling as HTMLTextAreaElement);
                                             handleSave(textarea.value);
                                         }}
-                                        className="px-4 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                                        className={`px-4 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center shadow-lg shadow-blue-500/20 transition-all active:scale-95 ${isAndroid ? 'py-2.5 px-5 text-sm' : ''}`}
                                     >
                                         <Save size={14} className="mr-1.5" />
                                         保存
                                     </button>
                                 </div>
-                                <div className="text-[10px] text-gray-400 dark:text-gray-500 italic text-right px-1">
-                                    Shift + Enter 保存
-                                </div>
+                                {!isAndroid && (
+                                    <div className="text-[10px] text-gray-400 dark:text-gray-500 italic text-right px-1">
+                                        Shift + Enter 保存
+                                    </div>
+                                )}
                             </div>
                         </div>
                     ) : (
@@ -216,13 +259,18 @@ const AnnotationItem: React.FC<{
                             onClick={() => setIsEditing(true)}
                         >
                             <div className="flex justify-between items-start mb-2">
-                                <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">点击进行编辑</span>
+                                <span className="text-[10px] font-medium text-gray-400 dark:text-gray-500 uppercase tracking-wider">{isAndroid ? '点击编辑' : '点击进行编辑'}</span>
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         onRemove();
                                     }}
-                                    className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20"
+                                    onTouchEnd={(e) => {
+                                        e.stopPropagation();
+                                        e.preventDefault();
+                                        onRemove();
+                                    }}
+                                    className={`${isAndroid ? 'opacity-100 p-2' : 'opacity-0 group-hover:opacity-100 p-1'} text-gray-400 hover:text-red-500 transition-all rounded-md hover:bg-red-50 dark:hover:bg-red-900/20`}
                                 >
                                     <Trash2 size={14} />
                                 </button>
@@ -240,18 +288,23 @@ const AnnotationItem: React.FC<{
 
 const PendingAnnotationItem: React.FC<{
     position: { x: number, y: number };
+    popupOffset: { left: number; top: number };
     onSave: (text: string) => void;
     onCancel: () => void;
-}> = ({ position, onSave, onCancel }) => {
+}> = ({ position, popupOffset, onSave, onCancel }) => {
+    const isAndroid = isAndroidSync();
     return (
         <div
             className="absolute z-[200] pointer-events-auto"
             style={{ left: position.x, top: position.y }}
             onMouseDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
         >
             <div className="w-3 h-3 rounded-full bg-blue-500 border-2 border-white shadow-lg transform -translate-x-1/2 -translate-y-1/2 scale-125 animate-pulse" />
 
-            <div className="absolute top-4 left-4 min-w-[320px] bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-xl shadow-2xl border border-blue-400/50 p-4 animate-zoom-in animate-fade-in">
+            <div className={`absolute bg-white/80 dark:bg-gray-800/80 backdrop-blur-md rounded-xl shadow-2xl border border-blue-400/50 p-4 animate-zoom-in animate-fade-in ${isAndroid ? 'min-w-[260px]' : 'min-w-[320px]'}`}
+                style={{ top: popupOffset.top, left: popupOffset.left }}
+            >
                 <textarea
                     autoFocus
                     className="w-full h-32 p-3 text-sm bg-white/50 dark:bg-gray-900/50 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none resize-none dark:text-gray-100 placeholder-gray-400"
@@ -269,7 +322,7 @@ const PendingAnnotationItem: React.FC<{
                     <div className="flex items-center justify-end space-x-3 mb-2">
                         <button
                             onClick={onCancel}
-                            className="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                            className={`px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors ${isAndroid ? 'py-2.5 px-4 text-sm' : ''}`}
                         >
                             取消
                         </button>
@@ -278,15 +331,17 @@ const PendingAnnotationItem: React.FC<{
                                 const textarea = (e.currentTarget.parentElement?.parentElement?.previousElementSibling as HTMLTextAreaElement);
                                 if (textarea.value.trim()) onSave(textarea.value);
                             }}
-                            className="px-4 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center shadow-lg shadow-blue-500/20 transition-all active:scale-95"
+                            className={`px-4 py-1.5 text-xs font-medium bg-blue-500 text-white rounded-lg hover:bg-blue-600 flex items-center shadow-lg shadow-blue-500/20 transition-all active:scale-95 ${isAndroid ? 'py-2.5 px-5 text-sm' : ''}`}
                         >
                             <Save size={14} className="mr-1.5" />
                             保存
                         </button>
                     </div>
-                    <div className="text-[10px] text-gray-400 dark:text-gray-500 italic text-right px-1">
-                        Shift + Enter 保存
-                    </div>
+                    {!isAndroid && (
+                        <div className="text-[10px] text-gray-400 dark:text-gray-500 italic text-right px-1">
+                            Shift + Enter 保存
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
