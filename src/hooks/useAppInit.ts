@@ -16,6 +16,7 @@ import {
   dbGetAllPeople,
   dbGetAllTopics,
   lanShareStart,
+  batchGetColors,
 } from '../api/tauri-bridge';
 
 let isAppInitialized = false;
@@ -533,7 +534,32 @@ export const useAppInit = ({
                   console.error(`Failed to reload root: ${p}`, err);
                 }
               }
+
               if (allRoots.length > 0) {
+                const imagePaths: string[] = [];
+                Object.values(allFiles).forEach((f: any) => {
+                  if (f.type === FileType.IMAGE && f.path && (!f.meta?.palette || f.meta.palette.length === 0)) {
+                    imagePaths.push(f.path);
+                  }
+                });
+
+                if (imagePaths.length > 0) {
+                  try {
+                    const palettes = await batchGetColors(imagePaths);
+                    for (const [dbPath, palette] of Object.entries(palettes)) {
+                      if (palette.length === 0) continue;
+                      const file = Object.values(allFiles).find((f: any) =>
+                        f.path === dbPath || f.path?.replace(/\\/g, '/') === dbPath
+                      );
+                      if (file && file.meta) {
+                        file.meta.palette = palette;
+                      }
+                    }
+                  } catch (e) {
+                    console.warn('Failed to batch load palettes:', e);
+                  }
+                }
+
                 const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
 
                 setState(prev => {

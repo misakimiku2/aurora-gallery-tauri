@@ -252,6 +252,7 @@ export const useDirectoryScan = ({
                 sourceUrl: existingFile.sourceUrl,
                 author: existingFile.author,
                 category: existingFile.category,
+                meta: existingFile.meta || newFile.meta,
                 children: newFile.children || existingFile.children,
                 parentId: (fileId === targetFolderId) ? existingFile.parentId : newFile.parentId,
                 isRefreshing: false

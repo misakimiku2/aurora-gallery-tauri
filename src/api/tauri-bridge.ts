@@ -157,6 +157,7 @@ interface RustFileNode {
     created: string;
     modified: string;
     format: string;
+    palette?: string[] | null;
   } | null;
   description?: string | null;
   sourceUrl?: string | null;
@@ -267,6 +268,7 @@ export const scanDirectory = async (
           created: node.meta.created || '',
           modified: node.meta.modified || '',
           format: node.meta.format || '',
+          palette: node.meta.palette || undefined,
         } : undefined,
       };
 
@@ -326,6 +328,7 @@ export const forceRescan = async (path: string): Promise<{ roots: string[]; file
           created: node.meta.created || '',
           modified: node.meta.modified || '',
           format: node.meta.format || '',
+          palette: node.meta.palette || undefined,
         } : undefined,
         description: node.description || undefined,
         sourceUrl: node.sourceUrl || undefined,
@@ -1044,7 +1047,8 @@ export const scanFile = async (filePath: string, parentId?: string | null): Prom
         sizeKb: rustFile.meta.sizeKb || 0,
         created: rustFile.meta.created || '',
         modified: rustFile.meta.modified || '',
-        format: rustFile.meta.format || ''
+        format: rustFile.meta.format || '',
+        palette: rustFile.meta.palette || undefined,
       } : undefined,
       description: rustFile.description || undefined,
       sourceUrl: rustFile.sourceUrl || undefined,
@@ -1158,6 +1162,17 @@ export const getDominantColors = async (filePath: string, count: number = 8, thu
   } catch (error) {
     console.error('Failed to get dominant colors:', error);
     return [];
+  }
+};
+
+export const batchGetColors = async (filePaths: string[]): Promise<Record<string, string[]>> => {
+  if (filePaths.length === 0) return {};
+  try {
+    const result = await invoke<Record<string, string[]>>('batch_get_colors', { filePaths });
+    return result;
+  } catch (error) {
+    console.error('Failed to batch get colors:', error);
+    return {};
   }
 };
 

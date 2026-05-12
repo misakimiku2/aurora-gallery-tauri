@@ -32,6 +32,8 @@ pub struct ImageMeta {
     pub created: String,
     pub modified: String,
     pub format: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::HashMap;
 use rusqlite::{Connection, params};
 use std::fs;
 use std::time::{SystemTime, Duration};
@@ -994,6 +995,51 @@ pub fn get_colors_by_file_path(
         },
         Err(_) => Ok(None)
     }
+}
+
+pub fn get_colors_by_file_paths(
+    conn: &mut Connection,
+    file_paths: &[String]
+) -> Result<HashMap<String, Vec<String>>> {
+    let mut result = HashMap::new();
+    if file_paths.is_empty() {
+        return Ok(result);
+    }
+
+    let normalized_paths: Vec<String> = file_paths.iter()
+        .map(|p| p.replace("\\", "/"))
+        .collect();
+
+    let placeholders: Vec<String> = normalized_paths.iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect();
+    let sql = format!(
+        "SELECT file_path, colors FROM dominant_colors WHERE file_path IN ({}) AND status = 'extracted'",
+        placeholders.join(",")
+    );
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+
+    let params: Vec<&dyn rusqlite::types::ToSql> = normalized_paths.iter()
+        .map(|p| p as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let rows = stmt.query_map(params.as_slice(), |row| {
+        let file_path: String = row.get(0)?;
+        let colors_json: String = row.get(1)?;
+        Ok((file_path, colors_json))
+    }).map_err(|e| e.to_string())?;
+
+    for row in rows {
+        if let Ok((path, colors_json)) = row {
+            if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
+                result.insert(path, colors.into_iter().map(|c| c.hex).collect());
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 // 获取待处理文件列表

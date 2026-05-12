@@ -636,111 +636,6 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     })();
                 }
             }
-
-            // Extract palette colors when file is selected
-            if (file.type === FileType.IMAGE && (file.path || file.url)) {
-                const currentPalette = file.meta?.palette;
-                let shouldExtract = false;
-
-                if (!currentPalette || currentPalette.length === 0) {
-                    // Missing palette
-                    shouldExtract = true;
-                } else if (currentPalette.every(c => c === '#000000')) {
-                    // All black (placeholder)
-                    shouldExtract = true;
-                } else {
-                    // Enhanced "Bad Palette" Detection
-                    if (currentPalette.length >= 2) {
-                        const hexToRgb = (hex: string) => {
-                            const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-                            return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 };
-                        };
-
-                        const rgbs = currentPalette.map(hexToRgb);
-                        let maxDist = 0;
-                        let minDist = Infinity;
-
-                        for (let i = 0; i < rgbs.length; i++) {
-                            for (let j = i + 1; j < rgbs.length; j++) {
-                                const d = Math.sqrt((rgbs[i].r - rgbs[j].r) ** 2 + (rgbs[i].g - rgbs[j].g) ** 2 + (rgbs[i].b - rgbs[j].b) ** 2);
-                                if (d > maxDist) maxDist = d;
-                                if (d < minDist) minDist = d;
-                            }
-                        }
-
-                        // 1. Clump check: Entire palette is too similar (monochrome)
-                        if (maxDist < 20) {
-                            shouldExtract = true;
-                        }
-                        // 2. Duplicate check: Any two colors are too close (likely duplicates)
-                        // Threshold 10 ensures we re-run if we have near-duplicates like #252429 vs #242328 (dist ~1.7)
-                        if (minDist < 10) {
-                            shouldExtract = true;
-                        }
-                    }
-                }
-
-                // Only run if we haven't already processed this file in this session
-                if (shouldExtract && !extractedCache.current.has(file.id) && file.path) {
-                    const fileId = file.id;
-                    extractedCache.current.add(fileId);
-                    currentExtractFileRef.current = fileId;
-                    setLoadingPalette(true);
-                    (async () => {
-                        try {
-
-                            const { getDominantColors } = await import('../api/tauri-bridge');
-
-                            // 尝试从全局缩略图路径缓存中获取缩略图路�?
-                            let thumbnailPath: string | null = null;
-                            const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                            if (pathCache && pathCache.get) {
-                                thumbnailPath = pathCache.get(file.path!);
-                                if (thumbnailPath) {
-                                    // 使用缓存的缩略图路径
-                                }
-                            }
-
-                            // 如果缓存中没有，尝试生成缩略图并获取路径
-                            if (!thumbnailPath && resourceRoot) {
-                                try {
-                                    const { getThumbnail } = await import('../api/tauri-bridge');
-                                    // getThumbnail 返回的是 convertFileSrc 后的 URL，我们需要原始路�?
-                                    // 所以我们先调用 getThumbnail 确保缩略图存在，然后从缓存中获取路径
-                                    const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
-                                    if (thumbUrl) {
-                                        // 重新从缓存获取原始路�?
-                                        thumbnailPath = pathCache.get(file.path!);
-                                    }
-                                } catch (err) {
-                                    // 忽略缩略图生成失败，继续使用原图提取
-                                }
-                            }
-
-                            // 使用缩略图路径（如果可用）或原图路径进行颜色提取
-                            const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
-                            if (colors && colors.length > 0) {
-                                const hexColors = colors.map(c => c.hex);
-                                // 只有当提取的颜色与当前颜色不同时才更新，避免不必要的更新
-                                const currentHexColors = currentPalette || [];
-                                const colorsChanged = JSON.stringify(hexColors) !== JSON.stringify(currentHexColors);
-
-                                if (colorsChanged) {
-                                    onUpdate(file.id, {
-                                        meta: { ...file.meta!, palette: hexColors }
-                                    });
-                                }
-                            }
-                        } catch (err) {
-                            console.error('[Auto-extract] Failed to extract palette:', err);
-                        } finally {
-                            if (currentExtractFileRef.current === fileId) {
-                                setLoadingPalette(false);
-                            }
-                        }
-                    })();
-                }
-            }
         } else if (isMulti) {
             /* ... (existing multi-select logic) ... */
             const selectedNodes = selectedFileIds.map(id => files[id]).filter(Boolean);
@@ -780,6 +675,85 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         setPaletteMenu({ visible: false, x: 0, y: 0, color: null });
     }, [file?.id, file?.description, file?.aiData, selectedFileIds.join(','), isMulti, person?.id, topic?.id, topics]);
 
+    useEffect(() => {
+        if (!file || isMulti || file.type !== FileType.IMAGE || !file.path) return;
+
+        const currentPalette = file.meta?.palette;
+        let shouldExtract = false;
+
+        if (!currentPalette || currentPalette.length === 0) {
+            shouldExtract = true;
+        } else if (currentPalette.every(c => c === '#000000')) {
+            shouldExtract = true;
+        } else if (currentPalette.length >= 2) {
+            const hexToRgb = (hex: string) => {
+                const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : { r: 0, g: 0, b: 0 };
+            };
+            const rgbs = currentPalette.map(hexToRgb);
+            let maxDist = 0;
+            let minDist = Infinity;
+            for (let i = 0; i < rgbs.length; i++) {
+                for (let j = i + 1; j < rgbs.length; j++) {
+                    const d = Math.sqrt((rgbs[i].r - rgbs[j].r) ** 2 + (rgbs[i].g - rgbs[j].g) ** 2 + (rgbs[i].b - rgbs[j].b) ** 2);
+                    if (d > maxDist) maxDist = d;
+                    if (d < minDist) minDist = d;
+                }
+            }
+            if (maxDist < 20 || minDist < 10) shouldExtract = true;
+        }
+
+        if (!shouldExtract || extractedCache.current.has(file.id)) return;
+
+        const fileId = file.id;
+        const filePath = file.path;
+        const fileMeta = file.meta;
+        extractedCache.current.add(fileId);
+        currentExtractFileRef.current = fileId;
+        setLoadingPalette(true);
+
+        (async () => {
+            try {
+                const { getDominantColors } = await import('../api/tauri-bridge');
+
+                let thumbnailPath: string | null = null;
+                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                if (pathCache && pathCache.get) {
+                    thumbnailPath = pathCache.get(filePath);
+                }
+
+                if (!thumbnailPath && resourceRoot) {
+                    try {
+                        const { getThumbnail } = await import('../api/tauri-bridge');
+                        const thumbUrl = await getThumbnail(filePath, undefined, resourceRoot);
+                        if (thumbUrl) {
+                            thumbnailPath = pathCache.get(filePath);
+                        }
+                    } catch (_err) {}
+                }
+
+                const colors = await getDominantColors(filePath, 8, thumbnailPath || undefined);
+                if (colors && colors.length > 0) {
+                    const hexColors = colors.map(c => c.hex);
+                    const currentHexColors = currentPalette || [];
+                    const colorsChanged = JSON.stringify(hexColors) !== JSON.stringify(currentHexColors);
+
+                    if (colorsChanged) {
+                        onUpdate(fileId, {
+                            meta: { ...fileMeta!, palette: hexColors }
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error('[Auto-extract] Failed to extract palette:', err);
+            } finally {
+                if (currentExtractFileRef.current === fileId) {
+                    setLoadingPalette(false);
+                }
+            }
+        })();
+    }, [file?.id, file?.meta?.palette]);
+
     const handleUpdateTopicMeta = () => {
         if (topic && onUpdateTopic) {
             onUpdateTopic(topic.id, { name: topicName, description: topicDesc, sourceUrl: topicSource, updatedAt: new Date().toISOString() });
@@ -816,7 +790,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             return;
         }
 
-        // 优先从预加载缓存获取（图片查看器预加载的调色板）
+        if (file.meta?.palette && file.meta.palette.length > 0 && !file.meta.palette.every(c => c === '#000000')) {
+            setColors(file.meta.palette);
+            return;
+        }
+
         if (file.path) {
             const cachedPalette = getPaletteCacheSync(file.path);
             if (cachedPalette && cachedPalette.length > 0) {
@@ -825,19 +803,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             }
         }
 
-        // 使用文件已有的 palette 数据
-        if (file.meta?.palette && file.meta.palette.length > 0) {
-            setColors(file.meta.palette);
-            return;
-        }
-
-        // Fallback to AI data
         if (file.aiData?.dominantColors && file.aiData.dominantColors.length > 0) {
             setColors(file.aiData.dominantColors);
             return;
         }
 
-        // 如果都没有，设置空数组（触发后续的提取逻辑）
         setColors([]);
     }, [file?.id, file?.path, file?.meta?.palette, file?.aiData?.dominantColors]);
 

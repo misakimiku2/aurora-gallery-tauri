@@ -1647,6 +1647,7 @@ pub fn run() {
         window_commands::set_window_min_size,
         window_commands::exit_app,
         color_commands::get_dominant_colors,
+        color_commands::batch_get_colors,
         color_worker::pause_color_extraction,
         color_worker::resume_color_extraction,
         db_commands::force_wal_checkpoint,

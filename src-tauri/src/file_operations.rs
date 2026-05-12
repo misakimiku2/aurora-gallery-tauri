@@ -150,6 +150,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                     })
                     .unwrap_or_default(),
                 format: extension,
+                palette: None,
             }),
             description: None,
             source_url: None,

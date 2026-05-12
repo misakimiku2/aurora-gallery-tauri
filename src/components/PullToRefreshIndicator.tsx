@@ -1,20 +1,19 @@
-import React, { useMemo } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
 interface PullToRefreshIndicatorProps {
-  pullDistance: number;
   isRefreshing: boolean;
-  canRefresh: boolean;
-  isComplete?: boolean;
+  isComplete: boolean;
   threshold?: number;
+  pullDistanceRef: React.MutableRefObject<number>;
 }
 
 const DOT_COUNT = 12;
 
 export const PullToRefreshIndicator: React.FC<PullToRefreshIndicatorProps> = ({
-  pullDistance,
   isRefreshing,
   isComplete,
   threshold = 80,
+  pullDistanceRef,
 }) => {
   const size = 40;
   const dotRadius = 2.2;
@@ -22,10 +21,33 @@ export const PullToRefreshIndicator: React.FC<PullToRefreshIndicatorProps> = ({
   const cx = size / 2;
   const cy = size / 2;
 
-  const progress = isRefreshing || isComplete ? 1 : Math.min(pullDistance / threshold, 1);
+  const [animDistance, setAnimDistance] = useState(0);
+  const rafRef = useRef<number | null>(null);
+  const targetRef = useRef(0);
+
+  useEffect(() => {
+    const tick = () => {
+      const target = pullDistanceRef.current;
+      const diff = target - targetRef.current;
+      if (Math.abs(diff) > 0.3) {
+        targetRef.current += diff * 0.35;
+        setAnimDistance(targetRef.current);
+      } else if (targetRef.current !== target) {
+        targetRef.current = target;
+        setAnimDistance(target);
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
+  }, [pullDistanceRef]);
+
+  const progress = isRefreshing || isComplete ? 1 : Math.min(animDistance / threshold, 1);
   const activeDots = Math.ceil(progress * DOT_COUNT);
 
-  const dots = useMemo(() => {
+  const dots = React.useMemo(() => {
     return Array.from({ length: DOT_COUNT }, (_, i) => {
       const angle = (i * 360) / DOT_COUNT - 90;
       const rad = (angle * Math.PI) / 180;
@@ -40,11 +62,11 @@ export const PullToRefreshIndicator: React.FC<PullToRefreshIndicatorProps> = ({
 
   const translateY = isRefreshing || isComplete
     ? threshold / 2
-    : pullDistance > 0
-      ? pullDistance / 2
+    : animDistance > 0
+      ? animDistance / 2
       : -size;
 
-  const opacity = pullDistance > 0 || isRefreshing || isComplete ? 1 : 0;
+  const opacity = animDistance > 0 || isRefreshing || isComplete ? 1 : 0;
 
   const getDotOpacity = (index: number) => {
     if (isComplete) return 0;
@@ -52,9 +74,7 @@ export const PullToRefreshIndicator: React.FC<PullToRefreshIndicatorProps> = ({
       const stagger = index / DOT_COUNT;
       return 0.25 + 0.75 * stagger;
     }
-    if (index < activeDots) {
-      return 1;
-    }
+    if (index < activeDots) return 1;
     if (index === activeDots && progress > 0) {
       return progress * DOT_COUNT - Math.floor(progress * DOT_COUNT);
     }
@@ -77,7 +97,7 @@ export const PullToRefreshIndicator: React.FC<PullToRefreshIndicatorProps> = ({
         height: size,
         transform: `translate(-50%, ${translateY - size / 2}px)`,
         opacity,
-        transition: (!isRefreshing && !isComplete)
+        transition: (!isRefreshing && !isComplete && animDistance === 0)
           ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94), opacity 200ms ease-out'
           : isComplete
             ? 'transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1)'

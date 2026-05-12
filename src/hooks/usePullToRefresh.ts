@@ -1,7 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 
 interface PullToRefreshState {
-  pullDistance: number;
   isPulling: boolean;
   isRefreshing: boolean;
   canRefresh: boolean;
@@ -11,6 +10,8 @@ interface PullToRefreshState {
 interface UsePullToRefreshOptions {
   containerRef: React.RefObject<HTMLDivElement | null>;
   onRefresh: () => Promise<void>;
+  contentRef?: React.RefObject<HTMLDivElement | null>;
+  pullDistanceRef?: React.MutableRefObject<number>;
   threshold?: number;
   maxPull?: number;
   resistance?: number;
@@ -19,16 +20,28 @@ interface UsePullToRefreshOptions {
 
 const COMPLETE_DELAY = 800;
 
+function applyContentTransform(el: HTMLElement | null, distance: number) {
+  if (!el) return;
+  if (distance > 0) {
+    el.style.transform = `translateY(${distance}px)`;
+    el.style.transition = 'none';
+  } else {
+    el.style.transform = '';
+    el.style.transition = 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+  }
+}
+
 export function usePullToRefresh({
   containerRef,
   onRefresh,
+  contentRef,
+  pullDistanceRef,
   threshold = 80,
   maxPull = 160,
   resistance = 0.5,
   enabled = true,
 }: UsePullToRefreshOptions) {
   const [state, setState] = useState<PullToRefreshState>({
-    pullDistance: 0,
     isPulling: false,
     isRefreshing: false,
     canRefresh: false,
@@ -52,6 +65,9 @@ export function usePullToRefresh({
   const resistanceRef = useRef(resistance);
   resistanceRef.current = resistance;
 
+  const localPullDistanceRef = useRef(0);
+  const activePullRef = pullDistanceRef || localPullDistanceRef;
+
   useEffect(() => {
     if (!enabled) return;
     const container = containerRef.current;
@@ -67,7 +83,6 @@ export function usePullToRefresh({
 
     const handleTouchStart = (e: TouchEvent) => {
       if (isRefreshingRef.current || isCompleteRef.current) {
-        console.log('[PullToRefresh] touchstart ignored — busy (refreshing:', isRefreshingRef.current, 'complete:', isCompleteRef.current, ')');
         return;
       }
       if (container.scrollTop > 0) {
@@ -83,7 +98,9 @@ export function usePullToRefresh({
         if (currentPullRef.current > 0) {
           console.log('[PullToRefresh] cancelled — scrollTop changed to', container.scrollTop.toFixed(1));
           currentPullRef.current = 0;
-          setState({ pullDistance: 0, isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
+          activePullRef.current = 0;
+          applyContentTransform(contentRef?.current ?? null, 0);
+          setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
         }
         return;
       }
@@ -93,7 +110,9 @@ export function usePullToRefresh({
         if (currentPullRef.current > 0) {
           console.log('[PullToRefresh] cancelled — deltaY <= 0, was at', currentPullRef.current.toFixed(1));
           currentPullRef.current = 0;
-          setState({ pullDistance: 0, isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
+          activePullRef.current = 0;
+          applyContentTransform(contentRef?.current ?? null, 0);
+          setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
         }
         return;
       }
@@ -104,16 +123,16 @@ export function usePullToRefresh({
 
       const dampened = Math.min(maxPullRef.current, deltaY * resistanceRef.current);
       currentPullRef.current = dampened;
+      activePullRef.current = dampened;
+
+      applyContentTransform(contentRef?.current ?? null, dampened);
 
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = requestAnimationFrame(() => {
         const reachedThreshold = dampened >= thresholdRef.current;
-        setState({
-          pullDistance: dampened,
-          isPulling: true,
-          isRefreshing: false,
-          canRefresh: reachedThreshold,
-          isComplete: false,
+        setState(prev => {
+          if (prev.isPulling && prev.canRefresh === reachedThreshold) return prev;
+          return { isPulling: true, isRefreshing: false, canRefresh: reachedThreshold, isComplete: false };
         });
       });
     };
@@ -125,7 +144,6 @@ export function usePullToRefresh({
       }
 
       if (isRefreshingRef.current || isCompleteRef.current) {
-        console.log('[PullToRefresh] touchend ignored — already in progress');
         return;
       }
 
@@ -137,13 +155,13 @@ export function usePullToRefresh({
         isRefreshingRef.current = true;
         refreshStartTimeRef.current = Date.now();
         currentPullRef.current = 0;
-        setState({
-          pullDistance: thresholdRef.current,
-          isPulling: false,
-          isRefreshing: true,
-          canRefresh: true,
-          isComplete: false,
-        });
+
+        if (contentRef?.current) {
+          contentRef.current.style.transform = `translateY(${thresholdRef.current}px)`;
+          contentRef.current.style.transition = 'none';
+        }
+
+        setState({ isPulling: false, isRefreshing: true, canRefresh: true, isComplete: false });
 
         onRefreshRef.current()
           .then(() => {
@@ -151,22 +169,14 @@ export function usePullToRefresh({
             console.log('[PullToRefresh] <<< refresh completed', { elapsedMs: elapsed });
             isRefreshingRef.current = false;
             isCompleteRef.current = true;
-            setState(prev => ({
-              ...prev,
-              isRefreshing: false,
-              isComplete: true,
-            }));
+            setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: true });
 
             completeTimerRef.current = setTimeout(() => {
               console.log('[PullToRefresh] --- complete timeout, resetting');
               isCompleteRef.current = false;
-              setState({
-                pullDistance: 0,
-                isPulling: false,
-                isRefreshing: false,
-                canRefresh: false,
-                isComplete: false,
-              });
+              activePullRef.current = 0;
+              applyContentTransform(contentRef?.current ?? null, 0);
+              setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
             }, COMPLETE_DELAY);
           })
           .catch((err) => {
@@ -174,34 +184,22 @@ export function usePullToRefresh({
             console.error('[PullToRefresh] !!! refresh failed', { elapsedMs: elapsed, error: err });
             isRefreshingRef.current = false;
             isCompleteRef.current = true;
-            setState(prev => ({
-              ...prev,
-              isRefreshing: false,
-              isComplete: true,
-            }));
+            setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: true });
 
             completeTimerRef.current = setTimeout(() => {
               console.log('[PullToRefresh] --- complete timeout (after error), resetting');
               isCompleteRef.current = false;
-              setState({
-                pullDistance: 0,
-                isPulling: false,
-                isRefreshing: false,
-                canRefresh: false,
-                isComplete: false,
-              });
+              activePullRef.current = 0;
+              applyContentTransform(contentRef?.current ?? null, 0);
+              setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
             }, COMPLETE_DELAY);
           });
       } else {
         console.log('[PullToRefresh] below threshold, dismissing', { finalPull: finalPull.toFixed(1), threshold: thresholdRef.current });
         currentPullRef.current = 0;
-        setState({
-          pullDistance: 0,
-          isPulling: false,
-          isRefreshing: false,
-          canRefresh: false,
-          isComplete: false,
-        });
+        activePullRef.current = 0;
+        applyContentTransform(contentRef?.current ?? null, 0);
+        setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
       }
     };
 
@@ -216,10 +214,9 @@ export function usePullToRefresh({
       if (rafIdRef.current) cancelAnimationFrame(rafIdRef.current);
       if (completeTimerRef.current) clearTimeout(completeTimerRef.current);
     };
-  }, [containerRef, enabled]);
+  }, [containerRef, contentRef, pullDistanceRef, enabled]);
 
   return {
-    pullDistance: state.pullDistance,
     isPulling: state.isPulling,
     isRefreshing: state.isRefreshing,
     canRefresh: state.canRefresh,

@@ -214,8 +214,6 @@ export const hasPaletteCache = (path: string): boolean => {
 
 // 加载调色板到缓存
 const loadPaletteToCache = async (path: string, existingPalette?: string[]): Promise<string[]> => {
-  if (isAndroidPlatformCached()) return [];
-
   // 如果已在缓存中，直接返回
   const cached = getPaletteCacheSync(path);
   if (cached) return cached;
@@ -276,7 +274,6 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
 
 // 预加载调色板到缓存（静默，不返回结果）
 export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
-  if (isAndroidPlatformCached()) return;
   if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
     loadPaletteToCache(path, existingPalette).catch(() => { });
   }
@@ -642,6 +639,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const fileName = path.split('/').pop() || path;
     const switchT0 = performance.now();
     PERF.log('--- SWITCH START ---', fileName);
+
+    if (file.meta?.palette && file.meta.palette.length > 0 && !file.meta.palette.every(c => c === '#000000')) {
+      if (!paletteCache.has(path)) {
+        if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
+          const firstKey = paletteCache.keys().next().value;
+          if (firstKey) paletteCache.delete(firstKey);
+        }
+        paletteCache.set(path, file.meta.palette);
+      }
+    }
 
     const cachedUrl = getBlobCacheSync(path);
 

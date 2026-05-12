@@ -1,6 +1,7 @@
 use crate::color_db;
 use crate::color_extractor;
 use crate::color_worker;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -64,6 +65,25 @@ pub async fn get_dominant_colors(
     }
     
     Ok(colors)
+}
+
+#[tauri::command]
+pub async fn batch_get_colors(
+    file_paths: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<HashMap<String, Vec<String>>, String> {
+    if file_paths.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    let pool = app.state::<std::sync::Arc<color_db::ColorDbPool>>().inner().clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut conn = pool.get_connection();
+        color_db::get_colors_by_file_paths(&mut conn, &file_paths)
+    }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
+
+    result.map_err(|e| format!("批量获取颜色数据失败: {}", e))
 }
 
 #[tauri::command]

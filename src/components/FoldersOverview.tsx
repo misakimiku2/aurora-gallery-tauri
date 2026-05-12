@@ -395,6 +395,8 @@ const FoldersOverview = React.memo(({
   onRefresh,
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const pullDistanceRef = useRef(0);
   const [containerWidth, setContainerWidth] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
   const [containerHeight, setContainerHeight] = useState(0);
@@ -411,12 +413,12 @@ const FoldersOverview = React.memo(({
   const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0, filesCount: 0 });
 
   const {
-    pullDistance: pullRefreshDistance,
     isRefreshing: isPullRefreshing,
-    canRefresh: canPullRefresh,
     isComplete: isPullComplete,
   } = usePullToRefresh({
     containerRef,
+    contentRef,
+    pullDistanceRef,
     onRefresh: onRefresh || (async () => {}),
     enabled: isAndroid,
   });
@@ -702,21 +704,19 @@ const FoldersOverview = React.memo(({
       className="w-full h-full overflow-y-auto overflow-x-hidden relative"
       style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
     >
-      {isAndroid && (pullRefreshDistance > 0 || isPullRefreshing || isPullComplete) && (
+      {isAndroid && (
         <PullToRefreshIndicator
-          pullDistance={pullRefreshDistance}
           isRefreshing={isPullRefreshing}
-          canRefresh={canPullRefresh}
           isComplete={isPullComplete}
+          pullDistanceRef={pullDistanceRef}
         />
       )}
       <div
+        ref={contentRef}
         className="relative w-full"
         style={{
           height: totalHeight > 0 ? totalHeight : 'auto',
           minHeight: '100%',
-          transform: isAndroid && pullRefreshDistance > 0 ? `translateY(${pullRefreshDistance}px)` : undefined,
-          transition: isAndroid && pullRefreshDistance === 0 && !isPullRefreshing && !isPullComplete ? 'transform 300ms cubic-bezier(0.25, 0.46, 0.45, 0.94)' : undefined,
         }}
       >
         {visibleItems.map(pos => (

@@ -228,6 +228,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                         created: chrono::DateTime::from_timestamp(entry.created_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                         modified: chrono::DateTime::from_timestamp(entry.modified_at, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
                         format: entry.format.clone().unwrap_or_else(|| "unknown".to_string()),
+                        palette: None,
                     });
                 }
 
@@ -438,6 +439,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
                                 .map(|dt| dt.to_rfc3339())
                                 .unwrap_or_default(),
                             modified: chrono::DateTime::from_timestamp(mtime, 0).map(|dt| dt.to_rfc3339()).unwrap_or_default(),
+                            palette: None,
                         }),
                     };
                     Some((file_id, image_node, p_path))
