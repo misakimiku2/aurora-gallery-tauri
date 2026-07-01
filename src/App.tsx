@@ -755,6 +755,13 @@ export const App: React.FC = () => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
 
+  const handleOpenCompareAndClearSelection = useCallback((imageIds: string[]) => {
+    handleOpenCompareInNewTab(imageIds);
+    if (isAndroidSelectionMode) {
+      setIsAndroidSelectionMode(false);
+    }
+  }, [handleOpenCompareInNewTab, isAndroidSelectionMode]);
+
   const handleDeselectAllAndroid = useCallback(() => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
@@ -1439,15 +1446,24 @@ export const App: React.FC = () => {
     const idsToAdd = imageIds.slice(0, remainingSpace);
     const actuallyAdded = idsToAdd.length;
 
+    const sourceTabId = state.activeTabId;
+
     setState(prev => ({
       ...prev,
       activeTabId: tabId,
       tabs: prev.tabs.map(tab =>
         tab.id === tabId
           ? { ...tab, selectedFileIds: [...tab.selectedFileIds, ...idsToAdd] }
-          : tab
+          : tab.id === sourceTabId
+            ? { ...tab, selectedFileIds: [], lastSelectedId: null }
+            : tab
       )
     }));
+
+    // 退出 Android 多选模式
+    if (isAndroidSelectionMode) {
+      setIsAndroidSelectionMode(false);
+    }
 
     // 显示提示
     if (actuallyAdded < imageIds.length) {
@@ -1925,10 +1941,7 @@ export const App: React.FC = () => {
       }
 
       if (tab.isCompareMode) {
-        setState(prev => ({
-          ...prev,
-          tabs: prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, isCompareMode: false } : t)
-        }));
+        handleCloseTab({ stopPropagation: () => { } } as any, tab.id);
         setIsReferenceMode(false);
         return;
       }
@@ -2077,7 +2090,7 @@ export const App: React.FC = () => {
               t={t}
               activeTab={activeTab}
               tabs={state.tabs}
-              handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+              handleOpenCompareInNewTab={handleOpenCompareAndClearSelection}
               handleAddToCompareCanvas={handleAddToCompareCanvas}
               enterImmersiveOnMount={state.settings.openInImmersiveByDefault}
             />
@@ -2092,6 +2105,7 @@ export const App: React.FC = () => {
                 customTags={state.customTags}
                 resourceRoot={state.settings.paths.resourceRoot}
                 cachePath={state.settings.paths.cacheRoot}
+                isActiveTab={tab.id === state.activeTabId}
                 onClose={() => {
                   updateTabById(tab.id, { isCompareMode: false });
                   setIsReferenceMode(false);
@@ -2778,7 +2792,7 @@ export const App: React.FC = () => {
         handlePasteTags={handlePasteTags}
         showToast={showToast}
         updateActiveTab={updateActiveTab}
-        handleOpenCompareInNewTab={handleOpenCompareInNewTab}
+        handleOpenCompareInNewTab={handleOpenCompareAndClearSelection}
         handleAddToCompareCanvas={handleAddToCompareCanvas}
         handleCopyImageToClipboard={handleCopyImageToClipboard}
         handleSearchSimilarImages={handleSearchSimilarImages}

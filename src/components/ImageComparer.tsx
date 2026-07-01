@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Maximize, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye, MoreVertical } from 'lucide-react';
+import { Maximize, Maximize2, Minimize2, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye, MoreVertical } from 'lucide-react';
 import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../types';
-import { setWindowMinSize } from '../api/tauri-bridge';
+import { setWindowMinSize, setAndroidImmersiveMode, setAndroidStatusBar } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { convertFileSrc } from '@tauri-apps/api/core';
@@ -41,6 +41,7 @@ interface ImageComparerProps {
   onSessionNameChange?: (name: string) => void;
   onReferenceModeChange?: (isReferenceMode: boolean) => void;
   isReferenceMode?: boolean;
+  isActiveTab?: boolean;
 }
 
 interface ImageLayoutInfo {
@@ -127,7 +128,8 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   sessionName: sessionNameProp,
   onSessionNameChange,
   onReferenceModeChange,
-  isReferenceMode: isReferenceModeProp
+  isReferenceMode: isReferenceModeProp,
+  isActiveTab = true
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -197,6 +199,36 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     }
     onReferenceModeChange?.(value);
   };
+
+  // Android 全屏按钮可见性
+  const [fullscreenBtnVisible, setFullscreenBtnVisible] = useState(true);
+  const fullscreenBtnTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showFullscreenBtn = useCallback(() => {
+    setFullscreenBtnVisible(true);
+    if (fullscreenBtnTimerRef.current) {
+      clearTimeout(fullscreenBtnTimerRef.current);
+    }
+    fullscreenBtnTimerRef.current = setTimeout(() => {
+      setFullscreenBtnVisible(false);
+    }, 3000);
+  }, []);
+
+  // 切换全屏模式时显示按钮
+  useEffect(() => {
+    if (isAndroid && isReferenceMode) {
+      showFullscreenBtn();
+    }
+  }, [isAndroid, isReferenceMode, showFullscreenBtn]);
+
+  // 清理定时器
+  useEffect(() => {
+    return () => {
+      if (fullscreenBtnTimerRef.current) {
+        clearTimeout(fullscreenBtnTimerRef.current);
+      }
+    };
+  }, []);
   // Use ref to store callbacks to avoid re-render issues
   const layoutPropRef = useRef(layoutProp);
   const onLayoutToggleRef = useRef(onLayoutToggle);
@@ -1225,6 +1257,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     if (isAddImageModalOpen) return;
     if (pendingAnnotation) return;
     if (isTouchOnMenuOrToolbar(e.target)) return;
+    showFullscreenBtn();
 
     if (e.touches.length === 2) {
       clearLongPressTimer();
@@ -1603,9 +1636,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const handleOpenAndroidMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (activeImageIds.length === 0) return;
-    const targetId = activeImageIds[activeImageIds.length - 1];
-    setMenuTargetId(targetId);
+    if (activeImageIds.length > 0) {
+      const targetId = activeImageIds[activeImageIds.length - 1];
+      setMenuTargetId(targetId);
+    } else {
+      setMenuTargetId(null);
+    }
     const btn = e.currentTarget as HTMLElement;
     const rect = btn.getBoundingClientRect();
     setContextMenu({ x: rect.right - 10, y: rect.bottom + 20 });
@@ -2262,8 +2298,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     { label: '放置到下方', onClick: () => handleReorder('down'), icon: <Maximize size={14} className="rotate-45" /> },
     { label: '放置到最底层', onClick: () => handleReorder('bottom'), icon: <Maximize size={14} className="rotate-45" /> },
     { divider: true, label: '', onClick: () => { } },
-    { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
-    { divider: true, label: '', onClick: () => { } },
+    ...(!isAndroid ? [
+      { label: '添加注释', onClick: handleStartAddAnnotation, icon: <Plus size={14} /> },
+      { divider: true, label: '', onClick: () => { } },
+    ] : []),
     { label: '从对比中移除', onClick: handleRemoveImage, icon: <Trash2 size={14} />, style: 'text-red-500 hover:bg-red-50' }
   ];
 
@@ -2317,8 +2355,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   };
 
   const nonSelectedMenuOptions = [
-    { label: '添加图片', onClick: handleOpenAddImageModal, icon: <Plus size={14} /> },
-    { divider: true, label: '', onClick: () => { } },
+    ...(isAndroid ? [
+      { label: `吸附功能: ${isSnappingEnabled ? 'ON' : 'OFF'}`, onClick: () => setIsSnappingEnabled(!isSnappingEnabled), icon: <Magnet size={14} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} /> },
+      { divider: true, label: '', onClick: () => { } },
+    ] : [
+      { label: '添加图片', onClick: handleOpenAddImageModal, icon: <Plus size={14} /> },
+      { divider: true, label: '', onClick: () => { } },
+    ]),
     { label: '保存对比信息', onClick: handleSaveSession, icon: <Save size={14} />, disabled: imageFiles.length === 0 },
     { label: '读取对比信息', onClick: handleLoadSession, icon: <FolderOpen size={14} /> },
     { divider: true, label: '', onClick: () => { } },
@@ -2333,6 +2376,47 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const newMode = !isReferenceMode;
     setIsReferenceMode(newMode);
     onReferenceModeChangeRef.current?.(newMode);
+
+    // Android 全屏模式
+    if (isAndroid) {
+      if (newMode) {
+        // 进入全屏：关闭面板并进入沉浸模式
+        const currentLayout = layoutPropRef.current;
+        sidebarStateBeforeRef.current = {
+          isSidebarVisible: currentLayout?.isSidebarVisible ?? false,
+          isMetadataVisible: currentLayout?.isMetadataVisible ?? false
+        };
+        setAndroidImmersiveMode(true);
+        setTimeout(() => {
+          const currentLayout = layoutPropRef.current;
+          const currentOnLayoutToggle = onLayoutToggleRef.current;
+          if (currentLayout?.isSidebarVisible) {
+            currentOnLayoutToggle?.('sidebar');
+          }
+          if (currentLayout?.isMetadataVisible) {
+            currentOnLayoutToggle?.('metadata');
+          }
+        }, 50);
+      } else {
+        // 退出全屏：恢复面板并退出沉浸模式
+        setAndroidImmersiveMode(false);
+        const isDark = document.documentElement.classList.contains('dark');
+        setAndroidStatusBar(isDark);
+        const savedState = sidebarStateBeforeRef.current;
+        if (savedState) {
+          const currentLayout = layoutPropRef.current;
+          const currentOnLayoutToggle = onLayoutToggleRef.current;
+          if (savedState.isSidebarVisible && !currentLayout?.isSidebarVisible) {
+            currentOnLayoutToggle?.('sidebar');
+          }
+          if (savedState.isMetadataVisible && !currentLayout?.isMetadataVisible) {
+            currentOnLayoutToggle?.('metadata');
+          }
+          sidebarStateBeforeRef.current = null;
+        }
+      }
+      return;
+    }
 
     // Helper function to animate window resize
     const animateWindowResize = async (
@@ -2441,10 +2525,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         }
       }
     } catch {}
-  }, [isReferenceMode]);
+  }, [isReferenceMode, isAndroid]);
 
   // Keyboard support
   useEffect(() => {
+    if (!isActiveTab) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         // 优先级1: 如果添加图片窗口打开，关闭它
@@ -2470,10 +2555,11 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode]);
+  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode, isActiveTab]);
 
   // Handle mouse side buttons
   useEffect(() => {
+    if (!isActiveTab) return;
     const handleMouseUp = (e: MouseEvent) => {
       if (e.button === 3) {
         e.stopImmediatePropagation();
@@ -2499,18 +2585,25 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     window.addEventListener('mouseup', handleMouseUp, { capture: true });
     return () => window.removeEventListener('mouseup', handleMouseUp, { capture: true });
-  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode]);
+  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode, isActiveTab]);
 
-  const backPressStateRef = useRef({ contextMenu: null as { x: number; y: number } | null, isEditMode: false, activeImageIds: [] as string[], onClose: onClose, onCloseTab: onCloseTab });
-  backPressStateRef.current = { contextMenu, isEditMode, activeImageIds, onClose, onCloseTab };
+  const backPressStateRef = useRef({ contextMenu: null as { x: number; y: number } | null, isEditMode: false, activeImageIds: [] as string[], onClose: onClose, onCloseTab: onCloseTab, isActiveTab: isActiveTab, isReferenceMode: isReferenceMode });
+  backPressStateRef.current = { contextMenu, isEditMode, activeImageIds, onClose, onCloseTab, isActiveTab, isReferenceMode };
 
   useEffect(() => {
     if (!isAndroid) return;
     const handler = () => {
       const state = backPressStateRef.current;
+      if (!state.isActiveTab) return;
       if (state.contextMenu) {
         setContextMenu(null);
         setMenuTargetId(null);
+        (window as any).__androidBackHandled = true;
+        return;
+      }
+      // 全屏模式下，返回键退出全屏
+      if (state.isReferenceMode) {
+        toggleReferenceMode();
         (window as any).__androidBackHandled = true;
         return;
       }
@@ -2531,7 +2624,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     };
     window.addEventListener('android-back-press', handler);
     return () => window.removeEventListener('android-back-press', handler);
-  }, [isAndroid]);
+  }, [isAndroid, toggleReferenceMode]);
 
   return (
     <div
@@ -2621,23 +2714,39 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         </div>
 
         <div className="flex items-center space-x-2">
-          <button
-            onClick={() => setIsSnappingEnabled(!isSnappingEnabled)}
-            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'}`}
-            title={`吸附功能 (A): ${isSnappingEnabled ? 'ON' : 'OFF'}`}
-          >
-            <Magnet size={18} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={() => setIsSnappingEnabled(!isSnappingEnabled)}
+              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'}`}
+              title={`吸附功能 (A): ${isSnappingEnabled ? 'ON' : 'OFF'}`}
+            >
+              <Magnet size={18} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} />
+            </button>
+          )}
 
-          <button
-            onClick={toggleReferenceMode}
-            className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isReferenceMode ? 'text-blue-500' : 'text-gray-400'}`}
-            title={`参考模式 (R): ${isReferenceMode ? 'ON' : 'OFF'}`}
-          >
-            <Eye size={18} className={isReferenceMode ? 'text-blue-500' : 'text-gray-400'} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={toggleReferenceMode}
+              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isReferenceMode ? 'text-blue-500' : 'text-gray-400'}`}
+              title={`参考模式 (R): ${isReferenceMode ? 'ON' : 'OFF'}`}
+            >
+              <Eye size={18} className={isReferenceMode ? 'text-blue-500' : 'text-gray-400'} />
+            </button>
+          )}
 
-          {isAndroid && activeImageIds.length > 0 && (
+          {/* Android 添加图片按钮 */}
+          {isAndroid && (
+            <button
+              onClick={handleOpenAddImageModal}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title="添加图片"
+            >
+              <Plus size={18} />
+            </button>
+          )}
+
+          {/* Android 更多按钮 */}
+          {isAndroid && (
             <button
               onMouseDown={handleOpenAndroidMenu}
               className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
@@ -2647,41 +2756,49 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             </button>
           )}
 
-          <button
-            onClick={handleSaveSession}
-            disabled={imageFiles.length === 0}
-            className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300`}
-            title="保存对比信息"
-          >
-            <Save size={18} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={handleSaveSession}
+              disabled={imageFiles.length === 0}
+              className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300`}
+              title="保存对比信息"
+            >
+              <Save size={18} />
+            </button>
+          )}
 
-          <button
-            onClick={handleLoadSession}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-            title="读取对比信息"
-          >
-            <FolderOpen size={18} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={handleLoadSession}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+              title="读取对比信息"
+            >
+              <FolderOpen size={18} />
+            </button>
+          )}
 
-          <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />
+          {!isAndroid && <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />}
 
-          <button
-            onClick={handleViewAll}
-            disabled={imageFiles.length === 0}
-            className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300 transition-colors`}
-            title="查看全部"
-          >
-            <Scan size={18} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={handleViewAll}
+              disabled={imageFiles.length === 0}
+              className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300 transition-colors`}
+              title="查看全部"
+            >
+              <Scan size={18} />
+            </button>
+          )}
 
-          <button
-            onClick={handleReset}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-colors"
-            title="重置画布"
-          >
-            <RefreshCcw size={18} />
-          </button>
+          {!isAndroid && (
+            <button
+              onClick={handleReset}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-colors"
+              title="重置画布"
+            >
+              <RefreshCcw size={18} />
+            </button>
+          )}
 
           {!isReferenceMode && (
             <button
@@ -2978,6 +3095,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
           </>
         )}
       </div>
+      )}
+
+      {/* Android 全屏按钮 */}
+      {isAndroid && (
+        <button
+          onClick={toggleReferenceMode}
+          className={`absolute bottom-8 right-6 z-[50] w-14 h-14 flex items-center justify-center rounded-full bg-black/50 dark:bg-white/20 backdrop-blur-sm text-white dark:text-white shadow-lg border border-white/20 transition-opacity duration-700 ease-out active:scale-90 ${
+            fullscreenBtnVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          }`}
+          style={{ touchAction: 'manipulation' }}
+        >
+          {isReferenceMode ? <Minimize2 size={24} /> : <Maximize2 size={24} />}
+        </button>
       )}
 
       {/* Add Image Modal */}

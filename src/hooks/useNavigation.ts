@@ -246,7 +246,11 @@ export const useNavigation = (
       }
     };
 
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
+    setState(prev => ({
+      ...prev,
+      tabs: [...prev.tabs.map(t => t.id === prev.activeTabId ? { ...t, selectedFileIds: [], lastSelectedId: null } : t), newTab],
+      activeTabId: newTab.id
+    }));
   }, [setState, state.tabs, state.activeTabId]);
 
   return {

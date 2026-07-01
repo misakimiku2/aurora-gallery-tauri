@@ -1,10 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { Search, Image as ImageIcon, Check, Folder, User, Tag, Layout, ChevronRight, X, FolderOpen, ArrowUpDown, Layers, ArrowUp, ArrowDown } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Search, Image as ImageIcon, Check, Folder, User, Tag, Layout, ChevronRight, ChevronDown, X, FolderOpen, ArrowUpDown, Layers, ArrowUp, ArrowDown, HardDrive } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../../types';
 import { ImageThumbnail } from '../ImageThumbnail';
 import { isTauriEnvironment } from '../../utils/environment';
+import { isAndroidSync } from '../../utils/androidPlatform';
+import { getThumbnailPrefetcher } from '../../utils/thumbnailPrefetch';
 import * as RW from 'react-window';
 
 // Resolve FixedSizeList component from various module shapes
@@ -70,6 +73,9 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
     const [isSearchMode, setIsSearchMode] = useState(false); // 是否处于搜索模式
     const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
+    const categoryMenuRef = useRef<HTMLDivElement>(null);
+    const isAndroid = isAndroidSync();
     const modalRef = useRef<HTMLDivElement>(null);
     const gridContainerRef = useRef<HTMLDivElement>(null);
     const [gridHeight, setGridHeight] = useState(400);
@@ -521,7 +527,16 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         setSelectedNodeId(null);
         setExpandedNodes(new Set());
         setSearchQuery('');
+        setCategoryMenuOpen(false);
     };
+
+    // 分类菜单的类别配置
+    const categoryConfig: { key: CategoryType; label: string; headerIcon: React.ReactNode; menuIcon: React.ReactNode; headerBg: string }[] = [
+        { key: 'folders', label: t('sidebar.folders') || '本地相册', headerIcon: <HardDrive size={18} className="text-white" />, menuIcon: <HardDrive size={18} className="text-blue-500" />, headerBg: '#5391f6' },
+        { key: 'topics', label: t('sidebar.topics') || '专题', headerIcon: <Layout size={18} className="text-white" />, menuIcon: <Layout size={18} className="text-pink-500" />, headerBg: '#ee5ea5' },
+        { key: 'people', label: t('sidebar.people') || '人物', headerIcon: <User size={18} className="text-white" />, menuIcon: <User size={18} className="text-purple-500" />, headerBg: '#a855f7' },
+        { key: 'tags', label: t('sidebar.tags') || '标签', headerIcon: <Tag size={18} className="text-white" />, menuIcon: <Tag size={18} className="text-blue-500" />, headerBg: '#5391f6' },
+    ];
 
     // 更新网格容器高度
     useEffect(() => {
@@ -619,7 +634,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [onClose]);
 
-    // 点击外部关闭排序/分组菜单
+    // 点击外部关闭排序/分组/分类菜单
     useEffect(() => {
         const handleClickOutsideMenus = (e: MouseEvent) => {
             if (sortMenuRef.current && !sortMenuRef.current.contains(e.target as Node)) {
@@ -627,6 +642,9 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
             }
             if (groupMenuRef.current && !groupMenuRef.current.contains(e.target as Node)) {
                 setShowGroupMenu(false);
+            }
+            if (categoryMenuRef.current && !categoryMenuRef.current.contains(e.target as Node)) {
+                setCategoryMenuOpen(false);
             }
         };
         document.addEventListener('mousedown', handleClickOutsideMenus);
@@ -666,6 +684,17 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         }
     }, [activeCategory, rootFolders, rootTopics]);
 
+    // Android: 批量预取缩略图（与主界面 FileGrid 逻辑一致）
+    useEffect(() => {
+        if (!isAndroid || displayedImages.length === 0) return;
+        const prefetcher = getThumbnailPrefetcher();
+        const items = displayedImages
+            .map(img => ({ mediaStoreId: img.mediaStoreId, filePath: img.path }))
+            .filter(v => v.mediaStoreId != null);
+        if (items.length === 0) return;
+        prefetcher.updateVisibleIds(items, items);
+    }, [isAndroid, displayedImages]);
+
     // 虚拟滚动行数据
     const rowData = useMemo(() => {
         const rows: FileNode[][] = [];
@@ -680,13 +709,14 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         const isSelected = selectedNodeId === node.id;
         
         const getIcon = () => {
+            const selectedColor = isAndroid ? 'text-white' : '';
             switch (node.type) {
                 case 'folder':
                     return node.isExpanded ? 
-                        <FolderOpen size={16} className="mr-2 text-blue-500" /> : 
-                        <Folder size={16} className="mr-2 text-blue-500" />;
+                        <FolderOpen size={isAndroid ? 18 : 16} className={`mr-2 ${isSelected ? selectedColor : 'text-blue-500'}`} /> : 
+                        <Folder size={isAndroid ? 18 : 16} className={`mr-2 ${isSelected ? selectedColor : 'text-blue-500'}`} />;
                 case 'topic':
-                    return <Layout size={16} className="mr-2 text-pink-500" />;
+                    return <Layout size={isAndroid ? 18 : 16} className={`mr-2 ${isSelected ? selectedColor : 'text-pink-500'}`} />;
                 case 'person':
                     const coverFile = node.coverFileId ? files[node.coverFileId] : null;
                     return coverFile ? (
@@ -696,10 +726,10 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                             className="w-5 h-5 rounded-full object-cover mr-2"
                         />
                     ) : (
-                        <User size={16} className="mr-2 text-purple-500" />
+                        <User size={isAndroid ? 18 : 16} className={`mr-2 ${isSelected ? selectedColor : 'text-purple-500'}`} />
                     );
                 case 'tag':
-                    return <Tag size={16} className="mr-2 text-blue-500" />;
+                    return <Tag size={isAndroid ? 18 : 16} className={`mr-2 ${isSelected ? selectedColor : 'text-blue-500'}`} />;
             }
         };
 
@@ -712,24 +742,29 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                     }
                     setSelectedNodeId(node.id);
                 }}
-                className={`w-full flex items-center px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors ${
-                    isSelected ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500' : ''
+                className={`w-full flex items-center text-left transition-colors ${
+                    isAndroid
+                        ? `${isSelected ? 'bg-blue-600 text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`
+                        : `px-3 py-2 ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}`
                 }`}
-                style={{ paddingLeft: `${12 + node.depth * 16}px` }}
+                style={{ 
+                    height: isAndroid ? '35px' : undefined,
+                    paddingLeft: isAndroid ? `${8 + node.depth * 12}px` : `${12 + node.depth * 16}px`,
+                    paddingRight: isAndroid ? '8px' : undefined,
+                }}
             >
                 {(node.type === 'folder' || node.type === 'topic') && node.hasChildren && (
-                    <ChevronRight 
-                        size={14} 
-                        className={`mr-1 transition-transform ${node.isExpanded ? 'rotate-90' : ''}`}
-                    />
+                    node.isExpanded 
+                        ? <ChevronDown size={isAndroid ? 18 : 14} className="mr-1" /> 
+                        : <ChevronRight size={isAndroid ? 18 : 14} className="mr-1" />
                 )}
-                {(node.type !== 'folder' && node.type !== 'topic') && <div className="w-[14px]" />}
+                {(node.type !== 'folder' && node.type !== 'topic') && <div className={`w-[${isAndroid ? 18 : 14}px] mr-1`} />}
                 {getIcon()}
-                <span className="text-sm text-gray-700 dark:text-gray-300 truncate flex-1">
+                <span className={`truncate flex-1 text-sm ${isSelected && isAndroid ? 'text-white' : 'text-gray-700 dark:text-gray-300'}`}>
                     {node.name}
                 </span>
                 {node.count !== undefined && (
-                    <span className="ml-auto text-xs text-gray-400">
+                    <span className={`ml-auto text-xs ${isSelected ? (isAndroid ? 'text-white/70' : 'text-blue-500') : 'text-gray-400'}`}>
                         {node.count}
                     </span>
                 )}
@@ -765,6 +800,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                     fileMeta={file.meta}
                                     resourceRoot={resourceRoot}
                                     cachePath={cachePath}
+                                    mediaStoreId={file.mediaStoreId}
                                 />
                                 {isSelected && (
                                     <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
@@ -786,9 +822,9 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
         );
     };
 
-    return (
+    return createPortal(
         <div 
-            className="fixed inset-0 z-[200] bg-black/70 flex items-center justify-center p-4 animate-fade-in"
+            className="fixed inset-0 z-[300] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
         >
@@ -816,54 +852,92 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                 <div className="flex-1 flex overflow-hidden">
                     {/* Left: Category Navigation */}
                     <div className="w-56 border-r border-gray-200 dark:border-gray-800 flex flex-col bg-gray-50/50 dark:bg-black/10">
-                        <div className="p-2 space-y-1">
-                            <button
-                                onClick={() => handleCategoryChange('folders')}
-                                className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
-                                    activeCategory === 'folders' 
-                                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
-                                        : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                                }`}
-                            >
-                                <Folder size={18} className="mr-2" />
-                                <span className="text-sm font-medium">{t('sidebar.folders') || '本地相册'}</span>
-                            </button>
-                            <button
-                                onClick={() => handleCategoryChange('topics')}
-                                className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
-                                    activeCategory === 'topics' 
-                                        ? 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300' 
-                                        : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                                }`}
-                            >
-                                <Layout size={18} className="mr-2" />
-                                <span className="text-sm font-medium">{t('sidebar.topics') || '专题'}</span>
-                            </button>
-                            <button
-                                onClick={() => handleCategoryChange('people')}
-                                className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
-                                    activeCategory === 'people' 
-                                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
-                                        : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                                }`}
-                            >
-                                <User size={18} className="mr-2" />
-                                <span className="text-sm font-medium">{t('sidebar.people') || '人物'}</span>
-                            </button>
-                            <button
-                                onClick={() => handleCategoryChange('tags')}
-                                className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
-                                    activeCategory === 'tags' 
-                                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
-                                        : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
-                                }`}
-                            >
-                                <Tag size={18} className="mr-2" />
-                                <span className="text-sm font-medium">{t('sidebar.tags') || '标签'}</span>
-                            </button>
-                        </div>
-                        <div className="border-t border-gray-200 dark:border-gray-800 my-2" />
-                        <div className="flex-1 overflow-y-auto">
+                        {isAndroid ? (
+                            /* Android: 折叠分类选择器 */
+                            <div className="relative" ref={categoryMenuRef}>
+                                <div
+                                    className="flex items-center px-3 cursor-pointer transition-colors text-white rounded-lg"
+                                    style={{ height: '55px', minHeight: '55px', flexShrink: 0, margin: '10px 10px 0 10px', backgroundColor: categoryConfig.find(c => c.key === activeCategory)?.headerBg }}
+                                    onClick={() => setCategoryMenuOpen(!categoryMenuOpen)}
+                                >
+                                    <div className="p-1 mr-1.5 hover:bg-black/10 rounded">
+                                        {categoryMenuOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                    </div>
+                                    <div className="flex items-center flex-1">
+                                        {categoryConfig.find(c => c.key === activeCategory)?.headerIcon}
+                                        <span className="font-bold text-sm uppercase tracking-wider ml-2">{categoryConfig.find(c => c.key === activeCategory)?.label}</span>
+                                    </div>
+                                </div>
+                                {categoryMenuOpen && (
+                                    <div className="absolute left-[10px] right-[10px] top-full mt-1 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-200 dark:border-gray-700 py-1 z-50">
+                                        {categoryConfig.map(cat => (
+                                            <button
+                                                key={cat.key}
+                                                onClick={() => handleCategoryChange(cat.key)}
+                                                className={`w-full flex items-center px-3 py-2.5 text-left text-sm transition-colors ${
+                                                    activeCategory === cat.key 
+                                                        ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
+                                                        : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700'
+                                                }`}
+                                            >
+                                                {cat.menuIcon}
+                                                <span className="ml-2">{cat.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            /* Desktop: 完整分类按钮 */
+                            <div className="p-2 space-y-1">
+                                <button
+                                    onClick={() => handleCategoryChange('folders')}
+                                    className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                                        activeCategory === 'folders' 
+                                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
+                                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                                    }`}
+                                >
+                                    <Folder size={18} className="mr-2" />
+                                    <span className="text-sm font-medium">{t('sidebar.folders') || '本地相册'}</span>
+                                </button>
+                                <button
+                                    onClick={() => handleCategoryChange('topics')}
+                                    className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                                        activeCategory === 'topics' 
+                                            ? 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300' 
+                                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                                    }`}
+                                >
+                                    <Layout size={18} className="mr-2" />
+                                    <span className="text-sm font-medium">{t('sidebar.topics') || '专题'}</span>
+                                </button>
+                                <button
+                                    onClick={() => handleCategoryChange('people')}
+                                    className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                                        activeCategory === 'people' 
+                                            ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' 
+                                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                                    }`}
+                                >
+                                    <User size={18} className="mr-2" />
+                                    <span className="text-sm font-medium">{t('sidebar.people') || '人物'}</span>
+                                </button>
+                                <button
+                                    onClick={() => handleCategoryChange('tags')}
+                                    className={`w-full flex items-center px-3 py-2 rounded-lg text-left transition-colors ${
+                                        activeCategory === 'tags' 
+                                            ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' 
+                                            : 'hover:bg-gray-200 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300'
+                                    }`}
+                                >
+                                    <Tag size={18} className="mr-2" />
+                                    <span className="text-sm font-medium">{t('sidebar.tags') || '标签'}</span>
+                                </button>
+                            </div>
+                        )}
+                        <div className={`border-t border-gray-200 dark:border-gray-800 my-2 ${isAndroid ? 'hidden' : ''}`} />
+                        <div className={`flex-1 overflow-y-auto ${isAndroid ? 'no-scrollbar mt-2 px-[10px]' : ''}`}>
                             {treeNodes.map(node => renderTreeNode(node))}
                         </div>
                     </div>
@@ -871,29 +945,41 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                     {/* Right: Image Grid */}
                     <div className="flex-1 flex flex-col bg-white dark:bg-gray-900">
                         {/* Search and Actions */}
-                        <div className="p-4 border-b border-gray-200 dark:border-gray-800 flex items-center gap-3">
+                        <div className={`border-b border-gray-200 dark:border-gray-800 flex items-center gap-3 ${isAndroid ? 'p-3' : 'p-4'}`}>
                             <div className="relative flex-1">
-                                <input
-                                    type="text"
-                                    placeholder={t('search.placeholder') || '搜索文件名，按Enter执行...'}
-                                    value={searchInputValue}
-                                    onChange={(e) => setSearchInputValue(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            executeSearch();
-                                        }
-                                    }}
-                                    className="w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none text-sm"
-                                />
-                                <Search size={16} className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                                {searchInputValue && (
-                                    <button
-                                        onClick={clearSearch}
-                                        className="absolute right-3 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-                                    >
-                                        <X size={14} className="text-gray-400" />
-                                    </button>
-                                )}
+                                <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 ${isAndroid ? 'py-2.5' : 'py-2'} transition-all border ${
+                                    searchInputValue ? 'border-blue-500 shadow-sm' : 'border-transparent'
+                                }`}>
+                                    <Search size={16} className="text-gray-400 mr-2 flex-shrink-0" />
+                                    <input
+                                        type="text"
+                                        placeholder={isAndroid ? (t('search.placeholderMobile') || '搜索文件名...') : (t('search.placeholder') || '搜索文件名，按Enter执行...')}
+                                        value={searchInputValue}
+                                        onChange={(e) => {
+                                            setSearchInputValue(e.target.value);
+                                            if (isAndroid) {
+                                                const query = e.target.value.trim();
+                                                setSearchQuery(query);
+                                                setIsSearchMode(query.length > 0);
+                                                setCurrentPage(1);
+                                            }
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (!isAndroid && e.key === 'Enter') {
+                                                executeSearch();
+                                            }
+                                        }}
+                                        className={`bg-transparent border-none focus:outline-none w-full text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 min-w-0 ${isAndroid ? 'text-sm' : 'text-sm'}`}
+                                    />
+                                    {searchInputValue && (
+                                        <button
+                                            onClick={clearSearch}
+                                            className="ml-1 p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full flex-shrink-0"
+                                        >
+                                            <X size={14} className="text-gray-400" />
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                             {/* 升序/降序按钮 */}
                             <button
@@ -1028,7 +1114,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                 </div>
                             ) : groupBy !== 'none' ? (
                                 // 分组显示模式
-                                <div className="overflow-y-auto h-full p-4">
+                                <div className={`overflow-y-auto h-full p-4 ${isAndroid ? 'no-scrollbar' : ''}`}>
                                     {groupedImages.map((group, groupIndex) => {
                                         const isExpanded = expandedGroups.has(groupIndex);
                                         return (
@@ -1082,6 +1168,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                                                             fileMeta={file.meta}
                                                                             resourceRoot={resourceRoot}
                                                                             cachePath={cachePath}
+                                                                            mediaStoreId={file.mediaStoreId}
                                                                         />
                                                                         {isSelected && (
                                                                             <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
@@ -1117,7 +1204,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                 </FixedSizeListComp>
                             ) : (
                                 // Fallback without virtual scroll
-                                <div className="overflow-y-auto h-full p-4">
+                                <div className={`overflow-y-auto h-full p-4 ${isAndroid ? 'no-scrollbar' : ''}`}>
                                     <div className="grid grid-cols-5 gap-3">
                                         {displayedImages.map((file) => {
                                             const isSelected = selectedIds.has(file.id);
@@ -1142,6 +1229,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                                             fileMeta={file.meta}
                                                             resourceRoot={resourceRoot}
                                                             cachePath={cachePath}
+                                                            mediaStoreId={file.mediaStoreId}
                                                         />
                                                         {isSelected && (
                                                             <div className="absolute inset-0 bg-blue-500/20 flex items-center justify-center">
@@ -1190,7 +1278,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                         </div>
 
                         {/* Pagination */}
-                        {totalPages > 1 && (
+                        {!isAndroid && totalPages > 1 && (
                             <div className="px-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-200 dark:border-gray-800 flex items-center justify-center gap-2">
                                 <button
                                     onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -1218,7 +1306,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                 </div>
 
                 {/* Footer */}
-                <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/20 flex items-center justify-between">
+                <div className={`${isAndroid ? 'p-3' : 'p-4'} border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-black/20 flex items-center justify-between`}>
                     <div className="text-sm text-gray-500 dark:text-gray-400">
                         {t('comparer.canvasCount') || '画布中'}: 
                         <span className="font-medium text-gray-700 dark:text-gray-300">{existingImageIds.length}</span>
@@ -1236,14 +1324,14 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                         </button>
                         <button
                             onClick={onClose}
-                            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                            className={`${isAndroid ? 'px-4 h-[55px]' : 'px-4 py-2'} text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors`}
                         >
                             {t('settings.cancel') || '取消'}
                         </button>
                         <button
                             onClick={handleConfirm}
                             disabled={selectedIds.size === 0 || totalImageCount > MAX_IMAGES}
-                            className="px-6 py-2 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center"
+                            className={`${isAndroid ? 'px-6 h-[55px]' : 'px-6 py-2'} text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center`}
                         >
                             <Check size={16} className="mr-1.5" />
                             {t('comparer.confirmAdd') || '确认添加'} 
@@ -1252,6 +1340,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                     </div>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
