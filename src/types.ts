@@ -76,6 +76,8 @@ export interface FileNode {
   updatedAt?: string;
   lastRefresh?: number;
   isRefreshing?: boolean;
+  source?: 'local' | 'lan';
+  remotePath?: string;
 }
 
 export interface Person {
@@ -288,11 +290,26 @@ export interface ClipSettings {
 
 // 局域网共享设置
 export interface LanShareSettings {
+  // 服务器配置（桌面端使用，安卓端忽略）
   enabled: boolean;           // 是否启用局域网共享
   port: number;              // 服务端口
   accessCode: string;        // 访问验证码
   allowEdit: boolean;        // 允许编辑和删除
   allowUpload: boolean;      // 允许上传
+  serverName?: string;       // 服务器名称（显示给客户端）
+  // 客户端配置（安卓端使用，桌面端忽略）
+  clientMode?: boolean;
+  serverHost?: string;
+  serverPort?: number;
+  serverAccessToken?: string;
+  savedServers?: SavedServer[];
+}
+
+export interface SavedServer {
+  host: string;
+  port: number;
+  name?: string;
+  lastConnected: number;
 }
 
 // 已连接设备信息
@@ -374,7 +391,7 @@ export interface FileGroup {
 export interface HistoryItem {
   folderId: string;
   viewingId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
   searchQuery: string;
   searchScope: SearchScope;
   activeTags: string[];
@@ -391,7 +408,7 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;

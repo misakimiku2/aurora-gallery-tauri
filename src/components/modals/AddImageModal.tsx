@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Search, Image as ImageIcon, Check, Folder, User, Tag, Layout, ChevronRight, ChevronDown, X, FolderOpen, ArrowUpDown, Layers, ArrowUp, ArrowDown, HardDrive } from 'lucide-react';
+import { Search, Image as ImageIcon, Check, Folder, User, Tag, Layout, ChevronRight, ChevronDown, X, FolderOpen, ArrowUpDown, Layers, ArrowUp, ArrowDown, HardDrive, Monitor } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../../types';
@@ -8,6 +8,7 @@ import { ImageThumbnail } from '../ImageThumbnail';
 import { isTauriEnvironment } from '../../utils/environment';
 import { isAndroidSync } from '../../utils/androidPlatform';
 import { getThumbnailPrefetcher } from '../../utils/thumbnailPrefetch';
+import { lanClientApi } from '../lan-client/lanClientApi';
 import * as RW from 'react-window';
 
 // Resolve FixedSizeList component from various module shapes
@@ -38,6 +39,7 @@ interface AddImageModalProps {
     existingImageIds: string[]; // 画布中已存在的图片ID
     onConfirm: (selectedIds: string[]) => void;
     onClose: () => void;
+    onOpenLanGallery?: () => void;
     t: (key: string) => string;
 }
 
@@ -64,6 +66,7 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
     existingImageIds,
     onConfirm,
     onClose,
+    onOpenLanGallery,
     t
 }) => {
     const [activeCategory, setActiveCategory] = useState<CategoryType>('folders');
@@ -76,6 +79,8 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
     const [categoryMenuOpen, setCategoryMenuOpen] = useState(false);
     const categoryMenuRef = useRef<HTMLDivElement>(null);
     const isAndroid = isAndroidSync();
+    const [lanConnected, setLanConnected] = useState(() => lanClientApi.isConnected());
+    const [lanHint, setLanHint] = useState<string | null>(null);
     const modalRef = useRef<HTMLDivElement>(null);
     const gridContainerRef = useRef<HTMLDivElement>(null);
     const [gridHeight, setGridHeight] = useState(400);
@@ -934,6 +939,44 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                                     <Tag size={18} className="mr-2" />
                                     <span className="text-sm font-medium">{t('sidebar.tags') || '标签'}</span>
                                 </button>
+                            </div>
+                        )}
+                        {isAndroid && (
+                            <div className="px-[10px] mt-2">
+                                <button
+                                    onClick={() => {
+                                        setLanConnected(lanClientApi.isConnected());
+                                        if (lanClientApi.isConnected()) {
+                                            setLanHint(null);
+                                            if (onOpenLanGallery) {
+                                                onOpenLanGallery();
+                                            } else {
+                                                onClose();
+                                            }
+                                        } else {
+                                            setLanHint(t('lanClient.connectHint') || '请先在设置中连接桌面端');
+                                        }
+                                    }}
+                                    className={`w-full flex items-center px-3 rounded-lg transition-colors ${
+                                        lanConnected
+                                            ? 'bg-emerald-600 text-white'
+                                            : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
+                                    }`}
+                                    style={{ height: '45px' }}
+                                >
+                                    <Monitor size={18} className="mr-2 flex-shrink-0" />
+                                    <span className="font-bold text-sm tracking-wider flex-1 text-left">
+                                        {t('sidebar.desktopGallery') || '桌面图库'}
+                                    </span>
+                                    <span className="text-xs whitespace-nowrap">
+                                        {lanConnected
+                                            ? (t('lanClient.connected') || '已连接')
+                                            : (t('lanClient.disconnected') || '未连接')}
+                                    </span>
+                                </button>
+                                {lanHint && (
+                                    <div className="text-xs text-amber-500 mt-1 px-1">{lanHint}</div>
+                                )}
                             </div>
                         )}
                         <div className={`border-t border-gray-200 dark:border-gray-800 my-2 ${isAndroid ? 'hidden' : ''}`} />

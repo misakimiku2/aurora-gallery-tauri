@@ -1482,7 +1482,57 @@ async fn request_android_permissions() -> Result<String, String> {
         "()V",
         &[],
     ).map_err(|e| format!("Failed to call requestMediaPermissions: {:?}", e))?;
-    
+
+    Ok("requested".to_string())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn check_camera_permission() -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+    let result = env.call_method(
+        &activity_obj,
+        "checkCameraPermission",
+        "()Ljava/lang/String;",
+        &[],
+    ).map_err(|e| format!("Failed to call checkCameraPermission: {:?}", e))?;
+
+    let jstr = result.l()
+        .map_err(|e| format!("Failed to get result: {:?}", e))?;
+
+    let java_str = unsafe { JString::from_raw(jstr.into_raw()) };
+    let rust_string: String = env.get_string(&java_str)
+        .map_err(|e| format!("Failed to get string: {:?}", e))?
+        .into();
+
+    Ok(rust_string)
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn request_camera_permission() -> Result<String, String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+    env.call_method(
+        &activity_obj,
+        "requestCameraPermission",
+        "()V",
+        &[],
+    ).map_err(|e| format!("Failed to call requestCameraPermission: {:?}", e))?;
+
     Ok("requested".to_string())
 }
 
@@ -1805,7 +1855,8 @@ pub fn run() {
         lan_share_commands::lan_share_get_devices,
         lan_share_commands::lan_share_get_local_ip,
         lan_share_commands::lan_share_check_port,
-        lan_share_commands::lan_share_update_config
+        lan_share_commands::lan_share_update_config,
+        lan_share_commands::lan_share_rename_device
     ]);
 
     #[cfg(target_os = "android")]
@@ -1863,6 +1914,8 @@ pub fn run() {
         android_get_native_preview,
         check_android_permissions,
         request_android_permissions,
+        check_camera_permission,
+        request_camera_permission,
         android_check_storage_manager,
         android_request_all_files_access,
         set_android_status_bar,

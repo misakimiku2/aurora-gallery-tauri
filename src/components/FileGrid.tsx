@@ -921,6 +921,7 @@ interface FileGridProps {
   personSortDirection?: import('../types').SortDirection;
   personGroupBy?: import('../types').PersonGroupByOption;
   onRefresh?: () => Promise<void>;
+  panelWidthRem?: number;
 }
 
 export const FileGrid: React.FC<FileGridProps> = ({
@@ -984,7 +985,8 @@ export const FileGrid: React.FC<FileGridProps> = ({
   personSortBy = 'count',
   personSortDirection = 'desc',
   personGroupBy = 'none',
-  onRefresh
+  onRefresh,
+  panelWidthRem
 }) => {
   // #region agent log
   // Removed debug logs
@@ -1027,10 +1029,28 @@ export const FileGrid: React.FC<FileGridProps> = ({
 
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
+  const containerWidthRef = useRef(0);
+  const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
 
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+  const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const prevScrollTopForFlipRef = useRef(0);
+  // Layout transition tracking: increases buffer so cards in the NEW viewport
+  // are mounted before the FLIP WAAPI animation runs.
+  const [isLayoutTransitioning, setIsLayoutTransitioning] = useState(false);
+  const isLayoutTransitioningRef = useRef(false);
+  const prevThumbnailSizeRef = useRef(thumbnailSize);
+  const prevContainerWidthRef = useRef(containerRect.width);
+  const transitionBufferRef = useRef(400);
+  const transitionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flipDebugLogRef = useRef(0);
+  // Two-phase FLIP: when scrollDelta is large, phase 0 expands buffer + updates scrollTop
+  // (mounts cards at new viewport), phase 1 runs the WAAPI animation.
+  const [flipPhase, setFlipPhase] = useState(0);
+  const pendingFlipDataRef = useRef<{ oldScrollTop: number; newScrollTop: number } | null>(null);
 
   const throttledOnScrollTopChange = useMemo(() => 
     onScrollTopChange ? throttle(onScrollTopChange, 100) : undefined
@@ -1157,16 +1177,24 @@ export const FileGrid: React.FC<FileGridProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     if (rect.width > 0) {
         setContainerRect({ width: rect.width, height: rect.height });
+        containerWidthRef.current = rect.width;
     }
 
     let animationFrameId: number;
     const observer = new ResizeObserver((entries) => {
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
-        
+
         animationFrameId = requestAnimationFrame(() => {
             for (const entry of entries) {
                 if (entry.target === containerRef.current) {
-                    setContainerRect({ width: entry.contentRect.width, height: entry.contentRect.height });
+                    const newWidth = entry.contentRect.width;
+                    const newHeight = entry.contentRect.height;
+                    setContainerRect(prev => ({ width: prev.width, height: newHeight }));
+                    containerWidthRef.current = newWidth;
+                    if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
+                    widthDebounceRef.current = setTimeout(() => {
+                        setContainerRect(prev => ({ width: containerWidthRef.current, height: prev.height }));
+                    }, 60);
                 }
             }
         });
@@ -1220,8 +1248,26 @@ export const FileGrid: React.FC<FileGridProps> = ({
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         observer.disconnect();
         containerRef?.current?.removeEventListener('scroll', handleScroll);
+        if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
     };
   }, [containerRef, activeTab.viewMode]);
+
+  // Predict container width immediately when panels toggle, so card transitions
+  // run simultaneously with the panel animation instead of waiting for ResizeObserver
+  useEffect(() => {
+    if (panelWidthRem === undefined) return;
+    if (prevPanelWidthRemRef.current !== undefined && prevPanelWidthRemRef.current !== panelWidthRem) {
+      const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const deltaRem = prevPanelWidthRemRef.current - panelWidthRem;
+      const deltaPx = deltaRem * remPx;
+      if (containerWidthRef.current > 0) {
+        const predictedWidth = containerWidthRef.current + deltaPx;
+        setContainerRect(prev => ({ width: predictedWidth, height: prev.height }));
+        containerWidthRef.current = predictedWidth;
+      }
+    }
+    prevPanelWidthRemRef.current = panelWidthRem;
+  }, [panelWidthRem]);
 
   const { layout, totalHeight } = useLayout(
       activeTab.viewMode === 'people-overview' ? [] : displayFileIds,
@@ -1234,6 +1280,257 @@ export const FileGrid: React.FC<FileGridProps> = ({
       people,
       activeTab.searchQuery
   );
+
+  // FLIP animation: anchor at viewport top instead of page top.
+  // Only applies to non-grouped views where the top-level layout is used for rendering.
+  const isNonGroupedView = groupBy === 'none' || !groupedFiles || groupedFiles.length === 0;
+
+  // Sync isLayoutTransitioning to ref for use inside FLIP effect (avoids stale closure / extra deps)
+  useEffect(() => {
+    isLayoutTransitioningRef.current = isLayoutTransitioning;
+  }, [isLayoutTransitioning]);
+
+  // Watch layout input changes: set transition state + predict buffer size so the
+  // new viewport's cards are mounted BEFORE the new layout arrives from the worker.
+  // Only activates for thumbnail size changes — width changes (panel toggle) are
+  // handled by CSS transition + predicted width, no buffer increase needed.
+  useEffect(() => {
+    const prevThumb = prevThumbnailSizeRef.current;
+    const prevWidth = prevContainerWidthRef.current;
+    const currWidth = containerRect.width;
+    const thumbChanged = prevThumb !== thumbnailSize;
+    const widthChanged = prevWidth !== currWidth && prevWidth > 0 && currWidth > 0;
+
+    if (!thumbChanged && !widthChanged) return;
+    // Skip if container not visible or not in non-grouped view (FileGrid idle)
+    if (currWidth <= 0 || !isNonGroupedView) {
+      prevThumbnailSizeRef.current = thumbnailSize;
+      prevContainerWidthRef.current = currWidth;
+      return;
+    }
+    // Only increase buffer for thumbnail size changes (large scroll adjustments).
+    // For width-only changes (panel toggle), CSS transition + predicted width handles it.
+    if (!thumbChanged) {
+      prevThumbnailSizeRef.current = thumbnailSize;
+      prevContainerWidthRef.current = currWidth;
+      return;
+    }
+
+    const currentScroll = containerRef?.current?.scrollTop || 0;
+    const ratio = prevThumb > 0 ? thumbnailSize / prevThumb : 1;
+    const predictedDelta = Math.abs(currentScroll * (1 - ratio));
+    const buffer = Math.min(3000, Math.max(1500, predictedDelta + 800));
+
+    transitionBufferRef.current = buffer;
+    setIsLayoutTransitioning(true);
+    console.log(`[FLIP-FileGrid] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${currWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)}, predictedDelta=${predictedDelta.toFixed(0)}, buffer=${buffer.toFixed(0)}`);
+
+    if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+    transitionResetTimerRef.current = setTimeout(() => {
+      setIsLayoutTransitioning(false);
+      transitionBufferRef.current = 400;
+      console.log(`[FLIP-FileGrid] TRANSITION END (timeout 600ms)`);
+    }, 600);
+
+    prevThumbnailSizeRef.current = thumbnailSize;
+    prevContainerWidthRef.current = currWidth;
+  }, [thumbnailSize, containerRect.width]);
+
+  useLayoutEffect(() => {
+    if (!isNonGroupedView) {
+      prevLayoutPositionsRef.current = new Map();
+      return;
+    }
+    const prevPositions = prevLayoutPositionsRef.current;
+    const logId = ++flipDebugLogRef.current;
+
+    // First render or empty layout: just record positions
+    if (prevPositions.size === 0 || layout.length === 0) {
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = containerRef?.current?.scrollTop || 0;
+      return;
+    }
+
+    // Check if any position actually changed
+    let hasPositionChanged = false;
+    for (const item of layout) {
+      const prev = prevPositions.get(item.id);
+      if (!prev || Math.abs(prev.x - item.x) > 0.5 || Math.abs(prev.y - item.y) > 0.5) {
+        hasPositionChanged = true;
+        break;
+      }
+    }
+    if (!hasPositionChanged) {
+      prevScrollTopForFlipRef.current = containerRef?.current?.scrollTop || 0;
+      return;
+    }
+
+    // If most items changed (e.g., tab switch), skip FLIP to avoid animating unrelated cards
+    const commonCount = layout.filter(item => prevPositions.has(item.id)).length;
+    if (commonCount < layout.length * 0.5) {
+      console.log(`[FLIP-FileGrid] #${logId} SKIP: too many new items (common=${commonCount}/${layout.length})`);
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = containerRef?.current?.scrollTop || 0;
+      return;
+    }
+
+    const container = containerRef?.current;
+    if (!container) return;
+
+    // BUG FIX #1: Use LIVE scrollTop from the DOM, not the stale prevScrollTopForFlipRef.
+    const oldScrollTop = container.scrollTop;
+    const staleScrollTop = prevScrollTopForFlipRef.current;
+
+    console.log(`[FLIP-FileGrid] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount}`);
+    console.log(`[FLIP-FileGrid] #${logId}   scrollTop: live=${oldScrollTop.toFixed(1)}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(oldScrollTop - staleScrollTop).toFixed(1)}`);
+
+    // Find anchor card: the card closest to viewport top (oldScreenY >= 0) in previous layout
+    let anchorId: string | null = null;
+    let anchorOldScreenY = 0;
+    let minScreenY = Infinity;
+    prevPositions.forEach((pos, id) => {
+      const screenY = pos.y - oldScrollTop;
+      if (screenY >= -50 && screenY < minScreenY) {
+        minScreenY = screenY;
+        anchorId = id;
+        anchorOldScreenY = screenY;
+      }
+    });
+
+    // Calculate new scroll top so the anchor card stays at the same screen position
+    let newScrollTop = oldScrollTop;
+    if (anchorId) {
+      const anchorNew = layout.find(item => item.id === anchorId);
+      if (anchorNew) {
+        newScrollTop = Math.max(0, anchorNew.y - anchorOldScreenY);
+      }
+    }
+
+    const anchorOldY = anchorId ? prevPositions.get(anchorId)?.y : undefined;
+    const anchorNewY = anchorId ? layout.find(i => i.id === anchorId)?.y : undefined;
+    const scrollDelta = newScrollTop - oldScrollTop;
+    console.log(`[FLIP-FileGrid] #${logId}   anchor: id=${(anchorId || '').slice(0, 12)}, oldY=${anchorOldY?.toFixed(0)}, screenY=${anchorOldScreenY.toFixed(0)}, newY=${anchorNewY?.toFixed(0)}, newScroll=${newScrollTop.toFixed(0)}, scrollDelta=${scrollDelta.toFixed(0)}`);
+
+    // If scroll adjustment is negligible, CSS transition on transform handles the animation.
+    // No need for WAAPI — this avoids perf cost on panel toggle (width-only changes).
+    if (Math.abs(scrollDelta) <= 1) {
+      console.log(`[FLIP-FileGrid] #${logId} SKIP WAAPI: |scrollDelta|≤1, CSS transition handles it`);
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = oldScrollTop;
+      if (flipPhase === 1) setFlipPhase(0);
+      return;
+    }
+
+    // Two-phase FLIP: when scrollDelta is large, the new viewport cards aren't mounted yet
+    // (visibleItems was computed with old scrollTop). Phase 0 updates scrollTop state so
+    // visibleItems includes new viewport cards. Phase 1 runs the WAAPI animation after
+    // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
+    // already recorded in prevPositions, so they don't need to be in the DOM. Only new
+    // viewport cards need mounting, and the existing transition buffer handles that.
+    const containerHeight = container.clientHeight || 0;
+
+    if (flipPhase === 0) {
+      console.log(`[FLIP-FileGrid] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${transitionBufferRef.current})`);
+      pendingFlipDataRef.current = { oldScrollTop, newScrollTop };
+      setScrollTop(newScrollTop);
+      setFlipPhase(1);
+      return;
+    }
+
+    // Phase 1: run FLIP animation
+    let actualOldScrollTop = oldScrollTop;
+    let actualNewScrollTop = newScrollTop;
+    if (flipPhase === 1 && pendingFlipDataRef.current) {
+      actualOldScrollTop = pendingFlipDataRef.current.oldScrollTop;
+      actualNewScrollTop = pendingFlipDataRef.current.newScrollTop;
+      pendingFlipDataRef.current = null;
+      setFlipPhase(0);
+      console.log(`[FLIP-FileGrid] #${logId} PHASE 1: oldScroll=${actualOldScrollTop.toFixed(0)}, newScroll=${actualNewScrollTop.toFixed(0)}`);
+    }
+
+    // Adjust scroll position instantly (before paint, so no visual jump)
+    container.scrollTop = actualNewScrollTop;
+
+    // Apply WAAPI FLIP animation only to cards near old OR new viewport.
+    // visibleItems may include many cards (large buffer), but only animate relevant ones.
+    const viewportPadding = 400;
+    const oldVpMin = actualOldScrollTop - viewportPadding;
+    const oldVpMax = actualOldScrollTop + containerHeight + viewportPadding;
+    const newVpMin = actualNewScrollTop - viewportPadding;
+    const newVpMax = actualNewScrollTop + containerHeight + viewportPadding;
+
+    let animatedCount = 0;
+    let notFoundCount = 0;
+    let skippedCount = 0;
+    visibleItems.forEach(item => {
+      const prev = prevPositions.get(item.id);
+      if (!prev) return;
+
+      const inOldVp = item.y < oldVpMax && item.y + item.height > oldVpMin;
+      const inNewVp = item.y < newVpMax && item.y + item.height > newVpMin;
+      if (!inOldVp && !inNewVp) {
+        skippedCount++;
+        return;
+      }
+
+      const el = container.querySelector(`[data-id="${item.id}"]`) as HTMLElement | null;
+      if (!el) {
+        notFoundCount++;
+        return;
+      }
+
+      const oldScreenY = prev.y - actualOldScrollTop;
+      const newScreenY = item.y - actualNewScrollTop;
+      const deltaY = oldScreenY - newScreenY;
+      const deltaX = prev.x - item.x;
+
+      if (Math.abs(deltaY) < 1 && Math.abs(deltaX) < 1) {
+        skippedCount++;
+        return;
+      }
+
+      el.animate(
+        [
+          { transform: `translate(${item.x + deltaX}px, ${item.y + deltaY}px)` },
+          { transform: `translate(${item.x}px, ${item.y}px)` },
+        ],
+        {
+          duration: 300,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'none',
+        }
+      );
+      animatedCount++;
+    });
+
+    console.log(`[FLIP-FileGrid] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}`);
+
+    // Update refs for next layout change
+    const map = new Map<string, { x: number; y: number }>();
+    layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+    prevLayoutPositionsRef.current = map;
+    prevScrollTopForFlipRef.current = actualNewScrollTop;
+
+    // Update scrollTop state (WAAPI animation overrides inline transform, so re-render is safe)
+    setScrollTop(actualNewScrollTop);
+    throttledOnScrollTopChange?.(actualNewScrollTop);
+
+    // Reset transition state after animation completes
+    if (isLayoutTransitioningRef.current) {
+      if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+      transitionResetTimerRef.current = setTimeout(() => {
+        setIsLayoutTransitioning(false);
+        transitionBufferRef.current = 400;
+        console.log(`[FLIP-FileGrid] #${logId} TRANSITION END (post-FLIP 400ms)`);
+      }, 400);
+    }
+  }, [layout, isNonGroupedView, flipPhase]);
 
   useLayoutEffect(() => {
       if (!isVisible) return;
@@ -1326,11 +1623,11 @@ export const FileGrid: React.FC<FileGridProps> = ({
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
   const visibleItems = useMemo(() => {
-      const buffer = 400;
+      const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
-  }, [layout, scrollTop, containerRect.height, totalHeight]);
+  }, [layout, scrollTop, containerRect.height, totalHeight, isLayoutTransitioning]);
 
   // keep a cheap, always-available source of truth for how many items FileGrid is rendering
   useEffect(() => {

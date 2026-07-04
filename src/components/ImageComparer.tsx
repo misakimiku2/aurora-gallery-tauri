@@ -6,6 +6,7 @@ import { setWindowMinSize, setAndroidImmersiveMode, setAndroidStatusBar } from '
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { convertFileSrc } from '@tauri-apps/api/core';
+import { lanClientApi } from './lan-client/lanClientApi';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
 import { AnnotationLayer } from './comparer/AnnotationLayer';
@@ -18,6 +19,13 @@ import JSZip from 'jszip';
 import { ComparisonSessionManifest, ComparisonSessionViewport, ComparisonSessionLayout } from './comparer/types';
 import { invoke } from '@tauri-apps/api/core';
 import { useToasts } from '../hooks/useToasts';
+
+// Resolve a FileNode's full-image URL: LAN files load from the remote desktop
+// server, local files use Tauri's convertFileSrc.
+const resolveImageSrc = (file: FileNode): string =>
+  file.source === 'lan' && file.remotePath
+    ? lanClientApi.getImageUrl(file.remotePath)
+    : convertFileSrc(file.path);
 
 interface ImageComparerProps {
   selectedFileIds: string[];
@@ -410,7 +418,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         loadingIdsRef.current.add(file.id);
         const img = new Image();
         const loadStart = performance.now();
-        img.src = convertFileSrc(file.path);
+        img.src = resolveImageSrc(file);
         img.onload = () => {
           if (cancelled) return;
           const w = file.meta?.width || img.width;
@@ -569,7 +577,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       y: -firstH / 2,
       width: firstW,
       height: firstH,
-      src: convertFileSrc(first.path)
+      src: resolveImageSrc(first)
     });
 
     for (let i = 1; i < packOrder.length; i++) {
@@ -608,7 +616,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         y: bestPos.y,
         width: w,
         height: h,
-        src: convertFileSrc(file.path)
+        src: resolveImageSrc(file)
       });
     }
 
@@ -2332,7 +2340,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       const file = files[id];
       if (file && file.path && !imagesCache.current.has(file.id)) {
         const img = new Image();
-        img.src = convertFileSrc(file.path);
+        img.src = resolveImageSrc(file);
         img.onload = () => {
           const w = file.meta?.width || img.width;
           const h = file.meta?.height || img.height;

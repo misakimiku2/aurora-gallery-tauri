@@ -1,14 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Wifi, Copy, RefreshCw, Shield, Smartphone, ExternalLink, Check, AlertCircle, Loader2, Monitor, Tablet } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { LanShareSettings, ConnectedDevice } from '../../types';
 import {
   lanShareStart,
   lanShareStop,
   lanShareGetStatus,
   lanShareGetDevices,
+  lanShareRenameDevice,
+  lanShareUpdateConfig,
   lanShareGetLocalIp,
   LanShareStatus,
 } from '../../api/tauri-bridge';
+import { isAndroidPlatform } from '../../utils/androidPlatform';
+import { LanClientPanel } from '../lan-client/LanClientPanel';
 
 interface LanSharePanelProps {
   t: (key: string) => string;
@@ -49,27 +54,42 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
   const [isStopping, setIsStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [isAndroid, setIsAndroid] = useState(false);
+  const [serverNameInput, setServerNameInput] = useState(settings.serverName || '');
+
+  useEffect(() => {
+    isAndroidPlatform().then(setIsAndroid);
+  }, []);
 
   const serverUrl = serverStatus?.is_running && serverStatus.local_ip
     ? `http://${serverStatus.local_ip}:${serverStatus.port}`
     : null;
 
+  const qrContent = serverUrl
+    ? JSON.stringify({ type: 'aurora-lan', url: serverUrl, code: settings.accessCode })
+    : null;
+
   useEffect(() => {
-    if (serverUrl) {
+    if (qrContent) {
       setQrLoading(true);
-      setQrCodeUrl(generateQRCodeUrl(serverUrl));
+      setQrCodeUrl(generateQRCodeUrl(qrContent));
     } else {
       setQrCodeUrl('');
       setQrLoading(false);
     }
-  }, [serverUrl]);
+  }, [qrContent]);
 
   useEffect(() => {
     lanShareGetStatus().then(setServerStatus).catch(console.error);
   }, []);
 
+  // 服务器运行时拉取设备列表：Tauri 事件驱动即时刷新 + 3s 轮询兜底。
+  // 事件由后端在设备认证/登出/清理时 emit，连接或断开几乎瞬间反映到 UI。
   useEffect(() => {
     if (settings.enabled && serverStatus?.is_running) {
+      // 立即获取一次，避免打开设置面板时先显示"暂无设备"
+      lanShareGetDevices().then(setConnectedDevices).catch(console.error);
+
       pollIntervalRef.current = setInterval(async () => {
         try {
           const devices = await lanShareGetDevices();
@@ -77,7 +97,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
         } catch (e) {
           console.error('Failed to poll devices:', e);
         }
-      }, 5000);
+      }, 3000);
 
       return () => {
         if (pollIntervalRef.current) {
@@ -87,6 +107,17 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
     } else {
       setConnectedDevices([]);
     }
+  }, [settings.enabled, serverStatus?.is_running]);
+
+  // 监听后端推送的设备变化事件，收到后立即刷新列表（无需等待 3s 轮询）
+  useEffect(() => {
+    if (!settings.enabled || !serverStatus?.is_running) return;
+    const unlistenPromise = listen('lan-share-devices-changed', () => {
+      lanShareGetDevices().then(setConnectedDevices).catch(console.error);
+    });
+    return () => {
+      unlistenPromise.then(unlisten => unlisten()).catch(() => {});
+    };
   }, [settings.enabled, serverStatus?.is_running]);
 
   const handleToggle = useCallback(async () => {
@@ -168,8 +199,66 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
     });
   }, [settings, onUpdateSettings]);
 
+  // 服务器名称编辑：失焦或回车时保存。服务运行中则实时推送到服务端，
+  // 否则只存 settings，下次 lanShareStart 时生效。
+  const handleServerNameCommit = useCallback(async () => {
+    const trimmed = serverNameInput.trim();
+    if (trimmed === (settings.serverName || '')) return;
+    const newSettings = { ...settings, serverName: trimmed };
+    onUpdateSettings(newSettings);
+    if (serverStatus?.is_running) {
+      try {
+        await lanShareUpdateConfig(newSettings);
+      } catch (e) {
+        console.error('Failed to update server name:', e);
+      }
+    }
+  }, [serverNameInput, settings, onUpdateSettings, serverStatus]);
+
+  const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
+
+  const handleStartEdit = useCallback((device: ConnectedDevice) => {
+    setEditingDeviceId(device.id);
+    setEditingName(device.name);
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditingDeviceId(null);
+    setEditingName('');
+  }, []);
+
+  const handleSaveEdit = useCallback(async (deviceId: string) => {
+    const trimmed = editingName.trim();
+    const original = connectedDevices.find(d => d.id === deviceId);
+    // 空名或未变更时直接取消，不发请求
+    if (!trimmed || (original && original.name === trimmed)) {
+      setEditingDeviceId(null);
+      setEditingName('');
+      return;
+    }
+    const ok = await lanShareRenameDevice(deviceId, trimmed);
+    if (ok) {
+      setConnectedDevices(prev =>
+        prev.map(d => (d.id === deviceId ? { ...d, name: trimmed } : d))
+      );
+    }
+    setEditingDeviceId(null);
+    setEditingName('');
+  }, [editingName, connectedDevices]);
+
   const onlineCount = connectedDevices.length;
   const isLoading = isStarting || isStopping;
+
+  if (isAndroid) {
+    return (
+      <LanClientPanel
+        t={t}
+        settings={settings}
+        onUpdateSettings={onUpdateSettings}
+      />
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -245,9 +334,33 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                     </div>
                   )}
                 </div>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 text-center">
+                  {t('settings.lanShare.qrTip') || '手机扫码即可自动连接，无需手动输入访问码'}
+                </p>
               </div>
 
               <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center mb-2">
+                    {t('settings.lanShare.serverName') || '服务器名称'}
+                  </label>
+                  <input
+                    type="text"
+                    value={serverNameInput}
+                    onChange={(e) => setServerNameInput(e.target.value)}
+                    onBlur={handleServerNameCommit}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.currentTarget.blur();
+                      }
+                    }}
+                    placeholder={t('settings.lanShare.serverNamePlaceholder') || '如：我的图库'}
+                    maxLength={30}
+                    className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
+                  />
+                </div>
+
                 <div>
                   <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center mb-2">
                     {t('settings.lanShare.accessCode') || '访问验证码'}
@@ -344,25 +457,51 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
               <div className="space-y-2">
                 {connectedDevices.map((device) => {
                   const DeviceIcon = getDeviceIcon(device.deviceType);
+                  const isEditing = editingDeviceId === device.id;
                   return (
                     <div
                       key={device.id}
                       className="flex items-center justify-between p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center shrink-0">
                           <DeviceIcon size={16} className="text-gray-500" />
                         </div>
-                        <div>
-                          <div className="text-sm font-medium text-gray-800 dark:text-white">
-                            {device.name}
-                          </div>
+                        <div className="min-w-0 flex-1">
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              value={editingName}
+                              onChange={(e) => setEditingName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleSaveEdit(device.id);
+                                } else if (e.key === 'Escape') {
+                                  e.preventDefault();
+                                  handleCancelEdit();
+                                }
+                              }}
+                              onBlur={() => handleSaveEdit(device.id)}
+                              autoFocus
+                              maxLength={30}
+                              className="w-full text-sm font-medium text-gray-800 dark:text-white bg-white dark:bg-gray-800 border border-blue-500 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            />
+                          ) : (
+                            <div
+                              className="text-sm font-medium text-gray-800 dark:text-white cursor-text hover:text-blue-500 transition-colors truncate"
+                              onClick={() => handleStartEdit(device)}
+                              title={t('settings.lanShare.clickToEdit') || '点击编辑名称'}
+                            >
+                              {device.name}
+                            </div>
+                          )}
                           <div className="text-xs text-gray-500 dark:text-gray-400">
                             {device.ip}
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0 ml-2">
                         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           {t('settings.lanShare.active') || '活跃'}
@@ -384,7 +523,11 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
 
           <div className="flex items-start gap-2 text-xs text-gray-500 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg">
             <AlertCircle size={14} className="mt-0.5 text-blue-500 flex-shrink-0" />
-            <p>{t('settings.lanShare.tip') || '确保设备连接到同一 Wi-Fi 网络'}</p>
+            <p>
+              {t('settings.lanShare.tip') || '确保设备连接到同一 Wi-Fi 网络'}
+              {' '}
+              {t('settings.lanShare.androidConnectTip') || '安卓端可通过此服务连接'}
+            </p>
           </div>
         </div>
       )}

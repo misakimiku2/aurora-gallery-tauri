@@ -3,12 +3,12 @@ import { TabState, AppState, SearchScope, LayoutMode, SortOption, DateFilter, Gr
 import { debounce } from '../utils/debounce';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { ColorPickerPopover } from './ColorPickerPopover';
-import { 
-  Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw, 
-  Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate, 
-  ArrowDownUp, Calendar, PanelRight, X, Tag, 
+import {
+  Sidebar, ChevronLeft, ChevronRight, ArrowUp, RefreshCw,
+  Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate,
+  ArrowDownUp, Calendar, PanelRight, X, Tag,
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp, Users, Sparkles, Image as ImageIcon
+  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -68,7 +68,9 @@ interface TopBarProps {
   clipModelName?: string;
   onOpenClipSettings?: () => void;
   showToast?: (message: string) => void;
-} 
+  showLanUpload?: boolean;
+  onUploadToLan?: () => void;
+}
 
 const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { current: number, total: number, pageSize: number, onPageChange: (page: number) => void, t: any }) => {
   const totalPages = Math.ceil(total / pageSize);
@@ -557,7 +559,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   clipEnabled = true,
   clipModelName,
   onOpenClipSettings,
-  showToast
+  showToast,
+  showLanUpload,
+  onUploadToLan
 }) => {
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
@@ -582,6 +586,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   const getFolderDisplayName = () => {
     if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
+    if (activeTab.viewMode === 'lan-folders-overview') return t('sidebar.network.title') || '网络';
     if (activeTab.viewMode === 'tags-overview') return t('sidebar.allTags');
     if (activeTab.viewMode === 'topics-overview') {
       if (activeTab.activeTopicId) return (state.topics as any)?.[activeTab.activeTopicId]?.name || t('sidebar.topics');
@@ -822,7 +827,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                         {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                         <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                       </button>
-                      {activeTab.viewMode !== 'folders-overview' && (
+                      {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                       <>
                       <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
@@ -1187,7 +1192,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                   </button>
                   
-                  {activeTab.viewMode !== 'folders-overview' && (
+                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                   <>
                   <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
@@ -1228,7 +1233,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && !isCompactMode && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && (
           <>
           {isAndroid ? (
             <button
@@ -1339,7 +1344,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Folders overview layout menu */}
-        {activeTab.viewMode === 'folders-overview' && onFolderLayoutModeChange && !isCompactMode && (
+        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && (
           <>
           {isAndroid ? (
             <button
@@ -1468,7 +1473,17 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
 
-        <button 
+        {showLanUpload && (
+          <button
+            onClick={onUploadToLan}
+            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-blue-500 dark:text-blue-400"
+            title={t('lanClient.uploadButton') || '上传图片到桌面'}
+          >
+            <Upload size={18} />
+          </button>
+        )}
+
+        <button
           onClick={onToggleMetadata}
           className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
           title={t('viewer.toggleMeta')}

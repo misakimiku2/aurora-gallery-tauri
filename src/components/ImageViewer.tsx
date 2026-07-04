@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
 import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode, androidShareImage, setAndroidStatusBar } from '../api/tauri-bridge';
+import { lanClientApi } from './lan-client/lanClientApi';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
@@ -85,6 +86,43 @@ const PERF = {
 const loadToCache = async (path: string): Promise<string> => {
   const cached = getBlobCacheSync(path);
   if (cached) return cached;
+
+  // LAN source: fetch full image as blob for true local caching.
+  // Storing only the HTTP URL causes re-downloads on every <img> use (no
+  // browser cache without Cache-Control headers), which makes swipe
+  // transitions on large LAN images appear to "stick" on the old image.
+  if (path.startsWith('lan://')) {
+    const remotePath = path.slice('lan://'.length);
+    const httpUrl = lanClientApi.getImageUrl(remotePath);
+
+    if (loadingPromises.has(path)) {
+      return loadingPromises.get(path)!;
+    }
+
+    const t0 = performance.now();
+    const loadPromise = (async () => {
+      try {
+        const response = await fetch(httpUrl);
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        blobCache.set(path, blobUrl);
+        evictBlobCache();
+        PERF.log('loadToCache LAN blob', remotePath.split('/').pop(), PERF.ms(t0), (blob.size / 1024 / 1024).toFixed(1) + 'MB');
+        return blobUrl;
+      } catch (e) {
+        PERF.log('loadToCache LAN blob FAILED, fallback to HTTP URL', remotePath.split('/').pop(), String(e));
+        blobCache.set(path, httpUrl);
+        evictBlobCache();
+        return httpUrl;
+      } finally {
+        loadingPromises.delete(path);
+      }
+    })();
+
+    loadingPromises.set(path, loadPromise);
+    return loadPromise;
+  }
 
   if (loadingPromises.has(path)) {
     return loadingPromises.get(path)!;
@@ -274,6 +312,13 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
 
 // 预加载调色板到缓存（静默，不返回结果）
 export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
+  // LAN 图片的主色调由服务端提供。有数据则缓存，无数据则跳过（不触发本地提取）。
+  if (path.startsWith('lan://')) {
+    if (existingPalette && existingPalette.length >= 2 && !paletteCache.has(path)) {
+      loadPaletteToCache(path, existingPalette).catch(() => { });
+    }
+    return;
+  }
   if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
     loadPaletteToCache(path, existingPalette).catch(() => { });
   }
@@ -618,9 +663,22 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => {
     if (swipeState?.animating) {
-      swipeAnimTimerRef.current = setTimeout(() => {
-        setSwipeState(null);
-      }, 280);
+      const incomingUrl = swipeState.incomingUrl;
+      const ANIM_DURATION = 280;
+      const MAX_WAIT = 5000;
+      const CHECK_INTERVAL = 50;
+      let elapsed = 0;
+
+      const tick = () => {
+        elapsed += CHECK_INTERVAL;
+        if (elapsed >= ANIM_DURATION && (displayUrlRef.current === incomingUrl || elapsed >= MAX_WAIT)) {
+          setSwipeState(null);
+          return;
+        }
+        swipeAnimTimerRef.current = setTimeout(tick, CHECK_INTERVAL);
+      };
+
+      swipeAnimTimerRef.current = setTimeout(tick, CHECK_INTERVAL);
     }
     return () => {
       if (swipeAnimTimerRef.current) clearTimeout(swipeAnimTimerRef.current);

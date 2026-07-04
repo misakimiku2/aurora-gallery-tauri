@@ -23,17 +23,24 @@ impl SessionManager {
         let session = Session::new(device_id, device_name, ip);
         let token = session.token.clone();
         let device_id_clone = session.device_id.clone();
-        
-        {
+
+        // 同一 device_id 重连时，先取出旧 session 的 token，以便清理
+        // token_to_device 中的旧映射，避免旧 token 仍然有效导致计数泄漏。
+        let old_token = {
             let mut sessions = self.sessions.write().await;
+            let old = sessions.remove(&device_id_clone).map(|s| s.token);
             sessions.insert(device_id_clone.clone(), session.clone());
-        }
-        
+            old
+        };
+
         {
             let mut token_map = self.token_to_device.write().await;
-            token_map.insert(token.clone(), device_id_clone);
+            if let Some(old) = old_token {
+                token_map.remove(&old);
+            }
+            token_map.insert(token, device_id_clone);
         }
-        
+
         session
     }
 
@@ -111,6 +118,15 @@ impl SessionManager {
     pub async fn get_device_count(&self) -> usize {
         let sessions = self.sessions.read().await;
         sessions.len()
+    }
+
+    pub async fn rename_device(&self, device_id: &str, new_name: &str) -> bool {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(device_id) {
+            session.device_name = new_name.to_string();
+            return true;
+        }
+        false
     }
 }
 

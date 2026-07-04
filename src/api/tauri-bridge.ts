@@ -1175,6 +1175,12 @@ export const exitApp = async (): Promise<void> => {
  * @returns 主色调数组，如果失败则返回空数组
  */
 export const getDominantColors = async (filePath: string, count: number = 8, thumbnailPath?: string): Promise<DominantColor[]> => {
+  // LAN 图片存在于远程服务器，本地文件系统无法访问 lan:// 路径。
+  // 不加判断会触发 Kotlin/Rust 后端的文件访问，产生 "File not found" /
+  // "No such file or directory" 红色错误日志。
+  if (filePath.startsWith('lan://')) {
+    return [];
+  }
   if (isAndroidPlatformCached()) {
     try {
       const cacheRoot = _globalCacheRoot || '';
@@ -1731,6 +1737,7 @@ export interface DownloadProgressResult {
  */
 export const checkForUpdates = async (): Promise<UpdateCheckResult | null> => {
   if (!isTauriEnvironment()) return null;
+  if (isAndroidPlatformCached()) return null;
   try {
     const result = await invoke<UpdateCheckResult>('check_for_updates_command');
     return result;
@@ -1818,6 +1825,7 @@ export const cancelUpdateDownload = async (): Promise<void> => {
  */
 export const getUpdateDownloadProgress = async (): Promise<DownloadProgressResult | null> => {
   if (!isTauriEnvironment()) return null;
+  if (isAndroidPlatformCached()) return null;
   try {
     const result = await invoke<DownloadProgressResult>('get_update_download_progress');
     return result;
@@ -2613,7 +2621,7 @@ export const clipCreateWorkTopics = async (worksToCreate: import('../types').Wor
 
 // ==================== LAN Share 相关 API ====================
 
-import { LanShareSettings, ConnectedDevice } from '../types';
+import { LanShareSettings, ConnectedDevice, SavedServer } from '../types';
 
 export interface LanShareInfo {
   url: string;
@@ -2649,6 +2657,7 @@ export const lanShareStart = async (
         access_code: config.accessCode,
         allow_edit: config.allowEdit,
         allow_upload: config.allowUpload,
+        server_name: config.serverName || '',
       },
       rootPath,
     });
@@ -2719,6 +2728,29 @@ export const lanShareGetDevices = async (): Promise<ConnectedDevice[]> => {
 };
 
 /**
+ * 重命名已连接设备。同时更新服务端的 session 和 device 记录，
+ * 安卓端下次刷新设备列表时会同步到本地。
+ */
+export const lanShareRenameDevice = async (
+  deviceId: string,
+  newName: string
+): Promise<boolean> => {
+  if (!isTauriEnvironment()) {
+    return false;
+  }
+  try {
+    const ok = await invoke<boolean>('lan_share_rename_device', {
+      deviceId,
+      newName,
+    });
+    return ok;
+  } catch (error) {
+    console.error('Failed to rename device:', error);
+    return false;
+  }
+};
+
+/**
  * 获取本机局域网 IP 地址
  * @returns IP 地址
  */
@@ -2769,10 +2801,44 @@ export const lanShareUpdateConfig = async (config: LanShareSettings): Promise<vo
         access_code: config.accessCode,
         allow_edit: config.allowEdit,
         allow_upload: config.allowUpload,
+        server_name: config.serverName || '',
       },
     });
   } catch (error) {
     console.error('Failed to update LAN share config:', error);
     throw error;
   }
+};
+
+/**
+ * 保存服务器到最近连接列表（仅前端逻辑，操作 savedServers 数组）
+ */
+export const lanShareSaveServer = (
+  currentSettings: LanShareSettings,
+  host: string,
+  port: number,
+  name?: string
+): LanShareSettings => {
+  const existing = currentSettings.savedServers || [];
+  const filtered = existing.filter(s => !(s.host === host && s.port === port));
+  const updated: SavedServer[] = [
+    { host, port, name, lastConnected: Date.now() },
+    ...filtered,
+  ].slice(0, 10); // keep last 10
+  return { ...currentSettings, savedServers: updated };
+};
+
+/**
+ * 从最近连接列表移除服务器
+ */
+export const lanShareRemoveServer = (
+  currentSettings: LanShareSettings,
+  host: string,
+  port: number
+): LanShareSettings => {
+  const existing = currentSettings.savedServers || [];
+  return {
+    ...currentSettings,
+    savedServers: existing.filter(s => !(s.host === host && s.port === port)),
+  };
 };

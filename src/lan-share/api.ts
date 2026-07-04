@@ -1,12 +1,14 @@
 export interface BrowseItem {
   name: string;
   path: string;
-  type: 'folder' | 'image';
+  type: 'folder' | 'image' | 'video';
   size?: number;
   thumbnail?: string;
   preview_images?: string[];
   width?: number;
   height?: number;
+  modified_at?: number;
+  palette?: string[];
 }
 
 export interface BrowseResponse {
@@ -14,6 +16,7 @@ export interface BrowseResponse {
   folders: BrowseItem[];
   images: BrowseItem[];
   allow_edit?: boolean;
+  allow_upload?: boolean;
 }
 
 export interface AuthResponse {
@@ -21,6 +24,7 @@ export interface AuthResponse {
   token?: string;
   expires_in?: number;
   error?: string;
+  server_name?: string;
 }
 
 export interface ConnectedDevice {

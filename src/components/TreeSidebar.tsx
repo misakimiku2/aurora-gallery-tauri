@@ -18,16 +18,25 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail, isAndroidPlatformCached } from '../api/tauri-bridge';
 import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { lanClientApi } from './lan-client/lanClientApi';
+import NetworkSection from './lan-client/NetworkSection';
 import { PeopleCanvas } from './PeopleCanvas';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
+  const isLan = file.source === 'lan' && !!file.remotePath;
   const [src, setSrc] = useState<string | null>(() => {
     if (!file.path) return null;
+    // LAN source: use remote thumbnail URL directly
+    if (isLan) {
+      return lanClientApi.getThumbnailUrl(file.remotePath!);
+    }
     return getGlobalCache().get(file.path) || null;
   });
 
   useEffect(() => {
     let active = true;
+    // LAN source: thumbnail URL is direct, skip local generation
+    if (isLan) return () => { active = false; };
     if (file.type === FileType.IMAGE && resourceRoot && !src) {
       getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
         if (active && url) {
@@ -37,9 +46,12 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
       });
     }
     return () => { active = false; };
-  }, [file.path, file.meta?.modified, resourceRoot, src]);
+  }, [file.path, file.meta?.modified, resourceRoot, src, isLan]);
 
-  const displaySrc = src || convertFileSrc(file.path);
+  // LAN source: use remote thumbnail URL; fall back to local convertFileSrc otherwise
+  const displaySrc = isLan
+    ? (src || lanClientApi.getThumbnailUrl(file.remotePath!))
+    : (src || convertFileSrc(file.path));
 
   return (
     <img 
@@ -1182,11 +1194,17 @@ export const Sidebar: React.FC<{
   onDropOnFolder?: (targetFolderId: string, sourceIds: string[]) => void;
   onOpenCanvas?: () => void;
   onNavigateHome?: () => void;
+  lanRoots?: string[];
+  lanConnected?: boolean;
+  lanLoading?: boolean;
+  onNavigateNetworkFolder?: (folderId: string) => void;
+  onNavigateNetworkHome?: () => void;
+  onOpenLanSettings?: () => void;
   t: (key: string) => string;
   aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
   activeViewMode?: string;
   filesVersion?: number;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, onNavigateHome, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, onNavigateHome, lanRoots, lanConnected = false, lanLoading = false, onNavigateNetworkFolder, onNavigateNetworkHome, onOpenLanSettings, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -1237,7 +1255,7 @@ export const Sidebar: React.FC<{
   const currentFolderForNodes = activeViewMode === 'browser' ? currentFolderId : '';
 
   // active section controls which primary section is expanded in the sidebar
-  const [activeSection, setActiveSection] = useState<'roots' | 'people' | 'tags' | 'topics' | null>('roots');
+  const [activeSection, setActiveSection] = useState<'roots' | 'people' | 'tags' | 'topics' | 'lanNetwork' | null>('roots');
 
   // Sidebar sorting state with persistence
   const [folderSortMode, setFolderSortMode] = useState<'name' | 'date'>(() => 
@@ -1508,6 +1526,24 @@ export const Sidebar: React.FC<{
              onToggleSort={handleToggleFolderSort}
              onNavigateHome={onNavigateHome}
           />
+
+          {isAndroidPlatformCached() && (
+            <NetworkSection
+              expanded={activeSection === 'lanNetwork'}
+              onToggleExpand={() => setActiveSection(prev => prev === 'lanNetwork' ? null : 'lanNetwork')}
+              onNavigateHome={() => { setActiveSection('lanNetwork'); onNavigateNetworkHome?.(); }}
+              onNavigateFolder={(id) => { setActiveSection('lanNetwork'); onNavigateNetworkFolder?.(id); }}
+              onOpenSettings={() => onOpenLanSettings?.()}
+              connected={lanConnected}
+              loading={lanLoading}
+              isSelected={activeViewMode === 'lan-folders-overview'}
+              lanRoots={lanRoots || []}
+              files={files}
+              currentFolderId={currentFolderForNodes}
+              listHeight={listHeight}
+              t={t}
+            />
+          )}
 
           <PeopleSection
             people={people}

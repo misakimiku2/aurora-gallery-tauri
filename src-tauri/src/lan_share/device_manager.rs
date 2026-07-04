@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
-use super::types::{ConnectedDevice, Session};
+use super::types::{ConnectedDevice, Session, ONLINE_TIMEOUT_SECS};
 
 pub struct DeviceManager {
     devices: Arc<RwLock<HashMap<String, ConnectedDevice>>>,
@@ -51,16 +51,40 @@ impl DeviceManager {
     }
 
     pub async fn get_devices(&self) -> Vec<ConnectedDevice> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let devices = self.devices.read().await;
-        devices.values().cloned().collect()
+        devices
+            .values()
+            .filter(|d| now.saturating_sub(d.last_active_at) <= ONLINE_TIMEOUT_SECS)
+            .cloned()
+            .collect()
     }
 
     pub async fn get_device_count(&self) -> usize {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let devices = self.devices.read().await;
-        devices.len()
+        devices
+            .values()
+            .filter(|d| now.saturating_sub(d.last_active_at) <= ONLINE_TIMEOUT_SECS)
+            .count()
     }
 
-    pub async fn cleanup_inactive(&self, timeout_secs: u64) {
+    pub async fn rename_device(&self, device_id: &str, new_name: &str) -> bool {
+        let mut devices = self.devices.write().await;
+        if let Some(device) = devices.get_mut(device_id) {
+            device.name = new_name.to_string();
+            return true;
+        }
+        false
+    }
+
+    pub async fn cleanup_inactive(&self, timeout_secs: u64) -> usize {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,10 +99,15 @@ impl DeviceManager {
                 .collect()
         };
 
-        let mut devices = self.devices.write().await;
-        for id in inactive_ids {
-            devices.remove(&id);
+        let removed = inactive_ids.len();
+        if removed > 0 {
+            let mut devices = self.devices.write().await;
+            for id in &inactive_ids {
+                devices.remove(id);
+            }
+            log::info!("[LAN Share] 清理 {} 个超时离线设备", removed);
         }
+        removed
     }
 }
 

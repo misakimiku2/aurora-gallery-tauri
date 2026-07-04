@@ -4,7 +4,21 @@ import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
-import { Image as ImageIcon } from 'lucide-react';
+import { lanClientApi } from './lan-client/lanClientApi';
+import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v', 'mpg', 'mpeg', '3gp', 'ts']);
+const isVideoFile = (filePath?: string, format?: string): boolean => {
+  if (format && format.startsWith('video/')) return true;
+  if (!filePath) return false;
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  return ext ? VIDEO_EXTENSIONS.has(ext) : false;
+};
+
+// LAN source files use a synthetic `lan://<remotePath>` path marker.
+const LAN_PREFIX = 'lan://';
+const isLanPath = (p?: string): boolean => !!p && p.startsWith(LAN_PREFIX);
+const lanRemotePath = (p: string): string => p.slice(LAN_PREFIX.length);
 
 export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath, mediaStoreId }: { 
   src: string; 
@@ -23,6 +37,12 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
       if (!filePath) return null;
+      // 视频文件没有缩略图端点，直接返回 null（由 renderThumbnail 显示视频图标）
+      if (isVideoFile(filePath, fileMeta?.format)) return null;
+      // LAN source: use remote thumbnail URL directly (no local generation)
+      if (isLanPath(filePath)) {
+        return lanClientApi.getThumbnailUrl(lanRemotePath(filePath));
+      }
       const cache = getGlobalCache();
       return cache.get(filePath) || null;
   });
@@ -41,6 +61,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   }, [thumbnailSrc]);
 
   useEffect(() => {
+    // LAN source: thumbnail URL is resolved directly, skip local generation
+    if (isLanPath(filePath)) return;
     if (!(isInView || wasInView) || !filePath || !resourceRoot) return;
 
     const cache = getGlobalCache();
@@ -106,6 +128,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   }, [filePath, thumbnailSrc]);
 
   useEffect(() => {
+    // LAN source: no local thumbnail upgrade pipeline
+    if (isLanPath(filePath)) return;
     if (!upgrading || !filePath || !resourceRoot) return;
     let cancelled = false;
     let retryCount = 0;
@@ -142,6 +166,11 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     let isMounted = true;
 
     const loadAnimation = async () => {
+      // LAN source: animation preview needs local file access; skip for remote files
+      if (isLanPath(filePath)) {
+        if (isMounted) setAnimSrc(null);
+        return;
+      }
       if (isHovering && filePath) {
         const fileName = filePath.split(/[\\/]/).pop() || '';
         const fileExt = fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
@@ -209,6 +238,15 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
           loading="eager" 
           draggable="false"
         />
+      );
+    }
+
+    // 视频文件显示视频图标
+    if (isVideoFile(filePath, fileMeta?.format)) {
+      return (
+        <div className="w-full h-full flex items-center justify-center">
+          <VideoIcon className="w-8 h-8 text-gray-400 dark:text-gray-600" />
+        </div>
       );
     }
 

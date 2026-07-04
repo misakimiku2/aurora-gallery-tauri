@@ -154,6 +154,50 @@ export async function ensureAndroidPermission(): Promise<boolean> {
   }
 }
 
+export async function ensureCameraPermission(): Promise<boolean> {
+  try {
+    _lastPermissionResult = null;
+    let permStatus = await invoke<string>('check_camera_permission');
+    if (permStatus === 'granted') {
+      return true;
+    }
+
+    const permissionResult = await waitForAndroidPermission();
+    if (permissionResult === 'granted') {
+      return true;
+    }
+
+    if (permissionResult === 'denied' || permissionResult === 'denied_permanently' || permissionResult === 'timeout') {
+      try {
+        await invoke<string>('request_camera_permission');
+        const retryResult = await waitForAndroidPermission();
+        if (retryResult === 'granted') {
+          return true;
+        }
+      } catch (e) {
+        console.error('[Android] Re-request camera permission failed:', e);
+      }
+    }
+
+    for (let i = 0; i < 2; i++) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        permStatus = await invoke<string>('check_camera_permission');
+        if (permStatus === 'granted') {
+          return true;
+        }
+      } catch {}
+    }
+
+    // Returns false on permanent denial or after all retries fail.
+    // Callers should offer a manual-input fallback (e.g. type the server URL) when this returns false.
+    return false;
+  } catch (e) {
+    console.error('[Android] ensureCameraPermission failed:', e);
+    return false;
+  }
+}
+
 interface AndroidFolderRaw {
   id: number;
   name: string;

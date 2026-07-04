@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
 import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin, HardDrive } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
@@ -70,7 +70,7 @@ export const TabBar: React.FC<TabBarProps> = ({
 
   useEffect(() => {
     // Listen for window maximize state changes in Tauri
-    if (isTauriEnvironment()) {
+    if (isTauriEnvironment() && !isAndroidSync()) {
       const checkMaximizeState = async () => {
         try {
           const window = getCurrentWindow();

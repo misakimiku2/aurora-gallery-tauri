@@ -62,8 +62,11 @@ pub async fn lan_share_start(
     }
 
     let db_pool = Arc::new(app.state::<AppDbPool>().inner().clone());
-    let mut server = LanShareServer::new(root).with_db_pool(db_pool);
-    let info = server.start(config).await?;
+    let color_db_pool = app.state::<Arc<crate::color_db::ColorDbPool>>().inner().clone();
+    let mut server = LanShareServer::new(root)
+        .with_db_pool(db_pool)
+        .with_color_db_pool(color_db_pool);
+    let info = server.start(config, app).await?;
     *server_guard = Some(server);
 
     log::info!("[LAN Share] 启动成功 - URL: {}", info.url);
@@ -166,17 +169,38 @@ pub async fn lan_share_update_config(
     config: LanShareConfig,
     state: State<'_, LanShareState>,
 ) -> Result<(), String> {
-    log::info!("[LAN Share] 更新配置 - 端口: {}, 允许编辑: {}, 允许上传: {}", 
+    log::info!("[LAN Share] 更新配置 - 端口: {}, 允许编辑: {}, 允许上传: {}",
         config.port, config.allow_edit, config.allow_upload);
-    
+
     let server_guard = state.server.read().await;
-    
+
     if let Some(server) = server_guard.as_ref() {
         server.update_config(config).await;
         log::info!("[LAN Share] 配置更新成功");
     } else {
         log::warn!("[LAN Share] 配置更新忽略 - 服务器未运行");
     }
-    
+
     Ok(())
+}
+
+#[tauri::command]
+pub async fn lan_share_rename_device(
+    device_id: String,
+    new_name: String,
+    state: State<'_, LanShareState>,
+) -> Result<bool, String> {
+    let name = new_name.trim().to_string();
+    if name.is_empty() {
+        return Err("Device name cannot be empty".to_string());
+    }
+    log::info!("[LAN Share] 重命名设备 - {}: {}", device_id, name);
+
+    let server_guard = state.server.read().await;
+    if let Some(server) = server_guard.as_ref() {
+        let ok = server.rename_device(&device_id, &name).await;
+        Ok(ok)
+    } else {
+        Err("LAN share server is not running".to_string())
+    }
 }

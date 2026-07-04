@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { Sidebar } from './components/TreeSidebar';
+import { lanClientApi } from './components/lan-client/lanClientApi';
+import { downloadLanImagesBatched } from './components/lan-client/lanDownload';
 import { MetadataPanel } from './components/MetadataPanel';
 import { ImageViewer } from './components/ImageViewer';
 import { ImageComparer } from './components/ImageComparer';
@@ -86,6 +88,9 @@ declare global {
 
 // Global initialization guard to prevent double execution in React Strict Mode
 let isAppInitialized = false;
+
+// LAN 根目录虚拟文件夹 ID：容纳资源根目录下未归入子文件夹的散落图片
+const LAN_ROOT_IMAGES_ID = '__lan_root_images__';
 
 export const App: React.FC = () => {
   const getInitialLayout = () => {
@@ -282,6 +287,13 @@ export const App: React.FC = () => {
   const [isReferenceMode, setIsReferenceMode] = useState(false);
   const [isAndroidSelectionMode, setIsAndroidSelectionMode] = useState(false);
   const isAndroidSelectionModeRef = useRef(false);
+  const [lanRoots, setLanRoots] = useState<string[]>([]);
+  const [lanLoading, setLanLoading] = useState(false);
+  const [lanConnected, setLanConnected] = useState(false);
+  const [lanAllowUpload, setLanAllowUpload] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const lanUploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [lanDownloadProgress, setLanDownloadProgress] = useState<{ active: boolean; completed: number; total: number }>({ active: false, completed: 0, total: 0 });
   useEffect(() => { isAndroidSelectionModeRef.current = isAndroidSelectionMode; }, [isAndroidSelectionMode]);
   // State for tracking if user is hovering over the top bar area
   const [isHoveringTopBar, setIsHoveringTopBar] = useState(false);
@@ -703,6 +715,8 @@ export const App: React.FC = () => {
 
   // 锟叫断讹拷锟斤拷锟角凤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷示锟斤拷息锟斤拷模态锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷
   const isAndroidDevice = state.settings.paths.resourceRoot === 'android_media_store';
+  const currentLanFolder = state.files[activeTab.folderId];
+  const showLanUpload = isAndroidDevice && !!currentLanFolder && currentLanFolder.source === 'lan' && lanAllowUpload && !isUploading;
 
   const isModalOpen = state.activeModal.type !== null || state.isSettingsOpen;
   const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen && !isAndroidDevice;
@@ -734,6 +748,319 @@ export const App: React.FC = () => {
     handleOpenCompareInNewTab,
     setNavigationTimestamp
   } = useNavigation(state, setState, { selectionRef, activeTabRef }, setGroupBy);
+
+  // LAN client: restore connection on mount + load roots when connected
+  // 关键：token 变化（首次连接/断开后重连/重启恢复）时总是重新加载 lanRoots，
+  // 不依赖 lanRoots 是否为空——否则断开时残留的旧 lanRoots 会阻止重连后刷新。
+  const lanLoadingRef = useRef(false);
+  const lanTokenRef = useRef<string | undefined>(undefined);
+  // 记录 lanLoadingRef 置 true 的时间戳，供周期性重试检测卡死
+  const lanLoadingSinceRef = useRef<number>(0);
+  useEffect(() => {
+    const ls = state.settings.lanShare;
+    lanTokenRef.current = ls.serverAccessToken;
+    console.log('[LAN useEffect] token/host/port:', ls.serverAccessToken, ls.serverHost, ls.serverPort);
+    if (ls.serverAccessToken && ls.serverHost && ls.serverPort) {
+      // 卡死保护：如果 lanLoadingRef 被某个挂起的 fetch 卡住超过 25s，强制重置
+      if (lanLoadingRef.current) {
+        const stuckMs = Date.now() - lanLoadingSinceRef.current;
+        if (stuckMs < 25000) {
+          console.log(`[LAN useEffect] load already in progress (${Math.round(stuckMs / 1000)}s), skipping`);
+          return;
+        }
+        console.warn(`[LAN useEffect] lanLoadingRef stuck for ${Math.round(stuckMs / 1000)}s, force resetting`);
+        lanLoadingRef.current = false;
+      }
+      lanLoadingRef.current = true;
+      lanLoadingSinceRef.current = Date.now();
+      setLanLoading(true);
+      setLanConnected(false);
+
+      lanClientApi.setBaseUrl(`http://${ls.serverHost}:${ls.serverPort}`);
+      lanClientApi.setToken(ls.serverAccessToken);
+
+      // 指数退避重试：2s, 4s, 8s, 12s, 20s（共 ~46s），应对安卓启动时网络未就绪
+      const backoff = [2000, 4000, 8000, 12000, 20000];
+      const loadRoots = async (attempt: number): Promise<void> => {
+        // 如果 token 已被其他流程清除，停止重试
+        if (lanTokenRef.current !== ls.serverAccessToken) return;
+        console.log(`[LAN loadRoots] attempt ${attempt + 1}/${backoff.length + 1}, baseUrl=${lanClientApi.getBaseUrl()}`);
+        try {
+          const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders();
+          applyLanRoots(folders, rootImages, allowUpload);
+          setLanConnected(true);
+          console.log(`[LAN loadRoots] success: ${folders.length} folders, ${rootImages.length} root images`);
+        } catch (err) {
+          const msg = (err as Error).message || '';
+          // token 过期/失效：清除连接状态，让用户重新连接
+          if (msg.includes('Authentication failed') || msg.includes('token expired') || msg.includes('HTTP 401')) {
+            console.warn('[LAN] Token expired/invalid, clearing connection');
+            lanClientApi.disconnect();
+            setState(s => ({
+              ...s,
+              settings: {
+                ...s.settings,
+                lanShare: { ...s.settings.lanShare, serverAccessToken: undefined },
+              },
+            }));
+            return;
+          }
+          // 网络错误：指数退避重试
+          if (attempt < backoff.length) {
+            console.warn(`[LAN] Load roots failed (attempt ${attempt + 1}/${backoff.length + 1}), retrying in ${backoff[attempt]}ms:`, msg);
+            await new Promise(r => setTimeout(r, backoff[attempt]));
+            return loadRoots(attempt + 1);
+          }
+          console.error('[LAN] Failed to load roots after all retries:', err);
+          setLanConnected(false);
+        }
+      };
+
+      loadRoots(0).finally(() => {
+        lanLoadingRef.current = false;
+        setLanLoading(false);
+      });
+    } else {
+      // token 被清除（断开连接/过期）时清空 lanRoots，确保下次重连能重新加载
+      setLanRoots([]);
+      setLanConnected(false);
+    }
+  }, [state.settings.lanShare.serverAccessToken, state.settings.lanShare.serverHost, state.settings.lanShare.serverPort]);
+
+  // 周期性重试：token 存在但未连接成功时，每 15 秒重试一次（应对安卓启动时网络未就绪）
+  useEffect(() => {
+    const ls = state.settings.lanShare;
+    if (!ls.serverAccessToken || !ls.serverHost || !ls.serverPort) return;
+    if (lanConnected) return;
+
+    const interval = setInterval(() => {
+      const currentLs = state.settings.lanShare;
+      if (!currentLs.serverAccessToken || lanConnected) return;
+      // 卡死保护：lanLoadingRef 超过 25s 仍未释放，说明上一次 fetch 可能挂起
+      // （虽有 fetchWithTimeout 兜底，这里作为第二道防线），强制重置后继续重试
+      if (lanLoadingRef.current) {
+        const stuckMs = Date.now() - lanLoadingSinceRef.current;
+        if (stuckMs < 25000) return;
+        console.warn(`[LAN] Periodic retry: lanLoadingRef stuck for ${Math.round(stuckMs / 1000)}s, force resetting`);
+        lanLoadingRef.current = false;
+      }
+      console.log('[LAN] Periodic retry: attempting to load roots...');
+      lanLoadingRef.current = true;
+      lanLoadingSinceRef.current = Date.now();
+      setLanLoading(true);
+      lanClientApi.setBaseUrl(`http://${currentLs.serverHost}:${currentLs.serverPort}`);
+      lanClientApi.setToken(currentLs.serverAccessToken);
+      lanClientApi.getAllImageFolders()
+        .then(({ folders, rootImages, allowUpload }) => {
+          applyLanRoots(folders, rootImages, allowUpload);
+          setLanConnected(true);
+          console.log(`[LAN] Periodic retry: roots loaded (${folders.length} folders, ${rootImages.length} root images)`);
+        })
+        .catch((err) => {
+          const msg = (err as Error).message || '';
+          if (msg.includes('Authentication failed') || msg.includes('token expired') || msg.includes('HTTP 401')) {
+            console.warn('[LAN] Periodic retry: token invalid, clearing');
+            lanClientApi.disconnect();
+            setState(s => ({
+              ...s,
+              settings: {
+                ...s.settings,
+                lanShare: { ...s.settings.lanShare, serverAccessToken: undefined },
+              },
+            }));
+          } else {
+            console.warn('[LAN] Periodic retry failed:', msg);
+          }
+        })
+        .finally(() => {
+          lanLoadingRef.current = false;
+          setLanLoading(false);
+        });
+    }, 15000);
+
+    return () => clearInterval(interval);
+  }, [state.settings.lanShare.serverAccessToken, state.settings.lanShare.serverHost, state.settings.lanShare.serverPort, lanConnected]);
+
+  // 心跳：连接成功后每 5s 发送一次，保持服务端设备列表中本设备"在线"。
+  // 客户端关闭后心跳停止，服务端在 ONLINE_TIMEOUT_SECS（15s）后将其从列表移除。
+  useEffect(() => {
+    if (!lanConnected) return;
+    const sendHeartbeat = () => {
+      lanClientApi.heartbeat().catch((err) => {
+        console.warn('[LAN] Heartbeat failed:', (err as Error).message);
+      });
+    };
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 5000);
+    return () => clearInterval(interval);
+  }, [lanConnected]);
+
+  // 统一处理 LAN 根目录加载结果：文件夹 + 散落图片（聚合成虚拟文件夹）
+  const applyLanRoots = useCallback((folders: FileNode[], images: FileNode[], allowUpload: boolean) => {
+    const newFiles: Record<string, FileNode> = {};
+    const rootIds: string[] = [];
+
+    for (const f of folders) {
+      newFiles[f.id] = f;
+      rootIds.push(f.id);
+    }
+
+    // 根目录下的散落图片：聚合成虚拟文件夹，使总览视图卡片网格也能展示
+    if (images.length > 0) {
+      for (const img of images) {
+        newFiles[img.id] = { ...img, parentId: LAN_ROOT_IMAGES_ID };
+      }
+      newFiles[LAN_ROOT_IMAGES_ID] = {
+        id: LAN_ROOT_IMAGES_ID,
+        parentId: null,
+        name: '根目录图片',
+        type: FileType.FOLDER,
+        path: 'lan://__root_images__',
+        remotePath: '__root_images__',
+        source: 'lan',
+        children: images.map(img => img.id),
+        tags: [],
+        coverImagePath: images[0]?.path,
+        imageCount: images.length,
+      };
+      rootIds.push(LAN_ROOT_IMAGES_ID);
+    }
+
+    setState(s => ({ ...s, files: { ...s.files, ...newFiles } }));
+    setLanRoots(rootIds);
+    setLanAllowUpload(allowUpload);
+  }, [setState]);
+
+  const handleNavigateNetworkFolder = useCallback(async (folderId: string) => {
+    const folder = state.files[folderId];
+    if (!folder || folder.source !== 'lan' || !folder.remotePath) return;
+
+    if (folder.children && folder.children.length > 0) {
+      enterFolder(folderId, { resetScroll: true });
+      return;
+    }
+
+    setLanLoading(true);
+    try {
+      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath);
+      const newFiles: Record<string, FileNode> = {};
+      const childIds: string[] = [];
+      for (const f of folders) {
+        newFiles[f.id] = { ...f, parentId: folderId };
+        childIds.push(f.id);
+      }
+      for (const img of images) {
+        newFiles[img.id] = { ...img, parentId: folderId };
+        childIds.push(img.id);
+      }
+      setState(s => ({
+        ...s,
+        files: {
+          ...s.files,
+          ...newFiles,
+          [folderId]: { ...s.files[folderId], children: childIds },
+        },
+      }));
+      setLanAllowUpload(allowUpload);
+      enterFolder(folderId, { resetScroll: true });
+    } catch (err) {
+      console.error('[LAN] Failed to load folder:', err);
+    } finally {
+      setLanLoading(false);
+    }
+  }, [state.files, enterFolder, setState]);
+
+  const handleOpenLanSettings = useCallback(() => {
+    setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'lanShare' }));
+  }, [setState]);
+
+  // 网络总览视图下拉刷新：重新拉取桌面端根目录文件夹
+  const handleLanRefresh = useCallback(async () => {
+    if (!lanConnected) return;
+    setLanLoading(true);
+    try {
+      const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders();
+      applyLanRoots(folders, rootImages, allowUpload);
+    } catch (err) {
+      console.error('[LAN] Refresh failed:', err);
+    } finally {
+      setLanLoading(false);
+    }
+  }, [lanConnected, setState, applyLanRoots]);
+
+  const reloadCurrentLanFolder = useCallback(async () => {
+    const folder = state.files[activeTab.folderId];
+    if (!folder || folder.source !== 'lan' || !folder.remotePath) return;
+    // 虚拟文件夹内容来自根目录加载，不单独 browse
+    if (folder.id === LAN_ROOT_IMAGES_ID) return;
+    setLanLoading(true);
+    try {
+      const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath);
+      const newFiles: Record<string, FileNode> = {};
+      const childIds: string[] = [];
+      for (const f of folders) {
+        newFiles[f.id] = { ...f, parentId: folder.id };
+        childIds.push(f.id);
+      }
+      for (const img of images) {
+        newFiles[img.id] = { ...img, parentId: folder.id };
+        childIds.push(img.id);
+      }
+      setState(s => ({
+        ...s,
+        files: { ...s.files, ...newFiles, [folder.id]: { ...s.files[folder.id], children: childIds } },
+      }));
+      setLanAllowUpload(allowUpload);
+    } catch (err) {
+      console.error('[LAN] Failed to refresh folder:', err);
+    } finally {
+      setLanLoading(false);
+    }
+  }, [state.files, activeTab.folderId, setState]);
+
+  const handleUploadToLan = useCallback(() => {
+    lanUploadInputRef.current?.click();
+  }, []);
+
+  const handleUploadFilesSelected = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+    const folder = state.files[activeTab.folderId];
+    if (!folder || folder.source !== 'lan' || !folder.remotePath) return;
+    const targetDir = folder.remotePath;
+    const files = Array.from(fileList);
+    setIsUploading(true);
+    let success = 0;
+    const total = files.length;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const res = await lanClientApi.uploadFile(file, targetDir, file.name);
+          if (res.success) {
+            success++;
+          } else {
+            console.error('[LAN] Upload failed:', res.error);
+            showToast((res.error || (t('lanClient.uploadFailed') || '上传失败')));
+          }
+        } catch (err) {
+          console.error('[LAN] Upload error:', err);
+          showToast((err as Error).message || (t('lanClient.uploadFailed') || '上传失败'));
+        }
+        const uploadingMsg = t('lanClient.uploading') || '正在上传 {x}/{n}';
+        showToast(uploadingMsg.replace('{x}', String(i + 1)).replace('{n}', String(total)));
+      }
+      if (success === total) {
+        showToast((t('lanClient.uploadDone') || `上传完成 ${success}/${total}`).replace('{x}', String(success)).replace('{n}', String(total)));
+      } else {
+        showToast((t('lanClient.uploadPartial') || `上传完成 ${success}/${total}`).replace('{x}', String(success)).replace('{n}', String(total)));
+      }
+      await reloadCurrentLanFolder();
+    } finally {
+      e.target.value = '';
+      setIsUploading(false);
+    }
+  }, [state.files, activeTab.folderId, showToast, t, reloadCurrentLanFolder]);
 
   const {
     displayFileIds,
@@ -1429,7 +1756,7 @@ export const App: React.FC = () => {
   /* handleOpenCompareInNewTab: delegated to `useNavigation` */
 
   // 添加图片到现有的图片对比画布
-  const handleAddToCompareCanvas = useCallback((tabId: string, imageIds: string[]) => {
+  const handleAddToCompareCanvas = useCallback(async (tabId: string, imageIds: string[]) => {
     const targetTab = state.tabs.find(t => t.id === tabId);
     if (!targetTab || !targetTab.isCompareMode) return;
 
@@ -1443,8 +1770,74 @@ export const App: React.FC = () => {
     }
 
     // 只添加能容纳的图片
-    const idsToAdd = imageIds.slice(0, remainingSpace);
+    let idsToAdd = imageIds.slice(0, remainingSpace);
+
+    // 处理 LAN 来源图片：先下载到本地缓存，再以本地节点加入画布
+    const lanIds = idsToAdd.filter(id => state.files[id]?.source === 'lan' && state.files[id]?.remotePath);
+    if (lanIds.length > 0) {
+      const cacheRoot = state.settings.paths.cacheRoot;
+      if (!cacheRoot) {
+        showToast(t('lanClient.downloadNoCache') || '缓存目录未配置，无法下载桌面图片');
+        return;
+      }
+      const remotePaths = lanIds.map(id => state.files[id].remotePath!);
+      setLanDownloadProgress({ active: true, completed: 0, total: lanIds.length });
+      try {
+        const results = await downloadLanImagesBatched(remotePaths, cacheRoot, (completed, total) => {
+          setLanDownloadProgress({ active: true, completed, total });
+        });
+
+        // 为下载成功的图片创建本地 FileNode（复制 LAN 节点信息，改写路径与来源）
+        const newLocalNodes: Record<string, FileNode> = {};
+        const idMap: Record<string, string> = {};
+        let failedCount = 0;
+        results.forEach((res, idx) => {
+          const lanId = lanIds[idx];
+          const lanFile = state.files[lanId];
+          if (res.success && lanFile) {
+            const newId = generateId(res.localPath);
+            newLocalNodes[newId] = {
+              ...lanFile,
+              id: newId,
+              path: res.localPath,
+              source: 'local',
+              remotePath: undefined,
+              parentId: null,
+            };
+            idMap[lanId] = newId;
+          } else {
+            failedCount++;
+          }
+        });
+
+        // 合并本地节点到 state.files
+        if (Object.keys(newLocalNodes).length > 0) {
+          setState(prev => ({
+            ...prev,
+            files: { ...prev.files, ...newLocalNodes },
+          }));
+        }
+
+        // 用新的本地 id 替换 LAN id；下载失败的 LAN id 予以剔除
+        idsToAdd = idsToAdd
+          .map(id => idMap[id] || id)
+          .filter(id => !lanIds.includes(id) || idMap[id]);
+
+        if (failedCount > 0) {
+          showToast((t('lanClient.downloadPartialFail') || '部分桌面图片下载失败：{count} 张').replace('{count}', String(failedCount)));
+        }
+      } catch (err) {
+        console.error('[LAN] Download failed:', err);
+        showToast(t('lanClient.downloadFailed') || '下载桌面图片失败');
+        // 下载整体失败时剔除所有 LAN id，仅添加本地图片
+        idsToAdd = idsToAdd.filter(id => !lanIds.includes(id));
+      } finally {
+        setLanDownloadProgress({ active: false, completed: 0, total: 0 });
+      }
+    }
+
     const actuallyAdded = idsToAdd.length;
+    if (actuallyAdded === 0) return;
 
     const sourceTabId = state.activeTabId;
 
@@ -1471,7 +1864,7 @@ export const App: React.FC = () => {
     } else {
       showToast(t('context.addedToCanvas') || '已添加到画布');
     }
-  }, [state.tabs, setState, showToast, t]);
+  }, [state.tabs, state.files, state.settings.paths.cacheRoot, setState, showToast, t]);
 
   const handleNavigateTopic = useCallback((topicId: string | null) => {
     pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
@@ -1698,6 +2091,14 @@ export const App: React.FC = () => {
     pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
   }, [pushHistory]);
 
+  const handleNavigateNetworkHome = useCallback(() => {
+    if (!lanConnected) {
+      handleOpenLanSettings();
+      return;
+    }
+    pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
+  }, [pushHistory, lanConnected, handleOpenLanSettings]);
+
   const handleNavigateUp = () => {
     if (activeTab.activeTopicId) {
       const currentTopic = state.topics[activeTab.activeTopicId];
@@ -1705,6 +2106,8 @@ export const App: React.FC = () => {
     } else if (activeTab.activePersonId) {
       enterPeopleOverview();
     } else if (activeTab.viewMode === 'folders-overview') {
+      return;
+    } else if (activeTab.viewMode === 'lan-folders-overview') {
       return;
     } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
       const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
@@ -1717,6 +2120,9 @@ export const App: React.FC = () => {
       const current = state.files[activeTab.folderId];
       if (current && current.parentId) {
         enterFolder(current.parentId);
+      } else if (current?.source === 'lan') {
+        // LAN 子文件夹无父级时回到网络总览视图
+        pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
       } else {
         const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
         if (isAndroid && activeTab.viewMode === 'browser') {
@@ -1891,6 +2297,8 @@ export const App: React.FC = () => {
   pushHistoryRef.current = pushHistory;
   const activeTabRef2 = useRef(activeTab);
   activeTabRef2.current = activeTab;
+  const filesRef = useRef(state.files);
+  filesRef.current = state.files;
   const closeViewerRef = useRef(closeViewer);
   closeViewerRef.current = closeViewer;
   const exitActionRef2 = useRef(exitActionRef.current);
@@ -1946,9 +2354,18 @@ export const App: React.FC = () => {
         return;
       }
 
-      if (tab.viewMode === 'folders-overview') {
+      if (tab.viewMode === 'folders-overview' || tab.viewMode === 'lan-folders-overview') {
         // Already at main screen, fall through to exit behavior
       } else if (tab.viewMode === 'browser') {
+        const current = filesRef.current[tab.folderId];
+        if (current?.source === 'lan') {
+          if (current.parentId) {
+            pushHistoryRef.current(current.parentId, null, 'browser', '', 'all', [], null, 0);
+          } else {
+            pushHistoryRef.current('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
+          }
+          return;
+        }
         pushHistoryRef.current('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
         return;
       } else {
@@ -2009,6 +2426,11 @@ export const App: React.FC = () => {
     }));
   };
 
+  // Total visible side-panel width in rem (sidebar 16rem + metadata 20rem).
+  // Passed to grid components so they can predict the target container width at
+  // toggle moment and run card transitions simultaneously with panel animation.
+  const panelWidthRem = (state.layout.isSidebarVisible ? 16 : 0) + (state.layout.isMetadataVisible ? 20 : 0);
+
   return (
     <div
       className="w-full h-full flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300"
@@ -2020,6 +2442,27 @@ export const App: React.FC = () => {
     >
       {/* 锟斤拷锟斤拷锟斤拷锟斤拷 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
+
+      {/* LAN 桌面图片下载进度遮罩 */}
+      {lanDownloadProgress.active && (
+        <div className="fixed inset-0 z-[400] bg-black/50 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center min-w-[220px]">
+            <Loader2 size={28} className="text-blue-500 animate-spin mb-3" />
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
+              {t('lanClient.downloading') || '正在下载桌面图片'}
+            </div>
+            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-500 rounded-full transition-all duration-200"
+                style={{ width: `${lanDownloadProgress.total > 0 ? (lanDownloadProgress.completed / lanDownloadProgress.total) * 100 : 0}%` }}
+              />
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+              {lanDownloadProgress.completed} / {lanDownloadProgress.total}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 锟解部锟斤拷拽锟斤拷锟角诧拷 */}
       <DragDropOverlay
@@ -2050,9 +2493,14 @@ export const App: React.FC = () => {
       }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
       <div className="flex-1 flex overflow-hidden relative"
         style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
-        <div className={`bg-gray-50 dark:bg-gray-850 border-r border-gray-200 dark:border-gray-800 flex flex-col shrink-0 z-40 ${state.layout.isSidebarVisible ? 'w-64 translate-x-0 opacity-100' : 'w-0 -translate-x-full opacity-0 overflow-hidden'}`}
-          style={{ transition: 'width 300ms ease-out, transform 300ms ease-out, opacity 300ms ease-out' }}>
-          <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} />
+        <div
+          className="shrink-0 z-40 overflow-hidden bg-gray-50 dark:bg-gray-850"
+          style={{ width: state.layout.isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
+          <div
+            className="h-full flex flex-col border-r border-gray-200 dark:border-gray-800"
+            style={{ width: '16rem', transform: state.layout.isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
+            <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} lanRoots={lanRoots} lanConnected={lanConnected} lanLoading={lanLoading} onNavigateNetworkFolder={handleNavigateNetworkFolder} onNavigateNetworkHome={handleNavigateNetworkHome} onOpenLanSettings={handleOpenLanSettings} />
+          </div>
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
@@ -2133,6 +2581,15 @@ export const App: React.FC = () => {
             </div>
           ))}
           <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              ref={lanUploadInputRef}
+              onChange={handleUploadFilesSelected}
+              className="hidden"
+              aria-hidden="true"
+            />
             {isAndroidDevice && isAndroidSelectionMode ? (
               <AndroidSelectionBar
                 selectedCount={activeTab.selectedFileIds.length}
@@ -2283,6 +2740,8 @@ export const App: React.FC = () => {
               clipModelName={state.settings.clip.modelName}
               onOpenClipSettings={openClipSettings}
               showToast={showToast}
+              showLanUpload={showLanUpload}
+              onUploadToLan={handleUploadToLan}
             />
             )}
             {/* ... (Filter UI, same as before) ... */}
@@ -2499,6 +2958,33 @@ export const App: React.FC = () => {
                     sortDirection={state.sortDirection}
                     dateFilter={activeTab.dateFilter}
                     onRefresh={() => handleRefresh()}
+                    panelWidthRem={panelWidthRem}
+                  />
+                </div>
+                <div style={{ display: activeTab.viewMode === 'lan-folders-overview' ? 'contents' : 'none' }}>
+                  <FoldersOverview
+                    roots={lanRoots}
+                    files={state.files}
+                    resourceRoot={state.settings.paths.resourceRoot}
+                    cachePath={state.settings.paths.cacheRoot}
+                    onFolderClick={handleNavigateNetworkFolder}
+                    thumbnailSize={state.thumbnailSize}
+                    onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
+                    t={t}
+                    isLoadingImages={lanLoading}
+                    layoutMode={folderLayoutMode}
+                    onLayoutModeChange={handleFolderLayoutModeChange}
+                    isVisible={activeTab.viewMode === 'lan-folders-overview'}
+                    isAndroidSelectionMode={isAndroidSelectionMode}
+                    selectedFileIds={activeTab.selectedFileIds}
+                    onFileLongPress={handleFolderLongPress}
+                    onShowContextMenuForFile={handleShowContextMenuForFile}
+                    onAndroidRangeSelect={handleFolderAndroidRangeSelect}
+                    onFolderSelect={handleFolderSelect}
+                    sortBy={state.sortBy}
+                    sortDirection={state.sortDirection}
+                    onRefresh={handleLanRefresh}
+                    panelWidthRem={panelWidthRem}
                   />
                 </div>
                 {activeTab.viewMode === 'topics-overview' ? (
@@ -2623,38 +3109,44 @@ export const App: React.FC = () => {
                     personSortDirection={personSortDirection}
                     personGroupBy={personGroupBy}
                     onRefresh={() => handleRefresh(activeTab.folderId)}
+                    panelWidthRem={panelWidthRem}
                   />
                 )}
               </div>
             </div>
           </div>
         </div>
-        <div className={`metadata-panel-container bg-gray-50 dark:bg-gray-850 border-l border-gray-200 dark:border-gray-800 flex flex-col shrink-0 z-40 ${state.layout.isMetadataVisible ? 'w-80 translate-x-0 opacity-100' : 'w-0 translate-x-full opacity-0 overflow-hidden'}`}
-          style={{ transition: 'width 300ms ease-out, transform 300ms ease-out, opacity 300ms ease-out' }}>
-          <MetadataPanel
-            files={state.files}
-            selectedFileIds={activeTab.selectedFileIds}
-            people={peopleWithDisplayCounts}
-            topics={state.topics}
-            selectedPersonIds={activeTab.selectedPersonIds}
-            selectedTopicIds={activeTab.selectedTopicIds}
-            onUpdate={handleUpdateFile}
-            onUpdatePerson={handleUpdatePerson}
-            onUpdateTopic={handleUpdateTopic}
-            onDeleteTopic={handleDeleteTopic}
-            onSelectTopic={handleNavigateTopic}
-            onSelectPerson={handleNavigatePerson}
-            onNavigateToFolder={handleNavigateFolder}
-            onNavigateToTag={enterTagView}
-            onSearch={onPerformSearch}
-            t={t}
-            activeTab={activeTab}
-            resourceRoot={state.settings.paths.resourceRoot}
-            cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-            filesVersion={filesVersion}
-            settings={state.settings}
-            aiConnectionStatus={state.aiConnectionStatus}
-          />
+        <div
+          className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-gray-50 dark:bg-gray-850"
+          style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
+          <div
+            className="h-full flex flex-col border-l border-gray-200 dark:border-gray-800"
+            style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
+            <MetadataPanel
+              files={state.files}
+              selectedFileIds={activeTab.selectedFileIds}
+              people={peopleWithDisplayCounts}
+              topics={state.topics}
+              selectedPersonIds={activeTab.selectedPersonIds}
+              selectedTopicIds={activeTab.selectedTopicIds}
+              onUpdate={handleUpdateFile}
+              onUpdatePerson={handleUpdatePerson}
+              onUpdateTopic={handleUpdateTopic}
+              onDeleteTopic={handleDeleteTopic}
+              onSelectTopic={handleNavigateTopic}
+              onSelectPerson={handleNavigatePerson}
+              onNavigateToFolder={handleNavigateFolder}
+              onNavigateToTag={enterTagView}
+              onSearch={onPerformSearch}
+              t={t}
+              activeTab={activeTab}
+              resourceRoot={state.settings.paths.resourceRoot}
+              cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
+              filesVersion={filesVersion}
+              settings={state.settings}
+              aiConnectionStatus={state.aiConnectionStatus}
+            />
+          </div>
         </div>
         <TaskProgressModal
           tasks={tasks}

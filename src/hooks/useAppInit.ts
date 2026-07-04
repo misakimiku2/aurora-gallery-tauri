@@ -159,6 +159,12 @@ export const useAppInit = ({
                 folderSettings: savedData.folderSettings || {},
                 settings: finalSettings
               }));
+              console.log('[useAppInit] settings applied. lanShare:', {
+                hasToken: !!finalSettings.lanShare?.serverAccessToken,
+                host: finalSettings.lanShare?.serverHost,
+                port: finalSettings.lanShare?.serverPort,
+                tokenPrefix: finalSettings.lanShare?.serverAccessToken?.slice(0, 8),
+              });
               savedDataLoadedRef.current = true;
               setSavedDataLoaded(true);
 
@@ -245,7 +251,7 @@ export const useAppInit = ({
                   setState(prev => ({
                     ...prev,
                     settings: finalSettings,
-                    files: folderCachedResult.files,
+                    files: { ...prev.files, ...folderCachedResult.files },
                     roots: folderCachedResult.roots,
                     expandedFolderIds: folderCachedResult.roots,
                     tabs: [defaultTab],
@@ -261,7 +267,7 @@ export const useAppInit = ({
                     if (fullCachedResult) {
                       setState(prev => ({
                         ...prev,
-                        files: fullCachedResult.files,
+                        files: { ...prev.files, ...fullCachedResult.files },
                         roots: fullCachedResult.roots,
                       }));
                     }
@@ -272,7 +278,7 @@ export const useAppInit = ({
                       if (fullResult) {
                         setState(prev => ({
                           ...prev,
-                          files: fullResult.files,
+                          files: { ...prev.files, ...fullResult.files },
                           roots: fullResult.roots,
                           isScanning: false,
                         }));
@@ -304,7 +310,7 @@ export const useAppInit = ({
                   setState(prev => ({
                     ...prev,
                     settings: finalSettings,
-                    files: folderResult.files,
+                    files: { ...prev.files, ...folderResult.files },
                     roots: folderResult.roots,
                     expandedFolderIds: folderResult.roots,
                     tabs: [defaultTab],
@@ -320,7 +326,7 @@ export const useAppInit = ({
                     if (imageResult) {
                       setState(prev => ({
                         ...prev,
-                        files: imageResult.files,
+                        files: { ...prev.files, ...imageResult.files },
                         roots: imageResult.roots,
                         isScanning: false,
                       }));
@@ -376,7 +382,7 @@ export const useAppInit = ({
 
                 setState(prev => ({
                   ...prev,
-                  files: folderCachedResult.files,
+                  files: { ...prev.files, ...folderCachedResult.files },
                   roots: folderCachedResult.roots,
                   expandedFolderIds: folderCachedResult.roots,
                   tabs: [defaultTab],
@@ -394,7 +400,7 @@ export const useAppInit = ({
                   if (fullCachedResult) {
                     setState(prev => ({
                       ...prev,
-                      files: fullCachedResult.files,
+                      files: { ...prev.files, ...fullCachedResult.files },
                       roots: fullCachedResult.roots,
                       sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
                       sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
@@ -407,7 +413,7 @@ export const useAppInit = ({
                     if (fullResult) {
                       setState(prev => ({
                         ...prev,
-                        files: fullResult.files,
+                        files: { ...prev.files, ...fullResult.files },
                         roots: fullResult.roots,
                         sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
                         sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
@@ -445,7 +451,7 @@ export const useAppInit = ({
 
                 setState(prev => ({
                   ...prev,
-                  files: folderResult.files,
+                  files: { ...prev.files, ...folderResult.files },
                   roots: folderResult.roots,
                   expandedFolderIds: folderResult.roots,
                   tabs: [defaultTab],
@@ -461,7 +467,7 @@ export const useAppInit = ({
                   if (imageResult) {
                     setState(prev => ({
                       ...prev,
-                      files: imageResult.files,
+                      files: { ...prev.files, ...imageResult.files },
                       roots: imageResult.roots,
                       sortBy: savedData?.settings?.defaultLayoutSettings?.sortBy || globalLayoutSettings.sortBy,
                       sortDirection: savedData?.settings?.defaultLayoutSettings?.sortDirection || globalLayoutSettings.sortDirection,
@@ -585,7 +591,7 @@ export const useAppInit = ({
                   return {
                     ...prev,
                     roots: allRoots,
-                    files: allFiles,
+                    files: { ...prev.files, ...allFiles },
                     expandedFolderIds: allRoots,
                     tabs: [defaultTab],
                     activeTabId: defaultTab.id,

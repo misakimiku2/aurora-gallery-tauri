@@ -79,6 +79,25 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  private val permissionPrefs by lazy {
+    getSharedPreferences("aurora_permissions", MODE_PRIVATE)
+  }
+
+  private val cameraPermissionLauncher = registerForActivityResult(
+    ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    markCameraRequested()
+    if (granted) {
+      notifyPermissionResultWithRetry("granted")
+    } else {
+      if (!shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+        notifyPermissionResultWithRetry("denied_permanently")
+      } else {
+        notifyPermissionResultWithRetry("denied")
+      }
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     val splashScreen = installSplashScreen()
     enableEdgeToEdge()
@@ -169,6 +188,65 @@ class MainActivity : TauriActivity() {
       android.os.Environment.isExternalStorageManager()
     } else {
       true
+    }
+  }
+
+  private fun markCameraRequested() {
+    permissionPrefs.edit().putBoolean("camera_requested", true).apply()
+  }
+
+  private fun hasRequestedCameraBefore(): Boolean {
+    return permissionPrefs.getBoolean("camera_requested", false)
+  }
+
+  fun checkCameraPermission(): String {
+    val granted = ContextCompat.checkSelfPermission(
+      this, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (granted) return "granted"
+    if (hasRequestedCameraBefore() &&
+      !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
+    ) {
+      return "denied_permanently"
+    }
+    return "denied"
+  }
+
+  override fun onWebViewCreate(webView: android.webkit.WebView) {
+    webView.webChromeClient = object : android.webkit.WebChromeClient() {
+      override fun onPermissionRequest(request: android.webkit.PermissionRequest) {
+        runOnUiThread {
+          val resources = request.resources
+          val granted = resources.filter { resource ->
+            when (resource) {
+              android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> {
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+              }
+              else -> true
+            }
+          }
+          if (granted.size == resources.size) {
+            request.grant(resources)
+          } else {
+            request.deny()
+          }
+        }
+      }
+    }
+  }
+
+  fun requestCameraPermission() {
+    val granted = ContextCompat.checkSelfPermission(
+      this, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (granted) {
+      notifyPermissionResultWithRetry("granted")
+      return
+    }
+    try {
+      cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    } catch (_: Exception) {
+      notifyPermissionResultWithRetry("denied")
     }
   }
 

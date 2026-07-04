@@ -677,6 +677,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     useEffect(() => {
         if (!file || isMulti || file.type !== FileType.IMAGE || !file.path) return;
+        // LAN 图片存在于远程服务器，本地无法提取主色调，跳过自动提取。
+        if (file.path.startsWith('lan://')) return;
 
         const currentPalette = file.meta?.palette;
         let shouldExtract = false;

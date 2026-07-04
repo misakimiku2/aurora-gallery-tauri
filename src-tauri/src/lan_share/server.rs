@@ -1,4 +1,5 @@
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post},
     Router,
 };
@@ -6,6 +7,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -43,6 +45,8 @@ pub struct LanShareServer {
     devices: Arc<DeviceManager>,
     root_path: Arc<PathBuf>,
     db_pool: Option<Arc<AppDbPool>>,
+    color_db_pool: Option<Arc<crate::color_db::ColorDbPool>>,
+    app_handle: Option<AppHandle>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_handle: Option<JoinHandle<()>>,
     cleanup_handle: Option<JoinHandle<()>>,
@@ -59,6 +63,8 @@ impl LanShareServer {
             devices: Arc::new(DeviceManager::new()),
             root_path: Arc::new(root_path),
             db_pool: None,
+            color_db_pool: None,
+            app_handle: None,
             shutdown_tx: None,
             server_handle: None,
             cleanup_handle: None,
@@ -66,13 +72,18 @@ impl LanShareServer {
             port: 8080,
         }
     }
-    
+
     pub fn with_db_pool(mut self, pool: Arc<AppDbPool>) -> Self {
         self.db_pool = Some(pool);
         self
     }
 
-    pub async fn start(&mut self, config: LanShareConfig) -> Result<LanShareInfo, String> {
+    pub fn with_color_db_pool(mut self, pool: Arc<crate::color_db::ColorDbPool>) -> Self {
+        self.color_db_pool = Some(pool);
+        self
+    }
+
+    pub async fn start(&mut self, config: LanShareConfig, app_handle: AppHandle) -> Result<LanShareInfo, String> {
         if self.server_handle.is_some() {
             log::warn!("[LAN Share] 启动失败 - 服务器已在运行中");
             return Err("Server is already running".to_string());
@@ -97,6 +108,7 @@ impl LanShareServer {
 
         self.port = port;
         self.local_ip = Some(local_ip.clone());
+        self.app_handle = Some(app_handle.clone());
 
         let app_state = AppState {
             config: self.config.clone(),
@@ -104,6 +116,8 @@ impl LanShareServer {
             devices: self.devices.clone(),
             root_path: self.root_path.clone(),
             db_pool: self.db_pool.clone(),
+            color_db_pool: self.color_db_pool.clone(),
+            app_handle: app_handle.clone(),
         };
 
         log::info!("[LAN Share] 注册 API 路由...");
@@ -112,13 +126,17 @@ impl LanShareServer {
             .route("/style.css", get(handle_style_css))
             .route("/app.js", get(handle_app_js))
             .route("/api/auth/verify", post(handle_auth))
+            .route("/api/auth/logout", post(handle_logout))
             .route("/api/browse", get(handle_browse))
+            .route("/api/all_image_folders", get(handle_all_image_folders))
             .route("/api/search", get(handle_search))
             .route("/api/thumbnail", get(handle_thumbnail))
             .route("/api/image", get(handle_image))
             .route("/api/file", delete(handle_delete))
             .route("/api/rename", post(handle_rename))
+            .route("/api/upload", post(handle_upload).layer(DefaultBodyLimit::max(200 * 1024 * 1024)))
             .route("/api/devices", get(handle_devices))
+            .route("/api/heartbeat", get(handle_heartbeat))
             .layer(create_cors_layer())
             .with_state(app_state);
 
@@ -160,12 +178,18 @@ impl LanShareServer {
 
         let sessions = self.sessions.clone();
         let devices = self.devices.clone();
+        let cleanup_app_handle = app_handle.clone();
         let cleanup_handle = tokio::spawn(async move {
             loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
+                tokio::time::sleep(Duration::from_secs(10)).await;
                 log::debug!("[LAN Share] 执行定期清理 - 检查过期会话和设备");
                 sessions.cleanup_expired().await;
-                devices.cleanup_inactive(SESSION_TIMEOUT_SECS).await;
+                let removed = devices.cleanup_inactive(SESSION_TIMEOUT_SECS).await;
+                if removed > 0 {
+                    if let Err(e) = cleanup_app_handle.emit("lan-share-devices-changed", ()) {
+                        log::warn!("[LAN Share] 清理后发送 lan-share-devices-changed 事件失败: {}", e);
+                    }
+                }
             }
         });
         self.cleanup_handle = Some(cleanup_handle);
@@ -222,6 +246,15 @@ impl LanShareServer {
 
     pub async fn get_device_count(&self) -> usize {
         self.devices.get_device_count().await
+    }
+
+    pub async fn rename_device(&self, device_id: &str, new_name: &str) -> bool {
+        let s = self.sessions.rename_device(device_id, new_name).await;
+        let d = self.devices.rename_device(device_id, new_name).await;
+        if s || d {
+            log::info!("[LAN Share] 设备重命名 - {} -> {}", device_id, new_name);
+        }
+        s || d
     }
 
     pub fn is_running(&self) -> bool {

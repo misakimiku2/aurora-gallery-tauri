@@ -8,6 +8,8 @@ pub struct LanShareConfig {
     pub access_code: String,
     pub allow_edit: bool,
     pub allow_upload: bool,
+    #[serde(default)]
+    pub server_name: String,
 }
 
 impl Default for LanShareConfig {
@@ -18,6 +20,7 @@ impl Default for LanShareConfig {
             access_code: String::new(),
             allow_edit: false,
             allow_upload: false,
+            server_name: String::new(),
         }
     }
 }
@@ -90,6 +93,10 @@ pub struct AuthRequest {
     pub code: String,
     #[serde(default)]
     pub device_name: Option<String>,
+    /// 客户端持久化的设备标识。若提供则服务端按此 ID 覆盖旧会话，
+    /// 避免同一设备重连时在线计数累加；否则回退到随机 UUID。
+    #[serde(default)]
+    pub device_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,6 +108,8 @@ pub struct AuthResponse {
     pub expires_in: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -119,6 +128,10 @@ pub struct BrowseItem {
     pub width: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub palette: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -126,6 +139,20 @@ pub struct BrowseResponse {
     pub current_path: String,
     pub folders: Vec<BrowseItem>,
     pub images: Vec<BrowseItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_edit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_upload: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AllImageFoldersResponse {
+    pub folders: Vec<BrowseItem>,
+    pub root_images: Vec<BrowseItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_edit: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allow_upload: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,4 +176,8 @@ pub struct DevicesResponse {
 }
 
 pub const SESSION_TIMEOUT_SECS: u64 = 3600;
-pub const HEARTBEAT_INTERVAL_SECS: u64 = 30;
+// 心跳间隔缩短到 5s，配合 Tauri 事件推送让设备列表近乎实时更新。
+pub const HEARTBEAT_INTERVAL_SECS: u64 = 5;
+// 设备"在线"判定阈值：last_active_at 在此时间内才算在线。
+// = 心跳间隔 × 3，容忍 2 次心跳丢失。客户端异常关闭后 ~15 秒从设备列表消失。
+pub const ONLINE_TIMEOUT_SECS: u64 = 15;

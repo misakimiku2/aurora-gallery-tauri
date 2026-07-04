@@ -54,7 +54,15 @@ export const translations = {
       topics: '专题',
       files: '个文件',
       noDescription: '暂无描述',
-      noFolders: '暂无文件夹'
+      noFolders: '暂无文件夹',
+      network: {
+        title: '网络',
+        disconnected: '未连接',
+        empty: '暂无文件夹',
+        noFolders: '暂无文件夹',
+        loading: '加载中...',
+        connectHint: '点击连接到桌面端'
+      }
     },
     context: {
       viewInExplorer: '在系统文件管理器中查看',
@@ -670,6 +678,8 @@ export const translations = {
         scanToConnect: '扫码连接',
         accessCode: '访问验证码',
         regenerate: '重新生成',
+        serverName: '服务器名称',
+        serverNamePlaceholder: '如：我的图库',
         allowEdit: '允许编辑和删除',
         accessUrl: '访问地址',
         copy: '复制',
@@ -679,7 +689,52 @@ export const translations = {
         online: '在线',
         active: '活跃',
         noDevices: '暂无设备连接',
-        tip: '确保设备连接到同一 Wi-Fi 网络'
+        clickToEdit: '点击编辑名称',
+        tip: '确保设备连接到同一 Wi-Fi 网络',
+        androidConnectTip: '安卓端可通过此服务连接',
+        qrTip: '手机扫码即可自动连接，无需手动输入访问码',
+        client: {
+          title: '客户端模式',
+          description: '连接到桌面端服务器浏览图库',
+          serverHost: '服务器地址',
+          serverPort: '端口',
+          port: '端口',
+          accessCode: '访问码',
+          connect: '连接',
+          scanToConnect: '扫码连接',
+          connected: '已连接',
+          disconnect: '断开',
+          enterBrowser: '进入浏览',
+          openBrowser: '进入浏览',
+          recentServers: '最近服务器',
+          noRecentServers: '暂无最近连接的服务器',
+          connecting: '连接中...',
+          connectFailed: '连接失败',
+          wrongCode: '访问码错误',
+          serverUnreachable: '无法连接到服务器',
+          cameraPermissionDenied: '需要摄像头权限以扫描 QR 码',
+          cameraPermissionPermanentDeny: '摄像头权限被永久拒绝，请前往系统设置开启',
+          cameraDenied: '需要摄像头权限以扫描 QR 码',
+          manualInputUrl: '手动输入服务器地址',
+          disconnectConfirm: '确定断开连接？',
+          invalidAddress: '请填写正确的服务器地址和端口',
+          enterCode: '请输入访问码',
+          authFailed: '访问码错误，连接失败',
+          invalidUrl: '无法识别地址，请输入 http://IP:端口 格式',
+          invalidQr: '无法识别二维码内容，请确保扫描的是桌面端的连接二维码',
+          scanning: '扫描二维码',
+          scanTip: '将桌面端二维码放入框内，即可自动扫描',
+          cameraNotAvailable: '相机不可用，请检查摄像头是否正常',
+          onlineDevices: '在线设备',
+          serverAddress: '服务器地址',
+          pasteUrl: '请输入或粘贴服务器地址',
+          confirm: '确认',
+          cancel: '取消',
+          remove: '移除',
+          tip: '确保手机与电脑连接到同一 Wi-Fi 网络，并在桌面端开启局域网共享',
+          deviceName: '设备名称',
+          deviceNamePlaceholder: '如：三星Tab S8+'
+        }
       }
     },
     tags: {
@@ -866,6 +921,13 @@ export const translations = {
       selectWorkToPreview: '请选择作品查看详情',
       createTopics: '创建专题',
       creating: '创建中...'
+    },
+    lanClient: {
+      uploadButton: '上传图片到桌面',
+      uploading: '正在上传 {x}/{n}',
+      uploadFailed: '上传失败',
+      uploadDone: '上传完成 {x}/{n}',
+      uploadPartial: '上传完成 {x}/{n}（部分失败）'
     }
   },
   en: {
@@ -922,7 +984,15 @@ export const translations = {
       tasks: 'Background Tasks',
       topics: 'TOPICS',
       files: 'files',
-      noDescription: 'No description'
+      noDescription: 'No description',
+      network: {
+        title: 'Network',
+        disconnected: 'Disconnected',
+        empty: 'No folders',
+        noFolders: 'No folders',
+        loading: 'Loading...',
+        connectHint: 'Click to connect to desktop'
+      }
     },
     context: {
       viewInExplorer: 'View in File Explorer',
@@ -1533,6 +1603,8 @@ export const translations = {
         scanToConnect: 'Scan to Connect',
         accessCode: 'Access Code',
         regenerate: 'Regenerate',
+        serverName: 'Server Name',
+        serverNamePlaceholder: 'e.g. My Gallery',
         allowEdit: 'Allow Edit and Delete',
         accessUrl: 'Access URL',
         copy: 'Copy',
@@ -1542,7 +1614,52 @@ export const translations = {
         online: 'Online',
         active: 'Active',
         noDevices: 'No devices connected',
-        tip: 'Ensure devices are connected to the same Wi-Fi network'
+        clickToEdit: 'Click to edit name',
+        tip: 'Ensure devices are connected to the same Wi-Fi network',
+        androidConnectTip: 'Android devices can connect via this service',
+        qrTip: 'Scan with phone to auto-connect, no access code needed',
+        client: {
+          title: 'Client Mode',
+          description: 'Connect to a desktop server to browse gallery',
+          serverHost: 'Server Address',
+          serverPort: 'Port',
+          port: 'Port',
+          accessCode: 'Access Code',
+          connect: 'Connect',
+          scanToConnect: 'Scan to Connect',
+          connected: 'Connected',
+          disconnect: 'Disconnect',
+          enterBrowser: 'Enter Browser',
+          openBrowser: 'Enter Browser',
+          recentServers: 'Recent Servers',
+          noRecentServers: 'No recent servers',
+          connecting: 'Connecting...',
+          connectFailed: 'Connection Failed',
+          wrongCode: 'Wrong access code',
+          serverUnreachable: 'Cannot reach server',
+          cameraPermissionDenied: 'Camera permission is required to scan QR code',
+          cameraPermissionPermanentDeny: 'Camera permission permanently denied. Please enable it in system settings.',
+          cameraDenied: 'Camera permission is required to scan QR code',
+          manualInputUrl: 'Enter server URL manually',
+          disconnectConfirm: 'Disconnect?',
+          invalidAddress: 'Please enter a valid server address and port',
+          enterCode: 'Please enter the access code',
+          authFailed: 'Wrong access code, connection failed',
+          invalidUrl: 'Unrecognized address. Please enter in http://IP:port format',
+          invalidQr: 'Unrecognized QR code. Please scan the desktop QR code for connection',
+          scanning: 'Scan QR Code',
+          scanTip: 'Point the camera at the desktop QR code to auto-scan',
+          cameraNotAvailable: 'Camera not available. Please check your camera',
+          onlineDevices: 'Online Devices',
+          serverAddress: 'Server Address',
+          pasteUrl: 'Please enter or paste the server address',
+          confirm: 'Confirm',
+          cancel: 'Cancel',
+          remove: 'Remove',
+          tip: 'Ensure your phone and computer are on the same Wi-Fi network, and LAN sharing is enabled on the desktop',
+          deviceName: 'Device Name',
+          deviceNamePlaceholder: 'e.g. Galaxy Tab S8+'
+        }
       }
     },
     tags: {
@@ -1729,6 +1846,13 @@ export const translations = {
       selectWorkToPreview: 'Please select a work to preview details',
       createTopics: 'Create Topics',
       creating: 'Creating...'
+    },
+    lanClient: {
+      uploadButton: 'Upload to Desktop',
+      uploading: 'Uploading {x}/{n}',
+      uploadFailed: 'Upload failed',
+      uploadDone: 'Upload complete {x}/{n}',
+      uploadPartial: 'Upload complete {x}/{n} (some failed)'
     }
   }
 };

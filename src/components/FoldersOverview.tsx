@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { FileNode, LayoutMode, SortOption, SortDirection, FileType, DateFilter } from '../types';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
@@ -9,6 +9,7 @@ import { useLayout, LayoutItem } from './useLayoutHook';
 import { Folder, Check } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
+import { lanClientApi } from './lan-client/lanClientApi';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -35,6 +36,7 @@ interface FoldersOverviewProps {
   sortDirection?: SortDirection;
   dateFilter?: DateFilter;
   onRefresh?: () => Promise<void>;
+  panelWidthRem?: number;
 }
 
 const FolderCard = React.memo(({
@@ -105,7 +107,7 @@ const FolderCard = React.memo(({
 
   useEffect(() => {
     if (!(isInView || wasInView)) return;
-    if (!effectiveCoverPath || !resourceRoot) return;
+    if (!effectiveCoverPath) return;
 
     const cache = getGlobalCache();
     const cached = cache.get(effectiveCoverPath);
@@ -113,6 +115,16 @@ const FolderCard = React.memo(({
       if (cached !== coverSrc) setCoverSrc(cached);
       return;
     }
+
+    // LAN 封面：直接生成 URL，不走 Tauri getThumbnail（lanClientApi 内含 token）
+    if (effectiveCoverPath.startsWith('lan://')) {
+      const url = lanClientApi.getThumbnailUrl(effectiveCoverPath.slice('lan://'.length));
+      cache.set(effectiveCoverPath, url);
+      setCoverSrc(url);
+      return;
+    }
+
+    if (!resourceRoot) return;
 
     let cancelled = false;
     const loadCover = async () => {
@@ -393,6 +405,7 @@ const FoldersOverview = React.memo(({
   sortDirection = 'asc',
   dateFilter,
   onRefresh,
+  panelWidthRem,
 }: FoldersOverviewProps) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -403,6 +416,9 @@ const FoldersOverview = React.memo(({
   const hasRestoredRef = useRef(false);
   const isRestoringScrollRef = useRef(false);
   const scrollbarStyleInjectedRef = useRef(false);
+  const containerWidthRef = useRef(0);
+  const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
 
   const isAndroid = resourceRoot === 'android_media_store';
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -411,6 +427,21 @@ const FoldersOverview = React.memo(({
   const prevSortedIdsRef = useRef<string[]>([]);
   const prevAspectRatiosRef = useRef<Record<string, number>>({});
   const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0, filesCount: 0 });
+  const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+  const prevScrollTopForFlipRef = useRef(0);
+  // Layout transition tracking: increases buffer so cards in the NEW viewport
+  // are mounted before the FLIP WAAPI animation runs.
+  const [isLayoutTransitioning, setIsLayoutTransitioning] = useState(false);
+  const isLayoutTransitioningRef = useRef(false);
+  const prevThumbnailSizeRef = useRef(thumbnailSize);
+  const prevContainerWidthRef = useRef(containerWidth);
+  const transitionBufferRef = useRef(400);
+  const transitionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flipDebugLogRef = useRef(0);
+  // Two-phase FLIP: when scrollDelta is large, phase 0 expands buffer + updates scrollTop
+  // (mounts cards at new viewport), phase 1 runs the WAAPI animation.
+  const [flipPhase, setFlipPhase] = useState(0);
+  const pendingFlipDataRef = useRef<{ oldScrollTop: number; newScrollTop: number } | null>(null);
 
   const {
     isRefreshing: isPullRefreshing,
@@ -472,19 +503,25 @@ const FoldersOverview = React.memo(({
   }, [roots, files, dateFilter]);
 
   const sortedFolderIds = useMemo(() => {
-    return [...folderNodes]
+    const sorted = [...folderNodes]
       .sort((a, b) => {
         let res = 0;
         if (sortBy === 'date') {
           res = (a.createdAt || '').localeCompare(b.createdAt || '');
         } else if (sortBy === 'size') {
-          res = (a.size || 0) - (b.size || 0);
+          res = ((a.imageCount ?? a.size ?? 0) - (b.imageCount ?? b.size ?? 0));
         } else {
           res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
         }
         return res * (sortDirection === 'asc' ? 1 : -1);
-      })
-      .map(f => f.id);
+      });
+    // Pin __lan_root_images__ virtual folder to the top, unaffected by sort mode
+    const rootImgIdx = sorted.findIndex(f => f.id === '__lan_root_images__');
+    if (rootImgIdx > 0) {
+      const [rootImg] = sorted.splice(rootImgIdx, 1);
+      sorted.unshift(rootImg);
+    }
+    return sorted.map(f => f.id);
   }, [folderNodes, sortBy, sortDirection]);
 
   if (isAndroid) {
@@ -605,6 +642,253 @@ const FoldersOverview = React.memo(({
     onFolderClick(folderId);
   }, [onFolderClick]);
 
+  // Sync isLayoutTransitioning to ref for use inside FLIP effect (avoids stale closure / extra deps)
+  useEffect(() => {
+    isLayoutTransitioningRef.current = isLayoutTransitioning;
+  }, [isLayoutTransitioning]);
+
+  // Watch layout input changes: set transition state + predict buffer size so the
+  // new viewport's cards are mounted BEFORE the new layout arrives from the worker.
+  // Only activates for thumbnail size changes — width changes (panel toggle) are
+  // handled by CSS transition + predicted width, no buffer increase needed.
+  useEffect(() => {
+    const prevThumb = prevThumbnailSizeRef.current;
+    const prevWidth = prevContainerWidthRef.current;
+    const thumbChanged = prevThumb !== thumbnailSize;
+    const widthChanged = prevWidth !== containerWidth && prevWidth > 0 && containerWidth > 0;
+
+    if (!thumbChanged && !widthChanged) return;
+    // Skip if container not visible (width=0)
+    if (containerWidth <= 0) {
+      prevThumbnailSizeRef.current = thumbnailSize;
+      prevContainerWidthRef.current = containerWidth;
+      return;
+    }
+    // Only increase buffer for thumbnail size changes (large scroll adjustments).
+    // For width-only changes (panel toggle), CSS transition + predicted width handles it.
+    if (!thumbChanged) {
+      prevThumbnailSizeRef.current = thumbnailSize;
+      prevContainerWidthRef.current = containerWidth;
+      return;
+    }
+
+    const currentScroll = containerRef.current?.scrollTop || 0;
+    const ratio = prevThumb > 0 ? thumbnailSize / prevThumb : 1;
+    const predictedDelta = Math.abs(currentScroll * (1 - ratio));
+    const buffer = Math.min(3000, Math.max(1500, predictedDelta + 800));
+
+    transitionBufferRef.current = buffer;
+    setIsLayoutTransitioning(true);
+    console.log(`[FLIP-FoldersOverview] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${containerWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)}, predictedDelta=${predictedDelta.toFixed(0)}, buffer=${buffer.toFixed(0)}`);
+
+    if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+    transitionResetTimerRef.current = setTimeout(() => {
+      setIsLayoutTransitioning(false);
+      transitionBufferRef.current = 400;
+      console.log(`[FLIP-FoldersOverview] TRANSITION END (timeout 600ms)`);
+    }, 600);
+
+    prevThumbnailSizeRef.current = thumbnailSize;
+    prevContainerWidthRef.current = containerWidth;
+  }, [thumbnailSize, containerWidth]);
+
+  // FLIP animation: anchor at viewport top instead of page top.
+  // When layout changes, adjust scrollTop so the card at viewport top stays in place,
+  // then use WAAPI to animate visible cards from old screen positions to new ones.
+  useLayoutEffect(() => {
+    const prevPositions = prevLayoutPositionsRef.current;
+    const logId = ++flipDebugLogRef.current;
+
+    // First render or empty layout: just record positions
+    if (prevPositions.size === 0 || layout.length === 0) {
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = containerRef.current?.scrollTop || 0;
+      return;
+    }
+
+    // Check if any position actually changed
+    let hasPositionChanged = false;
+    for (const item of layout) {
+      const prev = prevPositions.get(item.id);
+      if (!prev || Math.abs(prev.x - item.x) > 0.5 || Math.abs(prev.y - item.y) > 0.5) {
+        hasPositionChanged = true;
+        break;
+      }
+    }
+    if (!hasPositionChanged) {
+      prevScrollTopForFlipRef.current = containerRef.current?.scrollTop || 0;
+      return;
+    }
+
+    // If most items changed (e.g., tab switch), skip FLIP to avoid animating unrelated cards
+    const commonCount = layout.filter(item => prevPositions.has(item.id)).length;
+    if (commonCount < layout.length * 0.5) {
+      console.log(`[FLIP-FoldersOverview] #${logId} SKIP: too many new items (common=${commonCount}/${layout.length})`);
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = containerRef.current?.scrollTop || 0;
+      return;
+    }
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    // BUG FIX #1: Use LIVE scrollTop from the DOM, not the stale prevScrollTopForFlipRef.
+    // prevScrollTopForFlipRef only updates when this effect runs, so if the user scrolled
+    // without a layout change, it holds an old value → wrong anchor → newScrollTop=0 → jump to top.
+    const oldScrollTop = container.scrollTop;
+    const staleScrollTop = prevScrollTopForFlipRef.current;
+
+    console.log(`[FLIP-FoldersOverview] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount}`);
+    console.log(`[FLIP-FoldersOverview] #${logId}   scrollTop: live=${oldScrollTop.toFixed(1)}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(oldScrollTop - staleScrollTop).toFixed(1)}`);
+
+    // Find anchor card: the card closest to viewport top (oldScreenY >= 0) in previous layout
+    let anchorId: string | null = null;
+    let anchorOldScreenY = 0;
+    let minScreenY = Infinity;
+    prevPositions.forEach((pos, id) => {
+      const screenY = pos.y - oldScrollTop;
+      if (screenY >= -50 && screenY < minScreenY) {
+        minScreenY = screenY;
+        anchorId = id;
+        anchorOldScreenY = screenY;
+      }
+    });
+
+    // Calculate new scroll top so the anchor card stays at the same screen position
+    let newScrollTop = oldScrollTop;
+    if (anchorId) {
+      const anchorNew = layout.find(item => item.id === anchorId);
+      if (anchorNew) {
+        newScrollTop = Math.max(0, anchorNew.y - anchorOldScreenY);
+      }
+    }
+
+    const anchorOldY = anchorId ? prevPositions.get(anchorId)?.y : undefined;
+    const anchorNewY = anchorId ? layout.find(i => i.id === anchorId)?.y : undefined;
+    const scrollDelta = newScrollTop - oldScrollTop;
+    console.log(`[FLIP-FoldersOverview] #${logId}   anchor: id=${(anchorId || '').slice(0, 12)}, oldY=${anchorOldY?.toFixed(0)}, screenY=${anchorOldScreenY.toFixed(0)}, newY=${anchorNewY?.toFixed(0)}, newScroll=${newScrollTop.toFixed(0)}, scrollDelta=${scrollDelta.toFixed(0)}`);
+
+    // If scroll adjustment is negligible, CSS transition on transform handles the animation.
+    // No need for WAAPI — this avoids perf cost on panel toggle (width-only changes).
+    if (Math.abs(scrollDelta) <= 1) {
+      console.log(`[FLIP-FoldersOverview] #${logId} SKIP WAAPI: |scrollDelta|≤1, CSS transition handles it`);
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = oldScrollTop;
+      if (flipPhase === 1) setFlipPhase(0);
+      return;
+    }
+
+    // Two-phase FLIP: when scrollDelta is large, the new viewport cards aren't mounted yet
+    // (visibleItems was computed with old scrollTop). Phase 0 updates scrollTop state so
+    // visibleItems includes new viewport cards. Phase 1 runs the WAAPI animation after
+    // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
+    // already recorded in prevPositions, so they don't need to be in the DOM. Only new
+    // viewport cards need mounting, and the existing transition buffer handles that.
+    const containerHeight = container.clientHeight || 0;
+
+    if (flipPhase === 0) {
+      console.log(`[FLIP-FoldersOverview] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${transitionBufferRef.current})`);
+      pendingFlipDataRef.current = { oldScrollTop, newScrollTop };
+      setScrollTop(newScrollTop);
+      setFlipPhase(1);
+      return;
+    }
+
+    // Phase 1: run FLIP animation
+    let actualOldScrollTop = oldScrollTop;
+    let actualNewScrollTop = newScrollTop;
+    if (flipPhase === 1 && pendingFlipDataRef.current) {
+      actualOldScrollTop = pendingFlipDataRef.current.oldScrollTop;
+      actualNewScrollTop = pendingFlipDataRef.current.newScrollTop;
+      pendingFlipDataRef.current = null;
+      setFlipPhase(0);
+      console.log(`[FLIP-FoldersOverview] #${logId} PHASE 1: oldScroll=${actualOldScrollTop.toFixed(0)}, newScroll=${actualNewScrollTop.toFixed(0)}`);
+    }
+
+    // Adjust scroll position instantly (before paint, so no visual jump)
+    container.scrollTop = actualNewScrollTop;
+
+    // Apply WAAPI FLIP animation only to cards near old OR new viewport.
+    // visibleItems may include many cards (large buffer), but only animate relevant ones.
+    const viewportPadding = 400;
+    const oldVpMin = actualOldScrollTop - viewportPadding;
+    const oldVpMax = actualOldScrollTop + containerHeight + viewportPadding;
+    const newVpMin = actualNewScrollTop - viewportPadding;
+    const newVpMax = actualNewScrollTop + containerHeight + viewportPadding;
+
+    let animatedCount = 0;
+    let notFoundCount = 0;
+    let skippedCount = 0;
+    visibleItems.forEach(item => {
+      const prev = prevPositions.get(item.id);
+      if (!prev) return;
+
+      const inOldVp = item.y < oldVpMax && item.y + item.height > oldVpMin;
+      const inNewVp = item.y < newVpMax && item.y + item.height > newVpMin;
+      if (!inOldVp && !inNewVp) {
+        skippedCount++;
+        return;
+      }
+
+      const el = container.querySelector(`[data-flip-id="${item.id}"]`) as HTMLElement | null;
+      if (!el) {
+        notFoundCount++;
+        return;
+      }
+
+      const oldScreenY = prev.y - actualOldScrollTop;
+      const newScreenY = item.y - actualNewScrollTop;
+      const deltaY = oldScreenY - newScreenY;
+      const deltaX = prev.x - item.x;
+
+      if (Math.abs(deltaY) < 1 && Math.abs(deltaX) < 1) {
+        skippedCount++;
+        return;
+      }
+
+      el.animate(
+        [
+          { transform: `translate(${item.x + deltaX}px, ${item.y + deltaY}px)` },
+          { transform: `translate(${item.x}px, ${item.y}px)` },
+        ],
+        {
+          duration: 300,
+          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          fill: 'none',
+        }
+      );
+      animatedCount++;
+    });
+
+    console.log(`[FLIP-FoldersOverview] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}`);
+
+    // Update refs for next layout change
+    const map = new Map<string, { x: number; y: number }>();
+    layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+    prevLayoutPositionsRef.current = map;
+    prevScrollTopForFlipRef.current = actualNewScrollTop;
+
+    // Update scrollTop state (WAAPI animation overrides inline transform, so re-render is safe)
+    setScrollTop(actualNewScrollTop);
+    onScrollTopChange?.(actualNewScrollTop);
+
+    // Reset transition state after animation completes
+    if (isLayoutTransitioningRef.current) {
+      if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+      transitionResetTimerRef.current = setTimeout(() => {
+        setIsLayoutTransitioning(false);
+        transitionBufferRef.current = 400;
+        console.log(`[FLIP-FoldersOverview] #${logId} TRANSITION END (post-FLIP 400ms)`);
+      }, 400);
+    }
+  }, [layout, flipPhase]);
+
   useEffect(() => {
     if (!scrollbarStyleInjectedRef.current && isAndroid) {
       const style = document.createElement('style');
@@ -636,8 +920,15 @@ const FoldersOverview = React.memo(({
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width);
-        setContainerHeight(entry.contentRect.height);
+        const newWidth = entry.contentRect.width;
+        const newHeight = entry.contentRect.height;
+        setContainerHeight(newHeight);
+
+        containerWidthRef.current = newWidth;
+        if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
+        widthDebounceRef.current = setTimeout(() => {
+          setContainerWidth(containerWidthRef.current);
+        }, 60);
       }
     });
 
@@ -645,6 +936,7 @@ const FoldersOverview = React.memo(({
       observer.observe(containerRef.current);
       setContainerWidth(containerRef.current.clientWidth);
       setContainerHeight(containerRef.current.clientHeight);
+      containerWidthRef.current = containerRef.current.clientWidth;
     }
 
     const handleScroll = () => {
@@ -687,15 +979,47 @@ const FoldersOverview = React.memo(({
       observer.disconnect();
       containerRef.current?.removeEventListener('scroll', handleScroll);
       if (scrollStateTimerRef.current) clearTimeout(scrollStateTimerRef.current);
+      if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
     };
   }, [isAndroid, onScrollTopChange]);
 
+  // Re-measure container dimensions when the view becomes visible
+  // (switching from display:none to display:contents leaves stale width/height=0)
+  useEffect(() => {
+    if (isVisible && containerRef.current) {
+      const w = containerRef.current.clientWidth;
+      const h = containerRef.current.clientHeight;
+      if (w > 0) {
+        setContainerWidth(w);
+        setContainerHeight(h);
+        containerWidthRef.current = w;
+      }
+    }
+  }, [isVisible]);
+
+  // Predict container width immediately when panels toggle, so card transitions
+  // run simultaneously with the panel animation instead of waiting for ResizeObserver
+  useEffect(() => {
+    if (panelWidthRem === undefined) return;
+    if (prevPanelWidthRemRef.current !== undefined && prevPanelWidthRemRef.current !== panelWidthRem) {
+      const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+      const deltaRem = prevPanelWidthRemRef.current - panelWidthRem;
+      const deltaPx = deltaRem * remPx;
+      if (containerWidthRef.current > 0) {
+        const predictedWidth = containerWidthRef.current + deltaPx;
+        setContainerWidth(predictedWidth);
+        containerWidthRef.current = predictedWidth;
+      }
+    }
+    prevPanelWidthRemRef.current = panelWidthRem;
+  }, [panelWidthRem]);
+
   const visibleItems = useMemo(() => {
-      const buffer = 400;
+      const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerHeight + buffer;
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
-  }, [layout, scrollTop, containerHeight]);
+  }, [layout, scrollTop, containerHeight, isLayoutTransitioning]);
 
   return (
     <div
@@ -722,6 +1046,7 @@ const FoldersOverview = React.memo(({
         {visibleItems.map(pos => (
             <div
               key={pos.id}
+              data-flip-id={pos.id}
               className="absolute"
               style={{
                 transform: `translate(${pos.x}px, ${pos.y}px)`,
