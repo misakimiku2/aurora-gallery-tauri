@@ -18,7 +18,7 @@ export interface PersonGroup {
 export interface LayoutWorkerInput {
     items: string[];
     // We pass aspect ratios directly instead of full file objects to save transfer time
-    aspectRatios: Record<string, number>; 
+    aspectRatios: Record<string, number>;
     layoutMode: LayoutMode;
     containerWidth: number;
     thumbnailSize: number;
@@ -28,26 +28,28 @@ export interface LayoutWorkerInput {
     // People view grouping
     groupedPeople?: PersonGroup[];
     collapsedGroups?: Record<string, boolean>;
+    _version?: number;
 }
 
 export interface LayoutWorkerOutput {
     layout: LayoutItem[];
     totalHeight: number;
+    _version?: number;
 }
 
 self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
-    // console.time('Worker Calculation'); // Optional: Measure time
-    const { 
-        items, 
-        aspectRatios, 
-        layoutMode, 
-        containerWidth, 
+    const {
+        items,
+        aspectRatios,
+        layoutMode,
+        containerWidth,
         thumbnailSize,
         viewMode,
         groupedTags,
         searchQuery,
         groupedPeople,
-        collapsedGroups
+        collapsedGroups,
+        _version
     } = e.data;
 
     const layout: LayoutItem[] = [];
@@ -405,7 +407,5 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
         }
     }
     
-    // Send back results
-    // console.timeEnd('Worker Calculation');
-    self.postMessage({ layout, totalHeight } as LayoutWorkerOutput);
+    self.postMessage({ layout, totalHeight, _version } as LayoutWorkerOutput);
 };

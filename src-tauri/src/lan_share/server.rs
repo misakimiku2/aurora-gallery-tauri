@@ -3,6 +3,7 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
+use tower_http::compression::CompressionLayer;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -128,6 +129,7 @@ impl LanShareServer {
             .route("/api/auth/verify", post(handle_auth))
             .route("/api/auth/logout", post(handle_logout))
             .route("/api/browse", get(handle_browse))
+            .route("/api/palette", get(handle_palette))
             .route("/api/all_image_folders", get(handle_all_image_folders))
             .route("/api/search", get(handle_search))
             .route("/api/thumbnail", get(handle_thumbnail))
@@ -138,6 +140,7 @@ impl LanShareServer {
             .route("/api/devices", get(handle_devices))
             .route("/api/heartbeat", get(handle_heartbeat))
             .layer(create_cors_layer())
+            .layer(CompressionLayer::new())
             .with_state(app_state);
 
         let addr: SocketAddr = format!("0.0.0.0:{}", port)

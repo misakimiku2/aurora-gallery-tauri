@@ -194,6 +194,11 @@ class LanClientApi {
     )}`;
   }
 
+  async getPalette(remotePath: string): Promise<string[]> {
+    const res = await this.fetchJson<{ palette: string[] }>(`/api/palette?path=${encodeURIComponent(remotePath)}`);
+    return res.palette || [];
+  }
+
   getImageUrl(remotePath: string): string {
     const base = this.baseUrl || '';
     return `${base}/api/image?path=${encodeURIComponent(remotePath)}&token=${encodeURIComponent(

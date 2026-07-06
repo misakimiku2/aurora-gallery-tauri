@@ -5,7 +5,7 @@ import { usePinchZoom } from '../hooks/usePinchZoom';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
-import { useLayout, LayoutItem } from './useLayoutHook';
+import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
 import { Folder, Check } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
@@ -13,7 +13,7 @@ import { lanClientApi } from './lan-client/lanClientApi';
 
 interface FoldersOverviewProps {
   roots: string[];
-  files: Record<string, FileNode>;
+  getFileNode: GetFileNode;
   resourceRoot?: string;
   cachePath?: string;
   onFolderClick: (folderId: string) => void;
@@ -55,7 +55,6 @@ const FolderCard = React.memo(({
   coverOverrideMediaStoreId,
 }: {
   folder: FileNode;
-  files?: Record<string, FileNode>;
   resourceRoot?: string;
   cachePath?: string;
   onClick: () => void;
@@ -382,7 +381,7 @@ const FolderCard = React.memo(({
 
 const FoldersOverview = React.memo(({
   roots,
-  files,
+  getFileNode,
   resourceRoot,
   cachePath,
   onFolderClick,
@@ -419,6 +418,10 @@ const FoldersOverview = React.memo(({
   const containerWidthRef = useRef(0);
   const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
+  // 跟踪 isVisible：ResizeObserver 在容器隐藏时仍会触发（display:none→width=0），
+  // 用 ref 在回调内读取最新值，避免把 0 写入 containerWidth 触发不必要的布局重算。
+  const isVisibleRef = useRef(isVisible);
+  isVisibleRef.current = isVisible;
 
   const isAndroid = resourceRoot === 'android_media_store';
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -426,7 +429,7 @@ const FoldersOverview = React.memo(({
   const lastScrollTopRef = useRef(0);
   const prevSortedIdsRef = useRef<string[]>([]);
   const prevAspectRatiosRef = useRef<Record<string, number>>({});
-  const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0, filesCount: 0 });
+  const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0 });
   const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevScrollTopForFlipRef = useRef(0);
   // Layout transition tracking: increases buffer so cards in the NEW viewport
@@ -470,8 +473,11 @@ const FoldersOverview = React.memo(({
   });
 
   const folderNodes = useMemo(() => {
+    // 隐藏时短路返回空数组，跳过 roots.map(getFileNode(id)) + 递归 hasMatchingChild。
+    // 这会级联跳过 sortedFolderIds、sortCoverOverrides、folderAspectRatios、useLayout 的计算。
+    if (!isVisible) return [];
     const nodes = roots
-      .map(id => files[id])
+      .map(id => getFileNode(id))
       .filter((f): f is FileNode => !!f && f.type === 'folder');
 
     if (!dateFilter?.start || !dateFilter?.end) return nodes;
@@ -484,7 +490,7 @@ const FoldersOverview = React.memo(({
     const hasMatchingChild = (folder: FileNode): boolean => {
       const children = folder.children || [];
       for (const childId of children) {
-        const child = files[childId];
+        const child = getFileNode(childId);
         if (!child) continue;
         if (child.type === FileType.FOLDER) {
           if (hasMatchingChild(child)) return true;
@@ -500,7 +506,7 @@ const FoldersOverview = React.memo(({
     };
 
     return nodes.filter(hasMatchingChild);
-  }, [roots, files, dateFilter]);
+  }, [roots, getFileNode, dateFilter, isVisible]);
 
   const sortedFolderIds = useMemo(() => {
     const sorted = [...folderNodes]
@@ -524,7 +530,7 @@ const FoldersOverview = React.memo(({
     return sorted.map(f => f.id);
   }, [folderNodes, sortBy, sortDirection]);
 
-  if (isAndroid) {
+  if (isAndroid && isVisible) {
     const prev = prevSortedIdsRef.current;
     if (prev.length !== sortedFolderIds.length || prev.some((id, i) => id !== sortedFolderIds[i])) {
       const added = sortedFolderIds.filter(id => !prev.includes(id));
@@ -533,11 +539,11 @@ const FoldersOverview = React.memo(({
       if (added.length === 0 && removed.length === 0 && prev.length === sortedFolderIds.length) {
         for (let i = 0; i < prev.length; i++) {
           if (prev[i] !== sortedFolderIds[i]) {
-            moved.push(`${files[prev[i]]?.name || prev[i]}→${files[sortedFolderIds[i]]?.name || sortedFolderIds[i]}`);
+            moved.push(`${getFileNode(prev[i])?.name || prev[i]}→${getFileNode(sortedFolderIds[i])?.name || sortedFolderIds[i]}`);
           }
         }
       }
-      console.log(`[FoldersOverview] sortedFolderIds CHANGED: ${prev.length}→${sortedFolderIds.length}, sortBy=${sortBy}, sortDir=${sortDirection}, layout=${layoutMode}, filesCount=${Object.keys(files).length}` +
+      console.log(`[FoldersOverview] sortedFolderIds CHANGED: ${prev.length}→${sortedFolderIds.length}, sortBy=${sortBy}, sortDir=${sortDirection}, layout=${layoutMode}, folders=${folderNodes.length}` +
         (added.length > 0 ? `, added=${added.length}` : '') +
         (removed.length > 0 ? `, removed=${removed.length}` : '') +
         (moved.length > 0 ? `, orderChanged=${moved.length}` : ''));
@@ -549,7 +555,7 @@ const FoldersOverview = React.memo(({
     const overrides: Record<string, { path: string; mediaStoreId?: number; width?: number; height?: number }> = {};
     for (const folder of folderNodes) {
       const children = (folder.children || [])
-        .map(id => files[id])
+        .map(id => getFileNode(id))
         .filter((f): f is FileNode => !!f && f.type === FileType.IMAGE);
       if (children.length === 0) continue;
       const sorted = [...children].sort((a, b) => {
@@ -572,7 +578,7 @@ const FoldersOverview = React.memo(({
       };
     }
     return overrides;
-  }, [folderNodes, files, sortBy, sortDirection]);
+  }, [folderNodes, getFileNode, sortBy, sortDirection]);
 
   const folderAspectRatios = useMemo(() => {
     const ratios: Record<string, number> = {};
@@ -591,7 +597,7 @@ const FoldersOverview = React.memo(({
     return ratios;
   }, [folderNodes, sortCoverOverrides]);
 
-  if (isAndroid) {
+  if (isAndroid && isVisible) {
     const prev = prevAspectRatiosRef.current;
     const changedIds = Object.keys(folderAspectRatios).filter(id => prev[id] !== folderAspectRatios[id]);
     const newIds = Object.keys(folderAspectRatios).filter(id => !(id in prev));
@@ -601,15 +607,15 @@ const FoldersOverview = React.memo(({
         `, changed=${changedIds.length}` +
         `, new=${newIds.length}` +
         `, removed=${removedIds.length}` +
-        (changedIds.length > 0 && changedIds.length <= 5 ? ` [${changedIds.map(id => `${files[id]?.name}:${prev[id]?.toFixed(2)}→${folderAspectRatios[id]?.toFixed(2)}`).join(', ')}]` : ''));
+        (changedIds.length > 0 && changedIds.length <= 5 ? ` [${changedIds.map(id => `${getFileNode(id)?.name}:${prev[id]?.toFixed(2)}→${folderAspectRatios[id]?.toFixed(2)}`).join(', ')}]` : ''));
       prevAspectRatiosRef.current = folderAspectRatios;
     }
   }
 
-  if (isAndroid) {
+  if (isAndroid && isVisible) {
     const prev = prevLayoutInputsRef.current;
-    const curr = { containerWidth, thumbnailSize, layoutMode, sortBy, sortDirection, folderCount: sortedFolderIds.length, filesCount: Object.keys(files).length };
-    if (prev.containerWidth !== curr.containerWidth || prev.thumbnailSize !== curr.thumbnailSize || prev.layoutMode !== curr.layoutMode || prev.sortBy !== curr.sortBy || prev.sortDirection !== curr.sortDirection || prev.folderCount !== curr.folderCount || prev.filesCount !== curr.filesCount) {
+    const curr = { containerWidth, thumbnailSize, layoutMode, sortBy, sortDirection, folderCount: sortedFolderIds.length };
+    if (prev.containerWidth !== curr.containerWidth || prev.thumbnailSize !== curr.thumbnailSize || prev.layoutMode !== curr.layoutMode || prev.sortBy !== curr.sortBy || prev.sortDirection !== curr.sortDirection || prev.folderCount !== curr.folderCount) {
       const changes: string[] = [];
       if (prev.containerWidth !== curr.containerWidth) changes.push(`width=${prev.containerWidth}→${curr.containerWidth}`);
       if (prev.thumbnailSize !== curr.thumbnailSize) changes.push(`thumbSize=${prev.thumbnailSize}→${curr.thumbnailSize}`);
@@ -617,15 +623,14 @@ const FoldersOverview = React.memo(({
       if (prev.sortBy !== curr.sortBy) changes.push(`sortBy=${prev.sortBy}→${curr.sortBy}`);
       if (prev.sortDirection !== curr.sortDirection) changes.push(`sortDir=${prev.sortDirection}→${curr.sortDirection}`);
       if (prev.folderCount !== curr.folderCount) changes.push(`folders=${prev.folderCount}→${curr.folderCount}`);
-      if (prev.filesCount !== curr.filesCount) changes.push(`files=${prev.filesCount}→${curr.filesCount}`);
       console.log(`[FoldersOverview] LAYOUT INPUTS CHANGED: ${changes.join(', ')}`);
       prevLayoutInputsRef.current = curr;
     }
   }
 
   const { layout, totalHeight } = useLayout(
-    sortedFolderIds,
-    files,
+    isVisible ? sortedFolderIds : [],
+    getFileNode,
     layoutMode,
     containerWidth,
     thumbnailSize,
@@ -790,10 +795,17 @@ const FoldersOverview = React.memo(({
     // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
     // already recorded in prevPositions, so they don't need to be in the DOM. Only new
     // viewport cards need mounting, and the existing transition buffer handles that.
+    // Skip Phase 0 when the new viewport is already covered by the current buffer (e.g.,
+    // width-only changes with small scrollDelta) — avoids an unnecessary re-render that
+    // causes mid-animation stutter.
     const containerHeight = container.clientHeight || 0;
+    const currentBuffer = transitionBufferRef.current;
+    const oldBufferMin = oldScrollTop - currentBuffer;
+    const oldBufferMax = oldScrollTop + containerHeight + currentBuffer;
+    const newViewportCovered = newScrollTop >= oldBufferMin && (newScrollTop + containerHeight) <= oldBufferMax;
 
-    if (flipPhase === 0) {
-      console.log(`[FLIP-FoldersOverview] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${transitionBufferRef.current})`);
+    if (flipPhase === 0 && !newViewportCovered) {
+      console.log(`[FLIP-FoldersOverview] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${currentBuffer})`);
       pendingFlipDataRef.current = { oldScrollTop, newScrollTop };
       setScrollTop(newScrollTop);
       setFlipPhase(1);
@@ -924,9 +936,21 @@ const FoldersOverview = React.memo(({
         const newHeight = entry.contentRect.height;
         setContainerHeight(newHeight);
 
+        // 容器隐藏（display:none）会报告 width=0。如果当前已有非零宽度，
+        // 不要把 0 写入 state——这会触发 useLayout 重算（items=0 分支清空布局），
+        // 紧接着容器恢复可见时又触发一次重算（0→实际宽度）。日志中 1061.64→0→1062 即此问题。
+        if (newWidth <= 0) continue;
+
+        // 亚像素抖动（scrollbar 出现/消失导致 1062→1061.64）不会改变取整后的宽度，
+        // useLayoutHook 已用 Math.round 处理；这里再加 1px 阈值提前过滤，
+        // 避免触发 setContainerWidth → 组件重渲染 → LAYOUT INPUTS CHANGED 日志。
+        if (Math.abs(newWidth - containerWidthRef.current) < 1) continue;
+
         containerWidthRef.current = newWidth;
         if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
         widthDebounceRef.current = setTimeout(() => {
+          // 二次检查可见性：debounce 期间视图可能已切走
+          if (!isVisibleRef.current) return;
           setContainerWidth(containerWidthRef.current);
         }, 60);
       }
@@ -1043,7 +1067,10 @@ const FoldersOverview = React.memo(({
           minHeight: '100%',
         }}
       >
-        {visibleItems.map(pos => (
+        {visibleItems.map(pos => {
+            const folder = getFileNode(pos.id);
+            if (!folder) return null;
+            return (
             <div
               key={pos.id}
               data-flip-id={pos.id}
@@ -1062,7 +1089,7 @@ const FoldersOverview = React.memo(({
             >
               <FolderCard
                 key={pos.id}
-                folder={files[pos.id]}
+                folder={folder}
                 resourceRoot={resourceRoot}
                 cachePath={cachePath}
                 onClick={() => stableOnFolderClick(pos.id)}
@@ -1078,7 +1105,8 @@ const FoldersOverview = React.memo(({
                 coverOverrideMediaStoreId={isAndroid ? undefined : sortCoverOverrides[pos.id]?.mediaStoreId}
               />
             </div>
-        ))}
+            );
+        })}
       </div>
 
       {sortedFolderIds.length === 0 && !isLoadingImages && (

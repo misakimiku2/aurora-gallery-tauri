@@ -14,7 +14,6 @@ import { AndroidSelectionBar } from './components/AndroidSelectionBar';
 import { FileGrid } from './components/FileGrid';
 import { InlineRenameInput } from './components/InlineRenameInput';
 import { ImageThumbnail } from './components/ImageThumbnail';
-import EmptyFolderPlaceholder from './components/EmptyFolderPlaceholder';
 import { TopicModule } from './components/TopicModule';
 import { FoldersOverview } from './components/FoldersOverview';
 import { SettingsModal } from './components/SettingsModal';
@@ -25,6 +24,7 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
+import { lanNavStart, lanNavStep } from './utils/lanNavTrace';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
@@ -936,13 +936,31 @@ export const App: React.FC = () => {
     if (!folder || folder.source !== 'lan' || !folder.remotePath) return;
 
     if (folder.children && folder.children.length > 0) {
+      lanNavStart(folder.name);
+      lanNavStep('CACHE HIT (folder already loaded)');
       enterFolder(folderId, { resetScroll: true });
       return;
     }
 
+    // 未缓存的 LAN 文件夹：立即切换视图（显示加载状态），而非等待网络请求完成。
+    // 这样用户点击后立刻进入文件夹，避免"点击后没反应"的延迟感。
+    lanNavStart(folder.name);
+    setState(s => ({
+      ...s,
+      files: {
+        ...s.files,
+        [folderId]: { ...s.files[folderId], children: [], isRefreshing: true },
+      },
+    }));
+    enterFolder(folderId, { resetScroll: true });
     setLanLoading(true);
+
     try {
+      lanNavStep('FETCH START');
+      const __fetchStart = performance.now();
       const { folders, images, allowUpload } = await lanClientApi.browseToFolderNodes(folder.remotePath);
+      const __fetchEnd = performance.now();
+      lanNavStep('FETCH END', `(${(__fetchEnd - __fetchStart).toFixed(0)}ms, folders=${folders.length} images=${images.length})`);
       const newFiles: Record<string, FileNode> = {};
       const childIds: string[] = [];
       for (const f of folders) {
@@ -958,15 +976,23 @@ export const App: React.FC = () => {
         files: {
           ...s.files,
           ...newFiles,
-          [folderId]: { ...s.files[folderId], children: childIds },
+          [folderId]: { ...s.files[folderId], children: childIds, isRefreshing: false },
         },
       }));
+      lanNavStep('setFiles()', `children=${childIds.length}`);
       setLanAllowUpload(allowUpload);
-      enterFolder(folderId, { resetScroll: true });
     } catch (err) {
       console.error('[LAN] Failed to load folder:', err);
+      setState(s => ({
+        ...s,
+        files: {
+          ...s.files,
+          [folderId]: { ...s.files[folderId], isRefreshing: false },
+        },
+      }));
     } finally {
       setLanLoading(false);
+      lanNavStep('Loading hidden (lanLoading=false)');
     }
   }, [state.files, enterFolder, setState]);
 
@@ -2299,6 +2325,19 @@ export const App: React.FC = () => {
   activeTabRef2.current = activeTab;
   const filesRef = useRef(state.files);
   filesRef.current = state.files;
+  // getFileNode 引用永远不变（从 filesRef 读取），消费它的组件不会因 state.files
+  // 引用变化而重渲染。组件只在 items/displayFileIds 等真正相关的 prop 变化时才重渲染，
+  // 重渲染时 getFileNode 自然读到最新数据。
+  const getFileNode = useCallback((id: string) => filesRef.current[id], []);
+  // 稳定的双击回调：用 getFileNode 代替 state.files，避免 setFiles() 触发 FileGrid 重渲染。
+  const handleFileDoubleClick = useCallback((id: string) => {
+    const file = getFileNode(id);
+    if (file?.type === FileType.FOLDER) {
+      handleNavigateFolder(id);
+    } else {
+      enterViewer(id);
+    }
+  }, [getFileNode, handleNavigateFolder, enterViewer]);
   const closeViewerRef = useRef(closeViewer);
   closeViewerRef.current = closeViewer;
   const exitActionRef2 = useRef(exitActionRef.current);
@@ -2935,7 +2974,7 @@ export const App: React.FC = () => {
                 <div style={{ display: activeTab.viewMode === 'folders-overview' ? 'contents' : 'none' }}>
                   <FoldersOverview
                     roots={state.roots}
-                    files={state.files}
+                    getFileNode={getFileNode}
                     resourceRoot={state.settings.paths.resourceRoot}
                     cachePath={state.settings.paths.cacheRoot}
                     onFolderClick={enterFolder}
@@ -2964,7 +3003,7 @@ export const App: React.FC = () => {
                 <div style={{ display: activeTab.viewMode === 'lan-folders-overview' ? 'contents' : 'none' }}>
                   <FoldersOverview
                     roots={lanRoots}
-                    files={state.files}
+                    getFileNode={getFileNode}
                     resourceRoot={state.settings.paths.resourceRoot}
                     cachePath={state.settings.paths.cacheRoot}
                     onFolderClick={handleNavigateNetworkFolder}
@@ -3027,7 +3066,7 @@ export const App: React.FC = () => {
                     // Provide resource root / cache for thumbnails and open action
                     resourceRoot={state.settings.paths.resourceRoot}
                     cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-                    onOpenFile={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
+                    onOpenFile={handleFileDoubleClick}
                     onFileLongPress={handleFileLongPress}
                     t={t}
                     scrollTop={activeTab.scrollTop}
@@ -3040,18 +3079,12 @@ export const App: React.FC = () => {
                     onSetHoverPlayingId={setHoverPlayingId}
                     onSmartCreateTopic={() => setState(prev => ({ ...prev, activeModal: { type: 'smart-create-topic', data: {} } }))}
                   />
-                ) : displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
-                  // If folder is being actively refreshed after an operation, show a loading state
-                  <EmptyFolderPlaceholder
-                    isRefreshing={state.files[activeTab.folderId]?.isRefreshing}
-                    onRefresh={() => handleRefresh(activeTab.folderId)}
-                    t={t}
-                  />
                 ) : (
                   <FileGrid
                     displayFileIds={displayFileIds}
                     isVisible={!activeTab.viewingFileId}
-                    files={state.files}
+                    getFileNode={getFileNode}
+                    files={activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'people-overview' ? state.files : undefined}
                     activeTab={activeTab}
                     renamingId={state.renamingId}
                     thumbnailSize={state.thumbnailSize}
@@ -3060,7 +3093,7 @@ export const App: React.FC = () => {
                     hoverPlayingId={hoverPlayingId}
                     onSetHoverPlayingId={setHoverPlayingId}
                     onFileClick={handleFileClick}
-                    onFileDoubleClick={(id) => state.files[id]?.type === FileType.FOLDER ? handleNavigateFolder(id) : enterViewer(id)}
+                    onFileDoubleClick={handleFileDoubleClick}
                     onContextMenu={(e, id) => handleContextMenu(e, 'file', id)}
                     onRenameSubmit={handleRenameSubmit}
                     onRenameCancel={() => setState(s => ({ ...s, renamingId: null }))}

@@ -36,6 +36,9 @@ const getMaxCacheSize = (): number => {
   return isAndroidPlatformCached() ? getAndroidMaxCacheSize() : MAX_CACHE_SIZE;
 };
 
+// Blob 大小追踪（与 blobCache 平行，用于统计内存占用）
+const blobCacheSizes = new Map<string, number>();
+
 const evictBlobCache = (): void => {
   const maxSize = getMaxCacheSize();
   while (blobCache.size > maxSize) {
@@ -43,6 +46,11 @@ const evictBlobCache = (): void => {
     if (firstKey) {
       const url = blobCache.get(firstKey);
       blobCache.delete(firstKey);
+      const size = blobCacheSizes.get(firstKey);
+      if (size !== undefined) {
+        totalBlobBytes -= size;
+        blobCacheSizes.delete(firstKey);
+      }
       if (url && url.startsWith('blob:')) {
         try { URL.revokeObjectURL(url); } catch {}
       }
@@ -54,15 +62,21 @@ const evictBlobCache = (): void => {
 export const getBlobCacheSync = (path: string): string | null => {
   if (blobCache.has(path)) {
     const url = blobCache.get(path)!;
-    // LRU: 移动到最�?
+    // LRU: 移动到最后
     blobCache.delete(path);
     blobCache.set(path, url);
+    // size 也同步移动
+    const size = blobCacheSizes.get(path);
+    if (size !== undefined) {
+      blobCacheSizes.delete(path);
+      blobCacheSizes.set(path, size);
+    }
     return url;
   }
   return null;
 };
 
-// 检查缓存是否存�?
+// 检查缓存是否存在
 export const hasBlobCache = (path: string): boolean => {
   return blobCache.has(path);
 };
@@ -83,65 +97,130 @@ const PERF = {
   ms: (start: number) => isAndroidPlatformCached() ? (performance.now() - start).toFixed(1) + 'ms' : '',
 };
 
-const loadToCache = async (path: string): Promise<string> => {
+// 图片切换生命周期计数器，用于追踪每次 SWITCH 的完整流程
+let switchSeq = 0;
+
+// 生命周期日志：[PERF] [SWITCH#N] STEP fileName elapsedMs [extra]
+const lcLog = (switchId: number, step: string, fileName: string, t0: number, extra?: string) => {
+  if (!isAndroidPlatformCached()) return;
+  const elapsed = (performance.now() - t0).toFixed(1) + 'ms';
+  const extraStr = extra !== undefined ? ' ' + extra : '';
+  console.log(`[PERF] [SWITCH#${switchId}] ${step} ${fileName} ${elapsed}${extraStr}`);
+};
+
+// 加载流程日志：[PERF] [LOAD] STEP fileName elapsedMs [extra]
+const loadLog = (step: string, fileName: string, t0: number, extra?: string) => {
+  if (!isAndroidPlatformCached()) return;
+  const elapsed = (performance.now() - t0).toFixed(1) + 'ms';
+  const extraStr = extra !== undefined ? ' ' + extra : '';
+  console.log(`[PERF] [LOAD] ${step} ${fileName} ${elapsed}${extraStr}`);
+};
+
+// Blob 缓存总内存占用（字节）
+let totalBlobBytes = 0;
+
+// 预加载 Image 对象缓存：持有 Image 引用防止 GC，让浏览器保留解码后的位图。
+// 切换时 <img> 使用相同 URL，浏览器复用内存中的解码位图，跳过下载+解码。
+// 仅用于 LAN 图片（本地图片已有 native preview 缓存）。
+const preloadedImages = new Map<string, HTMLImageElement>();
+const MAX_PRELOADED_IMAGES = 6;
+
+const preloadLanImage = (path: string, httpUrl: string, priority: 'high' | 'low'): void => {
+  // 只对高优先级（immediate 邻居）触发预下载。
+  // 低优先级（nearby）只缓存 URL，避免并发下载过多拖慢当前图片。
+  // 无线网络下 7 个并发下载会导致每张 13-19 秒；限制为 immediate（2张）+ 当前（1张）= 3 个并发。
+  if (priority === 'low') return;
+
+  if (preloadedImages.has(path)) return;
+
+  const fileName = path.split('/').pop() || path;
+  const doPreload = () => {
+    if (preloadedImages.has(path)) return;
+    const img = new Image();
+    img.decoding = 'async';
+    const t0 = performance.now();
+    PERF.log('[PRELOAD] IMG DOWNLOAD START', fileName, 'priority=' + priority);
+    img.onload = () => {
+      PERF.log('[PRELOAD] IMG DOWNLOAD END', fileName, PERF.ms(t0));
+      if (typeof img.decode === 'function') {
+        img.decode().then(() => {
+          PERF.log('[PRELOAD] IMG DECODE END', fileName, PERF.ms(t0));
+        }).catch(() => {});
+      }
+    };
+    img.onerror = () => {
+      PERF.log('[PRELOAD] IMG DOWNLOAD ERROR', fileName, PERF.ms(t0));
+    };
+    img.src = httpUrl;
+    preloadedImages.set(path, img);
+
+    while (preloadedImages.size > MAX_PRELOADED_IMAGES) {
+      const firstKey = preloadedImages.keys().next().value;
+      if (firstKey) preloadedImages.delete(firstKey);
+    }
+  };
+
+  // 延迟 1.5 秒，让当前图片先占用带宽下载
+  setTimeout(doPreload, 1500);
+};
+
+const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Promise<string> => {
   const cached = getBlobCacheSync(path);
   if (cached) return cached;
 
-  // LAN source: fetch full image as blob for true local caching.
-  // Storing only the HTTP URL causes re-downloads on every <img> use (no
-  // browser cache without Cache-Control headers), which makes swipe
-  // transitions on large LAN images appear to "stick" on the old image.
+  // LAN source: 直接缓存 HTTP URL，跳过 fetch blob。
+  // 原因：在 Android WebView 中，response.blob() 对 3-4MB 的 LAN 图片极其缓慢
+  // （实测 5-8 秒），而 <img> 直接加载 HTTP URL 时浏览器只需 300-1000ms 下载。
+  // 浏览器会自动缓存已下载的 HTTP 响应，不需要手动创建 blob URL。
   if (path.startsWith('lan://')) {
     const remotePath = path.slice('lan://'.length);
     const httpUrl = lanClientApi.getImageUrl(remotePath);
-
-    if (loadingPromises.has(path)) {
-      return loadingPromises.get(path)!;
-    }
+    const fileName = remotePath.split('/').pop() || remotePath;
 
     const t0 = performance.now();
-    const loadPromise = (async () => {
-      try {
-        const response = await fetch(httpUrl);
-        if (!response.ok) throw new Error('HTTP ' + response.status);
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        blobCache.set(path, blobUrl);
-        evictBlobCache();
-        PERF.log('loadToCache LAN blob', remotePath.split('/').pop(), PERF.ms(t0), (blob.size / 1024 / 1024).toFixed(1) + 'MB');
-        return blobUrl;
-      } catch (e) {
-        PERF.log('loadToCache LAN blob FAILED, fallback to HTTP URL', remotePath.split('/').pop(), String(e));
-        blobCache.set(path, httpUrl);
-        evictBlobCache();
-        return httpUrl;
-      } finally {
-        loadingPromises.delete(path);
-      }
-    })();
-
-    loadingPromises.set(path, loadPromise);
-    return loadPromise;
+    blobCache.set(path, httpUrl);
+    blobCacheSizes.set(path, 0);
+    evictBlobCache();
+    // 触发预下载+预解码：持有 Image 对象引用，让浏览器保留解码位图。
+    // 切换时 <img> 命中浏览器内部缓存，跳过下载+解码（DECODE 从 3.2s 降到 ~0ms）。
+    preloadLanImage(path, httpUrl, priority);
+    const cacheCount = blobCache.size;
+    const cacheMemoryMB = (totalBlobBytes / 1024 / 1024).toFixed(1);
+    PERF.log('[CACHE] CACHE INSERT (LAN HTTP URL)', fileName, 'count=' + cacheCount, 'memory=' + cacheMemoryMB + 'MB');
+    loadLog('LOAD START + END (LAN)', fileName, t0, 'priority=' + priority + ' HTTP URL cached directly');
+    return httpUrl;
   }
 
   if (loadingPromises.has(path)) {
     return loadingPromises.get(path)!;
   }
 
+  const fileName = path.split('/').pop() || path;
   const t0 = performance.now();
+  loadLog('LOAD START (local)', fileName, t0, priority);
   const loadPromise = (async () => {
     try {
       if (path.toLowerCase().endsWith('.jxl')) {
+        loadLog('FETCH START (jxl_preview)', fileName, t0);
         const previewUrl = await invoke<string>('get_jxl_preview', { path });
+        loadLog('FETCH END (jxl_preview)', fileName, t0);
         blobCache.set(path, previewUrl);
+        blobCacheSizes.set(path, 0);
         evictBlobCache();
+        PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
+        loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
         return previewUrl;
       }
 
       if (path.toLowerCase().endsWith('.avif')) {
+        loadLog('FETCH START (avif_preview)', fileName, t0);
         const previewUrl = await invoke<string>('get_avif_preview', { path });
+        loadLog('FETCH END (avif_preview)', fileName, t0);
         blobCache.set(path, previewUrl);
+        blobCacheSizes.set(path, 0);
         evictBlobCache();
+        PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
+        loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
         return previewUrl;
       }
 
@@ -149,6 +228,7 @@ const loadToCache = async (path: string): Promise<string> => {
         const cacheRoot = getGlobalCacheRoot();
         if (cacheRoot) {
           try {
+            loadLog('FETCH START (native_preview)', fileName, t0);
             const result = await invoke<{
               previewPath: string;
               originalWidth: number;
@@ -160,6 +240,7 @@ const loadToCache = async (path: string): Promise<string> => {
               cacheRoot,
               maxDimension: 0,
             });
+            loadLog('FETCH END (native_preview)', fileName, t0, 'downsampled=' + result.isDownsampled + ' animated=' + result.isAnimatedWebp);
 
             const previewUrl = result.previewPath.startsWith('/')
               ? convertFileSrc(result.previewPath)
@@ -168,22 +249,29 @@ const loadToCache = async (path: string): Promise<string> => {
                 : convertFileSrc(result.previewPath);
 
             blobCache.set(path, previewUrl);
+            blobCacheSizes.set(path, 0);
             evictBlobCache();
-            PERF.log('loadToCache native preview', path.split('/').pop(), PERF.ms(t0), 'downsampled=' + result.isDownsampled, 'animated=' + result.isAnimatedWebp);
+            PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
+            loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
             return previewUrl;
           } catch (e) {
-            PERF.log('loadToCache native preview FAILED', path.split('/').pop(), String(e));
+            loadLog('FETCH FAILED (native_preview)', fileName, t0, String(e));
           }
         }
       }
 
+      loadLog('FETCH START (convertFileSrc)', fileName, t0);
       const url = convertFileSrc(path);
+      loadLog('FETCH END (convertFileSrc)', fileName, t0);
       blobCache.set(path, url);
+      blobCacheSizes.set(path, 0);
       evictBlobCache();
-      PERF.log('loadToCache convertFileSrc', path.split('/').pop(), PERF.ms(t0));
+      PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
+      loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
       return url;
     } catch (e) {
       console.error("Failed to load image to cache", path, e);
+      loadLog('LOAD END (local, error)', fileName, t0, 'TOTAL');
       return convertFileSrc(path);
     } finally {
       loadingPromises.delete(path);
@@ -207,7 +295,7 @@ export const preloadToCache = (path: string, priority: 'high' | 'low' = 'low'): 
       const doPreload = () => {
         if (!blobCache.has(path) && !loadingPromises.has(path)) {
           PERF.log('preload idle', fileName);
-          loadToCache(path).catch(() => {});
+          loadToCache(path, priority).catch(() => {});
         }
       };
       if ('requestIdleCallback' in window) {
@@ -217,7 +305,7 @@ export const preloadToCache = (path: string, priority: 'high' | 'low' = 'low'): 
       }
     } else {
       PERF.log('preload MISS', fileName);
-      loadToCache(path).catch(() => {});
+      loadToCache(path, priority).catch(() => {});
     }
   } else if (isAndroidPlatformCached()) {
     PERF.log('preload HIT', fileName);
@@ -281,12 +369,23 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
   // 创建新的加载 Promise
   const loadPromise = (async () => {
     try {
-      const { getDominantColors } = await import('../api/tauri-bridge');
-      const colors = await getDominantColors(path, 8);
+      let hexColors: string[] = [];
 
-      if (colors && colors.length > 0) {
-        const hexColors = colors.map(c => c.hex);
+      if (path.startsWith('lan://')) {
+        // LAN 图片：从服务端按需获取 palette（browse 时不返回 palette 以节省传输）
+        const remotePath = path.slice('lan://'.length);
+        const { lanClientApi } = await import('./lan-client/lanClientApi');
+        hexColors = await lanClientApi.getPalette(remotePath);
+      } else {
+        // 本地图片：通过 Tauri 命令提取主色调
+        const { getDominantColors } = await import('../api/tauri-bridge');
+        const colors = await getDominantColors(path, 8);
+        if (colors && colors.length > 0) {
+          hexColors = colors.map(c => c.hex);
+        }
+      }
 
+      if (hexColors.length > 0) {
         // 缓存管理
         if (paletteCache.size >= MAX_PALETTE_CACHE_SIZE) {
           const firstKey = paletteCache.keys().next().value;
@@ -312,13 +411,6 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
 
 // 预加载调色板到缓存（静默，不返回结果）
 export const preloadPaletteToCache = (path: string, existingPalette?: string[]): void => {
-  // LAN 图片的主色调由服务端提供。有数据则缓存，无数据则跳过（不触发本地提取）。
-  if (path.startsWith('lan://')) {
-    if (existingPalette && existingPalette.length >= 2 && !paletteCache.has(path)) {
-      loadPaletteToCache(path, existingPalette).catch(() => { });
-    }
-    return;
-  }
   if (!paletteCache.has(path) && !paletteLoadingPromises.has(path)) {
     loadPaletteToCache(path, existingPalette).catch(() => { });
   }
@@ -534,6 +626,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     direction: -1 | 1;
     outgoingUrl: string;
     incomingUrl: string;
+    incomingPath: string;
     offset: number;
     animating: boolean;
   } | null>(null);
@@ -628,6 +721,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const outgoingUrlRef = useRef<string>('');
   const outgoingFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // LAN 缩略图→原图渐变过渡：先显示 256px 缩略图（服务端已缓存，下载快），
+  // 原图下载完成后渐变替换。lanThumbUrl 为缩略图 URL，lanFadeIn 控制主图透明度过渡。
+  const [lanThumbUrl, setLanThumbUrl] = useState<string>('');
+  const [lanFadeIn, setLanFadeIn] = useState<boolean>(false);
+  const lanFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lanThumbUrlRef = useRef<string>('');
+  useEffect(() => { lanThumbUrlRef.current = lanThumbUrl; }, [lanThumbUrl]);
+
   useEffect(() => {
     if (isAndroidPlatformCached()) {
       PERF.log('=== VIEWER OPEN ===', file.path.split('/').pop(), 'sinceMount=' + PERF.ms(viewerOpenTimeRef.current));
@@ -663,15 +764,25 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   useEffect(() => {
     if (swipeState?.animating) {
-      const incomingUrl = swipeState.incomingUrl;
+      const incomingPath = swipeState.incomingPath;
+      const incomingFileName = incomingPath.split('/').pop() || incomingPath;
       const ANIM_DURATION = 280;
-      const MAX_WAIT = 5000;
+      // 降低 MAX_WAIT 从 5000ms 到 1500ms：避免快速切换时长时间卡在上一个
+      // 切换的等待中（displayUrl 因新一轮切换而永远不会等于 incomingUrl）。
+      const MAX_WAIT = 1500;
       const CHECK_INTERVAL = 50;
       let elapsed = 0;
+      const animT0 = performance.now();
+      PERF.log('[ANIM] START', incomingFileName, 'direction=' + swipeState.direction);
 
       const tick = () => {
         elapsed += CHECK_INTERVAL;
-        if (elapsed >= ANIM_DURATION && (displayUrlRef.current === incomingUrl || elapsed >= MAX_WAIT)) {
+        // 使用路径匹配而非 URL 匹配：fallback URL（HTTP/convertFileSrc）与
+        // loadToCache 完成后的 cachedUrl（blob:/native preview）可能不同，
+        // 但路径相同即说明主图已切换到目标图片，可清除 swipeState。
+        if (elapsed >= ANIM_DURATION && (displayPathRef.current === incomingPath || elapsed >= MAX_WAIT)) {
+          const reason = displayPathRef.current === incomingPath ? 'PATH MATCH' : 'MAX_WAIT';
+          PERF.log('[ANIM] END', incomingFileName, PERF.ms(animT0), 'reason=' + reason);
           setSwipeState(null);
           return;
         }
@@ -696,7 +807,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const path = file.path;
     const fileName = path.split('/').pop() || path;
     const switchT0 = performance.now();
-    PERF.log('--- SWITCH START ---', fileName);
+    const switchId = ++switchSeq;
+    lcLog(switchId, 'SWITCH START', fileName, switchT0);
+
+    // 清理上一次 LAN 缩略图渐变状态（防止跨图片残留）
+    if (lanFadeTimerRef.current) {
+      clearTimeout(lanFadeTimerRef.current);
+      lanFadeTimerRef.current = null;
+    }
+    setLanThumbUrl('');
+    setLanFadeIn(false);
 
     if (file.meta?.palette && file.meta.palette.length > 0 && !file.meta.palette.every(c => c === '#000000')) {
       if (!paletteCache.has(path)) {
@@ -708,10 +828,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
     }
 
+    // LAN 图片（非幻灯片模式）：先立即显示 256px 缩略图，原图下载后渐变替换。
+    // 无论 blobCache 命中与否，浏览器可能尚未下载原图字节，所以总是先显示缩略图。
+    const isLan = path.startsWith('lan://') && !slideshowActiveRef.current;
+    if (isLan) {
+      const remotePath = path.slice('lan://'.length);
+      const thumbUrl = lanClientApi.getThumbnailUrl(remotePath);
+      setLanThumbUrl(thumbUrl);
+      setLanFadeIn(true);
+      lcLog(switchId, 'THUMB DISPLAY', fileName, switchT0, '256px thumbnail');
+    }
+
     const cachedUrl = getBlobCacheSync(path);
+    const displaySource: string = cachedUrl ? 'CACHE' : (loadingPromises.has(path) ? 'WAIT PROMISE' : 'NEW LOAD');
+    lcLog(switchId, 'CACHE LOOKUP', fileName, switchT0, cachedUrl ? 'HIT' : 'MISS');
+    PERF.log('[SWITCH#' + switchId + '] DISPLAY SOURCE:', displaySource, fileName);
 
     if (cachedUrl) {
-      PERF.log('switch: CACHE HIT', fileName, 'lookup=' + PERF.ms(switchT0));
       // 幻灯片模式下，保存当前图片作为过渡的起始图
       const shouldTransition = slideshowActiveRef.current && displayUrlRef.current && slideshowTransitionRef.current !== 'none';
 
@@ -744,9 +877,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       loadingPathRef.current = path;
       const preloadImg = new Image();
       const oldDisplayUrl = displayUrlRef.current;
+      lcLog(switchId, 'DECODE START', fileName, switchT0);
       preloadImg.onload = () => {
         if (loadingPathRef.current !== path) return;
+        lcLog(switchId, 'DECODE END', fileName, switchT0);
         setImgNaturalSize({ w: preloadImg.naturalWidth, h: preloadImg.naturalHeight });
+
+        // LAN 缩略图→原图渐变：跳过 outgoingUrl，用 lanFadeIn 控制透明度过渡
+        if (isLan && lanThumbUrlRef.current) {
+          setDisplayUrl(cachedUrl);
+          displayPathRef.current = path;
+          loadingPathRef.current = '';
+          lcLog(switchId, 'DISPLAY (LAN fade-in)', fileName, switchT0);
+          // 双重 rAF：确保浏览器先以 opacity:0 渲染原图，再触发渐变到 opacity:1
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => setLanFadeIn(false));
+          });
+          if (lanFadeTimerRef.current) clearTimeout(lanFadeTimerRef.current);
+          lanFadeTimerRef.current = setTimeout(() => {
+            setLanThumbUrl('');
+            lanFadeTimerRef.current = null;
+          }, 500);
+          return;
+        }
+
         if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
           setOutgoingUrl(oldDisplayUrl);
           outgoingUrlRef.current = oldDisplayUrl;
@@ -755,10 +909,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         setDisplayUrl(cachedUrl);
         displayPathRef.current = path;
         loadingPathRef.current = '';
-        PERF.log('switch: displayed', fileName, PERF.ms(switchT0));
+        lcLog(switchId, 'DISPLAY', fileName, switchT0);
       };
       preloadImg.onerror = () => {
         if (loadingPathRef.current !== path) return;
+        lcLog(switchId, 'DECODE END (fallback)', fileName, switchT0);
+
+        // LAN 缩略图→原图渐变（错误回退：直接显示，不渐变）
+        if (isLan && lanThumbUrlRef.current) {
+          setDisplayUrl(cachedUrl);
+          displayPathRef.current = path;
+          loadingPathRef.current = '';
+          setLanFadeIn(false);
+          setLanThumbUrl('');
+          lcLog(switchId, 'DISPLAY (LAN fade-in fallback)', fileName, switchT0);
+          return;
+        }
+
         if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
           setOutgoingUrl(oldDisplayUrl);
           outgoingUrlRef.current = oldDisplayUrl;
@@ -767,20 +934,46 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         setDisplayUrl(cachedUrl);
         displayPathRef.current = path;
         loadingPathRef.current = '';
-        PERF.log('switch: displayed (fallback)', fileName, PERF.ms(switchT0));
+        lcLog(switchId, 'DISPLAY (fallback)', fileName, switchT0);
       };
       preloadImg.src = cachedUrl;
     } else {
-      PERF.log('switch: CACHE MISS', fileName);
       loadingPathRef.current = path;
 
-      loadToCache(path).then(url => {
+      // 使用高优先级：取消所有 LAN 预加载请求，让当前图片独占网络带宽
+      loadToCache(path, 'high').then(url => {
+        // 被取消的请求返回空字符串，跳过
+        if (!url) {
+          lcLog(switchId, 'CANCELLED (loadToCache returned empty)', fileName, switchT0);
+          return;
+        }
         if (loadingPathRef.current === path) {
           const oldDisplayUrl = displayUrlRef.current;
           const preloadImg2 = new Image();
+          lcLog(switchId, 'DECODE START', fileName, switchT0);
           preloadImg2.onload = () => {
             if (loadingPathRef.current !== path) return;
+            lcLog(switchId, 'DECODE END', fileName, switchT0);
             setImgNaturalSize({ w: preloadImg2.naturalWidth, h: preloadImg2.naturalHeight });
+
+            // LAN 缩略图→原图渐变：跳过 outgoingUrl，用 lanFadeIn 控制透明度过渡
+            if (isLan && lanThumbUrlRef.current) {
+              setDisplayUrl(url);
+              displayPathRef.current = path;
+              loadingPathRef.current = '';
+              lcLog(switchId, 'DISPLAY (LAN fade-in)', fileName, switchT0);
+              // 双重 rAF：确保浏览器先以 opacity:0 渲染原图，再触发渐变到 opacity:1
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => setLanFadeIn(false));
+              });
+              if (lanFadeTimerRef.current) clearTimeout(lanFadeTimerRef.current);
+              lanFadeTimerRef.current = setTimeout(() => {
+                setLanThumbUrl('');
+                lanFadeTimerRef.current = null;
+              }, 500);
+              return;
+            }
+
             if (slideshowActiveRef.current && oldDisplayUrl && slideshowTransitionRef.current !== 'none') {
               if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
                 const currentImg = imgRef.current;
@@ -807,10 +1000,23 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             setDisplayUrl(url);
             displayPathRef.current = path;
             loadingPathRef.current = '';
-            PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
+            lcLog(switchId, 'DISPLAY', fileName, switchT0);
           };
           preloadImg2.onerror = () => {
             if (loadingPathRef.current !== path) return;
+            lcLog(switchId, 'DECODE END (fallback)', fileName, switchT0);
+
+            // LAN 缩略图→原图渐变（错误回退：直接显示，不渐变）
+            if (isLan && lanThumbUrlRef.current) {
+              setDisplayUrl(url);
+              displayPathRef.current = path;
+              loadingPathRef.current = '';
+              setLanFadeIn(false);
+              setLanThumbUrl('');
+              lcLog(switchId, 'DISPLAY (LAN fade-in fallback)', fileName, switchT0);
+              return;
+            }
+
             if (slideshowActiveRef.current && oldDisplayUrl && slideshowTransitionRef.current !== 'none') {
               if (slideshowTransitionRef.current === 'fade' && slideshowConfig.enableZoom) {
                 const currentImg = imgRef.current;
@@ -837,9 +1043,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             setDisplayUrl(url);
             displayPathRef.current = path;
             loadingPathRef.current = '';
-            PERF.log('switch: loaded', fileName, PERF.ms(switchT0));
+            lcLog(switchId, 'DISPLAY (fallback)', fileName, switchT0);
           };
           preloadImg2.src = url;
+        } else {
+          // 已被后续切换覆盖
+          lcLog(switchId, 'STALE (superseded)', fileName, switchT0);
         }
       });
     }
@@ -853,6 +1062,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
       if (outgoingFadeTimerRef.current) {
         clearTimeout(outgoingFadeTimerRef.current);
+      }
+      if (lanFadeTimerRef.current) {
+        clearTimeout(lanFadeTimerRef.current);
       }
     };
   }, []);
@@ -889,6 +1101,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       const next = getNeighbor(i);
       if (prev?.path) { nearby.push(prev); pathKeys.push(prev.path); }
       if (next?.path) { nearby.push(next); pathKeys.push(next.path); }
+    }
+
+    // 打印 PRELOAD QUEUE（每次重新计算时输出一次）
+    if (isAndroidPlatformCached()) {
+      const currentFile = file.name;
+      const immediateNames = immediate.map(n => n.name);
+      const nearbyNames = nearby.map(n => n.name);
+      PERF.log('[PRELOAD] QUEUE',
+        'current=' + currentFile,
+        'High(immediate)=' + JSON.stringify(immediateNames),
+        'Low(nearby)=' + JSON.stringify(nearbyNames));
     }
 
     return { immediate, nearby, key: pathKeys.join('|') };
@@ -1183,7 +1406,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
   }, [slideshowActive]);
 
-  const getAdjacentImageUrl = (direction: -1 | 1): string | null => {
+  const getAdjacentImageUrl = (direction: -1 | 1): { url: string; path: string } | null => {
     const currentSortedIds = sortedFileIdsRef.current;
     const currentFiles = filesRef.current;
     const currentFileId = fileIdRef.current;
@@ -1199,14 +1422,32 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     const adjacentFile = currentFiles[currentSortedIds[nextIdx]];
     if (!adjacentFile?.path) return null;
 
-    const cachedUrl = getBlobCacheSync(adjacentFile.path);
-    if (cachedUrl) return cachedUrl;
-
-    if (isAndroidPlatformCached() && !loadingPromises.has(adjacentFile.path)) {
-      loadToCache(adjacentFile.path).catch(() => {});
+    // LAN 图片：blobCache 只存 URL 字符串，不代表浏览器已下载原图字节。
+    // 用 preloadedImages 判断原图是否已下载+解码：
+    //   - 已预加载 → 用原图 URL（浏览器缓存命中，瞬间显示）
+    //   - 未预加载 → 用 256px 缩略图 URL（10-30KB，快速加载）
+    // 这样 swipe-in <img> 不会显示原图的渐进下载（3-4MB 从上往下加载）。
+    // 同时缩略图 URL 与切换函数 setLanThumbUrl 使用相同 URL，
+    // 滑动结束后缩略图层直接命中浏览器缓存，无黑屏。
+    if (adjacentFile.path.startsWith('lan://')) {
+      const remotePath = adjacentFile.path.slice('lan://'.length);
+      if (preloadedImages.has(adjacentFile.path)) {
+        return { url: lanClientApi.getImageUrl(remotePath), path: adjacentFile.path };
+      }
+      if (!loadingPromises.has(adjacentFile.path)) {
+        loadToCache(adjacentFile.path, 'low').catch(() => {});
+      }
+      return { url: lanClientApi.getThumbnailUrl(remotePath), path: adjacentFile.path };
     }
 
-    return null;
+    // 本地图片：缓存命中时直接返回，否则用 convertFileSrc 作为 fallback
+    const cachedUrl = getBlobCacheSync(adjacentFile.path);
+    if (cachedUrl) return { url: cachedUrl, path: adjacentFile.path };
+
+    if (!loadingPromises.has(adjacentFile.path)) {
+      loadToCache(adjacentFile.path, 'low').catch(() => {});
+    }
+    return { url: convertFileSrc(adjacentFile.path), path: adjacentFile.path };
   };
 
   useEffect(() => {
@@ -1466,12 +1707,18 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (hasMoved && isSwipingImage) {
         e.preventDefault();
         const direction = dx < 0 ? -1 : 1;
-        const incomingUrl = getAdjacentImageUrl(direction);
-        if (incomingUrl) {
+        const adjacent = getAdjacentImageUrl(direction);
+        if (adjacent) {
+          // 当前图片仍在加载中（缩略图状态）时，displayUrlRef.current 仍指向
+          // 上一张已加载的图。此时滑动应显示当前缩略图作为 outgoingUrl，
+          // 而非上一张原图，否则用户会看到"图片变成上一张已加载的图"。
+          const isThumbnailShowing = loadingPathRef.current !== '' && lanThumbUrlRef.current;
+          const outgoingUrl = isThumbnailShowing ? lanThumbUrlRef.current : displayUrlRef.current;
           setSwipeState({
             direction,
-            outgoingUrl: displayUrlRef.current,
-            incomingUrl,
+            outgoingUrl,
+            incomingUrl: adjacent.url,
+            incomingPath: adjacent.path,
             offset: dx,
             animating: false,
           });
@@ -2328,6 +2575,27 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             />
           )}
 
+          {/* LAN 缩略图图层：原图下载期间显示 256px 缩略图，原图就绪后渐变替换 */}
+          {!slideshowActive && !swipeState && lanThumbUrl && (
+            <img
+              key={`lan-thumb-${lanThumbUrl}`}
+              src={lanThumbUrl}
+              alt=""
+              className="max-w-none absolute inset-0 m-auto"
+              loading="eager"
+              decoding="async"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
+                pointerEvents: 'none',
+                zIndex: 1,
+                ...(isAndroidPlatformCached() ? { willChange: 'opacity', contain: 'layout paint style' } : {}),
+              }}
+              draggable={false}
+            />
+          )}
+
           <img
             ref={imgRef}
             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
@@ -2372,7 +2640,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   const cy = imgNaturalSize.h * s / 2;
                   return `translate(${tx}px, ${ty}px) translate(${cx}px, ${cy}px) rotate(${rotation}deg) translate(${-cx}px, ${-cy}px) scale(${s})`;
                 })(),
-                transition: isTransformAnimating ? 'transform 0.3s ease' : 'none',
+                transition: lanThumbUrl
+                  ? (isTransformAnimating ? 'transform 0.3s ease, opacity 0.4s ease' : 'opacity 0.4s ease')
+                  : (isTransformAnimating ? 'transform 0.3s ease' : 'none'),
                 transformOrigin: '0 0',
               } : {
                 width: '100%',
@@ -2382,13 +2652,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   transform: slideshowActive && slideshowConfig.enableZoom
                     ? undefined
                     : `translate(${position.x + swipeOffset}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                  transition: (isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'none' : 'transform 0.1s linear',
+                  transition: lanThumbUrl
+                    ? ((isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'opacity 0.4s ease' : 'transform 0.1s linear, opacity 0.4s ease')
+                    : ((isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'none' : 'transform 0.1s linear'),
                 } : {}),
                 transformOrigin: 'center center',
               }),
               pointerEvents: slideshowActive ? 'none' : 'auto',
               zIndex: swipeState ? 0 : 2,
-              opacity: swipeState ? 0 : 1,
+              opacity: swipeState ? 0 : (lanFadeIn ? 0 : 1),
               ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
               ...filterStyle
             }}

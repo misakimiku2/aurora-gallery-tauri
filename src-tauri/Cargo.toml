@@ -74,7 +74,7 @@ csv = "1.4.0"
 # LAN Share Support
 axum = { version = "0.7", features = ["multipart", "ws"] }
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "fs"] }
+tower-http = { version = "0.5", features = ["cors", "fs", "compression-gzip"] }
 local-ip-address = "0.6"
 uuid = { version = "1.0", features = ["v4"] }
 

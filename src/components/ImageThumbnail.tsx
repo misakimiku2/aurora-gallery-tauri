@@ -5,6 +5,7 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { lanClientApi } from './lan-client/lanClientApi';
+import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv', 'm4v', 'mpg', 'mpeg', '3gp', 'ts']);
@@ -52,6 +53,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   const isAndroid = resourceRoot === 'android_media_store';
   const hitRecordedRef = useRef(false);
+  const lanThumbReqLoggedRef = useRef(false);
 
   useEffect(() => {
     if (thumbnailSrc && !hitRecordedRef.current) {
@@ -59,6 +61,15 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       hitRecordedRef.current = true;
     }
   }, [thumbnailSrc]);
+
+  // LAN 导航管道：首个 LAN 缩略图 URL 就绪时记录「Thumbnail 请求开始」
+  useEffect(() => {
+    if (lanNavActive() && filePath && isLanPath(filePath) && thumbnailSrc && !lanThumbReqLoggedRef.current) {
+      lanThumbReqLoggedRef.current = true;
+      const fileName = filePath.split('/').pop() || filePath;
+      lanNavStep('===== FIRST THUMB REQUEST =====', `file=${fileName}`);
+    }
+  }, [thumbnailSrc, filePath]);
 
   useEffect(() => {
     // LAN source: thumbnail URL is resolved directly, skip local generation
@@ -215,14 +226,24 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   const finalSrc = animSrc || thumbnailSrc;
 
+  // LAN 导航管道：首个缩略图 <img> onLoad 时记录「Thumbnail 加载完成」
+  const lanThumbLoadLoggedRef = useRef(false);
+  const handleThumbLoad = useCallback(() => {
+    if (lanNavActive() && filePath && isLanPath(filePath) && !lanThumbLoadLoggedRef.current) {
+      lanThumbLoadLoggedRef.current = true;
+      const fileName = filePath.split('/').pop() || filePath;
+      lanNavStep('===== FIRST THUMB LOADED =====', `file=${fileName}`);
+    }
+  }, [filePath]);
+
   const renderThumbnail = () => {
     if (animSrc) {
       return (
-        <img 
-          src={animSrc} 
-          alt={alt} 
-          className="absolute inset-0 w-full h-full object-cover" 
-          loading="eager" 
+        <img
+          src={animSrc}
+          alt={alt}
+          className="absolute inset-0 w-full h-full object-cover"
+          loading="eager"
           draggable="false"
         />
       );
@@ -230,13 +251,14 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
     if (finalSrc) {
       return (
-        <img 
-          src={finalSrc} 
-          alt={alt} 
-          className="absolute inset-0 w-full h-full object-cover" 
+        <img
+          src={finalSrc}
+          alt={alt}
+          className="absolute inset-0 w-full h-full object-cover"
           decoding="async"
-          loading="eager" 
+          loading="eager"
           draggable="false"
+          onLoad={handleThumbLoad}
         />
       );
     }

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Person, FileNode, TabState, PersonSortOption, PersonGroupByOption, SortDirection, Topic } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
-import { useLayout, LayoutItem } from './useLayoutHook';
+import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
 import { getPinyinGroup } from '../utils/textUtils';
 import { getThumbnail } from '../api/tauri-bridge';
 
@@ -236,6 +236,11 @@ export const PersonGrid = ({
   resourceRoot
 }: PersonGridProps) => {
 
+  // filesRef + getFileNode：useLayout 期望稳定回调，避免 files 引用变化触发重计算。
+  const filesRef = useRef(files);
+  filesRef.current = files;
+  const getFileNode = useCallback<GetFileNode>((id) => filesRef.current[id], []);
+
   // 排序人物列表
   const sortedPeopleList = useMemo(() => {
     const peopleList = Object.values(people || {});
@@ -339,7 +344,7 @@ export const PersonGrid = ({
   // 无分组时的布局计算（使用 hook）
   const { layout: noGroupLayout, totalHeight: noGroupTotalHeight } = useLayout(
     groupBy === 'none' ? sortedPeopleList.map(p => p.id) : [],
-    files,
+    getFileNode,
     'grid',
     containerRect.width,
     thumbnailSize,

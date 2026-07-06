@@ -9,7 +9,7 @@ import md5 from 'md5';
 import { startDragToExternal, setGlobalScrollState } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { useLayout, LayoutItem } from './useLayoutHook';
+import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
 import { PersonGrid } from './PersonGrid';
 import { TagsList, TagIndexBar } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
@@ -24,6 +24,8 @@ import { FolderThumbnail } from './FolderThumbnail';
 import { InlineRenameInput } from './InlineRenameInput';
 import { FileListItem } from './FileListItem';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
+import { lanNavStep, lanNavActive, lanNavId } from '../utils/lanNavTrace';
+import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
     if (a === '#') return -1;
@@ -33,7 +35,7 @@ const sortKeys = (keys: string[]) => keys.sort((a, b) => {
 
 const FileCard = React.memo(({
   file,
-  files,
+  getFileNode,
   isSelected,
   renamingId,
   layoutMode,
@@ -96,7 +98,7 @@ const FileCard = React.memo(({
       : [file.id];
     
     // 锟秸硷拷锟斤拷锟斤拷拽锟侥硷拷锟斤拷实锟斤拷路锟斤拷
-    const filePaths = filesToDrag.map((fileId: string) => files[fileId]?.path || '').filter(Boolean);
+    const filePaths = filesToDrag.map((fileId: string) => getFileNode(fileId)?.path || '').filter(Boolean);
     
     // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
     if (setIsDraggingInternal && setDraggedFilePaths) {
@@ -194,7 +196,7 @@ const FileCard = React.memo(({
     // 锟斤拷锟斤拷每锟斤拷锟侥硷拷锟斤拷锟斤拷锟斤拷图
     for (let i = 0; i < previewFiles.length; i++) {
       const draggedFileId = previewFiles[i];
-      const draggedFile = files[draggedFileId];
+      const draggedFile = getFileNode(draggedFileId);
       if (!draggedFile) continue;
       
       // 锟斤拷取锟斤拷锟斤拷锟斤拷锟斤拷锟酵?
@@ -328,7 +330,7 @@ const FileCard = React.memo(({
     e.dataTransfer.effectAllowed = 'move';
     
     // 锟斤拷取要锟斤拷拽锟斤拷实锟斤拷锟侥硷拷路锟斤拷
-    const draggedFiles = filesToDrag.map((fileId: string) => files[fileId]).filter((Boolean as unknown) as (file: FileNode | undefined) => file is FileNode);
+    const draggedFiles = filesToDrag.map((fileId: string) => getFileNode(fileId)).filter((Boolean as unknown) as (file: FileNode | undefined) => file is FileNode);
     const draggedFilePaths = draggedFiles.map((file: FileNode) => file.path);
     
     // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
@@ -427,7 +429,7 @@ const FileCard = React.memo(({
                     
                     // 锟秸硷拷锟斤拷锟斤拷拽锟侥硷拷锟斤拷实锟斤拷路锟斤拷
                     const filePaths = filesToDrag
-                        .map((fileId: string) => files[fileId]?.path || '')
+                        .map((fileId: string) => getFileNode(fileId)?.path || '')
                         .filter(Boolean);
                     
                     if (filePaths.length > 0) {
@@ -597,7 +599,7 @@ const FileCard = React.memo(({
             }}
         >
             {file.type === FileType.FOLDER ? (
-            <FolderThumbnail file={file} files={files} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
+            <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
             ) : (
             <ImageThumbnail
                 src={''}
@@ -677,7 +679,7 @@ const FileCard = React.memo(({
 
 const GroupContent = React.memo(({
   group,
-  files,
+  getFileNode,
   activeTab,
   renamingId,
   thumbnailSize,
@@ -714,7 +716,7 @@ const GroupContent = React.memo(({
   // Calculate layout for this group
   const { layout, totalHeight } = useLayout(
     group.fileIds,
-    files,
+    getFileNode,
     activeTab.layoutMode,
     containerRect.width,
     thumbnailSize,
@@ -743,7 +745,7 @@ const GroupContent = React.memo(({
         // 列表布局：以前是一次性渲染，现在支持绝对定位虚拟滚动
         <div className="relative w-full overflow-hidden" style={{ height: totalHeight }}>
           {visibleItems.map((item) => {
-            const file = files[item.id];
+            const file = getFileNode(item.id);
             if (!file) return null;
             return (
               <div 
@@ -757,7 +759,7 @@ const GroupContent = React.memo(({
               >
                   <FileListItem
                       file={file}
-                      files={files}
+                      getFileNode={getFileNode}
                       isSelected={activeTab.selectedFileIds.includes(file.id)}
                       renamingId={renamingId}
                       onFileClick={handleFileClick}
@@ -795,14 +797,14 @@ const GroupContent = React.memo(({
           }}
         >
           {visibleItems.map((item) => {
-            const file = files[item.id];
+            const file = getFileNode(item.id);
             if (!file) return null;
             
             return (
               <FileCard
                 key={file.id}
                 file={file}
-                files={files}
+                getFileNode={getFileNode}
                 isSelected={activeTab.selectedFileIds.includes(file.id)}
                 renamingId={renamingId}
                 layoutMode={activeTab.layoutMode}
@@ -860,7 +862,10 @@ const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGro
 
 interface FileGridProps {
   displayFileIds: string[];
-  files: Record<string, FileNode>;
+  getFileNode: GetFileNode;
+  // files 仅在 tags-overview / people-overview 视图下需要（TagsList 用 Object.values 遍历全部）。
+  // browser 模式下传 undefined，避免 state.files 引用变化触发 FileGrid 重渲染。
+  files?: Record<string, FileNode>;
   activeTab: TabState;
   renamingId: string | null;
   thumbnailSize: number;
@@ -924,8 +929,9 @@ interface FileGridProps {
   panelWidthRem?: number;
 }
 
-export const FileGrid: React.FC<FileGridProps> = ({
+export const FileGrid = React.memo(({
   displayFileIds,
+  getFileNode,
   files,
   activeTab,
   renamingId,
@@ -987,7 +993,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
   personGroupBy = 'none',
   onRefresh,
   panelWidthRem
-}) => {
+}: FileGridProps) => {
   // #region agent log
   // Removed debug logs
   // #endregion
@@ -1032,6 +1038,10 @@ export const FileGrid: React.FC<FileGridProps> = ({
   const containerWidthRef = useRef(0);
   const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
+  // 跟踪 isVisible：ResizeObserver 在容器隐藏时仍会触发（display:none→width=0），
+  // 用 ref 在回调内读取最新值，避免把 0 写入 containerWidth 触发不必要的布局重算。
+  const isVisibleRef = useRef(isVisible);
+  isVisibleRef.current = isVisible;
 
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
@@ -1190,9 +1200,21 @@ export const FileGrid: React.FC<FileGridProps> = ({
                     const newWidth = entry.contentRect.width;
                     const newHeight = entry.contentRect.height;
                     setContainerRect(prev => ({ width: prev.width, height: newHeight }));
+
+                    // 容器隐藏（display:none）会报告 width=0。如果当前已有非零宽度，
+                    // 不要把 0 写入 state——会触发 useLayout 重算（items=0 分支清空布局），
+                    // 紧接着容器恢复可见时又触发一次重算（0→实际宽度）。
+                    if (newWidth <= 0) continue;
+
+                    // 亚像素抖动（scrollbar 出现/消失导致 1062→1061.64）不会改变取整后的宽度，
+                    // useLayoutHook 已用 Math.round 处理；这里再加 1px 阈值提前过滤。
+                    if (Math.abs(newWidth - containerWidthRef.current) < 1) continue;
+
                     containerWidthRef.current = newWidth;
                     if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
                     widthDebounceRef.current = setTimeout(() => {
+                        // 二次检查可见性：debounce 期间视图可能已切走
+                        if (!isVisibleRef.current) return;
                         setContainerRect(prev => ({ width: containerWidthRef.current, height: prev.height }));
                     }, 60);
                 }
@@ -1269,9 +1291,9 @@ export const FileGrid: React.FC<FileGridProps> = ({
     prevPanelWidthRemRef.current = panelWidthRem;
   }, [panelWidthRem]);
 
-  const { layout, totalHeight } = useLayout(
+  const { layout, totalHeight, sortedByY } = useLayout(
       activeTab.viewMode === 'people-overview' ? [] : displayFileIds,
-      files,
+      getFileNode,
       activeTab.layoutMode,
       containerRect.width,
       thumbnailSize,
@@ -1433,10 +1455,17 @@ export const FileGrid: React.FC<FileGridProps> = ({
     // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
     // already recorded in prevPositions, so they don't need to be in the DOM. Only new
     // viewport cards need mounting, and the existing transition buffer handles that.
+    // Skip Phase 0 when the new viewport is already covered by the current buffer (e.g.,
+    // width-only changes with small scrollDelta) — avoids an unnecessary re-render that
+    // causes mid-animation stutter.
     const containerHeight = container.clientHeight || 0;
+    const currentBuffer = transitionBufferRef.current;
+    const oldBufferMin = oldScrollTop - currentBuffer;
+    const oldBufferMax = oldScrollTop + containerHeight + currentBuffer;
+    const newViewportCovered = newScrollTop >= oldBufferMin && (newScrollTop + containerHeight) <= oldBufferMax;
 
-    if (flipPhase === 0) {
-      console.log(`[FLIP-FileGrid] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${transitionBufferRef.current})`);
+    if (flipPhase === 0 && !newViewportCovered) {
+      console.log(`[FLIP-FileGrid] #${logId} PHASE 0: scroll ${oldScrollTop.toFixed(0)}→${newScrollTop.toFixed(0)}, delta=${scrollDelta.toFixed(0)} (buffer kept at ${currentBuffer})`);
       pendingFlipDataRef.current = { oldScrollTop, newScrollTop };
       setScrollTop(newScrollTop);
       setFlipPhase(1);
@@ -1622,12 +1651,51 @@ export const FileGrid: React.FC<FileGridProps> = ({
       }
   }, [activeTab.scrollToItemId, layout, isVisible, containerRect.width, containerRect.height, totalHeight]);
 
+  // 防御性检查：构建当前 displayFileIds 的 Set，用于过滤掉残留布局中
+  // 属于上一个文件夹的 item，避免切换文件夹时短暂渲染旧文件夹的图片。
+  const displayFileIdsSet = useMemo(() => new Set(displayFileIds), [displayFileIds]);
+
   const visibleItems = useMemo(() => {
       const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
-      return layout.filter(item => item.y < maxY && item.y + item.height > minY);
-  }, [layout, scrollTop, containerRect.height, totalHeight, isLayoutTransitioning]);
+      if (layout.length === 0 || sortedByY.length === 0) return [];
+      // sortedByY is sorted by layout[idx].y; binary-search the first index whose y
+      // is >= minY - SAFE_MARGIN (margin covers max item height so items whose top is
+      // above minY but bottom still intersects the viewport are not skipped).
+      const SAFE_MARGIN = 800;
+      const threshold = minY - SAFE_MARGIN;
+      let lo = 0, hi = sortedByY.length;
+      while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (layout[sortedByY[mid]].y < threshold) lo = mid + 1;
+          else hi = mid;
+      }
+      // Linear scan from lo; since sorted by y, stop as soon as y >= maxY.
+      const out: LayoutItem[] = [];
+      for (let i = lo; i < sortedByY.length; i++) {
+          const item = layout[sortedByY[i]];
+          if (item.y >= maxY) break;
+          if (item.y + item.height > minY && displayFileIdsSet.has(item.id)) out.push(item);
+      }
+      return out;
+  }, [layout, sortedByY, scrollTop, containerRect.height, isLayoutTransitioning, displayFileIdsSet]);
+
+  // LAN 导航管道：visibleItems 首次非空时记录「第一页第一个 Item Render」
+  const lanNavFirstRenderRef = useRef(false);
+  const lanNavLastIdRef = useRef(0);
+  useEffect(() => {
+      const currentNavId = lanNavId();
+      // 新的导航会话开始：重置首次渲染标记
+      if (currentNavId !== lanNavLastIdRef.current) {
+          lanNavFirstRenderRef.current = false;
+          lanNavLastIdRef.current = currentNavId;
+      }
+      if (lanNavActive() && visibleItems.length > 0 && !lanNavFirstRenderRef.current) {
+          lanNavFirstRenderRef.current = true;
+          lanNavStep('===== FIRST ITEM RENDER =====', `count=${visibleItems.length}`);
+      }
+  }, [visibleItems.length]);
 
   // keep a cheap, always-available source of truth for how many items FileGrid is rendering
   useEffect(() => {
@@ -1660,7 +1728,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
     if (!isAndroid || visibleItems.length === 0) return;
     const prefetcher = getThumbnailPrefetcher();
     const visible = visibleItems.map(item => {
-      const file = files[item.id];
+      const file = getFileNode(item.id);
       return {
         mediaStoreId: file?.mediaStoreId,
         filePath: item.id,
@@ -1668,7 +1736,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
     }).filter(v => v.mediaStoreId != null);
     const buffer = visible;
     prefetcher.updateVisibleIds(visible, buffer);
-  }, [visibleItems, isAndroid, files]);
+  }, [visibleItems, isAndroid]);
 
   const sortedKeys = useMemo(() => {
       if (!groupedTags) return [];
@@ -1717,7 +1785,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                   <TagsList
                       groupedTags={groupedTags || {}}
                       keys={sortedKeys}
-                      files={files}
+                      files={files || {}}
                       selectedTagIds={activeTab.selectedTagIds}
                       onTagClick={handleTagClickStable}
                       onTagDoubleClick={handleTagDoubleClickStable}
@@ -1745,7 +1813,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
       if (folderElement) {
           const folderId = folderElement.getAttribute('data-id');
           if (folderId) {
-              const folder = files[folderId];
+              const folder = getFileNode(folderId);
               if (folder && folder.type === FileType.FOLDER) {
                   // 锟斤拷锟斤拷锟斤拷拽锟斤拷停锟斤拷锟接撅拷效??
                   folderElement.classList.add('drop-target-active');
@@ -1778,7 +1846,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
           if (folderElement) {
               const targetFolderId = folderElement.getAttribute('data-id');
               if (targetFolderId) {
-                  const targetFolder = files[targetFolderId];
+                  const targetFolder = getFileNode(targetFolderId);
                   
                   if (targetFolder && targetFolder.type === FileType.FOLDER) {
                       // 锟斤拷拽锟斤拷锟侥硷拷锟斤拷
@@ -1793,7 +1861,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               if (currentFolderId && onDropOnFolder) {
                   // 锟斤拷锟斤拷欠锟斤拷锟斤拷锟斤拷募锟斤拷锟斤拷丫锟斤拷诘锟角帮拷募锟斤拷锟??
                   const allFilesInCurrentFolder = ids.every((id: string) => {
-                      const file = files[id];
+                      const file = getFileNode(id);
                       return file && file.parentId === currentFolderId;
                   });
                   
@@ -1854,10 +1922,16 @@ export const FileGrid: React.FC<FileGridProps> = ({
           <div
               ref={contentRef}
           >
-          {activeTab.viewMode === 'people-overview' ? (
+          {displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
+              <EmptyFolderPlaceholder
+                  isRefreshing={getFileNode(activeTab.folderId)?.isRefreshing}
+                  onRefresh={() => { onRefresh?.(); }}
+                  t={t}
+              />
+          ) : activeTab.viewMode === 'people-overview' ? (
               <PersonGrid
                   people={people || {}}
-                  files={files}
+                  files={files || {}}
                   topics={topics}
                   selectedPersonIds={activeTab.selectedPersonIds}
                   onPersonClick={handlePersonClick}
@@ -1886,7 +1960,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                           {!collapsedGroups[group.id] && (
                               <GroupContent
                                   group={group}
-                                  files={files}
+                                  getFileNode={getFileNode}
                                   activeTab={activeTab}
                                   renamingId={renamingId}
                                   thumbnailSize={thumbnailSize}
@@ -1921,7 +1995,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
               <div className="w-full h-full min-w-0">
                   <div className="relative w-full" style={{ height: totalHeight }}>
                       {visibleItems.map((item) => {
-                          const file = files[item.id];
+                          const file = getFileNode(item.id);
                           if (!file) return null;
                           return (
                               <div 
@@ -1935,7 +2009,7 @@ export const FileGrid: React.FC<FileGridProps> = ({
                               >
                                   <FileListItem
                                       file={file}
-                                      files={files}
+                                      getFileNode={getFileNode}
                                       isSelected={activeTab.selectedFileIds.includes(file.id)}
                                       renamingId={renamingId}
                                       onFileClick={handleFileClick}
@@ -1977,14 +2051,14 @@ export const FileGrid: React.FC<FileGridProps> = ({
                           }}
                       >
                           {visibleItems.map((item) => {
-                              const file = files[item.id];
+                              const file = getFileNode(item.id);
                               if (!file) return null;
                               
                               return (
                                   <FileCard
                                       key={file.id}
                                       file={file}
-                                      files={files}
+                                      getFileNode={getFileNode}
                                       isSelected={activeTab.selectedFileIds.includes(file.id)}
                                       renamingId={renamingId}
                                       layoutMode={activeTab.layoutMode}
@@ -2020,4 +2094,4 @@ export const FileGrid: React.FC<FileGridProps> = ({
           </div>
       </div>
   );
-};
+});

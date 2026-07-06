@@ -12,7 +12,7 @@ import { CircularProgressOverlay } from './CircularProgressOverlay';
 
 export const FileListItem = React.memo(({
   file,
-  files,
+  getFileNode,
   isSelected,
   renamingId,
   onFileClick,
@@ -61,7 +61,7 @@ export const FileListItem = React.memo(({
       ? selectedFileIds 
       : [file.id];
     
-    const filePaths = filesToDrag.map((fileId: string) => files[fileId]?.path || '').filter(Boolean);
+    const filePaths = filesToDrag.map((fileId: string) => getFileNode(fileId)?.path || '').filter(Boolean);
     
     if (setIsDraggingInternal && setDraggedFilePaths) {
       setIsDraggingInternal(true);
@@ -126,7 +126,7 @@ export const FileListItem = React.memo(({
     
     for (let i = 0; i < previewFiles.length; i++) {
       const draggedFileId = previewFiles[i];
-      const draggedFile = files[draggedFileId];
+      const draggedFile = getFileNode(draggedFileId);
       if (!draggedFile) continue;
       
       const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
@@ -304,7 +304,7 @@ export const FileListItem = React.memo(({
                         : [file.id];
                     
                     const filePaths = filesToDrag
-                        .map((fileId: string) => files[fileId]?.path || '')
+                        .map((fileId: string) => getFileNode(fileId)?.path || '')
                         .filter(Boolean);
                     
                     if (filePaths.length > 0) {

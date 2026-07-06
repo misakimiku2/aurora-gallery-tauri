@@ -149,16 +149,10 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
     }).map(f => f.id);
   }, [allFiles, searchCriteria, state.files, state.topics]);
 
-  const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
-  const pageSize = isAndroid ? allMatchingFileIds.length : 1000;
-  const currentPage = activeTab.currentPage || 1;
+  const pageSize = allMatchingFileIds.length;
   const totalResults = allMatchingFileIds.length;
-  
-  const displayFileIds = useMemo(() => {
-    if (isAndroid) return allMatchingFileIds;
-    const start = (currentPage - 1) * pageSize;
-    return allMatchingFileIds.slice(start, start + pageSize);
-  }, [allMatchingFileIds, currentPage, isAndroid, pageSize]);
+
+  const displayFileIds = useMemo(() => allMatchingFileIds, [allMatchingFileIds]);
 
   const toggleGroup = (groupId: string) => {
     setCollapsedGroups(prev => ({ ...prev, [groupId]: !prev[groupId] }));
@@ -177,7 +171,7 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
       groups[key].push(id);
     });
     return Object.entries(groups).map(([title, ids]) => ({ id: title, title, fileIds: ids }));
-  }, [displayFileIds, groupBy, state.files, t]);
+  }, [displayFileIds, groupBy, t]);
 
   return {
     displayFileIds,

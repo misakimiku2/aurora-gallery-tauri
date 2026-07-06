@@ -7,18 +7,19 @@ import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
 import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
+import { GetFileNode } from './useLayoutHook';
 
 const findImagesDeeply = (
-    rootFolder: FileNode, 
-    allFiles: Record<string, FileNode>, 
+    rootFolder: FileNode,
+    getFileNode: GetFileNode,
     limit: number = 3
 ): FileNode[] => {
     const images: FileNode[] = [];
     const stack: string[] = [...(rootFolder.children || [])];
-    const visited = new Set<string>(); 
-    
+    const visited = new Set<string>();
+
     let traversalCount = 0;
-    const MAX_TRAVERSAL = 500; 
+    const MAX_TRAVERSAL = 500;
 
     while (stack.length > 0 && traversalCount < MAX_TRAVERSAL) {
         const id = stack.pop()!;
@@ -26,16 +27,16 @@ const findImagesDeeply = (
         visited.add(id);
         traversalCount++;
 
-        const node = allFiles[id];
+        const node = getFileNode(id);
         if (!node) continue;
-        
+
         if (node.type === FileType.IMAGE) {
             images.push(node);
         } else if (node.type === FileType.FOLDER && node.children) {
             stack.push(...node.children);
         }
     }
-    
+
     return images
         .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
         .slice(0, limit);
@@ -56,14 +57,14 @@ const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ fil
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, files, mode, resourceRoot, cachePath }: { file: FileNode; files: Record<string, FileNode>, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
+export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const isAndroid = resourceRoot === 'android_media_store';
   const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
-  
+
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
-      return findImagesDeeply(file, files, 3);
-  }, [file, files]);
+      return findImagesDeeply(file, getFileNode, 3);
+  }, [file, getFileNode]);
 
   const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
       const cache = getGlobalCache();

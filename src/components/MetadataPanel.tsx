@@ -48,7 +48,7 @@ import { useAIRename } from '../hooks/useAIRename';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
-import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
+import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, preloadPaletteToCache, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
 import { isAndroidPlatformCached } from '../api/tauri-bridge';
 
 interface MetadataProps {
@@ -810,8 +810,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             return;
         }
 
+        // LAN 图片：browse 时不返回 palette，按需从服务端获取。
+        // preloadPaletteToCache 会异步请求 /api/palette，结果通过
+        // PALETTE_CACHE_UPDATE_EVENT 事件回传，由上方的 useEffect 监听更新。
+        if (file.path && file.source === 'lan') {
+            preloadPaletteToCache(file.path);
+        }
+
         setColors([]);
-    }, [file?.id, file?.path, file?.meta?.palette, file?.aiData?.dominantColors]);
+    }, [file?.id, file?.path, file?.meta?.palette, file?.aiData?.dominantColors, file?.source]);
 
     // 监听调色板缓存更新事件
     useEffect(() => {
@@ -1925,44 +1932,42 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             // Re-extract palette using direct file path
                                             (async () => {
                                                 try {
-                                                    const { getDominantColors } = await import('../api/tauri-bridge');
+                                                    let hexColors: string[] = [];
+                                                    if (file.path.startsWith('lan://')) {
+                                                        const { lanClientApi } = await import('./lan-client/lanClientApi');
+                                                        hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+                                                    } else {
+                                                        const { getDominantColors } = await import('../api/tauri-bridge');
 
-                                                    // 尝试从全局缩略图路径缓存中获取缩略图路�?
-                                                    let thumbnailPath: string | null = null;
-                                                    const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                                    if (pathCache && pathCache.get) {
-                                                        thumbnailPath = pathCache.get(file.path!);
-                                                    }
+                                                        let thumbnailPath: string | null = null;
+                                                        const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                                        if (pathCache && pathCache.get) {
+                                                            thumbnailPath = pathCache.get(file.path!);
+                                                        }
 
-                                                    // 如果缓存中没有，尝试生成缩略�?
-                                                    if (!thumbnailPath && resourceRoot) {
-                                                        try {
-                                                            const { getThumbnail } = await import('../api/tauri-bridge');
-                                                            const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
-                                                            if (thumbUrl) {
-                                                                thumbnailPath = pathCache.get(file.path!);
+                                                        if (!thumbnailPath && resourceRoot) {
+                                                            try {
+                                                                const { getThumbnail } = await import('../api/tauri-bridge');
+                                                                const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
+                                                                if (thumbUrl) {
+                                                                    thumbnailPath = pathCache.get(file.path!);
+                                                                }
+                                                            } catch (err) {
+                                                                console.log('Failed to generate thumbnail:', err);
                                                             }
-                                                        } catch (err) {
-                                                            console.log('Failed to generate thumbnail:', err);
+                                                        }
+
+                                                        const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
+                                                        if (colors && colors.length > 0) {
+                                                            hexColors = colors.map(c => c.hex);
                                                         }
                                                     }
 
-                                                    const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
-
-                                                    if (colors && colors.length > 0) {
-                                                        const hexColors = colors.map(c => c.hex);
-                                                        onUpdate(file.id, {
-                                                            meta: { ...file.meta!, palette: hexColors }
-                                                        });
-                                                    } else {
-                                                        // If extraction fails or returns empty, clear the palette
-                                                        onUpdate(file.id, {
-                                                            meta: { ...file.meta!, palette: [] }
-                                                        });
-                                                    }
+                                                    onUpdate(file.id, {
+                                                        meta: { ...file.meta!, palette: hexColors }
+                                                    });
                                                 } catch (err) {
                                                     console.error('Failed to extract palette:', err);
-                                                    // Clear palette on error
                                                     onUpdate(file.id, {
                                                         meta: { ...file.meta!, palette: [] }
                                                     });
@@ -2012,15 +2017,23 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             currentExtractFileRef.current = fileId;
                                             setLoadingPalette(true);
                                             try {
-                                                const { getDominantColors } = await import('../api/tauri-bridge');
-                                                const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                                let thumbnailPath: string | undefined = undefined;
-                                                if (pathCache?.get) {
-                                                    thumbnailPath = pathCache.get(file.path);
+                                                let hexColors: string[] = [];
+                                                if (file.path.startsWith('lan://')) {
+                                                    const { lanClientApi } = await import('./lan-client/lanClientApi');
+                                                    hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+                                                } else {
+                                                    const { getDominantColors } = await import('../api/tauri-bridge');
+                                                    const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+                                                    let thumbnailPath: string | undefined = undefined;
+                                                    if (pathCache?.get) {
+                                                        thumbnailPath = pathCache.get(file.path);
+                                                    }
+                                                    const result = await getDominantColors(file.path, 8, thumbnailPath);
+                                                    if (result && result.length > 0) {
+                                                        hexColors = result.map(c => c.hex);
+                                                    }
                                                 }
-                                                const result = await getDominantColors(file.path, 8, thumbnailPath);
-                                                if (result && result.length > 0) {
-                                                    const hexColors = result.map(c => c.hex);
+                                                if (hexColors.length > 0) {
                                                     onUpdate(file.id, {
                                                         meta: { ...file.meta!, palette: hexColors }
                                                     });
