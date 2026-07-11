@@ -152,7 +152,10 @@ export const App: React.FC = () => {
         allowEdit: false,
         allowUpload: false,
       },
-      defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS
+      defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS,
+      android: {
+        useNativeViewer: true,
+      },
     },
     // Scan progress (onboarding)
     scanProgress: null,
@@ -2343,8 +2346,216 @@ export const App: React.FC = () => {
   const exitActionRef2 = useRef(exitActionRef.current);
   exitActionRef2.current = exitActionRef.current;
 
+  // ===== Android Native Viewer Integration =====
+  const useNativeViewer = isAndroidPlatformCached() && (state.settings.android?.useNativeViewer ?? true);
+  const [nativeViewerActive, setNativeViewerActive] = useState(false);
+  // Refs 用于在事件处理器中访问最新值，避免闭包过期
+  const useNativeViewerRef = useRef(useNativeViewer);
+  useNativeViewerRef.current = useNativeViewer;
+  const nativeViewerActiveRef = useRef(nativeViewerActive);
+  nativeViewerActiveRef.current = nativeViewerActive;
+
+  // 序列化图片列表供原生层使用
+  const serializeImagesForNativeViewer = useCallback(() => {
+    const imageFileIds = displayFileIds.filter(id => state.files[id]?.type === FileType.IMAGE);
+    return imageFileIds.map(id => {
+      const f = state.files[id];
+      if (!f) return null;
+      const isLan = f.path.startsWith('lan://');
+      const base: any = {
+        fileId: id,
+        name: f.name,
+        width: f.meta?.width || 0,
+        height: f.meta?.height || 0,
+        size: f.size || 0,
+        format: f.meta?.format || '',
+        createdAt: f.createdAt || f.meta?.created || '',
+        updatedAt: f.updatedAt || f.meta?.modified || '',
+        tags: f.tags || [],
+        description: f.description || '',
+        sourceUrl: f.sourceUrl || '',
+        palette: f.meta?.palette || [],
+        parentName: f.parentId ? state.files[f.parentId]?.name || '' : '',
+        aiData: f.aiData ? {
+          tags: f.aiData.tags || [],
+          description: f.aiData.description || '',
+          sceneCategory: f.aiData.sceneCategory || '',
+          objects: f.aiData.objects || [],
+        } : null,
+      };
+      if (isLan) {
+        const remotePath = f.path.slice('lan://'.length);
+        base.path = lanClientApi.getImageUrl(remotePath);
+        base.isLan = true;
+        base.thumbnailUrl = lanClientApi.getThumbnailUrl(remotePath);
+      } else {
+        base.path = f.path;
+        base.isLan = false;
+        base.thumbnailUrl = '';
+      }
+      return base;
+    }).filter(Boolean) as any[];
+  }, [displayFileIds, state.files]);
+
+  // 监听 viewingFileId 变化，打开/关闭原生查看器
   useEffect(() => {
-    const handleAndroidBackPress = () => {
+    if (!useNativeViewer) {
+      setNativeViewerActive(false);
+      return;
+    }
+    const viewingId = activeTab.viewingFileId;
+    console.log('[NativeViewer] useEffect triggered, viewingId:', viewingId, 'useNativeViewer:', useNativeViewer);
+    if (viewingId) {
+      const imageFileIds = displayFileIds.filter(id => state.files[id]?.type === FileType.IMAGE);
+      const startIndex = imageFileIds.indexOf(viewingId);
+      if (startIndex < 0) {
+        console.log('[NativeViewer] startIndex < 0, aborting');
+        setNativeViewerActive(false);
+        return;
+      }
+      const images = serializeImagesForNativeViewer();
+      console.log('[NativeViewer] calling invoke, images count:', images.length, 'startIndex:', startIndex);
+      const options = {
+        slideshow: {
+          enabled: false,
+          interval: state.slideshowConfig.interval || 5000,
+          transition: state.slideshowConfig.transition || 'fade',
+        },
+        isDark: (() => {
+          const theme = state.settings.theme;
+          if (theme === 'dark') return true;
+          if (theme === 'light') return false;
+          return document.documentElement.classList.contains('dark');
+        })(),
+      };
+      invoke('android_open_native_viewer', {
+        images: JSON.stringify(images),
+        startIndex,
+        options: JSON.stringify(options),
+      }).then(() => {
+        console.log('[NativeViewer] invoke succeeded, setting nativeViewerActive=true');
+        setNativeViewerActive(true);
+      }).catch((err) => {
+        console.error('[NativeViewer] open failed, fallback to WebView:', err);
+        setNativeViewerActive(false);
+      });
+    } else {
+      console.log('[NativeViewer] no viewingId, closing native viewer');
+      invoke('android_close_native_viewer').catch(() => {});
+      setNativeViewerActive(false);
+    }
+  }, [activeTab.viewingFileId, useNativeViewer, serializeImagesForNativeViewer, state.slideshowConfig.interval, state.slideshowConfig.transition]);
+
+  // 同步 LAN token 给原生层
+  useEffect(() => {
+    if (!useNativeViewer) return;
+    const token = lanClientApi.getToken();
+    if (token) {
+      invoke('android_native_viewer_set_lan_token', { token }).catch(() => {});
+    }
+  }, [useNativeViewer, lanConnected]);
+
+  // 预埋桥接函数：原生层通过 evaluateJavascript 调用这些方法
+  useEffect(() => {
+    if (!useNativeViewer) return;
+    const bridge = {
+      onClose: () => {
+        setNativeViewerActive(false);
+        closeViewerRef.current();
+      },
+      onNavigate: (index: number) => {
+        const imageFileIds = displayFileIds.filter(id => state.files[id]?.type === FileType.IMAGE);
+        const targetId = imageFileIds[index];
+        if (targetId && targetId !== activeTabRef2.current.viewingFileId) {
+          updateActiveTab({ viewingFileId: targetId });
+        }
+      },
+      onMore: (fileId: string) => {
+        // 关闭原生层，让 WebView 的 ImageViewer 显示完整 UI
+        invoke('android_close_native_viewer').catch(() => {});
+        setNativeViewerActive(false);
+      },
+      onDelete: (fileId: string) => {
+        if (isAndroidDevice) handleAndroidDelete([fileId]);
+        else requestDelete([fileId]);
+      },
+      onShowInFolder: (fileId: string) => {
+        const f = state.files[fileId];
+        if (f?.parentId) {
+          invoke('android_close_native_viewer').catch(() => {});
+          setNativeViewerActive(false);
+          enterFolder(f.parentId, { scrollToItemId: fileId });
+        }
+      },
+      onCopyToFolder: (fileId: string) => {
+        setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }));
+      },
+      onMoveToFolder: (fileId: string) => {
+        setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }));
+      },
+      onAIAnalyze: (fileId: string) => {
+        handleAIAnalysis([fileId]);
+      },
+      onEditTags: (fileId: string) => {
+        setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId } } }));
+      },
+      onUpdateFile: (fileId: string, updatesJson: string) => {
+        try {
+          const updates = JSON.parse(updatesJson);
+          handleUpdateFile(fileId, updates);
+        } catch (e) {
+          console.error('[NativeViewer] onUpdateFile parse error:', e);
+        }
+      },
+      onLongPress: (_fileId: string) => {
+        // 长按图片：未来可触发选择模式或多操作菜单
+      },
+      onImmersiveToggle: (immersive: boolean) => {
+        // 沉浸模式状态同步（可选）
+      },
+    };
+    (window as any).__androidViewerBridge = bridge;
+    return () => {
+      delete (window as any).__androidViewerBridge;
+    };
+  }, [useNativeViewer, displayFileIds, state.files, handleAIAnalysis, handleAndroidDelete, isAndroidDevice, requestDelete, enterFolder, setState]);
+
+  // 组件卸载时关闭原生查看器
+  useEffect(() => {
+    return () => {
+      if (useNativeViewer) {
+        invoke('android_close_native_viewer').catch(() => {});
+      }
+    };
+  }, [useNativeViewer]);
+
+  // React → 原生：监听当前 viewingFile 的 FileNode 变化，增量推送更新
+  useEffect(() => {
+    if (!useNativeViewer || !nativeViewerActive) return;
+    const viewingId = activeTab.viewingFileId;
+    if (!viewingId) return;
+    const file = state.files[viewingId];
+    if (!file) return;
+    const updates: Record<string, unknown> = {
+      tags: file.tags || [],
+      description: file.description || '',
+    };
+    if (file.aiData) {
+      updates.aiData = {
+        tags: file.aiData.tags || [],
+        description: file.aiData.description || '',
+        sceneCategory: file.aiData.sceneCategory || '',
+        objects: file.aiData.objects || [],
+      };
+    }
+    invoke('android_update_native_item', {
+      fileId: viewingId,
+      updates: JSON.stringify(updates),
+    }).catch(() => {});
+  }, [useNativeViewer, nativeViewerActive, activeTab.viewingFileId, state.files[activeTab.viewingFileId || '']]);
+
+  useEffect(() => {
+    const handleAndroidBackPress = async () => {
       if ((window as any).__androidBackHandled) {
         (window as any).__androidBackHandled = false;
         return;
@@ -2375,6 +2586,19 @@ export const App: React.FC = () => {
 
       if (isAndroidSelectionModeRef.current) {
         handleExitAndroidSelectionMode();
+        return;
+      }
+
+      // 原生查看器：先收起抽屉，再关闭查看器
+      if (useNativeViewerRef.current && nativeViewerActiveRef.current) {
+        // 通过 Rust 命令让 Kotlin 收起抽屉（如果打开）或关闭查看器
+        // Kotlin 侧 closeNativeDrawer 只在抽屉打开时收起，不关闭查看器
+        // 这里先尝试收起抽屉，由 Kotlin 决定是否需要进一步操作
+        try {
+          await invoke('android_close_drawer');
+        } catch (e) {
+          console.error('[NativeViewer] close drawer failed:', e);
+        }
         return;
       }
 
@@ -2543,7 +2767,7 @@ export const App: React.FC = () => {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
-          {activeTab.viewingFileId && (
+          {activeTab.viewingFileId && !useNativeViewer && (
             <ImageViewer
               file={state.files[activeTab.viewingFileId]}
               sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
@@ -2580,6 +2804,7 @@ export const App: React.FC = () => {
               handleOpenCompareInNewTab={handleOpenCompareAndClearSelection}
               handleAddToCompareCanvas={handleAddToCompareCanvas}
               enterImmersiveOnMount={state.settings.openInImmersiveByDefault}
+              nativeViewerActive={nativeViewerActive}
             />
           )}
           {state.tabs.map(tab => tab.isCompareMode && (

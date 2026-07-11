@@ -348,6 +348,9 @@ export interface AppSettings {
     sortDirection: SortDirection;
     groupBy: GroupByOption;
   };
+  android?: {
+    useNativeViewer: boolean; // 安卓端是否使用原生图片查看器（绕开 WebView，达到原生相册流畅度）
+  };
 }
 
 export interface DateFilter {

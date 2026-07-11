@@ -1313,6 +1313,170 @@ async fn android_get_native_preview(
 }
 
 #[cfg(target_os = "android")]
+fn call_main_activity_void(method_name: &str, method_sig: &str, args: &[jni::objects::JValue]) -> Result<(), String> {
+    let activity = ndk_context::android_context();
+    let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+        .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+    let mut env = vm.attach_current_thread()
+        .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+    let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+    env.call_method(&activity_obj, method_name, method_sig, args)
+        .map_err(|e| format!("Failed to call {}: {:?}", method_name, e))?;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_open_native_viewer(
+    images: String,
+    start_index: i32,
+    options: String,
+) -> Result<(), String> {
+    log::info!("[NativeViewer] android_open_native_viewer called: start_index={}, images_len={}, options_len={}", start_index, images.len(), options.len());
+    let images_for_call = images.clone();
+    let options_for_call = options.clone();
+    let idx = start_index;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+
+        let j_images = env.new_string(&images_for_call)
+            .map_err(|e| format!("Failed to create images string: {:?}", e))?;
+        let j_options = env.new_string(&options_for_call)
+            .map_err(|e| format!("Failed to create options string: {:?}", e))?;
+
+        env.call_method(
+            &activity_obj,
+            "openNativeViewer",
+            "(Ljava/lang/String;ILjava/lang/String;)V",
+            &[
+                jni::objects::JValue::Object(&j_images),
+                jni::objects::JValue::Int(idx),
+                jni::objects::JValue::Object(&j_options),
+            ],
+        ).map_err(|e| format!("Failed to call openNativeViewer: {:?}", e))?;
+        log::info!("[NativeViewer] JNI call_method openNativeViewer succeeded");
+        Ok(())
+    }).await;
+    result.map_err(|e| format!("Join error: {:?}", e))?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_close_native_viewer() -> Result<(), String> {
+    call_main_activity_void("closeNativeViewer", "()V", &[])
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_close_drawer() -> Result<(), String> {
+    call_main_activity_void("closeNativeDrawer", "()V", &[])
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_update_native_item(file_id: String, updates: String) -> Result<(), String> {
+    let fid = file_id;
+    let upd = updates;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+        let j_fid = env.new_string(&fid)
+            .map_err(|e| format!("Failed to create fileId string: {:?}", e))?;
+        let j_upd = env.new_string(&upd)
+            .map_err(|e| format!("Failed to create updates string: {:?}", e))?;
+        env.call_method(
+            &activity_obj,
+            "updateNativeItem",
+            "(Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                jni::objects::JValue::Object(&j_fid),
+                jni::objects::JValue::Object(&j_upd),
+            ],
+        ).map_err(|e| format!("Failed to call updateNativeItem: {:?}", e))?;
+        Ok(())
+    }).await;
+    result.map_err(|e| format!("Join error: {:?}", e))?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_native_viewer_navigate(direction: String) -> Result<(), String> {
+    let dir_for_call = direction;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+        let j_dir = env.new_string(&dir_for_call)
+            .map_err(|e| format!("Failed to create direction string: {:?}", e))?;
+        env.call_method(
+            &activity_obj,
+            "nativeViewerNavigate",
+            "(Ljava/lang/String;)V",
+            &[jni::objects::JValue::Object(&j_dir)],
+        ).map_err(|e| format!("Failed to call nativeViewerNavigate: {:?}", e))?;
+        Ok(())
+    }).await;
+    result.map_err(|e| format!("Join error: {:?}", e))?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_native_viewer_set_slideshow(enabled: bool) -> Result<(), String> {
+    call_main_activity_void(
+        "nativeViewerSetSlideshow",
+        "(Z)V",
+        &[jni::objects::JValue::Bool(if enabled { 1 } else { 0 })],
+    )
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_native_viewer_set_rotation(degrees: i32) -> Result<(), String> {
+    call_main_activity_void(
+        "nativeViewerSetRotation",
+        "(I)V",
+        &[jni::objects::JValue::Int(degrees)],
+    )
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
+async fn android_native_viewer_set_lan_token(token: String) -> Result<(), String> {
+    let token_for_call = token;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+        let j_token = env.new_string(&token_for_call)
+            .map_err(|e| format!("Failed to create token string: {:?}", e))?;
+        env.call_method(
+            &activity_obj,
+            "nativeViewerSetLanToken",
+            "(Ljava/lang/String;)V",
+            &[jni::objects::JValue::Object(&j_token)],
+        ).map_err(|e| format!("Failed to call nativeViewerSetLanToken: {:?}", e))?;
+        Ok(())
+    }).await;
+    result.map_err(|e| format!("Join error: {:?}", e))?
+}
+
+
+#[cfg(target_os = "android")]
 #[tauri::command]
 async fn android_batch_get_thumbnails(
     app: tauri::AppHandle,
@@ -1933,6 +2097,14 @@ pub fn run() {
         android_share_image,
         android_share_images,
         android_delete_files,
+        android_open_native_viewer,
+        android_close_native_viewer,
+        android_close_drawer,
+        android_update_native_item,
+        android_native_viewer_navigate,
+        android_native_viewer_set_slideshow,
+        android_native_viewer_set_rotation,
+        android_native_viewer_set_lan_token,
         color_commands::add_pending_files_to_db,
         db_commands::get_color_db_stats,
         db_commands::get_color_db_error_files,

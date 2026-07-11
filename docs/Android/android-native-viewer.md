@@ -1,0 +1,1244 @@
+# Android 原生图片查看器（NativeGalleryView）完整实现记录
+
+## 日期
+2026-07-07 ~ 2026-07-12
+
+## 概述
+
+Android 端为绕开 WebView 渲染管线、达到接近系统相册的原生性能，单独实现了全屏原生图片查看器 `NativeGalleryView`。本文档整合了从 z-order 可见性修复、抽屉式元数据面板、手势跟手滑动、到帧率优化与滑动间隔的全部演进过程，反映当前最新代码状态。
+
+涉及五个阶段：
+1. **z-order 修复**（2026-07-07）：解决原生查看器被 WebView 遮挡不可见的问题
+2. **抽屉面板与手势修复**（2026-07-08）：新增元数据抽屉、标签/描述编辑、双向同步，修复 e1 recycle 等手势抖动
+3. **滑动体验优化**（2026-07-09）：跟手联动滑动、贝塞尔曲线、帧率优化、图片间隔
+4. **抽屉全屏模式与垂直手势**（2026-07-10）：抽屉展开时 topBar/系统状态栏同步隐藏形成全屏样式；垂直跟手手势上滑呼出/下滑收起抽屉；修复缩放插值导致图片"缩小再还原"现象
+5. **缩放修复与沉浸背景色**（2026-07-12）：修复双击缩放定位/留白/拖动漂移/边缘消失/连续缩放漂移/缩放误触翻页等一系列 ZoomableImageView 缩放手势 bug；单击进入沉浸时背景色改为黑色，退出还原主题色；沉浸状态与抽屉状态解耦（开关抽屉后正确回到沉浸）
+
+---
+
+## 一、架构设计
+
+### 1.1 双缓冲视图架构
+
+`NativeGalleryView` 内部维护两个 `ZoomableImageView` 实例作为双 buffer：
+
+```
+primaryView   (tag="active"/"idle")
+secondaryView (tag="active"/"idle")
+```
+
+- `activeView` 属性通过 `tag` 判断当前哪个视图处于活跃状态（显示当前图片）
+- `adjacentView()` 返回非活跃视图，用于翻页时预加载上一张/下一张
+- 切换图片时交换 `activeView` 指向，旧图滑出 + 新图滑入同时进行
+
+两个视图均为 `MATCH_PARENT`，通过 `translationX` 控制位移实现滑动切换动画。
+
+### 1.2 WindowManager z-order 修复
+
+**问题**：最初使用 `addContentView()` 将 NativeGalleryView 添加到 Activity 的 content frame，但 Tauri 的 WebView 由独立窗口机制管理，z-order 高于 content frame，导致原生查看器被完全遮挡。前端通过 `nativeViewerActive=true` 隐藏了 WebView 内的 `<img>`，但原生层在 WebView 之下，用户只看到 WebView 的半透明 UI 控件叠加在空白图片区域。
+
+**修复**：将 NativeGalleryView 从 content frame 转为独立的 WindowManager 窗口。
+
+**`MainActivity.setupNativeGalleryView()`**：
+- 移除 `addContentView(view, ...)` 调用
+- View 创建后只存储到 `nativeGalleryView`，不立即添加到任何父容器
+- 设置 Listener 回调
+
+**`MainActivity.openNativeViewer()`**：
+- 在 `view.open()` 之前检查 `view.isAttachedToWindow`
+- 若未附加，创建 `WindowManager.LayoutParams`：
+  - `TYPE_APPLICATION_PANEL` — 位于主窗口之上
+  - `FLAG_LAYOUT_IN_SCREEN` — 铺满整个屏幕（含状态栏区域）
+  - `PixelFormat.TRANSLUCENT` — 支持透明
+  - `params.token = window.decorView.windowToken` — 关联到 Activity 主窗口
+- 调用 `windowManager.addView(view, params)` 添加窗口
+- 检查 `isAttachedToWindow` 确认附加成功
+
+**`MainActivity.onClose` 回调**：
+- 使用 `windowManager.removeView(view)` 从 WindowManager 移除（而非仅设 `visibility = GONE`）
+
+**`MainActivity.closeNativeViewer()`**：
+- 增加从 WindowManager 移除 View 的逻辑
+
+**`MainActivity.onDestroy()`**：
+- Activity 销毁时 `windowManager.removeView(view)` + `view.destroy()` 释放 Coil ImageLoader 资源，防止窗口泄漏
+
+### 1.3 生命周期
+
+```
+Activity.onCreate()
+  └─ setupNativeGalleryView()
+       └─ 创建 NativeGalleryView（未附加到任何窗口）
+       └─ 设置 Listener 回调
+
+用户点击图片
+  └─ JS: invoke('android_open_native_viewer')
+       └─ Rust: JNI call_method openNativeViewer
+            └─ Kotlin: openNativeViewer()
+                 ├─ windowManager.addView(view, params)  ← 首次附加
+                 └─ view.open(items, startIndex, options)
+                      ├─ visibility = VISIBLE
+                      └─ loadCurrent() → Coil 异步加载
+
+用户点击关闭
+  └─ NativeGalleryView.onClose 回调
+       ├─ windowManager.removeView(view)  ← 从窗口移除
+       └─ evaluateJs("onClose()")
+            └─ JS: invoke('android_close_native_viewer')
+                 └─ Kotlin: closeNativeViewer()
+                      └─ view.close()  ← 停止幻灯片 + visibility = GONE
+
+Activity.onDestroy()
+  └─ windowManager.removeView(view)  ← 防止泄漏
+  └─ view.destroy()  ← 释放 ImageLoader
+```
+
+**关键约束**：
+- `NativeGalleryView.close()` 不调用 `imageLoader.shutdown()`，因为 `imageLoader` 是 `lazy` 属性，shutdown 后无法重建，会导致查看器关闭后无法再次打开
+- `destroy()` 方法专用于 Activity 销毁时的最终资源释放，包含 `imageLoader.shutdown()`
+- `imageLoader` 不在 close 时 shutdown，允许重新打开查看器时复用
+
+---
+
+## 二、功能特性
+
+### 2.1 ImageItem 数据模型
+
+`NativeGalleryView.ImageItem` 包含以下字段，覆盖 MetadataPanel 主要信息：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `path` | String | 本地文件路径；LAN 为完整 HTTP URL |
+| `fileId` | String | 文件唯一标识 |
+| `name` | String | 文件名 |
+| `width` / `height` | Int | 原图尺寸 |
+| `isLan` | Boolean | 是否局域网图片 |
+| `thumbnailUrl` | String? | LAN 缩略图 URL 或本地缩略图路径 |
+| `size` | Long | 文件大小 |
+| `format` | String | 格式 |
+| `createdAt` / `updatedAt` | String | 创建/修改时间 |
+| `tags` | List<String> | 标签 |
+| `description` | String | 描述 |
+| `sourceUrl` | String | 来源网址 |
+| `palette` | List<String> | 主色调 |
+| `aiTags` | List<String> | AI 标签 |
+| `aiDescription` | String | AI 描述 |
+| `aiSceneCategory` | String | AI 场景类别 |
+| `aiObjects` | List<String> | AI 物体 |
+| `parentName` | String | 所在文件夹名 |
+
+前端 `serializeImagesForNativeViewer` 从 FileNode 附加全部字段；MainActivity JSON 解析同步扩展。
+
+### 2.2 抽屉式元数据面板
+
+右侧抽屉式面板，对齐 PC 端 MetadataPanel 体验。
+
+**布局**（从上到下）：
+1. 文件名（16sp 粗体，居中）
+2. 文件夹名（12sp 次要色）
+3. 全览图（Coil 异步加载，180dp 高，圆角 12dp）
+4. 主色调识别区域（标题 + 圆形色块单行排列，24dp 色块 + 8dp 间距）
+5. 文件信息（GridLayout 2 列：尺寸/格式/创建时间/修改时间）
+6. 标签（胶囊形状 chip）
+7. 描述文本框
+8. 来源网址
+
+> **关闭方式**：抽屉可通过以下方式关闭（见 4.8、4.11）：
+> - 系统返回键/返回手势
+> - 垂直下滑手势（任意位置下滑收起，见 4.11）
+>
+> 不再使用抽屉头部关闭按钮，避免图片位置突跳。
+
+**规格**：
+- 宽度 320dp（20rem，与 App.tsx MetadataPanel 一致）
+- 280ms 滑动动画
+- 切换图片时 `updateDrawer` 同步刷新
+- 进入沉浸模式自动收起
+- **抽屉展开时进入全屏样式**：topBar/缩略图条/底部信息同步滑出隐藏，系统状态栏同步隐藏（见 4.7）
+- `close()` 始终重置抽屉视觉状态（translationX、view 宽度、immersive、系统状态栏），防止再次打开时残留
+- `isClickable = true` / `isFocusable = true` 消费触摸事件，防止穿透到下层 ZoomableImageView
+- **抽屉打开时仍可左右滑动切换图片**（见 4.10）
+
+**图片宽度同步动画**：`applyDrawerProgress(progress)` 统一驱动所有抽屉视觉状态（progress 0=关闭, 1=打开）：
+- 抽屉位移：`metadataDrawer.translationX = (1 - progress) * drawerWidthPx`
+- 图片宽度：`primaryView`/`secondaryView` 的 `layoutParams.width` 从 `MATCH_PARENT` 平滑过渡到 `totalWidth - 320dp`
+- 填充缩放：`drawerFillProgress = progress`，`resetToCenter` 据此在 fit/fill 间插值（见 4.7）
+- 全屏隐藏：topBar 上滑、缩略图条/底部信息下滑，translationY 由 progress 驱动
+- 起始宽度读 `layoutParams.width`（非 `View.width`，后者在时序异常时返回过期值导致关闭动画 no-op，详见 4.7）
+- 动画期间 `ZoomableImageView.onSizeChanged()` 每帧自动调用 `resetToCenter()`
+- ZoomableImageView 自动重新 layout 并按新宽度居中缩放
+
+### 2.3 标签和描述编辑
+
+原生 AlertDialog 实现：
+- `showTagEditDialog`：LinearLayout chip 列表 + EditText + 添加按钮，每个 chip 带红色 X 删除
+- `showDescriptionEditDialog`：multiline EditText
+- 保存时通过 `listener.onUpdateFile(fileId, json)` 回调
+
+### 2.4 双向实时同步
+
+**原生 → 前端**：
+- Kotlin `onUpdateFile` → `evaluateJavascript("window.__androidViewerBridge.onUpdateFile(...)")`
+- 前端 bridge 调 `handleUpdateFile` 更新 state
+
+**前端 → 原生**：
+- Rust 命令 `android_update_native_item`（[lib.rs](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/src/lib.rs)）
+- MainActivity.`updateNativeItem` + NativeGalleryView.`updateItem`（支持 tags/description/name/aiData 字段更新，幂等）
+- 前端 useEffect 监听当前 viewingFile 的 FileNode 变化主动推送
+
+### 2.5 Android 端 WebView ImageViewer 不渲染
+
+App.tsx 渲染条件改为 `activeTab.viewingFileId && !useNativeViewer`。Android + 原生查看器开启时，ImageViewer 完全不 mount，避免双重渲染。
+
+### 2.6 更多菜单
+
+`showMoreMenu` 改为 AlertDialog 7 项菜单：删除/在文件夹中显示/重命名/旋转保存/AI 分析/复制到文件夹/移动到文件夹。
+
+### 2.7 顶部工具栏
+
+- 工具栏下移状态栏高度（`status_bar_height` 系统资源），`setPadding(24, statusBarHeight, 24, 0)` 避免与状态栏重叠
+- 移除左右翻页按钮（‹ ›），文件名居中显示
+- 布局：✕ 关闭 → [文件名居中] → ⟳ 旋转 → ⓘ 信息 → ⋮ 更多
+
+---
+
+## 三、主题色对齐
+
+### 3.1 颜色规范
+
+| 元素 | 深色 | 浅色 |
+|------|------|------|
+| 图片查看背景 | `#171717` | `#E5E5E5` |
+| 顶部菜单栏/底栏/缩略图条 | `#171717`（半透明 `#CC` 前缀） | `#E5E5E5`（半透明 `#E6` 前缀） |
+| 抽屉面板背景 | `#171717` | `#FFFFFF` |
+| 边框 | `#1F2937` | `#E5E7EB` |
+| 主文字 | `#F3F4F6` | `#1F2937` |
+| 次文字 | `#9CA3AF` | `#6B7280` |
+| 强调色 | `#3B82F6` | `#3B82F6` |
+
+### 3.2 主题应用
+
+- `isDarkTheme` 字段通过 `open()` 的 `options.isDark` 从前端传入（根据 `state.settings.theme` 计算）
+- `applyTheme()` 方法在 open 时应用主题到所有 UI（背景、顶栏、底栏、缩略图条、抽屉所有 TextView）
+- 顶栏/底栏/缩略图条背景从 `#CC000000`（纯黑半透明）改为 `#CC171727`/`#E6E5E5E5`（主题色半透明）
+- 浅色模式下顶栏标题文字为 `#1F2937`（深色），确保可见
+- **沉浸模式背景色**：`applyTheme()` 中背景色 `setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())`
+  - 进入沉浸模式时背景色改为 `Color.BLACK`，退出还原主题色
+  - 切换图片时 `open()` 会重入调用 `applyTheme()`，若处于沉浸模式则保持黑色，避免被重置为主题色导致闪烁
+
+### 3.3 沉浸模式背景色动画
+
+进入/退出沉浸模式时，背景色与 topBar/缩略图条/底部信息的位移动画同步过渡（200ms）：
+
+```kotlin
+private fun toggleImmersive() {
+    if (drawerOpen) return  // 抽屉打开时不响应单击沉浸
+    isImmersive = !isImmersive
+    // topBar/缩略图条/底部信息 translationY 动画（200ms）
+    // ...
+    // 背景色与 UI 元素动画同步过渡：进入沉浸→黑色，退出沉浸→主题色
+    val fromColor = if (isImmersive) colorBg() else Color.BLACK
+    val toColor = if (isImmersive) Color.BLACK else colorBg()
+    val colorAnim = ValueAnimator.ofObject(ArgbEvaluator(), fromColor, toColor)
+    colorAnim.duration = 200
+    colorAnim.addUpdateListener { anim -> setBackgroundColor(anim.animatedValue as Int) }
+    colorAnim.start()
+    listener?.onImmersiveToggle(isImmersive)
+}
+```
+
+- 使用 `ValueAnimator` + `ArgbEvaluator` 实现颜色平滑过渡，避免瞬间切换的视觉跳变
+- `close()` 中显式还原背景色：`setBackgroundColor(colorBg())`，防止下次打开残留黑色
+
+---
+
+## 四、手势与动画
+
+本章是查看器体验的核心，涵盖跟手滑动、贝塞尔曲线、抖动修复、帧率优化和图片间隔。
+
+### 4.1 跟手联动滑动
+
+**目标**：滑动切换图片时，当前图片跟随手指移动，同时邻接图片（上一张/下一张）从屏幕外滑入，实现"跟手联动"——类似系统相册的体验，而非松手后才出现下一张。
+
+**实现**（`ZoomableImageView` + `NativeGalleryView` 协作）：
+
+`ZoomableImageView` 在 fit 状态（`currentScale <= 1.01f`）下检测水平主导滑动，进入 `swipeDragging` 模式：
+- `ACTION_DOWN` 时记录 `swipeStartX = event.rawX`
+- `onScroll` 中计算 `totalDx = e2.rawX - swipeStartX`，超过 `touchSlop` 且水平为主时触发
+- 触发后重置 `swipeStartX = currentRawX`，使拖动偏移从 0 开始，避免 touchSlop 范围内的瞬间跳变
+- 拖动中通过 `onSwipeDrag(dx)` 实时通知父级偏移量
+- 松手时通过 `onSwipeEnd(dx, velocityX)` 通知最终位移和速度
+
+`NativeGalleryView.onSwipeDrag(dx)`：
+```kotlin
+override fun onSwipeDrag(dx: Float) {
+    if (isAnimating.get()) return
+    if (dx == 0f) return
+    val actView = activeView
+    actView.translationX = dx
+    val dir = if (dx > 0) -1 else 1
+    val adjacentIndex = currentIndex + dir
+    if (adjacentIndex < 0 || adjacentIndex >= images.size) return
+    if (!swipeAdjacentPrepared || swipeAdjacentDirection != dir) {
+        prepareSwipeAdjacent(dir)
+    }
+    val adj = swipeCachedAdjacentView
+    if (adj != null && swipeAdjacentPrepared && swipeAdjacentDirection == dir) {
+        adj.translationX = dx + dir * swipeCachedWidth
+    }
+}
+```
+
+- 当前图片 `translationX = dx` 跟随手指
+- 邻接图片从 `dir * swipeCachedWidth`（屏幕外）同步滑入：`translationX = dx + dir * swipeCachedWidth`
+- `prepareSwipeAdjacent` 首次调用时预加载邻接图到非活跃视图，缓存视图引用和宽度避免每帧重复计算
+- **抽屉打开时不阻断滑动**：仅检查 `isAnimating`，不检查 `drawerOpen`，用户可在抽屉展开状态下正常左右滑动切换图片（见 4.9）
+
+**滑动期间状态缓存**（避免每帧开销）：
+```kotlin
+private var swipeAdjacentPrepared = false
+private var swipeAdjacentDirection = 0
+private var swipeCachedWidth = 0f          // 屏幕宽度 + 间隔，避免每帧调用 width.toFloat()
+private var swipeCachedAdjacentView: ZoomableImageView? = null  // 避免每帧调用 adjacentView()
+```
+
+### 4.2 翻页触发阈值
+
+`onSwipeEnd` 判断翻页条件：
+```kotlin
+val threshold = resources.displayMetrics.density * SWIPE_THRESHOLD_DP  // 32dp
+val shouldNavigate = abs(dx) > threshold || (abs(velocityX) > SWIPE_VELOCITY_THRESHOLD && abs(dx) > touchSlopForSwipe)
+```
+
+- **固定 32dp 阈值**：不使用屏幕宽度百分比，因为横竖屏宽度差异大（竖屏 1752px vs 横屏 2800px），百分比会导致竖屏难以触发、横屏过于敏感
+- **速度 fallback**：速度超过 200 且位移超过 touchSlop 也可触发，支持轻快滑动
+
+翻页时调 `navigateFromSwipe(dir, dx)`，未达阈值调 `bounceBackSwipe(dx, dir)` 回弹。
+
+### 4.3 贝塞尔曲线插值器
+
+```kotlin
+private val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
+```
+
+`PathInterpolator(0f, 0f, 0.2f, 1f)` 是强 ease-out 曲线：进场初期快速移动，接近中心时平滑减速。应用于所有翻页动画（滑出、滑入、回弹），时长 280ms。
+
+### 4.4 抖动修复（关键）
+
+经历多轮调试，抖动有三个独立根因，均需修复：
+
+#### 根因 1：GestureDetector e1 被 recycle
+
+**现象**：手指滑动时图片疯狂左右移动，形成两张图重叠的视觉效果。`e2.x` 在两个值之间交替跳动（约 18px 差值）。
+
+**根因**：`GestureDetector.onScroll` 的 `e1` 参数会被 Android 内部 recycle，导致 `swipeStartX = e1?.x` 在不同 `onScroll` 调用中返回不同值。
+
+**修复**：
+- 在 `onTouchEvent` 的 `ACTION_DOWN` 中记录 `swipeStartX = event.rawX`（使用 `getRawX()` 而非 `getX()`，rawX 不受 View 变换影响且更稳定）
+- 在 `onScroll` 中使用 `e2.rawX - swipeStartX` 计算偏移，不再依赖 `e1.x`
+- `swipeStartX` 只在 `ACTION_DOWN` 时设置一次，后续 `onScroll` 调用中保持不变
+
+#### 根因 2：setImageDrawable 的 post { resetToCenter() } 延迟执行
+
+**现象**：跟手滑动过程中图片位置突然跳动。
+
+**根因**：`ZoomableImageView.setImageDrawable` 中使用 `post { resetToCenter() }`。当邻接视图在滑动开始时通过 Coil 加载图片，`setImageDrawable` 被调用，`post` 将 `resetToCenter` 延迟到下一个 UI 帧执行。此时用户正在拖动，`resetToCenter` 会重置 matrix 导致图片位置跳变。
+
+**修复**：改为条件性立即调用：
+```kotlin
+override fun setImageDrawable(drawable: android.graphics.drawable.Drawable?) {
+    super.setImageDrawable(drawable)
+    if (drawable != null) {
+        if (width > 0 && height > 0) {
+            resetToCenter()  // 已 layout，立即调用
+        } else {
+            post { resetToCenter() }  // 未 layout，延迟到布局完成
+        }
+    }
+}
+```
+
+#### 根因 3：onNavigate 回调导致 WebView 重新调用 open()
+
+**现象**：翻页动画进行中图片突然闪烁/重载。
+
+**根因**：翻页完成后 `listener?.onNavigate(currentIndex)` 回调 MainActivity，MainActivity 通过 `evaluateJavascript` 通知 WebView。WebView 的 `onNavigate` 处理逻辑会重新调用 `open(images, currentIndex, options)`，导致 `loadCurrent()` 被再次触发，在动画进行中重新加载图片。
+
+**修复**：在 `open()` 中添加 `skipReload` 逻辑：
+```kotlin
+val skipReload = isOpen && startIndex == currentIndex && this.images.size == images.size
+// ...
+if (skipReload) {
+    Log.i("NativeViewer", "open: skipping reload, already at index $currentIndex (onNavigate re-entry)")
+} else {
+    loadCurrent(animateIn = false)
+}
+```
+
+当 `onNavigate` 回调导致重新进入 `open()` 且索引和图片列表未变时，跳过重新加载。
+
+#### 根因 4：onNavigate 期间 JSON 序列化往返
+
+**现象**：翻页动画期间帧率下降。
+
+**根因**：`onNavigate` 在动画进行中同步触发，MainActivity 将当前图片列表 JSON 序列化（约 49KB）再通过 `evaluateJavascript` 传给 WebView 解析，阻塞主线程。
+
+**修复**：将 `onNavigate` 回调延迟到动画结束的 `withEndAction` 中执行：
+```kotlin
+incoming.animate()
+    .translationX(0f)
+    .setDuration(duration)
+    .setInterpolator(SWIPE_INTERPOLATOR)
+    .withEndAction {
+        isAnimating.set(false)
+        // ... 清理状态 ...
+        listener?.onNavigate(currentIndex)  // 延迟到动画结束后
+        preloadNeighbors()
+        thumbnailAdapter.highlight(currentIndex)
+    }
+    .start()
+```
+
+`navigateFromSwipe` 和 `navigateTo` 均做了此调整。
+
+#### 根因 5：ViewPropertyAnimator 与拖动冲突
+
+**现象**：手指按下开始新拖动时图片抖动。
+
+**根因**：上一次回弹动画（`ViewPropertyAnimator`）仍在运行，与新拖动的 `translationX` 赋值冲突。
+
+**修复**：`ZoomableImageView.onTouchEvent` 的 `ACTION_DOWN` 中通过 `onTouchDown()` 回调通知父级，父级取消残留动画：
+```kotlin
+// NativeGalleryView
+override fun onTouchDown() {
+    activeView.animate().cancel()
+}
+```
+
+### 4.5 帧率优化
+
+**目标**：在三星 Tab S8+（120Hz 屏幕）上达到接近系统相册的流畅度。
+
+**诊断**：通过 `touch2.log` 分析帧间隔，发现帧率在 60-80fps 之间波动（8ms 和 16-17ms 交替），未达到 120fps 目标。
+
+**优化措施**：
+
+#### 1. 移除每帧日志
+
+每帧 2 次 `Log.i` 调用（ZIV_Swipe + NativeGalleryView）涉及字符串格式化 + Binder IPC + 日志写入，约 0.5-1ms/次，2 次 = 1-2ms，足以将帧时间推过 8.33ms（120Hz 阈值）。
+
+移除 `onSwipeDrag` 热路径中的所有 `Log.i`，仅保留 `ACTION_DOWN`/`ACTION_UP`/`TRIGGER` 等事件级日志。
+
+#### 2. 硬件层加速
+
+滑动期间启用 `LAYER_TYPE_HARDWARE`，将视图渲染缓存为 GPU 纹理，`translationX` 变为纯纹理位移，无需重新绘制：
+
+```kotlin
+private fun setSwipeHardwareLayers(enabled: Boolean) {
+    val layerType = if (enabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
+    primaryView.setLayerType(layerType, null)
+    secondaryView.setLayerType(layerType, null)
+}
+```
+
+- `prepareSwipeAdjacent` 中启用
+- `navigateFromSwipe` / `bounceBackSwipe` 的 `withEndAction` 中关闭
+- `cleanupSwipeAdjacentImmediate` 中关闭
+
+#### 3. 热路径值缓存
+
+`onSwipeDrag` 每帧调用，避免：
+- `width.toFloat()`（视图属性访问）
+- `adjacentView()`（tag 判断）
+
+改为在 `prepareSwipeAdjacent` 时一次性缓存到 `swipeCachedWidth` 和 `swipeCachedAdjacentView`。
+
+#### 4. 延迟 onNavigate 回调
+
+如 4.4 根因 4 所述，将 JSON 序列化往返延迟到动画结束后。
+
+**结果**：用户确认"效果非常流畅"，帧率达到 120fps。
+
+### 4.6 滑动图片间隔
+
+**问题**：竖屏下左右滑动切换图片时，两张图片紧贴在一起无间隔。横屏正常（图片有左右黑边留白，自然有间隔）。
+
+**根因**：两个视图均为 `MATCH_PARENT`（全屏宽度），邻接视图定位 `dir * cw`（cw = 屏幕宽度）使其边缘正好与当前视图边缘相接。竖屏下图片填满全宽，图片内容也紧贴；横屏下图片有 letterboxing，内容有自然间隔。
+
+**修复**：引入固定间隔常量，所有滑动定位计算使用 `cw + gapPx`：
+
+```kotlin
+companion object {
+    /** 翻页时两张图片之间的视觉间隔（dp），避免竖屏下图片紧贴 */
+    private const val SWIPE_GAP_DP = 16f
+}
+
+/** 翻页间隔的像素值 */
+private val swipeGapPx: Float get() = resources.displayMetrics.density * SWIPE_GAP_DP
+```
+
+**影响的位置**：
+
+| 函数 | 修改 | 说明 |
+|------|------|------|
+| `prepareSwipeAdjacent` | `adj.translationX = dir * (cw + gapPx)`；`swipeCachedWidth = cw + gapPx` | 邻接视图初始定位含间隔，缓存宽度含间隔 |
+| `onSwipeDrag` | 无需修改（使用 `swipeCachedWidth`） | 自动包含间隔 |
+| `navigateFromSwipe` | `cw = width.toFloat() + swipeGapPx`；outgoing 滑出到 `-direction * cw` | 滑出动画目标含间隔 |
+| `bounceBackSwipe` | 无需修改（使用 `swipeCachedWidth`） | 自动包含间隔 |
+| `navigateTo` | `cw = width.toFloat() + swipeGapPx`；incoming 定位和 outgoing 滑出均含间隔 | 缩略图点击触发的翻页也有一致间隔 |
+
+**视觉效果**：滑动时两张图片之间保持 16dp 间隔，横竖屏统一适用。调整 `SWIPE_GAP_DP` 常量即可改变间隔大小。
+
+### 4.7 抽屉展开/收起动画
+
+抽屉动画采用 **progress 驱动**架构：单一浮点值 `progress`（0=关闭, 1=打开）统一驱动所有视觉状态，动画和跟手使用同一套渲染逻辑，确保一致性。
+
+#### 4.7.1 `applyDrawerProgress(progress)` — 统一视觉驱动
+
+所有抽屉视觉状态由这一个方法驱动，动画的 `addUpdateListener` 和跟手的 `onVerticalSwipeDrag` 都调用它：
+
+```kotlin
+private fun applyDrawerProgress(progress: Float) {
+    val drawerWidthPx = (resources.displayMetrics.density * 320)
+    val totalWidth = width.toFloat()
+    val imageW = (totalWidth - progress * drawerWidthPx).toInt().coerceAtLeast(0)
+    // 抽屉位移
+    metadataDrawer.translationX = (1f - progress) * drawerWidthPx
+    // 图片宽度 + 填充进度（在 layoutParams 之前设置，确保 onSizeChanged→resetToCenter 读到最新值）
+    primaryView.drawerFillProgress = progress
+    secondaryView.drawerFillProgress = progress
+    // 全屏宽度基准（见 4.7.4）
+    primaryView.drawerFullWidth = totalWidth
+    secondaryView.drawerFullWidth = totalWidth
+    primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+    secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+    // topBar 向上滑出（沉浸模式下始终保持隐藏，不受抽屉进度影响）
+    if (topBar.height > 0) {
+        topBar.translationY = if (isImmersive) -topBar.height.toFloat() else -topBar.height * progress
+    }
+    // 缩略图条向下滑出（沉浸模式下始终保持隐藏）
+    if (thumbnailStrip.height > 0) {
+        thumbnailStrip.translationY = if (isImmersive) height.toFloat() else thumbnailStrip.height * progress
+    }
+    // 底部信息向下滑出（沉浸模式下始终保持隐藏）
+    if (bottomInfo.visibility == VISIBLE && bottomInfo.height > 0) {
+        bottomInfo.translationY = if (isImmersive) height.toFloat() else bottomInfo.height * progress
+    }
+}
+```
+
+- 在 `layoutParams` 之前设置 `drawerFillProgress` 和 `drawerFullWidth`，确保 `onSizeChanged` → `resetToCenter()` 能读到最新值
+- **沉浸模式兼容**（2026-07-12 修复）：抽屉打开/关闭过程中若处于沉浸模式，topBar/缩略图条/底部信息始终保持隐藏状态（`if (isImmersive)` 分支），避免抽屉关闭动画过程中这些 UI 元素重新出现再被隐藏造成的闪烁
+
+#### 4.7.2 `animateDrawerTo(open, fromProgress)` — 动画收尾
+
+`toggleDrawer()` 在打开抽屉前保存当前沉浸状态（`immersiveBeforeDrawer`），翻转 `drawerOpen` 后调用 `animateDrawerTo`；跟手松手后也调用此方法从当前位置动画到目标状态：
+
+```kotlin
+private fun toggleDrawer() {
+    if (!drawerOpen) {
+        // 即将打开抽屉——保存当前沉浸状态，关闭时恢复
+        immersiveBeforeDrawer = isImmersive
+    }
+    drawerOpen = !drawerOpen
+    val currentProgress = primaryView.drawerFillProgress
+    animateDrawerTo(drawerOpen, fromProgress = currentProgress)
+}
+```
+
+`animateDrawerTo` 使用 `ValueAnimator` 从 `fromProgress` 动画到目标（0 或 1），280ms，`AccelerateDecelerateInterpolator`：
+- `addUpdateListener` 每帧调 `applyDrawerProgress(anim.animatedValue)`
+- `onAnimationEnd`（非 cancelled 时）：精确设置最终状态 + 调 `listener?.onImmersiveToggle(...)` 同步系统状态栏
+- `cancelled` 标志检测快速连点取消，取消时跳过最终状态设置由新动画接管
+- 显式设置最终 `layoutParams` 宽度（打开=精确像素，关闭=MATCH_PARENT）防止浮点漂移
+- `drawerWidthAnimator` 字段跟踪当前动画，`close()` 时 cancel 防止残留更新
+
+**沉浸状态与抽屉状态解耦**（2026-07-12 修复）：
+
+`onAnimationEnd` 不再直接设 `isImmersive = open`，而是根据 open/close 分支处理：
+
+```kotlin
+override fun onAnimationEnd(animation: Animator) {
+    drawerWidthAnimator = null
+    if (cancelled) return
+    applyDrawerProgress(targetProgress)
+    // 显式设置最终 layoutParams 宽度
+    val finalW = if (open) (totalWidth - drawerWidthPx).toInt().coerceAtLeast(0) else LayoutParams.MATCH_PARENT
+    primaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
+    secondaryView.layoutParams = LayoutParams(finalW, LayoutParams.MATCH_PARENT)
+    if (open) {
+        // 抽屉打开：隐藏系统状态栏，但不改变 isImmersive（保留单击沉浸状态）
+        listener?.onImmersiveToggle(true)
+    } else {
+        // 抽屉关闭：恢复抽屉打开前的沉浸状态
+        isImmersive = immersiveBeforeDrawer
+        listener?.onImmersiveToggle(immersiveBeforeDrawer)
+        // 还原背景色：若之前在沉浸模式则保持黑色，否则还原主题色
+        setBackgroundColor(if (immersiveBeforeDrawer) Color.BLACK else colorBg())
+    }
+}
+```
+
+- **抽屉打开**：仅调 `onImmersiveToggle(true)` 隐藏系统状态栏（视觉上等同沉浸），但不修改 `isImmersive` 字段，保留单击触发的沉浸状态
+- **抽屉关闭**：恢复 `immersiveBeforeDrawer` 保存的沉浸状态，并据此设置背景色
+- 这样沉浸模式下开关抽屉后能正确回到沉浸状态（topBar 隐藏、背景黑色），而非恢复 topBar 显示
+
+`onTouchDown` 中也保存 `immersiveBeforeDrawer`（垂直跟手可能打开抽屉）：
+
+```kotlin
+override fun onTouchDown() {
+    if (isAnimating.get()) return
+    // ... 清理动画 ...
+    drawerDragStartOpen = drawerOpen
+    drawerDragStartProgress = primaryView.drawerFillProgress
+    if (!drawerOpen) {
+        // 可能即将通过垂直手势打开抽屉——保存沉浸状态
+        immersiveBeforeDrawer = isImmersive
+    }
+    drawerWidthAnimator?.cancel()
+    drawerWidthAnimator = null
+}
+```
+
+#### 4.7.3 全屏样式（topBar + 系统状态栏同步隐藏）
+
+抽屉展开时形成全屏显示样式：
+- **topBar**：`translationY = -topBar.height * progress`（非沉浸）或 `-topBar.height`（沉浸，始终保持隐藏），向上滑出隐藏
+- **缩略图条 / 底部信息**：`translationY = height * progress`（非沉浸）或 `height`（沉浸），向下滑出隐藏
+- **系统状态栏**：`animateDrawerTo` 的 `onAnimationEnd` 调 `listener?.onImmersiveToggle(...)`，MainActivity 据此显示/隐藏系统 UI
+- **沉浸模式兼容**（2026-07-12 修复）：`applyDrawerProgress` 中所有 UI 元素的 translationY 均检查 `isImmersive`，沉浸模式下无论抽屉 progress 为何都保持隐藏。避免抽屉关闭动画过程中（progress 从 1 → 0），topBar 等元素因 progress 减小而短暂重新出现，造成闪烁
+- `close()` 中检查 `isImmersive || drawerOpen`，若其中任一为 true 则调 `listener?.onImmersiveToggle(false)` 恢复系统状态栏（因为抽屉打开时虽未设 `isImmersive=true`，但状态栏已被隐藏，需要恢复）
+
+```kotlin
+// close() 中的状态栏恢复
+if (isImmersive || drawerOpen) {
+    listener?.onImmersiveToggle(false)
+}
+isImmersive = false
+setBackgroundColor(colorBg())  // 还原主题色，避免下次打开残留黑色
+```
+
+#### 4.7.4 填充模式（fill）与 `drawerFullWidth` 修复
+
+抽屉打开时图片从"适应"（fit，整图可见留白）平滑过渡到"填充"（fill，裁剪填满视图），关闭时反向。
+
+`ZoomableImageView` 的 `drawerFillProgress` 字段（0=fit, 1=fill）驱动 `resetToCenter()` 在 fit/fill scale 之间插值。
+
+**"缩小再还原"问题修复**：最初 `fitS` 和 `fillS` 都基于当前视图宽度 `vw` 计算，而 `vw` 随抽屉展开减小。对于横屏图片（宽 > 高），`fitS = min(vw/logicW, vh/logicH)` 在中间过程因 `vw` 减小而变为宽度受限导致下降，而 `fillS` 同时变化，造成 fitScale 先降后升——视觉上图片缩小再还原。
+
+修复：新增 `drawerFullWidth` 字段（全屏宽度基准，由 `applyDrawerProgress` 设置为 `NativeGalleryView.width`）。`resetToCenter()` 中：
+- `fitS` 基于 `drawerFullWidth`（**固定**全屏宽度），不随 vw 变化
+- `fillS` 基于当前 `vw`（随抽屉宽度变化），实现"填充剩余区域"
+
+```kotlin
+val fitVw = if (drawerFullWidth > 0f) drawerFullWidth else vw
+val fitS = min(fitVw / logicW, vh / logicH)   // 适应：基于全屏宽度（固定）
+val fillS = max(vw / logicW, vh / logicH)     // 填充：基于当前视图宽度
+fitScale = fitS + (fillS - fitS) * drawerFillProgress
+```
+
+效果：
+- **横屏图片**（fitS ≈ fillS）：fitScale 全程恒定，图片不缩放，只是视图变窄裁剪
+- **竖屏图片**：fitS 固定（小），fillS 随 vw 变化，fitScale 平滑放大填满剩余区域
+
+`close()` 重置 `drawerFillProgress = 0f`。
+
+#### 4.7.5 起始宽度读 `layoutParams.width`（非 `View.width`）
+
+`View.width` 返回上次 layout pass 的实际宽度，在某些布局时序下返回过期值。实测抽屉打开动画结束后 `primaryView.width` 报告 2800（全屏宽度），而最后一次 `onSizeChanged` 显示为 2120（压缩后宽度），导致关闭动画 `startWidth=2800=targetWidth` 变成 no-op。
+
+`animateDrawerTo` 通过 `fromProgress` 参数（调用方传 `primaryView.drawerFillProgress`）避免直接读宽度，`drawerFillProgress` 可靠反映当前状态。
+
+#### 4.7.6 旋转屏幕处理（onMeasure）
+
+抽屉打开时 `primaryView`/`secondaryView` 的 `layoutParams.width` 是固定像素值，旋转后不会自动适配新屏幕宽度，导致图片偏左、中间留白。
+
+关键时序问题：`onSizeChanged` 在 layout 遍历**期间**被调用，此时子 View 已用旧 `layoutParams` 完成测量。即使同步设置新 `layoutParams`，也不会在当前 layout pass 生效，会被推迟到下一次 layout——导致连续旋转时 `layoutParams` 永远落后一帧。
+
+修复：覆盖 `onMeasure`（而非 `onSizeChanged`），在 `super.onMeasure()` **之前**设置子 View 的 `layoutParams`，同一 pass 即生效：
+```kotlin
+override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+    val w = MeasureSpec.getSize(widthMeasureSpec)
+    val h = MeasureSpec.getSize(heightMeasureSpec)
+    if (w > 0 && h > 0 && drawerOpen && width > 0 && w != width) {
+        drawerWidthAnimator?.cancel()
+        val drawerWidthPx = (resources.displayMetrics.density * 320).toInt()
+        val imageW = (w - drawerWidthPx).coerceAtLeast(0)
+        primaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+        secondaryView.layoutParams = LayoutParams(imageW, LayoutParams.MATCH_PARENT)
+    }
+    super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+}
+```
+`onSizeChanged` 仅保留 `drawerWidthAnimator?.cancel()` + 重新应用 `topBar.translationY`（旋转后 topBar.height 可能变化）。
+
+**调试日志**：
+- `ZIV_Size`：`onSizeChanged` 每次 fire 时记录 w/h/oldw/oldh/fillProg + 计数器
+- `ZIV_Reset`：`resetToCenter` 计算结果（fitVw/fitS/fillS/fillProg/fitScale 新旧值对比），可发现不连续跳变
+- `ZIV_Img`：`setImageDrawable` 调用时机
+- `NativeGalleryView` `animateDrawerTo` 日志记录 `fromProgress`/`targetProgress`/`primaryW`/`lpW`/`fillProg`
+
+### 4.8 返回键交互
+
+返回键采用三层防御机制，确保抽屉和查看器均可通过返回键关闭：
+
+**第一层：`dispatchKeyEvent`（NativeGalleryView 直接处理）**
+
+NativeGalleryView 通过 `WindowManager.addView()` 以 `TYPE_APPLICATION_PANEL` 窗口添加。`open()` 时调用 `requestFocus()` 使窗口获取焦点，从而直接在 `dispatchKeyEvent` 中接收 `KEYCODE_BACK`：
+
+```kotlin
+override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+        if (event.action == KeyEvent.ACTION_UP) {
+            if (drawerOpen) closeDrawer()
+            else if (isOpen) listener?.onClose()
+        }
+        return true  // 消费事件，阻止传播到 OnBackPressedDispatcher
+    }
+    return super.dispatchKeyEvent(event)
+}
+```
+
+- 抽屉打开 → `closeDrawer()` → `toggleDrawer()` 收起抽屉
+- 抽屉未打开但查看器打开 → `listener?.onClose()` 关闭查看器
+- `init` 中设置 `isFocusable = true` + `isFocusableInTouchMode = true` 确保可获取焦点
+
+**第二层：`OnBackPressedDispatcher`（Activity 级回调）**
+
+`MainActivity.setupBackPressedHandler()` 注册 `OnBackPressedCallback`，当 NativeGalleryView 窗口未获取焦点时作为后备：
+- `ngv.isDrawerOpen()` → `ngv.closeDrawer()`
+- 否则 → `closeNativeViewer()` + `onClose()` 回调
+- 均不打开时 → 向 WebView 派发 `android-back-press` 事件
+
+**第三层：前端 `handleAndroidBackPress`（WebView 事件处理）**
+
+前端监听 `android-back-press` 事件，通过 ref 访问最新状态（避免闭包过期）：
+- `useNativeViewerRef.current && nativeViewerActiveRef.current` → `invoke('android_close_drawer')`
+- Rust 命令 `android_close_drawer` → JNI 调 `MainActivity.closeNativeDrawer()`
+
+> **闭包过期修复**：`nativeViewerActive` 和 `useNativeViewer` 是 React state/derived value，但 useEffect 依赖数组不包含它们。使用 `useRef` 镜像最新值，事件处理器通过 `.current` 访问，避免 stale closure 导致条件判断始终为 false。
+
+**`onClose` 回调立即重置状态**：
+
+`MainActivity.onClose` 回调中增加 `view.close()` 调用，确保查看器状态（`isOpen`、`drawerOpen`、抽屉 translation、view 宽度、immersive）在窗口移除时立即重置，而非等待异步的 `closeNativeViewer()` 路径。
+
+**Android 返回手势优先级**：
+1. 收起元数据抽屉
+2. 关闭原生查看器
+3. 关闭右键菜单
+4. 退出全屏
+5. 退出编辑模式
+6. 取消选择
+7. 关闭标签页
+
+### 4.9 残留邻接视图清理
+
+`cleanupSwipeAdjacentImmediate()` 用于在非滑动路径（如缩略图点击）切换图片时，清理可能残留的邻接视图：
+
+```kotlin
+private fun cleanupSwipeAdjacentImmediate() {
+    if (swipeAdjacentPrepared) {
+        val adj = swipeCachedAdjacentView ?: adjacentView()
+        adj.animate().cancel()
+        adj.translationX = 0f
+        adj.visibility = GONE
+        adj.setImageDrawable(null)
+        swipeAdjacentPrepared = false
+        swipeAdjacentDirection = 0
+    }
+    swipeCachedAdjacentView = null
+    swipeCachedWidth = 0f
+    setSwipeHardwareLayers(false)
+}
+```
+
+`navigateTo` 开头调用此方法，防止跟手滑动残留的邻接视图影响后续动画。
+
+### 4.10 抽屉打开时滑动切换图片
+
+抽屉展开后，用户仍可左右滑动切换图片，无需先关闭抽屉。
+
+**手势处理器调整**：`onSwipeDrag`、`onSwipeEnd`、`onTouchDown` 仅检查 `isAnimating`，不再检查 `drawerOpen`：
+- `onSingleTapConfirmed` 仍保留 `if (drawerOpen) return`，抽屉打开时单击不触发沉浸模式切换
+
+**宽度计算调整**：抽屉打开时 `primaryView`/`secondaryView` 宽度被压缩为 `totalWidth - 320dp`，翻页滑动需基于压缩后的宽度计算邻接图位置。新增 `effectiveViewWidth()` 辅助方法：
+
+```kotlin
+private fun effectiveViewWidth(): Float {
+    val pw = primaryView.width
+    return if (pw > 0) pw.toFloat() else width.toFloat()
+}
+```
+
+`prepareSwipeAdjacent`、`navigateFromSwipe`、`navigateTo` 中的 `width.toFloat()` 均替换为 `effectiveViewWidth()`，确保：
+- 邻接图定位在压缩后视图的屏幕外（`dir * (effectiveViewWidth + swipeGapPx)`）
+- 翻页动画滑出距离与压缩后视图宽度一致
+- 回弹动画通过 `swipeCachedWidth`（已使用 `effectiveViewWidth()` 计算）保持一致
+
+### 4.11 垂直手势控制抽屉（跟手呼出/收起）
+
+查看图片时，任意位置（边缘区域除外）垂直滑动可呼出/收起抽屉，过程跟手。
+
+**手势检测**（`ZoomableImageView.onScroll`）：在 fit 状态下，与水平翻页手势互斥地检测垂直主导滑动：
+- `ACTION_DOWN` 记录 `swipeStartY = event.rawY`（rawY 避免 e1 recycle）
+- `onScroll` 中计算 `totalDy = e2.rawY - swipeStartY`，超过 `touchSlop` 且垂直为主（`|totalDy| > |totalDx| * 1.5f`）时触发 `verticalSwipeDragging` 模式
+- 触发后通过 `onVerticalSwipeDrag(dy)` 实时通知父级偏移量
+- 松手时 `onVerticalSwipeEnd(dy, velocityY)` 通知最终位移和速度（`VelocityTracker` 计算）
+
+**边缘区域屏蔽**：屏幕顶部/底部 24dp 内缘不触发垂直手势，避免与系统状态栏下拉、返回主界面手势冲突：
+```kotlin
+val screenHeight = resources.displayMetrics.heightPixels
+val edgeZone = resources.displayMetrics.density * 24
+val startInVerticalEdge = swipeStartY < edgeZone || swipeStartY > screenHeight - edgeZone
+if (!swipeTriggered && !verticalSwipeTriggered && !startInVerticalEdge && ...) { /* 触发 */ }
+```
+水平翻页手势不受边缘屏蔽影响。
+
+**方向限制**：抽屉只响应"打开方向"的滑动，反向滑动无效果（避免抽屉已展开时上滑仍触发关闭）：
+- 抽屉打开（`startProgress=1`）：只允许 progress 减小（向下滑收起），上滑无效果 → `progress.coerceAtMost(startProgress)`
+- 抽屉关闭（`startProgress=0`）：只允许 progress 增大（向上滑呼出），下滑无效果 → `progress.coerceAtLeast(startProgress)`
+
+```kotlin
+override fun onVerticalSwipeDrag(dy: Float) {
+    if (isAnimating.get()) return
+    val drawerWidthPx = (resources.displayMetrics.density * 320)
+    var progress = (drawerDragStartProgress - dy / drawerWidthPx).coerceIn(0f, 1f)
+    if (drawerDragStartOpen) progress = progress.coerceAtMost(drawerDragStartProgress)
+    else progress = progress.coerceAtLeast(drawerDragStartProgress)
+    applyDrawerProgress(progress)
+}
+```
+
+**跟手状态记录**：`onTouchDown` 中记录 `drawerDragStartOpen = drawerOpen` 和 `drawerDragStartProgress = primaryView.drawerFillProgress`，并取消正在进行的抽屉动画让跟手接管。
+
+**松手判定**（`onVerticalSwipeEnd`）：根据当前进度和速度决定打开/关闭或回弹：
+- 抽屉打开时：`progress < 0.5` 或 `velocityY > 500`（快速下滑）→ 关闭，否则保持打开
+- 抽屉关闭时：`progress > 0.5` 或 `velocityY < -500`（快速上滑）→ 打开，否则保持关闭
+- 判定后调 `animateDrawerTo(targetOpen, fromProgress = currentProgress)` 平滑收尾
+
+**与水平翻页的关系**：垂直和水平手势在 `onScroll` 中互斥判定（先触发者独占），`swipeTriggered` 和 `verticalSwipeTriggered` 互斥。抽屉打开时仍可水平滑动切换图片（见 4.10），此时垂直手势方向限制为只允许收起。
+
+---
+
+## 五、ZoomableImageView 手势处理
+
+`ZoomableImageView` 是支持双击缩放、pinch-zoom、pan、fling 的 ImageView，矩阵变换通过 `Matrix` 实现，避免创建中间 Bitmap。
+
+### 5.1 缩放
+
+- `ScaleGestureDetector` 处理 pinch-zoom，缩放范围 `[0.85, MAX_SCALE]`（`MAX_SCALE = 8f`）
+- 中心点缩放：基于手指中点，公式 `translateX = focusX - (focusX - translateX) * scaleDelta`
+- 缩放小于 1 时回弹到 1.0
+- 双击缩放：基于双击点，1x → 2x → MAX_SCALE
+- **缩放后边界 clamp**（2026-07-12 修复）：`onScale` 末尾调用 `clampTranslateToBounds()`，避免快速收拢双指时 focus 在屏幕边缘导致图片缩小后完全脱离屏幕
+
+### 5.2 平移
+
+- 已放大状态（`currentScale > 1.01f`）下跟随手指平移
+- 平移期间实时调用 `clampTranslateToBounds()`，确保图片不飞出屏幕边缘（2026-07-12 修复）
+- `onFling` 使用 `OverScroller` 实现惯性滑动，fling 边界与 clamp 边界一致
+
+### 5.3 翻页手势
+
+仅在 fit 状态（`currentScale <= 1.01f`）下允许翻页手势：
+- `ACTION_DOWN` 记录 `swipeStartX = event.rawX`、`swipeStartY = event.rawY`
+- `onScroll` 检测水平主导（`|totalDx| > touchSlop` 且 `|totalDx| > |totalDy| * 1.5f`）
+- 触发后进入 `swipeDragging` 模式，通过 `onSwipeDrag(dx)` 实时通知父级
+- 松手时 `onSwipeEnd(dx, velocityX)` 通知父级决定翻页/回弹
+- `ACTION_DOWN` 时通过 `onTouchDown()` 通知父级取消残留动画
+
+### 5.4 垂直抽屉手势
+
+与翻页手势互斥，仅在 fit 状态下检测垂直主导滑动（详见 4.11）：
+- `onScroll` 检测垂直主导（`|totalDy| > touchSlop` 且 `|totalDy| > |totalDx| * 1.5f`），排除顶部/底部 24dp 边缘区域
+- 触发后进入 `verticalSwipeDragging` 模式，通过 `onVerticalSwipeDrag(dy)` 实时通知父级
+- 松手时 `onVerticalSwipeEnd(dy, velocityY)` 通知父级决定打开/关闭或回弹
+- `swipeTriggered` 与 `verticalSwipeTriggered` 互斥，先触发者独占本次手势
+
+### 5.5 旋转
+
+通过 `rotationDegrees` 字段管理（90 度递增），`setRotationDegrees` 设置后重新计算 fit scale 和居中位置。旋转后逻辑宽高互换。
+
+### 5.6 边界回弹
+
+缩放超过 1 时，平移到边界外则回弹到边界（`bounceBackToBounds`）。
+
+### 5.7 `clampTranslateToBounds()` — 实时边界约束（2026-07-12 新增）
+
+**问题**：拖动放大后的图片时，图片会漂移到屏幕外，松手后才回弹，体验不佳。
+
+**修复**：新增 `clampTranslateToBounds()` 方法，在拖动（`onScroll`）、fling、缩放（`onScale`）期间实时约束 translate 值，确保图片至少贴住屏幕一条边：
+
+```kotlin
+private fun clampTranslateToBounds() {
+    val d = drawable ?: return
+    val vw = width.toFloat()
+    val vh = height.toFloat()
+    if (vw <= 0f || vh <= 0f) return
+    val isRotated = rotationDegrees == 90 || rotationDegrees == 270
+    val logicW = (if (isRotated) d.intrinsicHeight else d.intrinsicWidth).toFloat() * fitScale * currentScale
+    val logicH = (if (isRotated) d.intrinsicWidth else d.intrinsicHeight).toFloat() * fitScale * currentScale
+    if (logicW <= vw) {
+        translateX = (vw - logicW) / 2f  // 图片比视图窄：居中
+    } else {
+        translateX = translateX.coerceIn(vw - logicW, 0f)  // 图片比视图宽：限制在 [v-logic, 0]
+    }
+    // Y 方向同理
+}
+```
+
+- 图片某边长 ≤ 视图：该方向居中（`translate = (v - logic) / 2f`）
+- 图片某边长 > 视图：translate 限制在 `[v - logic, 0]`（图片至少贴住一条边，不会完全脱离屏幕）
+- 调用点：`onScroll` 平移后、`onScale` 缩放后、`onSizeChanged` 尺寸变化后
+
+### 5.8 `allowZoom` — 抽屉打开时禁用缩放（2026-07-12 新增）
+
+**问题**：抽屉打开时缩放会与 `drawerFillProgress` 填充逻辑冲突，导致图片异常缩放。
+
+**修复**：新增 `allowZoom` 字段（默认 true），在 `onDoubleTap` 和 `onScaleBegin` 开头检查：
+
+```kotlin
+override fun onDoubleTap(e: MotionEvent): Boolean {
+    if (!allowZoom) return false
+    // ...
+}
+override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+    if (!allowZoom) return false
+    // ...
+}
+```
+
+`NativeGalleryView.applyDrawerProgress` 中根据进度设置：
+```kotlin
+primaryView.allowZoom = progress <= 0.01f  // 抽屉打开（progress>0）时禁用缩放
+secondaryView.allowZoom = progress <= 0.01f
+```
+
+### 5.9 `onScaleBegin` 清理手势状态（2026-07-12 修复）
+
+**问题**：pinch-zoom 开始时，之前的 `onScroll` 可能已设置 `swipeTriggered`/`verticalSwipeTriggered` 标志，导致缩放过程中误触发翻页或抽屉控制。
+
+**修复**：`onScaleBegin` 开头清理所有 swipe 相关状态：
+
+```kotlin
+override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+    if (!allowZoom) return false
+    isAnimating = false
+    scroller.abortAnimation()       // 取消 fling
+    removeCallbacks(flingRunnable)
+    swipeTriggered = false          // 清理 swipe 状态
+    swipeDragging = false
+    verticalSwipeTriggered = false
+    verticalSwipeDragging = false
+    return true
+}
+```
+
+同时 `onScroll` 开头新增 `if (scaleDetector.isInProgress) return false`，双指缩放进行中时不处理 scroll 事件，避免误触发翻页/抽屉手势。
+
+### 5.10 `onDoubleTap` / `animateScaleTo` fling 取消（2026-07-12 修复）
+
+**问题**：双击缩放或动画缩放期间，`flingRunnable` 可能仍在运行，覆盖缩放动画设置的 translate 值，导致图片位置漂移。
+
+**修复**：在 `onDoubleTap`、`animateScaleTo` 开头取消 fling：
+
+```kotlin
+override fun onDoubleTap(e: MotionEvent): Boolean {
+    if (!allowZoom) return false
+    scroller.abortAnimation()
+    removeCallbacks(flingRunnable)
+    // ... 缩放逻辑 ...
+}
+
+private fun animateScaleTo(targetScale: Float, focusX: Float, focusY: Float) {
+    scroller.abortAnimation()
+    removeCallbacks(flingRunnable)
+    // ... 动画逻辑 ...
+}
+```
+
+### 5.11 `animateScaleTo` fit-center 公式（2026-07-12 修复）
+
+**问题**：双击缩小到 1x 时，使用 focus 公式计算 target translate 会导致图片未居中（下方留白）。
+
+**修复**：`targetScale <= 1.001f` 时改用 fit 居中公式，而非 focus 公式：
+
+```kotlin
+val useFitCenter = targetScale <= 1.001f
+if (useFitCenter) {
+    // fit 居中：translate = (v - logic * fitScale) / 2f
+    targetTx = (vw - logicW * fitScale) / 2f
+    targetTy = (vh - logicH * fitScale) / 2f
+} else {
+    // focus 公式：保持点击点不动
+    targetTx = focusX - (focusX - startTx) * scaleDelta
+    targetTy = focusY - (focusY - startTy) * scaleDelta
+}
+```
+
+动画结束后若 `currentScale > 1.01f`，调用 `bounceBackToBounds()` 确保 focus 缩放后图片在边界内（focus 缩放只保证点击点不动，不保证整体在边界内）。
+
+### 5.12 `onSizeChanged` 保留缩放状态（2026-07-12 修复）
+
+**问题**：进入/退出沉浸模式时窗口尺寸变化（status bar 显示/隐藏），`onSizeChanged` 调用 `resetToCenter()` 会重置用户的缩放状态。
+
+**修复**：根据 `currentScale` 分支处理：
+
+```kotlin
+override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+    super.onSizeChanged(w, h, oldw, oldh)
+    if (w > 0 && h > 0) {
+        if (currentScale > 1.01f) {
+            // 放大状态：保留缩放，只重新计算 fitScale 并 clamp translate
+            val fitS = min(fitVw / logicW, vh / logicH)
+            val fillS = max(vw / logicW, vh / logicH)
+            fitScale = fitS + (fillS - fitS) * drawerFillProgress
+            clampTranslateToBounds()
+            applyMatrix()
+        } else {
+            // fit 状态：重新居中
+            resetToCenter()
+        }
+    }
+}
+```
+
+### 5.13 `ACTION_UP` bounceBack 触发条件（2026-07-12 修复）
+
+`ACTION_UP` 时检查 `isAnimating` 和 `currentScale`，避免在双击缩放动画运行期间触发 `bounceBackToBounds`：
+
+```kotlin
+if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+    // ... 翻页/垂直拖动结束处理 ...
+    // 注意：isAnimating 期间（双击缩放动画正在跑）不要触发 bounceBackToBounds，
+    // 否则 bounce 会基于中间帧 scale 算出错误的 target，覆盖双击缩放的 target。
+    // 双击缩放动画结束后会自行调用 bounceBackToBounds（见 animateScaleTo）。
+    if (!isAnimating && currentScale > 1.01f) {
+        bounceBackToBounds()
+    }
+}
+```
+
+---
+
+## 六、Coil 图片加载
+
+```kotlin
+private val imageLoader: ImageLoader by lazy {
+    ImageLoader.Builder(context)
+        .memoryCache {
+            MemoryCache.Builder(context).maxSizePercent(0.30).build()
+        }
+        .diskCache {
+            DiskCache.Builder()
+                .directory(File(context.cacheDir, "coil_viewer_cache"))
+                .maxSizeBytes(200L * 1024 * 1024)
+                .build()
+        }
+        .crossfade(false)
+        .precision(Precision.INEXACT)
+        .components {
+            // API 28+: ImageDecoderDecoder 支持 animated WebP + animated GIF（硬件解码）
+            // API < 28: GifDecoder 仅支持 animated GIF（软件解码，无 animated WebP 支持）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                add(ImageDecoderDecoder.Factory())
+            } else {
+                add(GifDecoder.Factory())
+            }
+        }
+        .build()
+}
+```
+
+- 内存缓存 30%，磁盘缓存 200MB
+- `crossfade(false)`：关闭渐变，避免与翻页动画叠加
+- `Precision.INEXACT`：允许非精确尺寸解码，提升性能
+- `onSuccess` 回调可能同步触发（缓存命中时），`setImageDrawable` 的立即 `resetToCenter` 处理此情况
+
+### 6.1 Animated WebP / GIF 动画播放
+
+**问题**：默认 Coil 把 animated WebP 解码为静帧（首帧），不播放动画。
+
+**依赖**：`io.coil-kt:coil-gif:2.7.0`（提供 `ImageDecoderDecoder` 和 `GifDecoder`）
+
+**解码器注册**：
+- API 28+（Android P）：`ImageDecoderDecoder.Factory()` — 基于 Android `ImageDecoder` API，支持 animated WebP + animated GIF，硬件加速
+- API < 28：`GifDecoder.Factory()` — 基于 `Movie` 的软件解码，仅支持 animated GIF（无 animated WebP 支持，平台限制）
+
+> **注意**：Coil 2.x 中类名为 `ImageDecoderDecoder`（非 `AnimatedImageDecoder`，后者是 Coil 3.x 命名）。
+
+**动画启停**（`ZoomableImageView.setImageDrawable`）：
+```kotlin
+override fun setImageDrawable(drawable: Drawable?) {
+    // 停止旧 drawable 的帧动画
+    (getDrawable() as? Animatable)?.stop()
+    super.setImageDrawable(drawable)
+    if (drawable != null) {
+        // 启动新 drawable 的帧动画（AnimatedImageDrawable 不自动播放，需显式 start）
+        (drawable as? Animatable)?.start()
+        // ... resetToCenter ...
+    }
+}
+```
+
+- `AnimatedImageDrawable`（API 28+）实现 `Animatable2`（继承 `Animatable`），需显式 `start()` 才会播放
+- `MovieDrawable`（coil-gif）也实现 `Animatable`，同样需 `start()`
+- 通过 `Animatable` 接口统一处理两种动画 drawable
+- 替换图片时先 `stop()` 旧动画，避免后台帧动画浪费 CPU
+- `close()` 中清除两个 View 的 drawable（`setImageDrawable(null)`），确保查看器关闭后动画停止
+
+**矩阵兼容性**：`ScaleType.MATRIX` + `imageMatrix` 与 `AnimatedImageDrawable` 完全兼容 — drawable 内部处理帧切换，ImageView 的矩阵变换逐帧应用，缩放/平移/旋转不影响动画播放。
+
+**缩略图条/抽屉预览**：使用普通 `ImageView`（非 `ZoomableImageView`），不调用 `start()`，故缩略图和预览图只显示首帧（符合预期，避免性能浪费）。
+
+---
+
+## 七、修改文件清单
+
+### Kotlin
+
+| 文件 | 修改内容 |
+|------|---------|
+| [NativeGalleryView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/NativeGalleryView.kt) | 双缓冲架构、WindowManager 可见性、抽屉面板、主题色、手势跟手滑动、贝塞尔曲线、帧率优化（硬件层/缓存/日志移除）、图片间隔、skipReload、延迟 onNavigate、编辑 Dialog、双向同步、applyDrawerProgress/animateDrawerTo progress 驱动动画、全屏样式（topBar/状态栏同步隐藏）、垂直跟手手势控制抽屉、drawerFullWidth 修复缩放、onMeasure 旋转修复、**沉浸模式背景色动画（ValueAnimator+ArgbEvaluator）、applyTheme 尊重 isImmersive、沉浸状态与抽屉状态解耦（immersiveBeforeDrawer）、applyDrawerProgress 尊重 isImmersive、close 检查 isImmersive||drawerOpen** |
+| [ZoomableImageView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/ZoomableImageView.kt) | e1 recycle 修复（rawX）、swipeDragging 模式、跟手拖动回调、setImageDrawable 立即 resetToCenter、onTouchDown 回调、drawerFillProgress（fit/fill 插值）、drawerFullWidth（固定 fitS 基准）、垂直滑动检测（onVerticalSwipeDrag/End）、边缘区域屏蔽、**clampTranslateToBounds 实时边界约束、allowZoom 抽屉打开时禁用缩放、onScaleBegin 清理 swipe 状态 + 取消 fling、onScroll 检查 scaleDetector.isInProgress、onDoubleTap/animateScaleTo 取消 fling、animateScaleTo fit-center 公式、onSizeChanged 保留缩放状态、ACTION_UP bounceBack 触发条件、onScale 缩放后 clamp** |
+| [MainActivity.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/MainActivity.kt) | WindowManager addView/removeView、JSON 解析扩展、closeNativeDrawer、onUpdateFile bridge、onDestroy 清理、INFO 级日志、onImmersiveToggle 系统状态栏控制 |
+
+### Rust
+
+| 文件 | 修改内容 |
+|------|---------|
+| [lib.rs](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/src/lib.rs) | `android_open_native_viewer`、`android_close_native_viewer`、`android_close_drawer`、`android_update_native_item` 命令 |
+
+### TypeScript
+
+| 文件 | 修改内容 |
+|------|---------|
+| [App.tsx](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src/App.tsx) | 序列化扩展（serializeImagesForNativeViewer）、ImageViewer 不渲染、handleAndroidBackPress async、bridge onUpdateFile、nativeViewerActive 状态 |
+
+---
+
+## 八、尝试过但放弃的方案
+
+### 8.1 addContentView 添加原生查看器（已放弃）
+
+使用 `addContentView()` 将 NativeGalleryView 添加到 Activity content frame。但 Tauri WebView z-order 更高，原生查看器被完全遮挡。改用 WindowManager `TYPE_APPLICATION_PANEL` 独立窗口。
+
+### 8.2 close 时 imageLoader.shutdown()（已放弃）
+
+`imageLoader` 是 `lazy` 属性，shutdown 后无法重建，导致查看器关闭后无法再次打开。改为仅在 `destroy()`（Activity 销毁）时 shutdown，`close()` 只设 `visibility = GONE`。
+
+### 8.3 翻页阈值使用屏幕宽度百分比（已放弃）
+
+`widthPixels * 0.25f` 作为翻页阈值。横竖屏宽度差异大（竖屏 1752px vs 横屏 2800px），百分比导致竖屏难以触发（需 438px）、横屏过于敏感（需 700px）。改用固定 32dp，横竖屏一致。
+
+### 8.4 onScroll 中 e1.x 计算偏移（已放弃）
+
+`swipeStartX = e1?.x` 中 `e1` 会被 Android recycle，导致 `swipeStartX` 在不同 `onScroll` 调用中返回不同值，图片疯狂左右移动。改用 `ACTION_DOWN` 时记录 `event.rawX`，`onScroll` 中用 `e2.rawX - swipeStartX`。
+
+### 8.5 翻页前 activeView.translationX = 0f 复位（已放弃）
+
+翻页时先复位再开始滑出动画，导致图片从拖动位置瞬间跳回原位再滑出。移除复位，让滑出动画从当前 `dx` 位置继续沿同方向滑出，`animate().translationX(目标值)` 会从当前值平滑过渡。
+
+### 8.6 RGB_565 位图格式（已放弃，见性能优化记录）
+
+减少内存占用但只有 65536 色，导致色带和锯齿。改用 ARGB_8888。（此为 ImageViewer 预览生成相关，非 NativeGalleryView 本身，但涉及 MainActivity 共用方法。）
+
+### 8.7 fitS/fillS 都基于当前 vw 计算（已放弃）
+
+抽屉展开时 `resetToCenter` 中 `fitS` 和 `fillS` 都基于当前视图宽度 `vw` 计算，而 `vw` 随抽屉展开减小。横屏图片的 `fitS = min(vw/logicW, vh/logicH)` 在中间过程因 `vw` 减小变为宽度受限而下降，`fillS` 同时变化，造成 fitScale 先降后升——视觉上图片"缩小再还原"。
+
+改为 `fitS` 基于固定全屏宽度（`drawerFullWidth`），`fillS` 基于当前 `vw`，fitScale 单调变化（见 4.7.4）。
+
+### 8.8 垂直手势无方向限制（已放弃）
+
+最初 `onVerticalSwipeDrag`/`onVerticalSwipeEnd` 不限制滑动方向，导致抽屉展开时向上滑仍能触发关闭、抽屉关闭时向下滑触发异常。且 `onVerticalSwipeEnd` 的 `targetOpen` 逻辑反转（关闭条件被当作"保持打开"），导致下滑松手后总是退回展开状态。
+
+改为根据 `drawerDragStartOpen` 用 `coerceAtMost`/`coerceAtLeast` 限制 progress 方向，并修正 `targetOpen` 取反逻辑（见 4.11）。
+
+---
+
+## 九、关键常量与配置
+
+```kotlin
+companion object {
+    private const val TAG = "NativeGalleryView"
+    /** 翻页动画贝塞尔曲线插值器：快速进场 → 接近中心时平滑减速 */
+    private val SWIPE_INTERPOLATOR = PathInterpolator(0f, 0f, 0.2f, 1f)
+    /** 翻页触发距离阈值（dp），固定值不受横竖屏影响 */
+    private const val SWIPE_THRESHOLD_DP = 32f
+    /** 翻页触发速度阈值 */
+    private const val SWIPE_VELOCITY_THRESHOLD = 200f
+    /** 翻页时两张图片之间的视觉间隔（dp），避免竖屏下图片紧贴 */
+    private const val SWIPE_GAP_DP = 16f
+}
+```
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `SWIPE_INTERPOLATOR` | `PathInterpolator(0f, 0f, 0.2f, 1f)` | 强 ease-out 贝塞尔曲线 |
+| `SWIPE_THRESHOLD_DP` | 32f | 翻页距离阈值，横竖屏统一 |
+| `SWIPE_VELOCITY_THRESHOLD` | 200f | 翻页速度阈值 |
+| `SWIPE_GAP_DP` | 16f | 滑动时图片间隔 |
+| `MAX_SCALE` | 8f | ZoomableImageView 最大缩放倍数 |
+| 动画时长 | 280ms | 翻页滑出/滑入/回弹 |
+| 抽屉宽度 | 320dp | 对齐 MetadataPanel |
+| 抽屉动画时长 | 280ms | 展开/收起（AccelerateDecelerateInterpolator） |
+| 沉浸模式动画时长 | 200ms | topBar/缩略图条/底部信息 translationY + 背景色 ArgbEvaluator |
+| 缩放动画时长 | 250ms | 双击缩放/`animateScaleTo`（ease-out） |
+| 边界回弹时长 | 200ms | `bounceBackToBounds`（ease-out） |
+| 垂直手势边缘屏蔽 | 24dp | 顶部/底部不触发垂直抽屉手势 |
+| 垂直手势速度阈值 | 500px/s | 快速滑动直接打开/关闭抽屉 |
+| 垂直手势进度阈值 | 0.5 | 松手时进度过半则提交打开/关闭 |
+| `allowZoom` 禁用阈值 | 0.01f | 抽屉 progress > 0.01 时禁用缩放 |
+| 内存缓存 | 30% | Coil MemoryCache |
+| 磁盘缓存 | 200MB | Coil DiskCache |
+
+---
+
+## 十、验证
+
+### 编译验证
+- Kotlin Gradle `:app:compileUniversalDebugKotlin` BUILD SUCCESSFUL ✅
+- TypeScript 类型检查 ✅
+- Rust cargo check ✅
+
+### 设备验证清单
+1. 点击图片后原生查看器可见（WindowManager z-order）✅
+2. 图片正确加载显示 ✅
+3. 关闭后再次打开正常工作（imageLoader 不 shutdown）✅
+4. Activity 销毁后无窗口泄漏（onDestroy removeView + destroy）✅
+5. 元数据抽屉显示与切换同步 ✅
+6. 标签/描述编辑后双向同步（原生编辑 → WebView grid；WebView 编辑 → 抽屉）✅
+7. Android 端 WebView 不渲染 ImageViewer ✅
+8. 更多菜单 7 项可用 ✅
+9. 设置开关关闭后回退 WebView 路径 ✅
+10. 颜色匹配（深色/浅色模式）✅
+11. 主色调色块单行显示 ✅
+12. 左右滑动跟手联动（当前图跟随手指，邻接图同步滑入）✅
+13. 翻页触发阈值合理（32dp 横竖屏一致）✅
+14. 贝塞尔曲线减速效果 ✅
+15. 无抖动（e1 recycle / setImageDrawable / skipReload / onNavigate 延迟 全部修复）✅
+16. 帧率达到 120fps（三星 Tab S8+）✅
+17. 滑动时图片有间隔，不紧贴（16dp）✅
+18. 抽屉动画流畅（展开/收起 + 图片宽度同步）✅
+19. 浅色模式标题栏文字可见 ✅
+20. 返回键收起抽屉 / 关闭查看器 ✅
+21. 抽屉打开时滑动不穿透 ✅
+22. 抽屉展开时全屏样式（topBar/缩略图条/底部信息/系统状态栏同步隐藏）✅
+23. 垂直上滑呼出抽屉、下滑收起抽屉，过程跟手 ✅
+24. 垂直手势方向限制（抽屉打开时上滑无效、关闭时下滑无效）✅
+25. 边缘区域（顶部/底部 24dp）不误触发垂直抽屉手势 ✅
+26. 横屏/竖屏图片呼出抽屉无"缩小再还原"现象（drawerFullWidth 修复）✅
+27. 抽屉打开时旋转屏幕图片正确适配（onMeasure 同 pass 修复）✅
+28. 单击进入沉浸模式背景色平滑过渡到黑色（200ms ArgbEvaluator 动画）✅
+29. 退出沉浸模式背景色平滑过渡到主题色 ✅
+30. 沉浸模式下切换图片背景色保持黑色（applyTheme 尊重 isImmersive）✅
+31. 沉浸模式下打开抽屉再关闭，正确回到沉浸状态（immersiveBeforeDrawer 恢复）✅
+32. 沉浸模式下开关抽屉过程中 topBar/缩略图条/底部信息始终保持隐藏（applyDrawerProgress 尊重 isImmersive）✅
+33. 抽屉打开时不响应双击/pinch 缩放（allowZoom 禁用）✅
+34. 拖动放大图片时图片不飞出屏幕边缘（clampTranslateToBounds 实时约束）✅
+35. 双击缩小到 1x 后图片正确居中，无下方留白（fit-center 公式）✅
+36. 双指缩放期间不误触发翻页/抽屉手势（onScaleBegin 清理 swipe 状态 + onScroll 检查 scaleDetector）✅
+37. 双击缩放动画期间无位置漂移（onDoubleTap/animateScaleTo 取消 fling）✅
+38. 进入/退出沉浸模式时保留用户的缩放状态（onSizeChanged 分支处理）✅
+39. close() 后重新打开查看器无黑色背景残留 ✅

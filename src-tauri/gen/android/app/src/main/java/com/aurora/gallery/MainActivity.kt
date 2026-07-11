@@ -9,9 +9,11 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.WebView
 import android.view.WindowInsetsController
 import android.graphics.Color
+import android.graphics.PixelFormat
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -35,6 +37,9 @@ class MainActivity : TauriActivity() {
   private val previewSemaphore = Semaphore(1)
   private val memoryPressureLow = AtomicBoolean(false)
   private val memoryPressureCritical = AtomicBoolean(false)
+
+  private var nativeGalleryView: NativeGalleryView? = null
+  private var lanToken: String? = null
 
   private val componentCallbacks = object : ComponentCallbacks2 {
     override fun onTrimMemory(level: Int) {
@@ -108,6 +113,115 @@ class MainActivity : TauriActivity() {
     setupBackPressedHandler()
     registerComponentCallbacks(componentCallbacks)
     ColorExtractionService.createChannel(this)
+    setupNativeGalleryView()
+  }
+
+  override fun onDestroy() {
+    nativeGalleryView?.let { view ->
+      if (view.isAttachedToWindow) {
+        try {
+          windowManager.removeView(view)
+        } catch (e: Exception) {
+          android.util.Log.e("AuroraNativeViewer", "removeView in onDestroy failed", e)
+        }
+      }
+      view.destroy()
+    }
+    super.onDestroy()
+  }
+
+  override fun onConfigurationChanged(newConfig: Configuration) {
+    super.onConfigurationChanged(newConfig)
+    val orientationStr = if (newConfig.orientation == Configuration.ORIENTATION_LANDSCAPE) "landscape" else "portrait"
+    android.util.Log.i("AuroraConfig", "onConfigurationChanged: orientation=$orientationStr screenWidthDp=${newConfig.screenWidthDp} screenHeightDp=${newConfig.screenHeightDp}")
+    nativeGalleryView?.let { view ->
+      if (view.isAttachedToWindow && view.visibility == View.VISIBLE) {
+        // TYPE_APPLICATION_PANEL 窗口在 Activity 处理 configChanges 时可能不会自动 resize，
+        // 通过 updateViewLayout 强制 WindowManager 以新屏幕尺寸重新测量窗口，
+        // 随后 NativeGalleryView.onSizeChanged 会被触发，内部完成 primaryView 宽度更新。
+        try {
+          val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+          )
+          params.token = window.decorView.windowToken
+          windowManager.updateViewLayout(view, params)
+          android.util.Log.i("AuroraConfig", "updateViewLayout called for nativeGalleryView")
+        } catch (e: Exception) {
+          android.util.Log.e("AuroraConfig", "updateViewLayout failed", e)
+        }
+        view.handleRotation()
+      }
+    }
+  }
+
+  private fun setupNativeGalleryView() {
+    val view = NativeGalleryView(this)
+    view.visibility = View.GONE
+    view.listener = object : NativeGalleryView.Listener {
+      override fun onClose() {
+        runOnUiThread {
+          view.close()
+          if (view.isAttachedToWindow) {
+            windowManager.removeView(view)
+          }
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+        }
+      }
+      override fun onNavigate(index: Int) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onNavigate)window.__androidViewerBridge.onNavigate($index);")
+      }
+      override fun onMore(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onMore)window.__androidViewerBridge.onMore('${escapeJsString(fileId)}');")
+      }
+      override fun onDelete(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onDelete)window.__androidViewerBridge.onDelete('${escapeJsString(fileId)}');")
+      }
+      override fun onShowInFolder(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onShowInFolder)window.__androidViewerBridge.onShowInFolder('${escapeJsString(fileId)}');")
+      }
+      override fun onCopyToFolder(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onCopyToFolder)window.__androidViewerBridge.onCopyToFolder('${escapeJsString(fileId)}');")
+      }
+      override fun onMoveToFolder(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onMoveToFolder)window.__androidViewerBridge.onMoveToFolder('${escapeJsString(fileId)}');")
+      }
+      override fun onAIAnalyze(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onAIAnalyze)window.__androidViewerBridge.onAIAnalyze('${escapeJsString(fileId)}');")
+      }
+      override fun onEditTags(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onEditTags)window.__androidViewerBridge.onEditTags('${escapeJsString(fileId)}');")
+      }
+      override fun onLongPress(fileId: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onLongPress)window.__androidViewerBridge.onLongPress('${escapeJsString(fileId)}');")
+      }
+      override fun onImmersiveToggle(immersive: Boolean) {
+        setImmersiveMode(immersive)
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onImmersiveToggle)window.__androidViewerBridge.onImmersiveToggle($immersive);")
+      }
+      override fun onUpdateFile(fileId: String, updatesJson: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onUpdateFile)window.__androidViewerBridge.onUpdateFile('${escapeJsString(fileId)}','${escapeJsString(updatesJson)}');")
+      }
+    }
+    nativeGalleryView = view
+  }
+
+  private fun escapeJsString(s: String): String {
+    return s.replace("\\", "\\\\").replace("'", "\\'").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r")
+  }
+
+  private fun evaluateJs(script: String) {
+    try {
+      val webView = findWebView(window.decorView)
+      webView?.post {
+        webView.evaluateJavascript(script, null)
+      }
+    } catch (e: Exception) {
+      android.util.Log.e("AuroraNativeViewer", "evaluateJs failed", e)
+    }
   }
 
   private fun applyInitialStatusBarStyle() {
@@ -119,6 +233,23 @@ class MainActivity : TauriActivity() {
   private fun setupBackPressedHandler() {
     onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
       override fun handleOnBackPressed() {
+        android.util.Log.i("AuroraBack", "handleOnBackPressed triggered, nativeGalleryView=$nativeGalleryView")
+        // 优先：如果原生查看器抽屉打开，先收起抽屉
+        val ngv = nativeGalleryView
+        if (ngv != null && ngv.isOpen()) {
+          android.util.Log.i("AuroraBack", "NativeViewer isOpen=true, isDrawerOpen=${ngv.isDrawerOpen()}")
+          if (ngv.isDrawerOpen()) {
+            android.util.Log.i("AuroraBack", "Closing drawer via back press")
+            ngv.closeDrawer()
+            return
+          }
+          // 查看器打开但抽屉未打开 → 关闭查看器
+          android.util.Log.i("AuroraBack", "Closing native viewer via back press")
+          closeNativeViewer()
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+          return
+        }
+        android.util.Log.i("AuroraBack", "Falling through to WebView back press")
         val webView = findWebView(window.decorView)
         if (webView != null) {
           webView.evaluateJavascript(
@@ -1064,5 +1195,171 @@ class MainActivity : TauriActivity() {
       }
       return result.toString()
     }
+  }
+
+  // ===== Native Gallery Viewer =====
+
+  fun openNativeViewer(imagesJson: String, startIndex: Int, optionsJson: String) {
+    android.util.Log.i("AuroraNativeViewer", "openNativeViewer called: startIndex=$startIndex, imagesJson.length=${imagesJson.length}")
+    runOnUiThread {
+      try {
+        val arr = JSONArray(imagesJson)
+        android.util.Log.i("AuroraNativeViewer", "parsed ${arr.length()} images")
+        val items = ArrayList<NativeGalleryView.ImageItem>(arr.length())
+        for (i in 0 until arr.length()) {
+          val o = arr.getJSONObject(i)
+          val isLan = o.optBoolean("isLan", false)
+          val path = o.optString("path", "")
+          val remotePath = o.optString("remotePath", "")
+          val resolvedPath = if (isLan) {
+            // LAN: path 字段已是完整 HTTP URL（前端已用 lanClientApi.getImageUrl 构造）
+            path
+          } else {
+            path
+          }
+          val thumbUrl = o.optString("thumbnailUrl", "").ifEmpty { null }
+          // 元数据字段
+          val tagsList = mutableListOf<String>()
+          val tagsArr = o.optJSONArray("tags")
+          if (tagsArr != null) {
+            for (t in 0 until tagsArr.length()) tagsList.add(tagsArr.optString(t))
+          }
+          val paletteList = mutableListOf<String>()
+          val paletteArr = o.optJSONArray("palette")
+          if (paletteArr != null) {
+            for (c in 0 until paletteArr.length()) paletteList.add(paletteArr.optString(c))
+          }
+          val aiTagsList = mutableListOf<String>()
+          val aiObjectsList = mutableListOf<String>()
+          o.optJSONObject("aiData")?.let { ai ->
+            val at = ai.optJSONArray("tags")
+            if (at != null) for (t in 0 until at.length()) aiTagsList.add(at.optString(t))
+            val ao = ai.optJSONArray("objects")
+            if (ao != null) for (t in 0 until ao.length()) aiObjectsList.add(ao.optString(t))
+          }
+          items.add(NativeGalleryView.ImageItem(
+            path = resolvedPath,
+            fileId = o.optString("fileId", ""),
+            name = o.optString("name", ""),
+            width = o.optInt("width", 0),
+            height = o.optInt("height", 0),
+            isLan = isLan,
+            thumbnailUrl = thumbUrl,
+            size = o.optLong("size", 0),
+            format = o.optString("format", ""),
+            createdAt = o.optString("createdAt", ""),
+            updatedAt = o.optString("updatedAt", ""),
+            tags = tagsList,
+            description = o.optString("description", ""),
+            sourceUrl = o.optString("sourceUrl", ""),
+            palette = paletteList,
+            aiTags = aiTagsList,
+            aiDescription = o.optJSONObject("aiData")?.optString("description", "") ?: "",
+            aiSceneCategory = o.optJSONObject("aiData")?.optString("sceneCategory", "") ?: "",
+            aiObjects = aiObjectsList,
+            parentName = o.optString("parentName", ""),
+          ))
+        }
+        val options = if (optionsJson.isNotEmpty()) JSONObject(optionsJson) else null
+        val view = nativeGalleryView
+        if (view == null) {
+          android.util.Log.e("AuroraNativeViewer", "nativeGalleryView is null, cannot open")
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+          return@runOnUiThread
+        }
+        if (!view.isAttachedToWindow) {
+          val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_PANEL,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+          )
+          params.token = window.decorView.windowToken
+          windowManager.addView(view, params)
+          android.util.Log.i("AuroraNativeViewer", "view added to WindowManager, isAttachedToWindow=${view.isAttachedToWindow}")
+        }
+        view.open(items, startIndex, options)
+        android.util.Log.i("AuroraNativeViewer", "view.open() completed, isAttachedToWindow=${view.isAttachedToWindow}, visibility=${view.visibility}")
+      } catch (e: Exception) {
+        android.util.Log.e("AuroraNativeViewer", "openNativeViewer failed", e)
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+      }
+    }
+  }
+
+  fun closeNativeViewer() {
+    runOnUiThread {
+      nativeGalleryView?.let { view ->
+        view.close()
+        if (view.isAttachedToWindow) {
+          windowManager.removeView(view)
+        }
+      }
+    }
+  }
+
+  fun closeNativeDrawer() {
+    runOnUiThread {
+      nativeGalleryView?.let { view ->
+        if (view.isDrawerOpen()) {
+          // 抽屉打开 → 收起抽屉
+          view.closeDrawer()
+        } else if (view.isOpen()) {
+          // 抽屉未打开但查看器打开 → 关闭查看器
+          view.close()
+          if (view.isAttachedToWindow) {
+            windowManager.removeView(view)
+          }
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+        }
+      }
+    }
+  }
+
+  fun updateNativeItem(fileId: String, updatesJson: String) {
+    runOnUiThread {
+      try {
+        val updates = JSONObject(updatesJson)
+        nativeGalleryView?.updateItem(fileId, updates)
+      } catch (e: Exception) {
+        android.util.Log.e("AuroraNativeViewer", "updateNativeItem parse error", e)
+      }
+    }
+  }
+
+  fun nativeViewerNavigate(direction: String) {
+    runOnUiThread {
+      when (direction) {
+        "prev" -> nativeGalleryView?.navigate(-1)
+        "next" -> nativeGalleryView?.navigate(1)
+        "random" -> {
+          val view = nativeGalleryView ?: return@runOnUiThread
+          // 简单随机：跳到任意位置
+          val total = view.childCount
+          // 通过反射或公开 API 获取图片数量；这里复用 navigate 1 多次
+          // 实际随机逻辑由前端控制（前端知道完整列表），这里不实现 random
+          nativeGalleryView?.navigate(1)
+        }
+      }
+    }
+  }
+
+  fun nativeViewerSetSlideshow(enabled: Boolean) {
+    runOnUiThread {
+      nativeGalleryView?.setSlideshow(enabled)
+    }
+  }
+
+  fun nativeViewerSetRotation(degrees: Int) {
+    runOnUiThread {
+      nativeGalleryView?.setRotation(degrees)
+    }
+  }
+
+  fun nativeViewerSetLanToken(token: String) {
+    lanToken = token
+    // Coil 默认会复用 connection pool；token 通过 URL query 传递（前端已构造），
+    // 这里仅存储以备未来需要 header 鉴权时使用
   }
 }

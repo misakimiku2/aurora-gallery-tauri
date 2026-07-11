@@ -456,6 +456,7 @@ interface ViewerProps {
   handleOpenCompareInNewTab?: (imageIds: string[]) => void;
   handleAddToCompareCanvas?: (tabId: string, imageIds: string[]) => void;
   enterImmersiveOnMount?: boolean;
+  nativeViewerActive?: boolean;
 }
 
 interface ContextMenuState {
@@ -502,7 +503,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   tabs = [],
   handleOpenCompareInNewTab,
   handleAddToCompareCanvas,
-  enterImmersiveOnMount = false
+  enterImmersiveOnMount = false,
+  nativeViewerActive = false
 }) => {
   // 如果 file 不存在，关闭查看�?
   if (!file) {
@@ -2463,7 +2465,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         onContextMenu={isAndroidPlatformCached() ? (e: React.MouseEvent) => { e.preventDefault(); } : handleContextMenu}
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
-        {!displayUrl && (
+        {!displayUrl && !nativeViewerActive && (
           <div className="absolute inset-0 flex items-center justify-center z-0">
             <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
           </div>
@@ -2472,7 +2474,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         {/* 单图层渲染 - 简洁高效（普通模式） */}
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
         <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden"
-          style={isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style' } : {}}>
+          style={{
+            ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style' } : {}),
+            ...(nativeViewerActive ? { display: 'none' } : {}),
+          }}>
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
             <img
