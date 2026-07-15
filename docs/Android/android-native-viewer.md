@@ -1,7 +1,7 @@
 # Android 原生图片查看器（NativeGalleryView）完整实现记录
 
 ## 日期
-2026-07-07 ~ 2026-07-12
+2026-07-07 ~ 2026-07-15
 
 ## 概述
 
@@ -13,6 +13,7 @@ Android 端为绕开 WebView 渲染管线、达到接近系统相册的原生性
 3. **滑动体验优化**（2026-07-09）：跟手联动滑动、贝塞尔曲线、帧率优化、图片间隔
 4. **抽屉全屏模式与垂直手势**（2026-07-10）：抽屉展开时 topBar/系统状态栏同步隐藏形成全屏样式；垂直跟手手势上滑呼出/下滑收起抽屉；修复缩放插值导致图片"缩小再还原"现象
 5. **缩放修复与沉浸背景色**（2026-07-12）：修复双击缩放定位/留白/拖动漂移/边缘消失/连续缩放漂移/缩放误触翻页等一系列 ZoomableImageView 缩放手势 bug；单击进入沉浸时背景色改为黑色，退出还原主题色；沉浸状态与抽屉状态解耦（开关抽屉后正确回到沉浸）
+6. **抽屉 UI 对齐与弹窗重构**（2026-07-15）：抽屉 UI 全面对齐 MetadataPanel；自定义弹窗替代 AlertDialog 实现动态高度；标签/描述/来源网址弹窗改为动态自适应高度；hint 文本统一斜体+淡色；修复深色模式颜色未对齐 neutral 色板的问题
 
 ---
 
@@ -134,14 +135,16 @@ Activity.onDestroy()
 右侧抽屉式面板，对齐 PC 端 MetadataPanel 体验。
 
 **布局**（从上到下）：
-1. 文件名（16sp 粗体，居中）
+1. 文件名（18sp 加粗）
 2. 文件夹名（12sp 次要色）
-3. 全览图（Coil 异步加载，180dp 高，圆角 12dp）
+3. 全览图（Coil 异步加载，180dp 高，圆角 12dp，背景 `#262626`/`#F3F4F6`）
 4. 主色调识别区域（标题 + 圆形色块单行排列，24dp 色块 + 8dp 间距）
-5. 文件信息（GridLayout 2 列：尺寸/格式/创建时间/修改时间）
-6. 标签（胶囊形状 chip）
-7. 描述文本框
-8. 来源网址
+5. 文件信息（GridLayout 2 列：格式/大小/尺寸/创建/修改，每项带 lucide 图标）
+6. 标签（胶囊形状 chip + "+ 编辑标签"按钮，按钮使用次要按钮样式与标签区分）
+7. 描述文本框（点击可编辑，空时显示斜体 hint "添加描述..."）
+8. 来源网址（点击可编辑，空时显示斜体 hint "https://..."）
+
+> **滚动条**：抽屉 ScrollView 已禁用滚动条（`isVerticalScrollBarEnabled = false`），上下滚动时不显示滚动条。
 
 > **关闭方式**：抽屉可通过以下方式关闭（见 4.8、4.11）：
 > - 系统返回键/返回手势
@@ -170,10 +173,46 @@ Activity.onDestroy()
 
 ### 2.3 标签和描述编辑
 
-原生 AlertDialog 实现：
-- `showTagEditDialog`：LinearLayout chip 列表 + EditText + 添加按钮，每个 chip 带红色 X 删除
-- `showDescriptionEditDialog`：multiline EditText
-- 保存时通过 `listener.onUpdateFile(fileId, json)` 回调
+使用自定义 Dialog（圆角矩形 + 主题背景），替代原生 AlertDialog：
+
+**通用弹窗样式**：
+- 透明窗口背景 + `GradientDrawable` 圆角 16dp 背景
+- 弹窗背景色：`#1E1E1E`（深色）/ `#FFFFFF`（浅色），比文本框背景 `#262626` 更深，形成层次
+- 文本框背景色：`#262626`（深色）/ `#F9FAFB`（浅色）
+- "取消"/"保存"按钮：`createDialogButton()` 生成，主按钮蓝色背景、次按钮次要色背景
+- **动态高度**：弹窗 `show()` 后通过 `dialogView.measure(widthPx, AT_MOST maxHeightPx)` 测量实际高度，`window.setLayout(width, measuredHeight)` 自适应内容
+
+**`showTagEditDialog`**：
+- 380dp 宽，最大 450dp 高（动态自适应，标签增删后重新测量）
+- 标签列表 `chipsBox`（垂直 LinearLayout）+ 输入行（EditText + "+" 按钮）
+- 标签胶囊：`WRAP_CONTENT` 宽度（只占内容宽度），14sp 文字，padding (14,10)，圆角 16dp，蓝色标签配色
+- 删除按钮：32dp 最小触控区，居中
+- 标签文字 `maxEms=14` + `ellipsize=END` 防止过长溢出
+- 标签增删后调用 `relayoutTagDialog()` 重新测量弹窗高度
+
+**`showDescriptionEditDialog`**：
+- 380dp 宽，最大 520dp 高（动态自适应）
+- 多行 EditText，`gravity = TOP | START`（文字从左上角开始，不居中）
+- `minLines=4`, `maxLines=8`, `TYPE_TEXT_FLAG_MULTI_LINE | TYPE_TEXT_FLAG_CAP_SENTENCES`
+- hint "添加描述..." 斜体 + 淡色
+
+**`showSourceUrlEditDialog`**：
+- 380dp 宽，最大 300dp 高（动态自适应，仅包裹标题+输入框+按钮）
+- 单行 EditText，`TYPE_TEXT_VARIATION_URI`
+- hint "https://..." 斜体 + 淡色
+
+**hint 文本样式**：
+- 使用 `setItalicHint(editText, hintText)` 辅助方法
+- 通过 `SpannableString` + `StyleSpan(ITALIC)` 设置斜体 hint
+- hint 颜色 `colorHint()`：`#6B7280`（深色）/ `#9CA3AF`（浅色），比次文字更淡
+- 正文（用户输入的文字）不斜体，与 hint 区分
+
+**"+ 编辑标签"按钮**（抽屉中）：
+- 排列在标签后面（同一 tagFlow 水平布局）
+- 使用次要按钮样式（`colorButtonSecondaryBg`/`colorButtonSecondaryText`/`colorBorder`）与标签胶囊（蓝色）区分
+- 圆角 10dp（比标签 16dp 更方正），文字 "+ 编辑标签"
+
+保存时通过 `listener.onUpdateFile(fileId, json)` 回调。
 
 ### 2.4 双向实时同步
 
@@ -206,22 +245,33 @@ App.tsx 渲染条件改为 `activeTab.viewingFileId && !useNativeViewer`。Andro
 
 ### 3.1 颜色规范
 
-| 元素 | 深色 | 浅色 |
-|------|------|------|
-| 图片查看背景 | `#171717` | `#E5E5E5` |
-| 顶部菜单栏/底栏/缩略图条 | `#171717`（半透明 `#CC` 前缀） | `#E5E5E5`（半透明 `#E6` 前缀） |
-| 抽屉面板背景 | `#171717` | `#FFFFFF` |
-| 边框 | `#1F2937` | `#E5E7EB` |
-| 主文字 | `#F3F4F6` | `#1F2937` |
-| 次文字 | `#9CA3AF` | `#6B7280` |
-| 强调色 | `#3B82F6` | `#3B82F6` |
+> **重要**：`tailwind.config.js` 中 `gray` 色板已被 `...colors.neutral` 覆盖。网页端 `dark:bg-gray-800` 实际渲染为 `neutral-800` = `#262626`（纯中性灰），而非 Tailwind 默认的 `#1F2937`（带蓝色饱和度）。Android 代码中所有颜色必须使用 neutral 色板值，不可用 Tailwind 默认 gray 值。
+>
+> neutral 色板映射：50=`#FAFAFA` 100=`#F5F5F5` 200=`#E5E5E5` 400=`#A3A3A3` 500=`#737373` 700=`#404040` 800=`#262626` 900=`#171717`
+> 自定义扩展：750=`#333333` 850=`#1E1E1E` 950=`#0A0A0A`
+
+| 元素 | 深色 | 浅色 | 色板对应 |
+|------|------|------|------|
+| 图片查看背景 | `#171717` | `#E5E5E5` | neutral-900 / neutral-200 |
+| 顶部菜单栏/底栏/缩略图条 | `#171717`（半透明 `#CC` 前缀） | `#E5E5E5`（半透明 `#E6` 前缀） | — |
+| 抽屉面板背景 | `#171717` | `#FFFFFF` | neutral-900 |
+| 弹窗背景 | `#1E1E1E` | `#FFFFFF` | gray-850 |
+| 文本框背景（描述/来源网址/输入框） | `#262626` | `#F9FAFB` | neutral-800 / neutral-50 |
+| 全览图背景 | `#262626` | `#F3F4F6` | neutral-800 |
+| 边框 | `#262626` | `#E5E7EB` | neutral-800 |
+| 次要按钮背景 | `#404040` | `#E5E7EB` | neutral-700 |
+| 次要按钮文字 | `#A3A3A3` | `#404040` | neutral-400 / neutral-700 |
+| hint 提示文字 | `#6B7280` | `#9CA3AF` | 比 colorTextSecondary 更淡 |
+| 主文字 | `#F3F4F6` | `#262626` | — / neutral-800 |
+| 次文字 | `#9CA3AF` | `#6B7280` | — |
+| 强调色 | `#3B82F6` | `#3B82F6` | — |
 
 ### 3.2 主题应用
 
 - `isDarkTheme` 字段通过 `open()` 的 `options.isDark` 从前端传入（根据 `state.settings.theme` 计算）
 - `applyTheme()` 方法在 open 时应用主题到所有 UI（背景、顶栏、底栏、缩略图条、抽屉所有 TextView）
-- 顶栏/底栏/缩略图条背景从 `#CC000000`（纯黑半透明）改为 `#CC171727`/`#E6E5E5E5`（主题色半透明）
-- 浅色模式下顶栏标题文字为 `#1F2937`（深色），确保可见
+- 顶栏/底栏/缩略图条背景从 `#CC000000`（纯黑半透明）改为 `#CC171717`/`#E6E5E5E5`（主题色半透明）
+- 浅色模式下顶栏标题文字为 `#262626`（neutral-800，深色），确保可见
 - **沉浸模式背景色**：`applyTheme()` 中背景色 `setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())`
   - 进入沉浸模式时背景色改为 `Color.BLACK`，退出还原主题色
   - 切换图片时 `open()` 会重入调用 `applyTheme()`，若处于沉浸模式则保持黑色，避免被重置为主题色导致闪烁
@@ -249,6 +299,27 @@ private fun toggleImmersive() {
 
 - 使用 `ValueAnimator` + `ArgbEvaluator` 实现颜色平滑过渡，避免瞬间切换的视觉跳变
 - `close()` 中显式还原背景色：`setBackgroundColor(colorBg())`，防止下次打开残留黑色
+
+### 3.4 Neutral 色板对齐修复（2026-07-15）
+
+**问题**：深色模式下，新增组件（文本框、弹窗、按钮等）颜色偏蓝，与网页端 MetadataPanel 不一致。
+
+**根因**：`tailwind.config.js` 中 `gray` 色板被 `...colors.neutral` 覆盖，网页端 `dark:bg-gray-800` 实际渲染为 `neutral-800` = `#262626`（纯中性灰）。但 Android 代码中错误引用了 Tailwind **默认** gray 值（`#1F2937` 等，带蓝色饱和度），未意识到项目已覆盖为 neutral 色板。
+
+**修复**：将所有 Android 颜色辅助函数从 Tailwind 默认 gray 改为 neutral 色板：
+
+| 颜色函数 | 旧值（Tailwind 默认 gray） | 新值（neutral 色板） |
+|---|---|---|
+| `colorBorder()` dark | `#1F2937` | `#262626` (neutral-800) |
+| `colorTextPrimary()` light | `#1F2937` | `#262626` (neutral-800) |
+| `colorTextBoxBg()` dark | `#1F2937` | `#262626` (neutral-800) |
+| `colorDialogBg()` dark | `#1E1E1E` | `#1E1E1E` (gray-850，保持) |
+| `colorButtonSecondaryBg()` dark | `#374151` | `#404040` (neutral-700) |
+| `colorButtonSecondaryText()` dark | `#D1D5DB` | `#A3A3A3` (neutral-400) |
+| `colorButtonSecondaryText()` light | `#374151` | `#404040` (neutral-700) |
+| 全览图背景 dark (2处) | `#1F2937` | `#262626` (neutral-800) |
+
+**预防措施**：在颜色函数区添加 neutral 色板映射注释，后续新增组件对照使用，避免再次引用 Tailwind 默认 gray 值。
 
 ---
 
@@ -1242,3 +1313,13 @@ companion object {
 37. 双击缩放动画期间无位置漂移（onDoubleTap/animateScaleTo 取消 fling）✅
 38. 进入/退出沉浸模式时保留用户的缩放状态（onSizeChanged 分支处理）✅
 39. close() 后重新打开查看器无黑色背景残留 ✅
+40. 标签编辑弹窗动态高度，标签增删后按钮不被挤出 ✅
+41. 来源网址编辑弹窗动态高度，无多余下方空间 ✅
+42. 标签胶囊缩短（WRAP_CONTENT）+ 放大（14sp + 大 padding）适合触控 ✅
+43. "+ 编辑标签"按钮使用次要按钮样式与标签区分 ✅
+44. 描述编辑弹窗文字从左上角开始（gravity TOP|START），不居中 ✅
+45. hint 文本（新标签/添加描述/https://...）统一斜体 + 淡色，正文不斜体 ✅
+46. 深色模式颜色对齐 neutral 色板（#262626），无蓝色饱和度偏差 ✅
+47. 弹窗背景 #1E1E1E 与文本框 #262626 有层次区分，不融为一体 ✅
+48. 抽屉滚动条已隐藏 ✅
+49. 抽屉文件名 18sp 加粗，与文件夹名 12sp 区分明显 ✅

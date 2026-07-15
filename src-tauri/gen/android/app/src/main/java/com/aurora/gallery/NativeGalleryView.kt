@@ -1,9 +1,11 @@
 package com.aurora.gallery
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.Drawable
+import android.text.method.ScrollingMovementMethod
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -18,7 +20,6 @@ import android.view.ViewGroup
 import android.view.ViewPropertyAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.PathInterpolator
-import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
@@ -148,15 +149,24 @@ class NativeGalleryView @JvmOverloads constructor(
     private var isOpen = false
 
     // 主题颜色（与 WebView 一致）
+    // 注意：tailwind.config.js 中 gray 色板已被 colors.neutral 覆盖，新增组件必须使用 neutral 值，不可用 Tailwind 默认 gray 值
+    // neutral 色板映射：50=#FAFAFA 100=#F5F5F5 200=#E5E5E5 400=#A3A3A3 500=#737373 700=#404040 800=#262626 900=#171717
+    // 自定义扩展：750=#333333 850=#1E1E1E 950=#0A0A0A
     private fun colorBg() = if (isDarkTheme) Color.parseColor("#171717") else Color.parseColor("#E5E5E5")
     private fun colorPanel() = if (isDarkTheme) Color.parseColor("#171717") else Color.parseColor("#FFFFFF")
-    private fun colorBorder() = if (isDarkTheme) Color.parseColor("#1F2937") else Color.parseColor("#E5E7EB")
-    private fun colorTextPrimary() = if (isDarkTheme) Color.parseColor("#F3F4F6") else Color.parseColor("#1F2937")
+    private fun colorBorder() = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#E5E7EB")
+    private fun colorTextPrimary() = if (isDarkTheme) Color.parseColor("#F3F4F6") else Color.parseColor("#262626")
     private fun colorTextSecondary() = if (isDarkTheme) Color.parseColor("#9CA3AF") else Color.parseColor("#6B7280")
     private fun colorAccent() = Color.parseColor("#3B82F6")
     private fun colorTagBg() = if (isDarkTheme) Color.parseColor("#1E3A8A33") else Color.parseColor("#EFF6FF")
     private fun colorTagText() = if (isDarkTheme) Color.parseColor("#93C5FD") else Color.parseColor("#2563EB")
     private fun colorTagBorder() = if (isDarkTheme) Color.parseColor("#1E40AF55") else Color.parseColor("#DBEAFE")
+    private fun colorTextBoxBg() = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#F9FAFB")
+    private fun colorDialogBg() = if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#FFFFFF")
+    private fun colorButtonSecondaryBg() = if (isDarkTheme) Color.parseColor("#404040") else Color.parseColor("#E5E7EB")
+    private fun colorButtonSecondaryText() = if (isDarkTheme) Color.parseColor("#A3A3A3") else Color.parseColor("#404040")
+    // 提示文本颜色（比次文字更淡，纯色无透明度）
+    private fun colorHint() = if (isDarkTheme) Color.parseColor("#6B7280") else Color.parseColor("#9CA3AF")
 
     var listener: Listener? = null
 
@@ -309,6 +319,9 @@ class NativeGalleryView @JvmOverloads constructor(
                 weight = 1f
             }
             isClickable = true
+            // 隐藏滚动条
+            isVerticalScrollBarEnabled = false
+            isHorizontalScrollBarEnabled = false
         }
         drawerContainer = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -317,10 +330,11 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerScrollView.addView(drawerContainer)
         metadataDrawer.addView(drawerScrollView)
 
-        // Section 1: 文件名（大号、居中）
+        // Section 1: 文件名（大号、加粗）
         drawerNameView = TextView(context).apply {
             setTextColor(colorTextPrimary())
-            textSize = 16f
+            textSize = 20f
+            paint.isFakeBoldText = true
             setPadding(0, 0, 0, 4)
             text = "—"
         }
@@ -341,7 +355,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
             }
             scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-            setBackgroundColor(if (isDarkTheme) Color.parseColor("#1F2937") else Color.parseColor("#F3F4F6"))
+            setBackgroundColor(if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#F3F4F6"))
             clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: android.graphics.Outline) {
@@ -353,9 +367,10 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerContainer.addView(drawerPreviewImage)
 
         // Section 4: 主色调（标题 + 圆形色块横排，单行显示，缩到 20dp 适配 8 个）
-        drawerContainer.addView(buildSectionTitle("主色调"))
+        drawerContainer.addView(buildSectionTitle("主色调", iconRes = R.drawable.ic_lucide_palette))
         drawerPaletteLayout = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
             }
@@ -363,7 +378,7 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerContainer.addView(drawerPaletteLayout)
 
         // Section 5: 文件信息
-        drawerContainer.addView(buildSectionTitle("文件信息"))
+        drawerContainer.addView(buildSectionTitle("文件信息", iconRes = R.drawable.ic_lucide_info))
         drawerDetailsGrid = GridLayout(context).apply {
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (resources.displayMetrics.density * 16).toInt()
@@ -374,14 +389,7 @@ class NativeGalleryView @JvmOverloads constructor(
         drawerContainer.addView(drawerDetailsGrid)
 
         // Section 6: 标签（胶囊形状）
-        val tagsHeader = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        tagsHeader.addView(buildSectionTitle("标签", 1f))
-        tagsHeader.addView(makeTextButton("编辑") { showTagEditDialog() })
-        drawerContainer.addView(tagsHeader)
+        drawerContainer.addView(buildSectionTitle("标签", iconRes = R.drawable.ic_lucide_tag))
         drawerTagsLayout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
@@ -390,30 +398,65 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         drawerContainer.addView(drawerTagsLayout)
 
-        // Section 7: 描述文本框
-        val descHeader = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        descHeader.addView(buildSectionTitle("描述", 1f))
-        descHeader.addView(makeTextButton("编辑") { showDescriptionEditDialog() })
-        drawerContainer.addView(descHeader)
+        // Section 7: 描述文本框（点击可编辑）
+        drawerContainer.addView(buildSectionTitle("描述", iconRes = R.drawable.ic_lucide_file_text))
         drawerDescView = TextView(context).apply {
             setTextColor(colorTextPrimary())
+            setHintTextColor(colorHint())
             textSize = 13f
-            setPadding(0, (resources.displayMetrics.density * 8).toInt(), 0, (resources.displayMetrics.density * 16).toInt())
-            text = "—"
+            setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt())
+            // 斜体 hint（占位提示），正文不斜体
+            val hintSpan = android.text.SpannableString("添加描述...")
+            hintSpan.setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
+                0, hintSpan.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            setHint(hintSpan)
+            minimumHeight = (resources.displayMetrics.density * 80).toInt()
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = resources.displayMetrics.density * 8
+                setColor(colorTextBoxBg())
+                setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+            }
+            movementMethod = ScrollingMovementMethod()
+            setLineSpacing(0f, 1.4f)
+            isClickable = true
+            setOnClickListener { showDescriptionEditDialog() }
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (resources.displayMetrics.density * 16).toInt()
+            }
         }
         drawerContainer.addView(drawerDescView)
 
-        // Section 8: 来源网址
-        drawerContainer.addView(buildSectionTitle("来源网址"))
+        // Section 8: 来源网址（点击可编辑）
+        drawerContainer.addView(buildSectionTitle("来源网址", iconRes = R.drawable.ic_lucide_globe))
         drawerSourceUrlView = TextView(context).apply {
             setTextColor(colorAccent())
+            setHintTextColor(colorHint())
             textSize = 13f
-            setPadding(0, (resources.displayMetrics.density * 8).toInt(), 0, (resources.displayMetrics.density * 16).toInt())
-            text = "—"
+            setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 12).toInt())
+            // 斜体 hint（占位提示）
+            val hintSpan = android.text.SpannableString("https://...")
+            hintSpan.setSpan(
+                android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
+                0, hintSpan.length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+            )
+            setHint(hintSpan)
+            minimumHeight = (resources.displayMetrics.density * 44).toInt()
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = resources.displayMetrics.density * 8
+                setColor(colorTextBoxBg())
+                setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+            }
+            setSingleLine(true)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            isClickable = true
+            setOnClickListener { showSourceUrlEditDialog() }
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (resources.displayMetrics.density * 16).toInt()
+            }
         }
         drawerContainer.addView(drawerSourceUrlView)
 
@@ -471,12 +514,22 @@ class NativeGalleryView @JvmOverloads constructor(
         }
     }
 
-    private fun buildSectionTitle(title: String, weight: Float = 0f): TextView {
+    private fun buildSectionTitle(title: String, weight: Float = 0f, iconRes: Int? = null): TextView {
+        val density = resources.displayMetrics.density
         return TextView(context).apply {
             text = title
             setTextColor(colorTextSecondary())
             textSize = 11f
-            setPadding(0, (resources.displayMetrics.density * 16).toInt(), 0, (resources.displayMetrics.density * 8).toInt())
+            paint.isFakeBoldText = true
+            if (iconRes != null) {
+                val drawable = context.getDrawable(iconRes)
+                drawable?.setTint(colorTextSecondary())
+                val iconSize = (density * 12).toInt()
+                drawable?.setBounds(0, 0, iconSize, iconSize)
+                setCompoundDrawablesRelative(drawable, null, null, null)
+                compoundDrawablePadding = (density * 6).toInt()
+            }
+            setPadding(0, (density * 16).toInt(), 0, (density * 8).toInt())
             layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, weight).apply {
                 if (weight == 0f) width = LayoutParams.MATCH_PARENT
             }
@@ -625,7 +678,8 @@ class NativeGalleryView @JvmOverloads constructor(
         // 如果抽屉打开，等待 onSizeChanged 触发后由其处理 layoutParams 更新
     }
 
-    private fun buildDetailCell(label: String, value: String): LinearLayout {
+    private fun buildDetailCell(label: String, value: String, iconRes: Int? = null): LinearLayout {
+        val density = resources.displayMetrics.density
         return LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = GridLayout.LayoutParams().apply {
@@ -633,11 +687,19 @@ class NativeGalleryView @JvmOverloads constructor(
                 height = LayoutParams.WRAP_CONTENT
                 columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1, 1f)
             }
-            setPadding(0, 0, (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 8).toInt())
+            setPadding(0, 0, (density * 12).toInt(), (density * 8).toInt())
             addView(TextView(context).apply {
                 text = label
                 setTextColor(colorTextSecondary())
                 textSize = 10f
+                if (iconRes != null) {
+                    val drawable = context.getDrawable(iconRes)
+                    drawable?.setTint(colorTextSecondary())
+                    val iconSize = (density * 10).toInt()
+                    drawable?.setBounds(0, 0, iconSize, iconSize)
+                    setCompoundDrawablesRelative(drawable, null, null, null)
+                    compoundDrawablePadding = (density * 4).toInt()
+                }
             })
             addView(TextView(context).apply {
                 text = value
@@ -674,7 +736,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 textSize = 12f
             })
         } else {
-            val colorSize = (resources.displayMetrics.density * 24).toInt()
+            val colorSize = (resources.displayMetrics.density * 28).toInt()
             val colorGap = (resources.displayMetrics.density * 8).toInt()
             item.palette.forEach { hex ->
                 drawerPaletteLayout.addView(View(context).apply {
@@ -693,52 +755,59 @@ class NativeGalleryView @JvmOverloads constructor(
 
         // Section 5: 文件信息
         drawerDetailsGrid.removeAllViews()
-        drawerDetailsGrid.addView(buildDetailCell("格式", item.format.uppercase().ifEmpty { "—" }))
-        drawerDetailsGrid.addView(buildDetailCell("大小", formatFileSize(item.size)))
-        drawerDetailsGrid.addView(buildDetailCell("尺寸", if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"))
-        drawerDetailsGrid.addView(buildDetailCell("创建", formatDate(item.createdAt)))
-        drawerDetailsGrid.addView(buildDetailCell("修改", formatDate(item.updatedAt)))
+        drawerDetailsGrid.addView(buildDetailCell("格式", item.format.uppercase().ifEmpty { "—" }, R.drawable.ic_lucide_file_text))
+        drawerDetailsGrid.addView(buildDetailCell("大小", formatFileSize(item.size), R.drawable.ic_lucide_hard_drive))
+        drawerDetailsGrid.addView(buildDetailCell("尺寸", if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—", R.drawable.ic_lucide_image))
+        drawerDetailsGrid.addView(buildDetailCell("创建", formatDate(item.createdAt), R.drawable.ic_lucide_calendar))
+        drawerDetailsGrid.addView(buildDetailCell("修改", formatDate(item.updatedAt), R.drawable.ic_lucide_clock))
 
-        // Section 6: 标签（胶囊形状）
+        // Section 6: 标签（胶囊形状 + 编辑按钮）
         drawerTagsLayout.removeAllViews()
-        if (item.tags.isEmpty()) {
-            drawerTagsLayout.addView(TextView(context).apply {
-                text = "无标签"
-                setTextColor(colorTextSecondary())
-                textSize = 12f
-            })
-        } else {
-            val tagFlow = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-            }
-            item.tags.forEach { tag ->
-                val chip = TextView(context).apply {
-                    text = tag
-                    setTextColor(colorTagText())
-                    textSize = 11f
-                    setPadding((resources.displayMetrics.density * 10).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 10).toInt(), (resources.displayMetrics.density * 6).toInt())
-                    val drawable = android.graphics.drawable.GradientDrawable().apply {
-                        cornerRadius = resources.displayMetrics.density * 14
-                        setColor(colorTagBg())
-                        setStroke((resources.displayMetrics.density * 1).toInt(), colorTagBorder())
-                    }
-                    background = drawable
-                    layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                        marginEnd = (resources.displayMetrics.density * 6).toInt()
-                        bottomMargin = (resources.displayMetrics.density * 6).toInt()
-                    }
-                }
-                tagFlow.addView(chip)
-            }
-            drawerTagsLayout.addView(tagFlow)
+        val tagFlow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
+        item.tags.forEach { tag ->
+            val chip = TextView(context).apply {
+                text = tag
+                setTextColor(colorTagText())
+                textSize = 11f
+                setPadding((resources.displayMetrics.density * 10).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 10).toInt(), (resources.displayMetrics.density * 6).toInt())
+                val drawable = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = resources.displayMetrics.density * 14
+                    setColor(colorTagBg())
+                    setStroke((resources.displayMetrics.density * 1).toInt(), colorTagBorder())
+                }
+                background = drawable
+                layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    marginEnd = (resources.displayMetrics.density * 6).toInt()
+                    bottomMargin = (resources.displayMetrics.density * 6).toInt()
+                }
+            }
+            tagFlow.addView(chip)
+        }
+        // 编辑标签按钮（排列在标签后面，使用按钮样式与标签胶囊区分）
+        val editTagButton = TextView(context).apply {
+            text = "+ 编辑标签"
+            setTextColor(colorButtonSecondaryText())
+            textSize = 11f
+            setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
+            background = createRoundedBg(colorButtonSecondaryBg(), 10f, colorBorder(), 1f)
+            isClickable = true
+            setOnClickListener { showTagEditDialog() }
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (resources.displayMetrics.density * 6).toInt()
+                bottomMargin = (resources.displayMetrics.density * 6).toInt()
+            }
+        }
+        tagFlow.addView(editTagButton)
+        drawerTagsLayout.addView(tagFlow)
 
-        // Section 7: 描述
-        drawerDescView.text = item.description.ifEmpty { "—" }
+        // Section 7: 描述（空时显示 hint）
+        drawerDescView.text = item.description
 
-        // Section 8: 来源网址
-        drawerSourceUrlView.text = item.sourceUrl.ifEmpty { "—" }
+        // Section 8: 来源网址（空时显示 hint）
+        drawerSourceUrlView.text = item.sourceUrl
     }
 
     private fun formatFileSize(bytes: Long): String {
@@ -1078,9 +1147,21 @@ class NativeGalleryView @JvmOverloads constructor(
         metadataDrawer.setBackgroundColor(colorPanel())
         drawerNameView.setTextColor(colorTextPrimary())
         drawerFolderView.setTextColor(colorTextSecondary())
-        drawerPreviewImage.setBackgroundColor(if (isDarkTheme) Color.parseColor("#1F2937") else Color.parseColor("#F3F4F6"))
+        drawerPreviewImage.setBackgroundColor(if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#F3F4F6"))
         drawerDescView.setTextColor(colorTextPrimary())
+        drawerDescView.setHintTextColor(colorHint())
+        drawerDescView.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = resources.displayMetrics.density * 8
+            setColor(colorTextBoxBg())
+            setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+        }
         drawerSourceUrlView.setTextColor(colorAccent())
+        drawerSourceUrlView.setHintTextColor(colorHint())
+        drawerSourceUrlView.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = resources.displayMetrics.density * 8
+            setColor(colorTextBoxBg())
+            setStroke((resources.displayMetrics.density * 1).toInt(), colorBorder())
+        }
         // 重新刷新当前图片的抽屉内容（标题色块等会用到主题色）
         images.getOrNull(currentIndex)?.let { updateDrawer(it) }
     }
@@ -1296,35 +1377,116 @@ class NativeGalleryView @JvmOverloads constructor(
         }
     }
 
+    /** 创建圆角矩形背景 drawable */
+    private fun createRoundedBg(bgColor: Int, cornerRadiusDp: Float, borderColor: Int? = null, strokeWidthDp: Float = 0f): android.graphics.drawable.GradientDrawable {
+        val density = resources.displayMetrics.density
+        return android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            setColor(bgColor)
+            cornerRadius = cornerRadiusDp * density
+            if (borderColor != null) setStroke((strokeWidthDp * density).toInt(), borderColor)
+        }
+    }
+
+    /** 设置斜体提示文本（hint），用于区分占位提示与正文输入 */
+    private fun setItalicHint(editText: EditText, hintText: String) {
+        val spannable = android.text.SpannableString(hintText)
+        spannable.setSpan(
+            android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
+            0, hintText.length,
+            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+        )
+        editText.setHint(spannable)
+        editText.setHintTextColor(colorHint())
+    }
+
+    /** 创建弹窗按钮（主/次样式） */
+    private fun createDialogButton(text: String, isPrimary: Boolean, onClick: () -> Unit): TextView {
+        val density = resources.displayMetrics.density
+        return TextView(context).apply {
+            this.text = text
+            textSize = 13f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(if (isPrimary) Color.WHITE else colorButtonSecondaryText())
+            setPadding((density * 20).toInt(), (density * 10).toInt(), (density * 20).toInt(), (density * 10).toInt())
+            background = createRoundedBg(
+                if (isPrimary) colorAccent() else colorButtonSecondaryBg(),
+                8f,
+                if (isPrimary) null else colorBorder(),
+                if (isPrimary) 0f else 1f
+            )
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                marginStart = (density * 8).toInt()
+            }
+        }
+    }
+
     private fun showTagEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        // 临时可编辑列表
         val localTags = item.tags.toMutableList()
+        val density = resources.displayMetrics.density
 
-        val container = LinearLayout(context).apply {
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+
+        val dialogView = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(48, 24, 48, 24)
+            background = createRoundedBg(colorDialogBg(), 16f)
+            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
         }
 
+        // 标题
+        dialogView.addView(TextView(context).apply {
+            text = "编辑标签"
+            setTextColor(colorTextPrimary())
+            textSize = 16f
+            paint.isFakeBoldText = true
+            setPadding(0, 0, 0, (density * 16).toInt())
+        })
+
+        // 标签列表
         val chipsBox = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
-        container.addView(chipsBox)
+        dialogView.addView(chipsBox)
 
+        // 输入行
         val inputRow = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = 16
+                topMargin = (density * 12).toInt()
             }
+            gravity = android.view.Gravity.CENTER_VERTICAL
         }
         val input = EditText(context).apply {
-            hint = "新标签"
+            setTextColor(colorTextPrimary())
+            textSize = 14f
+            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
+            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
             layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
             setSingleLine(true)
         }
-        val addButton = Button(context).apply {
+        setItalicHint(input, "新标签")
+        val widthPx = (380 * density).toInt()
+        val maxHeightPx = (450 * density).toInt()
+        // 标签增删后重新测量弹窗高度（自适应）
+        fun relayoutTagDialog() {
+            dialogView.measure(
+                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
+            )
+            dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
+        }
+        val addButton = TextView(context).apply {
             text = "+"
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            gravity = android.view.Gravity.CENTER
+            background = createRoundedBg(colorAccent(), 8f)
             setOnClickListener {
                 val tag = input.text.toString().trim()
                 if (tag.isNotEmpty() && tag !in localTags) {
@@ -1333,103 +1495,248 @@ class NativeGalleryView @JvmOverloads constructor(
                     refreshTagChips(chipsBox, localTags) { removedTag ->
                         localTags.remove(removedTag)
                         refreshTagChips(chipsBox, localTags) {}
+                        relayoutTagDialog()
                     }
+                    relayoutTagDialog()
                 }
+            }
+            layoutParams = LinearLayout.LayoutParams((density * 44).toInt(), (density * 44).toInt()).apply {
+                marginStart = (density * 8).toInt()
             }
         }
         inputRow.addView(input)
         inputRow.addView(addButton)
-        container.addView(inputRow)
+        dialogView.addView(inputRow)
 
         refreshTagChips(chipsBox, localTags) { removedTag ->
             localTags.remove(removedTag)
             refreshTagChips(chipsBox, localTags) {}
+            relayoutTagDialog()
         }
 
-        AlertDialog.Builder(context)
-            .setTitle("编辑标签")
-            .setView(container)
-            .setPositiveButton("保存") { _, _ ->
-                val idx2 = images.indexOfFirst { it.fileId == item.fileId }
-                if (idx2 >= 0) {
-                    images[idx2] = images[idx2].copy(tags = localTags.toList())
-                }
-                val json = JSONObject().apply { put("tags", JSONArray(localTags)) }
-                listener?.onUpdateFile(item.fileId, json.toString())
-                images.getOrNull(idx2)?.let { updateDrawer(it) }
+        // 按钮行
+        val buttonRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (density * 20).toInt()
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
+        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
+            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
+            if (idx2 >= 0) {
+                images[idx2] = images[idx2].copy(tags = localTags.toList())
+            }
+            val json = JSONObject().apply { put("tags", JSONArray(localTags)) }
+            listener?.onUpdateFile(item.fileId, json.toString())
+            images.getOrNull(idx2)?.let { updateDrawer(it) }
+            dialog.dismiss()
+        })
+        dialogView.addView(buttonRow)
+
+        dialog.setContentView(dialogView)
+        dialog.show()
+        relayoutTagDialog()
     }
 
     private fun refreshTagChips(container: LinearLayout, tags: List<String>, onRemove: (String) -> Unit) {
         container.removeAllViews()
+        val density = resources.displayMetrics.density
         if (tags.isEmpty()) {
             container.addView(TextView(context).apply {
                 text = "（无标签）"
                 setTextColor(colorTextSecondary())
-                textSize = 12f
-                setPadding(0, 8, 0, 8)
+                textSize = 13f
+                setPadding(0, (density * 8).toInt(), 0, (density * 8).toInt())
             })
             return
         }
         tags.forEach { tag ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
-                layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = 6
+                // WRAP_CONTENT 让胶囊只占内容宽度（缩短）
+                layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = (density * 6).toInt()
                 }
                 gravity = android.view.Gravity.CENTER_VERTICAL
                 val drawable = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = resources.displayMetrics.density * 14
+                    cornerRadius = density * 16
                     setColor(colorTagBg())
-                    setStroke((resources.displayMetrics.density * 1).toInt(), colorTagBorder())
+                    setStroke((density * 1).toInt(), colorTagBorder())
                 }
                 background = drawable
-                setPadding(12, 8, 12, 8)
+                // 放大内边距以符合触控操作
+                setPadding((density * 14).toInt(), (density * 10).toInt(), (density * 10).toInt(), (density * 10).toInt())
             }
             row.addView(TextView(context).apply {
                 text = tag
                 setTextColor(colorTagText())
-                textSize = 12f
-                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+                textSize = 14f
+                maxEms = 14
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setSingleLine(true)
             })
-            row.addView(TextView(context).apply {
+            // 放大删除按钮触控区
+            val removeBtn = TextView(context).apply {
                 text = "✕"
                 setTextColor(Color.parseColor("#EF4444"))
-                textSize = 14f
-                setPadding(16, 0, 0, 0)
+                textSize = 15f
+                val minTouch = (density * 32).toInt()
+                minWidth = minTouch
+                minHeight = minTouch
+                gravity = android.view.Gravity.CENTER
                 setOnClickListener { onRemove(tag) }
-            })
+            }
+            row.addView(removeBtn)
             container.addView(row)
         }
     }
 
     private fun showDescriptionEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
+        val density = resources.displayMetrics.density
+
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+
+        val dialogView = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createRoundedBg(colorDialogBg(), 16f)
+            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
+        }
+
+        // 标题
+        dialogView.addView(TextView(context).apply {
+            text = "编辑描述"
+            setTextColor(colorTextPrimary())
+            textSize = 16f
+            paint.isFakeBoldText = true
+            setPadding(0, 0, 0, (density * 16).toInt())
+        })
+
+        // 多行输入框（正文非斜体，从左上角开始）
         val input = EditText(context).apply {
-            hint = "添加描述"
-            inputType = InputType.TYPE_TEXT_FLAG_MULTI_LINE
+            setTextColor(colorTextPrimary())
+            textSize = 13f
+            inputType = InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            // 文字从左上角开始（修复水平居中 + 上下空位问题）
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
             minLines = 4
             maxLines = 8
             setText(item.description)
-            setPadding(48, 24, 48, 24)
+            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
+            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
+            setLineSpacing(0f, 1.4f)
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         }
-        AlertDialog.Builder(context)
-            .setTitle("编辑描述")
-            .setView(input)
-            .setPositiveButton("保存") { _, _ ->
-                val newDesc = input.text.toString().trim()
-                val idx2 = images.indexOfFirst { it.fileId == item.fileId }
-                if (idx2 >= 0) {
-                    images[idx2] = images[idx2].copy(description = newDesc)
-                }
-                val json = JSONObject().apply { put("description", newDesc) }
-                listener?.onUpdateFile(item.fileId, json.toString())
-                images.getOrNull(idx2)?.let { updateDrawer(it) }
+        setItalicHint(input, "添加描述...")
+        dialogView.addView(input)
+
+        // 按钮行
+        val buttonRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (density * 20).toInt()
             }
-            .setNegativeButton("取消", null)
-            .show()
+        }
+        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
+        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
+            val newDesc = input.text.toString().trim()
+            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
+            if (idx2 >= 0) {
+                images[idx2] = images[idx2].copy(description = newDesc)
+            }
+            val json = JSONObject().apply { put("description", newDesc) }
+            listener?.onUpdateFile(item.fileId, json.toString())
+            images.getOrNull(idx2)?.let { updateDrawer(it) }
+            dialog.dismiss()
+        })
+        dialogView.addView(buttonRow)
+
+        dialog.setContentView(dialogView)
+        dialog.show()
+        val widthPx = (380 * density).toInt()
+        val maxHeightPx = (520 * density).toInt()
+        dialogView.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
+        )
+        dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
+    }
+
+    private fun showSourceUrlEditDialog() {
+        val item = images.getOrNull(currentIndex) ?: return
+        val density = resources.displayMetrics.density
+
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        dialog.setCancelable(true)
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+
+        val dialogView = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            background = createRoundedBg(colorDialogBg(), 16f)
+            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
+        }
+
+        // 标题
+        dialogView.addView(TextView(context).apply {
+            text = "编辑来源网址"
+            setTextColor(colorTextPrimary())
+            textSize = 16f
+            paint.isFakeBoldText = true
+            setPadding(0, 0, 0, (density * 16).toInt())
+        })
+
+        // 单行输入框
+        val input = EditText(context).apply {
+            setTextColor(colorTextPrimary())
+            textSize = 13f
+            setText(item.sourceUrl)
+            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
+            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
+            setSingleLine(true)
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        }
+        setItalicHint(input, "https://...")
+        dialogView.addView(input)
+
+        // 按钮行
+        val buttonRow = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.END
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (density * 20).toInt()
+            }
+        }
+        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
+        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
+            val newUrl = input.text.toString().trim()
+            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
+            if (idx2 >= 0) {
+                images[idx2] = images[idx2].copy(sourceUrl = newUrl)
+            }
+            val json = JSONObject().apply { put("sourceUrl", newUrl) }
+            listener?.onUpdateFile(item.fileId, json.toString())
+            images.getOrNull(idx2)?.let { updateDrawer(it) }
+            dialog.dismiss()
+        })
+        dialogView.addView(buttonRow)
+
+        dialog.setContentView(dialogView)
+        dialog.show()
+        val widthPx = (380 * density).toInt()
+        val maxHeightPx = (300 * density).toInt()
+        dialogView.measure(
+            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
+        )
+        dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
     }
 
     private fun showMoreMenu() {
