@@ -1,47 +1,30 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import React, { useEffect, useLayoutEffect, useRef, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { isAndroidPlatformCached, getGlobalCacheRoot, setAndroidImmersiveMode, androidShareImage, setAndroidStatusBar } from '../api/tauri-bridge';
 import { lanClientApi } from './lan-client/lanClientApi';
 import { ColorPickerPopover } from './ColorPickerPopover';
-import { usePinchZoom } from '../hooks/usePinchZoom';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
   RotateCw, RotateCcw, Maximize, Minimize, ArrowLeft, ArrowRight,
   Play, Square, Settings, Sliders, Globe, FileText, Tag, Folder as FolderIcon, ChevronDown, Loader2,
   Copy, ExternalLink, Image as ImageIcon, Save, Move, Trash2, FolderOpen, Palette, Clipboard,
-  Scan, Share2, MoreVertical
+  Scan
 } from 'lucide-react';
 
 
 // 全局高分辨率图片 Blob 缓存 - 增大容量�?200 �?
 const blobCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 50;
-const MAX_ANDROID_CACHE_SIZE = 30;
 
 const loadingPromises = new Map<string, Promise<string>>();
-
-const getAndroidMaxCacheSize = (): number => {
-  if (typeof navigator !== 'undefined' && 'deviceMemory' in navigator) {
-    const mem = (navigator as any).deviceMemory as number;
-    if (mem <= 2) return 15;
-    if (mem <= 4) return 20;
-  }
-  return MAX_ANDROID_CACHE_SIZE;
-};
-
-const getMaxCacheSize = (): number => {
-  return isAndroidPlatformCached() ? getAndroidMaxCacheSize() : MAX_CACHE_SIZE;
-};
 
 // Blob 大小追踪（与 blobCache 平行，用于统计内存占用）
 const blobCacheSizes = new Map<string, number>();
 
 const evictBlobCache = (): void => {
-  const maxSize = getMaxCacheSize();
-  while (blobCache.size > maxSize) {
+  while (blobCache.size > MAX_CACHE_SIZE) {
     const firstKey = blobCache.keys().next().value;
     if (firstKey) {
       const url = blobCache.get(firstKey);
@@ -81,41 +64,6 @@ export const hasBlobCache = (path: string): boolean => {
   return blobCache.has(path);
 };
 
-const PERF = {
-  mark: (label: string) => { if (isAndroidPlatformCached()) performance.mark(label); },
-  measure: (name: string, start: string, end?: string) => {
-    if (!isAndroidPlatformCached()) return;
-    try {
-      if (end) performance.measure(name, start, end);
-      else performance.measure(name, start);
-      const entries = performance.getEntriesByName(name);
-      const last = entries[entries.length - 1];
-      if (last) console.log('[PERF] ' + name + ': ' + last.duration.toFixed(1) + 'ms');
-    } catch {}
-  },
-  log: (...args: any[]) => { if (isAndroidPlatformCached()) console.log('[PERF]', ...args); },
-  ms: (start: number) => isAndroidPlatformCached() ? (performance.now() - start).toFixed(1) + 'ms' : '',
-};
-
-// 图片切换生命周期计数器，用于追踪每次 SWITCH 的完整流程
-let switchSeq = 0;
-
-// 生命周期日志：[PERF] [SWITCH#N] STEP fileName elapsedMs [extra]
-const lcLog = (switchId: number, step: string, fileName: string, t0: number, extra?: string) => {
-  if (!isAndroidPlatformCached()) return;
-  const elapsed = (performance.now() - t0).toFixed(1) + 'ms';
-  const extraStr = extra !== undefined ? ' ' + extra : '';
-  console.log(`[PERF] [SWITCH#${switchId}] ${step} ${fileName} ${elapsed}${extraStr}`);
-};
-
-// 加载流程日志：[PERF] [LOAD] STEP fileName elapsedMs [extra]
-const loadLog = (step: string, fileName: string, t0: number, extra?: string) => {
-  if (!isAndroidPlatformCached()) return;
-  const elapsed = (performance.now() - t0).toFixed(1) + 'ms';
-  const extraStr = extra !== undefined ? ' ' + extra : '';
-  console.log(`[PERF] [LOAD] ${step} ${fileName} ${elapsed}${extraStr}`);
-};
-
 // Blob 缓存总内存占用（字节）
 let totalBlobBytes = 0;
 
@@ -133,23 +81,14 @@ const preloadLanImage = (path: string, httpUrl: string, priority: 'high' | 'low'
 
   if (preloadedImages.has(path)) return;
 
-  const fileName = path.split('/').pop() || path;
   const doPreload = () => {
     if (preloadedImages.has(path)) return;
     const img = new Image();
     img.decoding = 'async';
-    const t0 = performance.now();
-    PERF.log('[PRELOAD] IMG DOWNLOAD START', fileName, 'priority=' + priority);
     img.onload = () => {
-      PERF.log('[PRELOAD] IMG DOWNLOAD END', fileName, PERF.ms(t0));
       if (typeof img.decode === 'function') {
-        img.decode().then(() => {
-          PERF.log('[PRELOAD] IMG DECODE END', fileName, PERF.ms(t0));
-        }).catch(() => {});
+        img.decode().catch(() => {});
       }
-    };
-    img.onerror = () => {
-      PERF.log('[PRELOAD] IMG DOWNLOAD ERROR', fileName, PERF.ms(t0));
     };
     img.src = httpUrl;
     preloadedImages.set(path, img);
@@ -175,19 +114,13 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
   if (path.startsWith('lan://')) {
     const remotePath = path.slice('lan://'.length);
     const httpUrl = lanClientApi.getImageUrl(remotePath);
-    const fileName = remotePath.split('/').pop() || remotePath;
 
-    const t0 = performance.now();
     blobCache.set(path, httpUrl);
     blobCacheSizes.set(path, 0);
     evictBlobCache();
     // 触发预下载+预解码：持有 Image 对象引用，让浏览器保留解码位图。
     // 切换时 <img> 命中浏览器内部缓存，跳过下载+解码（DECODE 从 3.2s 降到 ~0ms）。
     preloadLanImage(path, httpUrl, priority);
-    const cacheCount = blobCache.size;
-    const cacheMemoryMB = (totalBlobBytes / 1024 / 1024).toFixed(1);
-    PERF.log('[CACHE] CACHE INSERT (LAN HTTP URL)', fileName, 'count=' + cacheCount, 'memory=' + cacheMemoryMB + 'MB');
-    loadLog('LOAD START + END (LAN)', fileName, t0, 'priority=' + priority + ' HTTP URL cached directly');
     return httpUrl;
   }
 
@@ -195,83 +128,31 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
     return loadingPromises.get(path)!;
   }
 
-  const fileName = path.split('/').pop() || path;
-  const t0 = performance.now();
-  loadLog('LOAD START (local)', fileName, t0, priority);
   const loadPromise = (async () => {
     try {
       if (path.toLowerCase().endsWith('.jxl')) {
-        loadLog('FETCH START (jxl_preview)', fileName, t0);
         const previewUrl = await invoke<string>('get_jxl_preview', { path });
-        loadLog('FETCH END (jxl_preview)', fileName, t0);
         blobCache.set(path, previewUrl);
         blobCacheSizes.set(path, 0);
         evictBlobCache();
-        PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
-        loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
         return previewUrl;
       }
 
       if (path.toLowerCase().endsWith('.avif')) {
-        loadLog('FETCH START (avif_preview)', fileName, t0);
         const previewUrl = await invoke<string>('get_avif_preview', { path });
-        loadLog('FETCH END (avif_preview)', fileName, t0);
         blobCache.set(path, previewUrl);
         blobCacheSizes.set(path, 0);
         evictBlobCache();
-        PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
-        loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
         return previewUrl;
       }
 
-      if (isAndroidPlatformCached()) {
-        const cacheRoot = getGlobalCacheRoot();
-        if (cacheRoot) {
-          try {
-            loadLog('FETCH START (native_preview)', fileName, t0);
-            const result = await invoke<{
-              previewPath: string;
-              originalWidth: number;
-              originalHeight: number;
-              isDownsampled: boolean;
-              isAnimatedWebp: boolean;
-            }>('android_get_native_preview', {
-              filePath: path,
-              cacheRoot,
-              maxDimension: 0,
-            });
-            loadLog('FETCH END (native_preview)', fileName, t0, 'downsampled=' + result.isDownsampled + ' animated=' + result.isAnimatedWebp);
-
-            const previewUrl = result.previewPath.startsWith('/')
-              ? convertFileSrc(result.previewPath)
-              : result.previewPath.startsWith('http')
-                ? result.previewPath
-                : convertFileSrc(result.previewPath);
-
-            blobCache.set(path, previewUrl);
-            blobCacheSizes.set(path, 0);
-            evictBlobCache();
-            PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
-            loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
-            return previewUrl;
-          } catch (e) {
-            loadLog('FETCH FAILED (native_preview)', fileName, t0, String(e));
-          }
-        }
-      }
-
-      loadLog('FETCH START (convertFileSrc)', fileName, t0);
       const url = convertFileSrc(path);
-      loadLog('FETCH END (convertFileSrc)', fileName, t0);
       blobCache.set(path, url);
       blobCacheSizes.set(path, 0);
       evictBlobCache();
-      PERF.log('[CACHE] CACHE INSERT (local)', fileName, 'count=' + blobCache.size, 'memory=' + (totalBlobBytes / 1024 / 1024).toFixed(1) + 'MB');
-      loadLog('LOAD END (local)', fileName, t0, 'TOTAL');
       return url;
     } catch (e) {
       console.error("Failed to load image to cache", path, e);
-      loadLog('LOAD END (local, error)', fileName, t0, 'TOTAL');
       return convertFileSrc(path);
     } finally {
       loadingPromises.delete(path);
@@ -289,26 +170,8 @@ const isAnimatedFile = (path: string): boolean => {
 };
 
 export const preloadToCache = (path: string, priority: 'high' | 'low' = 'low'): void => {
-  const fileName = path.split('/').pop() || path;
   if (!blobCache.has(path) && !loadingPromises.has(path)) {
-    if (priority === 'low' && isAndroidPlatformCached()) {
-      const doPreload = () => {
-        if (!blobCache.has(path) && !loadingPromises.has(path)) {
-          PERF.log('preload idle', fileName);
-          loadToCache(path, priority).catch(() => {});
-        }
-      };
-      if ('requestIdleCallback' in window) {
-        (window as any).requestIdleCallback(doPreload, { timeout: 3000 });
-      } else {
-        setTimeout(doPreload, 200);
-      }
-    } else {
-      PERF.log('preload MISS', fileName);
-      loadToCache(path, priority).catch(() => {});
-    }
-  } else if (isAndroidPlatformCached()) {
-    PERF.log('preload HIT', fileName);
+    loadToCache(path, priority).catch(() => {});
   }
 };
 
@@ -455,8 +318,6 @@ interface ViewerProps {
   tabs?: TabState[];
   handleOpenCompareInNewTab?: (imageIds: string[]) => void;
   handleAddToCompareCanvas?: (tabId: string, imageIds: string[]) => void;
-  enterImmersiveOnMount?: boolean;
-  nativeViewerActive?: boolean;
 }
 
 interface ContextMenuState {
@@ -503,8 +364,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   tabs = [],
   handleOpenCompareInNewTab,
   handleAddToCompareCanvas,
-  enterImmersiveOnMount = false,
-  nativeViewerActive = false
 }) => {
   // 如果 file 不存在，关闭查看�?
   if (!file) {
@@ -617,26 +476,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   } | null>(null);
   const [isFlipAnimating, setIsFlipAnimating] = useState(false);
   const [isTransformAnimating, setIsTransformAnimating] = useState(false);
-  const [imgNaturalSize, setImgNaturalSize] = useState<{ w: number; h: number } | null>(null);
-  const [containerSize, setContainerSize] = useState<{ w: number; h: number } | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [scopeMenuPos, setScopeMenuPos] = useState({ top: 0, left: 0 });
 
   const [isWheeling, setIsWheeling] = useState(false);
-  const [swipeState, setSwipeState] = useState<{
-    direction: -1 | 1;
-    outgoingUrl: string;
-    incomingUrl: string;
-    incomingPath: string;
-    offset: number;
-    animating: boolean;
-  } | null>(null);
-  const [isSwiping, setIsSwiping] = useState(false);
-  const [swipeOffset, setSwipeOffset] = useState(0);
-  const swipeStateRef = useRef(swipeState);
-  const swipeOutImgRef = useRef<HTMLImageElement | null>(null);
-  const swipeInImgRef = useRef<HTMLImageElement | null>(null);
   const wheelTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const lastFileIdRef = useRef(file.id);
@@ -652,7 +496,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { sortedFileIdsRef.current = sortedFileIds; }, [sortedFileIds]);
   useEffect(() => { filesRef.current = files; }, [files]);
   useEffect(() => { fileIdRef.current = file.id; }, [file.id]);
-  useEffect(() => { swipeStateRef.current = swipeState; }, [swipeState]);
 
   const isImmersiveModeRef = useRef(isImmersiveMode);
   useEffect(() => {
@@ -708,20 +551,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     if (file.path) {
       const cached = getBlobCacheSync(file.path);
       if (cached) {
-        PERF.log('init displayUrl: CACHE HIT', file.path.split('/').pop());
         return cached;
       }
     }
-    PERF.log('init displayUrl: EMPTY');
     return '';
   });
   const displayPathRef = useRef<string>(file.path || '');
   const loadingPathRef = useRef<string>('');
-  const viewerOpenTimeRef = useRef(performance.now());
-
-  const [outgoingUrl, setOutgoingUrl] = useState<string>('');
-  const outgoingUrlRef = useRef<string>('');
-  const outgoingFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // LAN 缩略图→原图渐变过渡：先显示 256px 缩略图（服务端已缓存，下载快），
   // 原图下载完成后渐变替换。lanThumbUrl 为缩略图 URL，lanFadeIn 控制主图透明度过渡。
@@ -730,19 +566,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const lanFadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lanThumbUrlRef = useRef<string>('');
   useEffect(() => { lanThumbUrlRef.current = lanThumbUrl; }, [lanThumbUrl]);
-
-  useEffect(() => {
-    if (isAndroidPlatformCached()) {
-      PERF.log('=== VIEWER OPEN ===', file.path.split('/').pop(), 'sinceMount=' + PERF.ms(viewerOpenTimeRef.current));
-      invoke('android_pause_thumbnail_workers').catch(() => {});
-    }
-    return () => {
-      if (isAndroidPlatformCached()) {
-        PERF.log('=== VIEWER CLOSE ===');
-        invoke('android_resume_thumbnail_workers').catch(() => {});
-      }
-    };
-  }, []);
 
   // 幻灯片模式专用：前一张图片的 URL（用于过渡效果）
   const [prevDisplayUrl, setPrevDisplayUrl] = useState<string>('');
@@ -762,42 +585,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { slideshowTransitionRef.current = slideshowConfig.transition; }, [slideshowConfig.transition]);
   useEffect(() => { displayUrlRef.current = displayUrl; }, [displayUrl]);
 
-  const swipeAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    if (swipeState?.animating) {
-      const incomingPath = swipeState.incomingPath;
-      const incomingFileName = incomingPath.split('/').pop() || incomingPath;
-      const ANIM_DURATION = 280;
-      // 降低 MAX_WAIT 从 5000ms 到 1500ms：避免快速切换时长时间卡在上一个
-      // 切换的等待中（displayUrl 因新一轮切换而永远不会等于 incomingUrl）。
-      const MAX_WAIT = 1500;
-      const CHECK_INTERVAL = 50;
-      let elapsed = 0;
-      const animT0 = performance.now();
-      PERF.log('[ANIM] START', incomingFileName, 'direction=' + swipeState.direction);
-
-      const tick = () => {
-        elapsed += CHECK_INTERVAL;
-        // 使用路径匹配而非 URL 匹配：fallback URL（HTTP/convertFileSrc）与
-        // loadToCache 完成后的 cachedUrl（blob:/native preview）可能不同，
-        // 但路径相同即说明主图已切换到目标图片，可清除 swipeState。
-        if (elapsed >= ANIM_DURATION && (displayPathRef.current === incomingPath || elapsed >= MAX_WAIT)) {
-          const reason = displayPathRef.current === incomingPath ? 'PATH MATCH' : 'MAX_WAIT';
-          PERF.log('[ANIM] END', incomingFileName, PERF.ms(animT0), 'reason=' + reason);
-          setSwipeState(null);
-          return;
-        }
-        swipeAnimTimerRef.current = setTimeout(tick, CHECK_INTERVAL);
-      };
-
-      swipeAnimTimerRef.current = setTimeout(tick, CHECK_INTERVAL);
-    }
-    return () => {
-      if (swipeAnimTimerRef.current) clearTimeout(swipeAnimTimerRef.current);
-    };
-  }, [swipeState?.animating]);
-
   // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
     if (!file.path) {
@@ -807,10 +594,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
 
     const path = file.path;
-    const fileName = path.split('/').pop() || path;
-    const switchT0 = performance.now();
-    const switchId = ++switchSeq;
-    lcLog(switchId, 'SWITCH START', fileName, switchT0);
 
     // 清理上一次 LAN 缩略图渐变状态（防止跨图片残留）
     if (lanFadeTimerRef.current) {
@@ -838,13 +621,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       const thumbUrl = lanClientApi.getThumbnailUrl(remotePath);
       setLanThumbUrl(thumbUrl);
       setLanFadeIn(true);
-      lcLog(switchId, 'THUMB DISPLAY', fileName, switchT0, '256px thumbnail');
     }
 
     const cachedUrl = getBlobCacheSync(path);
-    const displaySource: string = cachedUrl ? 'CACHE' : (loadingPromises.has(path) ? 'WAIT PROMISE' : 'NEW LOAD');
-    lcLog(switchId, 'CACHE LOOKUP', fileName, switchT0, cachedUrl ? 'HIT' : 'MISS');
-    PERF.log('[SWITCH#' + switchId + '] DISPLAY SOURCE:', displaySource, fileName);
 
     if (cachedUrl) {
       // 幻灯片模式下，保存当前图片作为过渡的起始图
@@ -878,19 +657,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       loadingPathRef.current = path;
       const preloadImg = new Image();
-      const oldDisplayUrl = displayUrlRef.current;
-      lcLog(switchId, 'DECODE START', fileName, switchT0);
       preloadImg.onload = () => {
         if (loadingPathRef.current !== path) return;
-        lcLog(switchId, 'DECODE END', fileName, switchT0);
-        setImgNaturalSize({ w: preloadImg.naturalWidth, h: preloadImg.naturalHeight });
 
-        // LAN 缩略图→原图渐变：跳过 outgoingUrl，用 lanFadeIn 控制透明度过渡
+        // LAN 缩略图→原图渐变：用 lanFadeIn 控制透明度过渡
         if (isLan && lanThumbUrlRef.current) {
           setDisplayUrl(cachedUrl);
           displayPathRef.current = path;
           loadingPathRef.current = '';
-          lcLog(switchId, 'DISPLAY (LAN fade-in)', fileName, switchT0);
           // 双重 rAF：确保浏览器先以 opacity:0 渲染原图，再触发渐变到 opacity:1
           requestAnimationFrame(() => {
             requestAnimationFrame(() => setLanFadeIn(false));
@@ -903,19 +677,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           return;
         }
 
-        if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
-          setOutgoingUrl(oldDisplayUrl);
-          outgoingUrlRef.current = oldDisplayUrl;
-          if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-        }
         setDisplayUrl(cachedUrl);
         displayPathRef.current = path;
         loadingPathRef.current = '';
-        lcLog(switchId, 'DISPLAY', fileName, switchT0);
       };
       preloadImg.onerror = () => {
         if (loadingPathRef.current !== path) return;
-        lcLog(switchId, 'DECODE END (fallback)', fileName, switchT0);
 
         // LAN 缩略图→原图渐变（错误回退：直接显示，不渐变）
         if (isLan && lanThumbUrlRef.current) {
@@ -924,19 +691,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           loadingPathRef.current = '';
           setLanFadeIn(false);
           setLanThumbUrl('');
-          lcLog(switchId, 'DISPLAY (LAN fade-in fallback)', fileName, switchT0);
           return;
         }
 
-        if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== cachedUrl) {
-          setOutgoingUrl(oldDisplayUrl);
-          outgoingUrlRef.current = oldDisplayUrl;
-          if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-        }
         setDisplayUrl(cachedUrl);
         displayPathRef.current = path;
         loadingPathRef.current = '';
-        lcLog(switchId, 'DISPLAY (fallback)', fileName, switchT0);
       };
       preloadImg.src = cachedUrl;
     } else {
@@ -946,24 +706,19 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       loadToCache(path, 'high').then(url => {
         // 被取消的请求返回空字符串，跳过
         if (!url) {
-          lcLog(switchId, 'CANCELLED (loadToCache returned empty)', fileName, switchT0);
           return;
         }
         if (loadingPathRef.current === path) {
           const oldDisplayUrl = displayUrlRef.current;
           const preloadImg2 = new Image();
-          lcLog(switchId, 'DECODE START', fileName, switchT0);
           preloadImg2.onload = () => {
             if (loadingPathRef.current !== path) return;
-            lcLog(switchId, 'DECODE END', fileName, switchT0);
-            setImgNaturalSize({ w: preloadImg2.naturalWidth, h: preloadImg2.naturalHeight });
 
-            // LAN 缩略图→原图渐变：跳过 outgoingUrl，用 lanFadeIn 控制透明度过渡
+            // LAN 缩略图→原图渐变：用 lanFadeIn 控制透明度过渡
             if (isLan && lanThumbUrlRef.current) {
               setDisplayUrl(url);
               displayPathRef.current = path;
               loadingPathRef.current = '';
-              lcLog(switchId, 'DISPLAY (LAN fade-in)', fileName, switchT0);
               // 双重 rAF：确保浏览器先以 opacity:0 渲染原图，再触发渐变到 opacity:1
               requestAnimationFrame(() => {
                 requestAnimationFrame(() => setLanFadeIn(false));
@@ -994,19 +749,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 setPrevDisplayUrl('');
               }, 600);
             }
-            if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== url) {
-              setOutgoingUrl(oldDisplayUrl);
-              outgoingUrlRef.current = oldDisplayUrl;
-              if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-            }
             setDisplayUrl(url);
             displayPathRef.current = path;
             loadingPathRef.current = '';
-            lcLog(switchId, 'DISPLAY', fileName, switchT0);
           };
           preloadImg2.onerror = () => {
             if (loadingPathRef.current !== path) return;
-            lcLog(switchId, 'DECODE END (fallback)', fileName, switchT0);
 
             // LAN 缩略图→原图渐变（错误回退：直接显示，不渐变）
             if (isLan && lanThumbUrlRef.current) {
@@ -1015,7 +763,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
               loadingPathRef.current = '';
               setLanFadeIn(false);
               setLanThumbUrl('');
-              lcLog(switchId, 'DISPLAY (LAN fade-in fallback)', fileName, switchT0);
               return;
             }
 
@@ -1037,20 +784,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 setPrevDisplayUrl('');
               }, 600);
             }
-            if (isAndroidPlatformCached() && oldDisplayUrl && oldDisplayUrl !== url) {
-              setOutgoingUrl(oldDisplayUrl);
-              outgoingUrlRef.current = oldDisplayUrl;
-              if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-            }
             setDisplayUrl(url);
             displayPathRef.current = path;
             loadingPathRef.current = '';
-            lcLog(switchId, 'DISPLAY (fallback)', fileName, switchT0);
           };
           preloadImg2.src = url;
-        } else {
-          // 已被后续切换覆盖
-          lcLog(switchId, 'STALE (superseded)', fileName, switchT0);
         }
       });
     }
@@ -1061,9 +799,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     return () => {
       if (transitionTimerRef.current) {
         clearTimeout(transitionTimerRef.current);
-      }
-      if (outgoingFadeTimerRef.current) {
-        clearTimeout(outgoingFadeTimerRef.current);
       }
       if (lanFadeTimerRef.current) {
         clearTimeout(lanFadeTimerRef.current);
@@ -1084,9 +819,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       return files[sortedFileIds[idx]];
     };
 
-    const isAndroid = isAndroidPlatformCached();
-    const immediateRange = isAndroid ? 1 : 3;
-    const nearbyRange = isAndroid ? 3 : 5;
+    const immediateRange = 3;
+    const nearbyRange = 5;
 
     const immediate: FileNode[] = [];
     const pathKeys: string[] = [];
@@ -1103,17 +837,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       const next = getNeighbor(i);
       if (prev?.path) { nearby.push(prev); pathKeys.push(prev.path); }
       if (next?.path) { nearby.push(next); pathKeys.push(next.path); }
-    }
-
-    // 打印 PRELOAD QUEUE（每次重新计算时输出一次）
-    if (isAndroidPlatformCached()) {
-      const currentFile = file.name;
-      const immediateNames = immediate.map(n => n.name);
-      const nearbyNames = nearby.map(n => n.name);
-      PERF.log('[PRELOAD] QUEUE',
-        'current=' + currentFile,
-        'High(immediate)=' + JSON.stringify(immediateNames),
-        'Low(nearby)=' + JSON.stringify(nearbyNames));
     }
 
     return { immediate, nearby, key: pathKeys.join('|') };
@@ -1227,24 +950,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     }
   }, [file.id]);
 
-  useEffect(() => {
-    if (!isAndroidPlatformCached() || !containerRef.current) return;
-    const el = containerRef.current;
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      setContainerSize({ w: rect.width, h: rect.height });
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-
   useLayoutEffect(() => {
     if (!immersiveFlip || !containerRef.current) return;
 
     const rect = containerRef.current.getBoundingClientRect();
-    setContainerSize({ w: rect.width, h: rect.height });
 
     const newCenterX = rect.left + rect.width / 2;
     const newCenterY = rect.top + rect.height / 2;
@@ -1392,435 +1101,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   }, [slideshowActive]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container || slideshowActive) return;
-
-    let initialDistance = 0;
-    let isPinching = false;
-    let pinchStartScale = 1;
-    let pinchStartPos = { x: 0, y: 0 };
-
-    const getTouchDistance = (t1: Touch, t2: Touch): number => {
-      const dx = t1.clientX - t2.clientX;
-      const dy = t1.clientY - t2.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
-    };
-
-  }, [slideshowActive]);
-
-  const getAdjacentImageUrl = (direction: -1 | 1): { url: string; path: string } | null => {
-    const currentSortedIds = sortedFileIdsRef.current;
-    const currentFiles = filesRef.current;
-    const currentFileId = fileIdRef.current;
-
-    if (!currentSortedIds || currentSortedIds.length === 0) return null;
-
-    const currentIdx = currentSortedIds.indexOf(currentFileId);
-    if (currentIdx === -1) return null;
-
-    const nextIdx = direction < 0
-      ? (currentIdx + 1) % currentSortedIds.length
-      : (currentIdx - 1 + currentSortedIds.length) % currentSortedIds.length;
-    const adjacentFile = currentFiles[currentSortedIds[nextIdx]];
-    if (!adjacentFile?.path) return null;
-
-    // LAN 图片：blobCache 只存 URL 字符串，不代表浏览器已下载原图字节。
-    // 用 preloadedImages 判断原图是否已下载+解码：
-    //   - 已预加载 → 用原图 URL（浏览器缓存命中，瞬间显示）
-    //   - 未预加载 → 用 256px 缩略图 URL（10-30KB，快速加载）
-    // 这样 swipe-in <img> 不会显示原图的渐进下载（3-4MB 从上往下加载）。
-    // 同时缩略图 URL 与切换函数 setLanThumbUrl 使用相同 URL，
-    // 滑动结束后缩略图层直接命中浏览器缓存，无黑屏。
-    if (adjacentFile.path.startsWith('lan://')) {
-      const remotePath = adjacentFile.path.slice('lan://'.length);
-      if (preloadedImages.has(adjacentFile.path)) {
-        return { url: lanClientApi.getImageUrl(remotePath), path: adjacentFile.path };
-      }
-      if (!loadingPromises.has(adjacentFile.path)) {
-        loadToCache(adjacentFile.path, 'low').catch(() => {});
-      }
-      return { url: lanClientApi.getThumbnailUrl(remotePath), path: adjacentFile.path };
-    }
-
-    // 本地图片：缓存命中时直接返回，否则用 convertFileSrc 作为 fallback
-    const cachedUrl = getBlobCacheSync(adjacentFile.path);
-    if (cachedUrl) return { url: cachedUrl, path: adjacentFile.path };
-
-    if (!loadingPromises.has(adjacentFile.path)) {
-      loadToCache(adjacentFile.path, 'low').catch(() => {});
-    }
-    return { url: convertFileSrc(adjacentFile.path), path: adjacentFile.path };
-  };
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || slideshowActive) return;
-
-    let initialDistance = 0;
-    let isPinching = false;
-    let pinchStartScale = 1;
-    let pinchStartPos = { x: 0, y: 0 };
-
-    const getTouchDistance = (t1: Touch, t2: Touch): number => {
-      const dx = t1.clientX - t2.clientX;
-      const dy = t1.clientY - t2.clientY;
-      return Math.sqrt(dx * dx + dy * dy);
-    };
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
-        const dist = getTouchDistance(e.touches[0], e.touches[1]);
-        if (dist > 10) {
-          e.preventDefault();
-          isPinching = true;
-          initialDistance = dist;
-          pinchStartScale = scaleRef.current;
-          pinchStartPos = { ...positionRef.current };
-          if (positionAnimRef.current) {
-            cancelAnimationFrame(positionAnimRef.current);
-            positionAnimRef.current = null;
-          }
-        }
-      }
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (!isPinching || e.touches.length !== 2) return;
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (!imgRef.current || !containerRef.current) return;
-
-      const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
-      if (currentDistance < 10) return;
-
-      const totalScale = currentDistance / initialDistance;
-
-      const rect = container.getBoundingClientRect();
-      const { naturalWidth, naturalHeight } = imgRef.current;
-      if (!naturalWidth || !naturalHeight) return;
-
-      const containerW = rect.width;
-      const containerH = rect.height;
-      const fitScale = Math.min(containerW / naturalWidth, containerH / naturalHeight);
-
-      const startLogicalW = naturalWidth * fitScale * pinchStartScale;
-      const startLogicalH = naturalHeight * fitScale * pinchStartScale;
-      const centerX = containerW / 2;
-      const centerY = containerH / 2;
-
-      const startImgCenterX = centerX + pinchStartPos.x;
-      const startImgCenterY = centerY + pinchStartPos.y;
-
-      const startImgLeft = startImgCenterX - startLogicalW / 2;
-      const startImgTop = startImgCenterY - startLogicalH / 2;
-      const startImgRight = startImgCenterX + startLogicalW / 2;
-      const startImgBottom = startImgCenterY + startLogicalH / 2;
-
-      const pinchCenterX = ((e.touches[0].clientX + e.touches[1].clientX) / 2) - rect.left;
-      const pinchCenterY = ((e.touches[0].clientY + e.touches[1].clientY) / 2) - rect.top;
-      const anchorX = Math.min(Math.max(pinchCenterX, startImgLeft), startImgRight);
-      const anchorY = Math.min(Math.max(pinchCenterY, startImgTop), startImgBottom);
-
-      let newScale = pinchStartScale * totalScale;
-      newScale = Math.max(0.01, Math.min(newScale, 15));
-
-      const scaleFactor = newScale / pinchStartScale;
-
-      const vecX = anchorX - startImgCenterX;
-      const vecY = anchorY - startImgCenterY;
-
-      const targetX = pinchStartPos.x + vecX * (1 - scaleFactor);
-      const targetY = pinchStartPos.y + vecY * (1 - scaleFactor);
-
-      setIsWheeling(true);
-      if (wheelTimeoutRef.current) clearTimeout(wheelTimeoutRef.current);
-      wheelTimeoutRef.current = setTimeout(() => setIsWheeling(false), 350);
-
-      setScale(newScale);
-      setPosition({ x: targetX, y: targetY });
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (isPinching && e.touches.length < 2) {
-        isPinching = false;
-        initialDistance = 0;
-      }
-    };
-
-    container.addEventListener('touchstart', handleTouchStart, { passive: false });
-    container.addEventListener('touchmove', handleTouchMove, { passive: false });
-    container.addEventListener('touchend', handleTouchEnd, { passive: false });
-    container.addEventListener('touchcancel', handleTouchEnd, { passive: false });
-
-    return () => {
-      container.removeEventListener('touchstart', handleTouchStart);
-      container.removeEventListener('touchmove', handleTouchMove);
-      container.removeEventListener('touchend', handleTouchEnd);
-      container.removeEventListener('touchcancel', handleTouchEnd);
-    };
-  }, [slideshowActive]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || slideshowActive) return;
-
-    let touchStartX = 0;
-    let touchStartY = 0;
-    let touchStartScreenY = 0;
-    let touchStartTime = 0;
-    let isSingleTouchDragging = false;
-    let isSwipingImage = false;
-    let hasMoved = false;
-    let lastTouchX = 0;
-    let lastTouchY = 0;
-    let lastTapTime = 0;
-    let lastTapX = 0;
-    let lastTapY = 0;
-    let isDoubleTap = false;
-    let isCancelled = false;
-
-    const SWIPE_THRESHOLD = 30;
-    const SWIPE_VELOCITY = 0.2;
-    const MOVE_THRESHOLD = 8;
-    const DOUBLE_TAP_DELAY = 200;
-    const DOUBLE_TAP_DISTANCE = 30;
-
-    let zoomMode: 'fit' | 'original' | 'fill' = 'fit';
-    let tapTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const isNotFitMode = () => Math.abs(scaleRef.current - 1) > 0.02;
-
-    const handleDoubleTap = (clientX: number, clientY: number) => {
-      if (!imgRef.current || !containerRef.current) return;
-      const { naturalWidth, naturalHeight } = imgRef.current;
-      const containerRect = containerRef.current.getBoundingClientRect();
-      const containerWidth = containerRect.width;
-      const containerHeight = containerRect.height;
-      if (!naturalWidth || !naturalHeight) return;
-
-      const scaleX = containerWidth / naturalWidth;
-      const scaleY = containerHeight / naturalHeight;
-      const fitScale = Math.min(scaleX, scaleY);
-      const originalScale = 1 / fitScale;
-      const fillScale = 1 / Math.max(scaleX, scaleY);
-
-      const current = scaleRef.current;
-      const isFit = Math.abs(current - 1) < 0.05;
-      const isOriginal = Math.abs(current - originalScale) < 0.05;
-      const isFill = Math.abs(current - fillScale) < 0.05;
-
-      if (isFit) zoomMode = 'fit';
-      else if (isOriginal) zoomMode = 'original';
-      else if (isFill) zoomMode = 'fill';
-
-      let nextMode: 'fit' | 'original' | 'fill';
-      if (zoomMode === 'fit') nextMode = 'original';
-      else if (zoomMode === 'original') nextMode = 'fill';
-      else nextMode = 'fit';
-      zoomMode = nextMode;
-
-      let targetScale: number;
-      if (nextMode === 'fit') targetScale = 1;
-      else if (nextMode === 'original') targetScale = originalScale;
-      else targetScale = fillScale;
-
-      const centerX = containerWidth / 2;
-      const centerY = containerHeight / 2;
-      const dx = clientX - (containerRect.left + centerX);
-      const dy = clientY - (containerRect.top + centerY);
-
-      if (nextMode === 'fit') {
-        animateTransformTo(targetScale, 0, 0, 300);
-      } else {
-        const targetX = dx * (1 - targetScale);
-        const targetY = dy * (1 - targetScale);
-        animateTransformTo(targetScale, targetX, targetY, 300);
-      }
-    };
-
-    const handleTouchStart = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const touch = e.touches[0];
-
-      const now = Date.now();
-      const tapDx = touch.clientX - lastTapX;
-      const tapDy = touch.clientY - lastTapY;
-      const tapDist = Math.sqrt(tapDx * tapDx + tapDy * tapDy);
-
-      if (now - lastTapTime < DOUBLE_TAP_DELAY && tapDist < DOUBLE_TAP_DISTANCE) {
-        e.preventDefault();
-        isDoubleTap = true;
-        if (tapTimer) {
-          clearTimeout(tapTimer);
-          tapTimer = null;
-        }
-        handleDoubleTap(touch.clientX, touch.clientY);
-        lastTapTime = 0;
-        return;
-      }
-
-      lastTapTime = now;
-      lastTapX = touch.clientX;
-      lastTapY = touch.clientY;
-      isDoubleTap = false;
-
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
-      touchStartScreenY = touch.screenY;
-      lastTouchX = touch.clientX;
-      lastTouchY = touch.clientY;
-      touchStartTime = now;
-      hasMoved = false;
-      isSingleTouchDragging = false;
-      isSwipingImage = false;
-    };
-
-    const handleTouchMove = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      if (isDoubleTap) return;
-      const touch = e.touches[0];
-      const dx = touch.clientX - touchStartX;
-      const dy = touch.clientY - touchStartY;
-      const totalDist = Math.sqrt(dx * dx + dy * dy);
-
-      if (!hasMoved && totalDist > MOVE_THRESHOLD) {
-        hasMoved = true;
-        if (isNotFitMode()) {
-          isSingleTouchDragging = true;
-          if (positionAnimRef.current) {
-            cancelAnimationFrame(positionAnimRef.current);
-            positionAnimRef.current = null;
-          }
-          setIsDragging(true);
-        } else {
-          isSwipingImage = true;
-          setIsSwiping(true);
-        }
-      }
-
-      if (hasMoved && isSingleTouchDragging) {
-        e.preventDefault();
-        const moveX = touch.clientX - lastTouchX;
-        const moveY = touch.clientY - lastTouchY;
-        setPosition(prev => ({ x: prev.x + moveX, y: prev.y + moveY }));
-      }
-
-      if (hasMoved && isSwipingImage) {
-        e.preventDefault();
-        const direction = dx < 0 ? -1 : 1;
-        const adjacent = getAdjacentImageUrl(direction);
-        if (adjacent) {
-          // 当前图片仍在加载中（缩略图状态）时，displayUrlRef.current 仍指向
-          // 上一张已加载的图。此时滑动应显示当前缩略图作为 outgoingUrl，
-          // 而非上一张原图，否则用户会看到"图片变成上一张已加载的图"。
-          const isThumbnailShowing = loadingPathRef.current !== '' && lanThumbUrlRef.current;
-          const outgoingUrl = isThumbnailShowing ? lanThumbUrlRef.current : displayUrlRef.current;
-          setSwipeState({
-            direction,
-            outgoingUrl,
-            incomingUrl: adjacent.url,
-            incomingPath: adjacent.path,
-            offset: dx,
-            animating: false,
-          });
-        } else {
-          setSwipeOffset(dx);
-        }
-      }
-
-      lastTouchX = touch.clientX;
-      lastTouchY = touch.clientY;
-    };
-
-    const handleTouchEnd = (e: TouchEvent) => {
-      if (e.touches.length > 0) return;
-
-      if (isCancelled) {
-        isCancelled = false;
-        setIsDragging(false);
-        isSingleTouchDragging = false;
-        isSwipingImage = false;
-        setSwipeState(null);
-        setSwipeOffset(0);
-        return;
-      }
-
-      if (isDoubleTap) {
-        isDoubleTap = false;
-        return;
-      }
-
-      if (isSingleTouchDragging) {
-        setIsDragging(false);
-        isSingleTouchDragging = false;
-        return;
-      }
-
-      if (isSwipingImage) {
-        const dx = lastTouchX - touchStartX;
-        const elapsed = Date.now() - touchStartTime;
-        const velocity = elapsed > 0 ? Math.abs(dx) / elapsed : 0;
-
-        if (swipeStateRef.current && (Math.abs(dx) > SWIPE_THRESHOLD || velocity > SWIPE_VELOCITY)) {
-          const direction = swipeStateRef.current.direction;
-
-          setSwipeState(prev => {
-            return prev ? { ...prev, animating: true } : null;
-          });
-
-          if (direction < 0) {
-            onNextRef.current();
-          } else {
-            onPrevRef.current();
-          }
-        } else {
-          setSwipeState(null);
-          setSwipeOffset(0);
-        }
-
-        isSwipingImage = false;
-        return;
-      }
-
-      if (isAndroidPlatformCached() && !hasMoved) {
-        if (touchStartScreenY > window.screen.height - 80) return;
-        if (tapTimer) clearTimeout(tapTimer);
-        const tapX = touchStartX;
-        tapTimer = setTimeout(() => {
-          tapTimer = null;
-          if (!containerRef.current) return;
-          const rect = containerRef.current.getBoundingClientRect();
-          const relX = tapX - rect.left;
-          const thirdWidth = rect.width / 3;
-
-          if (relX < thirdWidth) {
-            onPrevRef.current();
-          } else if (relX > thirdWidth * 2) {
-            onNextRef.current();
-          } else {
-            toggleImmersiveModeRef.current();
-          }
-        }, DOUBLE_TAP_DELAY);
-      }
-    };
-
-    const handleTouchCancel = () => { isCancelled = true; handleTouchEnd(new TouchEvent('touchcancel')); };
-    container.addEventListener('touchstart', handleTouchStart, { passive: false });
-    container.addEventListener('touchmove', handleTouchMove, { passive: false });
-    container.addEventListener('touchend', handleTouchEnd, { passive: true });
-    container.addEventListener('touchcancel', handleTouchCancel, { passive: true });
-
-    return () => {
-      container.removeEventListener('touchstart', handleTouchStart);
-      container.removeEventListener('touchmove', handleTouchMove);
-      container.removeEventListener('touchend', handleTouchEnd);
-      container.removeEventListener('touchcancel', handleTouchCancel);
-      if (tapTimer) clearTimeout(tapTimer);
-    };
-  }, [slideshowActive]);
-
-  useEffect(() => {
     let intervalId: ReturnType<typeof setTimeout>;
     if (slideshowActive) {
       intervalId = setInterval(() => {
@@ -1860,13 +1140,9 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       setIsImmersiveMode(true);
       setRotation(0);
 
-      if (isAndroidPlatformCached()) {
-        setAndroidImmersiveMode(true);
-      } else {
-        document.documentElement.requestFullscreen({ navigationUI: 'hide' } as FullscreenOptions).catch(() => {
-          rootRef.current?.requestFullscreen().catch(() => {});
-        });
-      }
+      document.documentElement.requestFullscreen({ navigationUI: 'hide' } as FullscreenOptions).catch(() => {
+        rootRef.current?.requestFullscreen().catch(() => {});
+      });
     } else {
       const imgRect = imgRef.current?.getBoundingClientRect();
       if (imgRect) {
@@ -1881,44 +1157,14 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       if (immersivePrevLayoutRef.current.sidebar && !layout.isSidebarVisible) onLayoutToggle('sidebar');
       if (immersivePrevLayoutRef.current.metadata && !layout.isMetadataVisible) onLayoutToggle('metadata');
 
-      if (isAndroidPlatformCached()) {
-        setAndroidImmersiveMode(false);
-        const isDark = document.documentElement.classList.contains('dark');
-        setAndroidStatusBar(isDark);
-      } else {
-        if (document.fullscreenElement) {
-          document.exitFullscreen().catch(() => {});
-        }
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
       }
     }
   };
 
   const toggleImmersiveModeRef = useRef(toggleImmersiveMode);
   useEffect(() => { toggleImmersiveModeRef.current = toggleImmersiveMode; });
-
-  useEffect(() => {
-    const handler = () => {
-      if (slideshowActiveRef.current) {
-        stopSlideshow();
-        (window as any).__androidBackHandled = true;
-      } else if (isImmersiveModeRef.current) {
-        toggleImmersiveModeRef.current();
-        (window as any).__androidBackHandled = true;
-      }
-    };
-    window.addEventListener('android-back-press', handler);
-    return () => window.removeEventListener('android-back-press', handler);
-  }, []);
-
-  const autoImmersiveDoneRef = useRef(false);
-  useEffect(() => {
-    if (!enterImmersiveOnMount || !imgNaturalSize || !displayUrl || isImmersiveMode || autoImmersiveDoneRef.current) return;
-    autoImmersiveDoneRef.current = true;
-    const timer = setTimeout(() => {
-      toggleImmersiveModeRef.current();
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [enterImmersiveOnMount, imgNaturalSize, displayUrl, isImmersiveMode]);
 
   const handleSearchSubmit = () => {
     onSearch(localQuery);
@@ -2073,22 +1319,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   // Stop slideshow and ensure fullscreen / UI state is cleaned up immediately
   const stopSlideshow = async () => {
     try {
-      if (isAndroidPlatformCached()) {
-        if (isImmersiveModeRef.current) {
-          toggleImmersiveModeRef.current();
-        }
-      } else {
-        if (document.fullscreenElement) {
-          await document.exitFullscreen();
-        }
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
       }
     } catch (err) {
       // ignore
     } finally {
-      if (isAndroidPlatformCached()) {
-        const isDark = document.documentElement.classList.contains('dark');
-        setAndroidStatusBar(isDark);
-      }
       setIsFullscreen(false);
       setSlideshowActive(false);
       setContextMenu(prev => ({ ...prev, visible: false }));
@@ -2099,18 +1335,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   const toggleSlideshow = async () => {
     if (!slideshowActive) {
       setSlideshowActive(true);
-      if (isAndroidPlatformCached()) {
-        if (!isImmersiveModeRef.current) {
-          toggleImmersiveModeRef.current();
-        }
-      } else {
-        if (!document.fullscreenElement) {
-          try {
-            await rootRef.current?.requestFullscreen();
-            setIsFullscreen(true);
-          } catch (err) {
-            // ignore
-          }
+      if (!document.fullscreenElement) {
+        try {
+          await rootRef.current?.requestFullscreen();
+          setIsFullscreen(true);
+        } catch (err) {
+          // ignore
         }
       }
       setContextMenu(prev => ({ ...prev, visible: false }));
@@ -2124,10 +1354,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => {
     const onFullscreenChange = () => {
       if (!document.fullscreenElement) {
-        if (!isAndroidPlatformCached() && slideshowActiveRef.current) {
+        if (slideshowActiveRef.current) {
           stopSlideshow();
         }
-        if (!isAndroidPlatformCached() && isImmersiveModeRef.current) {
+        if (isImmersiveModeRef.current) {
           setIsImmersiveMode(false);
         }
       }
@@ -2258,15 +1488,13 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             >
               <ChevronLeft size={18} />
             </button>
-            {!isAndroidPlatformCached() && (
-              <button
-                onClick={onNavigateForward} disabled={!canGoForward}
-                className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
-                title={t('viewer.forward')}
-              >
-                <ChevronRight size={18} />
-              </button>
-            )}
+            <button
+              onClick={onNavigateForward} disabled={!canGoForward}
+              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300"
+              title={t('viewer.forward')}
+            >
+              <ChevronRight size={18} />
+            </button>
           </div>
         </div>
 
@@ -2384,62 +1612,29 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             <Maximize size={14} className="text-gray-500" />
           </div>
 
-          {isAndroidPlatformCached() ? (
-            <>
-              <button
-                onClick={() => { setIsTransformAnimating(true); toggleOriginalFit(); setTimeout(() => setIsTransformAnimating(false), 320); }}
-                className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
-                title={Math.abs(scale - 1) < 0.1 ? t('viewer.original') : t('viewer.fit')}
-              >
-                {Math.abs(scale - 1) < 0.1 ? <span className="text-xs font-bold">1:1</span> : <Maximize size={18} />}
-              </button>
-              <button onClick={() => { setIsTransformAnimating(true); rotate(90); setPosition({ x: 0, y: 0 }); setTimeout(() => setIsTransformAnimating(false), 320); }} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.rotateRight')}>
-                <RotateCw size={18} />
-              </button>
-              <button onClick={() => { console.log('[SHARE] Button clicked, file.path:', file.path); console.log('[SHARE] isAndroidPlatformCached:', isAndroidPlatformCached()); invoke('android_share_image', { imagePath: file.path }).then(() => console.log('[SHARE] invoke succeeded')).catch((e) => console.warn('[SHARE] invoke failed:', e)); }} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.share') || 'Share'}>
-                <Share2 size={18} />
-              </button>
-              <button onClick={() => onDelete(file.id)} className="p-2 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-red-500 dark:text-red-400" title={t('context.delete')}>
-                <Trash2 size={18} />
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  setContextMenu({ x: rect.left, y: rect.bottom, visible: true });
-                  setMenuPos({ top: `${rect.bottom}px`, left: `${rect.left}px` });
-                }}
-                className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400"
-                title={t('viewer.more') || 'More'}
-              >
-                <MoreVertical size={18} />
-              </button>
-            </>
-          ) : (
-            <>
-              <button onClick={handleOriginalSize} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.original')}>
-                <span className="text-xs font-bold">1:1</span>
-              </button>
-              <button onClick={handleReset} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.fit')}>
-                <Maximize size={18} />
-              </button>
-              <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1 hidden sm:block"></div>
-              <button onClick={() => rotate(-90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateLeft')}>
-                <RotateCcw size={18} />
-              </button>
-              <button onClick={() => rotate(90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateRight')}>
-                <RotateCw size={18} />
-              </button>
-              <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
-              <button
-                onClick={() => setShowSearch(!showSearch)}
-                className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
-                title={t('viewer.search')}
-              >
-                <Search size={18} />
-              </button>
-            </>
-          )}
+          <>
+            <button onClick={handleOriginalSize} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.original')}>
+              <span className="text-xs font-bold">1:1</span>
+            </button>
+            <button onClick={handleReset} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title={t('viewer.fit')}>
+              <Maximize size={18} />
+            </button>
+            <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1 hidden sm:block"></div>
+            <button onClick={() => rotate(-90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateLeft')}>
+              <RotateCcw size={18} />
+            </button>
+            <button onClick={() => rotate(90)} className="p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 hidden sm:block" title={t('viewer.rotateRight')}>
+              <RotateCw size={18} />
+            </button>
+            <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
+            <button
+              onClick={() => setShowSearch(!showSearch)}
+              className={`p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-700 ${showSearch || localQuery ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
+              title={t('viewer.search')}
+            >
+              <Search size={18} />
+            </button>
+          </>
 
           <button
             onClick={() => onLayoutToggle('metadata')}
@@ -2455,17 +1650,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         ref={containerRef}
         className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-gray-200 dark:bg-gray-900'}`}
         style={{
-          ...(isAndroidPlatformCached() ? { contain: 'layout paint style' } : {}),
           ...(slideshowActive ? { cursor: 'none' } : {}),
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onContextMenu={isAndroidPlatformCached() ? (e: React.MouseEvent) => { e.preventDefault(); } : handleContextMenu}
+        onContextMenu={handleContextMenu}
       >
         {/* 只有在完全没有图片时才显示加载指示器 */}
-        {!displayUrl && !nativeViewerActive && (
+        {!displayUrl && (
           <div className="absolute inset-0 flex items-center justify-center z-0">
             <Loader2 className="animate-spin text-gray-400 dark:text-gray-600" size={48} />
           </div>
@@ -2473,11 +1667,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
         {/* 单图层渲染 - 简洁高效（普通模式） */}
         {/* 幻灯片模式下使用双图层实现过渡效果 */}
-        <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden"
-          style={{
-            ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style' } : {}),
-            ...(nativeViewerActive ? { display: 'none' } : {}),
-          }}>
+        <div className="w-full h-full flex items-center justify-center pointer-events-none relative overflow-hidden">
           {/* 幻灯片过渡：前一张图片（淡出/滑出） */}
           {slideshowActive && prevDisplayUrl && (
             <img
@@ -2504,84 +1694,8 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             />
           )}
 
-          {/* 滑动翻页过渡：新图片滑入 */}
-          {!slideshowActive && swipeState && (() => {
-            const cw = containerRef.current?.getBoundingClientRect().width || window.innerWidth;
-            const inOffset = swipeState.animating ? 0 : swipeState.offset - swipeState.direction * cw;
-            return (
-              <img
-                ref={swipeInImgRef}
-                key={`swipe-in-${swipeState.incomingUrl}`}
-                src={swipeState.incomingUrl}
-                alt=""
-                className="max-w-none absolute inset-0 m-auto"
-                loading="eager"
-                decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  pointerEvents: 'none',
-                  zIndex: 1,
-                  transform: `translate(${inOffset}px, 0)`,
-                  transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
-                  ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
-                }}
-                draggable={false}
-              />
-            );
-          })()}
-
-          {/* 滑动翻页过渡：旧图片滑出 */}
-          {!slideshowActive && swipeState && (() => {
-            const cw = containerRef.current?.getBoundingClientRect().width || window.innerWidth;
-            const outOffset = swipeState.animating ? swipeState.direction * cw : swipeState.offset;
-            return (
-              <img
-                ref={swipeOutImgRef}
-                key={`swipe-out-${swipeState.outgoingUrl}`}
-                src={swipeState.outgoingUrl}
-                alt=""
-                className="max-w-none absolute inset-0 m-auto"
-                loading="eager"
-                decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
-                style={{
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'contain',
-                  pointerEvents: 'none',
-                  zIndex: 3,
-                  transform: `translate(${outOffset}px, 0)`,
-                  transition: swipeState.animating ? 'transform 0.25s ease-out' : 'none',
-                  ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
-                }}
-                draggable={false}
-              />
-            );
-          })()}
-
-          {!slideshowActive && !swipeState && outgoingUrl && (
-            <img
-              key={`outgoing-${outgoingUrl}`}
-              src={outgoingUrl}
-              alt=""
-              className="max-w-none absolute inset-0 m-auto"
-              loading="eager"
-              decoding="sync"
-              style={{
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain',
-                pointerEvents: 'none',
-                zIndex: 1,
-                ...(isAndroidPlatformCached() ? { willChange: 'opacity', contain: 'layout paint style' } : {}),
-              }}
-              draggable={false}
-            />
-          )}
-
           {/* LAN 缩略图图层：原图下载期间显示 256px 缩略图，原图就绪后渐变替换 */}
-          {!slideshowActive && !swipeState && lanThumbUrl && (
+          {!slideshowActive && lanThumbUrl && (
             <img
               key={`lan-thumb-${lanThumbUrl}`}
               src={lanThumbUrl}
@@ -2595,7 +1709,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 objectFit: 'contain',
                 pointerEvents: 'none',
                 zIndex: 1,
-                ...(isAndroidPlatformCached() ? { willChange: 'opacity', contain: 'layout paint style' } : {}),
               }}
               draggable={false}
             />
@@ -2606,22 +1719,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             key={slideshowActive && slideshowConfig.transition !== 'none' ? `current-${displayUrl}` : 'main'}
             src={displayUrl || 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'}
             alt={file.name}
-            onLoad={() => {
-              if (outgoingUrlRef.current) {
-                if (outgoingFadeTimerRef.current) clearTimeout(outgoingFadeTimerRef.current);
-                outgoingFadeTimerRef.current = setTimeout(() => {
-                  setOutgoingUrl('');
-                  outgoingUrlRef.current = '';
-                  outgoingFadeTimerRef.current = null;
-                }, 80);
-              }
-            }}
-            onError={() => {
-              if (isAndroidPlatformCached()) {
-                PERF.log('img onerror', file.path.split('/').pop());
-              }
-            }}
-            className={`max-w-none absolute ${isAndroidPlatformCached() && imgNaturalSize && containerSize ? 'top-0 left-0' : 'inset-0 m-auto'} ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
+            className={`max-w-none absolute inset-0 m-auto ${slideshowActive && slideshowConfig.enableZoom && !isTransitioning ? 'animate-ken-burns' : ''
               } ${slideshowActive && isTransitioning && slideshowConfig.transition === 'fade'
                 ? 'animate-slideshow-fade-in'
                 : slideshowActive && isTransitioning && slideshowConfig.transition === 'slide'
@@ -2629,51 +1727,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                   : ''
               }`}
             loading="eager"
-            decoding={isAndroidPlatformCached() ? 'async' : 'sync'}
+            decoding="sync"
             style={{
-              ...(isAndroidPlatformCached() && imgNaturalSize && containerSize ? {
-                width: imgNaturalSize.w,
-                height: imgNaturalSize.h,
-                maxWidth: 'none',
-                objectFit: 'fill' as const,
-                transform: (() => {
-                  const fitScale = Math.min(containerSize.w / imgNaturalSize.w, containerSize.h / imgNaturalSize.h);
-                  const s = scale * fitScale;
-                  const tx = position.x + swipeOffset + (containerSize.w - imgNaturalSize.w * fitScale) / 2;
-                  const ty = position.y + (containerSize.h - imgNaturalSize.h * fitScale) / 2;
-                  const cx = imgNaturalSize.w * s / 2;
-                  const cy = imgNaturalSize.h * s / 2;
-                  return `translate(${tx}px, ${ty}px) translate(${cx}px, ${cy}px) rotate(${rotation}deg) translate(${-cx}px, ${-cy}px) scale(${s})`;
-                })(),
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain' as const,
+              ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
+                transform: slideshowActive && slideshowConfig.enableZoom
+                  ? undefined
+                  : `translate(${position.x}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
                 transition: lanThumbUrl
-                  ? (isTransformAnimating ? 'transform 0.3s ease, opacity 0.4s ease' : 'opacity 0.4s ease')
-                  : (isTransformAnimating ? 'transform 0.3s ease' : 'none'),
-                transformOrigin: '0 0',
-              } : {
-                width: '100%',
-                height: '100%',
-                objectFit: 'contain' as const,
-                ...(!slideshowActive || slideshowConfig.transition === 'none' || !isTransitioning ? {
-                  transform: slideshowActive && slideshowConfig.enableZoom
-                    ? undefined
-                    : `translate(${position.x + swipeOffset}px, ${position.y}px) rotate(${rotation}deg) scale(${scale})`,
-                  transition: lanThumbUrl
-                    ? ((isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'opacity 0.4s ease' : 'transform 0.1s linear, opacity 0.4s ease')
-                    : ((isDragging || isWheeling || isSwiping || isFlipAnimating) ? 'none' : 'transform 0.1s linear'),
-                } : {}),
-                transformOrigin: 'center center',
-              }),
+                  ? ((isDragging || isWheeling || isFlipAnimating) ? 'opacity 0.4s ease' : 'transform 0.1s linear, opacity 0.4s ease')
+                  : ((isDragging || isWheeling || isFlipAnimating) ? 'none' : 'transform 0.1s linear'),
+              } : {}),
+              transformOrigin: 'center center',
               pointerEvents: slideshowActive ? 'none' : 'auto',
-              zIndex: swipeState ? 0 : 2,
-              opacity: swipeState ? 0 : (lanFadeIn ? 0 : 1),
-              ...(isAndroidPlatformCached() ? { willChange: 'transform', contain: 'layout paint style', backfaceVisibility: 'hidden' } : {}),
+              zIndex: 2,
+              opacity: lanFadeIn ? 0 : 1,
               ...filterStyle
             }}
             draggable={false}
           />
         </div>
 
-        {!slideshowActive && !isAndroidPlatformCached() && (
+        {!slideshowActive && (
           <>
             <div className="absolute inset-y-0 left-0 w-24 flex items-center justify-start pl-2 opacity-0 hover:opacity-100 transition-opacity duration-300 bg-gradient-to-r from-black/30 to-transparent z-10 pointer-events-auto">
               <button
@@ -2696,18 +1773,10 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       </div>
 
       {contextMenu.visible && (() => {
-        const isAndroid = isAndroidPlatformCached();
-        const menuItemClass = isAndroid
-          ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
-          : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
-        const menuItemStyle = isAndroid ? { height: '50px', fontSize: '15px' } : undefined;
-        const iconSize = isAndroid ? 18 : 14;
-        const deleteItemClass = isAndroid
-          ? 'px-4 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center'
-          : 'px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center';
-        const purpleItemClass = isAndroid
-          ? 'px-4 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center'
-          : 'px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center';
+        const menuItemClass = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+        const iconSize = 14;
+        const deleteItemClass = 'px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center';
+        const purpleItemClass = 'px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center';
         const closeMenu = () => setContextMenu({ ...contextMenu, visible: false });
 
         return (
@@ -2719,42 +1788,30 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             left: menuPos.left,
             position: 'fixed',
             zIndex: 60,
-            ...(isAndroid ? { fontSize: '15px' } : {})
           }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {!isAndroid && (
-            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleOriginalSize(); closeMenu(); }}>
-              <Maximize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.original')}
-            </div>
-          )}
-          {!isAndroid && (
-            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleFitWindow(); closeMenu(); }}>
-              <Minimize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.fit')}
-            </div>
-          )}
+          <div className={menuItemClass} onClick={() => { handleOriginalSize(); closeMenu(); }}>
+            <Maximize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.original')}
+          </div>
+          <div className={menuItemClass} onClick={() => { handleFitWindow(); closeMenu(); }}>
+            <Minimize size={iconSize} className="mr-2 opacity-70" /> {t('viewer.fit')}
+          </div>
 
-          {!isAndroid && (
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-          )}
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          {!isAndroid && (
-            <div className={menuItemClass} style={menuItemStyle} onClick={() => { onViewInExplorer(file.id); closeMenu(); }}>
-              <ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
-            </div>
-          )}
+          <div className={menuItemClass} onClick={() => { onViewInExplorer(file.id); closeMenu(); }}>
+            <ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}
+          </div>
           {(() => {
             const parentId = file.parentId;
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
             if (isUnavailable) return null;
-            const cls = isAndroid
-              ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
-              : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+            const cls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
             return (
               <>
                 <div
                   className={cls}
-                  style={isAndroid ? menuItemStyle : undefined}
                   onClick={() => {
                     if (parentId) {
                       onNavigateToFolder(parentId, { targetId: file.id });
@@ -2770,35 +1827,33 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             );
           })()}
 
-          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onEditTags(); closeMenu(); }}>
+          <div className={menuItemClass} onClick={() => { onEditTags(); closeMenu(); }}>
             <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.editTags')}
           </div>
 
-          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onCopyTags(); closeMenu(); }}>
+          <div className={menuItemClass} onClick={() => { onCopyTags(); closeMenu(); }}>
             <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.copyTag')}
           </div>
-          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onPasteTags(file.id); closeMenu(); }}>
+          <div className={menuItemClass} onClick={() => { onPasteTags(file.id); closeMenu(); }}>
             <Tag size={iconSize} className="mr-2 opacity-70" /> {t('context.pasteTag')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          {!isAndroid && (
-            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleCopyImage(); closeMenu(); }}>
-              <Clipboard size={iconSize} className="mr-2 opacity-70" /> {t('context.copyImage')}
-            </div>
-          )}
+          <div className={menuItemClass} onClick={() => { handleCopyImage(); closeMenu(); }}>
+            <Clipboard size={iconSize} className="mr-2 opacity-70" /> {t('context.copyImage')}
+          </div>
 
-          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onCopyToFolder(file.id); closeMenu(); }}>
+          <div className={menuItemClass} onClick={() => { onCopyToFolder(file.id); closeMenu(); }}>
             <Copy size={iconSize} className="mr-2 opacity-70" /> {t('context.copyTo')}
           </div>
-          <div className={menuItemClass} style={menuItemStyle} onClick={() => { onMoveToFolder(file.id); closeMenu(); }}>
+          <div className={menuItemClass} onClick={() => { onMoveToFolder(file.id); closeMenu(); }}>
             <Move size={iconSize} className="mr-2 opacity-70" /> {t('context.moveTo')}
           </div>
 
           <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          <div className={purpleItemClass} style={menuItemStyle} onClick={() => { onAIAnalysis(file.id); closeMenu(); }}>
+          <div className={purpleItemClass} onClick={() => { onAIAnalysis(file.id); closeMenu(); }}>
             <Sliders size={iconSize} className="mr-2 opacity-70" /> {t('context.aiAnalyze')}
           </div>
 
@@ -2806,20 +1861,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === 'image' && (() => {
             const imageIds = [file.id];
             const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
-            const compareCls = isAndroid
-              ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center'
-              : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+            const compareCls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
             const itemClass = canCompare
               ? compareCls
-              : isAndroid
-                ? 'px-4 flex items-center text-gray-400 cursor-default opacity-60'
-                : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
+              : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
 
             return (
               <>
                 <div
                   className={itemClass}
-                  style={canCompare ? menuItemStyle : undefined}
                   onMouseEnter={openCompareSubmenu}
                   onMouseLeave={closeCompareSubmenu}
                   ref={compareMenuItemRef}
@@ -2843,20 +1893,15 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                       const remainingSpace = maxCount - currentCount;
                       const canAdd = remainingSpace > 0 && imageIds.length <= remainingSpace;
                       const canvasName = tab.sessionName || `画布${tab.id.slice(0, 4)}`;
-                      const subCls = isAndroid
-                        ? 'px-4 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between'
-                        : 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between';
+                      const subCls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between';
 
                       return (
                         <div
                           key={tab.id}
                           className={canAdd
                             ? subCls
-                            : isAndroid
-                              ? 'px-4 flex items-center justify-between text-gray-400 cursor-default opacity-60'
-                              : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
+                            : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
                           }
-                          style={canAdd ? menuItemStyle : undefined}
                           onClick={canAdd ? () => {
                             handleAddToCompareCanvas(tab.id, imageIds);
                             closeMenu();
@@ -2879,7 +1924,6 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
           <div
             className={menuItemClass}
-            style={menuItemStyle}
             onClick={() => { setShowSlideshowSettings(true); closeMenu(); }}
           >
             <Settings size={iconSize} className="mr-2 opacity-70" />
@@ -2887,22 +1931,17 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           </div>
           <div
             className={menuItemClass}
-            style={menuItemStyle}
             onClick={toggleSlideshow}
           >
             {slideshowActive ? <Square size={iconSize} className="mr-2" /> : <Play size={iconSize} className="mr-2" />}
             {slideshowActive ? t('context.stopSlideshow') : t('context.startSlideshow')}
           </div>
 
-          {!isAndroid && (
-            <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
-          )}
+          <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
 
-          {!isAndroid && (
-            <div className={deleteItemClass} style={menuItemStyle} onClick={() => { onDelete(file.id); closeMenu(); }}>
-              <Trash2 size={iconSize} className="mr-2 opacity-70" /> {t('context.delete')}
-            </div>
-          )}
+          <div className={deleteItemClass} onClick={() => { onDelete(file.id); closeMenu(); }}>
+            <Trash2 size={iconSize} className="mr-2 opacity-70" /> {t('context.delete')}
+          </div>
         </div>
         );
       })()}

@@ -2540,42 +2540,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </button>
                     </div>
 
-                    {isAndroid && (
-                    <div className="flex items-center justify-between pt-3 border-t border-gray-200 dark:border-gray-700" style={{ height: '55px' }}>
-                      <div>
-                        <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.openInImmersive')}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.openInImmersiveDesc')}</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          const newValue = !state.settings.openInImmersiveByDefault;
-                          onUpdateSettingsData({ openInImmersiveByDefault: newValue });
-                        }}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${state.settings.openInImmersiveByDefault ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${state.settings.openInImmersiveByDefault ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-                    )}
-
-                    {isAndroid && (
-                    <div className="flex items-center justify-between pt-3 border-t border-gray-200 dark:border-gray-700" style={{ height: '55px' }}>
-                      <div>
-                        <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.useNativeViewer')}</div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.useNativeViewerDesc')}</div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          const newValue = !(state.settings.android?.useNativeViewer ?? true);
-                          onUpdateSettingsData({ android: { ...(state.settings.android || { useNativeViewer: true }), useNativeViewer: newValue } });
-                        }}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${(state.settings.android?.useNativeViewer ?? true) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-                      >
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${(state.settings.android?.useNativeViewer ?? true) ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
-                    </div>
-                    )}
-
                     {!isAndroid && (
                       <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
                         <div className="flex items-center justify-between">

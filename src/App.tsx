@@ -111,7 +111,6 @@ export const App: React.FC = () => {
       autoStart: false,
       exitAction: 'ask',
       animateOnHover: true,
-      openInImmersiveByDefault: false,
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
@@ -153,9 +152,6 @@ export const App: React.FC = () => {
         allowUpload: false,
       },
       defaultLayoutSettings: DEFAULT_LAYOUT_SETTINGS,
-      android: {
-        useNativeViewer: true,
-      },
     },
     // Scan progress (onboarding)
     scanProgress: null,
@@ -2347,7 +2343,7 @@ export const App: React.FC = () => {
   exitActionRef2.current = exitActionRef.current;
 
   // ===== Android Native Viewer Integration =====
-  const useNativeViewer = isAndroidPlatformCached() && (state.settings.android?.useNativeViewer ?? true);
+  const useNativeViewer = isAndroidPlatformCached();
   const [nativeViewerActive, setNativeViewerActive] = useState(false);
   // Refs 用于在事件处理器中访问最新值，避免闭包过期
   const useNativeViewerRef = useRef(useNativeViewer);
@@ -2767,7 +2763,7 @@ export const App: React.FC = () => {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
-          {activeTab.viewingFileId && !useNativeViewer && (
+          {activeTab.viewingFileId && !isAndroidSync() && (
             <ImageViewer
               file={state.files[activeTab.viewingFileId]}
               sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
@@ -2803,8 +2799,6 @@ export const App: React.FC = () => {
               tabs={state.tabs}
               handleOpenCompareInNewTab={handleOpenCompareAndClearSelection}
               handleAddToCompareCanvas={handleAddToCompareCanvas}
-              enterImmersiveOnMount={state.settings.openInImmersiveByDefault}
-              nativeViewerActive={nativeViewerActive}
             />
           )}
           {state.tabs.map(tab => tab.isCompareMode && (
