@@ -2540,6 +2540,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </button>
                     </div>
 
+                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-t border-gray-200 dark:border-gray-700' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
+                      <div>
+                        <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoExtractPalette')}</div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.autoExtractPaletteDesc')}</div>
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newValue = !state.settings.autoExtractPalette;
+                          onUpdateSettingsData({ autoExtractPalette: newValue });
+                        }}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${state.settings.autoExtractPalette ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${state.settings.autoExtractPalette ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
                     {!isAndroid && (
                       <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
                         <div className="flex items-center justify-between">

@@ -34,6 +34,8 @@ interface TopBarProps {
   onSortDirectionChange: () => void;
   onThumbnailSizeChange: (size: number) => void;
   onToggleMetadata: () => void;
+  onToggleColorPicker?: () => void;
+  isColorPickerVisible?: boolean;
   onToggleSettings: () => void;
   onUpdateDateFilter: (filter: DateFilter) => void;
   groupBy: GroupByOption;
@@ -530,6 +532,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   onSortDirectionChange,
   onThumbnailSizeChange,
   onToggleMetadata,
+  onToggleColorPicker,
+  isColorPickerVisible,
   onToggleSettings,
   onUpdateDateFilter,
   groupBy,
@@ -630,6 +634,8 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   useEffect(() => {
     if (!isColorPickerOpen) return;
+    // Android 端使用 MobileColorPickerSheet 自带的遮罩点击关闭，不需要 document mousedown 监听
+    if (isAndroid) return;
     
     const handleClickOutside = (event: MouseEvent) => {
       if (colorPickerContainerRef.current && !colorPickerContainerRef.current.contains(event.target as Node)) {
@@ -639,7 +645,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isColorPickerOpen]);
+  }, [isColorPickerOpen, isAndroid]);
 
   // Handle mouse side buttons (back/forward)
   useEffect(() => {
@@ -673,11 +679,16 @@ export const TopBar: React.FC<TopBarProps> = ({
         setScopeMenuOpen(false);
         setViewMenuOpen(false);
         (window as any).__androidBackHandled = true;
+        return;
+      }
+      if (isColorPickerVisible) {
+        onToggleColorPicker?.();
+        (window as any).__androidBackHandled = true;
       }
     };
     window.addEventListener('android-back-press', handleAndroidBack);
     return () => window.removeEventListener('android-back-press', handleAndroidBack);
-  }, [isAndroid, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen]);
+  }, [isAndroid, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, isColorPickerVisible, onToggleColorPicker]);
 
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const isPaletteSearchQuery = useMemo(() => toolbarQuery.startsWith('palette:'), [toolbarQuery]);
@@ -920,7 +931,21 @@ export const TopBar: React.FC<TopBarProps> = ({
           )}
 
           <div className="relative" ref={colorPickerContainerRef}>
-             {!isAndroid && (
+             {isAndroid ? (
+               <>
+             {isColorSearching ? (
+                <Loader2 size={18} className="mr-1 flex-shrink-0 text-blue-500 animate-spin" />
+             ) : (
+                <button
+                  onClick={() => onToggleColorPicker?.()}
+                  className={`mr-1 flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${isColorPickerVisible ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : isAISearchEnabled ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'}`}
+                  title={t('search.byColor')}
+                >
+                  <Palette size={18} />
+                </button>
+             )}
+               </>
+             ) : (
                <>
              {isColorSearching ? (
                 <Loader2 size={16} className="mr-2 flex-shrink-0 text-blue-500 animate-spin" />

@@ -461,6 +461,8 @@ export const translations = {
       animateOnHoverDesc: '当鼠标悬停在 GIF 或 WebP 动画文件上时播放动画预览',
       animateOnSelect: '选择动画文件时播放',
       animateOnSelectDesc: '当选择GIF或者WebP动画文件时播放动画预览',
+      autoExtractPalette: '浏览时自动提取主色调',
+      autoExtractPaletteDesc: '在图片查看器中浏览图片时，自动提取主色调信息',
       exitAction: '关闭主面板时',
       exitActionAsk: '每次询问',
       exitActionMinimize: '最小化到托盘',
@@ -841,7 +843,14 @@ export const translations = {
       to: '至'
     },
     color: {
-      pickColor: "选取颜色"
+      pickColor: "选取颜色",
+      title: "按颜色搜索",
+      search: "搜索",
+      cancel: "取消",
+      done: "完成",
+      presets: "预设颜色",
+      recent: "最近使用",
+      hue: "色相"
     },
     comparer: {
       addImages: '添加图片到画布',
@@ -1384,6 +1393,8 @@ export const translations = {
       animateOnHoverDesc: 'Play animation preview when hovering over GIF or WebP files',
       animateOnSelect: 'Play on Selection',
       animateOnSelectDesc: 'Play animation preview when selecting GIF or WebP files',
+      autoExtractPalette: 'Auto Extract Palette',
+      autoExtractPaletteDesc: 'Automatically extract dominant colors when browsing images in the viewer',
       exitAction: 'When Closing',
       exitActionAsk: 'Ask Every Time',
       exitActionMinimize: 'Minimize to Tray',
@@ -1764,7 +1775,14 @@ export const translations = {
       to: 'to'
     },
     color: {
-      pickColor: "Pick Color"
+      pickColor: "Pick Color",
+      title: "Search by Color",
+      search: "Search",
+      cancel: "Cancel",
+      done: "Done",
+      presets: "Presets",
+      recent: "Recent",
+      hue: "Hue"
     },
     comparer: {
       addImages: 'Add Images to Canvas',

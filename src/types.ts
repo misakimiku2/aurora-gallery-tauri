@@ -328,6 +328,7 @@ export interface AppSettings {
   autoStart: boolean;
   exitAction: 'ask' | 'minimize' | 'exit';
   animateOnHover: boolean;
+  autoExtractPalette: boolean;
   paths: {
     resourceRoot: string;
     cacheRoot: string;
@@ -476,6 +477,7 @@ export interface AppState {
   layout: {
     isSidebarVisible: boolean;
     isMetadataVisible: boolean;
+    isColorPickerVisible: boolean;
   };
   slideshowConfig: SlideshowConfig;
   settings: AppSettings;

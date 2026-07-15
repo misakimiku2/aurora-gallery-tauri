@@ -82,6 +82,10 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onImmersiveToggle(immersive: Boolean)
         /** 用户在原生层编辑了文件元数据（tags/description 等），JSON 字符串形如 {"tags":[...]} */
         fun onUpdateFile(fileId: String, updatesJson: String)
+        /** 用户点击了抽屉里的调色板色块，请求按该颜色搜索。colorHex 形如 "#RRGGBB"。 */
+        fun onColorSearch(colorHex: String)
+        /** 用户点击了"提取主色调"按钮，请求对该图片提取主色调。 */
+        fun onExtractPalette(fileId: String, filePath: String)
     }
 
     data class ImageItem(
@@ -193,6 +197,12 @@ class NativeGalleryView @JvmOverloads constructor(
     private val drawerDescView: TextView
     private val drawerSourceUrlView: TextView
     private var drawerOpen = false
+    /** 正在提取主色调的 fileId，非 null 时抽屉显示 loading 占位 */
+    private var loadingPaletteFileId: String? = null
+    /** 用户设置：浏览时自动提取主色调。开启时 palette 为空显示 loading 而非按钮 */
+    private var autoExtractPalette = false
+    /** 自动提取失败的 fileId 集合，失败后显示"提取主色调"按钮供用户手动重试 */
+    private val failedPaletteFileIds = mutableSetOf<String>()
     /** 抽屉宽度动画，close() 时取消防止残留更新 */
     private var drawerWidthAnimator: android.animation.ValueAnimator? = null
     /** 垂直跟手开始时抽屉是否打开 */
@@ -712,6 +722,7 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     private fun updateDrawer(item: ImageItem) {
+        Log.i(TAG, "updateDrawer: fileId=${item.fileId}, paletteSize=${item.palette.size}, loadingPaletteFileId=$loadingPaletteFileId")
         // Section 1: 文件名
         drawerNameView.text = item.name
 
@@ -727,14 +738,64 @@ class NativeGalleryView @JvmOverloads constructor(
             .build()
         imageLoader.enqueue(req)
 
-        // Section 4: 主色调（圆形色块横排，单行）
+        // Section 4: 主色调（圆形色块横排，单行，点击触发颜色搜索）
+        // 显式取消子 view 的动画（AlphaAnimation INFINITE 不会随 removeAllViews 自动停止）
+        for (i in 0 until drawerPaletteLayout.childCount) {
+            drawerPaletteLayout.getChildAt(i).clearAnimation()
+        }
         drawerPaletteLayout.removeAllViews()
-        if (item.palette.isEmpty()) {
-            drawerPaletteLayout.addView(TextView(context).apply {
-                text = "—"
-                setTextColor(colorTextSecondary())
-                textSize = 12f
-            })
+        // 安全兜底：如果 item 有 palette 但 loadingPaletteFileId 仍指向它，清除 loading
+        if (item.palette.isNotEmpty() && loadingPaletteFileId == item.fileId) {
+            loadingPaletteFileId = null
+        }
+        // loading 条件：
+        // 1. 手动点击按钮触发提取（loadingPaletteFileId 指向当前文件）
+        // 2. 开启"浏览时自动提取主色调"且 palette 为空且未失败（自动提取即将/正在进行）
+        val isLoadingPalette = loadingPaletteFileId == item.fileId ||
+            (autoExtractPalette && item.palette.isEmpty() && !failedPaletteFileIds.contains(item.fileId))
+        if (isLoadingPalette) {
+            // 提取中：显示脉冲占位
+            val colorSize = (resources.displayMetrics.density * 28).toInt()
+            val colorGap = (resources.displayMetrics.density * 8).toInt()
+            repeat(8) {
+                drawerPaletteLayout.addView(View(context).apply {
+                    layoutParams = LinearLayout.LayoutParams(colorSize, colorSize).apply {
+                        marginEnd = colorGap
+                    }
+                    val drawable = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        // 使用与背景对比度更高的颜色，确保呼吸动画清晰可见
+                        setColor(if (isDarkTheme) Color.parseColor("#404040") else Color.parseColor("#D4D4D4"))
+                    }
+                    background = drawable
+                    val anim = android.view.animation.AlphaAnimation(0.2f, 0.9f).apply {
+                        duration = 800
+                        repeatMode = android.view.animation.Animation.REVERSE
+                        repeatCount = android.view.animation.Animation.INFINITE
+                    }
+                    startAnimation(anim)
+                })
+            }
+        } else if (item.palette.isEmpty()) {
+            // 无主色调且未在提取中：
+            // - 未开启"浏览时自动提取"→ 显示按钮供用户手动触发
+            // - 开启了自动提取但失败了→ 显示按钮供用户手动重试
+            val extractButton = TextView(context).apply {
+                text = "提取主色调"
+                setTextColor(colorTagText())
+                textSize = 11f
+                setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
+                background = createRoundedBg(colorTagBg(), 10f, colorTagBorder(), 1f)
+                isClickable = true
+                isFocusable = true
+                setOnClickListener {
+                    Log.i(TAG, "Extract palette clicked: ${item.fileId}")
+                    loadingPaletteFileId = item.fileId
+                    updateDrawer(item) // 立即显示 loading
+                    listener?.onExtractPalette(item.fileId, item.path)
+                }
+            }
+            drawerPaletteLayout.addView(extractButton)
         } else {
             val colorSize = (resources.displayMetrics.density * 28).toInt()
             val colorGap = (resources.displayMetrics.density * 8).toInt()
@@ -749,6 +810,27 @@ class NativeGalleryView @JvmOverloads constructor(
                         setStroke((resources.displayMetrics.density * 1).toInt(), if (isDarkTheme) Color.parseColor("#1FFFFFFF") else Color.parseColor("#10000000"))
                     }
                     background = drawable
+                    isClickable = true
+                    isFocusable = true
+                    // 按下视觉反馈
+                    val pressedScale = 1.15f
+                    setOnTouchListener { v, event ->
+                        when (event.action) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                v.animate().scaleX(pressedScale).scaleY(pressedScale).setDuration(100).start()
+                                v.alpha = 0.8f
+                            }
+                            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                                v.animate().scaleX(1f).scaleY(1f).setDuration(100).start()
+                                v.alpha = 1f
+                            }
+                        }
+                        false // 让 OnClickListener 继续处理点击
+                    }
+                    setOnClickListener {
+                        Log.i(TAG, "Color chip clicked: $hex")
+                        listener?.onColorSearch(hex)
+                    }
                 })
             }
         }
@@ -983,6 +1065,8 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         currentIndex = newIndex
         rotationDegrees = 0
+        // 切换图片时清除主色调 loading 状态（与 navigateTo 一致）
+        loadingPaletteFileId = null
 
         isAnimating.set(true)
         val outgoing = activeView
@@ -1176,6 +1260,10 @@ class NativeGalleryView @JvmOverloads constructor(
         secondaryView.setImageDrawable(null)
         isOpen = false
         drawerOpen = false
+        // 清除主色调 loading 状态，防止下次打开时残留
+        loadingPaletteFileId = null
+        // 清除自动提取失败记录，下次打开重新尝试
+        failedPaletteFileIds.clear()
         // 取消抽屉宽度动画并重置视觉状态（可能正在动画中）
         drawerWidthAnimator?.cancel()
         drawerWidthAnimator = null
@@ -1230,6 +1318,8 @@ class NativeGalleryView @JvmOverloads constructor(
         val direction = if (newIndex > currentIndex) 1 else -1
         currentIndex = newIndex
         rotationDegrees = 0
+        // 切换图片时清除主色调 loading 状态
+        loadingPaletteFileId = null
 
         if (!animate) {
             listener?.onNavigate(currentIndex)
@@ -1826,6 +1916,18 @@ class NativeGalleryView @JvmOverloads constructor(
         if (idx < 0) return
         val item = images[idx]
         var newItem = item
+        // 同步"浏览时自动提取主色调"开关到 native
+        if (updates.has("autoExtractPalette")) {
+            autoExtractPalette = updates.optBoolean("autoExtractPalette", false)
+        }
+        // 处理自动提取失败标记：失败时加入集合显示按钮，成功时从集合移除
+        if (updates.has("paletteLoadFailed")) {
+            if (updates.optBoolean("paletteLoadFailed", false)) {
+                failedPaletteFileIds.add(fileId)
+            } else {
+                failedPaletteFileIds.remove(fileId)
+            }
+        }
         if (updates.has("tags")) {
             val arr = updates.optJSONArray("tags")
             val list = mutableListOf<String>()
@@ -1837,6 +1939,22 @@ class NativeGalleryView @JvmOverloads constructor(
         }
         if (updates.has("name")) {
             newItem = newItem.copy(name = updates.optString("name", newItem.name))
+        }
+        if (updates.has("palette")) {
+            val arr = updates.optJSONArray("palette")
+            val list = mutableListOf<String>()
+            if (arr != null) for (i in 0 until arr.length()) list.add(arr.optString(i))
+            newItem = newItem.copy(palette = list)
+            Log.i(TAG, "updateItem: received palette for $fileId, size=${list.size}, loadingPaletteFileId=$loadingPaletteFileId")
+            // 收到主色调数据，清除 loading 状态
+            if (loadingPaletteFileId == fileId) {
+                loadingPaletteFileId = null
+                Log.i(TAG, "updateItem: cleared loadingPaletteFileId for $fileId")
+            }
+            // 收到非空 palette 表示提取成功，从失败集合中移除
+            if (list.isNotEmpty()) {
+                failedPaletteFileIds.remove(fileId)
+            }
         }
         if (updates.has("aiData")) {
             val ai = updates.optJSONObject("aiData")

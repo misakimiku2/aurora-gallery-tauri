@@ -1,66 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Pipette, Copy, Check } from 'lucide-react';
-
-interface RGB { r: number; g: number; b: number; }
-interface HSV { h: number; s: number; v: number; }
-
-// Utils
-const hexToRgb = (hex: string): RGB | null => {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null;
-};
-
-const rgbToHex = ({ r, g, b }: RGB): string => {
-  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
-};
-
-const rgbToHsv = ({ r, g, b }: RGB): HSV => {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0, v = max;
-  const d = max - min;
-  s = max === 0 ? 0 : d / max;
-
-  if (max !== min) {
-    switch (max) {
-      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
-      case g: h = (b - r) / d + 2; break;
-      case b: h = (r - g) / d + 4; break;
-    }
-    h /= 6;
-  }
-
-  return { h: h * 360, s: s * 100, v: v * 100 };
-};
-
-const hsvToRgb = ({ h, s, v }: HSV): RGB => {
-  let r = 0, g = 0, b = 0;
-  const i = Math.floor(h / 60);
-  const f = h / 60 - i;
-  const p = v / 100 * (1 - s / 100);
-  const q = v / 100 * (1 - f * s / 100);
-  const t = v / 100 * (1 - (1 - f) * s / 100);
-  const v_norm = v / 100;
-
-  switch (i % 6) {
-    case 0: r = v_norm; g = t; b = p; break;
-    case 1: r = q; g = v_norm; b = p; break;
-    case 2: r = p; g = v_norm; b = t; break;
-    case 3: r = p; g = q; b = v_norm; break;
-    case 4: r = t; g = p; b = v_norm; break;
-    case 5: r = v_norm; g = p; b = q; break;
-  }
-
-  return {
-    r: Math.round(r * 255),
-    g: Math.round(g * 255),
-    b: Math.round(b * 255)
-  };
-};
+import { RGB, HSV, hexToRgb, rgbToHex, rgbToHsv, hsvToRgb, loadRecentColors, addRecentColor } from '../utils/colorUtils';
 
 interface ColorPickerPopoverProps {
   initialColor?: string;
@@ -82,6 +22,21 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
      return rgbToHsv(rgb);
   });
   const [hex, setHex] = useState<string>(initialColor);
+  const [recent, setRecent] = useState<string[]>(() => loadRecentColors());
+
+  // 颜色变化时防抖更新最近使用（1.5s 延迟，避免拖动中间色被记录）
+  useEffect(() => {
+    if (!/^#[0-9A-Fa-f]{6}$/.test(hex)) return;
+    const timer = setTimeout(() => {
+      setRecent(prev => addRecentColor(hex, prev));
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [hex]);
+
+  // 预设/最近色块点击时需要立即保存（因为 onClose 会卸载组件，防抖 timer 会被清除）
+  const saveRecentImmediate = (color: string) => {
+    setRecent(prev => addRecentColor(color, prev));
+  };
 
   // Use ref to avoid closure issues with onChange callback
   const onChangeRef = useRef(onChange);
@@ -326,6 +281,8 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
                    try {
                        const result = await openPromise;
                        onChange(result.sRGBHex); // Directly trigger search
+                       // 组件已卸载，直接写入 localStorage
+                       addRecentColor(result.sRGBHex, loadRecentColors());
                    } catch {}
                } else {
                    alert(t ? t('color.pickColor') + ' - Eyedropper not supported' : 'Browser does not support Eyedropper API');
@@ -338,19 +295,42 @@ export const ColorPickerPopover: React.FC<ColorPickerPopoverProps> = ({
       </div>
 
       {/* Presets */}
-      <div className="flex flex-wrap gap-1.5">
+      <div className="text-[10px] text-gray-400 dark:text-gray-500 mb-1">{t ? t('color.presets') : 'Presets'}</div>
+      <div className="flex flex-wrap gap-1.5 mb-2">
          {presetColors.map(c => (
              <button
                key={c}
-               className="w-5 h-5 rounded hover:scale-110 transition-transform border border-gray-200 dark:border-gray-800"
+               className="w-5 h-5 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
                style={{ backgroundColor: c }}
                onClick={() => {
                    handleHexChange({ target: { value: c } } as any);
+                   saveRecentImmediate(c);
                    onClose();
                }}
              />
          ))}
       </div>
+
+      {/* Recent */}
+      {recent.length > 0 && (
+        <>
+        <div className="text-[10px] text-gray-400 dark:text-gray-500 mb-1">{t ? t('color.recent') : 'Recent'}</div>
+        <div className="flex flex-wrap gap-1.5">
+           {recent.map((c, i) => (
+               <button
+                 key={`${c}-${i}`}
+                 className="w-5 h-5 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
+                 style={{ backgroundColor: c }}
+                 onClick={() => {
+                     handleHexChange({ target: { value: c } } as any);
+                     saveRecentImmediate(c);
+                     onClose();
+                 }}
+               />
+           ))}
+        </div>
+        </>
+      )}
     </div>
   );
 };

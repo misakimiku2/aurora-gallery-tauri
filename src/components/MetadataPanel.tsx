@@ -677,6 +677,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     useEffect(() => {
         if (!file || isMulti || file.type !== FileType.IMAGE || !file.path) return;
+        // 用户关闭了"浏览时自动提取主色调"设置
+        if (settings && !settings.autoExtractPalette) return;
         // LAN 图片存在于远程服务器，本地无法提取主色调，跳过自动提取。
         if (file.path.startsWith('lan://')) return;
 
@@ -754,7 +756,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 }
             }
         })();
-    }, [file?.id, file?.meta?.palette]);
+    }, [file?.id, file?.meta?.palette, settings?.autoExtractPalette]);
 
     const handleUpdateTopicMeta = () => {
         if (topic && onUpdateTopic) {

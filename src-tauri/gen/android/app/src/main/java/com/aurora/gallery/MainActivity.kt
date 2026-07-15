@@ -205,6 +205,26 @@ class MainActivity : TauriActivity() {
       override fun onUpdateFile(fileId: String, updatesJson: String) {
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onUpdateFile)window.__androidViewerBridge.onUpdateFile('${escapeJsString(fileId)}','${escapeJsString(updatesJson)}');")
       }
+      override fun onColorSearch(colorHex: String) {
+        android.util.Log.i("AuroraNativeViewer", "onColorSearch: $colorHex")
+        runOnUiThread {
+          // 先关闭原生查看器（清理 NativeGalleryView）
+          nativeGalleryView?.let { view ->
+            view.close()
+            if (view.isAttachedToWindow) {
+              windowManager.removeView(view)
+            }
+          }
+          // 通知前端关闭查看器并清理状态
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onClose)window.__androidViewerBridge.onClose();")
+          // 触发颜色搜索
+          evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onColorSearch)window.__androidViewerBridge.onColorSearch('${escapeJsString(colorHex)}');")
+        }
+      }
+      override fun onExtractPalette(fileId: String, filePath: String) {
+        android.util.Log.i("AuroraNativeViewer", "onExtractPalette: $fileId")
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onExtractPalette)window.__androidViewerBridge.onExtractPalette('${escapeJsString(fileId)}','${escapeJsString(filePath)}');")
+      }
     }
     nativeGalleryView = view
   }

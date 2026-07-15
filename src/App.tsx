@@ -6,6 +6,7 @@ import { Sidebar } from './components/TreeSidebar';
 import { lanClientApi } from './components/lan-client/lanClientApi';
 import { downloadLanImagesBatched } from './components/lan-client/lanDownload';
 import { MetadataPanel } from './components/MetadataPanel';
+import { MobileColorPickerSheet } from './components/MobileColorPickerSheet';
 import { ImageViewer } from './components/ImageViewer';
 import { ImageComparer } from './components/ImageComparer';
 import { TabBar } from './components/TabBar';
@@ -97,9 +98,9 @@ export const App: React.FC = () => {
     const isAndroid = isAndroidSync();
     if (isAndroid) {
       const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
-      return { isSidebarVisible: !isPortrait, isMetadataVisible: false };
+      return { isSidebarVisible: !isPortrait, isMetadataVisible: false, isColorPickerVisible: false };
     }
-    return { isSidebarVisible: true, isMetadataVisible: true };
+    return { isSidebarVisible: true, isMetadataVisible: true, isColorPickerVisible: false };
   };
 
   const [state, setState] = useState<AppState>({
@@ -111,6 +112,7 @@ export const App: React.FC = () => {
       autoStart: false,
       exitAction: 'ask',
       animateOnHover: true,
+      autoExtractPalette: true,
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
@@ -1965,8 +1967,8 @@ export const App: React.FC = () => {
   // Toggle helpers for sidebars
   const toggleSidebar = () => {
     const next = !state.layout.isSidebarVisible;
-    if (isAndroidSync() && next && state.layout.isMetadataVisible) {
-      setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next, isMetadataVisible: false } }));
+    if (isAndroidSync() && next && (state.layout.isMetadataVisible || state.layout.isColorPickerVisible)) {
+      setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next, isMetadataVisible: false, isColorPickerVisible: false } }));
     } else {
       setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: next } }));
     }
@@ -1974,10 +1976,20 @@ export const App: React.FC = () => {
 
   const toggleMetadata = () => {
     const next = !state.layout.isMetadataVisible;
-    if (isAndroidSync() && next && state.layout.isSidebarVisible) {
-      setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next, isSidebarVisible: false } }));
+    if (isAndroidSync() && next && (state.layout.isSidebarVisible || state.layout.isColorPickerVisible)) {
+      setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next, isSidebarVisible: false, isColorPickerVisible: false } }));
     } else {
       setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: next } }));
+    }
+  };
+
+  // Android 端颜色选择器面板切换（与 sidebar/metadata 互斥）
+  const toggleColorPicker = () => {
+    const next = !state.layout.isColorPickerVisible;
+    if (isAndroidSync() && next && (state.layout.isSidebarVisible || state.layout.isMetadataVisible)) {
+      setState(s => ({ ...s, layout: { ...s.layout, isColorPickerVisible: next, isSidebarVisible: false, isMetadataVisible: false } }));
+    } else {
+      setState(s => ({ ...s, layout: { ...s.layout, isColorPickerVisible: next } }));
     }
   };
 
@@ -1985,11 +1997,11 @@ export const App: React.FC = () => {
     if (part === 'sidebar') toggleSidebar(); else toggleMetadata();
   };
 
-  // Track layout state changes (sidebar / metadata)
+  // Track layout state changes (sidebar / metadata / colorPicker)
   const prevLayoutRef = useRef(state.layout);
   useEffect(() => {
     prevLayoutRef.current = state.layout;
-  }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible]);
+  }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible, state.layout.isColorPickerVisible]);
 
   const handleViewerNavigate = (direction: 'next' | 'prev' | 'random') => {
     if (!activeTab.viewingFileId) return;
@@ -2339,6 +2351,8 @@ export const App: React.FC = () => {
   }, [getFileNode, handleNavigateFolder, enterViewer]);
   const closeViewerRef = useRef(closeViewer);
   closeViewerRef.current = closeViewer;
+  const performSearchRef = useRef(handlePerformSearch);
+  performSearchRef.current = handlePerformSearch;
   const exitActionRef2 = useRef(exitActionRef.current);
   exitActionRef2.current = exitActionRef.current;
 
@@ -2509,6 +2523,54 @@ export const App: React.FC = () => {
       onImmersiveToggle: (immersive: boolean) => {
         // 沉浸模式状态同步（可选）
       },
+      onColorSearch: (colorHex: string) => {
+        // viewer 已被 MainActivity.onColorSearch 关闭并触发 onClose
+        // 直接发起颜色搜索
+        const normalized = colorHex.startsWith('#') ? colorHex.slice(1) : colorHex;
+        performSearchRef.current(`color:${normalized}`);
+      },
+      onExtractPalette: async (fileId: string, _filePath: string) => {
+        // 用户在抽屉中点击了"提取主色调"按钮。
+        // 复用 PC 端 MetadataPanel 的提取逻辑（local getDominantColors / LAN lanClientApi.getPalette）。
+        // 完成后通过 handleUpdateFile 更新 meta.palette，
+        // React→Native sync effect 会自动将 palette 推送到 NativeGalleryView。
+        // 无论成功或失败，都必须通知 native 清除 loading 状态，否则脉冲动画永不停止。
+        const file = state.files[fileId];
+        if (!file?.path) return;
+        let hexColors: string[] = [];
+        try {
+          if (file.path.startsWith('lan://')) {
+            const { lanClientApi } = await import('./components/lan-client/lanClientApi');
+            hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+          } else {
+            const { getDominantColors } = await import('./api/tauri-bridge');
+            const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+            let thumbnailPath: string | undefined = undefined;
+            if (pathCache?.get) {
+              thumbnailPath = pathCache.get(file.path);
+            }
+            const result = await getDominantColors(file.path, 8, thumbnailPath);
+            if (result && result.length > 0) {
+              hexColors = result.map(c => c.hex);
+            }
+          }
+        } catch (err) {
+          console.error('[NativeViewer] onExtractPalette failed:', err);
+        }
+        // 无论成功失败都更新 React state（即使 palette 为空也会触发 sync effect 清除 loading）
+        if (hexColors.length > 0) {
+          handleUpdateFile(fileId, {
+            meta: { ...(file.meta || {}), palette: hexColors },
+          });
+        } else {
+          // 提取失败/无结果：通知 native 清除 loading 并标记失败，
+          // 使 autoExtractPalette 开启时显示"提取主色调"按钮而非永久 loading
+          invoke('android_update_native_item', {
+            fileId,
+            updates: JSON.stringify({ palette: [], paletteLoadFailed: true }),
+          }).catch(() => {});
+        }
+      },
     };
     (window as any).__androidViewerBridge = bridge;
     return () => {
@@ -2535,6 +2597,9 @@ export const App: React.FC = () => {
     const updates: Record<string, unknown> = {
       tags: file.tags || [],
       description: file.description || '',
+      palette: file.meta?.palette || [],
+      // 同步"浏览时自动提取主色调"开关到 native，控制 loading/按钮显示策略
+      autoExtractPalette: !!state.settings.autoExtractPalette,
     };
     if (file.aiData) {
       updates.aiData = {
@@ -2548,7 +2613,61 @@ export const App: React.FC = () => {
       fileId: viewingId,
       updates: JSON.stringify(updates),
     }).catch(() => {});
-  }, [useNativeViewer, nativeViewerActive, activeTab.viewingFileId, state.files[activeTab.viewingFileId || '']]);
+  }, [useNativeViewer, nativeViewerActive, activeTab.viewingFileId, state.files[activeTab.viewingFileId || ''], state.settings.autoExtractPalette]);
+
+  // React → 原生：浏览时自动提取主色调（当设置开启且当前图片无 palette 时）
+  const autoExtractedPaletteRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!useNativeViewer || !nativeViewerActive) {
+      // 查看器关闭时清除缓存，下次打开可重新尝试提取失败的图片
+      autoExtractedPaletteRef.current.clear();
+      return;
+    }
+    if (!state.settings.autoExtractPalette) return;
+    const viewingId = activeTab.viewingFileId;
+    if (!viewingId) return;
+    const file = state.files[viewingId];
+    if (!file?.path) return;
+    // 已有 palette 数据，无需提取
+    if (file.meta?.palette && file.meta.palette.length > 0) return;
+    // 同一张图片只自动提取一次（避免循环）
+    if (autoExtractedPaletteRef.current.has(viewingId)) return;
+    autoExtractedPaletteRef.current.add(viewingId);
+    // 异步提取（复用 onExtractPalette 的逻辑）
+    (async () => {
+      let hexColors: string[] = [];
+      try {
+        if (file.path.startsWith('lan://')) {
+          const { lanClientApi } = await import('./components/lan-client/lanClientApi');
+          hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+        } else {
+          const { getDominantColors } = await import('./api/tauri-bridge');
+          const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
+          let thumbnailPath: string | undefined = undefined;
+          if (pathCache?.get) {
+            thumbnailPath = pathCache.get(file.path);
+          }
+          const result = await getDominantColors(file.path, 8, thumbnailPath);
+          if (result && result.length > 0) {
+            hexColors = result.map(c => c.hex);
+          }
+        }
+      } catch (err) {
+        console.error('[NativeViewer] autoExtractPalette failed:', err);
+      }
+      if (hexColors.length > 0) {
+        handleUpdateFile(viewingId, {
+          meta: { ...(file.meta || {}), palette: hexColors },
+        });
+      } else {
+        // 提取失败/返回空：通知 native 显示"提取主色调"按钮供用户手动重试
+        invoke('android_update_native_item', {
+          fileId: viewingId,
+          updates: JSON.stringify({ palette: [], paletteLoadFailed: true }),
+        }).catch(() => {});
+      }
+    })();
+  }, [useNativeViewer, nativeViewerActive, activeTab.viewingFileId, state.files[activeTab.viewingFileId || ''], state.settings.autoExtractPalette]);
 
   useEffect(() => {
     const handleAndroidBackPress = async () => {
@@ -2688,7 +2807,7 @@ export const App: React.FC = () => {
   // Total visible side-panel width in rem (sidebar 16rem + metadata 20rem).
   // Passed to grid components so they can predict the target container width at
   // toggle moment and run card transitions simultaneously with panel animation.
-  const panelWidthRem = (state.layout.isSidebarVisible ? 16 : 0) + (state.layout.isMetadataVisible ? 20 : 0);
+  const panelWidthRem = (state.layout.isSidebarVisible ? 16 : 0) + (state.layout.isMetadataVisible ? 20 : 0) + (state.layout.isColorPickerVisible ? 20 : 0);
 
   return (
     <div
@@ -2951,6 +3070,8 @@ export const App: React.FC = () => {
               }}
               onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
               onToggleMetadata={toggleMetadata}
+              onToggleColorPicker={toggleColorPicker}
+              isColorPickerVisible={state.layout.isColorPickerVisible}
               onToggleSettings={toggleSettings}
               onUpdateDateFilter={(f) => updateActiveTab({ dateFilter: f })}
               // Pagination
@@ -3400,6 +3521,21 @@ export const App: React.FC = () => {
             />
           </div>
         </div>
+        {isAndroidPlatformCached() && (
+          <div
+            className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-white dark:bg-gray-800"
+            style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
+            <div
+              className="h-full flex flex-col border-l border-gray-200 dark:border-gray-800"
+              style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
+              <MobileColorPickerSheet
+                onSearch={(color) => handlePerformSearch(`color:${color}`)}
+                onClose={toggleColorPicker}
+                t={t}
+              />
+            </div>
+          </div>
+        )}
         <TaskProgressModal
           tasks={tasks}
           onMinimize={(id: string) => updateTask(id, { minimized: true })}
