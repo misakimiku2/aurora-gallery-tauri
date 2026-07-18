@@ -180,17 +180,11 @@ class MainActivity : TauriActivity() {
       override fun onDelete(fileId: String) {
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onDelete)window.__androidViewerBridge.onDelete('${escapeJsString(fileId)}');")
       }
-      override fun onShowInFolder(fileId: String) {
-        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onShowInFolder)window.__androidViewerBridge.onShowInFolder('${escapeJsString(fileId)}');")
-      }
       override fun onCopyToFolder(fileId: String) {
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onCopyToFolder)window.__androidViewerBridge.onCopyToFolder('${escapeJsString(fileId)}');")
       }
       override fun onMoveToFolder(fileId: String) {
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onMoveToFolder)window.__androidViewerBridge.onMoveToFolder('${escapeJsString(fileId)}');")
-      }
-      override fun onAIAnalyze(fileId: String) {
-        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onAIAnalyze)window.__androidViewerBridge.onAIAnalyze('${escapeJsString(fileId)}');")
       }
       override fun onEditTags(fileId: String) {
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onEditTags)window.__androidViewerBridge.onEditTags('${escapeJsString(fileId)}');")
@@ -225,8 +219,24 @@ class MainActivity : TauriActivity() {
         android.util.Log.i("AuroraNativeViewer", "onExtractPalette: $fileId")
         evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onExtractPalette)window.__androidViewerBridge.onExtractPalette('${escapeJsString(fileId)}','${escapeJsString(filePath)}');")
       }
+      override fun onShare(filePath: String) {
+        shareImage(filePath)
+      }
+      override fun onUpdateSlideshowConfig(configJson: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onUpdateSlideshowConfig)window.__androidViewerBridge.onUpdateSlideshowConfig('${escapeJsString(configJson)}');")
+      }
+      override fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String) {
+        evaluateJs("if(window.__androidViewerBridge&&window.__androidViewerBridge.onFolderPickerConfirm)window.__androidViewerBridge.onFolderPickerConfirm('${escapeJsString(fileId)}','${escapeJsString(targetFolderId)}','${escapeJsString(type)}');")
+      }
     }
     nativeGalleryView = view
+  }
+
+  /** 由 Tauri 命令 android_show_folder_picker 调用，显示原生文件夹选择弹窗。 */
+  fun showFolderPicker(type: String, fileId: String, folderTreeJson: String) {
+    runOnUiThread {
+      nativeGalleryView?.showFolderPickerDialog(type, fileId, folderTreeJson)
+    }
   }
 
   private fun escapeJsString(s: String): String {
@@ -257,7 +267,13 @@ class MainActivity : TauriActivity() {
         // 优先：如果原生查看器抽屉打开，先收起抽屉
         val ngv = nativeGalleryView
         if (ngv != null && ngv.isOpen()) {
-          android.util.Log.i("AuroraBack", "NativeViewer isOpen=true, isDrawerOpen=${ngv.isDrawerOpen()}")
+          android.util.Log.i("AuroraBack", "NativeViewer isOpen=true, isSlideshowPlaying=${ngv.isSlideshowPlaying()}, isDrawerOpen=${ngv.isDrawerOpen()}")
+          // 优先：幻灯片正在播放 → 停止幻灯片
+          if (ngv.isSlideshowPlaying()) {
+            android.util.Log.i("AuroraBack", "Stopping slideshow via back press")
+            ngv.setSlideshow(false)
+            return
+          }
           if (ngv.isDrawerOpen()) {
             android.util.Log.i("AuroraBack", "Closing drawer via back press")
             ngv.closeDrawer()

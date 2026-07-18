@@ -1110,15 +1110,79 @@ export const App: React.FC = () => {
   }, [updateActiveTab]);
 
   const handleOpenCompareAndClearSelection = useCallback((imageIds: string[]) => {
+    // 安卓端：限制为单个画布，先关闭所有现有比较模式 tab（避免无 TabBar UI 切换导致画布堆积）
+    if (isAndroidPlatformCached()) {
+      setState(prev => {
+        const newTabs = prev.tabs.filter(t => !t.isCompareMode);
+        // 若过滤后无 tab（异常情况），保留原 tabs 不动
+        if (newTabs.length === 0) return prev;
+        return { ...prev, tabs: newTabs };
+      });
+    }
     handleOpenCompareInNewTab(imageIds);
     if (isAndroidSelectionMode) {
       setIsAndroidSelectionMode(false);
     }
-  }, [handleOpenCompareInNewTab, isAndroidSelectionMode]);
+  }, [handleOpenCompareInNewTab, isAndroidSelectionMode, setState]);
 
   const handleDeselectAllAndroid = useCallback(() => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
+
+  const performDeleteFiles = useCallback((ids: string[], filesToDelete: any[], closeModal: boolean = false) => {
+    setState(s => {
+      const newFiles = { ...s.files };
+      const filePaths: string[] = [];
+
+      ids.forEach(id => {
+        const file = newFiles[id];
+        if (file) {
+          if (file.path) filePaths.push(file.path);
+          if (file.parentId && newFiles[file.parentId]) {
+            const parent = newFiles[file.parentId];
+            newFiles[file.parentId] = { ...parent, children: parent.children?.filter(cid => cid !== id) };
+          }
+          delete newFiles[id];
+        }
+      });
+
+      const updatedTabs = s.tabs.map(t => ({
+        ...t,
+        selectedFileIds: t.selectedFileIds.filter(fid => !ids.includes(fid)),
+        // 原生查看器激活时，删除当前 viewingFileId 不设为 null（保持原值），
+        // 由原生查看器的 onNavigate 在下一次 JS 执行中更新到正确的下一张 fileId；
+        // 否则 viewingFileId=null 会立即触发关闭原生查看器的 useEffect，
+        // 导致原生查看器在 onNavigate 到达前就被关闭。
+        viewingFileId: t.viewingFileId && ids.includes(t.viewingFileId)
+          ? (nativeViewerActiveRef.current ? t.viewingFileId : null)
+          : t.viewingFileId
+      }));
+
+      (async () => {
+        try {
+          for (const filePath of filePaths) {
+            if (isTauriEnvironment()) {
+              await deleteFile(filePath);
+            }
+          }
+          try {
+            const defaults = await tauriGetDefaultPaths();
+            if (defaults.appDataDir) {
+              await clearScanCache(defaults.appDataDir);
+            }
+          } catch (_) { /* cache clear is best-effort */ }
+          showToast(t('context.deletedItems').replace('{count}', filesToDelete.length.toString()));
+        } catch (err) {
+          console.error('Delete failed:', err);
+          try { showToast(t('errors.deleteFailed') || 'Delete failed'); } catch (_) { showToast('Delete failed'); }
+        }
+      })();
+
+      const newState: any = { ...s, files: newFiles, tabs: updatedTabs };
+      if (closeModal) newState.activeModal = { type: null };
+      return newState;
+    });
+  }, [t, showToast]);
 
   const handleAndroidDelete = useCallback((ids: string[]) => {
     if (ids.length === 0) return;
@@ -1133,51 +1197,7 @@ export const App: React.FC = () => {
           fileIds: ids,
           files: filesToDelete,
           onConfirm: async () => {
-            setState(s => {
-              const newFiles = { ...s.files };
-              const filePaths: string[] = [];
-
-              ids.forEach(id => {
-                const file = newFiles[id];
-                if (file) {
-                  if (file.path) filePaths.push(file.path);
-                  if (file.parentId && newFiles[file.parentId]) {
-                    const parent = newFiles[file.parentId];
-                    newFiles[file.parentId] = { ...parent, children: parent.children?.filter(cid => cid !== id) };
-                  }
-                  delete newFiles[id];
-                }
-              });
-
-              const updatedTabs = s.tabs.map(t => ({
-                ...t,
-                selectedFileIds: t.selectedFileIds.filter(fid => !ids.includes(fid)),
-                viewingFileId: t.viewingFileId && ids.includes(t.viewingFileId) ? null : t.viewingFileId
-              }));
-
-              (async () => {
-                try {
-                  for (const filePath of filePaths) {
-                    if (isTauriEnvironment()) {
-                      await deleteFile(filePath);
-                    }
-                  }
-                  try {
-                    const defaults = await tauriGetDefaultPaths();
-                    if (defaults.appDataDir) {
-                      await clearScanCache(defaults.appDataDir);
-                    }
-                  } catch (_) { /* cache clear is best-effort */ }
-                  showToast(t('context.deletedItems').replace('{count}', filesToDelete.length.toString()));
-                } catch (err) {
-                  console.error('Delete failed:', err);
-                  try { showToast(t('errors.deleteFailed') || 'Delete failed'); } catch (_) { showToast('Delete failed'); }
-                }
-              })();
-
-              return { ...s, files: newFiles, tabs: updatedTabs, activeModal: { type: null } };
-            });
-
+            performDeleteFiles(ids, filesToDelete, true);
             handleExitAndroidSelectionMode();
           },
           onCancel: () => {
@@ -1186,7 +1206,38 @@ export const App: React.FC = () => {
         }
       }
     }));
-  }, [state.files, t, showToast, handleExitAndroidSelectionMode]);
+  }, [state.files, performDeleteFiles, handleExitAndroidSelectionMode]);
+
+  // 原生查看器内已弹窗确认后的删除入口：直接执行删除流程，不再弹 ConfirmModal
+  const handleAndroidDeleteConfirmed = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    const filesToDelete = ids.map(id => state.files[id]).filter(Boolean);
+    if (filesToDelete.length === 0) return;
+    performDeleteFiles(ids, filesToDelete, false);
+  }, [state.files, performDeleteFiles]);
+
+  // 触发原生文件夹选择弹窗：收集 state.files 中的所有文件夹节点，序列化为 JSON，调用 Tauri 命令
+  const invokeAndroidFolderPicker = useCallback(async (type: 'copy' | 'move', fileId: string) => {
+    const folders: Array<{ id: string; name: string; parentId: string | null; children: string[] }> = [];
+    Object.values(state.files).forEach(file => {
+      if (file.type === FileType.FOLDER) {
+        folders.push({
+          id: file.id,
+          name: file.name,
+          parentId: file.parentId ?? null,
+          children: (file.children ?? []).filter(cid => state.files[cid]?.type === FileType.FOLDER),
+        });
+      }
+    });
+    const folderTreeJson = JSON.stringify({ roots: state.roots, folders });
+    try {
+      await invoke('android_show_folder_picker', { pickerType: type, fileId, folderTreeJson });
+    } catch (e) {
+      console.error('[NativeViewer] invoke android_show_folder_picker failed:', e);
+    }
+  }, [state.files, state.roots]);
+  const invokeAndroidFolderPickerRef = useRef(invokeAndroidFolderPicker);
+  invokeAndroidFolderPickerRef.current = invokeAndroidFolderPicker;
 
   const handleFolderSelect = useCallback((id: string) => {
     if (!isAndroidSelectionMode) return;
@@ -2430,6 +2481,8 @@ export const App: React.FC = () => {
           enabled: false,
           interval: state.slideshowConfig.interval || 5000,
           transition: state.slideshowConfig.transition || 'fade',
+          isRandom: state.slideshowConfig.isRandom || false,
+          enableZoom: state.slideshowConfig.enableZoom || false,
         },
         isDark: (() => {
           const theme = state.settings.theme;
@@ -2486,25 +2539,16 @@ export const App: React.FC = () => {
         setNativeViewerActive(false);
       },
       onDelete: (fileId: string) => {
-        if (isAndroidDevice) handleAndroidDelete([fileId]);
+        // 原生查看器内已弹窗确认；此处直接执行删除流程，不再关闭查看器、不再弹 ConfirmModal
+        if (isAndroidDevice) handleAndroidDeleteConfirmed([fileId]);
         else requestDelete([fileId]);
       },
-      onShowInFolder: (fileId: string) => {
-        const f = state.files[fileId];
-        if (f?.parentId) {
-          invoke('android_close_native_viewer').catch(() => {});
-          setNativeViewerActive(false);
-          enterFolder(f.parentId, { scrollToItemId: fileId });
-        }
-      },
       onCopyToFolder: (fileId: string) => {
-        setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }));
+        // 触发原生文件夹选择弹窗（不弹 WebView FolderPickerModal，因 WebView 被原生查看器遮挡）
+        invokeAndroidFolderPickerRef.current('copy', fileId);
       },
       onMoveToFolder: (fileId: string) => {
-        setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }));
-      },
-      onAIAnalyze: (fileId: string) => {
-        handleAIAnalysis([fileId]);
+        invokeAndroidFolderPickerRef.current('move', fileId);
       },
       onEditTags: (fileId: string) => {
         setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId } } }));
@@ -2571,12 +2615,30 @@ export const App: React.FC = () => {
           }).catch(() => {});
         }
       },
+      onUpdateSlideshowConfig: (configJson: string) => {
+        try {
+          const cfg = JSON.parse(configJson);
+          setState(s => ({ ...s, slideshowConfig: cfg }));
+        } catch (e) {
+          console.error('[NativeViewer] onUpdateSlideshowConfig parse error:', e);
+        }
+      },
+      onFolderPickerConfirm: (fileId: string, targetFolderId: string, type: string) => {
+        // 用户在原生文件夹选择弹窗中确认了目标文件夹
+        // type === 'copy' → 复制（图片仍在原文件夹，原生查看器不变）
+        // type === 'move' → 移动（图片已离开当前文件夹，原生层会自动从 images 列表移除并切换下一张）
+        if (type === 'copy') {
+          handleCopyFiles([fileId], targetFolderId);
+        } else if (type === 'move') {
+          handleMoveFiles([fileId], targetFolderId);
+        }
+      },
     };
     (window as any).__androidViewerBridge = bridge;
     return () => {
       delete (window as any).__androidViewerBridge;
     };
-  }, [useNativeViewer, displayFileIds, state.files, handleAIAnalysis, handleAndroidDelete, isAndroidDevice, requestDelete, enterFolder, setState]);
+  }, [useNativeViewer, displayFileIds, state.files, handleAIAnalysis, handleAndroidDeleteConfirmed, isAndroidDevice, requestDelete, enterFolder, setState, handleCopyFiles, handleMoveFiles]);
 
   // 组件卸载时关闭原生查看器
   useEffect(() => {
@@ -2765,8 +2827,21 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('android-back-press', handleAndroidBackPress);
   }, [state.activeModal.type, state.isSettingsOpen, showCloseConfirmation, setState, setIsReferenceMode]);
 
-  const handleCloseAllTabs = () => { /* ... */ };
-  const handleCloseOtherTabs = (id: string) => { /* ... */ };
+  const handleCloseAllTabs = () => {
+    setState(prev => {
+      if (prev.tabs.length <= 1) return prev;
+      // 保留第一个 tab，关闭其他所有 tab
+      const firstTab = prev.tabs[0];
+      return { ...prev, tabs: [firstTab], activeTabId: firstTab.id };
+    });
+  };
+  const handleCloseOtherTabs = (id: string) => {
+    setState(prev => {
+      const keptTab = prev.tabs.find(t => t.id === id);
+      if (!keptTab) return prev;
+      return { ...prev, tabs: [keptTab], activeTabId: id };
+    });
+  };
 
   // 锟捷癸拷锟饺★拷锟斤拷锟斤拷锟斤拷募锟斤拷锟絀D
   const getAllSubFolderIds = (folderId: string): string[] => {
@@ -2854,21 +2929,25 @@ export const App: React.FC = () => {
 
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
-        // Check user's exit action preference from ref (always latest value)
-        const exitAction = exitActionRef.current;
+      {isAndroidPlatformCached() ? (
+        <div className="shrink-0 bg-gray-200 dark:bg-gray-900" style={{ height: 'calc(env(safe-area-inset-top, 0px) + 10px)' }} />
+      ) : (
+        <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
+          // Check user's exit action preference from ref (always latest value)
+          const exitAction = exitActionRef.current;
 
-        if (exitAction === 'minimize') {
-          // Minimize to tray
-          await hideWindow();
-        } else if (exitAction === 'exit') {
-          // Exit immediately
-          await exitApp();
-        } else {
-          // Ask user (default behavior)
-          setShowCloseConfirmation(true);
-        }
-      }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
+          if (exitAction === 'minimize') {
+            // Minimize to tray
+            await hideWindow();
+          } else if (exitAction === 'exit') {
+            // Exit immediately
+            await exitApp();
+          } else {
+            // Ask user (default behavior)
+            setShowCloseConfirmation(true);
+          }
+        }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
+      )}
       <div className="flex-1 flex overflow-hidden relative"
         style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
         <div

@@ -1,7 +1,5 @@
 package com.aurora.gallery
 
-import android.app.AlertDialog
-import android.app.Dialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.Drawable
@@ -9,21 +7,17 @@ import android.text.method.ScrollingMovementMethod
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
-import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewPropertyAnimator
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.PathInterpolator
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.GridLayout
-import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -38,6 +32,18 @@ import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.ImageRequest
 import coil.size.Precision
+import com.aurora.gallery.dialogs.DeleteConfirmDialog
+import com.aurora.gallery.dialogs.DescriptionEditDialog
+import com.aurora.gallery.dialogs.DialogTheme
+import com.aurora.gallery.dialogs.DialogUtils
+import com.aurora.gallery.dialogs.FolderPickerDialog
+import com.aurora.gallery.dialogs.MoreMenuItem
+import com.aurora.gallery.dialogs.MoreMenuPopup
+import com.aurora.gallery.dialogs.RenameDialog
+import com.aurora.gallery.dialogs.SlideshowConfig
+import com.aurora.gallery.dialogs.SlideshowSettingsDialog
+import com.aurora.gallery.dialogs.SourceUrlEditDialog
+import com.aurora.gallery.dialogs.TagEditDialog
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -55,7 +61,7 @@ import kotlin.math.abs
  */
 class NativeGalleryView @JvmOverloads constructor(
     context: Context,
-) : FrameLayout(context) {
+) : FrameLayout(context), DialogTheme {
 
     interface Listener {
         /** 用户点击了关闭按钮。 */
@@ -66,14 +72,10 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onMore(fileId: String)
         /** 用户点击了删除按钮。 */
         fun onDelete(fileId: String)
-        /** 用户点击了"在文件夹中显示"。 */
-        fun onShowInFolder(fileId: String)
         /** 用户点击了"复制到文件夹"。 */
         fun onCopyToFolder(fileId: String)
         /** 用户点击了"移动到文件夹"。 */
         fun onMoveToFolder(fileId: String)
-        /** 用户点击了"AI 分析"。 */
-        fun onAIAnalyze(fileId: String)
         /** 用户点击了"编辑标签"。 */
         fun onEditTags(fileId: String)
         /** 用户长按图片。 */
@@ -86,6 +88,12 @@ class NativeGalleryView @JvmOverloads constructor(
         fun onColorSearch(colorHex: String)
         /** 用户点击了"提取主色调"按钮，请求对该图片提取主色调。 */
         fun onExtractPalette(fileId: String, filePath: String)
+        /** 用户点击了分享按钮。filePath 为本地文件路径。 */
+        fun onShare(filePath: String)
+        /** 用户在原生层修改了幻灯片设置，JSON 形如 {"interval":5000,"transition":"fade","isRandom":false,"enableZoom":false} */
+        fun onUpdateSlideshowConfig(configJson: String)
+        /** 用户在文件夹选择弹窗中确认了目标文件夹。type: "copy" 或 "move" */
+        fun onFolderPickerConfirm(fileId: String, targetFolderId: String, type: String)
     }
 
     data class ImageItem(
@@ -143,9 +151,12 @@ class NativeGalleryView @JvmOverloads constructor(
     private var currentIndex = 0
     private var isAnimating = AtomicBoolean(false)
     private var isImmersive = false
-    private var isSlideshowActive = false
     private var slideshowIntervalMs = 5000L
     private var slideshowTransition = "fade"
+    private var slideshowRandom = false
+    private var slideshowZoom = false
+    /** 当前挂载的幻灯片全屏覆盖层；非 null 表示幻灯片正在播放。 */
+    private var slideshowView: SlideshowView? = null
     private var rotationDegrees = 0
     // 主题：true=深色，false=浅色
     private var isDarkTheme = true
@@ -158,19 +169,20 @@ class NativeGalleryView @JvmOverloads constructor(
     // 自定义扩展：750=#333333 850=#1E1E1E 950=#0A0A0A
     private fun colorBg() = if (isDarkTheme) Color.parseColor("#171717") else Color.parseColor("#E5E5E5")
     private fun colorPanel() = if (isDarkTheme) Color.parseColor("#171717") else Color.parseColor("#FFFFFF")
-    private fun colorBorder() = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#E5E7EB")
-    private fun colorTextPrimary() = if (isDarkTheme) Color.parseColor("#F3F4F6") else Color.parseColor("#262626")
-    private fun colorTextSecondary() = if (isDarkTheme) Color.parseColor("#9CA3AF") else Color.parseColor("#6B7280")
-    private fun colorAccent() = Color.parseColor("#3B82F6")
-    private fun colorTagBg() = if (isDarkTheme) Color.parseColor("#1E3A8A33") else Color.parseColor("#EFF6FF")
-    private fun colorTagText() = if (isDarkTheme) Color.parseColor("#93C5FD") else Color.parseColor("#2563EB")
-    private fun colorTagBorder() = if (isDarkTheme) Color.parseColor("#1E40AF55") else Color.parseColor("#DBEAFE")
-    private fun colorTextBoxBg() = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#F9FAFB")
-    private fun colorDialogBg() = if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#FFFFFF")
-    private fun colorButtonSecondaryBg() = if (isDarkTheme) Color.parseColor("#404040") else Color.parseColor("#E5E7EB")
-    private fun colorButtonSecondaryText() = if (isDarkTheme) Color.parseColor("#A3A3A3") else Color.parseColor("#404040")
+    override fun isDarkTheme(): Boolean = isDarkTheme
+    override fun colorBorder(): Int = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#E5E7EB")
+    override fun colorTextPrimary(): Int = if (isDarkTheme) Color.parseColor("#F3F4F6") else Color.parseColor("#262626")
+    override fun colorTextSecondary(): Int = if (isDarkTheme) Color.parseColor("#9CA3AF") else Color.parseColor("#6B7280")
+    override fun colorAccent(): Int = Color.parseColor("#3B82F6")
+    override fun colorTagBg(): Int = if (isDarkTheme) Color.parseColor("#1E3A8A33") else Color.parseColor("#EFF6FF")
+    override fun colorTagText(): Int = if (isDarkTheme) Color.parseColor("#93C5FD") else Color.parseColor("#2563EB")
+    override fun colorTagBorder(): Int = if (isDarkTheme) Color.parseColor("#1E40AF55") else Color.parseColor("#DBEAFE")
+    override fun colorTextBoxBg(): Int = if (isDarkTheme) Color.parseColor("#262626") else Color.parseColor("#F9FAFB")
+    override fun colorDialogBg(): Int = if (isDarkTheme) Color.parseColor("#1E1E1E") else Color.parseColor("#FFFFFF")
+    override fun colorButtonSecondaryBg(): Int = if (isDarkTheme) Color.parseColor("#404040") else Color.parseColor("#E5E7EB")
+    override fun colorButtonSecondaryText(): Int = if (isDarkTheme) Color.parseColor("#A3A3A3") else Color.parseColor("#404040")
     // 提示文本颜色（比次文字更淡，纯色无透明度）
-    private fun colorHint() = if (isDarkTheme) Color.parseColor("#6B7280") else Color.parseColor("#9CA3AF")
+    override fun colorHint(): Int = if (isDarkTheme) Color.parseColor("#6B7280") else Color.parseColor("#9CA3AF")
 
     var listener: Listener? = null
 
@@ -180,6 +192,9 @@ class NativeGalleryView @JvmOverloads constructor(
     private val progressBar: ProgressBar
     private val topBar: LinearLayout
     lateinit private var titleView: TextView
+    lateinit private var moreBtn: ImageView
+    lateinit private var slideshowBtn: ImageView
+    lateinit private var deleteBtn: ImageView
     private val bottomInfo: LinearLayout
     private val bottomInfoText: TextView
     private val thumbnailStrip: RecyclerView
@@ -487,38 +502,60 @@ class NativeGalleryView @JvmOverloads constructor(
             layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (resources.displayMetrics.density * 56).toInt() + statusBarHeight).apply {
                 gravity = android.view.Gravity.TOP
             }
-            setBackgroundColor(if (isDarkTheme) Color.parseColor("#CC171717") else Color.parseColor("#CCE5E5E5"))
+            setBackgroundColor(if (isDarkTheme) Color.parseColor("#4D171717") else Color.parseColor("#4DE5E5E5"))
             setPadding(24, statusBarHeight, 24, 0)
             gravity = android.view.Gravity.CENTER_VERTICAL
 
-            val closeBtn = makeImageButton("✕") { listener?.onClose() }
+            val closeBtn = makeIconButton(R.drawable.ic_lucide_arrow_left) { listener?.onClose() }
             titleView = TextView(context).apply {
                 setTextColor(colorTextPrimary())
-                textSize = 14f
-                gravity = android.view.Gravity.CENTER
-                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
+                textSize = 18f
+                gravity = android.view.Gravity.CENTER_VERTICAL or android.view.Gravity.START
+                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply {
+                    marginStart = (resources.displayMetrics.density * 4).toInt()
+                }
                 maxLines = 1
                 ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-                setPadding(24, 0, 24, 0)
+                setPadding(0, 0, (resources.displayMetrics.density * 8).toInt(), 0)
             }
-            val rotateBtn = makeImageButton("⟳") { rotateCurrent() }
-            val infoBtn = makeImageButton("ⓘ") { toggleDrawer() }
-            val moreBtn = makeImageButton("⋮") { showMoreMenu() }
+            slideshowBtn = makeIconButton(R.drawable.ic_lucide_play) { toggleSlideshow() }
+            val rotateBtn = makeIconButton(R.drawable.ic_lucide_rotate_cw) { rotateCurrent() }
+            val infoBtn = makeIconButton(R.drawable.ic_lucide_info) { toggleDrawer() }
+            deleteBtn = makeIconButton(R.drawable.ic_lucide_trash, tintColor = Color.parseColor("#EF4444")) { showDeleteConfirmDialog() }
+            val shareBtn = makeIconButton(R.drawable.ic_lucide_share) { shareCurrentImage() }
+            moreBtn = makeIconButton(R.drawable.ic_lucide_more_vertical) { showMoreMenu(moreBtn) }
 
             addView(closeBtn)
             addView(titleView)
+            addView(slideshowBtn)
             addView(rotateBtn)
             addView(infoBtn)
+            addView(deleteBtn)
+            addView(shareBtn)
             addView(moreBtn)
         }
     }
 
     private fun makeImageButton(text: String, onClick: () -> Unit): TextView {
+        val density = resources.displayMetrics.density
+        val pad = (density * 14).toInt()
         return TextView(context).apply {
             this.text = text
             setTextColor(colorTextPrimary())
             textSize = 24f
-            setPadding(20, 20, 20, 20)
+            setPadding(pad, pad, pad, pad)
+            layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun makeIconButton(drawableRes: Int, tintColor: Int = colorTextPrimary(), onClick: () -> Unit): ImageView {
+        val density = resources.displayMetrics.density
+        val pad = (density * 10).toInt()
+        return ImageView(context).apply {
+            setImageResource(drawableRes)
+            setColorFilter(tintColor)
+            setPadding(pad, pad, pad, pad)
             layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT)
             setOnClickListener { onClick() }
         }
@@ -785,7 +822,7 @@ class NativeGalleryView @JvmOverloads constructor(
                 setTextColor(colorTagText())
                 textSize = 11f
                 setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
-                background = createRoundedBg(colorTagBg(), 10f, colorTagBorder(), 1f)
+                background = DialogUtils.createRoundedBg(colorTagBg(), 10f, colorTagBorder(), 1f, context)
                 isClickable = true
                 isFocusable = true
                 setOnClickListener {
@@ -874,7 +911,7 @@ class NativeGalleryView @JvmOverloads constructor(
             setTextColor(colorButtonSecondaryText())
             textSize = 11f
             setPadding((resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt(), (resources.displayMetrics.density * 12).toInt(), (resources.displayMetrics.density * 6).toInt())
-            background = createRoundedBg(colorButtonSecondaryBg(), 10f, colorBorder(), 1f)
+            background = DialogUtils.createRoundedBg(colorButtonSecondaryBg(), 10f, colorBorder(), 1f, context)
             isClickable = true
             setOnClickListener { showTagEditDialog() }
             layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
@@ -978,6 +1015,7 @@ class NativeGalleryView @JvmOverloads constructor(
             }
             override fun onSingleTapConfirmed() {
                 if (drawerOpen) return
+                // 幻灯片播放时本视图被 SlideshowView 覆盖，不会收到此回调
                 toggleImmersive()
             }
             override fun onVerticalSwipeDrag(dy: Float) {
@@ -1156,10 +1194,10 @@ class NativeGalleryView @JvmOverloads constructor(
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
             if (event.action == KeyEvent.ACTION_UP) {
-                if (drawerOpen) {
-                    closeDrawer()
-                } else if (isOpen) {
-                    listener?.onClose()
+                when {
+                    slideshowView != null -> slideshowView?.exit()
+                    drawerOpen -> closeDrawer()
+                    isOpen -> listener?.onClose()
                 }
             }
             return true
@@ -1169,6 +1207,9 @@ class NativeGalleryView @JvmOverloads constructor(
 
     /** 抽屉是否打开（供 MainActivity onBackPressed 查询）。 */
     fun isDrawerOpen(): Boolean = isOpen && drawerOpen
+
+    /** 幻灯片是否正在播放（供 MainActivity onBackPressed 查询）。 */
+    fun isSlideshowPlaying(): Boolean = slideshowView != null
 
     /** 收起抽屉（供外部调用）。 */
     fun closeDrawer() {
@@ -1188,10 +1229,13 @@ class NativeGalleryView @JvmOverloads constructor(
         this.currentIndex = startIndex.coerceIn(0, images.size - 1)
         this.rotationDegrees = 0
         this.isOpen = true
+        var autoStartSlideshow = false
         options?.optJSONObject("slideshow")?.let { sl ->
-            isSlideshowActive = sl.optBoolean("enabled", false)
+            autoStartSlideshow = sl.optBoolean("enabled", false)
             slideshowIntervalMs = sl.optLong("interval", 5000L)
             slideshowTransition = sl.optString("transition", "fade")
+            slideshowRandom = sl.optBoolean("isRandom", false)
+            slideshowZoom = sl.optBoolean("enableZoom", false)
         }
         // 主题
         if (options?.has("isDark") == true) {
@@ -1210,7 +1254,7 @@ class NativeGalleryView @JvmOverloads constructor(
             loadCurrent(animateIn = false)
         }
         updateTitle()
-        if (isSlideshowActive) startSlideshowLoop()
+        if (autoStartSlideshow) setSlideshow(true)
     }
 
     /** 应用当前主题到所有 UI 元素。 */
@@ -1218,13 +1262,20 @@ class NativeGalleryView @JvmOverloads constructor(
         // 沉浸模式下保持黑色背景（切换图片时 open() 重入会调用 applyTheme，不应重置为主题色）
         setBackgroundColor(if (isImmersive) Color.BLACK else colorBg())
         // 顶栏/底栏/缩略图条背景
-        topBar.setBackgroundColor(if (isDarkTheme) Color.parseColor("#CC171717") else Color.parseColor("#CCE5E5E5"))
+        topBar.setBackgroundColor(if (isDarkTheme) Color.parseColor("#4D171717") else Color.parseColor("#4DE5E5E5"))
         bottomInfo.setBackgroundColor(if (isDarkTheme) Color.parseColor("#CC171717") else Color.parseColor("#CCE5E5E5"))
         thumbnailStrip.setBackgroundColor(if (isDarkTheme) Color.parseColor("#E6171717") else Color.parseColor("#E6E5E5E5"))
         // 顶栏所有文字（按钮+标题）
         titleView.setTextColor(colorTextPrimary())
         for (i in 0 until topBar.childCount) {
-            (topBar.getChildAt(i) as? TextView)?.setTextColor(colorTextPrimary())
+            when (val child = topBar.getChildAt(i)) {
+                is TextView -> child.setTextColor(colorTextPrimary())
+                is ImageView -> child.setColorFilter(colorTextPrimary())
+            }
+        }
+        // 删除按钮保持红色（覆盖上面的统一着色）
+        if (this::deleteBtn.isInitialized) {
+            deleteBtn.setColorFilter(Color.parseColor("#EF4444"))
         }
         bottomInfoText.setTextColor(colorTextPrimary())
         // 抽屉
@@ -1251,7 +1302,7 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     fun close() {
-        stopSlideshowLoop()
+        cleanupSlideshow()
         cleanupSwipeAdjacentImmediate()
         activeView.animate().cancel()
         activeView.translationX = 0f
@@ -1292,7 +1343,7 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     fun destroy() {
-        stopSlideshowLoop()
+        cleanupSlideshow()
         imageLoader.shutdown()
     }
 
@@ -1425,7 +1476,7 @@ class NativeGalleryView @JvmOverloads constructor(
             titleView.text = ""
             return
         }
-        titleView.text = "${currentIndex + 1} / ${images.size}  ·  ${item.name}"
+        titleView.text = item.name
         // 底部信息
         val sizeStr = if (item.width > 0 && item.height > 0) "${item.width}×${item.height}" else "—"
         bottomInfoText.text = "${item.name}\n$sizeStr"
@@ -1467,442 +1518,300 @@ class NativeGalleryView @JvmOverloads constructor(
         }
     }
 
-    /** 创建圆角矩形背景 drawable */
+    /** 创建圆角矩形背景 drawable（已迁移至 DialogUtils.createRoundedBg，保留供非弹窗代码使用） */
     private fun createRoundedBg(bgColor: Int, cornerRadiusDp: Float, borderColor: Int? = null, strokeWidthDp: Float = 0f): android.graphics.drawable.GradientDrawable {
-        val density = resources.displayMetrics.density
-        return android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-            setColor(bgColor)
-            cornerRadius = cornerRadiusDp * density
-            if (borderColor != null) setStroke((strokeWidthDp * density).toInt(), borderColor)
-        }
-    }
-
-    /** 设置斜体提示文本（hint），用于区分占位提示与正文输入 */
-    private fun setItalicHint(editText: EditText, hintText: String) {
-        val spannable = android.text.SpannableString(hintText)
-        spannable.setSpan(
-            android.text.style.StyleSpan(android.graphics.Typeface.ITALIC),
-            0, hintText.length,
-            android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-        )
-        editText.setHint(spannable)
-        editText.setHintTextColor(colorHint())
-    }
-
-    /** 创建弹窗按钮（主/次样式） */
-    private fun createDialogButton(text: String, isPrimary: Boolean, onClick: () -> Unit): TextView {
-        val density = resources.displayMetrics.density
-        return TextView(context).apply {
-            this.text = text
-            textSize = 13f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(if (isPrimary) Color.WHITE else colorButtonSecondaryText())
-            setPadding((density * 20).toInt(), (density * 10).toInt(), (density * 20).toInt(), (density * 10).toInt())
-            background = createRoundedBg(
-                if (isPrimary) colorAccent() else colorButtonSecondaryBg(),
-                8f,
-                if (isPrimary) null else colorBorder(),
-                if (isPrimary) 0f else 1f
-            )
-            setOnClickListener { onClick() }
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                marginStart = (density * 8).toInt()
-            }
-        }
+        return DialogUtils.createRoundedBg(bgColor, cornerRadiusDp, borderColor, strokeWidthDp, context)
     }
 
     private fun showTagEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        val localTags = item.tags.toMutableList()
-        val density = resources.displayMetrics.density
-
-        val dialog = Dialog(context)
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
-        dialog.setCancelable(true)
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-
-        val dialogView = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = createRoundedBg(colorDialogBg(), 16f)
-            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
-        }
-
-        // 标题
-        dialogView.addView(TextView(context).apply {
-            text = "编辑标签"
-            setTextColor(colorTextPrimary())
-            textSize = 16f
-            paint.isFakeBoldText = true
-            setPadding(0, 0, 0, (density * 16).toInt())
-        })
-
-        // 标签列表
-        val chipsBox = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-        }
-        dialogView.addView(chipsBox)
-
-        // 输入行
-        val inputRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (density * 12).toInt()
-            }
-            gravity = android.view.Gravity.CENTER_VERTICAL
-        }
-        val input = EditText(context).apply {
-            setTextColor(colorTextPrimary())
-            textSize = 14f
-            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
-            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
-            layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f)
-            setSingleLine(true)
-        }
-        setItalicHint(input, "新标签")
-        val widthPx = (380 * density).toInt()
-        val maxHeightPx = (450 * density).toInt()
-        // 标签增删后重新测量弹窗高度（自适应）
-        fun relayoutTagDialog() {
-            dialogView.measure(
-                View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
-            )
-            dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
-        }
-        val addButton = TextView(context).apply {
-            text = "+"
-            setTextColor(Color.WHITE)
-            textSize = 18f
-            gravity = android.view.Gravity.CENTER
-            background = createRoundedBg(colorAccent(), 8f)
-            setOnClickListener {
-                val tag = input.text.toString().trim()
-                if (tag.isNotEmpty() && tag !in localTags) {
-                    localTags.add(tag)
-                    input.text.clear()
-                    refreshTagChips(chipsBox, localTags) { removedTag ->
-                        localTags.remove(removedTag)
-                        refreshTagChips(chipsBox, localTags) {}
-                        relayoutTagDialog()
-                    }
-                    relayoutTagDialog()
+        TagEditDialog(
+            context = context,
+            theme = this,
+            initialTags = item.tags,
+            onSave = { newTags ->
+                val idx = images.indexOfFirst { it.fileId == item.fileId }
+                if (idx >= 0) {
+                    images[idx] = images[idx].copy(tags = newTags)
                 }
+                val json = JSONObject().apply { put("tags", JSONArray(newTags)) }
+                listener?.onUpdateFile(item.fileId, json.toString())
+                images.getOrNull(idx)?.let { updateDrawer(it) }
             }
-            layoutParams = LinearLayout.LayoutParams((density * 44).toInt(), (density * 44).toInt()).apply {
-                marginStart = (density * 8).toInt()
-            }
-        }
-        inputRow.addView(input)
-        inputRow.addView(addButton)
-        dialogView.addView(inputRow)
-
-        refreshTagChips(chipsBox, localTags) { removedTag ->
-            localTags.remove(removedTag)
-            refreshTagChips(chipsBox, localTags) {}
-            relayoutTagDialog()
-        }
-
-        // 按钮行
-        val buttonRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (density * 20).toInt()
-            }
-        }
-        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
-        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
-            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
-            if (idx2 >= 0) {
-                images[idx2] = images[idx2].copy(tags = localTags.toList())
-            }
-            val json = JSONObject().apply { put("tags", JSONArray(localTags)) }
-            listener?.onUpdateFile(item.fileId, json.toString())
-            images.getOrNull(idx2)?.let { updateDrawer(it) }
-            dialog.dismiss()
-        })
-        dialogView.addView(buttonRow)
-
-        dialog.setContentView(dialogView)
-        dialog.show()
-        relayoutTagDialog()
-    }
-
-    private fun refreshTagChips(container: LinearLayout, tags: List<String>, onRemove: (String) -> Unit) {
-        container.removeAllViews()
-        val density = resources.displayMetrics.density
-        if (tags.isEmpty()) {
-            container.addView(TextView(context).apply {
-                text = "（无标签）"
-                setTextColor(colorTextSecondary())
-                textSize = 13f
-                setPadding(0, (density * 8).toInt(), 0, (density * 8).toInt())
-            })
-            return
-        }
-        tags.forEach { tag ->
-            val row = LinearLayout(context).apply {
-                orientation = LinearLayout.HORIZONTAL
-                // WRAP_CONTENT 让胶囊只占内容宽度（缩短）
-                layoutParams = LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                    topMargin = (density * 6).toInt()
-                }
-                gravity = android.view.Gravity.CENTER_VERTICAL
-                val drawable = android.graphics.drawable.GradientDrawable().apply {
-                    cornerRadius = density * 16
-                    setColor(colorTagBg())
-                    setStroke((density * 1).toInt(), colorTagBorder())
-                }
-                background = drawable
-                // 放大内边距以符合触控操作
-                setPadding((density * 14).toInt(), (density * 10).toInt(), (density * 10).toInt(), (density * 10).toInt())
-            }
-            row.addView(TextView(context).apply {
-                text = tag
-                setTextColor(colorTagText())
-                textSize = 14f
-                maxEms = 14
-                ellipsize = android.text.TextUtils.TruncateAt.END
-                setSingleLine(true)
-            })
-            // 放大删除按钮触控区
-            val removeBtn = TextView(context).apply {
-                text = "✕"
-                setTextColor(Color.parseColor("#EF4444"))
-                textSize = 15f
-                val minTouch = (density * 32).toInt()
-                minWidth = minTouch
-                minHeight = minTouch
-                gravity = android.view.Gravity.CENTER
-                setOnClickListener { onRemove(tag) }
-            }
-            row.addView(removeBtn)
-            container.addView(row)
-        }
+        ).show()
     }
 
     private fun showDescriptionEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        val density = resources.displayMetrics.density
-
-        val dialog = Dialog(context)
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
-        dialog.setCancelable(true)
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-
-        val dialogView = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = createRoundedBg(colorDialogBg(), 16f)
-            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
-        }
-
-        // 标题
-        dialogView.addView(TextView(context).apply {
-            text = "编辑描述"
-            setTextColor(colorTextPrimary())
-            textSize = 16f
-            paint.isFakeBoldText = true
-            setPadding(0, 0, 0, (density * 16).toInt())
-        })
-
-        // 多行输入框（正文非斜体，从左上角开始）
-        val input = EditText(context).apply {
-            setTextColor(colorTextPrimary())
-            textSize = 13f
-            inputType = InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            // 文字从左上角开始（修复水平居中 + 上下空位问题）
-            gravity = android.view.Gravity.TOP or android.view.Gravity.START
-            minLines = 4
-            maxLines = 8
-            setText(item.description)
-            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
-            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
-            setLineSpacing(0f, 1.4f)
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-        }
-        setItalicHint(input, "添加描述...")
-        dialogView.addView(input)
-
-        // 按钮行
-        val buttonRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (density * 20).toInt()
+        DescriptionEditDialog(
+            context = context,
+            theme = this,
+            initialDesc = item.description,
+            onSave = { newDesc ->
+                val idx = images.indexOfFirst { it.fileId == item.fileId }
+                if (idx >= 0) {
+                    images[idx] = images[idx].copy(description = newDesc)
+                }
+                val json = JSONObject().apply { put("description", newDesc) }
+                listener?.onUpdateFile(item.fileId, json.toString())
+                images.getOrNull(idx)?.let { updateDrawer(it) }
             }
-        }
-        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
-        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
-            val newDesc = input.text.toString().trim()
-            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
-            if (idx2 >= 0) {
-                images[idx2] = images[idx2].copy(description = newDesc)
-            }
-            val json = JSONObject().apply { put("description", newDesc) }
-            listener?.onUpdateFile(item.fileId, json.toString())
-            images.getOrNull(idx2)?.let { updateDrawer(it) }
-            dialog.dismiss()
-        })
-        dialogView.addView(buttonRow)
-
-        dialog.setContentView(dialogView)
-        dialog.show()
-        val widthPx = (380 * density).toInt()
-        val maxHeightPx = (520 * density).toInt()
-        dialogView.measure(
-            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
-        )
-        dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
+        ).show()
     }
 
     private fun showSourceUrlEditDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        val density = resources.displayMetrics.density
-
-        val dialog = Dialog(context)
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
-        dialog.setCancelable(true)
-        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-
-        val dialogView = LinearLayout(context).apply {
-            orientation = LinearLayout.VERTICAL
-            background = createRoundedBg(colorDialogBg(), 16f)
-            setPadding((density * 24).toInt(), (density * 24).toInt(), (density * 24).toInt(), (density * 16).toInt())
-        }
-
-        // 标题
-        dialogView.addView(TextView(context).apply {
-            text = "编辑来源网址"
-            setTextColor(colorTextPrimary())
-            textSize = 16f
-            paint.isFakeBoldText = true
-            setPadding(0, 0, 0, (density * 16).toInt())
-        })
-
-        // 单行输入框
-        val input = EditText(context).apply {
-            setTextColor(colorTextPrimary())
-            textSize = 13f
-            setText(item.sourceUrl)
-            background = createRoundedBg(colorTextBoxBg(), 8f, colorBorder(), 1f)
-            setPadding((density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt(), (density * 12).toInt())
-            setSingleLine(true)
-            inputType = InputType.TYPE_TEXT_VARIATION_URI
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
-        }
-        setItalicHint(input, "https://...")
-        dialogView.addView(input)
-
-        // 按钮行
-        val buttonRow = LinearLayout(context).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.END
-            layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-                topMargin = (density * 20).toInt()
+        SourceUrlEditDialog(
+            context = context,
+            theme = this,
+            initialUrl = item.sourceUrl,
+            onSave = { newUrl ->
+                val idx = images.indexOfFirst { it.fileId == item.fileId }
+                if (idx >= 0) {
+                    images[idx] = images[idx].copy(sourceUrl = newUrl)
+                }
+                val json = JSONObject().apply { put("sourceUrl", newUrl) }
+                listener?.onUpdateFile(item.fileId, json.toString())
+                images.getOrNull(idx)?.let { updateDrawer(it) }
             }
-        }
-        buttonRow.addView(createDialogButton("取消", isPrimary = false) { dialog.dismiss() })
-        buttonRow.addView(createDialogButton("保存", isPrimary = true) {
-            val newUrl = input.text.toString().trim()
-            val idx2 = images.indexOfFirst { it.fileId == item.fileId }
-            if (idx2 >= 0) {
-                images[idx2] = images[idx2].copy(sourceUrl = newUrl)
-            }
-            val json = JSONObject().apply { put("sourceUrl", newUrl) }
-            listener?.onUpdateFile(item.fileId, json.toString())
-            images.getOrNull(idx2)?.let { updateDrawer(it) }
-            dialog.dismiss()
-        })
-        dialogView.addView(buttonRow)
-
-        dialog.setContentView(dialogView)
-        dialog.show()
-        val widthPx = (380 * density).toInt()
-        val maxHeightPx = (300 * density).toInt()
-        dialogView.measure(
-            View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
-            View.MeasureSpec.makeMeasureSpec(maxHeightPx, View.MeasureSpec.AT_MOST)
-        )
-        dialog.window?.setLayout(widthPx, dialogView.measuredHeight)
+        ).show()
     }
 
-    private fun showMoreMenu() {
+    private fun showSlideshowSettingsDialog() {
+        SlideshowSettingsDialog(
+            context = context,
+            theme = this,
+            initialConfig = SlideshowConfig(
+                intervalMs = slideshowIntervalMs,
+                transition = slideshowTransition,
+                isRandom = slideshowRandom,
+                enableZoom = slideshowZoom
+            ),
+            onConfirm = { newConfig ->
+                slideshowIntervalMs = newConfig.intervalMs
+                slideshowTransition = newConfig.transition
+                slideshowZoom = newConfig.enableZoom
+                slideshowRandom = newConfig.isRandom
+                // 若幻灯片正在运行，把新配置应用到 SlideshowView（重置定时器/Ken Burns）
+                slideshowView?.updateConfig(slideshowConfig())
+                // 通知前端同步设置
+                val json = JSONObject().apply {
+                    put("interval", slideshowIntervalMs)
+                    put("transition", slideshowTransition)
+                    put("isRandom", slideshowRandom)
+                    put("enableZoom", slideshowZoom)
+                }
+                listener?.onUpdateSlideshowConfig(json.toString())
+            }
+        ).show()
+    }
+
+    /**
+     * 显示删除确认弹窗（UI 与 WebView 的 ConfirmModal 一致）。
+     * 确认后调用 confirmDelete 执行：从 images 列表移除 + 切换下一张 + 通知 JS 删除文件。
+     */
+    private fun showDeleteConfirmDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        val options = arrayOf("删除", "在文件夹中显示", "重命名", "旋转保存", "AI 分析", "复制到文件夹", "移动到文件夹")
-        AlertDialog.Builder(context)
-            .setTitle(item.name)
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> listener?.onDelete(item.fileId)
-                    1 -> listener?.onShowInFolder(item.fileId)
-                    2 -> showRenameDialog()
-                    3 -> {
-                        // 旋转保存：需要 EXIF 写入，暂未实现
-                        Toast.makeText(context, "旋转保存功能开发中", Toast.LENGTH_SHORT).show()
-                    }
-                    4 -> listener?.onAIAnalyze(item.fileId)
-                    5 -> listener?.onCopyToFolder(item.fileId)
-                    6 -> listener?.onMoveToFolder(item.fileId)
+        DeleteConfirmDialog(
+            context = context,
+            theme = this,
+            fileName = item.name,
+            onConfirm = { confirmDelete(item.fileId) }
+        ).show()
+    }
+
+    /**
+     * 执行删除：从 images 列表移除 → 通知 JS 删除文件 → 切换到下一张（或关闭查看器）。
+     */
+    private fun confirmDelete(fileId: String) {
+        val idx = images.indexOfFirst { it.fileId == fileId }
+        if (idx < 0) return
+        images.removeAt(idx)
+        // 通知 JS 端真正删除文件（不再弹 ConfirmModal）
+        listener?.onDelete(fileId)
+        if (images.isEmpty()) {
+            listener?.onClose()
+            return
+        }
+        // 调整 currentIndex
+        if (currentIndex >= images.size) {
+            currentIndex = images.size - 1
+        } else if (idx < currentIndex) {
+            // 删除的是当前图之前的图，currentIndex 需要前移以保持指向同一张
+            currentIndex -= 1
+        }
+        loadCurrent(animateIn = false)
+        updateTitle()
+        listener?.onNavigate(currentIndex)
+    }
+
+    /**
+     * 执行移动后从 images 列表移除（类似 confirmDelete 但不调 onDelete）。
+     * JS 端会处理实际文件移动 + state.files 更新。
+     */
+    private fun confirmMoveOut(fileId: String) {
+        val idx = images.indexOfFirst { it.fileId == fileId }
+        if (idx < 0) return
+        images.removeAt(idx)
+        if (images.isEmpty()) {
+            listener?.onClose()
+            return
+        }
+        if (currentIndex >= images.size) {
+            currentIndex = images.size - 1
+        } else if (idx < currentIndex) {
+            currentIndex -= 1
+        }
+        loadCurrent(animateIn = false)
+        updateTitle()
+        listener?.onNavigate(currentIndex)
+    }
+
+    /**
+     * 显示文件夹选择弹窗（UI 与 WebView FolderPickerModal 一致）。
+     * 用户选择目标文件夹后调用 listener?.onFolderPickerConfirm(fileId, targetId, type)。
+     * type: "copy" 或 "move"；move 时确认后还会从当前列表移除该图片。
+     */
+    fun showFolderPickerDialog(type: String, fileId: String, folderTreeJson: String) {
+        if (images.indexOfFirst { it.fileId == fileId } < 0) return
+        FolderPickerDialog(
+            context = context,
+            theme = this,
+            type = type,
+            fileId = fileId,
+            folderTreeJson = folderTreeJson,
+            onConfirm = { _, targetId, confirmedType ->
+                listener?.onFolderPickerConfirm(fileId, targetId, confirmedType)
+                if (confirmedType == "move") {
+                    confirmMoveOut(fileId)
                 }
             }
-            .show()
+        ).show()
+    }
+
+    private fun showMoreMenu(anchor: View) {
+        val item = images.getOrNull(currentIndex) ?: return
+        MoreMenuPopup(
+            context = context,
+            theme = this,
+            anchor = anchor,
+            menuItems = listOf(
+                MoreMenuItem("删除", colorDanger()) { showDeleteConfirmDialog() },
+                MoreMenuItem("重命名", colorTextPrimary()) { showRenameDialog() },
+                MoreMenuItem("复制到文件夹", colorTextPrimary()) { listener?.onCopyToFolder(item.fileId) },
+                MoreMenuItem("移动到文件夹", colorTextPrimary()) { listener?.onMoveToFolder(item.fileId) },
+                MoreMenuItem("幻灯片设置", colorTextPrimary()) { showSlideshowSettingsDialog() }
+            )
+        ).show()
     }
 
     private fun showRenameDialog() {
         val item = images.getOrNull(currentIndex) ?: return
-        val input = EditText(context).apply {
-            setText(item.name)
-            setSingleLine(true)
-            setPadding(48, 24, 48, 24)
+        RenameDialog(
+            context = context,
+            currentName = item.name,
+            onConfirm = { newName ->
+                val idx = images.indexOfFirst { it.fileId == item.fileId }
+                if (idx >= 0) {
+                    images[idx] = item.copy(name = newName)
+                    updateTitle()
+                }
+                val json = JSONObject().apply { put("name", newName) }
+                listener?.onUpdateFile(item.fileId, json.toString())
+            }
+        ).show()
+    }
+
+    // ====== 分享 ======
+    private fun shareCurrentImage() {
+        val item = images.getOrNull(currentIndex) ?: return
+        if (item.isLan) {
+            Toast.makeText(context, "无法分享局域网图片", Toast.LENGTH_SHORT).show()
+            return
         }
-        AlertDialog.Builder(context)
-            .setTitle("重命名")
-            .setView(input)
-            .setPositiveButton("保存") { _, _ ->
-                val newName = input.text.toString().trim()
-                if (newName.isNotEmpty() && newName != item.name) {
-                    val idx = images.indexOfFirst { it.fileId == item.fileId }
-                    if (idx >= 0) {
-                        images[idx] = item.copy(name = newName)
-                        updateTitle()
-                    }
-                    val json = JSONObject().apply { put("name", newName) }
-                    listener?.onUpdateFile(item.fileId, json.toString())
+        listener?.onShare(item.path)
+    }
+
+    // ====== 幻灯片（委托给独立全屏覆盖层 SlideshowView）======
+    /** 标记幻灯片启动时是否由本组件隐藏了系统状态栏（查看器已沉浸时为 false，退出时据此恢复）。 */
+    private var slideshowHidSystemUi = false
+
+    private fun slideshowConfig() = SlideshowView.SlideshowConfig(
+        intervalMs = slideshowIntervalMs,
+        transition = slideshowTransition,
+        isRandom = slideshowRandom,
+        enableZoom = slideshowZoom
+    )
+
+    /** 顶栏播放按钮回调：未播放则启动，播放中则退出（播放时按钮被覆盖，实际仅触发启动）。 */
+    private fun toggleSlideshow() {
+        if (slideshowView != null) slideshowView?.exit() else startSlideshow()
+    }
+
+    /** 创建并挂载 SlideshowView 全屏覆盖层，立即开始播放。 */
+    private fun startSlideshow() {
+        if (images.isEmpty()) return
+        if (slideshowView != null) return
+        val sv = SlideshowView(
+            context = context,
+            imageLoader = imageLoader,
+            images = images.toList(),
+            startIndex = currentIndex,
+            config = slideshowConfig(),
+            listener = object : SlideshowView.Listener {
+                override fun onSlideshowExit(currentIndex: Int) {
+                    onSlideshowExited(currentIndex)
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+        )
+        slideshowView = sv
+        addView(sv, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        sv.start()
+        updateSlideshowButtonIcon()
+        // 隐藏系统状态栏（查看器已沉浸时状态栏本就隐藏，无需重复切换）
+        slideshowHidSystemUi = !isImmersive
+        if (slideshowHidSystemUi) listener?.onImmersiveToggle(true)
     }
 
-    // ====== 幻灯片 ======
-    private val slideshowRunnable = object : Runnable {
-        override fun run() {
-            if (!isSlideshowActive) return
-            if (currentIndex < images.size - 1) {
-                navigateTo(currentIndex + 1, animate = true)
-            } else {
-                navigateTo(0, animate = true)
-            }
-            mainHandler.postDelayed(this, slideshowIntervalMs)
+    /** 幻灯片正常退出：同步当前索引到查看器并恢复 UI。 */
+    private fun onSlideshowExited(exitIndex: Int) {
+        val synced = if (images.isEmpty()) 0 else exitIndex.coerceIn(0, images.size - 1)
+        val changed = synced != currentIndex
+        currentIndex = synced
+        rotationDegrees = 0
+        loadingPaletteFileId = null
+        // 先移除覆盖层并恢复系统状态栏
+        cleanupSlideshow()
+        // 加载幻灯片停止时的图片到查看器
+        loadCurrent(animateIn = false)
+        updateTitle()
+        thumbnailAdapter.highlight(currentIndex)
+        if (changed) listener?.onNavigate(currentIndex)
+    }
+
+    /** 移除幻灯片覆盖层并恢复系统 UI（不触发索引同步，供 close/destroy 调用）。 */
+    private fun cleanupSlideshow() {
+        val sv = slideshowView ?: return
+        removeView(sv)
+        slideshowView = null
+        updateSlideshowButtonIcon()
+        if (slideshowHidSystemUi) {
+            listener?.onImmersiveToggle(false)
+            slideshowHidSystemUi = false
         }
     }
 
-    private fun startSlideshowLoop() {
-        mainHandler.postDelayed(slideshowRunnable, slideshowIntervalMs)
+    private fun updateSlideshowButtonIcon() {
+        slideshowBtn.setImageResource(if (slideshowView != null) R.drawable.ic_lucide_pause else R.drawable.ic_lucide_play)
     }
 
-    private fun stopSlideshowLoop() {
-        mainHandler.removeCallbacks(slideshowRunnable)
-        isSlideshowActive = false
-    }
-
+    /** 外部（MainActivity/React）切换幻灯片开关。 */
     fun setSlideshow(enabled: Boolean) {
-        if (enabled == isSlideshowActive) return
-        isSlideshowActive = enabled
-        if (enabled) startSlideshowLoop() else stopSlideshowLoop()
+        if (enabled) {
+            if (slideshowView == null) startSlideshow()
+        } else {
+            slideshowView?.exit()
+        }
     }
 
     fun setRotation(degrees: Int) {

@@ -1,19 +1,21 @@
 # Android 原生图片查看器（NativeGalleryView）完整实现记录
 
 ## 日期
-2026-07-07 ~ 2026-07-15
+2026-07-07 ~ 2026-07-19
 
 ## 概述
 
 Android 端为绕开 WebView 渲染管线、达到接近系统相册的原生性能，单独实现了全屏原生图片查看器 `NativeGalleryView`。本文档整合了从 z-order 可见性修复、抽屉式元数据面板、手势跟手滑动、到帧率优化与滑动间隔的全部演进过程，反映当前最新代码状态。
 
-涉及五个阶段：
+涉及八个阶段：
 1. **z-order 修复**（2026-07-07）：解决原生查看器被 WebView 遮挡不可见的问题
 2. **抽屉面板与手势修复**（2026-07-08）：新增元数据抽屉、标签/描述编辑、双向同步，修复 e1 recycle 等手势抖动
 3. **滑动体验优化**（2026-07-09）：跟手联动滑动、贝塞尔曲线、帧率优化、图片间隔
 4. **抽屉全屏模式与垂直手势**（2026-07-10）：抽屉展开时 topBar/系统状态栏同步隐藏形成全屏样式；垂直跟手手势上滑呼出/下滑收起抽屉；修复缩放插值导致图片"缩小再还原"现象
 5. **缩放修复与沉浸背景色**（2026-07-12）：修复双击缩放定位/留白/拖动漂移/边缘消失/连续缩放漂移/缩放误触翻页等一系列 ZoomableImageView 缩放手势 bug；单击进入沉浸时背景色改为黑色，退出还原主题色；沉浸状态与抽屉状态解耦（开关抽屉后正确回到沉浸）
 6. **抽屉 UI 对齐与弹窗重构**（2026-07-15）：抽屉 UI 全面对齐 MetadataPanel；自定义弹窗替代 AlertDialog 实现动态高度；标签/描述/来源网址弹窗改为动态自适应高度；hint 文本统一斜体+淡色；修复深色模式颜色未对齐 neutral 色板的问题
+7. **幻灯片拆分与全屏覆盖层**（2026-07-19）：幻灯片功能从 NativeGalleryView 拆分为独立的 `SlideshowView`（全屏覆盖层，覆盖查看器所有 chrome）；修复循环推进异常导致"停在第二张"的静默死亡 bug（try/catch + 始终重新调度）；新增 transitionGen 代际计数器防止过期图片加载回调竞态；保留 fade/slide/none 三种过渡效果 + Ken Burns 逐渐放大；修复 RadioGroup 视觉残留（View.generateViewId + radioGroup.check）；修复 Ken Burns 首张从左上角放大（视图未布局时延迟启动）和切换图片时缩放回弹（cancelKenBurns 不重置 scale，outgoing 隐藏后再回收）
+8. **顶栏布局调整、原生文件夹选择弹窗与弹窗组件独立化**（2026-07-19）：顶栏按钮顺序改为「关闭→文件名→幻灯片→旋转→元数据→删除→分享→更多」，关闭按钮由 X 图标改为返回箭头样式；新增原生「复制到文件夹」「移动到文件夹」弹窗（WebView 弹窗无法覆盖原生查看器，UI 与 FolderPickerModal 一致）；将所有 8 个弹窗（删除确认/文件夹选择/重命名/标签/描述/来源网址/幻灯片设置/更多菜单）抽取为 `dialogs/` 子包下的独立文件，通过 `DialogTheme` 接口注入主题色实现解耦
 
 ---
 
@@ -87,7 +89,7 @@ Activity.onCreate()
        └─ evaluateJs("onClose()")
             └─ JS: invoke('android_close_native_viewer')
                  └─ Kotlin: closeNativeViewer()
-                      └─ view.close()  ← 停止幻灯片 + visibility = GONE
+                      └─ view.close()  ← cleanupSlideshow() 移除幻灯片覆盖层 + visibility = GONE
 
 Activity.onDestroy()
   └─ windowManager.removeView(view)  ← 防止泄漏
@@ -173,6 +175,8 @@ Activity.onDestroy()
 
 ### 2.3 标签和描述编辑
 
+> **2026-07-19 重构**：本节描述的弹窗 UI 已抽取为独立文件 [TagEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/TagEditDialog.kt)、[DescriptionEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DescriptionEditDialog.kt)、[SourceUrlEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SourceUrlEditDialog.kt)，详见 2.9。下文描述的样式与行为保持不变。
+
 使用自定义 Dialog（圆角矩形 + 主题背景），替代原生 AlertDialog：
 
 **通用弹窗样式**：
@@ -231,13 +235,97 @@ App.tsx 渲染条件改为 `activeTab.viewingFileId && !useNativeViewer`。Andro
 
 ### 2.6 更多菜单
 
-`showMoreMenu` 改为 AlertDialog 7 项菜单：删除/在文件夹中显示/重命名/旋转保存/AI 分析/复制到文件夹/移动到文件夹。
+`showMoreMenu` 改为 5 项菜单（通过独立 [MoreMenuPopup.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/MoreMenuPopup.kt) 实现）：删除 / 重命名 / 复制到文件夹 / 移动到文件夹 / 幻灯片设置。
+
+- 删除项使用 `colorDanger()`（红色）文字
+- 其余项使用 `colorTextPrimary()`
+- 锚点定位到「更多」按钮右下角，并做屏幕边界约束
+- 点击菜单项后先 dismiss 弹窗，再触发对应动作
+
+> 复制到文件夹 / 移动到文件夹两项会调用 `listener?.onCopyToFolder/onMoveToFolder` 通知 JS 端调用 Rust 命令 `android_show_folder_picker`，由 MainActivity 调起原生 `showFolderPickerDialog`（见 2.8）。
 
 ### 2.7 顶部工具栏
 
 - 工具栏下移状态栏高度（`status_bar_height` 系统资源），`setPadding(24, statusBarHeight, 24, 0)` 避免与状态栏重叠
-- 移除左右翻页按钮（‹ ›），文件名居中显示
-- 布局：✕ 关闭 → [文件名居中] → ⟳ 旋转 → ⓘ 信息 → ⋮ 更多
+- 移除左右翻页按钮（‹ ›）
+- **关闭按钮**由 X 图标改为返回箭头样式（`ic_lucide_arrow_left`），更符合系统返回语义
+- **按钮顺序**（2026-07-19 调整）：← 返回 → [文件名] → ▶ 幻灯片 → ⟳ 旋转 → ⓘ 元数据 → 🗑 删除 → ↗ 分享 → ⋮ 更多
+- 文件名移至关闭按钮右侧，字体放大至 18sp，仅显示文件名（不显示图片数量）
+
+### 2.8 文件夹选择弹窗（复制/移动到文件夹）
+
+WebView 端的 FolderPickerModal 弹窗无法覆盖原生查看器（WindowManager 窗口位于 WebView 之上），因此在原生层实现了等价的 [FolderPickerDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/FolderPickerDialog.kt)。
+
+**触发流程**：
+1. 用户在「更多」菜单点击「复制到文件夹」/「移动到文件夹」
+2. NativeGalleryView 调 `listener?.onCopyToFolder/onMoveToFolder(fileId)` → JS 端收到回调
+3. JS 端构造 folderTree JSON（包含 roots 和 folders 节点列表），调用 `invoke('android_show_folder_picker', { type, fileId, folderTreeJson })`
+4. Rust 命令 `android_show_folder_picker` 通过 JNI 调 MainActivity.`showFolderPicker(type, fileId, folderTreeJson)`
+5. MainActivity 转发给 `nativeGalleryView?.showFolderPickerDialog(...)`
+6. 用户选择文件夹后调 `listener?.onFolderPickerConfirm(fileId, targetFolderId, type)` → JS 执行实际复制/移动
+7. 移动操作确认后会调 `confirmMoveOut(fileId)` 从查看器 images 列表中移除该图片（避免显示已移走的图片）
+
+**UI 与 WebView FolderPickerModal 一致**：
+- 标题：「复制到文件夹...」/「移动到文件夹...」
+- 搜索框（带放大镜图标 + X 清除按钮）
+- 文件夹树（ListView，支持展开/折叠，按层级缩进）
+- 取消 / 确认按钮（确认按钮默认禁用，选中文件夹后启用）
+
+**文件夹树数据结构**：`FolderNode(id, name, parentId, children)` + `FolderTreeData(roots, folders)`，由 `parseFolderTree(json)` 解析。
+
+**搜索/展开逻辑**：
+- `flattenVisibleNodes`：DFS 扁平化可见节点（仅展开 `expandedIds` 中的节点）
+- `computeMatchingSet`：计算匹配节点 + 祖先链（搜索时让匹配项可见）
+- `computeExpandedForSearch`：搜索时自动展开所有匹配项的祖先链
+- 清空搜索时恢复到只展开 roots
+
+**选中高亮**：
+- 选中行背景色变为 `colorAccent()`（蓝色）
+- 文件名/文件夹图标变为白色
+- Adapter 的 `selectedId` 必须通过 `updateData(...)` 同步更新，不能只调 `notifyDataSetChanged()`（详见 9.13）
+
+### 2.9 弹窗组件独立化（2026-07-19 重构）
+
+将原本内嵌在 `NativeGalleryView.kt` 中的 8 个弹窗抽取为 `com/aurora/gallery/dialogs/` 子包下的独立文件，便于维护。
+
+**核心抽象**：[DialogTheme.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DialogTheme.kt)
+- `interface DialogTheme`：提供主题色方法（`isDarkTheme`、`colorDialogBg`、`colorTextBoxBg`、`colorTextPrimary`、`colorTextSecondary`、`colorBorder`、`colorAccent`、`colorHint`、`colorButtonSecondaryBg`、`colorButtonSecondaryText`、`colorTagBg`、`colorTagText`、`colorTagBorder`、`colorDanger` 默认实现）
+- `object DialogUtils`：通用工具方法（`density`、`createRoundedBg`、`createDialogButton`、`setItalicHint`）
+- `NativeGalleryView` 实现该接口，注入到各弹窗构造函数
+
+**8 个独立弹窗**：
+
+| 文件 | 类 | 用途 |
+|------|----|------|
+| `DeleteConfirmDialog.kt` | `DeleteConfirmDialog` | 删除确认（标题+消息+文件名+取消/删除） |
+| `FolderPickerDialog.kt` | `FolderPickerDialog`（含 `FolderNode`、`FolderTreeData`、`FolderTreeAdapter`） | 文件夹选择（搜索+树+取消/确认） |
+| `RenameDialog.kt` | `RenameDialog` | 重命名（系统 AlertDialog + EditText） |
+| `TagEditDialog.kt` | `TagEditDialog` | 标签编辑（chips + 输入框） |
+| `DescriptionEditDialog.kt` | `DescriptionEditDialog` | 描述编辑（多行 EditText） |
+| `SourceUrlEditDialog.kt` | `SourceUrlEditDialog` | 来源网址编辑（单行 EditText） |
+| `SlideshowSettingsDialog.kt` | `SlideshowSettingsDialog`（含 `SlideshowConfig`） | 幻灯片设置（SeekBar+RadioGroup+Switch） |
+| `MoreMenuPopup.kt` | `MoreMenuPopup`（含 `MoreMenuItem`） | 更多菜单（PopupWindow 风格） |
+
+**重构后 NativeGalleryView 中的 `showXxxDialog()` 方法**全部变为薄包装，仅负责传入业务回调。例如：
+
+```kotlin
+private fun showDeleteConfirmDialog() {
+    val item = images.getOrNull(currentIndex) ?: return
+    DeleteConfirmDialog(
+        context = context,
+        theme = this,
+        fileName = item.name,
+        onConfirm = { confirmDelete(item.fileId) }
+    ).show()
+}
+```
+
+**保留在 NativeGalleryView 中的业务逻辑**：
+- `confirmDelete(fileId)`：从 images 列表移除 → 通知 JS 删除文件 → 切换下一张（或关闭查看器）
+- `confirmMoveOut(fileId)`：从 images 列表移除（移动后从查看器消失，但不调 onDelete）
+- `showFolderPickerDialog(type, fileId, folderTreeJson)`：检查 fileId 是否在 images 中，调用 FolderPickerDialog，移动时确认后调 `confirmMoveOut`
+
+**清理**：重构后从 NativeGalleryView.kt 删除约 500 行内联弹窗 UI 代码（FolderNode/FolderTreeData/FolderTreeAdapter/parseFolderTree/flattenVisibleNodes/computeMatchingSet/computeExpandedForSearch/setItalicHint 等），并清理 11 个未使用的 import。
 
 ---
 
@@ -1164,71 +1252,379 @@ override fun setImageDrawable(drawable: Drawable?) {
 
 ---
 
-## 七、修改文件清单
+## 七、幻灯片播放（SlideshowView）
+
+幻灯片功能已拆分为独立的 [SlideshowView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/SlideshowView.kt)，作为 NativeGalleryView 的全屏覆盖层实现。拆分动机：
+1. 早期实现把幻灯片逻辑塞在 NativeGalleryView 内（~2100 行），文件过大
+2. 旧实现通过 `toggleImmersive()` 在查看器内播放，并非真正的全屏（顶栏/缩略图条/底部信息仍可见）
+3. 循环推进逻辑缺乏鲁棒性，单次异常会让循环"静默死亡"——按钮显示暂停但停在第二张
+
+### 7.1 独立全屏覆盖层架构
+
+`SlideshowView` 继承 `FrameLayout`，通过 `addView(sv, MATCH_PARENT)` 作为子视图叠加到 NativeGalleryView 顶层，覆盖查看器的所有 chrome（顶栏/缩略图条/底部信息/抽屉），提供纯净的全屏播放体验。退出时通过 `removeView(sv)` 移除。
+
+```kotlin
+class SlideshowView(
+    context: Context,
+    private val imageLoader: ImageLoader,
+    private val images: List<NativeGalleryView.ImageItem>,
+    startIndex: Int,
+    private var config: SlideshowConfig,
+    private val listener: Listener
+) : FrameLayout(context)
+
+interface Listener {
+    /** 幻灯片退出，把幻灯片停止时的当前索引同步给查看器。 */
+    fun onSlideshowExit(currentIndex: Int)
+}
+
+data class SlideshowConfig(
+    val intervalMs: Long,
+    val transition: String, // "none" | "fade" | "slide"
+    val isRandom: Boolean,
+    val enableZoom: Boolean
+)
+```
+
+- **ImageLoader 共享**：构造时由 NativeGalleryView 传入自身 `imageLoader` 实例，共享内存缓存，避免重复加载已查看过的图片
+- **NativeGalleryView 委托**：自身保留所有配置字段（`slideshowIntervalMs`/`slideshowTransition`/`slideshowRandom`/`slideshowZoom`）、`showSlideshowSettingsDialog`、顶栏播放按钮；`toggleSlideshow()`/`setSlideshow()`/`startSlideshow()`/`cleanupSlideshow()`/`onSlideshowExited()` 控制覆盖层生命周期
+
+### 7.2 鲁棒的循环推进（修复"停在第二张"bug）
+
+**问题**：旧实现中 `slideshowRunnable` 的 `run()` 直接调 `advance()` 后 `postDelayed` 再调度。若 `advance()` 抛异常（例如切换图片时某个 view 状态异常），`postDelayed` 永不执行，循环"静默死亡"——但 `isSlideshowActive` 仍为 true，按钮保持暂停图标，用户以为在播放但停在第二张。
+
+**修复**：`slideshowRunnable` 把 `advance()` 包进 try/catch，无论是否异常都调用 `scheduleNext()` 重新调度：
+
+```kotlin
+private val slideshowRunnable = object : Runnable {
+    override fun run() {
+        if (!isPlaying) return
+        try {
+            advance()
+        } catch (t: Throwable) {
+            Log.e(TAG, "slideshow advance failed", t)
+        }
+        // 始终重新调度，避免异常导致循环静默死亡
+        scheduleNext()
+    }
+}
+```
+
+- 单次异常仅丢失一帧，下一周期自动恢复
+- 日志记录异常便于后续诊断
+
+### 7.3 transitionGen 代际计数器（防止过期回调竞态）
+
+每次开始新过渡时 `++transitionGen`，异步图片加载回调通过闭包捕获当时的 `gen`，回调触发时检查 `gen != transitionGen` 则丢弃，避免快速切换时旧回调覆盖新图。
+
+```kotlin
+private fun fadeTransition(nextIndex: Int) {
+    val gen = ++transitionGen
+    // ...
+    loadImage(incoming, nextIndex) {
+        if (gen != transitionGen) return@loadImage  // 过期，丢弃
+        // ... 启动淡入动画 ...
+    }
+}
+```
+
+`exit()` 时通过 `isExiting = true` 和 `isPlaying = false` 让后续调度失效；任何在途加载回调都会被 `gen` 检查作废。
+
+### 7.4 三种过渡效果（双 ImageView 缓冲）
+
+`viewA`/`viewB` 两个 `ImageView`（FIT_CENTER）作为双缓冲，`activeView` 指向当前可见的视图。每次切换时交换 activeView，旧图淡出/滑出，新图淡入/滑入。
+
+| 过渡 | 时长 | 实现 |
+|------|------|------|
+| `fade`（淡入淡出） | 400ms | incoming alpha 0→1，outgoing alpha 1→0 同步进行 |
+| `slide`（平滑移动） | 280ms | incoming 从右侧滑入，outgoing 向左滑出同步进行 |
+| `none`（无） | 0ms | 立即切换，无动画 |
+
+**outgoing 视图回收**：每种过渡的 `withEndAction` 在视图隐藏（`visibility = GONE`）后才重置 `outgoing.scaleX = 1f; outgoing.scaleY = 1f`，确保淡出期间保持 Ken Burns 缩放步调，回收后再供下次作为 incoming 使用。
+
+### 7.5 Ken Burns 逐渐放大
+
+**目标**：每张图片在 `intervalMs` 时间内从原始大小（scale=1）逐渐放大到 1.15 倍，使用 `AccelerateDecelerateInterpolator` 平滑过渡。
+
+#### 7.5.1 首张图片锚点修复
+
+**问题**：`startKenBurns` 使用 `view.width / 2f` 作为 `pivotX`，但首张图片在 `loadInitial` 时视图尚未完成布局（`width = 0`），导致 `pivotX = 0`（左边缘），首张图片从左上角放大，后续图片则从中心放大。
+
+**修复**：视图未布局时延迟到 `view.post { ... }` 后再启动，并通过守卫条件避免在退出/暂停/视图非活跃时误启动：
+
+```kotlin
+private fun startKenBurns(view: View) {
+    // 视图尚未布局（width=0）时 pivot 会落到左上角，导致首张从左上角放大。
+    // 延迟到布局完成后再启动。
+    if (view.width == 0 || view.height == 0) {
+        view.post {
+            if (isPlaying && config.enableZoom && view === activeView && !isExiting) {
+                startKenBurns(view)
+            }
+        }
+        return
+    }
+    // ...
+}
+```
+
+#### 7.5.2 切换图片时缩放不回弹
+
+**问题**：早期 `cancelKenBurns()` 同时重置两个视图的 `scaleX/Y = 1f`，导致切换图片时旧图（已放大到 ~1.13）瞬间回弹到 1.0 再淡出，视觉跳变。
+
+**修复**：
+- `cancelKenBurns()` 仅取消 `kenBurnsAnimator`，**不重置 scale**——旧图保持当前缩放步调淡出
+- 每种过渡的 `withEndAction` 在 outgoing 视图隐藏后才重置 `scaleX/Y = 1f`，供下次作为 incoming 使用
+- `startKenBurns` 从当前 scale 继续放大到 1.15（首张为 1f；暂停恢复时为中间值，避免回弹）：
+
+```kotlin
+private fun startKenBurns(view: View) {
+    // ...（延迟布局守卫）...
+    cancelKenBurns()
+    // 从当前缩放值继续放大到 1.15（首张为 1f；暂停恢复时为中间值，避免回弹）
+    val startScale = view.scaleX.coerceIn(1f, 1.15f)
+    if (startScale >= 1.149f) return  // 已接近最大，无需再放
+    view.scaleX = startScale
+    view.scaleY = startScale
+    view.pivotX = view.width / 2f
+    view.pivotY = view.height / 2f
+    kenBurnsAnimator = view.animate()
+        .scaleX(1.15f).scaleY(1.15f)
+        .setDuration(config.intervalMs)
+        .setInterpolator(AccelerateDecelerateInterpolator())
+    kenBurnsAnimator?.start()
+}
+
+private fun cancelKenBurns() {
+    // 仅取消动画器，不重置 scale——切换图片时旧图应保持当前缩放步调淡出，
+    // 而不是瞬间还原为 1。回收视图（隐藏）时由调用方重置 scale。
+    kenBurnsAnimator?.cancel()
+    kenBurnsAnimator = null
+}
+```
+
+### 7.6 退出索引同步
+
+退出幻灯片时通过 `Listener.onSlideshowExit(currentIndex)` 把当前索引同步回 NativeGalleryView：
+
+```kotlin
+// SlideshowView.exit()
+fun exit() {
+    if (isExiting) return
+    isExiting = true
+    isPlaying = false
+    mainHandler.removeCallbacks(slideshowRunnable)
+    cancelKenBurns()
+    (activeView.drawable as? Animatable)?.stop()
+    listener.onSlideshowExit(currentIndex)
+}
+
+// NativeGalleryView.onSlideshowExited(exitIndex)
+private fun onSlideshowExited(exitIndex: Int) {
+    val synced = if (images.isEmpty()) 0 else exitIndex.coerceIn(0, images.size - 1)
+    val changed = synced != currentIndex
+    currentIndex = synced
+    rotationDegrees = 0
+    loadingPaletteFileId = null
+    cleanupSlideshow()  // 移除覆盖层并恢复系统状态栏
+    loadCurrent(animateIn = false)  // 加载幻灯片停止时的图片到查看器
+    updateTitle()
+    thumbnailAdapter.highlight(currentIndex)
+    if (changed) listener?.onNavigate(currentIndex)
+}
+```
+
+- 退出后查看器立即显示幻灯片停止的那张图片，无缝衔接
+- `cleanupSlideshow()` 与 `onSlideshowExited()` 分离：前者仅做资源清理（供 `close()`/`destroy()` 调用），后者包含索引同步与图片加载（供正常退出调用）
+
+### 7.7 系统状态栏同步
+
+`slideshowHidSystemUi` 标记记录幻灯片启动时是否由本组件隐藏了系统状态栏：
+
+- 启动时：`slideshowHidSystemUi = !isImmersive`（查看器已沉浸时状态栏本就隐藏，无需重复切换）
+- 若 `slideshowHidSystemUi = true`：调 `listener?.onImmersiveToggle(true)` 隐藏状态栏
+- 退出时：若 `slideshowHidSystemUi = true`：调 `listener?.onImmersiveToggle(false)` 恢复状态栏，并重置标记
+
+### 7.8 交互
+
+| 交互 | 行为 |
+|------|------|
+| 单击 | 切换播放/暂停。暂停时显示播放指示器（圆形半透明背景 + 白色播放图标），恢复时 150ms 淡出后 `visibility = GONE` |
+| 返回键 | 退出幻灯片（通过 NativeGalleryView.dispatchKeyEvent 委托 `slideshowView?.exit()`） |
+
+**播放指示器**：不消费触摸事件，单击穿透到容器触发 `togglePlay()`。
+
+**NativeGalleryView.dispatchKeyEvent** 优先级（2026-07-19 更新）：
+
+```kotlin
+override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+        if (event.action == KeyEvent.ACTION_UP) {
+            when {
+                slideshowView != null -> slideshowView?.exit()  // 优先退出幻灯片
+                drawerOpen -> closeDrawer()
+                isOpen -> listener?.onClose()
+            }
+        }
+        return true
+    }
+    return super.dispatchKeyEvent(event)
+}
+```
+
+### 7.9 幻灯片设置对话框
+
+> **2026-07-19 重构**：弹窗 UI 已抽取为独立文件 [SlideshowSettingsDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SlideshowSettingsDialog.kt)（含 `SlideshowConfig` data class）。NativeGalleryView 中的 `showSlideshowSettingsDialog()` 仅保留业务回调（更新配置字段、应用 SlideshowView、通知前端）。
+
+`showSlideshowSettingsDialog()` 提供四项配置：
+
+| 配置 | 控件 | 范围/选项 |
+|------|------|---------|
+| 播放间隔 | SeekBar | 1-20 秒（默认 5 秒） |
+| 过渡效果 | RadioGroup | 无 / 淡入淡出 / 平滑移动 |
+| 图片逐渐放大 | Switch | 开启/关闭 Ken Burns |
+| 随机播放 | Switch | 开启/关闭随机顺序 |
+
+确定后：
+- 配置写入 NativeGalleryView 字段
+- 若幻灯片正在运行，调 `slideshowView?.updateConfig(slideshowConfig())` 实时应用（重置定时器/Ken Burns）
+- 通过 `listener?.onUpdateSlideshowConfig(json)` 通知前端同步设置
+
+#### 7.9.1 RadioGroup 视觉残留修复
+
+**问题**：默认选项通过 `rb.isChecked = true` 设置，但这种方式不会更新 RadioGroup 内部的 `mCheckedId`。用户点击新选项时，RadioGroup 只取消它"认为"被选中的按钮（即 `mCheckedId` 对应的按钮，而非视觉上勾选的默认项），导致旧选项视觉残留，需关闭重开对话框才显示正确选择。
+
+**修复**：用 `View.generateViewId()` 为每个 RadioButton 分配 ID，通过 `radioGroup.check(defaultCheckId)` 选中默认项（更新 `mCheckedId`），通过 RadioGroup 级别的 `setOnCheckedChangeListener` 捕获选择：
+
+```kotlin
+val transitionIds = HashMap<String, Int>()
+var defaultCheckId = View.NO_ID
+transitions.forEach { (value, label) ->
+    val viewId = View.generateViewId()
+    transitionIds[value] = viewId
+    if (value == selectedTransition) defaultCheckId = viewId
+    val rb = RadioButton(context).apply {
+        id = viewId
+        text = label
+        setTextColor(colorTextPrimary())
+    }
+    radioGroup.addView(rb)
+}
+if (defaultCheckId != View.NO_ID) radioGroup.check(defaultCheckId)
+radioGroup.setOnCheckedChangeListener { _, checkedId ->
+    transitionIds.entries.firstOrNull { it.value == checkedId }?.let { (value, _) ->
+        selectedTransition = value
+    }
+}
+```
+
+---
+
+## 八、修改文件清单
 
 ### Kotlin
 
 | 文件 | 修改内容 |
 |------|---------|
-| [NativeGalleryView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/NativeGalleryView.kt) | 双缓冲架构、WindowManager 可见性、抽屉面板、主题色、手势跟手滑动、贝塞尔曲线、帧率优化（硬件层/缓存/日志移除）、图片间隔、skipReload、延迟 onNavigate、编辑 Dialog、双向同步、applyDrawerProgress/animateDrawerTo progress 驱动动画、全屏样式（topBar/状态栏同步隐藏）、垂直跟手手势控制抽屉、drawerFullWidth 修复缩放、onMeasure 旋转修复、**沉浸模式背景色动画（ValueAnimator+ArgbEvaluator）、applyTheme 尊重 isImmersive、沉浸状态与抽屉状态解耦（immersiveBeforeDrawer）、applyDrawerProgress 尊重 isImmersive、close 检查 isImmersive||drawerOpen** |
+| [NativeGalleryView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/NativeGalleryView.kt) | 双缓冲架构、WindowManager 可见性、抽屉面板、主题色、手势跟手滑动、贝塞尔曲线、帧率优化（硬件层/缓存/日志移除）、图片间隔、skipReload、延迟 onNavigate、编辑 Dialog、双向同步、applyDrawerProgress/animateDrawerTo progress 驱动动画、全屏样式（topBar/状态栏同步隐藏）、垂直跟手手势控制抽屉、drawerFullWidth 修复缩放、onMeasure 旋转修复、**沉浸模式背景色动画（ValueAnimator+ArgbEvaluator）、applyTheme 尊重 isImmersive、沉浸状态与抽屉状态解耦（immersiveBeforeDrawer）、applyDrawerProgress 尊重 isImmersive、close 检查 isImmersive||drawerOpen**、**幻灯片委托（SlideshowView 覆盖层生命周期：toggleSlideshow/startSlideshow/cleanupSlideshow/onSlideshowExited/setSlideshow）、保留配置字段与设置对话框（RadioGroup 视觉残留修复）、dispatchKeyEvent 优先退出幻灯片、slideshowHidSystemUi 状态栏同步**、**顶栏按钮顺序调整（关闭→文件名→幻灯片→旋转→元数据→删除→分享→更多）+ 关闭按钮改为返回箭头 + 文件名 18sp**、**实现 DialogTheme 接口（override 颜色函数）、showXxxDialog 全部改为薄包装调用独立 Dialog 类、保留 confirmDelete/confirmMoveOut 业务逻辑、showFolderPickerDialog 薄包装 + 移动时调 confirmMoveOut、createRoundedBg 委托 DialogUtils、清理 11 个未使用 import** |
+| [SlideshowView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/SlideshowView.kt) | **新增文件** — 独立全屏幻灯片播放覆盖层（FrameLayout）。鲁棒循环推进（try/catch + 始终重新调度）、transitionGen 代际计数器防过期回调竞态、fade/slide/none 三种过渡（双 ImageView 缓冲）、Ken Burns 逐渐放大（首张延迟布局后启动、cancelKenBurns 不重置 scale、outgoing 隐藏后回收）、Listener.onSlideshowExit 索引同步、单击切换播放/暂停、返回键退出、ImageLoader 共享 |
 | [ZoomableImageView.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/ZoomableImageView.kt) | e1 recycle 修复（rawX）、swipeDragging 模式、跟手拖动回调、setImageDrawable 立即 resetToCenter、onTouchDown 回调、drawerFillProgress（fit/fill 插值）、drawerFullWidth（固定 fitS 基准）、垂直滑动检测（onVerticalSwipeDrag/End）、边缘区域屏蔽、**clampTranslateToBounds 实时边界约束、allowZoom 抽屉打开时禁用缩放、onScaleBegin 清理 swipe 状态 + 取消 fling、onScroll 检查 scaleDetector.isInProgress、onDoubleTap/animateScaleTo 取消 fling、animateScaleTo fit-center 公式、onSizeChanged 保留缩放状态、ACTION_UP bounceBack 触发条件、onScale 缩放后 clamp** |
-| [MainActivity.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/MainActivity.kt) | WindowManager addView/removeView、JSON 解析扩展、closeNativeDrawer、onUpdateFile bridge、onDestroy 清理、INFO 级日志、onImmersiveToggle 系统状态栏控制 |
+| [MainActivity.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/MainActivity.kt) | WindowManager addView/removeView、JSON 解析扩展、closeNativeDrawer、onUpdateFile bridge、onDestroy 清理、INFO 级日志、onImmersiveToggle 系统状态栏控制、**onFolderPickerConfirm bridge（evaluateJs 通知 JS）、showFolderPicker(type, fileId, folderTreeJson) 公开方法供 JNI 调用** |
+| [dialogs/DialogTheme.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DialogTheme.kt) | **新增文件（2026-07-19）** — 弹窗主题接口 `DialogTheme` + 通用工具 `object DialogUtils`（density/createRoundedBg/createDialogButton/setItalicHint） |
+| [dialogs/DeleteConfirmDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DeleteConfirmDialog.kt) | **新增文件（2026-07-19）** — 删除确认弹窗（构造参数：context, theme, fileName, onConfirm, onCancel） |
+| [dialogs/FolderPickerDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/FolderPickerDialog.kt) | **新增文件（2026-07-19）** — 文件夹选择弹窗，含 FolderNode/FolderTreeData/FolderTreeAdapter；构造参数：context, theme, type, fileId, folderTreeJson, onConfirm(fileId, targetFolderId, type)；**修复选中高亮不显示 bug（onNodeClick 改用 updateData 同步 Adapter 内部 selectedId）** |
+| [dialogs/RenameDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/RenameDialog.kt) | **新增文件（2026-07-19）** — 重命名弹窗（系统 AlertDialog + EditText） |
+| [dialogs/TagEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/TagEditDialog.kt) | **新增文件（2026-07-19）** — 标签编辑弹窗（chips + 输入框，动态高度） |
+| [dialogs/DescriptionEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/DescriptionEditDialog.kt) | **新增文件（2026-07-19）** — 描述编辑弹窗（多行 EditText） |
+| [dialogs/SourceUrlEditDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SourceUrlEditDialog.kt) | **新增文件（2026-07-19）** — 来源网址编辑弹窗（单行 EditText） |
+| [dialogs/SlideshowSettingsDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/SlideshowSettingsDialog.kt) | **新增文件（2026-07-19）** — 幻灯片设置弹窗，含 SlideshowConfig data class；构造参数：context, theme, initialConfig, onConfirm |
+| [dialogs/MoreMenuPopup.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/MoreMenuPopup.kt) | **新增文件（2026-07-19）** — 更多菜单弹窗（PopupWindow 风格，锚点定位），含 MoreMenuItem data class |
 
 ### Rust
 
 | 文件 | 修改内容 |
 |------|---------|
-| [lib.rs](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/src/lib.rs) | `android_open_native_viewer`、`android_close_native_viewer`、`android_close_drawer`、`android_update_native_item` 命令 |
+| [lib.rs](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/src/lib.rs) | `android_open_native_viewer`、`android_close_native_viewer`、`android_close_drawer`、`android_update_native_item`、**`android_show_folder_picker`（通过 JNI 调 MainActivity.showFolderPicker，调起原生文件夹选择弹窗）** 命令 |
 
 ### TypeScript
 
 | 文件 | 修改内容 |
 |------|---------|
-| [App.tsx](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src/App.tsx) | 序列化扩展（serializeImagesForNativeViewer）、ImageViewer 不渲染、handleAndroidBackPress async、bridge onUpdateFile、nativeViewerActive 状态 |
+| [App.tsx](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src/App.tsx) | 序列化扩展（serializeImagesForNativeViewer）、ImageViewer 不渲染、handleAndroidBackPress async、bridge onUpdateFile、nativeViewerActive 状态、**onCopyToFolder/onMoveToFolder 改为调 invokeAndroidFolderPicker（收集 folderTree JSON → invoke android_show_folder_picker）、新增 invokeAndroidFolderPicker useCallback + Ref、注册 onFolderPickerConfirm bridge** |
 
 ---
 
-## 八、尝试过但放弃的方案
+## 九、尝试过但放弃的方案
 
-### 8.1 addContentView 添加原生查看器（已放弃）
+### 9.1 addContentView 添加原生查看器（已放弃）
 
 使用 `addContentView()` 将 NativeGalleryView 添加到 Activity content frame。但 Tauri WebView z-order 更高，原生查看器被完全遮挡。改用 WindowManager `TYPE_APPLICATION_PANEL` 独立窗口。
 
-### 8.2 close 时 imageLoader.shutdown()（已放弃）
+### 9.2 close 时 imageLoader.shutdown()（已放弃）
 
 `imageLoader` 是 `lazy` 属性，shutdown 后无法重建，导致查看器关闭后无法再次打开。改为仅在 `destroy()`（Activity 销毁）时 shutdown，`close()` 只设 `visibility = GONE`。
 
-### 8.3 翻页阈值使用屏幕宽度百分比（已放弃）
+### 9.3 翻页阈值使用屏幕宽度百分比（已放弃）
 
 `widthPixels * 0.25f` 作为翻页阈值。横竖屏宽度差异大（竖屏 1752px vs 横屏 2800px），百分比导致竖屏难以触发（需 438px）、横屏过于敏感（需 700px）。改用固定 32dp，横竖屏一致。
 
-### 8.4 onScroll 中 e1.x 计算偏移（已放弃）
+### 9.4 onScroll 中 e1.x 计算偏移（已放弃）
 
 `swipeStartX = e1?.x` 中 `e1` 会被 Android recycle，导致 `swipeStartX` 在不同 `onScroll` 调用中返回不同值，图片疯狂左右移动。改用 `ACTION_DOWN` 时记录 `event.rawX`，`onScroll` 中用 `e2.rawX - swipeStartX`。
 
-### 8.5 翻页前 activeView.translationX = 0f 复位（已放弃）
+### 9.5 翻页前 activeView.translationX = 0f 复位（已放弃）
 
 翻页时先复位再开始滑出动画，导致图片从拖动位置瞬间跳回原位再滑出。移除复位，让滑出动画从当前 `dx` 位置继续沿同方向滑出，`animate().translationX(目标值)` 会从当前值平滑过渡。
 
-### 8.6 RGB_565 位图格式（已放弃，见性能优化记录）
+### 9.6 RGB_565 位图格式（已放弃，见性能优化记录）
 
 减少内存占用但只有 65536 色，导致色带和锯齿。改用 ARGB_8888。（此为 ImageViewer 预览生成相关，非 NativeGalleryView 本身，但涉及 MainActivity 共用方法。）
 
-### 8.7 fitS/fillS 都基于当前 vw 计算（已放弃）
+### 9.7 fitS/fillS 都基于当前 vw 计算（已放弃）
 
 抽屉展开时 `resetToCenter` 中 `fitS` 和 `fillS` 都基于当前视图宽度 `vw` 计算，而 `vw` 随抽屉展开减小。横屏图片的 `fitS = min(vw/logicW, vh/logicH)` 在中间过程因 `vw` 减小变为宽度受限而下降，`fillS` 同时变化，造成 fitScale 先降后升——视觉上图片"缩小再还原"。
 
 改为 `fitS` 基于固定全屏宽度（`drawerFullWidth`），`fillS` 基于当前 `vw`，fitScale 单调变化（见 4.7.4）。
 
-### 8.8 垂直手势无方向限制（已放弃）
+### 9.8 垂直手势无方向限制（已放弃）
 
 最初 `onVerticalSwipeDrag`/`onVerticalSwipeEnd` 不限制滑动方向，导致抽屉展开时向上滑仍能触发关闭、抽屉关闭时向下滑触发异常。且 `onVerticalSwipeEnd` 的 `targetOpen` 逻辑反转（关闭条件被当作"保持打开"），导致下滑松手后总是退回展开状态。
 
 改为根据 `drawerDragStartOpen` 用 `coerceAtMost`/`coerceAtLeast` 限制 progress 方向，并修正 `targetOpen` 取反逻辑（见 4.11）。
 
+### 9.9 幻灯片逻辑内嵌 NativeGalleryView（已放弃）
+
+旧实现把 `slideshowRunnable`、`startSlideshowLoop`、`stopSlideshowLoop`、`navigateToWithFade`、`startKenBurns`、`cancelKenBurns` 全部塞在 NativeGalleryView.kt（~2100 行）。文件过大且 `slideshowRunnable` 缺乏 try/catch 导致异常静默死亡。
+
+改为拆分为独立的 `SlideshowView`（见第七章），NativeGalleryView 仅保留配置字段、设置对话框、顶栏按钮和委托方法（`toggleSlideshow`/`startSlideshow`/`cleanupSlideshow`/`onSlideshowExited`/`setSlideshow`）。
+
+### 9.10 幻灯片在查看器内播放（已放弃）
+
+旧实现通过 `toggleImmersive()` 进入沉浸模式播放幻灯片，但顶栏/缩略图条/底部信息仍可见（仅隐藏系统状态栏），并非真正的全屏体验。
+
+改为 `SlideshowView` 作为独立全屏覆盖层叠加到 NativeGalleryView 顶层，覆盖所有 chrome（见 7.1）。
+
+### 9.11 cancelKenBurns 重置 scale（已放弃）
+
+`cancelKenBurns()` 同时重置 `scaleX/Y = 1f`，导致切换图片时旧图（已放大到 ~1.13）瞬间回弹到 1.0 再淡出，视觉跳变。
+
+改为 `cancelKenBurns()` 仅取消 `kenBurnsAnimator`，outgoing 视图在 `withEndAction` 隐藏后才重置 scale（见 7.5.2）。
+
+### 9.12 RadioGroup 通过 rb.isChecked = true 设置默认项（已放弃）
+
+直接 `rb.isChecked = true` 不更新 RadioGroup 内部 `mCheckedId`，导致点击新选项时旧选项视觉残留。改为 `View.generateViewId()` + `radioGroup.check(defaultCheckId)`（见 7.9.1）。
+
+### 9.13 FolderPickerDialog 仅调 notifyDataSetChanged 不更新选中高亮（已放弃）
+
+`onNodeClick` 中只更新外部 `selectedId[0]` 数组，然后调 `adapter.notifyDataSetChanged()`。但 `notifyDataSetChanged()` 触发的 `getView()` 读取的是 Adapter **内部**的 `selectedId` 字段（仍为 `null`），所以 `isSelected = selectedId == node.id` 始终为 false，选中行无高亮显示。
+
+改为调 `adapter.updateData(nodes, expandedIds, selectedId[0])` 显式同步 Adapter 内部的 `selectedId` 字段（与 `onToggleClick` 的写法一致），高亮立即显示。
+
+> 这个 bug 仅存在于刚重构出的独立 [FolderPickerDialog.kt](file:///c:/Users/Misaki/Desktop/git/aurora-gallery-tauri/src-tauri/gen/android/app/src/main/java/com/aurora/gallery/dialogs/FolderPickerDialog.kt) 中。原内嵌实现使用 `notifyDataSetChanged()` 没有此问题，因为 Adapter 是 `inner class`，直接读外部 `selectedId[0]` 数组；重构后 Adapter 改为独立类，`selectedId` 变为构造时传入的字段，必须显式更新。
+
 ---
 
-## 九、关键常量与配置
+## 十、关键常量与配置
 
 ```kotlin
 companion object {
@@ -1263,10 +1659,19 @@ companion object {
 | `allowZoom` 禁用阈值 | 0.01f | 抽屉 progress > 0.01 时禁用缩放 |
 | 内存缓存 | 30% | Coil MemoryCache |
 | 磁盘缓存 | 200MB | Coil DiskCache |
+| 幻灯片默认间隔 | 5000ms | `slideshowIntervalMs`，可在设置对话框调整为 1-20 秒 |
+| 幻灯片默认过渡 | `fade` | `slideshowTransition`，可选 `none`/`fade`/`slide` |
+| 幻灯片 fade 时长 | 400ms | 淡入淡出过渡时长 |
+| 幻灯片 slide 时长 | 280ms | 平滑移动过渡时长 |
+| 幻灯片 none 时长 | 0ms | 立即切换，无动画 |
+| Ken Burns 目标缩放 | 1.15f | 每张图片从 1.0 逐渐放大到 1.15 |
+| Ken Burns 插值器 | `AccelerateDecelerateInterpolator` | 开始/结束慢，中间快 |
+| Ken Burns 动画时长 | `intervalMs` | 与播放间隔同步，整段持续放大 |
+| 播放指示器淡入/淡出 | 150ms | 暂停时显示/恢复时隐藏的 alpha 动画 |
 
 ---
 
-## 十、验证
+## 十一、验证
 
 ### 编译验证
 - Kotlin Gradle `:app:compileUniversalDebugKotlin` BUILD SUCCESSFUL ✅
@@ -1323,3 +1728,27 @@ companion object {
 47. 弹窗背景 #1E1E1E 与文本框 #262626 有层次区分，不融为一体 ✅
 48. 抽屉滚动条已隐藏 ✅
 49. 抽屉文件名 18sp 加粗，与文件夹名 12sp 区分明显 ✅
+50. 幻灯片播放时全屏覆盖（顶栏/缩略图条/底部信息/抽屉全部被覆盖层遮挡）✅
+51. 幻灯片持续播放超过第二张，不再"静默死亡"（try/catch + 始终重新调度）✅
+52. 快速切换图片时无旧图覆盖新图（transitionGen 代际计数器作废过期回调）✅
+53. 三种过渡效果正常工作（无 / 淡入淡出 / 平滑移动）✅
+54. 幻灯片设置对话框 RadioGroup 切换选项时旧选项立即取消选中，无视觉残留 ✅
+55. Ken Burns 首张图片从中心放大，不从左上角放大（视图未布局时延迟启动）✅
+56. Ken Burns 切换图片时旧图保持缩放步调淡出，不瞬间回弹到 1.0（cancelKenBurns 不重置 scale）✅
+57. Ken Burns 暂停后恢复从当前缩放继续放大，不回弹（startKenBurns 从当前 scale 继续）✅
+58. 幻灯片退出后查看器立即显示幻灯片停止的那张图片（onSlideshowExit 索引同步 + loadCurrent）✅
+59. 幻灯片播放时隐藏系统状态栏，退出后恢复（slideshowHidSystemUi 标记）✅
+60. 幻灯片播放时单击切换播放/暂停，暂停时显示播放指示器 ✅
+61. 幻灯片播放时返回键退出（dispatchKeyEvent 优先级：幻灯片 > 抽屉 > 查看器）✅
+62. 幻灯片设置对话框确定后实时应用新配置（重置定时器/Ken Burns，无需退出重开）✅
+63. 幻灯片设置对话框确定后通知前端同步设置（onUpdateSlideshowConfig）✅
+64. 幻灯片设置（间隔/过渡/逐渐放大/随机播放）持久化到前端 state，再次打开查看器时按上次配置播放 ✅
+65. 顶栏按钮顺序：返回 → 文件名 → 幻灯片 → 旋转 → 元数据 → 删除 → 分享 → 更多 ✅
+66. 关闭按钮显示为返回箭头样式（非 X 图标） ✅
+67. 文件名显示在返回按钮右侧，18sp 字体，仅显示文件名（无图片数量） ✅
+68. 更多菜单点击后弹出 5 项菜单（删除/重命名/复制到文件夹/移动到文件夹/幻灯片设置），定位到「更多」按钮下方 ✅
+69. 复制到文件夹：原生弹窗显示文件夹树，搜索/展开/折叠正常，选中文件夹高亮显示 ✅
+70. 移动到文件夹：原生弹窗选择文件夹后从查看器移除该图片（confirmMoveOut） ✅
+71. 文件夹选择弹窗选中行有蓝色高亮背景 + 白色文字（updateData 同步 selectedId） ✅
+72. 8 个弹窗（删除确认/文件夹选择/重命名/标签/描述/来源网址/幻灯片设置/更多菜单）全部独立为 dialogs/ 包下文件 ✅
+73. NativeGalleryView.kt 重构后编译通过（compileArm64DebugKotlin BUILD SUCCESSFUL） ✅

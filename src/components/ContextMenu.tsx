@@ -126,6 +126,15 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       return;
     }
 
+    // 仅在长按 (long-press) 场景下启用交互阻塞机制：长按手指抬起时的
+    // touchend 不应触发菜单项点击，否则会立即穿透。
+    // 通过 "更多" 按钮等 click 触发的菜单不需要此机制 —— 此时 touchend
+    // 已在 click 之前派发完，启用阻塞反而会让下一次点击菜单项被吞掉。
+    if (contextMenu.source !== 'long-press') {
+      setBlockInteraction(false);
+      return;
+    }
+
     setBlockInteraction(true);
 
     const handleTouchEnd = () => {
@@ -139,7 +148,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       document.removeEventListener('touchend', handleTouchEnd);
       setBlockInteraction(true);
     };
-  }, [contextMenu.visible]);
+  }, [contextMenu.visible, contextMenu.source]);
 
   const openCompareSubmenu = () => {
     if (compareMenuTimeoutRef.current) {
@@ -233,7 +242,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
       }}
     >
       {contextMenu.type === 'file-single' || contextMenu.type === 'file-multi' || contextMenu.type === 'folder-single' || contextMenu.type === 'folder-multi' ? (<>
-        {contextMenu.type !== 'file-multi' && contextMenu.type !== 'folder-multi' && (
+        {!isAndroidSync() && contextMenu.type !== 'file-multi' && contextMenu.type !== 'folder-multi' && (
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleOpenInNewTab(contextMenu.targetId!); closeContextMenu(); }}>
             <Layout size={iconSize} className="mr-2 opacity-70" />
             {contextMenu.type === 'folder-single' ? t('context.openFolderInNewTab') : t('context.openInNewTab')}
@@ -556,7 +565,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           </>
         ) : null}
       </>)}
-      {contextMenu.type === 'tab' && contextMenu.targetId && (<> <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={(e) => { handleCloseTab(e, contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeTab')}</div><div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCloseOtherTabs(contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeOtherTabs')}</div><div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCloseAllTabs(); closeContextMenu(); }}>{t('context.closeAllTabs')}</div> </>)}
+      {!isAndroidSync() && contextMenu.type === 'tab' && contextMenu.targetId && (<> <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={(e) => { handleCloseTab(e, contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeTab')}</div><div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCloseOtherTabs(contextMenu.targetId!); closeContextMenu(); }}>{t('context.closeOtherTabs')}</div><div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCloseAllTabs(); closeContextMenu(); }}>{t('context.closeAllTabs')}</div> </>)}
       {contextMenu.type === 'background' && (<>
         {activeTab.viewMode === 'people-overview' ? (
           <>

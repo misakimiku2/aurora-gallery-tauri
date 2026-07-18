@@ -1379,6 +1379,44 @@ async fn android_close_drawer() -> Result<(), String> {
 
 #[cfg(target_os = "android")]
 #[tauri::command]
+async fn android_show_folder_picker(
+    picker_type: String,
+    file_id: String,
+    folder_tree_json: String,
+) -> Result<(), String> {
+    let pt = picker_type;
+    let fid = file_id;
+    let json = folder_tree_json;
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let activity = ndk_context::android_context();
+        let vm = unsafe { jni::JavaVM::from_raw(activity.vm().cast()) }
+            .map_err(|e| format!("Failed to get JavaVM: {:?}", e))?;
+        let mut env = vm.attach_current_thread()
+            .map_err(|e| format!("Failed to attach thread: {:?}", e))?;
+        let activity_obj = unsafe { JObject::from_raw(activity.context().cast()) };
+        let j_pt = env.new_string(&pt)
+            .map_err(|e| format!("Failed to create type string: {:?}", e))?;
+        let j_fid = env.new_string(&fid)
+            .map_err(|e| format!("Failed to create fileId string: {:?}", e))?;
+        let j_json = env.new_string(&json)
+            .map_err(|e| format!("Failed to create folderTreeJson string: {:?}", e))?;
+        env.call_method(
+            &activity_obj,
+            "showFolderPicker",
+            "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+            &[
+                jni::objects::JValue::Object(&j_pt),
+                jni::objects::JValue::Object(&j_fid),
+                jni::objects::JValue::Object(&j_json),
+            ],
+        ).map_err(|e| format!("Failed to call showFolderPicker: {:?}", e))?;
+        Ok(())
+    }).await;
+    result.map_err(|e| format!("Join error: {:?}", e))?
+}
+
+#[cfg(target_os = "android")]
+#[tauri::command]
 async fn android_update_native_item(file_id: String, updates: String) -> Result<(), String> {
     let fid = file_id;
     let upd = updates;
@@ -2100,6 +2138,7 @@ pub fn run() {
         android_open_native_viewer,
         android_close_native_viewer,
         android_close_drawer,
+        android_show_folder_picker,
         android_update_native_item,
         android_native_viewer_navigate,
         android_native_viewer_set_slideshow,
