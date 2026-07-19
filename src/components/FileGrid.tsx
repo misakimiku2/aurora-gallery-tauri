@@ -404,7 +404,7 @@ const FileCard = React.memo(({
             transform: `translate(${x}px, ${y}px)`,
             width: `${width}px`,
             height: `${height}px`,
-            transition: 'transform 300ms ease-out',
+            transition: isDragging ? 'none' : 'transform 300ms ease-out',
             ...(!isAndroid && {
               contentVisibility: 'auto' as const,
               containIntrinsicSize: `${width}px ${height}px`
@@ -912,6 +912,7 @@ interface FileGridProps {
   isDraggingInternal?: boolean;
   setIsDraggingInternal?: (isDragging: boolean) => void;
   setDraggedFilePaths?: (paths: string[]) => void;
+  draggedFileIds?: string[];
   isVisible?: boolean;
   onConsumeScrollToItem?: () => void;
   onFileLongPress?: (id: string) => void;
@@ -979,6 +980,7 @@ export const FileGrid = React.memo(({
   isDraggingInternal,
   setIsDraggingInternal,
   setDraggedFilePaths,
+  draggedFileIds,
   isVisible = true,
   onConsumeScrollToItem,
   onFileLongPress,
@@ -1004,6 +1006,28 @@ export const FileGrid = React.memo(({
 
   const contentRef = useRef<HTMLDivElement>(null);
   const pullDistanceRef = useRef(0);
+  // Track the currently highlighted drop target and debounced RAF for safe DOM mutation
+  const dragHoverRef = useRef<HTMLElement | null>(null);
+  const dragHighlightRafRef = useRef<number | null>(null);
+
+  // Deferred highlight helper: uses a single debounced RAF to apply dataset changes
+  // OUTSIDE the drag event handler, preventing browser drag event re-evaluation cycles.
+  const scheduleDragHighlight = (target: HTMLElement | null) => {
+      if (dragHighlightRafRef.current !== null) {
+          cancelAnimationFrame(dragHighlightRafRef.current);
+      }
+      dragHighlightRafRef.current = requestAnimationFrame(() => {
+          dragHighlightRafRef.current = null;
+          const prev = dragHoverRef.current;
+          if (prev && prev !== target) {
+              delete (prev as HTMLElement).dataset.dropTarget;
+          }
+          if (target) {
+              (target as HTMLElement).dataset.dropTarget = 'true';
+          }
+          dragHoverRef.current = target;
+      });
+  };
 
   const {
     isRefreshing: isPullRefreshing,
@@ -1034,20 +1058,6 @@ export const FileGrid = React.memo(({
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const containerWidthRef = useRef(0);
-
-  // ── DEBUG: Render counter ──
-  const renderCountRef = useRef(0);
-  renderCountRef.current++;
-  const renderSeq = renderCountRef.current;
-  if (renderSeq <= 3 || renderSeq % 20 === 0) {
-    const t = performance.now();
-    console.log(`[FileGrid RENDER #${renderSeq}]`, {
-      time: t.toFixed(0),
-      displayFileIds: displayFileIds.length,
-      visibleItemsCount: 'pending...',
-      layoutItemsRef: !!layoutItemsRef,
-    });
-  }
 
   const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
@@ -1698,18 +1708,6 @@ export const FileGrid = React.memo(({
           if (item.y >= maxY) break;
           if (item.y + item.height > minY && displayFileIdsSet.has(item.id)) out.push(item);
       }
-      // ── DEBUG: log visibleItems recalculation ──
-      const t = performance.now();
-      if (renderCountRef.current <= 3 || renderCountRef.current % 10 === 0) {
-        console.log(`[FileGrid visibleItems memo]`, {
-          renderSeq: renderCountRef.current,
-          time: t.toFixed(0),
-          layoutTotal: layout.length,
-          visibleCount: out.length,
-          scrollY: `${scrollTop} → ${scrollTop + containerRect.height}`,
-          buffer,
-        });
-      }
       return out;
   }, [layout, sortedByY, scrollTop, containerRect.height, isLayoutTransitioning, displayFileIdsSet]);
 
@@ -1833,22 +1831,17 @@ export const FileGrid = React.memo(({
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       
-      // 锟斤拷锟斤拷欠锟斤拷锟阶э拷锟斤拷募锟斤拷锟斤拷锟?
       const target = e.target as HTMLElement;
-      const folderElement = target.closest('.file-item[data-id]');
-      if (folderElement) {
-          const folderId = folderElement.getAttribute('data-id');
-          if (folderId) {
-              const folder = getFileNode(folderId);
-              if (folder && folder.type === FileType.FOLDER) {
-                  // 锟斤拷锟斤拷锟斤拷拽锟斤拷停锟斤拷锟接撅拷效??
-                  folderElement.classList.add('drop-target-active');
-                  if (onDropOnFolder && dragOverTarget !== folderId) {
-                      // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷泳锟斤拷锟斤拷锟?
-                  }
-              }
-          }
-      }
+      const folderElement = target.closest('.file-item[data-id]') as HTMLElement | null;
+      const folderId = folderElement?.getAttribute('data-id') || null;
+      const isSelfTarget = !!(folderId && draggedFileIds && draggedFileIds.includes(folderId));
+      const folder = folderId ? getFileNode(folderId) : null;
+      const isValidDrop = !!(folder && folder.type === FileType.FOLDER && !isSelfTarget);
+
+      // Schedule highlight update via debounced RAF — DOM mutations
+      // are executed OUTSIDE the drag event so the browser won't
+      // trigger dragLeave re-evaluation cycles.
+      scheduleDragHighlight(isValidDrop ? folderElement : null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -1861,9 +1854,14 @@ export const FileGrid = React.memo(({
           const { type, ids } = JSON.parse(data);
           if (type !== 'file' || !ids || ids.length === 0) return;
           
-          // 锟斤拷锟斤拷锟斤拷锟斤拷锟酵Ｗ??
+          // Clean up drop target highlights
+          if (dragHighlightRafRef.current !== null) {
+              cancelAnimationFrame(dragHighlightRafRef.current);
+              dragHighlightRafRef.current = null;
+          }
           const allFolders = document.querySelectorAll('.file-item[data-id]');
-          allFolders.forEach(el => el.classList.remove('drop-target-active'));
+          allFolders.forEach(el => delete (el as HTMLElement).dataset.dropTarget);
+          dragHoverRef.current = null;
           
           // 锟斤拷锟斤拷欠锟斤拷锟阶э拷锟斤拷囟锟斤拷募锟??
           const target = e.target as HTMLElement;
@@ -1916,10 +1914,7 @@ export const FileGrid = React.memo(({
           onMouseUp={onMouseUp}
           onDragOver={isAndroid ? undefined : handleDragOver}
           onDrop={isAndroid ? undefined : handleDrop}
-          onDragLeave={isAndroid ? undefined : () => {
-              const allFolders = document.querySelectorAll('.file-item[data-id]');
-              allFolders.forEach(el => el.classList.remove('drop-target-active'));
-          }}
+          onDragLeave={isAndroid ? undefined : undefined}
       >
           {isAndroid && (
               <style dangerouslySetInnerHTML={{ __html: '#file-grid-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />

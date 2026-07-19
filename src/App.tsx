@@ -3566,6 +3566,7 @@ export const App: React.FC = () => {
                     isDraggingInternal={isDraggingInternal}
                     setIsDraggingInternal={setIsDraggingInternal}
                     setDraggedFilePaths={setDraggedFilePaths}
+                    draggedFileIds={state.dragState.draggedFileIds}
                     onFileLongPress={handleFileLongPress}
                     onShowContextMenuForFile={handleShowContextMenuForFile}
                     isAndroidSelectionMode={isAndroidSelectionMode}
