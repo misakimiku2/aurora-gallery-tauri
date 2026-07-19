@@ -45,12 +45,12 @@ export const FileCard: React.FC<FileCardProps> = ({
       onMouseLeave={() => setIsHovered(false)}
     >
       <div
-        className={`w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300 ${
+        className={`w-full flex-1 rounded-xl overflow-hidden relative transition-shadow transition-transform duration-300 ${
           isSelected
-            ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30'
-            : 'border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'
+            ? 'bg-blue-100 dark:bg-blue-500/10 shadow-[0_4px_6px_-1px_rgba(59,130,246,0.2)] dark:shadow-[0_4px_6px_-1px_rgba(59,130,246,0.3)] after:absolute after:inset-0 after:rounded-xl after:border-[3px] after:border-blue-400 dark:after:border-blue-500 after:pointer-events-none after:z-10'
+            : 'bg-gray-100 dark:bg-gray-800'
         }`}
-        style={{ height: layout.height - 40, overflow: 'hidden' }}
+        style={{ height: layout.height - 40 }}
       >
         {isFolder ? (
           <FolderThumbnail
@@ -69,7 +69,7 @@ export const FileCard: React.FC<FileCardProps> = ({
         )}
 
         <div
-          className={`absolute top-2 left-2 transition-opacity duration-200 ${
+          className={`absolute top-2 left-2 z-20 transition-opacity duration-200 ${
             isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           }`}
         >

@@ -590,13 +590,10 @@ const FileCard = React.memo(({
         }) : undefined}>
         <div
             className={`
-                w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
-                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-subtle hover:border-gray-400 dark:hover:border-gray-500 bg-surface'}
+                w-full flex-1 rounded-xl overflow-hidden relative transition-shadow transition-transform duration-300
+                ${isSelected ? 'bg-blue-100 dark:bg-blue-500/10 shadow-[0_4px_6px_-1px_rgba(59,130,246,0.2)] dark:shadow-[0_4px_6px_-1px_rgba(59,130,246,0.3)] after:absolute after:inset-0 after:rounded-xl after:border-[3px] after:border-blue-400 dark:after:border-blue-500 after:pointer-events-none after:z-10' : isDragging ? 'border-2 border-dashed border-blue-400 bg-blue-50 dark:bg-blue-900/20' : 'bg-surface'}
             `}
-            style={{ 
-                height: height ? (height - 40) : '100%',
-                overflow: 'hidden'
-            }}
+            style={{ height: height ? (height - 40) : '100%' }}
         >
             {file.type === FileType.FOLDER ? (
             <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
@@ -623,8 +620,8 @@ const FileCard = React.memo(({
                 mediaStoreId={file.mediaStoreId}
             />
             )}
-            
-            <div className={`absolute top-2 left-2 transition-opacity duration-200 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+
+            <div className={`absolute top-2 left-2 z-20 transition-opacity duration-200 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
                 {isSelected ? (
                     <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center border-2 border-white shadow-lg ring-2 ring-blue-400/50">
                     <Check size={14} className="text-white" strokeWidth={3} />

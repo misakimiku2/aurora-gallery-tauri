@@ -36,9 +36,9 @@ export interface Folder3DIconProps {
 }
 
 const styles: Record<string, { back: string; front: string }> = {
-  general: { back: 'text-blue-600 dark:text-blue-500', front: 'text-blue-400 dark:text-blue-400' },
-  book: { back: 'text-amber-600 dark:text-amber-500', front: 'text-amber-400 dark:text-amber-400' },
-  sequence: { back: 'text-purple-600 dark:text-purple-500', front: 'text-purple-400 dark:text-purple-400' },
+  general: { back: 'text-blue-600 dark:text-blue-700', front: 'text-blue-400 dark:text-blue-500' },
+  book: { back: 'text-amber-600 dark:text-amber-700', front: 'text-amber-400 dark:text-amber-500' },
+  sequence: { back: 'text-purple-600 dark:text-purple-700', front: 'text-purple-400 dark:text-purple-500' },
 };
 
 export const Folder3DIcon: React.FC<Folder3DIconProps> = ({

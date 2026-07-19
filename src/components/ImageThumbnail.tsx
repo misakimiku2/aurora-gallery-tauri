@@ -281,7 +281,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   return (
     <div ref={ref} className="w-full h-full relative overflow-hidden">
-      <div className="absolute inset-0 bg-gray-100 dark:bg-gray-800 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none">
         {renderThumbnail()}
       </div>
       {upgrading && finalSrc && (
