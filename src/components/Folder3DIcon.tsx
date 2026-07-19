@@ -43,6 +43,23 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
 
   // Use whatever valid URLs are passed (base64 or asset://)
   const images = (previewSrcs || []).filter(src => !!src);
+  // 多张图（>=2）时，悬停改为"摊牌"式扇形展开，而不是整体平移
+  const fan = images.length >= 2;
+
+  // 每张图在「堆叠态」与「悬停摊开态」下的变换（索引对应 images[0]=前, [1]=中, [2]=后）
+  const cardBase = [
+    'rotate-0 scale-100',
+    '-rotate-3 -translate-x-1 -translate-y-1.5 scale-95',
+    'rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80',
+  ];
+  const cardHover = [
+    // 前卡 -> 扇形右侧（小幅度，留在背景内）
+    'group-hover:rotate-[14deg] group-hover:translate-x-[18%] group-hover:translate-y-[-4%] group-hover:scale-90 group-hover:opacity-100',
+    // 中卡 -> 居中上抬
+    'group-hover:rotate-0 group-hover:translate-x-0 group-hover:translate-y-[-10%] group-hover:scale-100 group-hover:opacity-100',
+    // 后卡 -> 扇形左侧
+    'group-hover:rotate-[-14deg] group-hover:translate-x-[-18%] group-hover:translate-y-[-4%] group-hover:scale-90 group-hover:opacity-100',
+  ];
   
   return (
     <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
@@ -56,7 +73,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
         {/* Preview Images */}
         <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
           {images[2] && (
-            <div className="absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transform rotate-6 translate-x-2 -translate-y-3 scale-90 opacity-80">
+            <div className={`absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transition-transform duration-300 ${cardBase[2]} ${fan ? cardHover[2] : ''}`}>
               <img 
                 src={images[2]} 
                 className="w-full h-full object-cover" 
@@ -67,7 +84,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
             </div>
           )}
           {images[1] && (
-            <div className="absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transform -rotate-3 -translate-x-1 -translate-y-1.5 scale-95">
+            <div className={`absolute inset-0 bg-white shadow-md z-10 border-[2px] border-white rounded-sm overflow-hidden transition-transform duration-300 ${cardBase[1]} ${fan ? cardHover[1] : ''}`}>
               <img 
                 src={images[1]} 
                 className="w-full h-full object-cover" 
@@ -78,7 +95,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
             </div>
           )}
           {images[0] && (
-            <div className="absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transform rotate-0 scale-100">
+            <div className={`absolute inset-0 bg-white shadow-md z-20 border-[2px] border-white rounded-sm overflow-hidden transition-transform duration-300 ${cardBase[0]} ${fan ? cardHover[0] : ''}`}>
               <img 
                 src={images[0]} 
                 className="w-full h-full object-cover" 

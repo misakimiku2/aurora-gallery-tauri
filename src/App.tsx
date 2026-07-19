@@ -728,9 +728,12 @@ export const App: React.FC = () => {
   const isModalOpen = state.activeModal.type !== null || state.isSettingsOpen;
   const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen && !isAndroidDevice;
 
+  // Ref to share FileGrid layout data with marquee selection for DOM-free collision detection
+  const fileGridLayoutRef = useRef<import('../hooks/useMarqueeSelection').LayoutItem[]>([]);
+
   const {
     isSelecting,
-    selectionBox,
+    overlayRef,
     selectionRef,
     handleMouseDown,
     handleMouseMove,
@@ -739,7 +742,8 @@ export const App: React.FC = () => {
     activeTab,
     state,
     updateActiveTab,
-    closeContextMenu
+    closeContextMenu,
+    layoutRef: fileGridLayoutRef,
   });
 
   // Navigation handlers (moved to hook). Keep hook invocation here so required refs exist.
@@ -3546,7 +3550,8 @@ export const App: React.FC = () => {
                     collapsedGroups={collapsedGroups}
                     onToggleGroup={toggleGroup}
                     isSelecting={isSelecting}
-                    selectionBox={selectionBox}
+                    layoutItemsRef={fileGridLayoutRef}
+                    marqueeOverlayRef={overlayRef}
                     onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
                     onConsumeScrollToItem={() => updateActiveTab({ scrollToItemId: undefined })}
                     onScroll={handleScroll}

@@ -404,7 +404,6 @@ const FileCard = React.memo(({
             transform: `translate(${x}px, ${y}px)`,
             width: `${width}px`,
             height: `${height}px`,
-            willChange: 'transform',
             transition: 'transform 300ms ease-out',
             ...(!isAndroid && {
               contentVisibility: 'auto' as const,
@@ -894,7 +893,8 @@ interface FileGridProps {
   collapsedGroups?: Record<string, boolean>;
   onToggleGroup?: (id: string) => void;
   isSelecting?: boolean;
-  selectionBox?: { startX: number; startY: number; currentX: number; currentY: number } | null;
+  marqueeOverlayRef?: React.MutableRefObject<HTMLDivElement | null>;
+  layoutItemsRef?: React.MutableRefObject<import('../hooks/useMarqueeSelection').LayoutItem[]>;
   t: (key: string) => string;
   onThumbnailSizeChange?: (size: number) => void;
   onUpdateFile?: (id: string, updates: Partial<FileNode>) => void;
@@ -963,7 +963,8 @@ export const FileGrid = React.memo(({
   collapsedGroups = {},
   onToggleGroup,
   isSelecting,
-  selectionBox,
+  marqueeOverlayRef,
+  layoutItemsRef,
   t,
   onThumbnailSizeChange,
   onUpdateFile,
@@ -1033,6 +1034,21 @@ export const FileGrid = React.memo(({
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const containerWidthRef = useRef(0);
+
+  // ── DEBUG: Render counter ──
+  const renderCountRef = useRef(0);
+  renderCountRef.current++;
+  const renderSeq = renderCountRef.current;
+  if (renderSeq <= 3 || renderSeq % 20 === 0) {
+    const t = performance.now();
+    console.log(`[FileGrid RENDER #${renderSeq}]`, {
+      time: t.toFixed(0),
+      displayFileIds: displayFileIds.length,
+      visibleItemsCount: 'pending...',
+      layoutItemsRef: !!layoutItemsRef,
+    });
+  }
+
   const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
   // 跟踪 isVisible：ResizeObserver 在容器隐藏时仍会触发（display:none→width=0），
@@ -1299,6 +1315,13 @@ export const FileGrid = React.memo(({
       people,
       activeTab.searchQuery
   );
+
+  // Keep the shared layoutRef in sync for marquee-selection collision detection
+  useEffect(() => {
+    if (layoutItemsRef) {
+      layoutItemsRef.current = layout;
+    }
+  }, [layout, layoutItemsRef]);
 
   // FLIP animation: anchor at viewport top instead of page top.
   // Only applies to non-grouped views where the top-level layout is used for rendering.
@@ -1675,6 +1698,18 @@ export const FileGrid = React.memo(({
           if (item.y >= maxY) break;
           if (item.y + item.height > minY && displayFileIdsSet.has(item.id)) out.push(item);
       }
+      // ── DEBUG: log visibleItems recalculation ──
+      const t = performance.now();
+      if (renderCountRef.current <= 3 || renderCountRef.current % 10 === 0) {
+        console.log(`[FileGrid visibleItems memo]`, {
+          renderSeq: renderCountRef.current,
+          time: t.toFixed(0),
+          layoutTotal: layout.length,
+          visibleCount: out.length,
+          scrollY: `${scrollTop} → ${scrollTop + containerRect.height}`,
+          buffer,
+        });
+      }
       return out;
   }, [layout, sortedByY, scrollTop, containerRect.height, isLayoutTransitioning, displayFileIdsSet]);
 
@@ -1766,17 +1801,11 @@ export const FileGrid = React.memo(({
                       />
                   )}
                   <div className="absolute inset-0 pointer-events-none z-50">
-                      {selectionBox && (
-                          <div
-                              className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
-                              style={{
-                                  left: Math.min(selectionBox.startX, selectionBox.currentX),
-                                  top: Math.min(selectionBox.startY, selectionBox.currentY),
-                                  width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                                  height: Math.abs(selectionBox.currentY - selectionBox.startY),
-                              }}
-                          />
-                      )}
+                      <div
+                          ref={marqueeOverlayRef}
+                          className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
+                          style={{ display: 'none', left: 0, top: 0, width: 0, height: 0, willChange: 'left, top, width, height', transform: 'translateZ(0)' }}
+                      />
                   </div>
                   <div ref={contentRef}>
                   <TagsList
@@ -1903,17 +1932,11 @@ export const FileGrid = React.memo(({
               />
           )}
           <div className="absolute inset-0 pointer-events-none z-50">
-              {selectionBox && (
-                  <div
-                      className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
-                      style={{
-                          left: Math.min(selectionBox.startX, selectionBox.currentX),
-                          top: Math.min(selectionBox.startY, selectionBox.currentY),
-                          width: Math.abs(selectionBox.currentX - selectionBox.startX),
-                          height: Math.abs(selectionBox.currentY - selectionBox.startY),
-                      }}
-                  />
-              )}
+              <div
+                  ref={marqueeOverlayRef}
+                  className="absolute border-2 border-blue-500 bg-blue-100 dark:bg-blue-900/20 opacity-50 pointer-events-none"
+                  style={{ display: 'none', left: 0, top: 0, width: 0, height: 0, willChange: 'left, top, width, height', transform: 'translateZ(0)' }}
+              />
           </div>
 
           <div

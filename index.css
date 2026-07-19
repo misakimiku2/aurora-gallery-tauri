@@ -449,3 +449,13 @@ input[type=range]::-webkit-slider-runnable-track {
 .dark .border-subtle {
   border-color: #404040;
 }
+
+/* ── Marquee selection: suppress card transitions/hover during drag to reduce compositing ── */
+.marquee-selecting .file-item {
+  transition: none !important;
+}
+/* Only reset the scale to 1:1 — never touch transform (it holds the card's position) */
+.marquee-selecting .file-item:hover {
+  --tw-scale-x: 1;
+  --tw-scale-y: 1;
+}
