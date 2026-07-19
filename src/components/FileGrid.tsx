@@ -591,7 +591,7 @@ const FileCard = React.memo(({
         <div
             className={`
                 w-full flex-1 rounded-lg overflow-hidden border shadow-sm relative transition-all duration-300
-                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-gray-200 dark:border-gray-800 hover:border-gray-400 dark:hover:border-gray-500 bg-gray-100 dark:bg-gray-800'}
+                ${isSelected ? 'border-blue-500 border-2 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : isDragging ? 'border-blue-400 border-2 dashed bg-blue-50 dark:bg-blue-900/20' : 'border-subtle hover:border-gray-400 dark:hover:border-gray-500 bg-surface'}
             `}
             style={{ 
                 height: height ? (height - 40) : '100%',
@@ -842,14 +842,14 @@ const GroupContent = React.memo(({
 const GroupHeader = React.memo(({ group, collapsed, onToggle }: { group: FileGroup, collapsed: boolean, onToggle: (id: string) => void }) => {
   return (
     <div 
-      className="flex items-center py-1 px-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors sticky top-0 z-20"
+      className="flex items-center py-2 px-4 bg-content/80 backdrop-blur-sm border-b border-subtle cursor-pointer select-none hover:bg-surface transition-colors sticky top-0 z-20"
       onClick={() => onToggle(group.id)}
     >
       <div className={`mr-2 p-1 rounded-full transition-transform duration-200 ${collapsed ? '-rotate-90' : 'rotate-0'}`}>
         <ChevronDown size={16} className="text-gray-500" />
       </div>
       <span className="font-bold text-sm text-gray-700 dark:text-gray-200">{group.title}</span>
-      <span className="ml-2 text-xs text-gray-400 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded-full">{group.fileIds.length}</span>
+      <span className="ml-2 text-xs text-gray-500 dark:text-gray-400 bg-surface px-2 py-0.5 rounded-full">{group.fileIds.length}</span>
     </div>
   );
 });

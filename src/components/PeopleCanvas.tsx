@@ -88,7 +88,7 @@ export const PeopleCanvas: React.FC<PeopleCanvasProps> = ({
   const layout = useMemo(() => calculateLayout(people, width), [people, width]);
 
   const colors = useMemo(() => ({
-    bg: isDarkMode ? '#111827' : '#ffffff',
+    bg: isDarkMode ? '#262626' : '#ffffff',
     avatarBg: isDarkMode ? '#1f2937' : '#f3f4f6',
     avatarPlaceholder: isDarkMode ? '#374151' : '#d1d5db',
     avatarPlaceholderIcon: isDarkMode ? '#6b7280' : '#9ca3af',

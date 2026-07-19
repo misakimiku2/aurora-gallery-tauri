@@ -1461,7 +1461,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   return (
     <div
       ref={rootRef}
-      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode ? 'bg-black' : 'bg-gray-50 dark:bg-gray-900'}`}
+      className={`flex flex-col h-full select-none overflow-hidden transition-colors duration-300 ${isImmersiveMode ? 'fixed inset-0 z-[300]' : 'relative flex-1'} ${slideshowActive || isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'}`}
       onClick={(e) => {
         setContextMenu({ ...contextMenu, visible: false });
         setIsColorPickerOpen(false);
@@ -1469,7 +1469,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
     >
       {/* Preloading handled in useEffect now */}
 
-      <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
+      <div className={`h-14 bg-white dark:bg-[#262626] flex items-center px-4 justify-between z-20 shrink-0 transition-all duration-300 ${(isFullscreen && slideshowActive) || slideshowActive || isImmersiveMode ? '-translate-y-full absolute w-full top-0 opacity-0 pointer-events-none' : ''}`}>
 
         <div className="flex items-center space-x-2">
           <button
@@ -1501,7 +1501,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
           {showSearch ? (
             <div className="relative w-full max-w-[672px] animate-fade-in" onClick={(e) => e.stopPropagation()}>
-              <div className={`flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${isColorSearchQuery
+              <div className={`flex items-center bg-gray-100 dark:bg-[#3a3a3a] rounded-full px-3 py-1.5 transition-all border ${isColorSearchQuery
                 ? 'border-blue-500 shadow-sm'
                 : isAISearchEnabled
                   ? 'border-purple-500 shadow-sm shadow-purple-500/20'
@@ -1648,7 +1648,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       <div
         ref={containerRef}
-        className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-gray-200 dark:bg-gray-900'}`}
+        className={`flex-1 overflow-hidden relative cursor-grab active:cursor-grabbing transition-colors duration-300 ${slideshowActive ? 'bg-black cursor-none' : isImmersiveMode ? 'bg-black' : 'bg-white dark:bg-[#262626]'}`}
         style={{
           ...(slideshowActive ? { cursor: 'none' } : {}),
         }}
@@ -1782,7 +1782,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         return (
         <div
           data-testid="viewer-context-menu"
-          className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
+          className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-800 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
           style={{
             top: menuPos.top,
             left: menuPos.left,
@@ -1881,7 +1881,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 {/* 二级菜单 - 使用 Portal 渲染到 body 避免被父容器裁剪 */}
                 {compareSubmenuOpen && createPortal(
                   <div
-                    className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 min-w-[200px] z-[9999]"
+                    className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 min-w-[200px] z-[9999]"
                     style={{ left: submenuPosition.x, top: submenuPosition.y }}
                     onMouseEnter={openCompareSubmenu}
                     onMouseLeave={closeCompareSubmenu}
@@ -1950,7 +1950,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <>
           <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setScopeMenuOpen(false); }}></div>
           <div
-            className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
+            className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
             style={{ top: scopeMenuPos.top, left: scopeMenuPos.left }}
           >
             {[
@@ -1978,7 +1978,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
 
       {showSlideshowSettings && (
         <div className="fixed inset-0 bg-black/50 z-[70] flex items-center justify-center">
-          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg w-80 shadow-2xl p-4 animate-zoom-in" onClick={e => e.stopPropagation()}>
+          <div className="bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 rounded-lg w-80 shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] p-4 animate-zoom-in" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4 border-b border-gray-200 dark:border-gray-800 pb-2">
               <h3 className="font-bold text-gray-800 dark:text-gray-200 flex items-center"><Sliders size={16} className="mr-2" /> {t('context.slideshowSettings')}</h3>
               <button onClick={() => setShowSlideshowSettings(false)} className="text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white"><X size={18} /></button>

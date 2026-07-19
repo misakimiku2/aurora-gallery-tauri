@@ -198,9 +198,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
     <div
       data-testid="context-menu"
       className={`fixed bg-white ${['file-single', 'file-multi', 'folder-single', 'folder-multi', 'person'].includes(contextMenu.type || '')
-        ? 'dark:bg-gray-800'
-        : 'dark:bg-gray-800'
-        } border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[1000] max-h-[80vh] overflow-y-auto`}
+        ? 'dark:bg-[#3a3a3a]'
+        : 'dark:bg-[#3a3a3a]'
+        } border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[1000] max-h-[80vh] overflow-y-auto`}
       style={{
         left: 0,
         top: 0,
@@ -365,7 +365,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               </div>
               {compareSubmenuOpen && (
                 <div
-                  className="fixed bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-xl text-sm py-1 min-w-[200px] z-[1001]"
+                  className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 min-w-[200px] z-[1001]"
                   onMouseEnter={openCompareSubmenu}
                   onMouseLeave={closeCompareSubmenu}
                   ref={(el) => {

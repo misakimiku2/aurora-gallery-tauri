@@ -1063,7 +1063,7 @@ class MainActivity : TauriActivity() {
         }
         decorView.systemUiVisibility = systemUiVisibility
       }
-      window.statusBarColor = if (isDark) Color.parseColor("#171717") else Color.parseColor("#E5E5E5")
+      window.statusBarColor = if (isDark) Color.parseColor("#262626") else Color.parseColor("#FFFFFF")
     }
   }
 

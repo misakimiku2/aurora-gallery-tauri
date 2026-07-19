@@ -881,7 +881,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const isDark = isDarkMode;
-    const bgColor = isDark ? '#0a0a0a' : '#f9fafb';
+    const bgColor = isDark ? '#262626' : '#ffffff';
     const dotColor = isDark ? 'rgba(156, 163, 175, 0.25)' : 'rgba(107, 114, 128, 0.2)';
 
     ctx.imageSmoothingEnabled = true;
@@ -2646,7 +2646,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     >
       {/* Loading Overlay */}
       {isLoadingCanvas && (
-        <div className="absolute inset-0 z-[500] flex flex-col items-center justify-center bg-white dark:bg-gray-900">
+        <div className="absolute inset-0 z-[500] flex flex-col items-center justify-center bg-white dark:bg-[#262626]">
           <div className="flex flex-col items-center space-y-4">
             <div className="relative w-12 h-12">
               <div className="absolute inset-0 rounded-full border-4 border-gray-200 dark:border-gray-700" />
@@ -2666,7 +2666,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       {!isReferenceMode && (
       <div
         id="comparer-toolbar"
-        className={`bg-white/90 dark:bg-gray-900/90 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 transition-transform duration-200 ease-out h-14 relative z-10`}
+        className={`bg-white/90 dark:bg-[#262626]/90 backdrop-blur-md flex items-center px-4 justify-between shrink-0 transition-transform duration-200 ease-out h-14 relative z-10`}
       >
         <div className="flex items-center space-x-2">
           {!isReferenceMode && (
@@ -2715,7 +2715,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                 {sessionName}
               </div>
             )}
-            <span className="ml-3 text-sm font-normal text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-800 px-3 py-1 rounded-full">
+            <span className="ml-3 text-sm font-normal text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-[#3a3a3a] px-3 py-1 rounded-full">
               {imageFiles.length} / 24
             </span>
           </div>
@@ -3071,7 +3071,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
       {/* Shortcuts Hint - hidden in reference mode */}
       {!isReferenceMode && (
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-gray-900/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2 px-5 py-2.5 bg-white/90 dark:bg-[#262626]/90 backdrop-blur-md rounded-full border border-gray-200 dark:border-gray-700/50 text-sm text-gray-500 dark:text-gray-400 pointer-events-none shadow-2xl animate-fade-in-up transition-opacity flex items-center space-x-4 z-[50]">
         {isAndroid ? (
           <>
             <div className="flex items-center">
@@ -3097,7 +3097,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
             </div>
             <div className="w-px h-3 bg-gray-300 dark:bg-gray-700" />
             <div className="flex items-center">
-              <div className="flex items-center justify-center min-w-[32px] h-5 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-bold mr-1.5 text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-gray-800 shadow-sm leading-none pt-0.5">ESC</div>
+              <div className="flex items-center justify-center min-w-[32px] h-5 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-bold mr-1.5 text-gray-900 dark:text-gray-100 bg-gray-100 dark:bg-[#3a3a3a] shadow-sm leading-none pt-0.5">ESC</div>
               <span className="text-gray-700 dark:text-gray-200 font-medium whitespace-nowrap">退出</span>
             </div>
           </>

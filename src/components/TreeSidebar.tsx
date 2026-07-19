@@ -163,9 +163,9 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
       <div 
         className={`flex items-center px-2 cursor-pointer transition-colors border border-transparent group relative
           ${isDragOverNode ? 'bg-blue-500/30 dark:bg-blue-900/50 border-2 border-blue-400 dark:border-blue-500 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : ''}
-          ${isSelected && !isDragOverNode ? 'bg-blue-600 text-white rounded-lg' : !isDragOverNode ? 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg' : ''}
+          ${isSelected && !isDragOverNode ? 'bg-blue-600 text-white rounded-lg' : !isDragOverNode ? 'hover:bg-surface rounded-lg' : ''}
         `}
-        style={{ paddingLeft: `${depth * 12 + 8}px`, ...(isAndroid ? { height: '35px' } : {}), margin: '0 10px' }}
+        style={{ paddingLeft: `${depth * 12 + 8}px`, ...(isAndroid ? { height: '35px' } : {}), margin: '0 12px' }}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onDragOver={handleDragOver}
@@ -390,10 +390,10 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   };
 
   return (
-      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
         <div 
-          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
-          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#a855f7' } : {}) }}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#a855f7' } : {}) }}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest('.expand-icon')) {
                 e.stopPropagation();
@@ -429,7 +429,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
             </div>
           )}
           <button 
-           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
+           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-surface'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onCreatePerson(); }}
            title={t('context.newPerson')}
           >
@@ -440,7 +440,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           {expanded && (
            <div 
              ref={containerRef}
-             className={`pl-6 pr-2 pb-2 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0 bg-white dark:bg-gray-900`}
+             className={`pl-5 pr-3 pb-3 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0 bg-panel`}
              style={{ 
                maxHeight: `${availableHeight}px`,
              }}
@@ -669,14 +669,14 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                      <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
                      <span className="pointer-events-none truncate">{tag}</span>
                    </div>
-                   <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+                   <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-surface px-1.5 rounded-full pointer-events-none ml-2">
                      {data.tagCounts[tag] || 0}
                    </span>
                 </div>
                 
                 {data.hoveredTag === tag && data.previewImages.length > 0 && data.hoveredTagPos && data.createPortal(
                   <div 
-                    className="fixed z-[100] bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none" 
+                    className="fixed z-[100] bg-white dark:bg-[#262626] border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl p-3 w-64 animate-fade-in pointer-events-none"
                     style={{ top: data.hoveredTagPos.top, left: data.hoveredTagPos.left }}
                   >
                     <div className="text-sm text-gray-800 dark:text-gray-200 mb-2 border-b border-gray-200 dark:border-gray-700 pb-1 font-bold flex items-center justify-between">
@@ -687,7 +687,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                        {data.previewImages.map((img: any) => (
                         <div key={img.id} className="aspect-square bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-gray-800 overflow-hidden relative">
                            <TagPreviewThumbnail file={img} resourceRoot={data.roots?.[0]} />
-                           <div className="absolute inset-0 flex items-center justify-center bg-gray-200 dark:bg-gray-700 -z-10">
+                           <div className="absolute inset-0 flex items-center justify-center bg-surface -z-10">
                              <ImageIcon className="text-gray-400 dark:text-gray-500" size={20} />
                            </div>
                         </div>
@@ -734,7 +734,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                  <TagIcon size={12} className="mr-2 opacity-70 flex-none" />
                  <span className="pointer-events-none truncate">{tag}</span>
                </div>
-               <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-gray-200 dark:bg-gray-800 px-1.5 rounded-full pointer-events-none ml-2">
+               <span className="text-[10px] text-gray-500 dark:text-gray-600 bg-surface px-1.5 rounded-full pointer-events-none ml-2">
                  {tagCounts[tag] || 0}
                </span>
             </div>
@@ -769,10 +769,10 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, (isAndroid || isHovered || isCreatingTag ? scrollTop : null), sortedTags.length]);
 
   return (
-    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
        <div 
-        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
-        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#5391f6' } : {}) }}
+        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
+        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#5391f6' } : {}) }}
       >
          <div className={`p-1 ${chevronMr} hover:bg-black/10 dark:hover:bg-white/10 rounded`} onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}>
            {expanded ? <ChevronDown size={iconSize} /> : <ChevronRight size={iconSize} />}
@@ -782,7 +782,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
           <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.allTags')} ({sortedTags.length})</span>
         </div>
         <button 
-           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
+           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-surface'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onStartCreateTag(); }}
            title={t('context.newTag')}
         >
@@ -792,7 +792,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
 
       {expanded && (
         <div 
-          className={`pl-6 pr-2 pb-2 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'}`}
+          className={`pl-5 pr-3 pb-3 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} bg-panel`}
           style={{ 
             maxHeight: `${availableHeight}px`,
             contentVisibility: 'auto'
@@ -811,7 +811,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                     ref={inputRef}
                     value={tagInputValue}
                     onChange={(e) => setTagInputValue(e.target.value)}
-                    className="w-full bg-white dark:bg-gray-800 border border-blue-500 rounded px-2 py-1 text-sm text-gray-900 dark:text-gray-200 focus:outline-none shadow-sm placeholder-gray-400"
+                    className="w-full bg-white dark:bg-[#3a3a3a] border border-blue-500 rounded px-2 py-1 text-sm text-gray-900 dark:text-gray-200 focus:outline-none shadow-sm placeholder-gray-400"
                     placeholder={t('context.enterTagName')}
                     onKeyDown={(e) => {
                        if (e.key === 'Enter') {
@@ -830,7 +830,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
                  />
                  
                  {suggestions.length > 0 && (
-                     <ul className="absolute left-2 right-2 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-md shadow-lg z-50 overflow-hidden">
+                     <ul className="absolute left-2 right-2 top-full mt-1 bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-800 rounded-md shadow-lg z-50 overflow-hidden">
                          {suggestions.map(tag => (
                              <li 
                                 key={tag}
@@ -870,10 +870,10 @@ const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics
   const textClass = isAndroid ? 'text-sm' : 'text-xs';
   const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
-      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
         <div
-          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
-          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#ee5ea5' } : {}) }}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#ee5ea5' } : {}) }}
           onClick={onNavigateTopics}
         >
           <div className={`p-1 rounded w-[${isAndroid ? 26 : 22}px] h-[${isAndroid ? 26 : 22}px] flex items-center justify-center opacity-0`}>
@@ -884,7 +884,7 @@ const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics
             <span className={`font-bold ${textClass} uppercase tracking-wider transition-colors ${isSelected ? 'text-white' : 'text-gray-500 dark:text-gray-400 group-hover:text-black dark:group-hover:text-white'}`}>{t('sidebar.topics')}</span>
           </div>
           <button
-           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-gray-300 dark:hover:bg-gray-700'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
+           className={`p-1 rounded transition-colors opacity-0 group-hover:opacity-100 ${isSelected ? 'hover:bg-white/10 dark:hover:bg-white/10' : 'hover:bg-surface'} text-gray-400 hover:text-gray-600 dark:hover:text-gray-200`}
            onClick={(e) => { e.stopPropagation(); onCreateTopic(); }}
            title={t('context.newTopic')}
           >
@@ -907,10 +907,10 @@ const CanvasSection: React.FC<CanvasSectionProps> = React.memo(({ onOpenCanvas, 
   const textClass = isAndroid ? 'text-sm' : 'text-xs';
   const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
-      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative">
+      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
         <div 
-          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1 ${isSelected ? 'text-white rounded-lg' : 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg'}`}
-          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px', ...(isSelected ? { backgroundColor: '#10b981' } : {}) }}
+          className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
+          style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#10b981' } : {}) }}
           onClick={onOpenCanvas}
         >
           <div className={`p-1 rounded w-[${isAndroid ? 26 : 22}px] h-[${isAndroid ? 26 : 22}px] flex items-center justify-center opacity-0`}>
@@ -1109,12 +1109,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   ]);
 
   return (
-    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
       <div 
-        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative mt-1
+        className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative
           ${isDragOver ? 'bg-blue-500/30 border-2 border-blue-400 ring-2 ring-blue-300/50' : ''}
-          ${isSelected && !isDragOver ? 'bg-blue-600 text-white rounded-lg' : !isDragOver ? 'hover:bg-gray-200 dark:hover:bg-gray-800 rounded-lg' : ''}`}
-        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 10px' }}
+          ${isSelected && !isDragOver ? 'bg-blue-600 text-white rounded-lg' : !isDragOver ? 'hover:bg-surface rounded-lg' : ''}`}
+        style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px' }}
         onClick={handleHeaderClick}
         onContextMenu={(e) => !isAndroid && isSingleRoot && onContextMenu(e, 'root-folder', rootId)}
         onDragOver={handleDragOver}
@@ -1482,11 +1482,6 @@ export const Sidebar: React.FC<{
       onMouseEnter={handleMouseEnterSidebar}
       onMouseLeave={handleMouseLeaveSidebar}
     >
-      {!isAndroidPlatformCached() && (
-        <div className="p-3 font-bold text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wider border-b border-gray-200 dark:border-gray-800">
-          {t('sidebar.catalog')}
-        </div>
-      )}
       <div ref={sidebarHeightRef} className="flex-1 flex flex-col overflow-hidden pb-4 pt-2.5">
           <TopicSection 
             onNavigateTopics={handleNavigateTopics}
@@ -1606,9 +1601,9 @@ export const Sidebar: React.FC<{
           const actionIconSize = isAndroid ? 16 : 10;
           const restoreBtnClass = isAndroid
             ? `${actionBtnPad} hover:bg-black/10 dark:hover:bg-white/10 rounded text-gray-500`
-            : `${actionBtnPad} hover:bg-gray-200 dark:hover:bg-gray-600 rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity`;
+            : `${actionBtnPad} hover:bg-surface rounded text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity`;
           return (
-          <div className="border-t border-gray-200 dark:border-gray-800 p-2 bg-gray-50 dark:bg-gray-900/50">
+          <div className="p-2 bg-panel">
              <div className={taskLabelClass}>{t('sidebar.tasks')}</div>
              <div className="space-y-1">
                  {minimizedTasks.map(task => {
@@ -1619,8 +1614,8 @@ export const Sidebar: React.FC<{
                     return (
                         <div key={task.id}
                           className={isAndroid
-                            ? 'relative overflow-hidden border border-gray-200 dark:border-gray-800 rounded shadow-sm transition-colors animate-fade-in h-[53px] flex items-center cursor-pointer'
-                            : 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded p-2 text-xs shadow-sm group hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors animate-fade-in cursor-pointer'
+                            ? 'relative overflow-hidden border border-subtle rounded shadow-sm transition-colors animate-fade-in h-[53px] flex items-center cursor-pointer'
+                            : 'bg-surface border border-subtle rounded p-2 text-xs shadow-sm group hover:bg-surface transition-colors animate-fade-in cursor-pointer'
                           }
                           onClick={() => onRestoreTask(task.id)}
                         >
@@ -1647,7 +1642,7 @@ export const Sidebar: React.FC<{
                                    {task.type === 'color' && (
                                      <button 
                                        onClick={(e) => { e.stopPropagation(); handlePauseResume(task.id, task.type); }}
-                                       className={`${isAndroid ? 'p-1.5 hover:bg-black/10 dark:hover:bg-white/10' : 'p-1 hover:bg-gray-200 dark:hover:bg-gray-600'} rounded text-gray-500`}
+                                       className={`${isAndroid ? 'p-1.5 hover:bg-black/10 dark:hover:bg-white/10' : 'p-1 hover:bg-surface'} rounded text-gray-500`}
                                        title={task.status === 'paused' ? t('tasks.resume') : t('tasks.pause')}
                                      >
                                        {task.status === 'paused' ? <Loader2 size={actionIconSize} className="animate-spin" /> : <Pause size={actionIconSize} />}
@@ -1663,7 +1658,7 @@ export const Sidebar: React.FC<{
                                </div>
                            </div>
                            {!isAndroid && (
-                           <div className="w-full bg-gray-200 dark:bg-gray-700 h-1 rounded-full overflow-hidden">
+                           <div className="w-full bg-surface h-1 rounded-full overflow-hidden">
                                <div className={`h-full rounded-full transition-all duration-300 ${progressColor}`} style={{ width: `${percent}%` }}></div>
                            </div>
                            )}
@@ -1676,7 +1671,7 @@ export const Sidebar: React.FC<{
       })()}
 
       {modelDownloads.length > 0 && (
-        <div className="p-2 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+        <div className="p-2 bg-panel">
           {modelDownloads.map((download) => (
             <div key={download.modelName} className="mb-2 last:mb-0">
               <div className="flex items-center justify-between text-xs mb-1">
@@ -1696,7 +1691,7 @@ export const Sidebar: React.FC<{
               </div>
               {download.status === 'downloading' && (
                 <>
-                  <div className="w-full bg-gray-200 dark:bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                  <div className="w-full bg-surface h-1.5 rounded-full overflow-hidden">
                     <div 
                       className="h-full bg-green-500 rounded-full transition-all duration-300" 
                       style={{ width: `${download.progress}%` }}
@@ -1718,10 +1713,10 @@ export const Sidebar: React.FC<{
         </div>
       )}
 
-      <div className="p-2 border-t border-gray-200 dark:border-gray-800">
-         <button 
+      <div className="p-2">
+         <button
            onClick={onOpenSettings}
-           className="w-full flex items-center px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+           className="w-full flex items-center px-4 py-2 text-gray-600 dark:text-gray-300 hover:bg-surface rounded transition-colors"
          >
            <div className="flex items-center justify-between w-full">
              <div className="flex items-center">
@@ -1737,10 +1732,6 @@ export const Sidebar: React.FC<{
              </div>
            </div>
          </button>
-      </div>
-
-      <div className="p-2 bg-gray-100 dark:bg-gray-850 border-t border-gray-200 dark:border-gray-800 text-xs text-gray-500 text-center">
-        <div>{t('sidebar.localSupport')}</div>
       </div>
     </div>
   );

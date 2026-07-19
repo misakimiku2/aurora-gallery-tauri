@@ -27,7 +27,7 @@ import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { lanNavStart, lanNavStep } from './utils/lanNavTrace';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection } from './types';
+import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
 import md5 from 'md5';
@@ -437,6 +437,12 @@ export const App: React.FC = () => {
   const activeTab = useMemo(() => {
     return state.tabs.find(t => t.id === state.activeTabId) || DUMMY_TAB;
   }, [state.tabs, state.activeTabId]);
+
+  const activeTabIndex = useMemo(() => {
+    return state.tabs.findIndex(t => t.id === state.activeTabId);
+  }, [state.tabs, state.activeTabId]);
+
+  const isLeftmostTab = activeTabIndex <= 0;
 
   // Use a ref for activeTab to provide stable callbacks
   const activeTabRef = useRef(activeTab);
@@ -2604,7 +2610,7 @@ export const App: React.FC = () => {
         // 无论成功失败都更新 React state（即使 palette 为空也会触发 sync effect 清除 loading）
         if (hexColors.length > 0) {
           handleUpdateFile(fileId, {
-            meta: { ...(file.meta || {}), palette: hexColors },
+            meta: { ...(file.meta || {}), palette: hexColors } as ImageMeta,
           });
         } else {
           // 提取失败/无结果：通知 native 清除 loading 并标记失败，
@@ -2719,7 +2725,7 @@ export const App: React.FC = () => {
       }
       if (hexColors.length > 0) {
         handleUpdateFile(viewingId, {
-          meta: { ...(file.meta || {}), palette: hexColors },
+          meta: { ...(file.meta || {}), palette: hexColors } as ImageMeta,
         });
       } else {
         // 提取失败/返回空：通知 native 显示"提取主色调"按钮供用户手动重试
@@ -2886,7 +2892,7 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="w-full h-full flex flex-col bg-white dark:bg-gray-900 text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300"
+      className="w-full h-full flex flex-col bg-main text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300"
       onClick={closeContextMenu}
       onDragEnter={handleExternalDragEnter}
       onDragOver={handleExternalDragOver}
@@ -2929,9 +2935,10 @@ export const App: React.FC = () => {
 
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      {isAndroidPlatformCached() ? (
-        <div className="shrink-0 bg-gray-200 dark:bg-gray-900" style={{ height: 'calc(env(safe-area-inset-top, 0px) + 10px)' }} />
-      ) : (
+      {isAndroidPlatformCached() && (
+        <div className="shrink-0 bg-main" style={{ height: 'calc(env(safe-area-inset-top, 0px) + 10px)' }} />
+      )}
+      {!isAndroidPlatformCached() && (
         <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
           // Check user's exit action preference from ref (always latest value)
           const exitAction = exitActionRef.current;
@@ -2948,19 +2955,20 @@ export const App: React.FC = () => {
           }
         }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
       )}
-      <div className="flex-1 flex overflow-hidden relative"
-        style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
-        <div
-          className="shrink-0 z-40 overflow-hidden bg-gray-50 dark:bg-gray-850"
-          style={{ width: state.layout.isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
+      <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
+        <div className="flex-1 flex overflow-hidden relative"
+          style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
           <div
-            className="h-full flex flex-col border-r border-gray-200 dark:border-gray-800"
-            style={{ width: '16rem', transform: state.layout.isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
+            className="shrink-0 z-40 overflow-hidden bg-panel"
+            style={{ width: state.layout.isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
+            <div
+              className="h-full flex flex-col"
+              style={{ width: '16rem', transform: state.layout.isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
             <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} lanRoots={lanRoots} lanConnected={lanConnected} lanLoading={lanLoading} onNavigateNetworkFolder={handleNavigateNetworkFolder} onNavigateNetworkHome={handleNavigateNetworkHome} onOpenLanSettings={handleOpenLanSettings} />
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col min-w-0 relative bg-white dark:bg-gray-900">
+        <div className="flex-1 flex flex-col min-w-0 relative bg-content">
           {activeTab.viewingFileId && !isAndroidSync() && (
             <ImageViewer
               file={state.files[activeTab.viewingFileId]}
@@ -3204,7 +3212,7 @@ export const App: React.FC = () => {
             )}
             {/* ... (Filter UI, same as before) ... */}
             {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
-              <div className="flex items-center px-4 py-2 bg-gray-50 dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 space-x-2 overflow-x-auto shrink-0 z-20">
+              <div className="flex items-center px-4 py-2 bg-content space-x-2 overflow-x-auto shrink-0 z-20">
                 <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
                   <Filter size={12} className="mr-1" />
                   {t('context.filters')}
@@ -3223,7 +3231,7 @@ export const App: React.FC = () => {
 
                 {activeTab.aiFilter && (
                   activeTab.aiFilter.originalQuery.startsWith('color:') ? (
-                    <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
+                    <div className="flex items-center bg-surface text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-subtle whitespace-nowrap shadow-sm">
                       <div
                         className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
                         style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '').startsWith('#') ? activeTab.aiFilter.originalQuery.replace('color:', '') : '#' + activeTab.aiFilter.originalQuery.replace('color:', '') }}
@@ -3232,7 +3240,7 @@ export const App: React.FC = () => {
                       <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12} /></button>
                     </div>
                   ) : activeTab.aiFilter.originalQuery.startsWith('palette:') ? (
-                    <div className="flex items-center bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-gray-200 dark:border-gray-700 whitespace-nowrap shadow-sm">
+                    <div className="flex items-center bg-surface text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-subtle whitespace-nowrap shadow-sm">
                       <div className="flex -space-x-1 mr-1.5">
                         {activeTab.aiFilter.originalQuery.replace('palette:', '').split(',').map((c, i) => (
                           <div
@@ -3292,11 +3300,11 @@ export const App: React.FC = () => {
                 <div className="flex-1" />
                 {totalResults > 0 && (
                   totalResults > pageSize ? (
-                    <div className="flex items-center gap-1 ml-4 pr-1 px-1 bg-white/50 dark:bg-black/20 rounded shadow-sm border border-gray-200 dark:border-gray-800">
+                    <div className="flex items-center gap-1 ml-4 pr-1 px-1 bg-surface rounded shadow-sm border border-subtle">
                       <button
                         disabled={(activeTab.currentPage || 1) <= 1}
                         onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) - 1, scrollTop: 0 })}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"
+                        className="p-1 hover:bg-surface/70 disabled:opacity-20 rounded transition-colors"
                         title={t('search.prevPage')}
                       >
                         <ChevronLeft size={14} />
@@ -3310,7 +3318,7 @@ export const App: React.FC = () => {
                       <button
                         disabled={(activeTab.currentPage || 1) >= Math.ceil(totalResults / pageSize)}
                         onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) + 1, scrollTop: 0 })}
-                        className="p-1 hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-20 rounded transition-colors"
+                        className="p-1 hover:bg-surface/70 disabled:opacity-20 rounded transition-colors"
                         title={t('search.nextPage')}
                       >
                         <ChevronRight size={14} />
@@ -3318,7 +3326,7 @@ export const App: React.FC = () => {
                     </div>
                   ) : (
                     (activeTab.searchQuery || activeTab.aiFilter || activeTab.activeTags.length > 0 || activeTab.activePersonId) && (
-                      <div className="flex items-center text-[11px] font-medium px-2 py-0.5 bg-white/50 dark:bg-black/20 rounded border border-gray-200 dark:border-gray-800 text-gray-500">
+                      <div className="flex items-center text-[11px] font-medium px-2 py-0.5 bg-surface rounded border border-subtle text-gray-500">
                         {totalResults} {t('context.items')}
                       </div>
                     )
@@ -3327,9 +3335,9 @@ export const App: React.FC = () => {
               </div>
             )}
 
-            <div className="flex-1 flex flex-col relative bg-white dark:bg-gray-900 overflow-hidden">
+            <div className="flex-1 flex flex-col relative bg-content overflow-hidden">
               {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && state.settings.paths.resourceRoot !== 'android_media_store' && (
-                <div className="h-14 flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-gray-800 bg-white dark:bg-gray-900/50 backdrop-blur shrink-0 relative z-20">
+                <div className="h-[30px] flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 bg-content backdrop-blur shrink-0 relative z-20">
                   {activeTab.viewMode === 'tags-overview' ? (
                     <div className="flex items-center w-full">
                       <div className="flex items-center">
@@ -3569,10 +3577,10 @@ export const App: React.FC = () => {
           </div>
         </div>
         <div
-          className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-gray-50 dark:bg-gray-850"
+          className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-panel"
           style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
           <div
-            className="h-full flex flex-col border-l border-gray-200 dark:border-gray-800"
+            className="h-full flex flex-col"
             style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
             <MetadataPanel
               files={state.files}
@@ -3602,10 +3610,10 @@ export const App: React.FC = () => {
         </div>
         {isAndroidPlatformCached() && (
           <div
-            className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-white dark:bg-gray-800"
+            className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-panel"
             style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
             <div
-              className="h-full flex flex-col border-l border-gray-200 dark:border-gray-800"
+              className="h-full flex flex-col"
               style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
               <MobileColorPickerSheet
                 onSearch={(color) => handlePerformSearch(`color:${color}`)}
@@ -3615,6 +3623,7 @@ export const App: React.FC = () => {
             </div>
           </div>
         )}
+        </div>
         <TaskProgressModal
           tasks={tasks}
           onMinimize={(id: string) => updateTask(id, { minimized: true })}

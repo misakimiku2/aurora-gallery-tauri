@@ -56,11 +56,11 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
   };
 
   return (
-    <div className="h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-3 justify-between shrink-0 z-30 android-topbar">
+    <div className="h-14 bg-white dark:bg-[#262626] flex items-center px-3 justify-between shrink-0 z-30 android-topbar">
       <div className="flex items-center space-x-2 min-w-fit">
         <button
           onClick={onClearSelection}
-          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-[#3a3a3a] text-gray-600 dark:text-gray-300"
         >
           <X size={20} />
         </button>
@@ -72,7 +72,7 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
       <div className="flex items-center space-x-1">
         <button
           onClick={selectedCount === totalCount ? onDeselectAll : onSelectAll}
-          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-[#3a3a3a] text-gray-600 dark:text-gray-300"
           title={selectedCount === totalCount ? t('context.deselectAll') : t('context.selectAll')}
         >
           {selectedCount === totalCount ? <XCircle size={20} /> : <CheckCheck size={20} />}
@@ -80,7 +80,7 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
 
         <button
           onClick={() => onDelete(selectedFileIds)}
-          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-red-500 dark:text-red-400"
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-[#3a3a3a] text-red-500 dark:text-red-400"
           title={t('context.delete')}
         >
           <Trash2 size={20} />
@@ -88,7 +88,7 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
 
         <button
           onClick={handleShare}
-          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-[#3a3a3a] text-gray-600 dark:text-gray-300"
           title={t('viewer.share') || 'Share'}
         >
           <Share2 size={20} />
@@ -99,7 +99,7 @@ export const AndroidSelectionBar: React.FC<AndroidSelectionBarProps> = ({
           onClick={handleMoreClick}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
-          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
+          className="w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-[#3a3a3a] text-gray-600 dark:text-gray-300"
         >
           <MoreVertical size={20} />
         </button>

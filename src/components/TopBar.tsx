@@ -79,11 +79,11 @@ const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { cur
   if (totalPages <= 1) return null;
 
   return (
-    <div className="flex items-center gap-1 ml-2 px-2 py-1 bg-gray-100 dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700">
+    <div className="flex items-center gap-1 ml-2 px-2 py-1 bg-surface rounded-md border border-subtle">
       <button 
         disabled={current <= 1}
         onClick={() => onPageChange(current - 1)}
-        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+        className="p-1 hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed rounded"
         title={t('search.prevPage') || 'Previous Page'}
       >
         <ChevronLeft size={16} />
@@ -99,7 +99,7 @@ const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { cur
       <button 
         disabled={current >= totalPages}
         onClick={() => onPageChange(current + 1)}
-        className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed rounded"
+        className="p-1 hover:bg-surface disabled:opacity-30 disabled:cursor-not-allowed rounded"
         title={t('search.nextPage') || 'Next Page'}
       >
         <ChevronRight size={16} />
@@ -155,8 +155,8 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const totalTags = Object.values(filteredGroupedTags || {}).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
-    <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+    <div className="flex flex-col select-none bg-surface text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#3a3a3a]/50">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-sm tracking-wide">{t('sidebar.allTags')}</span>
           <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded-full">
@@ -180,7 +180,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
               // 延迟关闭，以便点击建议项时能触发点击事件
               setTimeout(() => setIsFocused(false), 200);
             }}
-            className="w-full pl-8 pr-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full pl-8 pr-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-800 bg-surface text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
           {localSearchQuery && (
             <button
@@ -196,7 +196,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           
           {/* 智能联想下拉列表 */}
           {suggestedTags.length > 0 && (
-            <div className="absolute top-full left-0 right-0 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 mt-1 rounded-lg shadow-xl z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+            <div className="absolute top-full left-0 right-0 bg-surface border border-gray-200 dark:border-gray-800 mt-1 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
               {suggestedTags.map(tag => (
                 <div 
                   key={tag} 
@@ -239,7 +239,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
         </div>
         {/* 字母索引�?*/}
         {keys.length > 0 && (
-          <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-gray-900/50 border-l border-gray-100 dark:border-gray-800 overflow-y-auto no-scrollbar">
+          <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-[#3a3a3a]/50 border-l border-gray-100 dark:border-gray-800 overflow-y-auto no-scrollbar">
             {keys.map(key => (
               <button
                 key={key}
@@ -362,9 +362,9 @@ const CalendarWidget = ({
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
-      <div className="flex flex-col select-none bg-white dark:bg-gray-800 text-gray-900 dark:text-white rounded-lg shadow-2xl overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50">
+      <div className="flex flex-col select-none bg-surface text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50">
           {/* Controls Header */}
-          <div className="flex items-center justify-between px-4 py-4 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-800">
+          <div className="flex items-center justify-between px-4 py-4 bg-gray-50 dark:bg-[#3a3a3a]/50 border-b border-gray-200 dark:border-gray-800">
               <div className="font-bold text-base tracking-wide pl-1 text-gray-800 dark:text-gray-100">
                   {year}年{month + 1}月
               </div>
@@ -467,7 +467,7 @@ const CalendarWidget = ({
           </div>
 
           {/* Mode Switcher */}
-          <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50">
+          <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#3a3a3a]/50">
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-bold">{t('date.filterBy')}</div>
               <div className="flex gap-2">
                   <button
@@ -475,7 +475,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'created' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-surface border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
                       }`}
                   >
                       {t('date.createdDate')}
@@ -485,7 +485,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'updated' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-surface border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
                       }`}
                   >
                       {t('date.updatedDate')}
@@ -587,6 +587,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   const isAndroid = isAndroidSync();
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCompactMode, setIsCompactMode] = useState(false);
+  const [isSearchFocused, setIsSearchFocused] = useState(false);
 
   const getFolderDisplayName = () => {
     if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
@@ -765,24 +766,24 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <div className={`h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 flex items-center px-4 justify-between shrink-0 z-30 space-x-4 ${isAndroid ? 'android-topbar' : ''}`}>
+    <div className={`h-14 bg-content flex items-center px-4 justify-between shrink-0 z-30 space-x-4 ${isAndroid ? 'android-topbar' : ''}`}>
       {/* Left: Navigation */}
       <div className="flex items-center space-x-2 min-w-fit">
-        <button onClick={onToggleSidebar} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center' : 'p-2'} rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
+        <button onClick={onToggleSidebar} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center rounded-xl' : 'w-9 h-9 flex items-center justify-center rounded-lg'} hover:bg-surface ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
           <Sidebar size={18} />
         </button>
-        <button onClick={onGoBack} disabled={activeTab.history.currentIndex <= 0} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center' : 'p-2'} rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300 ${isCompactMode ? 'hidden' : ''}`}>
+        <button onClick={onGoBack} disabled={activeTab.history.currentIndex <= 0} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center rounded-xl' : 'w-9 h-9 flex items-center justify-center rounded-lg'} hover:bg-surface disabled:opacity-30 text-gray-600 dark:text-gray-300 ${isCompactMode ? 'hidden' : ''}`}>
           <ChevronLeft size={18} />
         </button>
         {!isAndroid && (
           <>
-            <button onClick={onGoForward} disabled={activeTab.history.currentIndex >= activeTab.history.stack.length - 1} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-30 text-gray-600 dark:text-gray-300">
+            <button onClick={onGoForward} disabled={activeTab.history.currentIndex >= activeTab.history.stack.length - 1} className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface disabled:opacity-30 text-gray-600 dark:text-gray-300">
               <ChevronRight size={18} />
             </button>
-            <button onClick={onNavigateUp} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('viewer.up')}>
+            <button onClick={onNavigateUp} className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-gray-600 dark:text-gray-300" title={t('viewer.up')}>
               <ArrowUp size={18} />
             </button>
-            <button onClick={() => onRefresh()} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300" title={t('context.refresh')}>
+            <button onClick={() => onRefresh()} className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-gray-600 dark:text-gray-300" title={t('context.refresh')}>
               <RefreshCw size={16} />
             </button>
           </>
@@ -799,14 +800,14 @@ export const TopBar: React.FC<TopBarProps> = ({
                 searchToggleRef.current = true;
                 setIsSearchOpen(true);
               }
-            }} className={`w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
+            }} className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
               <Search size={18} />
             </button>
             {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && !isCompactMode && (
               <div className="relative">
                 <button
                   onClick={() => setSortMenuOpen(!sortMenuOpen)}
-                  className={`w-10 h-10 flex items-center justify-center rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${sortMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+                  className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${sortMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
                   title={t('sort.sortBy')}
                 >
                   <ArrowDownUp size={18} />
@@ -814,7 +815,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 {sortMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
-                    <div className="absolute top-full left-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                    <div className="absolute top-full left-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
                       {[
                         { id: 'name', label: t('sort.name') },
@@ -885,23 +886,25 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
       ) : (
       <div className={`flex-1 ${isAndroid ? 'max-w-none' : 'max-w-2xl'} relative flex items-center`}>
-        <div className={`flex-1 flex items-center bg-gray-100 dark:bg-gray-800 rounded-full px-3 py-1.5 transition-all border ${
+        <div className={`flex-1 flex items-center rounded-full px-3 py-1.5 transition-all border ${
           isColorSearchQuery
-            ? 'border-blue-500 shadow-sm'
+            ? 'bg-surface border-blue-500 shadow-sm'
             : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
-              ? 'border-green-500 shadow-sm shadow-green-500/20'
-              : isAISearchEnabled 
-                ? 'border-purple-500 shadow-sm shadow-purple-500/20' 
-                : activeTab.searchQuery 
-                  ? 'border-blue-500 shadow-sm' 
-                  : 'border-transparent'
+              ? 'bg-surface border-green-500 shadow-sm shadow-green-500/20'
+              : isAISearchEnabled
+                ? 'bg-surface border-purple-500 shadow-sm shadow-purple-500/20'
+                : activeTab.searchQuery
+                  ? 'bg-surface border-blue-500 shadow-sm'
+                  : isSearchFocused
+                    ? 'bg-surface border-subtle'
+                    : 'bg-surface border-transparent hover:border-subtle'
         }`}>
           
           {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
             <div className="relative flex-shrink-0">
               <button 
                 onClick={() => setScopeMenuOpen(!scopeMenuOpen)}
-                className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-gray-300 dark:border-gray-800 whitespace-nowrap"
+                className="flex items-center text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 mr-2 pr-2 border-r border-subtle whitespace-nowrap"
               >
                 {getScopeIcon(activeTab.searchScope)}
                 <ChevronDown size={12} className="ml-1 opacity-70"/>
@@ -909,7 +912,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               {scopeMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
-                  <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
+                  <div className="absolute top-full left-0 mt-2 w-40 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-1 overflow-hidden animate-fade-in">
                     {[
                       { id: 'all', icon: Globe, label: t('search.scopeAll') },
                       { id: 'file', icon: FileText, label: t('search.scopeFile') },
@@ -938,7 +941,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              ) : (
                 <button
                   onClick={() => onToggleColorPicker?.()}
-                  className={`mr-1 flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ${isColorPickerVisible ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : isAISearchEnabled ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'}`}
+                  className={`mr-1 flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-full hover:bg-surface transition-colors ${isColorPickerVisible ? 'bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400' : isAISearchEnabled ? 'text-purple-500' : 'text-gray-500 dark:text-gray-400'}`}
                   title={t('search.byColor')}
                 >
                   <Palette size={18} />
@@ -1030,7 +1033,9 @@ export const TopBar: React.FC<TopBarProps> = ({
               }
             }}
             onKeyDown={handleKeyDown}
+            onFocus={() => setIsSearchFocused(true)}
             onBlur={() => {
+              setIsSearchFocused(false);
               if (isAndroid && !toolbarQuery && !searchToggleRef.current) {
                 setIsSearchOpen(false);
                 setIsCompactMode(false);
@@ -1047,7 +1052,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     setIsSearchOpen(false);
                     setIsCompactMode(false);
                   }}
-                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0"
+                  className="p-1 rounded-full hover:bg-surface text-gray-400 flex-shrink-0"
                 >
                   <X size={16} />
                 </button>
@@ -1066,7 +1071,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       onPerformSearch('');
                     }
                   }}
-                  className="p-1 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-400 flex-shrink-0"
+                  className="p-1 rounded-full hover:bg-surface text-gray-400 flex-shrink-0"
                 >
                   <X size={14} />
                 </button>
@@ -1124,7 +1129,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="relative">
              <button 
                onClick={() => setPersonSortMenuOpen(!personSortMenuOpen)}
-               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${personSortMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${personSortMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
                title={t('sort.sortBy')}
              >
                <Users size={18} />
@@ -1132,7 +1137,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {personSortMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setPersonSortMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('person.sortBy')}</div>
                     {[
                       { id: 'name', label: t('sort.name') },
@@ -1184,7 +1189,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="relative">
            <button 
              onClick={() => setSortMenuOpen(!sortMenuOpen)}
-             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${sortMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${sortMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
              title={t('sort.sortBy')}
            >
              <ArrowDownUp size={18} />
@@ -1192,7 +1197,7 @@ export const TopBar: React.FC<TopBarProps> = ({
            {sortMenuOpen && (
              <>
                <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+               <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
                   {[
                     { id: 'name', label: t('sort.name') },
@@ -1262,7 +1267,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <>
           {isAndroid ? (
             <button
-              className="p-2 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-gray-600 dark:text-gray-300 hover:bg-surface focus:outline-none"
               title={t('layout.mode')}
               onClick={() => {
                 const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
@@ -1278,7 +1283,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="relative">
              <button 
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
-               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${viewMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${viewMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
                title={t('layout.mode')}
              >
                {activeTab.layoutMode === 'grid' && <Grid size={18} />}
@@ -1289,7 +1294,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {viewMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
                     {[
                       { id: 'grid', icon: Grid, label: t('layout.grid') },
@@ -1351,17 +1356,17 @@ export const TopBar: React.FC<TopBarProps> = ({
         {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && (
           <div className="flex items-center space-x-2 mr-2">
             <button
-              className={`p-2 rounded ${topicLayoutMode === 'grid' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${topicLayoutMode === 'grid' ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-surface'}`}
               title={t('layout.grid')}
               onClick={() => onTopicLayoutModeChange('grid')}
             ><Grid size={16} /></button>
             <button
-              className={`p-2 rounded ${topicLayoutMode === 'adaptive' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${topicLayoutMode === 'adaptive' ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-surface'}`}
               title={t('layout.adaptive')}
               onClick={() => onTopicLayoutModeChange('adaptive')}
             ><LayoutGrid size={16} /></button>
             <button
-              className={`p-2 rounded ${topicLayoutMode === 'masonry' ? 'bg-white dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100'}`}
+              className={`w-9 h-9 flex items-center justify-center rounded-lg ${topicLayoutMode === 'masonry' ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-surface'}`}
               title={t('layout.masonry')}
               onClick={() => onTopicLayoutModeChange('masonry')}
             ><LayoutTemplate size={16} /></button>
@@ -1373,7 +1378,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <>
           {isAndroid ? (
             <button
-              className="p-2 rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 focus:outline-none"
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-gray-600 dark:text-gray-300 hover:bg-surface focus:outline-none"
               title={t('layout.mode')}
               onClick={() => {
                 const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
@@ -1389,7 +1394,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           <div className="relative">
              <button
                onClick={() => setViewMenuOpen(!viewMenuOpen)}
-               className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${viewMenuOpen ? 'bg-gray-100 dark:bg-gray-800 text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+               className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${viewMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
                title={t('layout.mode')}
              >
                {folderLayoutMode === 'grid' && <Grid size={18} />}
@@ -1399,7 +1404,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {viewMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
                     {[
                       { id: 'grid', icon: Grid, label: t('layout.grid') },
@@ -1449,7 +1454,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="relative">
            <button 
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
-             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${filterMenuOpen || activeTab.dateFilter.start ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${filterMenuOpen || activeTab.dateFilter.start ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
              title={t('date.calendar')}
            >
              <Calendar size={18} />
@@ -1474,7 +1479,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="relative">
            <button 
              onClick={() => setTagsMenuOpen(!tagsMenuOpen)}
-             className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${tagsMenuOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${tagsMenuOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
              title={t('sidebar.allTags')}
            >
              <Tag size={18} />
@@ -1501,7 +1506,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         {showLanUpload && (
           <button
             onClick={onUploadToLan}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-blue-500 dark:text-blue-400"
+            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-blue-500 dark:text-blue-400"
             title={t('lanClient.uploadButton') || '上传图片到桌面'}
           >
             <Upload size={18} />
@@ -1510,7 +1515,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
         <button
           onClick={onToggleMetadata}
-          className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${state.layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+          className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${state.layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
           title={t('viewer.toggleMeta')}
         >
           <PanelRight size={18} />

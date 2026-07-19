@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import React, { useRef, useEffect, useState } from 'react';
 import { TabState, Topic, Person } from '../types';
 import { X, Plus, Tag, Image as ImageIcon, Filter, Folder, Book, Film, Layout, User, Minus, Square, Minimize2, Scan, Pin, HardDrive } from 'lucide-react';
 import { isTauriEnvironment } from '../utils/environment';
@@ -352,7 +352,7 @@ export const TabBar: React.FC<TabBarProps> = ({
         />
       )}
       <div
-        className="flex items-center bg-gray-200 dark:bg-gray-900 border-b border-gray-300 dark:border-gray-800 h-[41px] select-none w-full"
+        className="flex items-center bg-main h-[41px] select-none w-full"
         style={{ WebkitAppRegion: 'drag' } as any}
       >
         {/* Ultra compact mode: only show close button */}

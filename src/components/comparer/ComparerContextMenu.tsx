@@ -141,7 +141,7 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
         <div
             ref={menuRef}
             data-menu="true"
-            className={`fixed z-[9999] bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden transition-opacity duration-100 ${
+            className={`fixed z-[9999] bg-white dark:bg-[#3a3a3a] rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] border border-gray-200 dark:border-gray-700 overflow-hidden transition-opacity duration-100 ${
                 isVisible ? 'opacity-100' : 'opacity-0'
             } ${
                 isAndroid ? 'w-52 py-1' : (isCompact ? 'w-44 py-0.5' : 'w-56 py-1')

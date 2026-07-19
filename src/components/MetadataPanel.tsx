@@ -178,7 +178,7 @@ const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resou
 
     return (
         <div className="flex flex-col items-center">
-            <div className="w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-black/40 border border-gray-200 dark:border-gray-800 flex justify-center items-center p-2 mb-2 shadow-sm min-h-[200px]">
+            <div className="w-full rounded-lg overflow-hidden bg-surface border border-subtle flex justify-center items-center p-2 mb-2 shadow-sm min-h-[200px]">
                 {isLoading ? (
                     <div className="flex items-center justify-center">
                         <ImageIcon className="animate-pulse text-gray-400" size={32} />
@@ -249,7 +249,7 @@ const PersonAvatar = ({ person, coverFile, size = 80, className = '' }: {
     if (!coverUrl) {
         return (
             <div
-                className={`w-full h-full flex items-center justify-center bg-gray-100 dark:bg-gray-700 text-gray-400 ${className}`}
+                className={`w-full h-full flex items-center justify-center bg-surface text-gray-400 ${className}`}
                 style={{ width: size, height: size }}
             >
                 <User size={size * 0.4} strokeWidth={1.5} />
@@ -393,9 +393,9 @@ const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
 
 
 const CategorySelector = ({ current, onChange, t }: any) => (
-    <div className="space-y-2 pt-4 border-t border-gray-200 dark:border-gray-800">
+    <div className="space-y-2 pt-4 border-t border-subtle">
         <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mb-2">{t('meta.folderCategory')}</div>
-        <div className="flex bg-gray-100 dark:bg-gray-800 p-1.5 rounded-xl gap-2">
+        <div className="flex bg-surface p-1.5 rounded-xl gap-2">
             {['general', 'book', 'sequence'].map((cat) => {
                 const isActive = current === cat;
                 return (
@@ -404,7 +404,7 @@ const CategorySelector = ({ current, onChange, t }: any) => (
                         onClick={() => onChange(cat)}
                         className={`flex-1 flex flex-col items-center justify-center py-3 rounded-lg text-xs font-medium transition-all ${isActive
                             ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-md ring-1 ring-black/5 dark:ring-white/10'
-                            : 'text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-gray-100'
+                            : 'text-gray-500 hover:bg-surface hover:text-gray-900 dark:hover:text-gray-100'
                             }`}
                     >
                         {cat === 'general' && <Folder size={20} className={`mb-1.5 ${isActive ? 'fill-blue-100 dark:fill-blue-900/30' : ''}`} />}
@@ -428,7 +428,7 @@ const DistributionChart = ({ data, totalFiles }: { data: { label: string, value:
                     <div className="w-20 text-gray-500 dark:text-gray-400 font-medium truncate shrink-0" title={item.label}>
                         {item.label}
                     </div>
-                    <div className="flex-1 mx-3 h-2 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
+                    <div className="flex-1 mx-3 h-2 bg-surface rounded-full overflow-hidden">
                         <div
                             className={`h-full rounded-full ${item.color} shadow-sm transition-all duration-700 ease-out`}
                             style={{ width: `${(item.value / max) * 100}%` }}
@@ -1257,8 +1257,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         };
 
         return (
-            <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-                <div className="relative w-full aspect-[3/4] bg-gray-100 dark:bg-gray-800 group shrink-0 overflow-hidden">
+            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+                <div className="relative w-full aspect-[3/4] bg-surface group shrink-0 overflow-hidden">
                     <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
                         <TopicCoverImage topic={topic} coverUrl={coverUrl} className="w-full h-full" />
                     </div>
@@ -1266,7 +1266,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 </div>
 
                 {/* 浮动内容面板 */}
-                <div className="px-6 py-8 space-y-8 flex-1 relative bg-white dark:bg-gray-900 rounded-t-[2rem] -mt-8 shadow-2xl">
+                <div className="px-6 py-8 space-y-8 flex-1 relative bg-panel rounded-t-[2rem] -mt-8 shadow-2xl">
                     {/* 标题与统计药�?*/}
                     <div className="space-y-5">
                         <h2 className="text-3xl font-bold tracking-tight text-gray-900 dark:text-white leading-tight text-center">
@@ -1283,7 +1283,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 <span>{topicFileCount} {t('context.files')}</span>
                             </div>
                             {topic.updatedAt && (
-                                <div className="flex items-center gap-2 px-3.5 py-1.5 bg-gray-50 dark:bg-gray-800 text-gray-500 dark:text-gray-400 rounded-full border border-gray-100 dark:border-gray-800 text-[11px] font-bold uppercase tracking-wider">
+                                <div className="flex items-center gap-2 px-3.5 py-1.5 bg-surface text-gray-500 dark:text-gray-400 rounded-full border border-subtle text-[11px] font-bold uppercase tracking-wider">
                                     <Clock size={14} />
                                     <span>{new Date(topic.updatedAt).toLocaleDateString()}</span>
                                 </div>
@@ -1298,7 +1298,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 {t('meta.description')}
                             </label>
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
+                        <div className="bg-surface/50 rounded-2xl border border-subtle/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                             <textarea
                                 className="w-full bg-transparent border-none p-4 text-sm text-gray-700 dark:text-gray-300 min-h-[140px] focus:ring-0 resize-none leading-relaxed placeholder:text-gray-400/50"
                                 value={topicDesc}
@@ -1326,7 +1326,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 <label className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em]">
                                     {t('context.people')}
                                 </label>
-                                <span className="text-[10px] font-bold bg-gray-100 dark:bg-gray-800 text-gray-500 px-2 py-0.5 rounded-full">
+                                <span className="text-[10px] font-bold bg-surface text-gray-500 px-2 py-0.5 rounded-full">
                                     {topicPeople.length}
                                 </span>
                             </div>
@@ -1341,7 +1341,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             title={p.name}
                                             onClick={() => onSelectPerson && onSelectPerson(p.id)}
                                         >
-                                            <div className="relative w-20 h-20 rounded-full bg-gray-100 dark:bg-gray-800 border border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
+                                            <div className="relative w-20 h-20 rounded-full bg-surface border border-transparent group-hover/avatar:border-blue-500/50 transition-all shadow-sm">
                                                 <div className="relative w-full h-full rounded-full overflow-hidden">
                                                     <div className="w-full h-full transition-transform duration-500 group-hover/avatar:scale-110">
                                                         <PersonAvatar person={p} coverFile={pCover} size={80} className="rounded-full" />
@@ -1381,7 +1381,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             className="group/sub flex flex-col gap-2.5 cursor-pointer transition-all active:scale-95"
                                             onClick={() => onSelectTopic && onSelectTopic(sub.id)}
                                         >
-                                            <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-gray-100 dark:bg-gray-800 border border-gray-100 dark:border-gray-800 shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
+                                            <div className="relative aspect-[3/4] rounded-2xl overflow-hidden bg-surface border border-subtle shadow-sm transition-all group-hover/sub:shadow-md group-hover/sub:border-blue-500/30">
                                                 <div className="w-full h-full transition-transform duration-500 group-hover/sub:scale-110">
                                                     <TopicCoverImage topic={sub} coverUrl={subCoverUrl} className="w-full h-full rounded-2xl" />
                                                 </div>
@@ -1409,7 +1409,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 <input
                                     value={topicSource}
                                     onChange={e => setTopicSource(e.target.value)}
-                                    className="w-full bg-gray-50 dark:bg-gray-800/50 border border-gray-100 dark:border-gray-800/50 rounded-2xl px-4 py-3 text-sm dark:text-white focus:outline-none focus:ring-2 ring-blue-500/20 focus:bg-white dark:focus:bg-gray-800 transition-all placeholder:text-gray-400/50"
+                                    className="w-full bg-surface/50 border border-subtle/50 rounded-2xl px-4 py-3 text-sm dark:text-white focus:outline-none focus:ring-2 ring-blue-500/20 focus:bg-white dark:focus:bg-gray-800 transition-all placeholder:text-gray-400/50"
                                     placeholder="https://"
                                 />
                                 {topicSource !== (topic.sourceUrl || '') && (
@@ -1426,7 +1426,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     href={topicSource}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="flex items-center justify-center w-12 h-12 bg-white dark:bg-gray-800 border border-gray-100 dark:border-gray-800 text-blue-500 hover:text-white hover:bg-blue-500 hover:border-blue-500 rounded-2xl shadow-sm transition-all active:scale-95"
+                                    className="flex items-center justify-center w-12 h-12 bg-surface border border-subtle text-blue-500 hover:text-white hover:bg-blue-500 hover:border-blue-500 rounded-2xl shadow-sm transition-all active:scale-95"
                                     title={t('context.openInBrowser')}
                                 >
                                     <ExternalLink size={20} />
@@ -1464,8 +1464,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 多选专题的情况
     if (selectedTopicCount > 1 && topics && selectedTopicIds && selectedTopicIds.length > 0) {
         return (
-            <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-                <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
+            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+                <div className="p-5 flex-shrink-0 bg-panel">
                     <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
                         {selectedTopicCount} {t('context.selectedTopics') || t('sidebar.topics')}
                     </div>
@@ -1475,7 +1475,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 </div>
 
                 <div className="p-5 space-y-6">
-                    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
+                    <div className="bg-surface rounded-xl border border-subtle p-4 shadow-sm">
                         <div className="text-[10px] font-black text-gray-400 dark:text-gray-500 uppercase tracking-[0.2em] mb-4 flex items-center">
                             <Layout size={12} className="mr-2 opacity-70" /> {t('sidebar.topics')}
                         </div>
@@ -1516,11 +1516,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 return (
                                     <div
                                         key={topicId}
-                                        className="flex items-start gap-3.5 p-3.5 bg-gray-50/50 dark:bg-gray-900/30 rounded-xl border border-gray-100 dark:border-gray-800/50 hover:bg-gray-200/70 dark:hover:bg-black/50 transition-all cursor-pointer group/item active:scale-[0.98]"
+                                        className="flex items-start gap-3.5 p-3.5 bg-surface/60 rounded-xl border border-subtle hover:bg-surface transition-all cursor-pointer group/item active:scale-[0.98]"
                                         onClick={() => onSelectTopic && onSelectTopic(topicId)}
                                     >
                                         {/* Cover with 3:4 Ratio */}
-                                        <div className="w-[66px] h-[88px] rounded-lg border border-gray-200/60 dark:border-gray-700/60 shadow-sm overflow-hidden bg-gray-200 dark:bg-gray-800 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-all">
+                                        <div className="w-[66px] h-[88px] rounded-lg border border-subtle/60 shadow-sm overflow-hidden bg-surface flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-all">
                                             {coverUrl ? (
                                                 <div className="w-full h-full transition-shadow duration-200 group-hover/item:shadow-md">
                                                     {/* Use the same crop display scheme as Person avatar for crisp result */}
@@ -1571,7 +1571,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             <div className="font-bold text-sm text-gray-900 dark:text-white truncate leading-tight mb-2 group-hover/item:text-blue-500 transition-colors flex items-center justify-between">
                                                 <span className="truncate flex-1 mr-3">{topic.name}</span>
                                                 {topic.type && (
-                                                    <span className="ml-2 flex-shrink-0 px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 text-[9px] font-black text-gray-400 dark:text-gray-500 rounded uppercase tracking-widest border border-gray-200/30 dark:border-gray-600/30">
+                                                    <span className="ml-2 flex-shrink-0 px-1.5 py-0.5 bg-surface text-[9px] font-black text-gray-400 dark:text-gray-500 rounded uppercase tracking-widest border border-subtle/30">
                                                         {topic.type}
                                                     </span>
                                                 )}
@@ -1579,10 +1579,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                             {/* Stats Row */}
                                             <div className="flex items-center gap-3 text-[10px] font-medium text-gray-400 dark:text-gray-500 mb-2.5">
-                                                <span className="flex items-center bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded" title={`${topic.peopleIds?.length || 0} People`}>
+                                                <span className="flex items-center bg-surface px-1.5 py-0.5 rounded" title={`${topic.peopleIds?.length || 0} People`}>
                                                     <User size={10} className="mr-1 opacity-70" /> {topic.peopleIds?.length || 0}
                                                 </span>
-                                                <span className="flex items-center bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded" title={`${topic.fileIds?.length || 0} Files`}>
+                                                <span className="flex items-center bg-surface px-1.5 py-0.5 rounded" title={`${topic.fileIds?.length || 0} Files`}>
                                                     <ImageIcon size={10} className="mr-1 opacity-70" /> {topic.fileIds?.length || 0}
                                                 </span>
                                                 {isMainTopic && allSubTopics.length > 0 && (
@@ -1594,7 +1594,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                             {/* Subtopics List (Vertical List) */}
                                             {isMainTopic && allSubTopics.length > 0 && (
-                                                <div className="space-y-1.5 pt-1.5 border-t border-gray-100 dark:border-gray-800/50 relative">
+                                                <div className="space-y-1.5 pt-1.5 border-t border-subtle/50 relative">
                                                     {visibleSubtopics.map(sub => (
                                                         <div key={sub.id} className="text-[10px] text-gray-500 dark:text-gray-400 flex items-center group/sub">
                                                             <FolderIcon size={10} className="mr-2 opacity-50 shrink-0 text-blue-500/80 group-hover/sub:opacity-100" />
@@ -1614,7 +1614,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                                     return next;
                                                                 });
                                                             }}
-                                                            className="absolute bottom-0 right-0 p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors text-blue-500/80 hover:text-blue-600"
+                                                            className="absolute bottom-0 right-0 p-1 hover:bg-surface rounded-md transition-colors text-blue-500/80 hover:text-blue-600"
                                                             title={isExpanded ? "Collapse" : `Show all ${allSubTopics.length} subtopics`}
                                                         >
                                                             {isExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
@@ -1631,7 +1631,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                     {/* Batch Actions */}
                     {onDeleteTopic && (
-                        <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+                        <div className="mt-4 pt-4 border-t border-subtle">
                             <button
                                 onClick={() => {
                                     if (window.confirm(`${t('context.delete')} ${selectedTopicIds.length} ${t('sidebar.topics')}?`)) {
@@ -1656,8 +1656,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 多个人物选择情况
     if (isMultiPerson) {
         return (
-            <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-                <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
+            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+                <div className="p-5 flex-shrink-0 bg-panel">
                     <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
                         {selectedPeopleCount} {t('context.selectedPeople')}
                     </div>
@@ -1665,7 +1665,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 <div className="p-5 space-y-6">
                     {/* Selected People List */}
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
+                    <div className="bg-surface rounded-lg border border-subtle p-4 shadow-sm">
                         <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                             <User size={12} className="mr-1.5" /> {t('context.selectedPeople')}
                         </div>
@@ -1679,11 +1679,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 return (
                                     <div
                                         key={personId}
-                                        className="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-lg border border-gray-100 dark:border-gray-800 hover:bg-gray-100 dark:hover:bg-gray-800 transition-all cursor-pointer group/item active:scale-[0.98]"
+                                        className="flex items-center gap-3 p-3 bg-surface/50 rounded-lg border border-subtle hover:bg-surface transition-all cursor-pointer group/item active:scale-[0.98]"
                                         onClick={() => onSelectPerson && onSelectPerson(personId)}
                                     >
                                         {/* Avatar */}
-                                        <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-gray-200 dark:bg-gray-700 flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
+                                        <div className="w-14 h-14 rounded-full border-2 border-white dark:border-gray-800 shadow-md overflow-hidden bg-surface flex-shrink-0 relative group-hover/item:border-blue-500/50 transition-colors">
                                             <PersonAvatar person={selectedPerson} coverFile={coverFile} size={56} className="rounded-full" />
                                         </div>
 
@@ -1708,7 +1708,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
 
         return (
-            <div className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
+            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
 
                 {/* Hero Header */}
                 <div className="relative">
@@ -1725,7 +1725,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     {/* Profile Content */}
                     <div className="relative z-10 pt-10 px-5 pb-2 flex flex-col items-center">
                         {/* Avatar */}
-                        <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-gray-200 dark:bg-gray-700 mb-4 relative group">
+                        <div className="w-32 h-32 rounded-full border-4 border-white dark:border-gray-800 shadow-xl overflow-hidden bg-surface mb-4 relative group">
                             <div className="w-full h-full transition-transform duration-300 group-hover:scale-110">
                                 <PersonAvatar person={person} coverFile={coverFile} size={128} className="rounded-full" />
                             </div>
@@ -1751,7 +1751,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             (e.target as HTMLInputElement).blur();
                                         }
                                     }}
-                                    className="text-2xl font-bold text-center text-gray-800 dark:text-white bg-transparent border-b border-transparent hover:border-gray-300 dark:hover:border-gray-600 focus:border-blue-500 focus:outline-none block mx-auto py-1 transition-all"
+                                    className="text-2xl font-bold text-center text-gray-800 dark:text-white bg-transparent border-b border-transparent hover:border-subtle focus:border-blue-500 focus:outline-none block mx-auto py-1 transition-all"
                                     placeholder={t('context.enterNewPersonName')}
                                     style={{ width: nameWidth }}
                                 />
@@ -1761,11 +1761,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                         {/* Stats */}
                         <div className="flex items-center gap-3">
-                            <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm backdrop-blur-sm min-w-[90px]">
+                            <div className="flex flex-col items-center px-4 py-2 bg-surface/80 rounded-xl border border-subtle shadow-sm backdrop-blur-sm min-w-[90px]">
                                 <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold tracking-wider mb-0.5">{t('context.files')}</span>
                                 <span className="text-lg font-mono font-bold text-blue-600 dark:text-blue-400">{person.count}</span>
                             </div>
-                            <div className="flex flex-col items-center px-4 py-2 bg-white/80 dark:bg-gray-800/80 rounded-xl border border-gray-100 dark:border-gray-800 shadow-sm backdrop-blur-sm min-w-[90px]">
+                            <div className="flex flex-col items-center px-4 py-2 bg-surface/80 rounded-xl border border-subtle shadow-sm backdrop-blur-sm min-w-[90px]">
                                 <span className="text-[10px] text-gray-500 dark:text-gray-400 uppercase font-bold tracking-wider mb-0.5">{t('meta.size')}</span>
                                 <span className="text-lg font-mono font-bold text-purple-600 dark:text-purple-400">{personStats ? formatSize(personStats.totalSize) : '-'}</span>
                             </div>
@@ -1781,7 +1781,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 {t('meta.description')}
                             </label>
                         </div>
-                        <div className="bg-gray-50 dark:bg-gray-800/50 rounded-2xl border border-gray-100 dark:border-gray-800/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
+                        <div className="bg-surface/50 rounded-2xl border border-subtle/50 p-1 group/desc relative overflow-hidden transition-all focus-within:ring-2 ring-blue-500/10">
                             <textarea
                                 ref={personDescRef}
                                 value={personDesc}
@@ -1836,8 +1836,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }
 
     return (
-        <div ref={panelRef} className="h-full flex flex-col bg-white dark:bg-gray-900 overflow-y-auto custom-scrollbar relative">
-            <div className="p-5 border-b border-gray-100 dark:border-gray-800 flex-shrink-0 bg-gray-50 dark:bg-gray-900/50">
+        <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+            <div className="p-5 flex-shrink-0 bg-panel">
                 {/* 文件名区域 - 使用相对定位，按钮绝对定位在右下角 */}
                 <div className="relative">
                     <div className={`font-bold text-lg text-gray-800 dark:text-white break-all leading-tight mb-1 ${!isMulti && file && file.type === FileType.IMAGE && settings && !previewName ? 'pr-7' : ''}`}>
@@ -1878,21 +1878,21 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 {/* Multi-Selection Composition Chart */}
                 {isMulti && batchStats && (
-                    <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
+                    <div className="bg-surface rounded-lg border border-subtle p-4 shadow-sm">
                         <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                             <PieChart size={12} className="mr-1.5" /> {t('meta.typeDistribution')}
                         </div>
                         <DistributionChart data={batchChartData} totalFiles={selectedFileIds.length} />
 
                         {/* Total Files Summary */}
-                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-800">
+                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-subtle">
                             <span>{t('meta.totalFiles')}</span>
-                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{selectedFileIds.length}</span>
+                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{selectedFileIds.length}</span>
                         </div>
                         {/* Total Size Summary */}
                         <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-2">
                             <span>{t('meta.totalSize')}</span>
-                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{formatSize(batchStats.totalSize)}</span>
+                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{formatSize(batchStats.totalSize)}</span>
                         </div>
                     </div>
                 )}
@@ -1918,7 +1918,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             onSearch(searchQuery);
                                         }
                                     }}
-                                    className="p-1 px-2 flex items-center gap-1 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors text-[10px] text-gray-500 font-medium"
+                                    className="p-1 px-2 flex items-center gap-1 hover:bg-surface rounded-md transition-colors text-[10px] text-gray-500 font-medium"
                                     title={t('meta.searchAtmosphere')}
                                 >
                                     <Sparkles size={10} className="text-purple-500" />
@@ -1977,7 +1977,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             })();
                                         }
                                     }}
-                                    className="p-1.5 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors flex items-center justify-center"
+                                    className="p-1.5 hover:bg-surface rounded-md transition-colors flex items-center justify-center"
                                     title={t('meta.regeneratePalette')}
                                 >
                                     <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
@@ -2008,7 +2008,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     Array.from({ length: 8 }).map((_, i) => (
                                         <div
                                             key={i}
-                                            className="w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-800 animate-pulse ring-1 ring-black/5 dark:ring-white/5"
+                                            className="w-6 h-6 rounded-full bg-surface animate-pulse ring-1 ring-black/5 dark:ring-white/5"
                                         />
                                     ))
                                 ) : (
@@ -2048,7 +2048,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                 }
                                             }
                                         }}
-                                        className="px-4 py-1.5 text-xs font-medium rounded-full border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
+                                        className="px-4 py-1.5 text-xs font-medium rounded-full border border-subtle text-gray-600 dark:text-gray-400 hover:bg-surface hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
                                     >
                                         {t('meta.extractColor')}
                                     </button>
@@ -2057,7 +2057,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 Array.from({ length: 8 }).map((_, i) => (
                                     <div
                                         key={i}
-                                        className="w-6 h-6 rounded-full bg-gray-100 dark:bg-gray-800 animate-pulse ring-1 ring-black/5 dark:ring-white/5"
+                                        className="w-6 h-6 rounded-full bg-surface animate-pulse ring-1 ring-black/5 dark:ring-white/5"
                                     />
                                 ))
                             )}
@@ -2068,7 +2068,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* Folder Thumbnail */}
                 {!isMulti && file && file.type === FileType.FOLDER && (
                     <div className="flex flex-col">
-                        <div className="w-full rounded-lg overflow-hidden bg-gray-100 dark:bg-black/40 border border-gray-200 dark:border-gray-800 flex justify-center items-center py-8 mb-4 shadow-sm relative group">
+                        <div className="w-full rounded-lg overflow-hidden bg-surface border border-subtle flex justify-center items-center py-8 mb-4 shadow-sm relative group">
                             <div className="w-[200px] h-[200px]">
                                 <Folder3DIcon
                                     previewSrcs={folderPreviewImages}
@@ -2081,16 +2081,16 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                         {/* File Type Distribution */}
                         {folderDetails && (
-                            <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 p-4 shadow-sm">
+                            <div className="bg-surface rounded-lg border border-subtle p-4 shadow-sm">
                                 <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
                                     <PieChart size={12} className="mr-1.5" /> {t('meta.fileDistribution')}
                                 </div>
                                 <DistributionChart data={chartData} totalFiles={folderDetails.totalFiles + folderDetails.subFolderCount} />
 
                                 {/* Total Files Summary */}
-                                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-gray-100 dark:border-gray-800">
+                                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-subtle">
                                     <span>{t('meta.totalFiles')}</span>
-                                    <span className="font-bold text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">{folderDetails.totalFiles}</span>
+                                    <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{folderDetails.totalFiles}</span>
                                 </div>
                             </div>
                         )}
@@ -2140,7 +2140,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 // Multi-selection AI analysis summary
                                 <div className="space-y-3">
                                     {/* Count of files with AI data */}
-                                    <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                    <div className="bg-surface p-2 rounded border border-subtle">
                                         <div className="text-gray-400 text-xs mb-1">{t('meta.aiFilesCount')}</div>
                                         <div className="font-medium text-gray-800 dark:text-gray-200">
                                             {selectedFileIds.filter(id => files[id]?.aiData).length} / {selectedFileIds.length}
@@ -2161,7 +2161,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                         if (sceneCategories.size > 0) {
                                             return (
-                                                <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                                <div className="bg-surface p-2 rounded border border-subtle">
                                                     <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                         <span className="mr-1.5">{t('meta.aiScene')}</span>
                                                         <span className="text-gray-500">({sceneCategories.size} {t('context.items')})</span>
@@ -2171,7 +2171,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                             .sort(([, a], [, b]) => b - a)
                                                             .slice(0, 8)
                                                             .map(([category, count]) => (
-                                                                <span key={category} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-700 flex items-center">
+                                                                <span key={category} className="px-2 py-1 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle flex items-center">
                                                                     <span className="mr-1 font-medium">{category}</span>
                                                                     <span className="text-gray-500">({count})</span>
                                                                 </span>
@@ -2200,7 +2200,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                         if (faceNames.size > 0) {
                                             return (
-                                                <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                                <div className="bg-surface p-2 rounded border border-subtle">
                                                     <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                         <span className="mr-1.5">{t('meta.aiFaces')}</span>
                                                         <span className="text-gray-500">({faceNames.size} {t('context.items')})</span>
@@ -2243,7 +2243,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                                         if (objects.size > 0) {
                                             return (
-                                                <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                                <div className="bg-surface p-2 rounded border border-subtle">
                                                     <div className="text-gray-400 text-xs mb-2 flex items-center">
                                                         <span className="mr-1.5">{t('meta.aiObjects')}</span>
                                                         <span className="text-gray-500">({objects.size} {t('context.items')})</span>
@@ -2253,7 +2253,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                             .sort(([, a], [, b]) => b - a)
                                                             .slice(0, 12)
                                                             .map(([obj, count]) => (
-                                                                <span key={obj} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800 flex items-center">
+                                                                <span key={obj} className="px-1.5 py-0.5 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle flex items-center">
                                                                     <span className="mr-1">{obj}</span>
                                                                     <span className="text-gray-500 text-[9px]">({count})</span>
                                                                 </span>
@@ -2272,11 +2272,11 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 file && file.aiData && (
                                     <div className="space-y-3">
                                         <div className="grid grid-cols-2 gap-2 text-xs">
-                                            <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                            <div className="bg-surface p-2 rounded border border-subtle">
                                                 <div className="text-gray-400 mb-1">{t('meta.aiScene')}</div>
                                                 <div className="font-medium text-gray-800 dark:text-gray-200">{file.aiData.sceneCategory}</div>
                                             </div>
-                                            <div className="bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                            <div className="bg-surface p-2 rounded border border-subtle">
                                                 <div className="text-gray-400 mb-1">{t('meta.aiConfidence')}</div>
                                                 <div className="font-medium text-gray-800 dark:text-gray-200">{Math.round(file.aiData.confidence * 100)}%</div>
                                             </div>
@@ -2289,7 +2289,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                     {file.aiData.faces.map((face, i) => (
                                                         <div
                                                             key={`${face.id}-${i}`}
-                                                            className={`flex items-center bg-white dark:bg-gray-800 px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm transition-all ${face.personId ? 'cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-95' : ''}`}
+                                                            className={`flex items-center bg-surface px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm transition-all ${face.personId ? 'cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-95' : ''}`}
                                                             onClick={() => face.personId && onSelectPerson && onSelectPerson(face.personId)}
                                                         >
                                                             <User size={10} className="mr-1 text-purple-500" />
@@ -2305,7 +2305,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                 <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Scan size={10} className="mr-1" /> {t('meta.aiObjects')}</div>
                                                 <div className="flex flex-wrap gap-1">
                                                     {file.aiData.objects.map((obj, i) => (
-                                                        <span key={`${obj}-${i}`} className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] rounded border border-gray-200 dark:border-gray-800">
+                                                        <span key={`${obj}-${i}`} className="px-1.5 py-0.5 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle">
                                                             {obj}
                                                         </span>
                                                     ))}
@@ -2314,12 +2314,12 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         )}
 
                                         {file.aiData.extractedText && (
-                                            <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                            <div className="mt-2 bg-surface p-2 rounded border border-subtle">
                                                 <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
                                                     <div className="flex items-center"><FileText size={10} className="mr-1" /> {t('meta.aiExtractedText')}</div>
                                                     <button
                                                         onClick={() => copyToClipboard(file.aiData?.extractedText || '')}
-                                                        className="ml-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+                                                        className="ml-2 p-1 rounded hover:bg-surface text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
                                                         title={t('context.copy')}
                                                         aria-label={t('context.copy')}
                                                     >
@@ -2331,12 +2331,12 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                         )}
 
                                         {file.aiData.translatedText && (
-                                            <div className="mt-2 bg-white dark:bg-gray-800 p-2 rounded border border-gray-100 dark:border-gray-800">
+                                            <div className="mt-2 bg-surface p-2 rounded border border-subtle">
                                                 <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
                                                     <div className="flex items-center"><Languages size={10} className="mr-1" /> {t('meta.aiTranslatedText')}</div>
                                                     <button
                                                         onClick={() => copyToClipboard(file.aiData?.translatedText || '')}
-                                                        className="ml-2 p-1 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
+                                                        className="ml-2 p-1 rounded hover:bg-surface text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
                                                         title={t('context.copy')}
                                                         aria-label={t('context.copy')}
                                                     >
@@ -2363,7 +2363,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 onNavigateToFolder(file.parentId, { targetId: file.id });
                             }
                         }}
-                        className={`w-full flex items-center justify-center py-2.5 px-4 text-sm font-medium rounded-lg transition-colors border border-gray-200 dark:border-gray-800 group ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50' : 'bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200'}`}
+                        className={`w-full flex items-center justify-center py-2.5 px-4 text-sm font-medium rounded-lg transition-colors border border-subtle group ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'bg-surface text-gray-400 dark:text-gray-500 cursor-not-allowed opacity-50' : 'bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200'}`}
                         disabled={activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId}
                     >
                         <FolderOpen size={16} className={`mr-2 ${activeTab.viewMode === 'browser' && activeTab.folderId === file.parentId ? 'text-gray-400 dark:text-gray-500' : 'text-blue-500 group-hover:text-blue-600 dark:group-hover:text-blue-400'}`} />
@@ -2478,7 +2478,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 onChange={(e) => setNewTagInput(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleAddTag(newTagInput)}
                                 placeholder={t('meta.addTagPlaceholder')}
-                                className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-md py-2 px-3 text-sm text-gray-700 dark:text-gray-300 focus:ring-2 ring-blue-500/50 placeholder-gray-400 focus:border-blue-500 outline-none transition-all"
+                                className="w-full bg-surface border border-subtle rounded-md py-2 px-3 text-sm text-gray-700 dark:text-gray-300 focus:ring-2 ring-blue-500/50 placeholder-gray-400 focus:border-blue-500 outline-none transition-all"
                             />
                             {newTagInput && (
                                 <button
@@ -2491,7 +2491,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                             {/* Tag Autocomplete Suggestions */}
                             {newTagInput && systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).length > 0 && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded shadow-lg z-10 max-h-32 overflow-y-auto">
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-subtle rounded shadow-lg z-10 max-h-32 overflow-y-auto">
                                     {systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).map(tag => (
                                         <div
                                             key={tag}
@@ -2532,7 +2532,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                     }
                                 }}
                                 placeholder={t('meta.addDesc')}
-                                className="w-full bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-800 rounded-lg p-3 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-2 ring-blue-500/50 min-h-[80px] leading-relaxed outline-none transition-all focus:border-blue-500"
+                                className="w-full bg-surface border border-subtle rounded-lg p-3 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-2 ring-blue-500/50 min-h-[80px] leading-relaxed outline-none transition-all focus:border-blue-500"
                             />
                         </div>
                         <div className="flex justify-between items-center mt-2 text-[10px] text-gray-400">
@@ -2558,7 +2558,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     {isMulti && isSourceMixed ? (
                         <div className="text-xs text-orange-500 italic mb-2 bg-orange-50 dark:bg-orange-900/20 px-2 py-1 rounded">{t('meta.mixedValues')}</div>
                     ) : null}
-                    <div className="flex items-center bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-800 focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
+                    <div className="flex items-center bg-surface rounded-lg border border-subtle focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
                         <input
                             type="text"
                             value={isMulti ? batchSource : source}
@@ -2588,7 +2588,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                 const f = files[id];
                                 if (!f || !f.sourceUrl) return null;
                                 return (
-                                    <div key={id} className="flex items-center text-xs group bg-gray-50 dark:bg-gray-800/50 p-1.5 rounded border border-transparent hover:border-gray-200 dark:hover:border-gray-700 transition-colors">
+                                    <div key={id} className="flex items-center text-xs group bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
                                         <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
                                         <button
                                             onClick={() => f.sourceUrl && window.open(f.sourceUrl, '_blank')}
@@ -2608,7 +2608,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             {/* Palette Context Menu */}
             {paletteMenu.visible && paletteMenu.color && createPortal(
                 <div
-                    className="fixed bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-800 rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 z-[70] animate-zoom-in"
+                    className="fixed bg-panel border border-subtle rounded-md shadow-xl text-sm py-1 text-gray-800 dark:text-gray-200 z-[70] animate-zoom-in"
                     style={{
                         top: 'auto',
                         left: 'auto',
