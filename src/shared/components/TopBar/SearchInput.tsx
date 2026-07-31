@@ -82,7 +82,7 @@ export const SearchInput: React.FC<SearchInputProps> = ({
           {scopeMenuOpen && (
             <>
               <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
-              <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
+              <div className="absolute top-full left-0 mt-2 w-40 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-lg shadow-xl z-50 py-1 overflow-hidden animate-fade-in">
                 {scopeOptions.map((opt) => (
                   <button
                     key={opt.id}

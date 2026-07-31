@@ -2170,7 +2170,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const menu = (
             <div
                 ref={contextMenuRef}
-                className="context-menu fixed bg-white dark:bg-gray-800 shadow-lg rounded-lg border border-gray-200 dark:border-gray-800 py-1 z-50 min-w-[200px]"
+                className="context-menu fixed bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-2 text-gray-800 dark:text-gray-200 z-50 min-w-[200px]"
                 style={{
                     left: contextMenu.x,
                     top: contextMenu.y,
@@ -2181,7 +2181,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 {contextMenu.type === 'blank' && (
                     <>
                         <button
-                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-blue-600 hover:text-white flex items-center text-gray-700 dark:text-gray-200"
                             onClick={handleCreateTopic}
                         >
                             <Plus size={16} className="mr-3" />
@@ -2189,7 +2189,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         </button>
                         {onSmartCreateTopic && (
                             <button
-                                className="w-full px-4 py-2 text-left hover:bg-purple-100 dark:hover:bg-purple-900/30 flex items-center text-purple-600 dark:text-purple-400"
+                                className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-purple-600 hover:text-white flex items-center text-purple-500 dark:text-purple-400"
                                 onClick={() => {
                                     onSmartCreateTopic();
                                     setContextMenu(null);
@@ -2205,21 +2205,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                 {contextMenu.type === 'single' && contextMenu.topicId && (
                     <>
                         <button
-                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-blue-600 hover:text-white flex items-center text-gray-700 dark:text-gray-200"
                             onClick={() => handleOpenInNewTab(contextMenu.topicId!)}
                         >
                             <ExternalLinkIcon size={16} className="mr-3" />
                             {t('context.openInNewTab') || '在新标签页中打开'}
                         </button>
                         <button
-                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-blue-600 hover:text-white flex items-center text-gray-700 dark:text-gray-200"
                             onClick={() => handleSetCover(contextMenu.topicId!)}
                         >
                             <FileImage size={16} className="mr-3" />
                             {t('context.setCover') || '设置专题封面'}
                         </button>
                         <button
-                            className="w-full px-4 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center text-gray-700 dark:text-gray-200"
+                            className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-blue-600 hover:text-white flex items-center text-gray-700 dark:text-gray-200"
                             onClick={() => handleRename(contextMenu.topicId!)}
                         >
                             <Edit2 size={16} className="mr-3" />
@@ -2227,7 +2227,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         </button>
                         <div className="border-t border-gray-200 dark:border-gray-800 my-1"></div>
                         <button
-                            className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"
+                            className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-red-600 hover:text-white flex items-center text-red-500 dark:text-red-400"
                             onClick={() => handleDelete([contextMenu.topicId!])}
                         >
                             <Trash2 size={16} className="mr-3" />
@@ -2238,31 +2238,31 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                 {contextMenu.type === 'person' && contextMenu.personId && (
                     <>
-                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenPersonInNewTab) onOpenPersonInNewTab(contextMenu.personId!); else onNavigatePerson && onNavigatePerson(contextMenu.personId!); setContextMenu(null); }}>
+                        <div className="mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenPersonInNewTab) onOpenPersonInNewTab(contextMenu.personId!); else onNavigatePerson && onNavigatePerson(contextMenu.personId!); setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic([contextMenu.personId!]); }}>
+                        <div className="mx-2 px-4 py-2 rounded hover:bg-red-600 hover:text-white cursor-pointer flex items-center text-red-500 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic([contextMenu.personId!]); }}>
                             <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                         </div>
                     </>
                 )}
 
                 {contextMenu.type === 'multiplePerson' && (
-                    <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic(selectedPersonIds || []); }}>
+                    <div className="mx-2 px-4 py-2 rounded hover:bg-red-600 hover:text-white cursor-pointer flex items-center text-red-500 dark:text-red-400" onClick={() => { removePeopleFromCurrentTopic(selectedPersonIds || []); }}>
                         <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                     </div>
                 )}
 
                 {contextMenu.type === 'file' && contextMenu.fileId && (
                     <>
-                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
+                        <div className="mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className={`px-4 py-2 flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
+                        <div className={`mx-2 px-4 py-2 rounded flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
                             <FolderOpen size={14} className="mr-3 opacity-70" />
                             {t('context.openFolder')}
                         </div>
-                        <div className="w-full px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => {
+                        <div className="mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => {
                             if (currentTopicId) {
                                 onUpdateTopic(currentTopicId, { backgroundFileId: contextMenu.fileId });
                                 if (onShowToast) onShowToast(t('context.setAsBackgroundSuccess') || '已设置为专题背景');
@@ -2272,21 +2272,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                             <FileImage size={14} className="mr-3" /> {t('context.setAsBackground') || '设置为专题背景'}
                         </div>
                         <div className="border-t border-gray-200 dark:border-gray-800 my-1"></div>
-                        <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic([contextMenu.fileId!]); }}>
+                        <div className="mx-2 px-4 py-2 rounded hover:bg-red-600 hover:text-white cursor-pointer flex items-center text-red-500 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic([contextMenu.fileId!]); }}>
                             <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                         </div>
                     </>
                 )}
 
                 {contextMenu.type === 'multipleFile' && (
-                    <div className="w-full px-4 py-2 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer flex items-center text-red-600 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic(selectedFileIds || []); }}>
+                    <div className="mx-2 px-4 py-2 rounded hover:bg-red-600 hover:text-white cursor-pointer flex items-center text-red-500 dark:text-red-400" onClick={() => { removeFilesFromCurrentTopic(selectedFileIds || []); }}>
                         <Trash2 size={14} className="mr-3" /> {t('context.removeFromTopic') || '从专题中移除'}
                     </div>
                 )}
 
                 {contextMenu.type === 'multiple' && (
                     <button
-                        className="w-full px-4 py-2 text-left hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center text-red-600 dark:text-red-400"
+                        className="mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-left hover:bg-red-600 hover:text-white flex items-center text-red-500 dark:text-red-400"
                         onClick={() => handleDelete(selectedTopicIds)}
                     >
                         <Trash2 size={16} className="mr-3" />

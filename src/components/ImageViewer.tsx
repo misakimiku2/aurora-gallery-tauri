@@ -1773,16 +1773,16 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       </div>
 
       {contextMenu.visible && (() => {
-        const menuItemClass = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+        const menuItemClass = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
         const iconSize = 14;
-        const deleteItemClass = 'px-4 py-2 hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center';
-        const purpleItemClass = 'px-4 py-2 hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center';
+        const deleteItemClass = 'mx-2 px-4 py-2 rounded hover:bg-red-600 dark:hover:bg-red-700 hover:text-white text-red-500 dark:text-red-400 cursor-pointer flex items-center';
+        const purpleItemClass = 'mx-2 px-4 py-2 rounded hover:bg-purple-600 dark:hover:bg-purple-700 hover:text-white cursor-pointer flex items-center';
         const closeMenu = () => setContextMenu({ ...contextMenu, visible: false });
 
         return (
         <div
           data-testid="viewer-context-menu"
-          className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-800 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
+          className="fixed bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[220px] z-[60] max-h-[80vh] overflow-y-auto animate-zoom-in"
           style={{
             top: menuPos.top,
             left: menuPos.left,
@@ -1807,7 +1807,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
             const parentId = file.parentId;
             const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId;
             if (isUnavailable) return null;
-            const cls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+            const cls = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
             return (
               <>
                 <div
@@ -1861,7 +1861,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
           {hasCompareTabs && handleOpenCompareInNewTab && handleAddToCompareCanvas && file.type === 'image' && (() => {
             const imageIds = [file.id];
             const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
-            const compareCls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
+            const compareCls = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center';
             const itemClass = canCompare
               ? compareCls
               : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60';
@@ -1881,7 +1881,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                 {/* 二级菜单 - 使用 Portal 渲染到 body 避免被父容器裁剪 */}
                 {compareSubmenuOpen && createPortal(
                   <div
-                    className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 min-w-[200px] z-[9999]"
+                    className="fixed bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-2 min-w-[200px] z-[9999]"
                     style={{ left: submenuPosition.x, top: submenuPosition.y }}
                     onMouseEnter={openCompareSubmenu}
                     onMouseLeave={closeCompareSubmenu}
@@ -1893,7 +1893,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
                       const remainingSpace = maxCount - currentCount;
                       const canAdd = remainingSpace > 0 && imageIds.length <= remainingSpace;
                       const canvasName = tab.sessionName || `画布${tab.id.slice(0, 4)}`;
-                      const subCls = 'px-4 py-2 hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between';
+                      const subCls = 'mx-2 px-4 py-2 rounded hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer flex items-center justify-between';
 
                       return (
                         <div
@@ -1950,7 +1950,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         <>
           <div className="fixed inset-0 z-[60]" onClick={(e) => { e.stopPropagation(); setScopeMenuOpen(false); }}></div>
           <div
-            className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-[61] overflow-hidden py-1 text-left w-36 animate-fade-in"
+            className="fixed bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-[61] overflow-hidden py-2 text-left w-36 animate-fade-in"
             style={{ top: scopeMenuPos.top, left: scopeMenuPos.left }}
           >
             {[

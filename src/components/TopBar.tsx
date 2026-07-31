@@ -155,8 +155,8 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const totalTags = Object.values(filteredGroupedTags || {}).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
-    <div className="flex flex-col select-none bg-surface text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#3a3a3a]/50">
+    <div className="flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50 animate-zoom-in">
+      <div className="px-4 py-3 border-b border-black/5 dark:border-white/10 dark:bg-white/5">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-sm tracking-wide">{t('sidebar.allTags')}</span>
           <span className="text-xs text-gray-500 dark:text-gray-400 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded-full">
@@ -196,11 +196,11 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           
           {/* 智能联想下拉列表 */}
           {suggestedTags.length > 0 && (
-            <div className="absolute top-full left-0 right-0 bg-surface border border-gray-200 dark:border-gray-800 mt-1 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
+            <div className="absolute top-full left-0 right-0 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 mt-1 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 dark:scrollbar-thumb-gray-600">
               {suggestedTags.map(tag => (
                 <div 
                   key={tag} 
-                  className="px-4 py-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-sm cursor-pointer text-gray-800 dark:text-gray-200"
+                  className="px-4 py-2 hover:bg-blue-600 hover:text-white text-sm cursor-pointer text-gray-800 dark:text-gray-200"
                   onClick={() => {
                     setLocalSearchQuery(tag);
                     onSetTagSearchQuery(tag);
@@ -221,7 +221,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           )}
           {keys.map(key => (
             <div id={`tag-widget-group-${key}`} key={key} className="mb-4 last:mb-0">
-              <div className="text-xs font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase border-b border-gray-100 dark:border-gray-800 pb-1">{key}</div>
+              <div className="text-xs font-bold text-gray-400 dark:text-gray-500 mb-2 uppercase border-b border-black/5 dark:border-white/10 pb-1">{key}</div>
               <div className="flex flex-wrap gap-2">
                 {filteredGroupedTags[key].map(tag => (
                   <button
@@ -239,7 +239,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
         </div>
         {/* 字母索引�?*/}
         {keys.length > 0 && (
-          <div className="w-6 flex flex-col items-center py-2 space-y-1 bg-gray-50 dark:bg-[#3a3a3a]/50 border-l border-gray-100 dark:border-gray-800 overflow-y-auto no-scrollbar">
+          <div className="w-6 flex flex-col items-center py-2 space-y-1 dark:bg-[#3a3a3a]/50 border-l border-black/5 dark:border-white/10 overflow-y-auto no-scrollbar">
             {keys.map(key => (
               <button
                 key={key}
@@ -362,9 +362,9 @@ const CalendarWidget = ({
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
-      <div className="flex flex-col select-none bg-surface text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50">
+      <div className="flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50 animate-zoom-in">
           {/* Controls Header */}
-          <div className="flex items-center justify-between px-4 py-4 bg-gray-50 dark:bg-[#3a3a3a]/50 border-b border-gray-200 dark:border-gray-800">
+          <div className="flex items-center justify-between px-4 py-4 dark:bg-white/5 border-b border-black/5 dark:border-white/10">
               <div className="font-bold text-base tracking-wide pl-1 text-gray-800 dark:text-gray-100">
                   {year}年{month + 1}月
               </div>
@@ -393,7 +393,7 @@ const CalendarWidget = ({
                       const status = getDayStatus(day, 'prev');
                       let bgClass = 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700';
                       if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600 dark:hover:bg-blue-700';
-                      else if (status === 'in-range') bgClass = 'bg-blue-50 dark:bg-blue-900/20 text-gray-300 dark:text-gray-600';
+                      else if (status === 'in-range') bgClass = 'bg-blue-100 dark:bg-blue-900/40 text-gray-300 dark:text-gray-600';
                       
                       return (
                           <div key={`prev-${day}`} 
@@ -416,7 +416,7 @@ const CalendarWidget = ({
                       if (status === 'selected') {
                           btnClass += ' bg-blue-500 text-white shadow-lg shadow-blue-500/30';
                       } else if (status === 'in-range') {
-                          containerClass += ' bg-blue-50 dark:bg-blue-900/20'; // Continuous background
+                          containerClass += ' bg-blue-100 dark:bg-blue-900/40'; // Continuous background
                           btnClass += ' text-blue-600 dark:text-blue-300 rounded-none w-full';
                       } else {
                           btnClass += ' text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700';
@@ -430,11 +430,11 @@ const CalendarWidget = ({
                           
                           if (currentTs === startTs && currentTs !== endTs) {
                               // Start of range - fill right half
-                              containerClass = "h-8 w-full flex items-center justify-center relative bg-gradient-to-r from-transparent from-50% to-blue-50 to-50% dark:to-blue-900/20";
+                              containerClass = "h-8 w-full flex items-center justify-center relative bg-gradient-to-r from-transparent from-50% to-blue-100 to-50% dark:to-blue-900/40";
                           }
                           if (currentTs === endTs && currentTs !== startTs) {
                               // End of range - fill left half
-                              containerClass = "h-8 w-full flex items-center justify-center relative bg-gradient-to-l from-transparent from-50% to-blue-50 to-50% dark:to-blue-900/20";
+                              containerClass = "h-8 w-full flex items-center justify-center relative bg-gradient-to-l from-transparent from-50% to-blue-100 to-50% dark:to-blue-900/40";
                           }
                       }
 
@@ -452,7 +452,7 @@ const CalendarWidget = ({
                       const status = getDayStatus(day, 'next');
                       let bgClass = 'text-gray-300 dark:text-gray-600 hover:text-gray-500 dark:hover:text-gray-400 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700';
                       if (status === 'selected') bgClass = 'bg-blue-500 text-white shadow-md rounded-full z-10 hover:bg-blue-600 dark:hover:bg-blue-700';
-                      else if (status === 'in-range') bgClass = 'bg-blue-50 dark:bg-blue-900/20 text-gray-300 dark:text-gray-600';
+                      else if (status === 'in-range') bgClass = 'bg-blue-100 dark:bg-blue-900/40 text-gray-300 dark:text-gray-600';
 
                       return (
                           <div key={`next-${day}`} 
@@ -467,7 +467,7 @@ const CalendarWidget = ({
           </div>
 
           {/* Mode Switcher */}
-          <div className="p-4 border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#3a3a3a]/50">
+          <div className="p-4 border-t border-black/5 dark:border-white/10 dark:bg-[#3a3a3a]/50">
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-bold">{t('date.filterBy')}</div>
               <div className="flex gap-2">
                   <button
@@ -475,7 +475,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'created' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-surface border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-white dark:bg-white/10 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
                       }`}
                   >
                       {t('date.createdDate')}
@@ -485,7 +485,7 @@ const CalendarWidget = ({
                       className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
                           dateFilter.mode === 'updated' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
-                          : 'bg-surface border-gray-300 dark:border-gray-700 text-gray-600 dark:text-gray-400 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-300'
+                          : 'bg-white dark:bg-white/10 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
                       }`}
                   >
                       {t('date.updatedDate')}
@@ -815,7 +815,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 {sortMenuOpen && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
-                    <div className="absolute top-full left-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                    <div className="absolute top-full left-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
                       {[
                         { id: 'name', label: t('sort.name') },
@@ -825,23 +825,23 @@ export const TopBar: React.FC<TopBarProps> = ({
                         <button
                           key={opt.id}
                           onClick={() => { onSortOptionChange(opt.id as SortOption); }}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                          className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                         >
                           {opt.label}
-                          {state.sortBy === opt.id && <Check size={14} className="text-blue-500" />}
+                          {state.sortBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                         </button>
                       ))}
-                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                      <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                       <button
                         onClick={onSortDirectionChange}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                       >
                         {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                         <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                       </button>
                       {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                       <>
-                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                      <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                       {[
                         { id: 'none', label: t('groupBy.none') },
@@ -852,10 +852,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                         <button
                           key={opt.id}
                           onClick={() => onGroupByChange(opt.id as GroupByOption)}
-                          className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                          className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                         >
                           {opt.label}
-                          {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
+                          {groupBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                         </button>
                       ))}
                       </>
@@ -912,7 +912,7 @@ export const TopBar: React.FC<TopBarProps> = ({
               {scopeMenuOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setScopeMenuOpen(false)}></div>
-                  <div className="absolute top-full left-0 mt-2 w-40 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-1 overflow-hidden animate-fade-in">
+                  <div className="absolute top-full left-0 mt-2 w-40 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-1 overflow-hidden animate-fade-in">
                     {[
                       { id: 'all', icon: Globe, label: t('search.scopeAll') },
                       { id: 'file', icon: FileText, label: t('search.scopeFile') },
@@ -922,7 +922,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <button
                         key={opt.id}
                         onClick={() => { onSearchScopeChange(opt.id as SearchScope); setScopeMenuOpen(false); }}
-                        className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-50 dark:hover:bg-blue-900/20 ${activeTab.searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
+                        className={`w-full text-left px-3 py-2 text-xs flex items-center hover:bg-blue-600 hover:text-white ${activeTab.searchScope === opt.id ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-700 dark:text-gray-300'}`}
                       >
                         <opt.icon size={14} className="mr-2"/> {opt.label}
                       </button>
@@ -1137,7 +1137,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {personSortMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setPersonSortMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('person.sortBy')}</div>
                     {[
                       { id: 'name', label: t('sort.name') },
@@ -1147,22 +1147,22 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <button
                         key={opt.id}
                         onClick={() => { onPersonSortByChange?.(opt.id as PersonSortOption); }}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                       >
                         {opt.label}
-                        {personSortBy === opt.id && <Check size={14} className="text-blue-500" />}
+                        {personSortBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                       </button>
                     ))}
-                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                     <button
                       onClick={() => onPersonSortDirectionChange?.()}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                     >
                       {personSortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                       <ArrowDownUp size={14} className={personSortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                     </button>
                     
-                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                     {[
                       { id: 'none', label: t('groupBy.none') },
@@ -1172,10 +1172,10 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <button
                         key={opt.id}
                         onClick={() => onPersonGroupByChange?.(opt.id as PersonGroupByOption)}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                       >
                         {opt.label}
-                        {personGroupBy === opt.id && <Check size={14} className="text-blue-500" />}
+                        {personGroupBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                       </button>
                     ))}
                  </div>
@@ -1197,7 +1197,7 @@ export const TopBar: React.FC<TopBarProps> = ({
            {sortMenuOpen && (
              <>
                <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+               <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('sort.sortBy')}</div>
                   {[
                     { id: 'name', label: t('sort.name') },
@@ -1207,16 +1207,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <button
                       key={opt.id}
                       onClick={() => { onSortOptionChange(opt.id as SortOption); }}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                     >
                       {opt.label}
-                      {state.sortBy === opt.id && <Check size={14} className="text-blue-500" />}
+                      {state.sortBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                     </button>
                   ))}
-                  <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                  <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                   <button
                     onClick={onSortDirectionChange}
-                    className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                   >
                     {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                     <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
@@ -1224,7 +1224,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                   
                   {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                   <>
-                  <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                  <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
                   {[
                     { id: 'none', label: t('groupBy.none') },
@@ -1235,21 +1235,21 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <button
                       key={opt.id}
                       onClick={() => onGroupByChange(opt.id as GroupByOption)}
-                      className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                     >
                       {opt.label}
-                      {groupBy === opt.id && <Check size={14} className="text-blue-500" />}
+                      {groupBy === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                     </button>
                   ))}
                   </>
                   )}
                   {onRememberFolderSettings && (
                     <>
-                      <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
-                      <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
+                      <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
+                      <div className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/10 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
                         <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
                         <button 
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500 group-hover:bg-blue-600' : 'bg-gray-300 dark:bg-gray-600 group-hover:bg-gray-400 dark:group-hover:bg-gray-500'}`}
                         >
                             <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
                         </button>
@@ -1294,7 +1294,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {viewMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
                     {[
                       { id: 'grid', icon: Grid, label: t('layout.grid') },
@@ -1305,16 +1305,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <button
                         key={opt.id}
                         onClick={() => { onLayoutModeChange(opt.id as LayoutMode); setViewMenuOpen(false); }}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                       >
                         <div className="flex items-center">
                           <opt.icon size={16} className="mr-2 opacity-70"/> {opt.label}
                         </div>
-                        {activeTab.layoutMode === opt.id && <Check size={14} className="text-blue-500" />}
+                        {activeTab.layoutMode === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                       </button>
                     ))}
                     
-                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                     <div className="px-4 py-2">
                        <div className="flex justify-between text-xs text-gray-500 mb-1">
                           <span>{t('layout.small')}</span>
@@ -1334,11 +1334,11 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </div>
                     {onRememberFolderSettings && (
                       <>
-                        <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
-                        <div className="w-full px-4 py-2 flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-700 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
+                        <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
+                        <div className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded flex items-center justify-between hover:bg-black/10 dark:hover:bg-white/10 select-none cursor-pointer" onClick={() => onRememberFolderSettings()}>
                           <span className="text-sm text-gray-700 dark:text-gray-200">{t('folderSettings.remember')}</span>
                           <button 
-                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${hasFolderSettings ? 'bg-blue-500 group-hover:bg-blue-600' : 'bg-gray-300 dark:bg-gray-600 group-hover:bg-gray-400 dark:group-hover:bg-gray-500'}`}
                           >
                               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition duration-200 ease-in-out ${hasFolderSettings ? 'translate-x-6' : 'translate-x-1'}`} />
                           </button>
@@ -1404,7 +1404,7 @@ export const TopBar: React.FC<TopBarProps> = ({
              {viewMenuOpen && (
                <>
                  <div className="fixed inset-0 z-40" onClick={() => setViewMenuOpen(false)}></div>
-                 <div className="absolute top-full right-0 mt-2 w-48 bg-surface border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                 <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
                     <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('layout.mode')}</div>
                     {[
                       { id: 'grid', icon: Grid, label: t('layout.grid') },
@@ -1414,16 +1414,16 @@ export const TopBar: React.FC<TopBarProps> = ({
                       <button
                         key={opt.id}
                         onClick={() => { onFolderLayoutModeChange!(opt.id as LayoutMode); setViewMenuOpen(false); }}
-                        className="w-full text-left px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        className="group mx-2 w-[calc(100%-1rem)] px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
                       >
                         <div className="flex items-center">
                           <opt.icon size={16} className="mr-2 opacity-70"/> {opt.label}
                         </div>
-                        {folderLayoutMode === opt.id && <Check size={14} className="text-blue-500" />}
+                        {folderLayoutMode === opt.id && <Check size={14} className="text-blue-500 group-hover:text-white" />}
                       </button>
                     ))}
 
-                    <div className="border-t border-gray-100 dark:border-gray-800 my-1"></div>
+                    <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                     <div className="px-4 py-2">
                        <div className="flex justify-between text-xs text-gray-500 mb-1">
                           <span>{t('layout.small')}</span>
@@ -1462,8 +1462,8 @@ export const TopBar: React.FC<TopBarProps> = ({
            {filterMenuOpen && (
              <>
                <div className="fixed inset-0 z-40" onClick={() => setFilterMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 z-50 animate-zoom-in">
-                  <CalendarWidget 
+               <div className="absolute top-full right-0 mt-2 z-50">
+                 <CalendarWidget 
                       dateFilter={activeTab.dateFilter} 
                       onUpdate={onUpdateDateFilter}
                       t={t}
@@ -1487,8 +1487,8 @@ export const TopBar: React.FC<TopBarProps> = ({
            {tagsMenuOpen && (
              <>
                <div className="fixed inset-0 z-40" onClick={() => setTagsMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 z-50 animate-zoom-in">
-                  <TagsWidget 
+               <div className="absolute top-full right-0 mt-2 z-50">
+                 <TagsWidget 
                       groupedTags={groupedTags} 
                       onTagClick={(tag, e) => { onTagClick(tag, e); setTagsMenuOpen(false); }}
                       t={t}

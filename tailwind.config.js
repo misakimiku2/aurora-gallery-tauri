@@ -15,7 +15,13 @@ export default {
           750: '#333333',
           850: '#1e1e1e',
           950: '#0a0a0a',
-        }
+        },
+        // Surface tokens — driven by CSS variables so dark mode + hover/opacity variants work
+        main: 'rgb(var(--color-main) / <alpha-value>)',
+        content: 'rgb(var(--color-content) / <alpha-value>)',
+        panel: 'rgb(var(--color-panel) / <alpha-value>)',
+        surface: 'rgb(var(--color-surface) / <alpha-value>)',
+        subtle: 'rgb(var(--color-subtle) / <alpha-value>)',
       },
       cursor: {
         'zoom-in': 'zoom-in',
@@ -41,7 +47,7 @@ export default {
       keyframes: {
         zoomIn: {
           '0%': { opacity: '0', transform: 'scale(0.9)' },
-          '100%': { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '1', transform: 'none' },
         },
         slideLeft: {
           '0%': { opacity: '0', transform: 'translateX(50px)' },

@@ -52,7 +52,7 @@ export const SortControls: React.FC<SortControlsProps> = ({
       {menuOpen && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)}></div>
-          <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
+          <div className="absolute top-full right-0 mt-2 w-48 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-lg shadow-xl z-50 py-2 animate-zoom-in">
             <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">
               {t('sort.sortBy') || '排序方式'}
             </div>

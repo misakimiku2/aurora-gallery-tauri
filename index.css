@@ -313,7 +313,7 @@ input[type=range]::-webkit-slider-runnable-track {
   }
   to {
     opacity: 1;
-    transform: scale(1);
+    transform: none;
   }
 }
 
@@ -376,42 +376,20 @@ input[type=range]::-webkit-slider-runnable-track {
   animation: progress-wave 2.5s infinite ease-in-out;
 }
 
-/* Main interface surface tokens */
-/* bg-main: window base / gap color */
-.bg-main {
-  background-color: #e5e5e5;
+/* Main interface surface tokens (consumed by Tailwind color utilities via tailwind.config.js) */
+:root {
+  --color-main: 229 229 229;
+  --color-content: 255 255 255;
+  --color-panel: 247 247 247;
+  --color-surface: 229 231 235;
+  --color-subtle: 229 231 235;
 }
-.dark .bg-main {
-  background-color: #1a1a1a;
-}
-
-/* bg-content: main content floating card */
-.bg-content {
-  background-color: #ffffff;
-}
-.dark .bg-content {
-  background-color: #262626;
-}
-
-.bg-panel {
-  background-color: #f7f7f7;
-}
-.dark .bg-panel {
-  background-color: #2a2a2a;
-}
-
-.bg-surface {
-  background-color: #f3f4f6;
-}
-.dark .bg-surface {
-  background-color: #3a3a3a;
-}
-
-.border-subtle {
-  border-color: #e5e7eb;
-}
-.dark .border-subtle {
-  border-color: #404040;
+.dark {
+  --color-main: 26 26 26;
+  --color-content: 38 38 38;
+  --color-panel: 42 42 42;
+  --color-surface: 58 58 58;
+  --color-subtle: 64 64 64;
 }
 
 /* ── Marquee selection: suppress card transitions/hover during drag to reduce compositing ── */

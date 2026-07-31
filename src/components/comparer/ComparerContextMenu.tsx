@@ -87,22 +87,22 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
 
     const renderOption = (opt: Option, index: number, isSubMenu = false) => {
         if (opt.divider) {
-            return <div key={index} className={`bg-gray-200 dark:bg-gray-700 ${isAndroid ? 'my-1' : (isCompact ? 'my-0.5' : 'my-1')} ${isSubMenu ? 'h-px' : 'h-px'}`} />;
+            return <div key={index} className={`bg-black/5 dark:bg-white/10 ${isAndroid ? 'my-1' : (isCompact ? 'my-0.5' : 'my-1')} ${isSubMenu ? 'h-px' : 'h-px'}`} />;
         }
 
         const hasChildren = opt.children && opt.children.length > 0;
         const isExpanded = expandedGroup === opt.label;
 
         const itemClass = isAndroid
-            ? `w-full text-left flex items-center transition-colors ${
+            ? `w-[calc(100%-1rem)] mx-2 rounded text-left flex items-center transition-colors ${
                 opt.disabled
                     ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500'
-                    : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
+                    : `hover:bg-black/5 dark:hover:bg-white/10 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
               } px-4 space-x-3`
-            : `w-full text-left flex items-center transition-colors ${
+            : `w-[calc(100%-1rem)] mx-2 rounded text-left flex items-center transition-colors ${
                 opt.disabled
                     ? 'opacity-50 cursor-not-allowed text-gray-400 dark:text-gray-500'
-                    : `hover:bg-gray-100 dark:hover:bg-gray-700 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
+                    : `hover:bg-black/5 dark:hover:bg-white/10 ${opt.style || 'text-gray-700 dark:text-gray-200'}`
               } ${
                 isCompact
                     ? 'px-2 py-1 text-xs space-x-1.5'
@@ -129,7 +129,7 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
                     )}
                 </button>
                 {hasChildren && isExpanded && (
-                    <div className={`bg-gray-50 dark:bg-gray-800/50 ${isAndroid ? 'py-1' : (isCompact ? 'py-0.5' : 'py-1')}`}>
+                    <div className={`bg-black/5 dark:bg-white/5 ${isAndroid ? 'py-1' : (isCompact ? 'py-0.5' : 'py-1')}`}>
                         {opt.children!.map((childOpt, childIndex) => renderOption(childOpt, childIndex, true))}
                     </div>
                 )}
@@ -141,10 +141,10 @@ export const ComparerContextMenu: React.FC<ComparerContextMenuProps> = ({ x, y, 
         <div
             ref={menuRef}
             data-menu="true"
-            className={`fixed z-[9999] bg-white dark:bg-[#3a3a3a] rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] border border-gray-200 dark:border-gray-700 overflow-hidden transition-opacity duration-100 ${
+            className={`fixed z-[9999] bg-[#f7f7f7]/80 dark:bg-[#3a3a3a]/80 backdrop-blur-md rounded-lg shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] overflow-hidden transition-opacity duration-100 ${
                 isVisible ? 'opacity-100' : 'opacity-0'
             } ${
-                isAndroid ? 'w-52 py-1' : (isCompact ? 'w-44 py-0.5' : 'w-56 py-1')
+                isAndroid ? 'w-52 py-2' : (isCompact ? 'w-44 py-2' : 'w-56 py-2')
             }`}
             style={{ left: position.x, top: position.y, maxHeight: '90vh', overflowY: 'auto' }}
             onContextMenu={(e) => e.preventDefault()}

@@ -41,12 +41,12 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
     <div className="space-y-8 animate-fade-in">
       {/* 软件信息卡片 */}
       <section>
-        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center">
+        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-subtle pb-2 flex items-center">
           <Info size={20} className="mr-2 text-blue-500" />
           {t('settings.catAbout')}
         </h3>
 
-        <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl p-8 border border-white/10">
+        <div className="bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl p-8 border border-subtle">
           <div className="flex items-center gap-6">
             <AuroraLogo size={115} className="rounded-2xl" />
             <div>
@@ -72,15 +72,15 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
           {t('settings.about.versions')}
         </h4>
         <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="bg-surface rounded-xl p-4 border border-subtle">
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">{t('settings.about.appVersion')}</div>
             <div className="text-lg font-semibold text-gray-800 dark:text-white">{appVersion || '...'}</div>
           </div>
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="bg-surface rounded-xl p-4 border border-subtle">
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">Tauri</div>
             <div className="text-lg font-semibold text-gray-800 dark:text-white">{tauriVersion}</div>
           </div>
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="bg-surface rounded-xl p-4 border border-subtle">
             <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">React</div>
             <div className="text-lg font-semibold text-gray-800 dark:text-white">{reactVersion}</div>
           </div>
@@ -93,7 +93,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
           <RefreshCwIcon size={16} className="mr-2" />
           {t('settings.about.update')}
         </h4>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+        <div className="bg-surface rounded-xl p-6 border border-subtle">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-sm font-medium text-gray-800 dark:text-white mb-1">
@@ -202,7 +202,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
         <div className="grid grid-cols-2 gap-3">
           <button
             onClick={() => handleOpenLink('https://github.com/misakimiku2/aurora-gallery-tauri')}
-            className="flex items-center gap-3 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
+            className="flex items-center gap-3 p-4 bg-surface rounded-xl border border-subtle hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
           >
             <Github size={20} className="text-gray-600 dark:text-gray-400" />
             <div>
@@ -212,7 +212,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
           </button>
           <button
             onClick={() => handleOpenLink('https://github.com/misakimiku2/aurora-gallery-tauri/issues')}
-            className="flex items-center gap-3 p-4 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
+            className="flex items-center gap-3 p-4 bg-surface rounded-xl border border-subtle hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
           >
             <Shield size={20} className="text-gray-600 dark:text-gray-400" />
             <div>
@@ -225,7 +225,7 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
 
       {/* 致谢 */}
       <section>
-        <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400 pt-4 border-t border-gray-200 dark:border-gray-800">
+        <div className="flex items-center justify-center gap-1 text-xs text-gray-500 dark:text-gray-400 pt-4 border-t border-subtle">
           <span>{t('settings.about.madeWith')}</span>
           <Heart size={12} className="text-red-500 fill-red-500" />
           <span>{t('settings.about.by')}</span>
@@ -371,6 +371,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     return 'siglip';
   };
 
+  const [showClipGuide, setShowClipGuide] = useState(false);
   const [activeSeries, setActiveSeries] = useState<ModelSeries>(getInitialSeries);
 
   // 从全局缓存初始化模型状态
@@ -1012,14 +1013,14 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   return (
     <div className="space-y-8 animate-fade-in">
       <section>
-        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center">
+        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-subtle pb-2 flex items-center">
           <Sparkles size={20} className="mr-2 text-green-500" />
           AI视觉
         </h3>
       </section>
 
       <section>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+        <div className="bg-surface rounded-xl p-4 border border-subtle">
           <div className="flex items-center justify-between">
             <div>
               <div className="font-medium text-gray-800 dark:text-white">启用 AI 视觉功能</div>
@@ -1059,10 +1060,49 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         </div>
       </section>
 
-      <section>
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
-          CLIP 模型可以实现自然语言图片搜索和以图搜图功能。选择适合您需求的模型进行下载。
-        </p>
+      {/* 使用说明 */}
+      <section className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 mt-4">
+        <button
+          onClick={() => setShowClipGuide(!showClipGuide)}
+          className="w-full flex items-center justify-between text-sm font-semibold text-blue-800 dark:text-blue-300"
+        >
+          <span className="flex items-center">
+            <Info size={16} className="mr-2" />
+            如何使用 CLIP 搜索
+          </span>
+          {showClipGuide ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </button>
+        {showClipGuide && (
+        <div className="text-sm text-blue-700 dark:text-blue-400 space-y-2 mt-2">
+          <p>CLIP 模型可以实现自然语言图片搜索和以图搜图功能。选择适合您需求的模型进行下载。</p>
+
+          <p className="font-medium mt-3">1. 启用 CLIP 搜索：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>返回主界面，点击顶部搜索框右侧的 ✨ 图标</li>
+            <li>搜索框边框会变成绿色，表示 CLIP 语义搜索已启用</li>
+          </ul>
+
+          <p className="font-medium mt-3">2. 自然语言搜索：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>在搜索框中输入自然语言描述，如："夕阳下的海滩"、"穿红色衣服的人"</li>
+            <li>按回车或点击搜索按钮</li>
+            <li>系统会返回语义相似的图片</li>
+          </ul>
+
+          <p className="font-medium mt-3">3. 以图搜图：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>右键点击图片，选择"搜索相似图片"</li>
+            <li>系统会找到视觉上相似的图片</li>
+          </ul>
+
+          <p className="font-medium mt-3">4. 提示：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li>ViT-B/32 速度更快，适合大多数用户</li>
+            <li>ViT-L/14 准确度更高，但需要更多内存</li>
+            <li>首次使用时会自动加载模型，可能需要几秒钟</li>
+          </ul>
+        </div>
+        )}
       </section>
 
       <section className="space-y-4">
@@ -1072,7 +1112,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         </h4>
 
         {/* 模型系列标签页 */}
-        <div className="border-b border-gray-200 dark:border-gray-700">
+        <div className="border-b border-subtle">
           <div className="flex">
             {MODEL_SERIES.map((series) => {
               const modelCount = CLIP_MODELS.filter(m => m.series === series.id).length;
@@ -1138,11 +1178,11 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             return (
               <div
                 key={model.name}
-                className={`relative bg-white dark:bg-gray-800 rounded-xl p-5 border transition-all ${showGreenBorder
+                className={`relative bg-surface rounded-xl p-5 border transition-all ${showGreenBorder
                   ? 'border-green-500 ring-2 ring-green-500/20'
                   : showRedBorder
                     ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
-                    : 'border-gray-200 dark:border-gray-700 hover:border-green-300'
+                    : 'border-subtle hover:border-green-300'
                   }`}
               >
                 {/* 高精度标签 - 绝对定位在右下角 */}
@@ -1201,7 +1241,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   <div className="flex flex-col items-end gap-2 flex-shrink-0">
                     <div className="flex items-center gap-2">
                       {isStatusLoading ? (
-                        <div className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-400 rounded-lg text-sm font-medium flex items-center">
+                        <div className="px-4 py-2 bg-surface text-gray-400 rounded-lg text-sm font-medium flex items-center">
                           <RefreshCw size={16} className="mr-2 animate-spin" />
                           加载中...
                         </div>
@@ -1221,7 +1261,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                             disabled={isLoading || clipLoading || !settings.enabled}
                             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isInUse
                               ? 'bg-green-500 text-white'
-                              : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                              : 'bg-surface text-gray-700 dark:text-gray-300 hover:bg-surface/70'
                               } disabled:opacity-50 disabled:cursor-not-allowed`}
                           >
                             {isInUse ? '使用中' : '使用'}
@@ -1274,7 +1314,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${
                           enabled
                             ? `bg-${config.color}-100 dark:bg-${config.color}-900/30 text-${config.color}-600 dark:text-${config.color}-400`
-                            : 'bg-gray-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 line-through opacity-60'
+                            : 'bg-surface text-gray-400 dark:text-gray-500 line-through opacity-60'
                         }`}
                         title={enabled ? '支持' : '不支持'}
                       >
@@ -1294,7 +1334,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       </span>
                     </div>
                     {downloadProgress[model.name]?.fileName && (
-                      <div className="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-3">
+                      <div className="bg-surface rounded-lg p-3">
                         <div className="flex items-center justify-between text-xs mb-1">
                           <span className="text-gray-700 dark:text-gray-300 truncate max-w-[60%]">
                             {downloadProgress[model.name].fileName}
@@ -1303,7 +1343,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                             {downloadProgress[model.name].progress}%
                           </span>
                         </div>
-                        <div className="h-1.5 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                        <div className="h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                           <div
                             className="h-full bg-green-500 transition-all duration-300"
                             style={{ width: `${downloadProgress[model.name].progress}%` }}
@@ -1334,7 +1374,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           <Brain size={16} className="mr-2" />
           嵌入向量生成
         </h4>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+        <div className="bg-surface rounded-xl p-4 border border-subtle">
           <div className="flex items-center justify-between mb-3">
             <div>
               <div className="font-medium text-gray-800 dark:text-white">生成图片嵌入向量</div>
@@ -1412,7 +1452,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               </div>
 
               {/* 进度条 - 取消时显示发射动画 */}
-              <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden relative">
+              <div className="h-2 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden relative">
                 {isCancelling ? (
                   // 取消时的发射动画
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-orange-400 to-transparent animate-shimmer"
@@ -1468,7 +1508,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           <Cpu size={16} className="mr-2" />
           高级选项
         </h4>
-        <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-gray-200 dark:border-gray-700 space-y-4">
+        <div className="bg-surface rounded-xl p-4 border border-subtle space-y-4">
           {/* GPU 加速 */}
           <div className={`flex items-center justify-between ${settings.enabled ? '' : 'opacity-50'}`}>
             <div>
@@ -1487,7 +1527,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           </div>
           
           {/* 相似度阈值 */}
-          <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+          <div className={`pt-4 border-subtle ${settings.enabled ? '' : 'opacity-50'}`}>
             <div className="flex items-center justify-between mb-2">
               <div>
                 <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.minScore') || '相似度阈值'}</div>
@@ -1507,7 +1547,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               value={settings.minScore ?? 0.4}
               onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, minScore: parseFloat(e.target.value) })}
               disabled={!settings.enabled}
-              className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full h-2 bg-black/10 dark:bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
             />
             <div className="flex justify-between text-xs text-gray-400 mt-1">
               <span>0.00</span>
@@ -1517,7 +1557,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           </div>
           
           {/* 最大结果数 */}
-          <div className={`pt-4 border-t border-gray-200 dark:border-gray-700 ${settings.enabled ? '' : 'opacity-50'}`}>
+          <div className={`pt-4 border-subtle ${settings.enabled ? '' : 'opacity-50'}`}>
             <div className="flex items-center justify-between mb-2">
               <div>
                 <div className="font-medium text-gray-800 dark:text-white">{t('settings.clip.maxResults') || '最大结果数'}</div>
@@ -1549,7 +1589,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   value={settings.maxResults ?? 200}
                   onChange={(e) => settings.enabled && onUpdateSettings({ ...settings, maxResults: parseInt(e.target.value) })}
                   disabled={!settings.enabled}
-                  className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full h-2 bg-black/10 dark:bg-white/10 rounded-lg appearance-none cursor-pointer accent-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <div className="flex justify-between text-xs text-gray-400 mt-1">
                   <span>50</span>
@@ -1591,7 +1631,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       )}
 
       {/* 模型目录和操作 */}
-      <section className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+      <section className="bg-surface rounded-xl p-4 border border-subtle">
         <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3 flex items-center">
           <FolderOpen size={16} className="mr-2" />
           模型目录
@@ -1610,47 +1650,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
               alert('打开目录失败: ' + error);
             }
           }}
-          className="px-4 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center"
+          className="px-4 py-2 bg-content border border-subtle text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-surface transition-colors flex items-center"
         >
           <FolderOpen size={16} className="mr-2" />
           打开模型目录
         </button>
       </section>
 
-      {/* 使用说明 */}
-      <section className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-4 border border-blue-100 dark:border-blue-800">
-        <h4 className="text-sm font-semibold text-blue-800 dark:text-blue-300 mb-2 flex items-center">
-          <Info size={16} className="mr-2" />
-          如何使用 CLIP 搜索
-        </h4>
-        <div className="text-sm text-blue-700 dark:text-blue-400 space-y-2">
-          <p className="font-medium">1. 启用 CLIP 搜索：</p>
-          <ul className="list-disc list-inside ml-2 space-y-1">
-            <li>返回主界面，点击顶部搜索框右侧的 ✨ 图标</li>
-            <li>搜索框边框会变成绿色，表示 CLIP 语义搜索已启用</li>
-          </ul>
+      {/* 使用说明已移至启用开关下方 */}
 
-          <p className="font-medium mt-3">2. 自然语言搜索：</p>
-          <ul className="list-disc list-inside ml-2 space-y-1">
-            <li>在搜索框中输入自然语言描述，如："夕阳下的海滩"、"穿红色衣服的人"</li>
-            <li>按回车或点击搜索按钮</li>
-            <li>系统会返回语义相似的图片</li>
-          </ul>
-
-          <p className="font-medium mt-3">3. 以图搜图：</p>
-          <ul className="list-disc list-inside ml-2 space-y-1">
-            <li>右键点击图片，选择"搜索相似图片"</li>
-            <li>系统会找到视觉上相似的图片</li>
-          </ul>
-
-          <p className="font-medium mt-3">4. 提示：</p>
-          <ul className="list-disc list-inside ml-2 space-y-1">
-            <li>ViT-B/32 速度更快，适合大多数用户</li>
-            <li>ViT-L/14 准确度更高，但需要更多内存</li>
-            <li>首次使用时会自动加载模型，可能需要几秒钟</li>
-          </ul>
-        </div>
-      </section>
     </div>
   );
 };
@@ -1693,6 +1701,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   const [colorDbStats, setColorDbStats] = useState<ColorDbStats | null>(null);
   const [errorFiles, setErrorFiles] = useState<ColorDbErrorFile[]>([]);
   const [showErrorFiles, setShowErrorFiles] = useState(false);
+  const [showConnectionSteps, setShowConnectionSteps] = useState(false);
   const [isLoadingStats, setIsLoadingStats] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
   const [retrySuccess, setRetrySuccess] = useState<string | null>(null);
@@ -2409,9 +2418,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
   return (
     <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
-      <div className="bg-white dark:bg-gray-800 rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl border border-gray-100 dark:border-gray-700 flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
+      <div className="bg-content rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
 
-        <div className="w-64 bg-gray-50 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col">
+        <div className="w-64 bg-panel flex flex-col">
           {/* ... (Sidebar buttons, same as before) ... */}
           <div className="p-6">
             <h2 className="text-xl font-bold text-gray-800 dark:text-white flex items-center">
@@ -2421,21 +2430,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           <div className="flex-1 px-4 space-y-1">
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'general' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'general' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'general' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Sliders size={18} className="mr-3" /> {t('settings.catGeneral')}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'storage' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'storage' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'storage' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Database size={18} className="mr-3" /> {t('settings.catStorage')}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'ai' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'ai' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'ai' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Brain size={18} className="mr-3" /> {t('settings.catAi')}
@@ -2443,7 +2452,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             {!isAndroid && (
               <button
                 onClick={() => onUpdateSettings({ settingsCategory: 'aiVision' })}
-                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'aiVision' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+                className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'aiVision' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               >
                 <Sparkles size={18} className="mr-3" /> AI视觉
               </button>
@@ -2451,30 +2460,30 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             {!isAndroid && (
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'performance' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'performance' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'performance' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
             >
               <BarChart2 size={18} className="mr-3" /> {t('settings.catPerformance')}
             </button>
             )}
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'lanShare' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'lanShare' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'lanShare' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Wifi size={18} className="mr-3" /> {t('settings.catLanShare') || '局域网共享'}
             </button>
             <button
               onClick={() => onUpdateSettings({ settingsCategory: 'about' })}
-              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'about' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'}`}
+              className={`w-full flex items-center px-4 py-3 rounded-lg text-sm font-medium transition-colors ${state.settingsCategory === 'about' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400' : 'text-gray-600 dark:text-gray-400 hover:bg-surface'}`}
               style={isAndroid ? { height: '55px', fontWeight: 700 } : undefined}
             >
               <Info size={18} className="mr-3" /> {t('settings.catAbout')}
             </button>
           </div>
-          <div className="p-4 border-t border-gray-200 dark:border-gray-800">
+          <div className="p-4">
             <button
               onClick={onClose}
-              className="w-full py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-sm text-gray-800 dark:text-gray-200 transition-colors"
+              className="w-full py-2 bg-surface hover:bg-surface/70 rounded-lg text-sm text-gray-800 dark:text-gray-200 transition-colors"
             >
               {t('viewer.done')}
             </button>
@@ -2487,7 +2496,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             /* ... General Settings Content ... */
             <div className="space-y-8 animate-fade-in">
               <section>
-                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2">{t('settings.catGeneral')}</h3>
+                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-subtle pb-2">{t('settings.catGeneral')}</h3>
                 <div className="space-y-6">
                   <div>
                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.language')}</label>
@@ -2496,7 +2505,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         <button
                           key={lang}
                           onClick={() => onUpdateSettingsData({ language: lang as any })}
-                          className={`px-4 py-2 rounded border text-sm flex items-center ${state.settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-gray-200 dark:border-gray-800'}`}
+                          className={`px-4 py-2 rounded border text-sm flex items-center ${state.settings.language === lang ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' : 'border-subtle'}`}
                         >
                           <Globe size={14} className="mr-2" />
                           {lang === 'zh' ? '中文' : 'English'}
@@ -2505,7 +2514,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </div>
                   </div>
 
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-lg p-4 border border-subtle">
                     {!isAndroid && (
                       <div className="flex items-center justify-between mb-3" style={isAndroid ? { height: '55px' } : undefined}>
                         <div>
@@ -2524,7 +2533,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </div>
                     )}
 
-                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-t border-gray-200 dark:border-gray-700' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
+                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-subtle' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
                       <div>
                         <div className="font-bold text-gray-800 dark:text-gray-200">{isAndroid ? t('settings.animateOnSelect') : t('settings.animateOnHover')}</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{isAndroid ? t('settings.animateOnSelectDesc') : t('settings.animateOnHoverDesc')}</div>
@@ -2540,7 +2549,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </button>
                     </div>
 
-                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-t border-gray-200 dark:border-gray-700' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
+                    <div className={`flex items-center justify-between ${!isAndroid ? 'mb-3 pt-3 border-subtle' : ''}`} style={isAndroid ? { height: '55px' } : undefined}>
                       <div>
                         <div className="font-bold text-gray-800 dark:text-gray-200">{t('settings.autoExtractPalette')}</div>
                         <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">{t('settings.autoExtractPaletteDesc')}</div>
@@ -2557,13 +2566,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </div>
 
                     {!isAndroid && (
-                      <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+                      <div className="pt-3 border-subtle">
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-gray-800 dark:text-gray-200">{t('settings.exitAction')}</span>
                           <select
                             value={state.settings.exitAction || 'ask'}
                             onChange={(e) => onUpdateSettingsData({ exitAction: e.target.value as any })}
-                            className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
+                            className="bg-panel rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
                           >
                             <option value="ask">{t('settings.exitActionAsk')}</option>
                             <option value="minimize">{t('settings.exitActionMinimize')}</option>
@@ -2576,7 +2585,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </div>
               </section>
 
-              <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+              <section className="mt-10 pt-2">
                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Palette size={20} className="mr-2 text-blue-500" /> {t('settings.catAppearance')}</h3>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-4">{t('settings.theme')}</label>
@@ -2606,7 +2615,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </div>
               </section>
 
-              <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+              <section className="mt-10 pt-2">
                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><LayoutGrid size={20} className="mr-2 text-blue-500" /> {t('settings.defaultLayout') || '默认布局设置'}</h3>
                 <div className="space-y-6">
                   {/* Layout Mode Selection */}
@@ -2632,7 +2641,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             })}
                             className={`flex flex-col items-center p-3 rounded-lg border-2 transition-all ${isSelected
                               ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                              : 'border-subtle hover:border-gray-300 dark:hover:border-gray-600'
                               }`}
                           >
                             <Icon size={24} className={`mb-2 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`} />
@@ -2668,7 +2677,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               })}
                               className={`w-full flex items-center px-3 py-2 rounded-lg border transition-all ${isSelected
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
+                                : 'border-subtle hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
                                 }`}
                             >
                               <Icon size={16} className="mr-2" />
@@ -2700,7 +2709,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               })}
                               className={`w-full flex items-center px-3 py-2 rounded-lg border transition-all ${isSelected
                                 ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400'
-                                : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
+                                : 'border-subtle hover:border-gray-300 dark:hover:border-gray-600 text-gray-700 dark:text-gray-300'
                                 }`}
                             >
                               <Icon size={16} className="mr-2" />
@@ -2736,7 +2745,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             })}
                             className={`flex flex-col items-center p-3 rounded-lg border-2 transition-all ${isSelected
                               ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                              : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+                              : 'border-subtle hover:border-gray-300 dark:hover:border-gray-600'
                               }`}
                           >
                             <Icon size={20} className={`mb-2 ${isSelected ? 'text-blue-500' : 'text-gray-400'}`} />
@@ -2757,13 +2766,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           {state.settingsCategory === 'storage' && (
             <div className="space-y-8 animate-fade-in">
               <section>
-                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center"><Database size={20} className="mr-2 text-blue-500" /> {t('settings.catStorage')}</h3>
+                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-subtle pb-2 flex items-center"><Database size={20} className="mr-2 text-blue-500" /> {t('settings.catStorage')}</h3>
                 <div className="space-y-4">
                   {!isAndroid && (
                   <div>
                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{t('settings.resourceRoot')}</label>
                     <div className="flex items-center">
-                      <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                      <div className="flex-1 bg-[#e5e7eb] dark:bg-[#404040] rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
                         {state.settings.paths.resourceRoot}
                       </div>
                       <button
@@ -2778,7 +2787,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   <div>
                     <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{isAndroid ? t('settings.cacheRootAndroid') : t('settings.cacheRoot')}</label>
                     <div className="flex items-center">
-                      <div className="flex-1 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
+                      <div className="flex-1 bg-[#e5e7eb] dark:bg-[#404040] rounded-l px-3 py-2 text-sm text-gray-600 dark:text-gray-300 truncate font-mono">
                         {isAndroid
                           ? (state.settings.paths.cacheRoot || t('settings.notSet'))
                           : (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : t('settings.notSet'))
@@ -2838,12 +2847,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </div>
               </section>
 
-              <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+              <section className="mt-10 pt-2">
                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><Download size={20} className="mr-2 text-blue-500" /> {t('settings.dataBackup')}</h3>
                 <div className="flex space-x-4">
                   <button
                     onClick={handleExportData}
-                    className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800"
+                    className="flex items-center px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle"
                   >
                     <Download size={16} className="mr-2" />
                     {t('settings.exportTags')}
@@ -2858,7 +2867,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                     />
                     <button
-                      className="flex items-center px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 pointer-events-none"
+                      className="flex items-center px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle pointer-events-none"
                     >
                       <Upload size={16} className="mr-2" />
                       {t('settings.importTags')}
@@ -2868,7 +2877,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               </section>
 
               {/* 主色调数据库管理 */}
-              <section className="mt-8 border-t border-gray-100 dark:border-gray-800 pt-6">
+              <section className="mt-10 pt-2">
                 <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center justify-between">
                   <div className="flex items-center">
                     <Palette size={20} className="mr-2 text-purple-500" />
@@ -2888,7 +2897,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       setIsLoadingStats(false);
                     }}
                     disabled={isLoadingStats}
-                    className="text-sm flex items-center px-3 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-700 dark:text-gray-200"
+                    className="text-sm flex items-center px-3 py-1 bg-surface hover:bg-surface/70 rounded-full transition-colors text-gray-700 dark:text-gray-200"
                   >
                     <RefreshCw size={14} className={`mr-1 ${isLoadingStats ? 'animate-spin' : ''}`} />
                     {t('settings.refresh')}
@@ -2899,18 +2908,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   <div className="space-y-4">
                     {/* 统计卡片 */}
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
+                      <div className="bg-surface rounded-lg p-3 border border-subtle">
                         <div className="text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbTotalRecords')}</div>
                         <div className="text-xl font-bold text-gray-800 dark:text-white">{colorDbStats.total.toLocaleString()}</div>
                       </div>
-                      <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-3 border border-gray-200 dark:border-gray-800">
+                      <div className="bg-surface rounded-lg p-3 border border-subtle">
                         <div className="text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbFileSize')}</div>
                         <div className="text-xl font-bold text-gray-800 dark:text-white">{formatFileSize(colorDbStats.dbSize + colorDbStats.walSize)}</div>
                       </div>
                     </div>
 
                     {/* 状态分布 */}
-                    <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                    <div className="bg-surface rounded-lg p-4 border border-subtle">
                       <div className="flex justify-between items-center mb-3">
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.colorDbStatusDistribution')}</span>
                       </div>
@@ -2919,7 +2928,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         <div className="flex items-center">
                           <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbExtracted')}</div>
                           <div className="flex-1 mx-2">
-                            <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                            <div className="h-2 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-green-500 rounded-full"
                                 style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.extracted / colorDbStats.total) * 100 : 0}%` }}
@@ -2935,7 +2944,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         <div className="flex items-center">
                           <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbPending')}</div>
                           <div className="flex-1 mx-2">
-                            <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                            <div className="h-2 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-blue-500 rounded-full"
                                 style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.pending / colorDbStats.total) * 100 : 0}%` }}
@@ -2952,7 +2961,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           <div className="flex items-center">
                             <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbProcessing')}</div>
                             <div className="flex-1 mx-2">
-                              <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                              <div className="h-2 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                                 <div
                                   className="h-full bg-yellow-500 rounded-full"
                                   style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.processing / colorDbStats.total) * 100 : 0}%` }}
@@ -2969,7 +2978,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         <div className="flex items-center">
                           <div className="w-20 text-xs text-gray-500 dark:text-gray-400">{t('settings.colorDbErrors')}</div>
                           <div className="flex-1 mx-2">
-                            <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded-full overflow-hidden">
+                            <div className="h-2 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-red-500 rounded-full"
                                 style={{ width: `${colorDbStats.total > 0 ? (colorDbStats.error / colorDbStats.total) * 100 : 0}%` }}
@@ -2984,7 +2993,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </div>
 
                     {/* 主色调提取任务控制 */}
-                    <div className="bg-gray-50 dark:bg-gray-700/30 rounded-lg p-4 border border-gray-200 dark:border-gray-800">
+                    <div className="bg-surface rounded-lg p-4 border border-subtle">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.colorExtractionTask')}</span>
                         <div className="flex items-center space-x-2">
@@ -3046,7 +3055,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               {t('settings.estimatedTimeRemaining')}: {formatEstimatedTimeMs(colorExtractProgress.estimatedTime)}
                             </div>
                           )}
-                          <div className="w-full bg-gray-200 dark:bg-gray-600 h-2 rounded-full overflow-hidden">
+                          <div className="w-full bg-black/10 dark:bg-white/10 h-2 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-300 ${isColorPaused ? 'bg-yellow-500' : 'bg-blue-500'}`}
                               style={{ width: `${(colorExtractProgress.current / Math.max(colorExtractProgress.total, 1)) * 100}%` }}
@@ -3084,7 +3093,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
                     {/* 错误文件管理 */}
                     {colorDbStats.error > 0 && (
-                      <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4 border border-red-200 dark:border-red-800">
+                      <div className="bg-red-50 dark:bg-red-900/20 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center">
                             <AlertCircle size={18} className="text-red-500 mr-2" />
@@ -3106,7 +3115,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 setShowErrorFiles(!showErrorFiles);
                                 if (!showErrorFiles) loadErrorFiles();
                               }}
-                              className="text-sm flex items-center px-3 py-1.5 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
+                              className="text-sm flex items-center px-3 py-1.5 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-300 rounded-lg transition-colors"
                             >
                               {showErrorFiles ? <ChevronUp size={14} className="mr-1" /> : <ChevronDown size={14} className="mr-1" />}
                               {showErrorFiles ? t('settings.hide') : t('settings.show')}
@@ -3144,10 +3153,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               </div>
                               <div className="flex items-center space-x-2">
                                 {/* 视图切换 */}
-                                <div className="flex items-center bg-gray-100 dark:bg-gray-800 rounded-lg p-0.5">
+                                <div className="flex items-center bg-surface rounded-lg p-0.5">
                                   <button
                                     onClick={() => setViewMode('list')}
-                                    className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                    className={`p-1.5 rounded ${viewMode === 'list' ? 'bg-content shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
                                     style={isAndroid ? { width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                     title={t('layout.list')}
                                   >
@@ -3155,7 +3164,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                   </button>
                                   <button
                                     onClick={() => setViewMode('grid')}
-                                    className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
+                                    className={`p-1.5 rounded ${viewMode === 'grid' ? 'bg-content shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}
                                     style={isAndroid ? { width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                     title={t('layout.grid')}
                                   >
@@ -3189,12 +3198,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     key={index}
                                     className={`relative group rounded-lg border-2 overflow-hidden cursor-pointer transition-all ${selectedFiles.has(file.path)
                                       ? 'border-red-500 ring-2 ring-red-500/20'
-                                      : 'border-gray-200 dark:border-gray-700 hover:border-red-300'
+                                      : 'border-subtle hover:border-red-300'
                                       }`}
                                     onClick={() => toggleFileSelection(file.path)}
                                   >
                                     {/* 缩略图 */}
-                                    <div className="aspect-square bg-gray-100 dark:bg-gray-800 flex items-center justify-center relative">
+                                    <div className="aspect-square bg-surface flex items-center justify-center relative">
                                       <img
                                         src={getAssetUrl(file.path)}
                                         alt=""
@@ -3227,7 +3236,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                             e.stopPropagation();
                                             openPreview(file);
                                           }}
-                                          className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                          className="p-1.5 bg-surface rounded shadow-sm hover:bg-surface"
                                           title={t('settings.preview')}
                                         >
                                           <Eye size={12} className="text-gray-600 dark:text-gray-400" />
@@ -3237,7 +3246,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                             e.stopPropagation();
                                             openInExplorer(file.path);
                                           }}
-                                          className="p-1.5 bg-white dark:bg-gray-800 rounded shadow-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                                          className="p-1.5 bg-surface rounded shadow-sm hover:bg-surface"
                                           title={t('context.openFolder')}
                                         >
                                           <FolderOpen size={12} className="text-gray-600 dark:text-gray-400" />
@@ -3246,7 +3255,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     )}
 
                                     {/* 文件名 */}
-                                    <div className="p-2 bg-white dark:bg-gray-800">
+                                    <div className="p-2 bg-surface">
                                       <div className="text-xs text-gray-600 dark:text-gray-300 truncate" title={file.path}>
                                         {file.path.split(/[\\/]/).pop()}
                                       </div>
@@ -3258,7 +3267,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               /* 列表视图 */
                               <div className="max-h-60 overflow-y-auto space-y-2">
                                 {errorFiles.map((file, index) => (
-                                  <div key={index} className="flex items-center p-2 bg-white dark:bg-gray-800 rounded border border-red-100 dark:border-red-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                  <div key={index} className="flex items-center p-2 bg-surface rounded border border-red-100 dark:border-red-800 hover:bg-surface transition-colors">
                                     <input
                                       type="checkbox"
                                       checked={selectedFiles.has(file.path)}
@@ -3276,7 +3285,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     <div className="flex items-center space-x-1">
                                       <button
                                         onClick={() => openPreview(file)}
-                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-surface rounded transition-colors"
                                         style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('settings.preview')}
                                       >
@@ -3284,7 +3293,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                       </button>
                                       <button
                                         onClick={() => openInExplorer(file.path)}
-                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded transition-colors"
+                                        className="p-1.5 text-gray-600 dark:text-gray-400 hover:bg-surface rounded transition-colors"
                                         style={isAndroid ? { width: '45px', height: '45px', display: 'flex', alignItems: 'center', justifyContent: 'center' } : undefined}
                                         title={t('context.openFolder')}
                                       >
@@ -3354,7 +3363,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             <div className="space-y-8 animate-fade-in">
               <section>
                 {/* ... Provider selection ... */}
-                <div className="flex items-center justify-between border-b border-gray-100 dark:border-gray-800 pb-2 mb-4">
+                <div className="flex items-center justify-between border-subtle pb-2 mb-4">
                   <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
                     <Brain size={20} className="mr-2 text-purple-500" /> {t('settings.catAi')}
                   </h3>
@@ -3395,7 +3404,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, provider: item.id as any } })}
                       className={`relative flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${state.settings.ai.provider === item.id
                         ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300'
-                        : 'border-gray-200 dark:border-gray-800 hover:border-purple-300 dark:hover:border-purple-700 text-gray-600 dark:text-gray-400'
+                        : 'border-subtle hover:border-purple-300 dark:hover:border-purple-700 text-gray-600 dark:text-gray-400'
                         }`}
                     >
                       <item.icon size={24} className="mb-2" />
@@ -3410,12 +3419,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </div>
 
                 {/* AI Model Connection Steps */}
-                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-5 border border-blue-200 dark:border-blue-800 space-y-3 mb-6">
-                  <h4 className="text-sm font-bold text-blue-700 dark:text-blue-400 flex items-center">
-                    <HelpCircle size={16} className="mr-2" />
-                    {t('settings.connectionSteps')}
-                  </h4>
+                <div className="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-5 space-y-3 mb-6">
+                  <button
+                    onClick={() => setShowConnectionSteps(!showConnectionSteps)}
+                    className="w-full flex items-center justify-between text-sm font-bold text-blue-700 dark:text-blue-400"
+                  >
+                    <span className="flex items-center">
+                      <HelpCircle size={16} className="mr-2" />
+                      {t('settings.connectionSteps')}
+                    </span>
+                    {showConnectionSteps ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </button>
 
+                  {showConnectionSteps && (
+                    <>
                   {state.settings.ai.provider === 'ollama' && (
                     <div className="space-y-2 text-sm text-blue-800 dark:text-blue-300">
                       <ol className="list-decimal list-inside space-y-1">
@@ -3451,9 +3468,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       </ol>
                     </div>
                   )}
+                    </>
+                  )}
                 </div>
 
-                <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-5 border border-gray-200 dark:border-gray-800 space-y-4">
+                <div className="bg-surface rounded-xl p-5 border border-subtle space-y-4">
                   {state.settings.ai.provider === 'openai' && (
                     <>
                       {/* 服务商和模型选择 - 左右布局 */}
@@ -3483,7 +3502,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                 onUpdateSettingsData({ ai: newSettings });
                               }
                             }}
-                            className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                            className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           >
                             {AI_SERVICE_PRESETS.map((preset) => (
                               <option key={preset.id} value={preset.id}>
@@ -3538,7 +3557,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                                     openai: { ...state.settings.ai.openai, model: e.target.value }
                                   }
                                 })}
-                                className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                                className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                               >
                                 {/* 优先显示动态获取的模型列表 */}
                                 {(dynamicModels[state.settings.ai.onlineServicePreset] ||
@@ -3563,7 +3582,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                               type="text"
                               value={state.settings.ai.openai.model}
                               onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, model: e.target.value } } })}
-                              className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                              className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                               placeholder="输入模型名称..."
                             />
                           )}
@@ -3578,7 +3597,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           name="openai-endpoint"
                           value={state.settings.ai.openai.endpoint}
                           onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, endpoint: e.target.value } } })}
-                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           placeholder="https://api.openai.com/v1"
                         />
                       </div>
@@ -3591,7 +3610,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             name="openai-api-key"
                             value={state.settings.ai.openai.apiKey}
                             onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, openai: { ...state.settings.ai.openai, apiKey: e.target.value } } })}
-                            className="flex-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                            className="flex-1 bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                             placeholder={AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.apiKeyPlaceholder || 'sk-...'}
                           />
                           {AI_SERVICE_PRESETS.find(p => p.id === state.settings.ai.onlineServicePreset)?.apiKeyHelpUrl && (
@@ -3618,7 +3637,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           name="ollama-endpoint"
                           value={state.settings.ai.ollama.endpoint}
                           onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, endpoint: e.target.value } } })}
-                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           placeholder="http://localhost:11434"
                         />
                       </div>
@@ -3630,7 +3649,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           name="ollama-model"
                           value={state.settings.ai.ollama.model}
                           onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, ollama: { ...state.settings.ai.ollama, model: e.target.value } } })}
-                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           placeholder="llava"
                         />
                       </div>
@@ -3647,7 +3666,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           name="lmstudio-endpoint"
                           value={state.settings.ai.lmstudio.endpoint}
                           onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, endpoint: e.target.value } } })}
-                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           placeholder="http://localhost:1234/v1"
                         />
                         <div className="text-[10px] text-gray-400 mt-1">{t('settings.lmStudioVersionHint')}</div>
@@ -3660,7 +3679,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           name="lmstudio-model"
                           value={state.settings.ai.lmstudio.model}
                           onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, lmstudio: { ...state.settings.ai.lmstudio, model: e.target.value } } })}
-                          className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
+                          className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200"
                           placeholder="local-model"
                         />
                       </div>
@@ -3671,17 +3690,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
                 <div className="mt-6">
                   <h4 className="text-sm font-bold text-gray-800 dark:text-white mb-2">{t('settings.systemPrompt')}</h4>
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-xl p-4 border border-subtle">
                     <textarea
                       id="ai-system-prompt"
                       value={state.settings.ai.systemPrompt || ''}
                       onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, systemPrompt: e.target.value } })}
-                      className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[80px]"
+                      className="w-full bg-panel rounded p-2 text-sm outline-none text-gray-800 dark:text-gray-200 min-h-[80px]"
                       placeholder="..."
                     />
 
                     {/* 预设工具�?*/}
-                    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 flex flex-wrap items-center gap-2">
+                    <div className="mt-3 pt-3 border-subtle flex flex-wrap items-center gap-2">
                       <select
                         id="ai-preset-select"
                         value={state.settings.ai.currentPresetId || ''}
@@ -3694,7 +3713,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             onUpdateSettingsData({ ai: { ...state.settings.ai, currentPresetId: undefined } });
                           }
                         }}
-                        className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                        className="flex-1 min-w-[120px] bg-panel rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
                       >
                         <option value="">{t('settings.selectPreset')}</option>
                         {state.settings.ai.promptPresets?.map(p => (
@@ -3707,7 +3726,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         value={editingPresetName}
                         onChange={(e) => setEditingPresetName(e.target.value)}
                         placeholder={t('settings.presetName')}
-                        className="flex-1 min-w-[120px] bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
+                        className="flex-1 min-w-[120px] bg-panel rounded p-1.5 text-xs outline-none text-gray-800 dark:text-gray-200"
                       />
 
                       <div className="flex items-center gap-1">
@@ -3722,7 +3741,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           }}
                           disabled={!state.settings.ai.currentPresetId}
                           title={t('settings.savePreset')}
-                          className="p-1.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-800/50 disabled:opacity-50"
+                          className="p-2 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Save size={16} />
                         </button>
@@ -3735,7 +3754,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             onUpdateSettingsData({ ai: { ...state.settings.ai, promptPresets: updated, currentPresetId: newId } });
                           }}
                           title={t('settings.saveAsNewPreset')}
-                          className="p-1.5 rounded bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 hover:bg-green-200 dark:hover:bg-green-800/50"
+                          className="p-2 rounded-lg bg-green-500/10 text-green-600 dark:text-green-400 hover:bg-green-500/20 transition-colors"
                         >
                           <PlusCircle size={16} />
                         </button>
@@ -3750,7 +3769,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           }}
                           disabled={!state.settings.ai.currentPresetId}
                           title={t('settings.deletePreset')}
-                          className="p-1.5 rounded bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-800/50 disabled:opacity-50"
+                          className="p-2 rounded-lg bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -3778,7 +3797,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${state.settings.ai.autoDescription ? 'translate-x-5' : 'translate-x-1'}`} />
                     </button>
                   </div>
-                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800" style={isAndroid ? { height: '55px' } : undefined}>
+                  <div className="flex items-center justify-between pl-4 border-l-2 border-subtle" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className={`text-sm font-medium ${state.settings.ai.autoDescription ? 'text-gray-700 dark:text-gray-300' : 'text-gray-400 dark:text-gray-500'}`}>{t('settings.aiEnhancePersonDesc')}</span>
                     <button
                       onClick={() => {
@@ -3801,7 +3820,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
-                  <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800" style={isAndroid ? { height: '55px' } : undefined}>
+                  <div className="flex items-center justify-between pl-4 border-l-2 border-subtle" style={isAndroid ? { height: '55px' } : undefined}>
                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiAutoAddPeople')}</span>
                     <button
                       onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, autoAddPeople: !state.settings.ai.autoAddPeople } })}
@@ -3832,7 +3851,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   {state.settings.ai.enableTranslation && (
-                    <div className="flex items-center justify-between pl-4 border-l-2 border-gray-200 dark:border-gray-800 animate-fade-in" style={isAndroid ? { height: '55px' } : undefined}>
+                    <div className="flex items-center justify-between pl-4 border-l-2 border-subtle animate-fade-in" style={isAndroid ? { height: '55px' } : undefined}>
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.aiTargetLang')}</span>
                       <div className="flex space-x-2">
                         {[
@@ -3846,7 +3865,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             onClick={() => onUpdateSettingsData({ ai: { ...state.settings.ai, targetLanguage: lang.code as any } })}
                             className={`text-xs px-2 py-1 rounded border transition-colors ${state.settings.ai.targetLanguage === lang.code
                               ? 'bg-purple-500 text-white border-purple-500'
-                              : 'bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-300 dark:border-gray-700 hover:border-purple-400'
+                              : 'bg-surface text-gray-600 dark:text-gray-400 border-subtle hover:border-purple-400'
                               }`}
                           >
                             {lang.label}
@@ -3867,7 +3886,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                       step="0.05"
                       value={state.settings.ai.confidenceThreshold}
                       onChange={(e) => onUpdateSettingsData({ ai: { ...state.settings.ai, confidenceThreshold: parseFloat(e.target.value) } })}
-                      className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                      className="w-full h-1.5 bg-black/10 dark:bg-white/10 rounded-lg appearance-none cursor-pointer accent-purple-500"
                     />
                   </div>
                 </div>
@@ -3894,14 +3913,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           {state.settingsCategory === 'performance' && (
             <div className="space-y-8 animate-fade-in">
               <section>
-                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-6 border-b border-gray-100 dark:border-gray-800 pb-2 flex items-center justify-between">
+                <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-6 border-subtle pb-2 flex items-center justify-between">
                   <div className="flex items-center">
                     <BarChart2 size={20} className="mr-2 text-blue-500" />
                     {t('settings.catPerformance')}
                   </div>
                   <button
                     onClick={handleRefreshPerformance}
-                    className="text-sm flex items-center px-3 py-1 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors text-gray-700 dark:text-gray-200"
+                    className="text-sm flex items-center px-3 py-1 bg-surface hover:bg-surface/70 rounded-full transition-colors text-gray-700 dark:text-gray-200"
                   >
                     <RefreshCw size={14} className="mr-1 animate-spin-on-hover" />
                     {t('settings.performance.refreshNow')}
@@ -3911,7 +3930,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 {/* 性能指标概览 */}
                 <div className="grid grid-cols-2 gap-4 mb-8">
                   {/* 实时内存使用 */}
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-xl p-4 border border-subtle">
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{t('settings.performance.memoryUsage')}</span>
@@ -3929,7 +3948,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </div>
 
                     {/* 内存使用历史可视�?*/}
-                    <div className="h-24 bg-gray-200 dark:bg-gray-600 rounded overflow-hidden relative">
+                    <div className="h-24 bg-black/10 dark:bg-white/10 rounded overflow-hidden relative">
                       {(() => {
                         // 获取内存历史并确保包含当前内存数�?
                         let memoryHistory = performanceMonitor.getMemoryHistory();
@@ -4025,7 +4044,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   {/* 缩略图缓存命中率 */}
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-xl p-4 border border-subtle">
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <span className="text-sm font-medium text-gray-600 dark:text-gray-400">{t('settings.performance.cacheHitRate')}</span>
@@ -4044,7 +4063,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </div>
 
                     {/* 缓存命中率可视化 */}
-                    <div className="h-10 bg-gray-200 dark:bg-gray-600 rounded overflow-hidden flex">
+                    <div className="h-10 bg-black/10 dark:bg-white/10 rounded overflow-hidden flex">
                       {(() => {
                         const hitCount = performanceMonitor.getCounter('thumbnailCacheHit');
                         const missCount = performanceMonitor.getCounter('thumbnailCacheMiss');
@@ -4070,7 +4089,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 {/* 性能指标详细数据 */}
                 <div className="space-y-6">
                   {/* 缩略图加载性能 */}
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-xl p-4 border border-subtle">
                     <h4 className="text-md font-semibold text-gray-800 dark:text-white mb-3 flex items-center">
                       <FileText size={16} className="mr-2 text-blue-500" />
                       {t('settings.performance.thumbnailLoading')}
@@ -4116,7 +4135,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                           })()}
                         </span>
                       </div>
-                      <div className="h-2 bg-gray-200 dark:bg-gray-600 rounded overflow-hidden">
+                      <div className="h-2 bg-black/10 dark:bg-white/10 rounded overflow-hidden">
                         {(() => {
                           const hitCount = performanceMonitor.getCounter('thumbnailCacheHit');
                           const missCount = performanceMonitor.getCounter('thumbnailCacheMiss');
@@ -4140,7 +4159,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                   </div>
 
                   {/* 文件扫描性能 */}
-                  <div className="bg-gray-50 dark:bg-gray-700/30 rounded-xl p-4 border border-gray-200 dark:border-gray-800">
+                  <div className="bg-surface rounded-xl p-4 border border-subtle">
                     <h4 className="text-md font-semibold text-gray-800 dark:text-white mb-3 flex items-center">
                       <Timer size={16} className="mr-2 text-blue-500" />
                       {t('settings.performance.fileScanning')}
@@ -4238,7 +4257,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                             }
                           });
                         }}
-                        className="bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
+                        className="bg-panel rounded px-2 py-1 text-sm outline-none text-gray-800 dark:text-gray-200"
                       >
                         <option value="1">1秒</option>
                         <option value="5">5秒</option>
@@ -4252,7 +4271,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     <div className="flex space-x-3">
                       <button
                         onClick={() => performanceMonitor.clearMetrics()}
-                        className="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-gray-200 dark:border-gray-800 text-sm flex items-center justify-center"
+                        className="flex-1 px-4 py-2 bg-surface hover:bg-surface/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle text-sm flex items-center justify-center"
                       >
                         <RefreshCw size={14} className="mr-2" />
                         {t('settings.performance.clearData')}
@@ -4302,11 +4321,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           onClick={closePreview}
         >
           <div
-            className="bg-white dark:bg-gray-800 rounded-xl max-w-4xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
+            className="bg-content rounded-xl max-w-4xl max-h-[90vh] w-full overflow-hidden shadow-2xl"
             onClick={e => e.stopPropagation()}
           >
             {/* 标题栏 */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between p-4 border-b border-subtle">
               <div className="flex-1 min-w-0 mr-4">
                 <h4 className="text-sm font-medium text-gray-800 dark:text-white truncate">
                   {previewFile.path.split(/[\\/]/).pop()}
@@ -4318,7 +4337,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => openInExplorer(previewFile.path)}
-                  className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                  className="p-2 text-gray-600 dark:text-gray-400 hover:bg-surface rounded-lg transition-colors"
                   title={t('context.openFolder')}
                 >
                   <FolderOpen size={18} />
@@ -4333,7 +4352,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                 </button>
                 <button
                   onClick={closePreview}
-                  className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                  className="p-2 text-gray-600 dark:text-gray-400 hover:bg-surface rounded-lg transition-colors"
                 >
                   <X size={18} />
                 </button>
@@ -4341,7 +4360,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             </div>
 
             {/* 图片预览区域 */}
-            <div className="p-4 bg-gray-100 dark:bg-gray-900 flex items-center justify-center" style={{ minHeight: '300px', maxHeight: '60vh' }}>
+            <div className="p-4 bg-panel flex items-center justify-center" style={{ minHeight: '300px', maxHeight: '60vh' }}>
               {!previewError ? (
                 <img
                   src={getAssetUrl(previewFile.path)}
@@ -4362,7 +4381,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
             </div>
 
             {/* 底部信息 */}
-            <div className="p-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+            <div className="p-4 border-t border-subtle bg-surface">
               <p className="text-xs text-gray-500 dark:text-gray-400 break-all">
                 {t('settings.filePath')}: {previewFile.path}
               </p>

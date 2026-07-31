@@ -169,26 +169,26 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   const isAndroidDevice = isAndroid ?? isAndroidSync();
 
   const menuItemClass = isAndroidDevice
-    ? 'px-4 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'
-    : 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center';
+    ? 'mx-2 px-4 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'
+    : 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center';
   const menuItemStyle = isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined;
   const iconSize = isAndroidDevice ? 18 : 14;
   const deleteItemClass = isAndroidDevice
-    ? 'px-4 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center'
-    : 'px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center';
+    ? 'mx-2 px-4 rounded hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center'
+    : 'mx-2 px-4 py-2 rounded hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer flex items-center';
   const purpleItemClass = isAndroidDevice
-    ? 'px-4 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center'
-    : 'px-4 py-2 hover:bg-purple-600 hover:text-white cursor-pointer flex items-center';
+    ? 'mx-2 px-4 rounded hover:bg-purple-600 hover:text-white cursor-pointer flex items-center'
+    : 'mx-2 px-4 py-2 rounded hover:bg-purple-600 hover:text-white cursor-pointer flex items-center';
   const pinkItemClass = isAndroidDevice
-    ? 'px-4 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center'
-    : 'px-4 py-2 hover:bg-pink-600 hover:text-white cursor-pointer flex items-center';
+    ? 'mx-2 px-4 rounded hover:bg-pink-600 hover:text-white cursor-pointer flex items-center'
+    : 'mx-2 px-4 py-2 rounded hover:bg-pink-600 hover:text-white cursor-pointer flex items-center';
   const plainMenuItemClass = isAndroidDevice
-    ? 'px-4 hover:bg-blue-600 hover:text-white cursor-pointer'
-    : 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer';
+    ? 'mx-2 px-4 rounded hover:bg-blue-600 hover:text-white cursor-pointer'
+    : 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer';
   const plainMenuItemStyle = isAndroidDevice ? { height: '50px', fontSize: '15px', display: 'flex', alignItems: 'center' } : undefined;
   const headerItemClass = isAndroidDevice
-    ? 'px-4 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1'
-    : 'px-4 py-2 font-bold bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-600 mb-1';
+    ? 'mx-2 px-4 rounded font-bold bg-black/5 dark:bg-white/5 mb-1'
+    : 'mx-2 px-4 py-2 rounded font-bold bg-black/5 dark:bg-white/5 mb-1';
   const headerItemStyle = isAndroidDevice ? { height: '50px', fontSize: '15px', display: 'flex', alignItems: 'center' } : undefined;
 
   const compareTabs = tabs.filter(tab => tab.isCompareMode);
@@ -197,10 +197,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   return (
     <div
       data-testid="context-menu"
-      className={`fixed bg-white ${['file-single', 'file-multi', 'folder-single', 'folder-multi', 'person'].includes(contextMenu.type || '')
-        ? 'dark:bg-[#3a3a3a]'
-        : 'dark:bg-[#3a3a3a]'
-        } border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 text-gray-800 dark:text-gray-200 min-w-[180px] z-[1000] max-h-[80vh] overflow-y-auto`}
+      className={`fixed bg-[#FAFAFA]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-2 text-gray-800 dark:text-gray-200 min-w-[180px] z-[1000] max-h-[80vh] overflow-y-auto`}
       style={{
         left: 0,
         top: 0,
@@ -253,13 +250,13 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleViewInExplorer(contextMenu.targetId!); closeContextMenu(); }}><ExternalLink size={iconSize} className="mr-2 opacity-70" /> {t('context.viewInExplorer')}</div>
         )}
         {contextMenu.type === 'file-single' && files[contextMenu.targetId!] && ((() => {
-          const file = files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; if (isUnavailable) return null; return (<div className={isAndroidDevice ? 'px-4 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center' : 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'} style={isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined} onClick={() => { if (parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
+          const file = files[contextMenu.targetId!]; const parentId = file.parentId; const isUnavailable = activeTab.viewMode === 'browser' && activeTab.folderId === parentId; if (isUnavailable) return null; return (<div className={isAndroidDevice ? 'mx-2 px-4 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center' : 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'} style={isAndroidDevice ? { height: '50px', fontSize: '15px' } : undefined} onClick={() => { if (parentId) { enterFolder(parentId, { scrollToItemId: file.id }); closeContextMenu(); } }}>
             <FolderOpen size={iconSize} className="mr-2 opacity-70" />
             {t('context.openFolder')}
           </div>);
         })())}
         {!(isAndroidDevice && (contextMenu.type === 'file-multi' || contextMenu.type === 'folder-multi')) && (
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
         )}
 
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && (
@@ -270,8 +267,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         )}
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && clipSettings?.enabled && handleSearchSimilarImages && (
           <div className={isAndroidDevice
-            ? 'px-4 hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'
-            : 'px-4 py-2 hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'
+            ? 'mx-2 px-4 rounded hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'
+            : 'mx-2 px-4 py-2 rounded hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'
           } style={menuItemStyle} onClick={() => {
             if (!clipSettings?.modelName) {
               showToast('请先选择视觉模型');
@@ -298,7 +295,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           <Link size={iconSize} className="mr-2 opacity-70" />
           {t('context.copyFolderPath')}
         </div>)}
-        <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+        <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
         {(contextMenu.type === 'file-single' || contextMenu.type === 'folder-single') && contextMenu.targetId && (<div className={menuItemClass} style={menuItemStyle} onClick={() => { startRename(contextMenu.targetId!); closeContextMenu(); }}>
           <Type size={iconSize} className="mr-2 opacity-70" />
           {t('context.rename')}
@@ -324,8 +321,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
           const canCompare = imageIds.length >= 1 && imageIds.length <= 24;
           const itemClass = canCompare
             ? (isAndroidDevice
-                ? 'px-4 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'
-                : 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center')
+                ? 'mx-2 px-4 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center'
+                : 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center')
             : (isAndroidDevice
                 ? 'px-4 flex items-center text-gray-400 cursor-default opacity-60'
                 : 'px-4 py-2 flex items-center text-gray-400 cursor-default opacity-60');
@@ -365,7 +362,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               </div>
               {compareSubmenuOpen && (
                 <div
-                  className="fixed bg-white dark:bg-[#3a3a3a] border border-gray-200 dark:border-gray-700 rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-1 min-w-[200px] z-[1001]"
+                  className="fixed bg-[#f7f7f7]/80 dark:bg-[#3a3a3a]/80 backdrop-blur-md rounded-md shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] text-sm py-2 min-w-[200px] z-[1001]"
                   onMouseEnter={openCompareSubmenu}
                   onMouseLeave={closeCompareSubmenu}
                   ref={(el) => {
@@ -407,7 +404,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
                       <div
                         key={tab.id}
                         className={canAdd
-                          ? 'px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center justify-between'
+                          ? 'mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center justify-between'
                           : 'px-4 py-2 flex items-center justify-between text-gray-400 cursor-default opacity-60'
                         }
                         onClick={canAdd ? () => {
@@ -420,9 +417,9 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
                       </div>
                     );
                   })}
-                  <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+                  <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                   <div
-                    className="px-4 py-2 hover:bg-blue-600 hover:text-white cursor-pointer flex items-center"
+                    className="mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center"
                     onClick={() => { handleOpenCompareInNewTab(imageIds); closeContextMenu(); }}
                   >
                     <Plus size={14} className="mr-2 opacity-70" />
@@ -507,7 +504,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
         )}
 
         {!isAndroidDevice && (
-          <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+          <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
         )}
         {!isAndroidDevice && (
           <div className={deleteItemClass} style={menuItemStyle} onClick={() => { requestDelete(activeTab.selectedFileIds); closeContextMenu(); }}><Trash2 size={iconSize} className="mr-2" /> {t('context.delete')}</div>
@@ -528,10 +525,10 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { enterTagView(contextMenu.targetId!); closeContextMenu(); }}>{t('context.viewTagged')}</div>
             <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { navigator.clipboard.writeText(contextMenu.targetId!); closeContextMenu(); }}>{t('context.copyName')}</div>
             <div className={menuItemClass} style={menuItemStyle} onClick={() => { setModal('rename-tag', { tag: contextMenu.targetId! }); closeContextMenu(); }}><Edit3 size={iconSize} className="mr-2 opacity-70" /> {t('context.renameTag')}</div>
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+            <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
             <div className={isAndroidDevice
-              ? 'px-4 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer'
-              : 'px-4 py-2 hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer'
+              ? 'mx-2 px-4 rounded hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer'
+              : 'mx-2 px-4 py-2 rounded hover:bg-red-600 text-red-500 dark:text-red-400 hover:text-white cursor-pointer'
             } style={isAndroidDevice ? { height: '50px', fontSize: '15px', display: 'flex', alignItems: 'center' } : undefined} onClick={() => { requestDeleteTags(activeTab.selectedTagIds.length > 0 ? activeTab.selectedTagIds : [contextMenu.targetId!]); closeContextMenu(); }}>{t('context.deleteTag')}</div>
           </>
         )}
@@ -555,7 +552,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <div className={menuItemClass} style={menuItemStyle} onClick={() => { setModal('rename-person', { personId: contextMenu.targetId! }); closeContextMenu(); }}><Edit3 size={iconSize} className="mr-2 opacity-70" /> {t('context.renamePerson')}</div>
             <div className={purpleItemClass} style={menuItemStyle} onClick={() => { setModal('smart-add-to-person', { personId: contextMenu.targetId! }); closeContextMenu(); }}><Sparkles size={iconSize} className="mr-2 opacity-70" /> {t('context.smartAddToPerson') || '智能添加图片'}</div>
             <div className={pinkItemClass} style={menuItemStyle} onClick={() => { setModal('add-to-topic', { personIds: [contextMenu.targetId!] }); closeContextMenu(); }}><Layout size={iconSize} className="mr-2 opacity-70" /> {t('context.addToTopic') || '添加到主题'}</div>
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+            <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
             <div className={deleteItemClass} style={menuItemStyle} onClick={() => {
               setModal('confirm-delete-person', { personId: contextMenu.targetId! });
               closeContextMenu();
@@ -588,7 +585,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
               updateActiveTab({ selectedFileIds: displayFileIds });
               closeContextMenu();
             }}>{t('context.selectAll')}</div>
-            <div className="border-t border-gray-200 dark:border-gray-600 my-1"></div>
+            <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
             <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCreateFolder(); closeContextMenu(); }}>{t('context.newFolder')}</div>
             <div className={plainMenuItemClass} style={plainMenuItemStyle} onClick={() => { handleCreateNewTag(); closeContextMenu(); }}>{t('context.newTag')}</div>
           </>

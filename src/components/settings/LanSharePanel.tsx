@@ -304,13 +304,13 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
 
       {settings.enabled && (
         <div className="space-y-6">
-          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
+          <div className="bg-surface rounded-xl p-6 border border-subtle">
             <div className="grid grid-cols-2 gap-6">
               <div className="space-y-3">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center">
                   {t('settings.lanShare.scanToConnect') || '扫码连接'}
                 </label>
-                <div className="bg-white rounded-lg p-3 inline-block border border-gray-200 dark:border-gray-600 overflow-hidden relative">
+                <div className="bg-white rounded-lg p-3 inline-block border border-subtle overflow-hidden relative">
                   {qrLoading && (
                     <div className="absolute top-3 left-3 w-36 h-36 bg-white rounded flex items-center justify-center z-10">
                       <Loader2 size={32} className="text-gray-400 animate-spin" />
@@ -357,7 +357,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                     }}
                     placeholder={t('settings.lanShare.serverNamePlaceholder') || '如：我的图库'}
                     maxLength={30}
-                    className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-sm text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
+                    className="w-full px-3 py-2 bg-panel rounded-lg text-sm text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/30 transition-colors"
                   />
                 </div>
 
@@ -404,12 +404,12 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
               </div>
             </div>
 
-            <div className="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div className="mt-6 pt-4 border-t border-gray-300 dark:border-gray-600">
               <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
                 {t('settings.lanShare.accessUrl') || '访问地址'}
               </label>
               <div className="flex items-center gap-2">
-                <div className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 font-mono">
+                <div className="flex-1 bg-panel rounded-lg px-3 py-2 text-sm text-gray-600 dark:text-gray-400 font-mono">
                   {serverUrl || (t('settings.lanShare.notRunning') || '服务未启动')}
                 </div>
                 {serverUrl && (
@@ -443,7 +443,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
             </div>
           </div>
 
-          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
+          <div className="bg-surface rounded-xl p-4 border border-subtle">
             <div className="flex items-center justify-between mb-3">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 {t('settings.lanShare.connectedDevices') || '已连接设备'}
@@ -461,10 +461,10 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                   return (
                     <div
                       key={device.id}
-                      className="flex items-center justify-between p-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
+                      className="flex items-center justify-between p-3 bg-surface rounded-lg border border-subtle"
                     >
                       <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-lg flex items-center justify-center shrink-0">
+                        <div className="w-8 h-8 bg-surface rounded-lg flex items-center justify-center shrink-0">
                           <DeviceIcon size={16} className="text-gray-500" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -485,7 +485,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                               onBlur={() => handleSaveEdit(device.id)}
                               autoFocus
                               maxLength={30}
-                              className="w-full text-sm font-medium text-gray-800 dark:text-white bg-white dark:bg-gray-800 border border-blue-500 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              className="w-full text-sm font-medium text-gray-800 dark:text-white bg-content border border-blue-500 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
                             />
                           ) : (
                             <div
