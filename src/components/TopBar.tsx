@@ -108,7 +108,7 @@ const PaginationControls = ({ current, total, pageSize, onPageChange, t }: { cur
   );
 };
 
-const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearchQuery }: { groupedTags: Record<string, string[]>, onTagClick: (tag: string, e: React.MouseEvent) => void, t: (key: string) => string, tagSearchQuery: string, onSetTagSearchQuery: (query: string) => void }) => {
+const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearchQuery, isMobile = false }: { groupedTags: Record<string, string[]>, onTagClick: (tag: string, e: React.MouseEvent) => void, t: (key: string) => string, tagSearchQuery: string, onSetTagSearchQuery: (query: string) => void, isMobile?: boolean }) => {
   const [localSearchQuery, setLocalSearchQuery] = React.useState(tagSearchQuery);
   const [isFocused, setIsFocused] = React.useState(false);
   
@@ -155,7 +155,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   const totalTags = Object.values(filteredGroupedTags || {}).reduce((acc, curr) => acc + curr.length, 0);
 
   return (
-    <div className="flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 max-h-[550px] font-sans border border-gray-200 dark:border-gray-800 z-50 animate-zoom-in">
+    <div className={`flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden font-sans border border-gray-200 dark:border-gray-800 z-50 ${isMobile ? 'w-full max-h-[70vh] rounded-t-2xl' : 'w-80 max-h-[550px] rounded-lg animate-zoom-in'}`}>
       <div className="px-4 py-3 border-b border-black/5 dark:border-white/10 dark:bg-white/5">
         <div className="flex items-center justify-between mb-3">
           <span className="font-bold text-sm tracking-wide">{t('sidebar.allTags')}</span>
@@ -164,7 +164,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
           </span>
         </div>
         <div className="relative">
-          <Search size={14} className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" />
+          <Search size={isMobile ? 16 : 14} className="absolute left-2.5 top-1/2 transform -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             id="tag-search-input"
@@ -180,7 +180,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
               // 延迟关闭，以便点击建议项时能触发点击事件
               setTimeout(() => setIsFocused(false), 200);
             }}
-            className="w-full pl-8 pr-2 py-1.5 rounded-md border border-gray-200 dark:border-gray-800 bg-surface text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className={`w-full pl-8 pr-2 ${isMobile ? 'py-2.5' : 'py-1.5'} rounded-md border border-gray-200 dark:border-gray-800 bg-surface text-sm text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent`}
           />
           {localSearchQuery && (
             <button
@@ -190,7 +190,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
               }}
               className="absolute right-2.5 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
-              <X size={14} />
+              <X size={isMobile ? 16 : 14} />
             </button>
           )}
           
@@ -227,7 +227,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
                   <button
                     key={tag}
                     onClick={(e) => onTagClick(tag, e)}
-                    className="text-xs px-2.5 py-1 rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-100 dark:border-blue-900/30 transition-colors truncate max-w-full text-left"
+                    className={`${isMobile ? 'text-sm px-3 py-1.5' : 'text-xs px-2.5 py-1'} rounded-md bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-blue-100 dark:border-blue-900/30 transition-colors truncate max-w-full text-left`}
                     title={tag}
                   >
                     {tag}
@@ -239,7 +239,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
         </div>
         {/* 字母索引�?*/}
         {keys.length > 0 && (
-          <div className="w-6 flex flex-col items-center py-2 space-y-1 dark:bg-[#3a3a3a]/50 border-l border-black/5 dark:border-white/10 overflow-y-auto no-scrollbar">
+          <div className={`${isMobile ? 'w-8' : 'w-6'} flex flex-col items-center py-2 space-y-1 dark:bg-[#3a3a3a]/50 border-l border-black/5 dark:border-white/10 overflow-y-auto no-scrollbar`}>
             {keys.map(key => (
               <button
                 key={key}
@@ -249,7 +249,7 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
                     element.scrollIntoView({ behavior: 'smooth', block: 'start' });
                   }
                 }}
-                className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                className={`${isMobile ? 'w-7 h-7 text-sm' : 'w-5 h-5 text-xs'} rounded-full flex items-center justify-center font-medium text-gray-600 dark:text-gray-400 hover:bg-blue-100 dark:hover:bg-blue-900/30 hover:text-blue-600 dark:hover:text-blue-400 transition-colors`}
                 title={key}
               >
                 {key}
@@ -262,14 +262,16 @@ const TagsWidget = ({ groupedTags, onTagClick, t, tagSearchQuery, onSetTagSearch
   );
 };
 
-const CalendarWidget = ({ 
-  dateFilter, 
+const CalendarWidget = ({
+  dateFilter,
   onUpdate,
-  t
-}: { 
-  dateFilter: DateFilter, 
+  t,
+  isMobile = false
+}: {
+  dateFilter: DateFilter,
   onUpdate: (f: DateFilter) => void,
-  t: (key: string) => string
+  t: (key: string) => string,
+  isMobile?: boolean
 }) => {
   // Initialize view based on start date or current date
   const [viewDate, setViewDate] = useState(() => dateFilter.start ? new Date(dateFilter.start) : new Date());
@@ -362,27 +364,27 @@ const CalendarWidget = ({
   const weekDays = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
-      <div className="flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white rounded-lg shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden w-80 font-sans border border-gray-200 dark:border-gray-800 z-50 animate-zoom-in">
+      <div className={`flex flex-col select-none bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md text-gray-900 dark:text-white shadow-[0_12px_40px_rgba(0,0,0,0.15)] dark:shadow-[0_12px_40px_rgba(0,0,0,0.7)] overflow-hidden font-sans border border-gray-200 dark:border-gray-800 z-50 ${isMobile ? 'w-full rounded-t-2xl' : 'w-80 rounded-lg animate-zoom-in'}`}>
           {/* Controls Header */}
-          <div className="flex items-center justify-between px-4 py-4 dark:bg-white/5 border-b border-black/5 dark:border-white/10">
-              <div className="font-bold text-base tracking-wide pl-1 text-gray-800 dark:text-gray-100">
+          <div className={`flex items-center justify-between ${isMobile ? 'px-5 py-5' : 'px-4 py-4'} dark:bg-white/5 border-b border-black/5 dark:border-white/10`}>
+              <div className={`font-bold ${isMobile ? 'text-lg' : 'text-base'} tracking-wide pl-1 text-gray-800 dark:text-gray-100`}>
                   {year}年{month + 1}月
               </div>
               <div className="flex space-x-1">
-                  <button onClick={handlePrevMonth} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-                      <ChevronUp size={16} />
+                  <button onClick={handlePrevMonth} className={`${isMobile ? 'p-2' : 'p-1'} hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors`}>
+                      <ChevronUp size={isMobile ? 20 : 16} />
                   </button>
-                  <button onClick={handleNextMonth} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-                      <ChevronDown size={16} />
+                  <button onClick={handleNextMonth} className={`${isMobile ? 'p-2' : 'p-1'} hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors`}>
+                      <ChevronDown size={isMobile ? 20 : 16} />
                   </button>
               </div>
           </div>
 
           {/* Grid */}
-          <div className="px-4 py-4">
+          <div className={`${isMobile ? 'px-5 py-5' : 'px-4 py-4'}`}>
               <div className="grid grid-cols-7 mb-2">
                   {weekDays.map(d => (
-                      <div key={d} className="text-center text-xs text-gray-400 dark:text-gray-500 font-bold py-1">
+                      <div key={d} className={`text-center ${isMobile ? 'text-sm' : 'text-xs'} text-gray-400 dark:text-gray-500 font-bold py-1`}>
                           {d}
                       </div>
                   ))}
@@ -398,7 +400,7 @@ const CalendarWidget = ({
                       return (
                           <div key={`prev-${day}`} 
                                onClick={() => handleDateClick(day, 'prev')}
-                               className={`h-8 w-8 mx-auto flex items-center justify-center text-xs font-medium relative transition-colors ${status !== 'in-range' ? 'rounded-full' : ''} ${bgClass}`}
+                               className={`${isMobile ? 'h-10 w-10' : 'h-8 w-8'} mx-auto flex items-center justify-center ${isMobile ? 'text-sm' : 'text-xs'} font-medium relative transition-colors ${status !== 'in-range' ? 'rounded-full' : ''} ${bgClass}`}
                           >
                               {day}
                           </div>
@@ -410,8 +412,8 @@ const CalendarWidget = ({
                       const day = i + 1;
                       const status = getDayStatus(day, 'current');
                       
-                      let containerClass = "h-8 w-full flex items-center justify-center relative";
-                      let btnClass = "h-8 w-8 flex items-center justify-center text-xs font-medium transition-all cursor-pointer rounded-full";
+                      let containerClass = `${isMobile ? 'h-10' : 'h-8'} w-full flex items-center justify-center relative`;
+                      let btnClass = `${isMobile ? 'h-10 w-10' : 'h-8 w-8'} flex items-center justify-center ${isMobile ? 'text-sm' : 'text-xs'} font-medium transition-all cursor-pointer rounded-full`;
                       
                       if (status === 'selected') {
                           btnClass += ' bg-blue-500 text-white shadow-lg shadow-blue-500/30';
@@ -457,7 +459,7 @@ const CalendarWidget = ({
                       return (
                           <div key={`next-${day}`} 
                                onClick={() => handleDateClick(day, 'next')}
-                               className={`h-8 w-8 mx-auto flex items-center justify-center text-xs font-medium relative transition-colors ${status !== 'in-range' ? 'rounded-full' : ''} ${bgClass}`}
+                               className={`${isMobile ? 'h-10 w-10' : 'h-8 w-8'} mx-auto flex items-center justify-center ${isMobile ? 'text-sm' : 'text-xs'} font-medium relative transition-colors ${status !== 'in-range' ? 'rounded-full' : ''} ${bgClass}`}
                           >
                               {day}
                           </div>
@@ -467,12 +469,12 @@ const CalendarWidget = ({
           </div>
 
           {/* Mode Switcher */}
-          <div className="p-4 border-t border-black/5 dark:border-white/10 dark:bg-[#3a3a3a]/50">
+          <div className={`${isMobile ? 'p-5' : 'p-4'} border-t border-black/5 dark:border-white/10 dark:bg-[#3a3a3a]/50`}>
               <div className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-bold">{t('date.filterBy')}</div>
               <div className="flex gap-2">
                   <button
                       onClick={() => onUpdate({ ...dateFilter, mode: 'created' })}
-                      className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
+                      className={`flex-1 ${isMobile ? 'py-2.5 px-3 text-sm' : 'py-1.5 px-2 text-xs'} font-medium rounded transition-all border ${
                           dateFilter.mode === 'created' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
                           : 'bg-white dark:bg-white/10 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
@@ -482,7 +484,7 @@ const CalendarWidget = ({
                   </button>
                   <button
                       onClick={() => onUpdate({ ...dateFilter, mode: 'updated' })}
-                      className={`flex-1 py-1.5 px-2 text-xs font-medium rounded transition-all border ${
+                      className={`flex-1 ${isMobile ? 'py-2.5 px-3 text-sm' : 'py-1.5 px-2 text-xs'} font-medium rounded transition-all border ${
                           dateFilter.mode === 'updated' 
                           ? 'bg-blue-500 border-blue-500 text-white shadow-sm' 
                           : 'bg-white dark:bg-white/10 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-gray-400 dark:hover:border-gray-500 hover:text-gray-800 dark:hover:text-gray-200'
@@ -1452,24 +1454,41 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* Date Filter (hidden on topics view) */}
         {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
         <div className="relative">
-           <button 
+           <button
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
-             className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${filterMenuOpen || activeTab.dateFilter.start ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             className={`${isAndroid ? 'w-10 h-10 rounded-xl' : 'w-9 h-9 rounded-lg'} flex items-center justify-center hover:bg-surface ${filterMenuOpen || activeTab.dateFilter.start ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
              title={t('date.calendar')}
            >
              <Calendar size={18} />
            </button>
            {filterMenuOpen && (
-             <>
-               <div className="fixed inset-0 z-40" onClick={() => setFilterMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 z-50">
-                 <CalendarWidget 
-                      dateFilter={activeTab.dateFilter} 
-                      onUpdate={onUpdateDateFilter}
-                      t={t}
-                  />
-               </div>
-             </>
+             isAndroid ? (
+               <>
+                 <div className="fixed inset-0 z-[200] bg-black/50" onClick={() => setFilterMenuOpen(false)}></div>
+                 <div className="fixed bottom-0 left-0 right-0 z-[201] animate-slide-up pb-[env(safe-area-inset-bottom)]">
+                   <div className="flex justify-center pt-2 pb-1">
+                     <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+                   </div>
+                   <CalendarWidget
+                        dateFilter={activeTab.dateFilter}
+                        onUpdate={onUpdateDateFilter}
+                        t={t}
+                        isMobile
+                    />
+                 </div>
+               </>
+             ) : (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setFilterMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 z-50">
+                   <CalendarWidget
+                        dateFilter={activeTab.dateFilter}
+                        onUpdate={onUpdateDateFilter}
+                        t={t}
+                    />
+                 </div>
+               </>
+             )
            )}
         </div>
         )}
@@ -1477,26 +1496,45 @@ export const TopBar: React.FC<TopBarProps> = ({
         {/* All Tags Widget (hidden on topics view) */}
         {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
         <div className="relative">
-           <button 
+           <button
              onClick={() => setTagsMenuOpen(!tagsMenuOpen)}
-             className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${tagsMenuOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+             className={`${isAndroid ? 'w-10 h-10 rounded-xl' : 'w-9 h-9 rounded-lg'} flex items-center justify-center hover:bg-surface ${tagsMenuOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
              title={t('sidebar.allTags')}
            >
              <Tag size={18} />
            </button>
            {tagsMenuOpen && (
-             <>
-               <div className="fixed inset-0 z-40" onClick={() => setTagsMenuOpen(false)}></div>
-               <div className="absolute top-full right-0 mt-2 z-50">
-                 <TagsWidget 
-                      groupedTags={groupedTags} 
-                      onTagClick={(tag, e) => { onTagClick(tag, e); setTagsMenuOpen(false); }}
-                      t={t}
-                      tagSearchQuery={tagSearchQuery}
-                      onSetTagSearchQuery={onSetTagSearchQuery}
-                  />
-               </div>
-             </>
+             isAndroid ? (
+               <>
+                 <div className="fixed inset-0 z-[200] bg-black/50" onClick={() => setTagsMenuOpen(false)}></div>
+                 <div className="fixed bottom-0 left-0 right-0 z-[201] animate-slide-up pb-[env(safe-area-inset-bottom)]">
+                   <div className="flex justify-center pt-2 pb-1">
+                     <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600"></div>
+                   </div>
+                   <TagsWidget
+                        groupedTags={groupedTags}
+                        onTagClick={(tag, e) => { onTagClick(tag, e); setTagsMenuOpen(false); }}
+                        t={t}
+                        tagSearchQuery={tagSearchQuery}
+                        onSetTagSearchQuery={onSetTagSearchQuery}
+                        isMobile
+                    />
+                 </div>
+               </>
+             ) : (
+               <>
+                 <div className="fixed inset-0 z-40" onClick={() => setTagsMenuOpen(false)}></div>
+                 <div className="absolute top-full right-0 mt-2 z-50">
+                   <TagsWidget
+                        groupedTags={groupedTags}
+                        onTagClick={(tag, e) => { onTagClick(tag, e); setTagsMenuOpen(false); }}
+                        t={t}
+                        tagSearchQuery={tagSearchQuery}
+                        onSetTagSearchQuery={onSetTagSearchQuery}
+                    />
+                 </div>
+               </>
+             )
            )}
         </div>
         )}
