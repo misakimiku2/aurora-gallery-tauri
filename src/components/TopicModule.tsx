@@ -2,11 +2,19 @@ import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffe
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check, Sparkles } from 'lucide-react';
+import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check, Sparkles, Filter, Wand2 } from 'lucide-react';
+import { AutoClassificationPanel } from './AutoClassificationPanel';
 import { ImageThumbnail } from './ImageThumbnail';
 import { debug as logDebug, info as logInfo } from '../utils/logger';
 import { CreateTopicModal } from './modals/CreateTopicModal';
 import { RenameTopicModal } from './modals/RenameTopicModal';
+import {
+  dbGetTopicFilesPaginated,
+  dbGetTopicFiles,
+  dbRemoveFileFromTopic,
+  dbRemovePersonFromTopic,
+} from '../api/tauri-bridge';
+import { isTauriEnvironment } from '../utils/environment';
 
 type LayoutMode = 'grid' | 'adaptive' | 'masonry';
 
@@ -408,6 +416,54 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         return result;
     }, [topics]);
 
+    // ===== Phase 0: 分页加载专题图片（避免一次性返回 2 万 file_ids） =====
+    const TOPIC_FILES_PAGE_SIZE = 100;
+    const [topicImagesFileIds, setTopicImagesFileIds] = useState<string[]>([]);
+    const [topicImagesTotal, setTopicImagesTotal] = useState<number>(0);
+    const [topicImagesHasMore, setTopicImagesHasMore] = useState<boolean>(false);
+    const [topicImagesLoading, setTopicImagesLoading] = useState<boolean>(false);
+    const topicImagesLoadTokenRef = useRef(0);
+
+    const loadTopicFilesPage = useCallback(async (topicId: string, offset: number, append: boolean) => {
+        if (!isTauriEnvironment()) return;
+        const token = ++topicImagesLoadTokenRef.current;
+        setTopicImagesLoading(true);
+        try {
+            const r = await dbGetTopicFilesPaginated(topicId, offset, TOPIC_FILES_PAGE_SIZE);
+            if (token !== topicImagesLoadTokenRef.current) return; // 被后续请求覆盖
+            setTopicImagesFileIds(prev => append ? [...prev, ...r.files] : r.files);
+            setTopicImagesTotal(r.total);
+            setTopicImagesHasMore(r.hasMore);
+        } catch (e) {
+            console.error('Failed to load topic files page:', e);
+        } finally {
+            if (token === topicImagesLoadTokenRef.current) setTopicImagesLoading(false);
+        }
+    }, []);
+
+    // 进入专题时加载第一页
+    useEffect(() => {
+        if (!currentTopicId) {
+            setTopicImagesFileIds([]);
+            setTopicImagesTotal(0);
+            setTopicImagesHasMore(false);
+            topicImagesLoadTokenRef.current++;
+            return;
+        }
+        loadTopicFilesPage(currentTopicId, 0, false);
+    }, [currentTopicId, loadTopicFilesPage]);
+
+    const loadMoreTopicFiles = useCallback(() => {
+        if (!currentTopicId || topicImagesLoading || !topicImagesHasMore) return;
+        loadTopicFilesPage(currentTopicId, topicImagesFileIds.length, true);
+    }, [currentTopicId, topicImagesLoading, topicImagesHasMore, topicImagesFileIds.length, loadTopicFilesPage]);
+
+    // 滚动监听里读这个 ref，避免重绑监听器
+    const loadMoreStateRef = useRef({ topicId: currentTopicId, hasMore: topicImagesHasMore, loading: topicImagesLoading, loadMore: loadMoreTopicFiles });
+    useEffect(() => {
+        loadMoreStateRef.current = { topicId: currentTopicId, hasMore: topicImagesHasMore, loading: topicImagesLoading, loadMore: loadMoreTopicFiles };
+    }, [currentTopicId, topicImagesHasMore, topicImagesLoading, loadMoreTopicFiles]);
+
     // 计算专题的总人物数量（包含子专题）
     const getTotalPersonCount = useCallback((topic: Topic): number => {
         const descendantIds = getAllDescendantTopicIds(topic.id);
@@ -422,18 +478,28 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         return allPeopleIds.size;
     }, [topics, getAllDescendantTopicIds]);
 
-    // 计算专题的总文件数量（包含子专题）
+    // 计算专题的总文件数量（包含子专题）—— Phase 0 后用缓存列 fileCount 求和，
+    // fileIds 仅在内存中已加载时作去重 fallback（防止跨专题重复）
     const getTotalFileCount = useCallback((topic: Topic): number => {
         const descendantIds = getAllDescendantTopicIds(topic.id);
         const allTopicIds = [topic.id, ...descendantIds];
-        const allFileIds = new Set<string>();
+        let count = 0;
+        const dedup = new Set<string>();
         allTopicIds.forEach(id => {
             const t = topics[id];
-            if (t && t.fileIds) {
-                t.fileIds.forEach(fid => allFileIds.add(fid));
+            if (!t) return;
+            // 优先用 fileCount 缓存列；列表态 fileIds 为空
+            count += (t.fileCount ?? 0);
+            // 若内存中已加载 fileIds（详情态或刚增删），做去重
+            if (t.fileIds && t.fileIds.length > 0) {
+                t.fileIds.forEach(fid => dedup.add(fid));
             }
         });
-        return allFileIds.size;
+        // 若去重集合非空且与求和差异较大（跨专题重复），用去重 size 兜底
+        if (dedup.size > 0 && Math.abs(count - dedup.size) > 0) {
+            return Math.max(count, dedup.size);
+        }
+        return count;
     }, [topics, getAllDescendantTopicIds]);
 
     // Selection state for box selection
@@ -584,6 +650,31 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     });
     const [showTopicSortMenu, setShowTopicSortMenu] = useState(false);
     const topicSortButtonRef = useRef<HTMLButtonElement>(null);
+    // P1: source_type 过滤（按分组查看专题）
+    const [topicSourceFilter, setTopicSourceFilter] = useState<string>(() => {
+        return localStorage.getItem('aurora_topic_source_filter') || 'all';
+    });
+    const [showSourceFilterMenu, setShowSourceFilterMenu] = useState(false);
+    const sourceFilterButtonRef = useRef<HTMLButtonElement>(null);
+
+    const sourceFilterLabels: Record<string, string> = {
+        all: '全部',
+        manual: '手动专题',
+        auto_content: '内容分类',
+        auto_cluster: '视觉聚类',
+        auto_work: '作品角色',
+        auto_person: '自定义主体',
+        folder_set: '图集',
+    };
+
+    const setSourceFilter = (filter: string) => {
+        setTopicSourceFilter(filter);
+        localStorage.setItem('aurora_topic_source_filter', filter);
+        setShowSourceFilterMenu(false);
+    };
+
+    // P1: 自动分类模态弹窗
+    const [showClassifyPanel, setShowClassifyPanel] = useState(false);
 
     const sortTopics = useCallback((topicsList: Topic[]) => {
         return [...topicsList].sort((a, b) => {
@@ -612,11 +703,17 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     };
 
     // Helper to get cover image URL
+    // Phase 0：列表态 fileIds 为空，依赖 coverFileId；详情态可回退到已加载页首张
     const getCoverUrl = (topic: Topic) => {
         if (topic.coverFileId && files[topic.coverFileId]) {
             return convertFileSrc(files[topic.coverFileId].path);
         }
-        // Fallback to first image in topic
+        // 详情态：用已分页加载的 fileIds 兜底
+        if (topic.id === currentTopicId && topicImagesFileIds.length > 0) {
+            const firstFile = files[topicImagesFileIds[0]];
+            if (firstFile) return convertFileSrc(firstFile.path);
+        }
+        // 内存中仍有 fileIds（详情态或增删后）的兜底
         if (topic.fileIds && topic.fileIds.length > 0) {
             const firstFile = files[topic.fileIds[0]];
             if (firstFile) return convertFileSrc(firstFile.path);
@@ -806,7 +903,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         if (currentTopicId) return { layoutItems: [], totalHeight: 0 };
 
         const rootTopics = Object.values(topics || {}).filter(topic => !topic.parentId);
-        const sortedRootTopics = sortTopics(rootTopics);
+        // P1: 按 source_type 过滤
+        const filteredRootTopics = topicSourceFilter === 'all'
+            ? rootTopics
+            : rootTopics.filter(t => (t.sourceType || 'manual') === topicSourceFilter);
+        const sortedRootTopics = sortTopics(filteredRootTopics);
 
         const GAP_X = 32; // Increased horizontal gap
         const GAP_Y = 48; // Increased vertical gap for title room
@@ -840,7 +941,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
         return { layoutItems: validItems, totalHeight: height };
 
-    }, [topics, currentTopicId, containerRect.width, coverHeight, sortTopics]);
+    }, [topics, currentTopicId, containerRect.width, coverHeight, sortTopics, topicSourceFilter]);
 
     const visibleLayoutItems = useMemo(() => {
         if (currentTopicId) return [];
@@ -851,11 +952,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     }, [layoutItems, scrollTop, containerRect.height, currentTopicId]);
 
     // --- Detail View Logic & Layouts ---
+    // Phase 0：详情页 fileIds 来自分页加载（topicImagesFileIds），不再依赖 currentTopic.fileIds
     const detailData = useMemo(() => {
         if (!currentTopic) return null;
         const subTopics = Object.values(topics || {}).filter(t => t.parentId === currentTopic.id);
         const sortedSubTopics = sortTopics(subTopics);
-        const topicImages = (currentTopic.fileIds || []).map(id => files[id]).filter(f => f && f.type === FileType.IMAGE);
+        const topicImages = topicImagesFileIds
+            .map(id => files[id])
+            .filter(f => f && f.type === FileType.IMAGE);
 
         // Aggregate people
         let topicPeople = currentTopic.peopleIds.map(id => people[id]).filter(Boolean);
@@ -880,7 +984,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             topicPeople = Array.from(collected).map(id => people[id]).filter(Boolean);
         }
         return { sortedSubTopics, topicImages, topicPeople, peopleSubtopicCount };
-    }, [currentTopic, topics, files, people, sortTopics]);
+    }, [currentTopic, topics, files, people, sortTopics, topicImagesFileIds]);
 
     const subTopicsLayout = useMemo(() => {
         if (!detailData || currentTopic?.parentId) return { items: [], height: 0 };
@@ -1094,6 +1198,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             return;
         }
 
+        // Phase 0：单行 DELETE topic_people 关联表；people_ids 列不再持久化，仅同步内存
+        if (isTauriEnvironment()) {
+            personIds.forEach(pid => {
+                Object.keys(topicsToUpdate).forEach(topicId => {
+                    dbRemovePersonFromTopic(topicId, pid).catch(e => console.error('Failed to remove person from topic:', e));
+                });
+            });
+        }
+
         Object.entries(topicsToUpdate).forEach(([topicId, newPeople]) => {
             onUpdateTopic(topicId, { peopleIds: newPeople });
         });
@@ -1224,6 +1337,14 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const handleScroll = () => {
             if (isRestoringScrollRef.current) return;
             onScrollTopChange?.(container.scrollTop);
+            // Phase 0: 滚动到文件区底部触发分页加载（用 ref 读最新值，避免重绑监听器）
+            const s = loadMoreStateRef.current;
+            if (s.topicId && s.hasMore && !s.loading) {
+                const threshold = 800;
+                if (container.scrollTop + container.clientHeight >= container.scrollHeight - threshold) {
+                    s.loadMore();
+                }
+            }
         };
 
         container.addEventListener('scroll', handleScroll, { passive: true });
@@ -1262,12 +1383,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             if (showTopicSortMenu && !target.closest('.topic-sort-container')) {
                 setShowTopicSortMenu(false);
             }
+            if (showSourceFilterMenu && !target.closest('.topic-source-filter-container')) {
+                setShowSourceFilterMenu(false);
+            }
         };
-        if (showTopicSortMenu) {
+        if (showTopicSortMenu || showSourceFilterMenu) {
             document.addEventListener('mousedown', handleClickOutside);
             return () => document.removeEventListener('mousedown', handleClickOutside);
         }
-    }, [showTopicSortMenu]);
+    }, [showTopicSortMenu, showSourceFilterMenu]);
 
     // Close context menu when clicking anywhere or scrolling
     useEffect(() => {
@@ -1633,16 +1757,21 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
             return;
         }
 
-        const fileIdSet = new Set(fileIds);
-        const previousFileIds = currentTopic.fileIds || [];
-        const newFiles = previousFileIds.filter(id => !fileIdSet.has(id));
-
-        if (newFiles.length === previousFileIds.length) {
-            setContextMenu(null);
-            return;
+        // Phase 0：单行 DELETE 关联表，并同步本地分页状态与 fileCount 缓存
+        if (isTauriEnvironment()) {
+            fileIds.forEach(fid => {
+                dbRemoveFileFromTopic(currentTopic.id, fid).catch(e => console.error('Failed to remove file from topic:', e));
+            });
         }
-
-        onUpdateTopic(currentTopic.id, { fileIds: newFiles });
+        const fileIdSet = new Set(fileIds);
+        // 从已加载页中剔除
+        setTopicImagesFileIds(prev => prev.filter(id => !fileIdSet.has(id)));
+        setTopicImagesTotal(prev => Math.max(0, prev - fileIds.length));
+        // 同步 currentTopic 内存中的 fileIds（若有）+ fileCount
+        onUpdateTopic(currentTopic.id, {
+            fileIds: (currentTopic.fileIds || []).filter(id => !fileIdSet.has(id)),
+            fileCount: Math.max(0, (currentTopic.fileCount ?? 0) - fileIds.length),
+        });
         onSelectFiles && onSelectFiles([], null);
         if (onShowToast) {
             onShowToast(t('context.removedFromTopic') || '已从专题中移除');
@@ -1653,7 +1782,11 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
     // View: Topic Gallery (Root)
     const renderGallery = () => {
         const rootTopics = Object.values(topics || {}).filter(topic => !topic.parentId);
-        const sortedRootTopics = sortTopics(rootTopics);
+        // P1: 按 source_type 过滤
+        const filteredRootTopics = topicSourceFilter === 'all'
+            ? rootTopics
+            : rootTopics.filter(t => (t.sourceType || 'manual') === topicSourceFilter);
+        const sortedRootTopics = sortTopics(filteredRootTopics);
         const allTopicIds = sortedRootTopics.map(t => t.id);
 
         return (
@@ -1672,6 +1805,41 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         {t('sidebar.topics')}
                     </h2>
                     <div className="flex items-center space-x-2">
+                        <button
+                            onClick={() => setShowClassifyPanel(true)}
+                            className={`px-3 py-2 rounded-lg transition border text-sm flex items-center ${showClassifyPanel ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                            title="自动内容分类"
+                        >
+                            <Wand2 size={14} className="mr-1.5" />
+                            自动分类
+                        </button>
+                        <div className="relative topic-source-filter-container">
+                            <button
+                                ref={sourceFilterButtonRef}
+                                onClick={() => setShowSourceFilterMenu(!showSourceFilterMenu)}
+                                className={`px-3 py-2 rounded-lg transition border text-sm flex items-center ${showSourceFilterMenu ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400' : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'}`}
+                                title="按来源筛选"
+                            >
+                                <Filter size={14} className="mr-1.5" />
+                                {sourceFilterLabels[topicSourceFilter] || '全部'}
+                            </button>
+                            {showSourceFilterMenu && (
+                                <div className="absolute right-0 mt-2 w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 py-1 z-[60]">
+                                    {Object.entries(sourceFilterLabels).map(([key, label]) => (
+                                        <button
+                                            key={key}
+                                            onClick={() => setSourceFilter(key)}
+                                            className="w-full px-4 py-2 text-left hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center justify-between text-gray-700 dark:text-gray-200"
+                                        >
+                                            <span className="text-sm">{label}</span>
+                                            {topicSourceFilter === key && (
+                                                <Check size={14} className="text-blue-500" />
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                         <div className="relative topic-sort-container">
                             <button
                                 ref={topicSortButtonRef}
@@ -1720,6 +1888,16 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                     </div>
                 </div>
 
+                {showClassifyPanel && createPortal(
+                    <AutoClassificationPanel
+                        onClose={() => setShowClassifyPanel(false)}
+                        onGoToAiVision={() => {
+                            window.dispatchEvent(new CustomEvent('navigate-to-ai-vision'));
+                        }}
+                    />,
+                    document.body
+                )}
+
                 <div className="relative" style={{ height: totalHeight }}>
                     {visibleLayoutItems.map(({ topic, x, y, width, height }) => {
                         const coverUrl = getCoverUrl(topic);
@@ -1760,9 +1938,16 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
 
                                         {/* Magazine Title Overlay */}
                                         <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-                                            <h3 className="text-white font-serif text-2xl font-bold tracking-widest uppercase drop-shadow-md truncate">
-                                                {topic.name}
-                                            </h3>
+                                            <div className="flex items-start justify-between gap-2">
+                                                <h3 className="text-white font-serif text-2xl font-bold tracking-widest uppercase drop-shadow-md truncate flex-1">
+                                                    {topic.name}
+                                                </h3>
+                                                {topic.sourceType && topic.sourceType !== 'manual' && (
+                                                    <span className="text-[10px] bg-white/20 backdrop-blur-sm text-white rounded-full px-2 py-0.5 flex-shrink-0 border border-white/30">
+                                                        {sourceFilterLabels[topic.sourceType] || topic.sourceType}
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
 
                                         {/* Info Overlay */}
@@ -2019,7 +2204,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                                                     </h4>
                                                     <div className="flex items-center justify-center text-xs text-gray-500 mt-1 space-x-3">
                                                         <span className="flex items-center"><User size={12} className="mr-1" /> {sub.peopleIds.length}</span>
-                                                        <span className="flex items-center"><FileImage size={12} className="mr-1" /> {sub.fileIds?.length || 0}</span>
+                                                        <span className="flex items-center"><FileImage size={12} className="mr-1" /> {sub.fileCount ?? sub.fileIds?.length ?? 0}</span>
                                                     </div>
                                                 </div>
                                             </div>
@@ -2258,7 +2443,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         <div className="mx-2 px-4 py-2 rounded hover:bg-blue-600 hover:text-white cursor-pointer flex items-center text-gray-700 dark:text-gray-200" onClick={() => { if (onOpenFileInNewTab) { handleOpenInNewTabLocal(contextMenu.fileId!); } else { handleOpenFileLocal(contextMenu.fileId!); } setContextMenu(null); }}>
                             <ExternalLinkIcon size={14} className="mr-3" /> {t('context.openInNewTab')}
                         </div>
-                        <div className={`mx-2 px-4 py-2 rounded flex items-center ${(() => { const file = currentTopic && currentTopic.fileIds ? files[contextMenu.fileId!] : null; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
+                        <div className={`mx-2 px-4 py-2 rounded flex items-center ${(() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; const isUnavailable = parentId == null; return isUnavailable ? 'text-gray-400 cursor-default' : 'hover:bg-blue-600 dark:hover:bg-blue-700 hover:text-white cursor-pointer'; })()}`} onClick={() => { const file = files[contextMenu.fileId!]; const parentId = file ? file.parentId : null; if (parentId) handleOpenFolderLocal(parentId, contextMenu.fileId!); setContextMenu(null); }}>
                             <FolderOpen size={14} className="mr-3 opacity-70" />
                             {t('context.openFolder')}
                         </div>
@@ -2424,6 +2609,36 @@ interface SetCoverModalProps {
 }
 
 const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, resourceRoot, cachePath, onClose, onSetCover, t }) => {
+    // Phase 0：file_ids 不再常驻 Topic，懒加载当前专题及子专题的 file_ids
+    const [topicFileIds, setTopicFileIds] = useState<string[]>(topic.fileIds || []);
+    const [subTopicFileIdsMap, setSubTopicFileIdsMap] = useState<Record<string, string[]>>({});
+
+    useEffect(() => {
+        if (!isTauriEnvironment()) return;
+        let cancelled = false;
+        (async () => {
+            // 仅当内存中无 fileIds 时才懒加载
+            if (!(topic.fileIds && topic.fileIds.length > 0)) {
+                const ids = await dbGetTopicFiles(topic.id);
+                if (!cancelled) setTopicFileIds(ids);
+            }
+            if (!topic.parentId) {
+                const subTopics = Object.values(topics || {}).filter(t => t.parentId === topic.id);
+                const entries = await Promise.all(
+                    subTopics
+                        .filter(sub => !(sub.fileIds && sub.fileIds.length > 0))
+                        .map(async sub => [sub.id, await dbGetTopicFiles(sub.id)] as const)
+                );
+                if (!cancelled) {
+                    const map: Record<string, string[]> = {};
+                    entries.forEach(([id, ids]) => { map[id] = ids; });
+                    setSubTopicFileIdsMap(map);
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [topic.id, topic.parentId, topics]);
+
     const [selectedFileId, setSelectedFileId] = useState<string | null>(() => {
         if (topic.coverFileId) return topic.coverFileId;
         if (topic.fileIds?.length) {
@@ -2449,7 +2664,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
     const OFFSET_Y = (VIEWPORT_SIZE - CROP_HEIGHT) / 2;
 
     // Get all images from this topic
-    const topicImages = (topic.fileIds || [])
+    const topicImages = (topicFileIds || [])
         .map(id => files[id])
         .filter(f => f && f.type === FileType.IMAGE);
 
@@ -2462,7 +2677,7 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
 
         // Images directly in parent topic
         const directImages = topicImages.filter(img => {
-            return !subTopics.some(sub => sub.fileIds?.includes(img.id));
+            return !subTopics.some(sub => (sub.fileIds || subTopicFileIdsMap[sub.id] || []).includes(img.id));
         });
 
         if (directImages.length > 0) {
@@ -2471,7 +2686,8 @@ const SetCoverModal: React.FC<SetCoverModalProps> = ({ topic, topics, files, res
 
         // Images in each sub-topic
         subTopics.forEach(sub => {
-            const subImages = (sub.fileIds || [])
+            const subIds = sub.fileIds && sub.fileIds.length > 0 ? sub.fileIds : (subTopicFileIdsMap[sub.id] || []);
+            const subImages = subIds
                 .map(id => files[id])
                 .filter(f => f && f.type === FileType.IMAGE);
             if (subImages.length > 0) {

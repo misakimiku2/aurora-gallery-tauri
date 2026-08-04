@@ -141,6 +141,8 @@ pub fn init_db(conn: &Connection) -> Result<()> {
     let _ = conn.execute("ALTER TABLE topics ADD COLUMN source_type TEXT", []);
     let _ = conn.execute("ALTER TABLE topics ADD COLUMN work_name TEXT", []);
     let _ = conn.execute("ALTER TABLE topics ADD COLUMN work_name_cn TEXT", []);
+    // Migration: Add file_count cache column to topics table (Phase 0)
+    let _ = conn.execute("ALTER TABLE topics ADD COLUMN file_count INTEGER DEFAULT 0", []);
 
     // Create indexes for file_metadata
     conn.execute(
@@ -153,6 +155,41 @@ pub fn init_db(conn: &Connection) -> Result<()> {
 
     // Create topics table
     topics::create_table(conn)?;
+
+    // Create topic_files / topic_people association tables (Phase 0: replace file_ids/people_ids TEXT)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS topic_files (
+            topic_id TEXT NOT NULL,
+            file_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (topic_id, file_id)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS topic_people (
+            topic_id TEXT NOT NULL,
+            people_id TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            PRIMARY KEY (topic_id, people_id)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_topic_files_file ON topic_files(file_id)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_topic_files_topic_pos ON topic_files(topic_id, position)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_topic_people_people ON topic_people(people_id)",
+        [],
+    )?;
+
+    // Backfill: migrate existing topics.file_ids / people_ids TEXT into topic_files / topic_people
+    topics::backfill_association_tables(conn)?;
 
     Ok(())
 }

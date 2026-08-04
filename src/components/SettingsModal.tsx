@@ -8,10 +8,11 @@ import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonit
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipUnloadModel, clipCancelModelDownload, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
 import { LanSharePanel } from './settings/LanSharePanel';
+import { ConfirmModal } from './modals/ConfirmModal';
 
 // 关于面板组件
 interface AboutPanelProps {
@@ -401,11 +402,18 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     const activeDownloads = getActiveDownloads();
     return activeDownloads.length > 0 ? activeDownloads[0].modelName : null;
   });
+  // 正在下载的模型集合（支持并发/排队时的正确状态）
+  const [downloadingModels, setDownloadingModels] = useState<Set<string>>(() => {
+    const activeDownloads = getActiveDownloads();
+    return new Set(activeDownloads.map(d => d.modelName));
+  });
   const [embeddingCount, setEmbeddingCount] = useState(0);
   const [embeddingRootPath, setEmbeddingRootPath] = useState('');
   const [embeddingModelName, setEmbeddingModelName] = useState('');
   // 添加延迟显示加载状态，避免闪烁
   const [showLoadingDelay, setShowLoadingDelay] = useState(false);
+  // 待删除确认的模型
+  const [deleteTarget, setDeleteTarget] = useState<ClipModelName | null>(null);
   // 跟踪模型损坏状态 - 从全局状态初始化
   const [corruptedModels, setCorruptedModels] = useState<Set<string>>(() => {
     const corrupted = getCorruptedModels();
@@ -469,9 +477,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       // 如果正在下载，更新 loadingModel 状态
       if (info.status === 'downloading') {
         setLoadingModel(modelName as ClipModelName);
+        setDownloadingModels(prev => new Set(prev).add(modelName));
       } else if (info.status === 'completed' || info.status === 'error') {
         // 下载完成或出错时，如果当前是这个模型，清除 loadingModel
         setLoadingModel(prev => prev === modelName ? null : prev);
+        setDownloadingModels(prev => {
+          const next = new Set(prev);
+          next.delete(modelName);
+          return next;
+        });
       }
     });
 
@@ -497,11 +511,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     const cached = getCachedModelStatuses();
     if (cached) {
       setModelStatuses(cached);
-      // 仍然调用加载函数以刷新最新状态，但不显示加载状态
-      loadModelStatuses(true);
-    } else {
-      loadModelStatuses(false);
     }
+    // 拉取模型状态时使用静默模式，避免触发所有模型卡片显示"加载中..."
+    loadModelStatuses(true);
 
     loadEmbeddingCount();
 
@@ -512,7 +524,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
   // 当 GPU 设置变更时，刷新模型状态以显示“GPU 已激活”标签
   useEffect(() => {
-    loadModelStatuses(false);
+    loadModelStatuses(true);
   }, [settings.useGpu]);
 
   // 延迟显示加载状态，避免闪烁
@@ -731,11 +743,17 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       console.error('Failed to download model:', error);
       const errorMsg = String(error);
       
-      // 检测是否是文件损坏导致的错误
+      // 检测是否是文件损坏导致的错误（含 ONNX 反序列化失败 / 外部权重越界等）
       const isCorrupt = errorMsg.includes('模型文件可能已损坏') ||
         errorMsg.includes('Protobuf parsing failed') ||
         errorMsg.includes('Invalid protobuf') ||
-        errorMsg.includes('ModelWrapper');
+        errorMsg.includes('ModelWrapper') ||
+        errorMsg.includes('Deserialize tensor') ||
+        errorMsg.includes('GetExtDataFromTensorProto') ||
+        errorMsg.includes('out of bounds') ||
+        errorMsg.includes('can not be read in full') ||
+        errorMsg.includes('onnxruntime') ||
+        errorMsg.includes('Failed to initialize ONNX');
       
       if (isCorrupt) {
         // 标记模型为损坏状态
@@ -759,24 +777,53 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     }
   };
 
-  const handleDelete = async (modelName: ClipModelName) => {
-    if (!confirm(`确定要删除 ${modelName} 模型吗？`)) return;
+  // 取消当前正在进行的模型下载
+  const handleCancelDownload = async () => {
+    try {
+      await clipCancelModelDownload();
+      // 清空所有下载中的模型状态
+      setLoadingModel(null);
+      setDownloadingModels(new Set());
+      setDownloadProgress({});
+      onShowToast?.(`已停止下载`, 3000);
+    } catch (error) {
+      console.error('Failed to cancel model download:', error);
+      onShowToast?.(`取消失败: ${error}`, 4000);
+    }
+  };
+
+  // 点击删除按钮：弹出确认框
+  const handleDelete = (modelName: ClipModelName) => {
+    setDeleteTarget(modelName);
+  };
+
+  // 确认删除：卸载（若为当前使用模型）→ 删除文件 → 刷新状态
+  const confirmDeleteModel = async (modelName: ClipModelName) => {
+    const isCurrent = settings.enabled && settings.modelName === modelName;
 
     try {
+      // 如果是当前正在使用的模型，先卸载，避免文件被占用/状态错乱
+      if (isCurrent) {
+        await clipUnloadModel();
+      }
+
       await clipDeleteModel(modelName);
       await loadModelStatuses();
 
-      // 如果删除的是当前选中的模型，重置设置
+      // 如果删除的是当前选中的模型，清空 modelName 并重置下载状态
       if (settings.modelName === modelName) {
         onUpdateSettings({
           ...settings,
+          modelName: '',
           downloadStatus: 'not_started',
           downloadProgress: 0,
         });
       }
     } catch (error) {
       console.error('Failed to delete model:', error);
-      alert('删除模型失败: ' + error);
+      onShowToast?.(`删除模型失败: ${error}`, 4000);
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -862,11 +909,17 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       console.error('Failed to load model:', error);
       const errorMsg = String(error);
 
-      // 检测是否是文件损坏导致的错误
+      // 检测是否是文件损坏导致的错误（含 ONNX 反序列化失败 / 外部权重越界等）
       const isCorrupt = errorMsg.includes('模型文件可能已损坏') ||
         errorMsg.includes('Protobuf parsing failed') ||
         errorMsg.includes('Invalid protobuf') ||
-        errorMsg.includes('ModelWrapper');
+        errorMsg.includes('ModelWrapper') ||
+        errorMsg.includes('Deserialize tensor') ||
+        errorMsg.includes('GetExtDataFromTensorProto') ||
+        errorMsg.includes('out of bounds') ||
+        errorMsg.includes('can not be read in full') ||
+        errorMsg.includes('onnxruntime') ||
+        errorMsg.includes('Failed to initialize ONNX');
 
       // 检测是否是网络/下载相关的错误
       const isNetworkError = errorMsg.includes('network') ||
@@ -1011,6 +1064,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   };
 
   return (
+    <>
     <div className="space-y-8 animate-fade-in">
       <section>
         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 border-subtle pb-2 flex items-center">
@@ -1157,7 +1211,9 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           {CLIP_MODELS.filter(model => model.series === activeSeries).map((model) => {
             const status = modelStatuses[model.name];
             const isDownloaded = status?.is_downloaded ?? false;
-            const isLoadingModel = loadingModel === model.name;
+            const isLoadingModel = downloadingModels.has(model.name);
+            // 是否有其他模型正在下载（用于禁用下载按钮，避免排队困惑）
+            const hasOtherDownloading = downloadingModels.size > 0 && !isLoadingModel;
             const cachedStatus = getCachedModelStatus(model.name);
             const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
             const isCorrupted = corruptedModels.has(model.name);
@@ -1169,38 +1225,40 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             
             // 只有启用AI视觉功能且当前模型被选中时才显示外框
             const isSelectedModel = settings.enabled && settings.modelName === model.name;
-            const showGreenBorder = isSelectedModel && !isCorrupted && !clipLoading;
+            const showGreenBorder = isDownloaded && isSelectedModel && !isCorrupted && !clipLoading && !isLoading && !isLoadingModel;
             const showRedBorder = isSelectedModel && isCorrupted;
             
             // 按钮状态：只有启用AI视觉功能且当前模型被选中时才显示"使用中"
-            const isInUse = isSelectedModel && !isCorrupted && !clipLoading;
+            const isInUse = isDownloaded && isSelectedModel && !isCorrupted && !clipLoading && !isLoading && !isLoadingModel;
+
+            // 正在加载以切换到当前模型（点击"使用"后、加载完成前）
+            const isUsingLoading = isLoading && isSelectedModel && !isCorrupted;
 
             return (
               <div
                 key={model.name}
-                className={`relative bg-surface rounded-xl p-5 border transition-all ${showGreenBorder
-                  ? 'border-green-500 ring-2 ring-green-500/20'
+                className={`relative rounded-xl p-5 transition-all ${showGreenBorder
+                  ? 'bg-[#22C55E]'
                   : showRedBorder
-                    ? 'border-red-300 dark:border-red-700 ring-2 ring-red-500/20'
-                    : 'border-subtle hover:border-green-300'
+                    ? 'bg-red-50 dark:bg-red-950/30'
+                    : 'bg-[#f7f8fa] dark:bg-[#3a3a3a] hover:bg-[#f0f1f4] dark:hover:bg-[#414141]'
                   }`}
               >
-                {/* 高精度标签 - 绝对定位在右下角 */}
-                {model.isHighPrecision && (
-                  <span className="absolute bottom-[20px] right-[20px] inline-flex items-center text-xs text-yellow-600 dark:text-yellow-400">
-                    <Sparkles size={12} className="mr-1" />
-                    高精度
-                  </span>
-                )}
                 {/* 第一行：标题、标签、按钮 */}
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
                     <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <h5 className="font-semibold text-gray-800 dark:text-white">
+                      <h5 className={`font-semibold ${showGreenBorder ? 'text-white' : 'text-gray-800 dark:text-white'}`}>
                         {model.displayName}
                       </h5>
+                      {model.isHighPrecision && (
+                        <span className={`inline-flex items-center text-xs ${showGreenBorder ? 'text-white/80' : 'text-yellow-600 dark:text-yellow-400'}`}>
+                          <Sparkles size={12} className="mr-1" />
+                          高精度
+                        </span>
+                      )}
                       {model.isRecommended && (
-                        <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs rounded-full">
+                        <span className={`px-2 py-0.5 text-xs rounded-full ${showGreenBorder ? 'bg-white/20 text-white' : 'bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400'}`}>
                           推荐
                         </span>
                       )}
@@ -1211,16 +1269,16 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         </span>
                       )}
                       {isDownloaded && status?.is_gpu_active && !isCorrupted && settings.enabled && !clipLoading && (
-                        <span className="px-2 py-0.5 bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-xs rounded-full flex items-center">
+                        <span className={`px-2 py-0.5 text-xs rounded-full flex items-center ${showGreenBorder ? 'bg-white/20 text-white' : 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400'}`}>
                           <Zap size={12} className="mr-1" />
                           GPU 已激活
                         </span>
                       )}
                     </div>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+                    <p className={`text-sm mb-2 ${showGreenBorder ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}>
                       {model.description}
                     </p>
-                    <div className="flex items-center gap-4 text-xs text-gray-400">
+                    <div className={`flex items-center gap-4 text-xs ${showGreenBorder ? 'text-white/90' : 'text-gray-400'}`}>
                       <span className="flex items-center">
                         <HardDrive size={12} className="mr-1" />
                         {model.sizeDisplay}
@@ -1230,7 +1288,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         {model.embeddingDim} 维向量
                       </span>
                       {isDownloaded && status && (
-                        <span className="flex items-center text-green-500">
+                        <span className={`flex items-center ${showGreenBorder ? 'text-white' : 'text-green-500'}`}>
                           <Check size={12} className="mr-1" />
                           已下载 {formatBytes(status.downloaded_size)}
                         </span>
@@ -1259,39 +1317,46 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                           <button
                             onClick={() => settings.enabled && handleSelectModel(model.name)}
                             disabled={isLoading || clipLoading || !settings.enabled}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isInUse
-                              ? 'bg-green-500 text-white'
-                              : 'bg-surface text-gray-700 dark:text-gray-300 hover:bg-surface/70'
-                              } disabled:opacity-50 disabled:cursor-not-allowed`}
+                            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors inline-flex items-center ${isUsingLoading
+                              ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 cursor-wait'
+                              : isInUse
+                                ? 'bg-white/20 text-white hover:bg-white/30'
+                                : 'bg-surface text-gray-700 dark:text-gray-300 hover:bg-surface/70'
+                              } ${!isUsingLoading && (isLoading || clipLoading || !settings.enabled) ? 'disabled:opacity-50 disabled:cursor-not-allowed' : ''}`}
                           >
-                            {isInUse ? '使用中' : '使用'}
+                            {isUsingLoading ? (
+                              <RefreshCw size={16} className="animate-spin" />
+                            ) : (
+                              isInUse ? '使用中' : '使用'
+                            )}
                           </button>
                           <button
                             onClick={() => handleDelete(model.name)}
                             disabled={clipLoading || !settings.enabled}
-                            className={`p-2 rounded-lg transition-colors ${clipLoading || !settings.enabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
+                            className={`p-2 rounded-lg transition-colors ${clipLoading || !settings.enabled ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed' : showGreenBorder ? 'text-white hover:text-red-600 hover:bg-white/20' : 'text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20'}`}
                             title={clipLoading ? '模型正在加载中' : !settings.enabled ? '请先启用 AI 视觉功能' : '删除模型'}
                           >
                             <Trash size={18} />
                           </button>
                         </>
+                      ) : isLoadingModel ? (
+                        <button
+                          onClick={() => handleCancelDownload()}
+                          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                          title="停止下载"
+                        >
+                          <Square size={16} className="mr-2" />
+                          停止
+                        </button>
                       ) : (
                         <button
                           onClick={() => settings.enabled && handleDownload(model.name)}
-                          disabled={isLoadingModel || clipLoading || !settings.enabled}
+                          disabled={hasOtherDownloading || clipLoading || !settings.enabled}
                           className="px-4 py-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                          title={hasOtherDownloading ? '请先完成当前下载或停止后重试' : undefined}
                         >
-                          {isLoadingModel ? (
-                            <>
-                              <RefreshCw size={16} className="mr-2 animate-spin" />
-                              下载中...
-                            </>
-                          ) : (
-                            <>
-                              <Download size={16} className="mr-2" />
-                              下载
-                            </>
-                          )}
+                          <Download size={16} className="mr-2" />
+                          下载
                         </button>
                       )}
                     </div>
@@ -1300,7 +1365,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
 
                 {/* 第二行：功能特性标签 - 使用完整宽度 */}
                 <div className="flex flex-wrap gap-1.5 mt-3">
-                  <span className="text-xs text-gray-500 dark:text-gray-400 mr-1">功能特性:</span>
+                  <span className={`text-xs mr-1 ${showGreenBorder ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}>功能特性:</span>
                   {featureOrder.map((featureKey) => {
                     const featureEntry = allFeatures.find(([key]) => key === featureKey);
                     if (!featureEntry) return null;
@@ -1312,9 +1377,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                       <span
                         key={featureKey}
                         className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs whitespace-nowrap ${
-                          enabled
-                            ? `bg-${config.color}-100 dark:bg-${config.color}-900/30 text-${config.color}-600 dark:text-${config.color}-400`
-                            : 'bg-surface text-gray-400 dark:text-gray-500 line-through opacity-60'
+                          showGreenBorder
+                            ? enabled
+                              ? config.color === 'green'
+                                ? 'bg-white/20 text-white'
+                                : `bg-${config.color}-100 dark:bg-${config.color}-900/40 text-${config.color}-600 dark:text-${config.color}-300`
+                              : 'bg-white/10 text-white/60 line-through opacity-70'
+                            : enabled
+                              ? `bg-${config.color}-100 dark:bg-${config.color}-900/30 text-${config.color}-600 dark:text-${config.color}-400`
+                              : 'bg-surface text-gray-400 dark:text-gray-500 line-through opacity-60'
                         }`}
                         title={enabled ? '支持' : '不支持'}
                       >
@@ -1660,6 +1731,23 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       {/* 使用说明已移至启用开关下方 */}
 
     </div>
+
+    {/* 删除模型确认弹窗 */}
+    {deleteTarget && (
+      <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4">
+        <ConfirmModal
+          title="删除模型"
+          message={`确定要删除 ${CLIP_MODELS.find(m => m.name === deleteTarget)?.displayName || deleteTarget} 模型吗？`}
+          subMessage="删除后将无法使用该模型，需重新下载。"
+          confirmText="删除"
+          confirmIcon={Trash2}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => confirmDeleteModel(deleteTarget)}
+          t={t}
+        />
+      </div>
+    )}
+    </>
   );
 };
 

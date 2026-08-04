@@ -111,10 +111,12 @@ export interface Topic {
   coverCrop?: CoverCropData;
   peopleIds: string[];
   fileIds?: string[];
+  /** 缓存的成员数量。列表查询时填充（fileIds 此时为空）。 */
+  fileCount?: number;
   sourceUrl?: string;
   createdAt?: string;
   updatedAt?: string;
-  sourceType?: 'manual' | 'auto_work';
+  sourceType?: 'manual' | 'auto_work' | 'auto_content' | 'auto_cluster' | 'auto_person' | 'folder_set';
   workName?: string;
   workNameCn?: string;
 }
@@ -148,6 +150,44 @@ export interface WorkToCreate {
 export interface CreateWorkTopicsResult {
   topics: Topic[];
   people: Person[];
+}
+
+// ============ P1 自动内容分类 ============
+
+export interface CategoryCount {
+  category: string;
+  labelCn: string;
+  count: number;
+}
+
+export interface ClassifyResult {
+  total: number;
+  classified: number;
+  skipped: number;
+  categoryCounts: CategoryCount[];
+  topicsCreated: number;
+}
+
+export interface CategoryStat {
+  category: string;
+  count: number;
+  topicId?: string;
+}
+
+export interface ClassificationOverview {
+  totalIndexed: number;
+  totalWithTags: number;
+  categories: CategoryStat[];
+}
+
+export interface ClassifyProgress {
+  current: number;
+  total: number;
+  progress: number;
+  classified?: number;
+  skipped?: number;
+  stage?: string;
+  topicCreated?: string;
 }
 
 export interface UserProfile {

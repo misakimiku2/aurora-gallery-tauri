@@ -9,6 +9,7 @@ import { isTauriEnvironment } from '../../utils/environment';
 import { isAndroidSync } from '../../utils/androidPlatform';
 import { getThumbnailPrefetcher } from '../../utils/thumbnailPrefetch';
 import { lanClientApi } from '../lan-client/lanClientApi';
+import { dbGetTopicFiles } from '../../api/tauri-bridge';
 import * as RW from 'react-window';
 
 // Resolve FixedSizeList component from various module shapes
@@ -81,6 +82,26 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
     const isAndroid = isAndroidSync();
     const [lanConnected, setLanConnected] = useState(() => lanClientApi.isConnected());
     const [lanHint, setLanHint] = useState<string | null>(null);
+    // Phase 0：列表态 topic.fileIds 为空，懒加载（仅小专题，打开 modal 时按需）
+    const [topicFileIdsCache, setTopicFileIdsCache] = useState<Record<string, string[]>>({});
+    const loadTopicFileIds = useCallback(async (topicId: string): Promise<string[]> => {
+        const cached = topicFileIdsCache[topicId];
+        if (cached) return cached;
+        const fromState = topics[topicId]?.fileIds;
+        if (fromState && fromState.length > 0) {
+            setTopicFileIdsCache(prev => ({ ...prev, [topicId]: fromState }));
+            return fromState;
+        }
+        if (!isTauriEnvironment()) return [];
+        try {
+            const ids = await dbGetTopicFiles(topicId);
+            setTopicFileIdsCache(prev => ({ ...prev, [topicId]: ids }));
+            return ids;
+        } catch (e) {
+            console.error('Failed to load topic files:', e);
+            return [];
+        }
+    }, [topicFileIdsCache, topics]);
     const modalRef = useRef<HTMLDivElement>(null);
     const gridContainerRef = useRef<HTMLDivElement>(null);
     const [gridHeight, setGridHeight] = useState(400);
@@ -155,6 +176,16 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
             .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-CN'));
     }, [topics]);
 
+    // Phase 0：进入"专题"分类时，预加载所有专题的 file_ids（小专题可接受）
+    useEffect(() => {
+        if (activeCategory !== 'topics') return;
+        Object.values(topics || {}).forEach(t => {
+            if (!topicFileIdsCache[t.id] && !(t.fileIds && t.fileIds.length > 0)) {
+                loadTopicFileIds(t.id);
+            }
+        });
+    }, [activeCategory, topics, topicFileIdsCache, loadTopicFileIds]);
+
     // 获取人物列表
     const peopleList = useMemo(() => {
         return Object.values(people || {}).sort((a, b) => 
@@ -215,9 +246,13 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
                     const isExpanded = expandedNodes.has(topic.id);
                     
                     // 计算该专题下可添加的图片数量（排除已存在的）
-                    const availableCount = topic.fileIds?.filter(id => 
+                    // Phase 0：列表态 fileIds 为空，优先用 cache；cache 未就绪时用 fileCount 估算上限
+                    const topicIds = topic.fileIds && topic.fileIds.length > 0
+                        ? topic.fileIds
+                        : (topicFileIdsCache[topic.id] || []);
+                    const availableCount = topicIds.filter(id =>
                         !existingIdsSet.has(id) && files[id]?.type === FileType.IMAGE
-                    ).length || 0;
+                    ).length || (topicIds.length === 0 ? (topic.fileCount ?? 0) : 0);
                     
                     nodes.push({
                         id: topic.id,
@@ -408,10 +443,14 @@ export const AddImageModal: React.FC<AddImageModalProps> = ({
             case 'topics': {
                 if (selectedNodeId) {
                     const topic = topics[selectedNodeId];
-                    if (topic?.fileIds) {
-                        filtered = topic.fileIds
+                    // Phase 0：fileIds 可能为空，优先 cache，再回退 state
+                    const ids = (topic?.fileIds && topic.fileIds.length > 0)
+                        ? topic.fileIds
+                        : (topic ? (topicFileIdsCache[topic.id] || []) : []);
+                    if (ids.length > 0) {
+                        filtered = ids
                             .map(id => files[id])
-                            .filter((f): f is FileNode => 
+                            .filter((f): f is FileNode =>
                                 f?.type === FileType.IMAGE && !existingIdsSet.has(f.id)
                             );
                     }

@@ -1,0 +1,30 @@
+{
+  "landscape": {
+    "label_cn": "风景自然",
+    "tags": ["landscape", "sky", "mountain", "ocean", "forest", "sunset", "beach", "river", "cloud", "field", "scenery", "nature", "lake", "sea", "tree", "flower", "grass", "snow", "desert", "waterfall", "valley", "horizon", "sunrise", "dawn", "dusk", "night", "starry_sky", "moon", "aurora", "rainbow"]
+  },
+  "people": {
+    "label_cn": "人物",
+    "tags": ["person", "portrait", "selfie", "face", "woman", "man", "girl", "boy", "lady", "gentleman", "child", "kid", "people", "crowd", "group", "couple", "facial_expression", "smile", "eyes", "hair"]
+  },
+  "anime": {
+    "label_cn": "动漫插画",
+    "tags": ["anime", "2d", "illustration", "manga", "drawing", "cartoon", "pixel_art", "comic", "sketch", "fanart", "digital_art", "vector", "cel_shading", "key_visual", "official_art"]
+  },
+  "food": {
+    "label_cn": "美食",
+    "tags": ["food", "dish", "cuisine", "dessert", "drink", "coffee", "cake", "meal", "snack", "fruit", "vegetable", "meat", "noodles", "rice", "soup", "salad", "bread", "pastry", "beverage", "tea"]
+  },
+  "architecture": {
+    "label_cn": "建筑",
+    "tags": ["architecture", "building", "interior", "house", "city", "street", "room", "skyscraper", "tower", "bridge", "church", "castle", "palace", "temple", "shrine", "office", "shop", "cafe", "restaurant", "hotel", "apartment", "window", "door", "wall", "ceiling", "staircase", "corridor"]
+  },
+  "animal": {
+    "label_cn": "动物",
+    "tags": ["animal", "cat", "dog", "bird", "fish", "horse", "rabbit", "pet", "wildlife", "insect", "butterfly", "fox", "wolf", "bear", "deer", "tiger", "lion", "panda", "penguin", "dolphin", "whale", "shark", "reptile", "snake", "lizard", "turtle", "chicken", "duck", "owl", "eagle"]
+  },
+  "screenshot": {
+    "label_cn": "截图",
+    "tags": ["screenshot", "ui", "screen", "interface", "webpage", "dialog", "menu", "button", "window", "browser", "app", "software", "code", "terminal", "text", "document", "spreadsheet", "chart", "graph", "diagram"]
+  }
+}

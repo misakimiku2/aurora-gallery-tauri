@@ -61,7 +61,7 @@ export const useContextMenu = ({
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (contextMenu.visible) {
-        const menuElement = document.querySelector('.fixed.bg-white[data-testid="context-menu"]');
+        const menuElement = document.querySelector('[data-testid="context-menu"]');
         if (!menuElement || !menuElement.contains(e.target as Node)) {
           closeContextMenu();
         }

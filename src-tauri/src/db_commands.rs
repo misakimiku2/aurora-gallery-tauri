@@ -104,6 +104,83 @@ pub fn db_delete_topic(pool: tauri::State<AppDbPool>, id: String) -> Result<(), 
     db::topics::delete_topic(&conn, &id).map_err(|e| e.to_string())
 }
 
+// ===== Phase 0: topic_files / topic_people 关联表命令 =====
+
+#[tauri::command]
+pub fn db_get_topic_files(pool: tauri::State<AppDbPool>, topic_id: String) -> Result<Vec<String>, String> {
+    let conn = pool.get_connection();
+    db::topics::get_topic_files(&conn, &topic_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_get_topic_files_paginated(
+    pool: tauri::State<AppDbPool>,
+    topic_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<db::topics::PaginatedFiles, String> {
+    let conn = pool.get_connection();
+    db::topics::get_topic_files_paginated(&conn, &topic_id, offset, limit).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_get_topic_cover_previews(
+    pool: tauri::State<AppDbPool>,
+    topic_ids: Vec<String>,
+    preview_count: usize,
+) -> Result<std::collections::HashMap<String, Vec<String>>, String> {
+    let conn = pool.get_connection();
+    db::topics::get_topic_cover_previews(&conn, &topic_ids, preview_count).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_find_topics_containing_file(pool: tauri::State<AppDbPool>, file_id: String) -> Result<Vec<String>, String> {
+    let conn = pool.get_connection();
+    db::topics::find_topics_containing_file(&conn, &file_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_set_topic_files(pool: tauri::State<AppDbPool>, topic_id: String, file_ids: Vec<String>) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::set_topic_files(&conn, &topic_id, &file_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_add_files_to_topic(pool: tauri::State<AppDbPool>, topic_id: String, file_ids: Vec<String>) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::add_files_to_topic(&conn, &topic_id, &file_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_remove_file_from_topic(pool: tauri::State<AppDbPool>, topic_id: String, file_id: String) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::remove_file_from_topic(&conn, &topic_id, &file_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_get_topic_people(pool: tauri::State<AppDbPool>, topic_id: String) -> Result<Vec<String>, String> {
+    let conn = pool.get_connection();
+    db::topics::get_topic_people(&conn, &topic_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_set_topic_people(pool: tauri::State<AppDbPool>, topic_id: String, people_ids: Vec<String>) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::set_topic_people(&conn, &topic_id, &people_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_add_people_to_topic(pool: tauri::State<AppDbPool>, topic_id: String, people_ids: Vec<String>) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::add_people_to_topic(&conn, &topic_id, &people_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn db_remove_person_from_topic(pool: tauri::State<AppDbPool>, topic_id: String, people_id: String) -> Result<(), String> {
+    let conn = pool.get_connection();
+    db::topics::remove_person_from_topic(&conn, &topic_id, &people_id).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn db_upsert_file_metadata(
     pool: tauri::State<'_, AppDbPool>, 

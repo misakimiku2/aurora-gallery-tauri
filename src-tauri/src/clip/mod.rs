@@ -6,6 +6,7 @@ pub mod model;
 pub mod preprocessor;
 pub mod embedding;
 pub mod search;
+pub mod content_classifier;
 
 use std::path::PathBuf;
 use std::sync::Arc;

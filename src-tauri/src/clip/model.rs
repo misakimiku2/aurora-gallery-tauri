@@ -15,6 +15,10 @@ use sha2::{Sha256, Digest};
 use super::ClipConfig;
 use super::preprocessor::{ImagePreprocessor, TextPreprocessor};
 use super::models::{ModelSpec, get_model_spec};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 全局模型下载取消标志
+pub static MODEL_DOWNLOAD_CANCEL: AtomicBool = AtomicBool::new(false);
 
 /// 嵌入中文标签翻译文件
 const TAGS_CN_CSV: &str = include_str!("Tags-cn_2024_ver-1.0.csv");
@@ -194,7 +198,7 @@ impl ClipModel {
         // 下载所有模型文件
         let mut downloaded_paths: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
         for (file_index, model_file) in model_files.iter().enumerate() {
-            let file_path = Self::ensure_model_file(&model_file, &model_cache_dir, app_handle, file_index, total_files).await?;
+            let file_path = Self::ensure_model_file(model_spec.name(), &model_file, &model_cache_dir, app_handle, file_index, total_files).await?;
             downloaded_paths.insert(model_file.name.clone(), file_path);
         }
 
@@ -429,6 +433,7 @@ impl ClipModel {
 
     /// 确保模型文件存在且完整，如果不存在或损坏则下载（支持进度事件和重试）
     async fn ensure_model_file(
+        model_name: &str,
         model_file: &super::models::ModelFile,
         cache_dir: &PathBuf,
         app_handle: &tauri::AppHandle,
@@ -457,10 +462,11 @@ impl ClipModel {
             }
         }
 
-        // 创建带超时的 HTTP 客户端
+        // 创建带超时的 HTTP 客户端（模拟浏览器 UA，避免被镜像站/CDN 风控拦截）
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
             .timeout(Duration::from_secs(DOWNLOAD_TIMEOUT_SECS))
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .build()
             .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
 
@@ -480,7 +486,7 @@ impl ClipModel {
                 "overall_progress": (file_index * 100) / total_files,
             }));
             
-            match Self::download_file_with_client(&client, url, &file_path, app_handle, file_index, total_files, file_name).await {
+            match Self::download_file_with_client(&client, model_name, url, &file_path, app_handle, file_index, total_files, file_name, model_file.expected_size).await {
                 Ok(()) => {
                     log::info!("Downloaded model file: {:?}", file_path);
                     return Ok(file_path);
@@ -503,14 +509,17 @@ impl ClipModel {
     }
     
     /// 使用客户端下载文件
+    #[allow(clippy::too_many_arguments)]
     async fn download_file_with_client(
         client: &Client,
+        model_name: &str,
         url: &str,
         file_path: &PathBuf,
         app_handle: &tauri::AppHandle,
         file_index: usize,
         total_files: usize,
         file_name: &str,
+        expected_size: Option<u64>,
     ) -> Result<(), String> {
         let response = client.get(url)
             .send()
@@ -547,6 +556,11 @@ impl ClipModel {
         let mut current_speed: u64 = 0;
         
         loop {
+            // 检查是否请求取消下载
+            if MODEL_DOWNLOAD_CANCEL.load(Ordering::SeqCst) {
+                return Err("模型下载已取消".to_string());
+            }
+            
             let chunk_result = tokio::time::timeout(progress_emit_interval, stream.next()).await;
             
             match chunk_result {
@@ -587,6 +601,7 @@ impl ClipModel {
                 let overall_progress = ((file_index as f64 * 100.0) + file_progress) / total_files as f64;
                 
                 let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
+                    "model_name": model_name,
                     "file_name": file_name,
                     "file_index": file_index,
                     "total_files": total_files,
@@ -605,8 +620,23 @@ impl ClipModel {
             .await
             .map_err(|e| format!("Failed to flush file: {}", e))?;
         
+        // 下载完成后校验文件大小，防止截断/不完整文件被误认为完整
+        if let Some(expected) = expected_size {
+            let actual = tokio::fs::metadata(file_path)
+                .await
+                .map_err(|e| format!("Failed to read downloaded file metadata: {}", e))?
+                .len();
+            if actual != expected {
+                return Err(format!(
+                    "Downloaded file size mismatch: expected {} bytes, got {} bytes",
+                    expected, actual
+                ));
+            }
+        }
+        
         let overall_progress = ((file_index + 1) * 100) / total_files;
         let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
+            "model_name": model_name,
             "file_name": file_name,
             "file_index": file_index,
             "total_files": total_files,

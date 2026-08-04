@@ -67,6 +67,9 @@ self.onmessage = (e: MessageEvent<SearchWorkerInput>) => {
      const tagSet = new Set(activeTab.activeTags);
      candidates = allFiles.filter(f => f.type !== FileType.FOLDER && f.tags?.some(t => tagSet.has(t)));
   } else if (activeTab.activeTopicId) {
+     // Phase 0 注意：列表态 topic.fileIds 为空。此 worker 未被引用（无 new Worker）；
+     // 真正的搜索走 useFileSearch.ts（已用 dbGetTopicFiles 懒加载）。
+     // 若未来启用此 worker，需调用方在 input 中传入 topic 的 fileIds。
      const topic = topics[activeTab.activeTopicId];
      candidates = topic ? (topic.fileIds || []).map((id: string) => allFiles.find(f => f.id === id)).filter(Boolean) : [];
   } else {

@@ -49,7 +49,8 @@ import { useAIRename } from '../hooks/useAIRename';
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
 import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, preloadPaletteToCache, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
-import { isAndroidPlatformCached } from '../api/tauri-bridge';
+import { isAndroidPlatformCached, dbFindTopicsContainingFile } from '../api/tauri-bridge';
+import { isTauriEnvironment } from '../utils/environment';
 
 interface MetadataProps {
     files: Record<string, FileNode>;
@@ -586,31 +587,46 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }, [filesVersion]);
 
     // Find which topic the selected file belongs to
-    const fileTopic = useMemo(() => {
-        if (!file || !topics) return null;
-
-        // Find the topic that contains this file's ID in its fileIds
-        const topicList = Object.values(topics || {});
-        // Note: We prioritize finding sub-topics (topics with parentId) first
-        // as a file might technically be in both if the logic allows, 
-        // but usually it's assigned to a specific sub-topic.
-        const targetTopic = topicList.find(t => t.fileIds?.includes(file.id) && t.parentId)
-            || topicList.find(t => t.fileIds?.includes(file.id));
-
-        if (!targetTopic) return null;
-
-        // Check if it has a parent (meaning it's a sub-topic)
-        if (targetTopic.parentId && topics[targetTopic.parentId]) {
-            return {
-                main: topics[targetTopic.parentId],
-                sub: targetTopic
-            };
-        }
-
-        return {
-            main: targetTopic,
-            sub: null
-        };
+    // Phase 0：列表态 topic.fileIds 为空，改用 dbFindTopicsContainingFile 反查（走索引）
+    const [fileTopic, setFileTopic] = useState<{ main: Topic; sub: Topic | null } | null>(null);
+    useEffect(() => {
+        if (!file || !topics) { setFileTopic(null); return; }
+        let cancelled = false;
+        (async () => {
+            // 优先用内存中已加载的 fileIds（详情态/增删后）快速判断
+            const topicList = Object.values(topics || {});
+            const inMemory = topicList.find(t => t.fileIds?.includes(file.id) && t.parentId)
+                || topicList.find(t => t.fileIds?.includes(file.id));
+            if (inMemory) {
+                if (!cancelled) {
+                    if (inMemory.parentId && topics[inMemory.parentId]) {
+                        setFileTopic({ main: topics[inMemory.parentId], sub: inMemory });
+                    } else {
+                        setFileTopic({ main: inMemory, sub: null });
+                    }
+                }
+                return;
+            }
+            // 内存无（列表态），走 DB 反查
+            if (!isTauriEnvironment()) { setFileTopic(null); return; }
+            try {
+                const topicIds = await dbFindTopicsContainingFile(file.id);
+                if (cancelled || topicIds.length === 0) { setFileTopic(null); return; }
+                // 优先子专题（有 parentId）
+                const targetId = topicIds.find(tid => topics[tid]?.parentId) || topicIds[0];
+                const targetTopic = topics[targetId];
+                if (!targetTopic || cancelled) { setFileTopic(null); return; }
+                if (targetTopic.parentId && topics[targetTopic.parentId]) {
+                    setFileTopic({ main: topics[targetTopic.parentId], sub: targetTopic });
+                } else {
+                    setFileTopic({ main: targetTopic, sub: null });
+                }
+            } catch (e) {
+                console.error('Failed to find topics containing file:', e);
+                if (!cancelled) setFileTopic(null);
+            }
+        })();
+        return () => { cancelled = true; };
     }, [file?.id, topics]);
 
     useEffect(() => {
@@ -1221,7 +1237,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         }
 
         // 计算文件数量
-        const topicFileCount = topic.fileIds ? topic.fileIds.length : 0;
+        const topicFileCount = topic.fileCount ?? topic.fileIds?.length ?? 0;
 
         // 获取封面样式 - �?TopicModule 保持一致的算法
         const getCoverStyle = (t: Topic, overrideUrl?: string | null): React.CSSProperties => {
@@ -1582,8 +1598,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                 <span className="flex items-center bg-surface px-1.5 py-0.5 rounded" title={`${topic.peopleIds?.length || 0} People`}>
                                                     <User size={10} className="mr-1 opacity-70" /> {topic.peopleIds?.length || 0}
                                                 </span>
-                                                <span className="flex items-center bg-surface px-1.5 py-0.5 rounded" title={`${topic.fileIds?.length || 0} Files`}>
-                                                    <ImageIcon size={10} className="mr-1 opacity-70" /> {topic.fileIds?.length || 0}
+                                                <span className="flex items-center bg-surface px-1.5 py-0.5 rounded" title={`${topic.fileCount ?? topic.fileIds?.length ?? 0} Files`}>
+                                                    <ImageIcon size={10} className="mr-1 opacity-70" /> {topic.fileCount ?? topic.fileIds?.length ?? 0}
                                                 </span>
                                                 {isMainTopic && allSubTopics.length > 0 && (
                                                     <span className="flex items-center bg-blue-50 dark:bg-blue-900/20 text-blue-500 px-1.5 py-0.5 rounded" title={`${allSubTopics.length} Subtopics`}>

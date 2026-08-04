@@ -52,39 +52,32 @@ impl ModelSpec for SigLIP2So400M {
             ModelFile::new(
                 "model.onnx",
                 "https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx",
-            ),
+            )
+            .with_expected_size(1_225_596),
             // 模型权重数据文件
             ModelFile::new(
                 "model.onnx_data",
                 "https://hf-mirror.com/onnx-community/siglip2-so400m-patch14-384-ONNX/resolve/main/onnx/model.onnx_data",
-            ),
+            )
+            .with_expected_size(4_544_033_984),
             // tokenizer.json (HuggingFace tokenizers 格式)
             ModelFile::new(
                 "tokenizer.json",
                 "https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/tokenizer.json",
             )
-            // TODO: 添加预期文件大小和哈希值
-            // .with_expected_size(XXX)
-            // .with_expected_hash("xxx"),
-            ,
+            .with_expected_size(34_363_039),
             // 分词器配置文件
             ModelFile::new(
                 "tokenizer_config.json",
                 "https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/tokenizer_config.json",
             )
-            // TODO: 添加预期文件大小和哈希值
-            // .with_expected_size(XXX)
-            // .with_expected_hash("xxx"),
-            ,
+            .with_expected_size(47_164),
             // 特殊 token 映射
             ModelFile::new(
                 "special_tokens_map.json",
                 "https://hf-mirror.com/google/siglip2-so400m-patch14-384/resolve/main/special_tokens_map.json",
             )
-            // TODO: 添加预期文件大小和哈希值
-            // .with_expected_size(XXX)
-            // .with_expected_hash("xxx"),
-            ,
+            .with_expected_size(636),
         ]
     }
 

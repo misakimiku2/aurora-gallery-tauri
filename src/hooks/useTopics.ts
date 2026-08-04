@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
 import { AppState, Topic, Person, FileType, TabState } from '../types';
-import { dbUpsertTopic, dbDeleteTopic } from '../api/tauri-bridge';
+import {
+  dbUpsertTopic,
+  dbDeleteTopic,
+  dbAddFilesToTopic,
+  dbAddPeopleToTopic,
+} from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 
 interface UseTopicsProps {
@@ -61,6 +66,8 @@ export const useTopics = ({
       return;
     }
 
+    let coverChanged = false;
+
     setState(current => {
       const topic = current.topics[topicId];
       if (!topic) return current;
@@ -69,8 +76,15 @@ export const useTopics = ({
 
       if (targetFileIds.length > 0) {
         const existingFiles = new Set(updatedTopic.fileIds || []);
-        targetFileIds.forEach(id => existingFiles.add(id));
+        let added = 0;
+        targetFileIds.forEach(id => {
+          if (!existingFiles.has(id)) { existingFiles.add(id); added++; }
+        });
         updatedTopic.fileIds = Array.from(existingFiles);
+        // 列表态 fileCount 为权威数量；累加新增（去重后）
+        if (added > 0) {
+          updatedTopic.fileCount = (updatedTopic.fileCount ?? existingFiles.size - added) + added;
+        }
 
         if (!updatedTopic.coverFileId && targetFileIds.length > 0) {
           const firstImageId = targetFileIds.find(id => {
@@ -79,6 +93,7 @@ export const useTopics = ({
           });
           if (firstImageId) {
             updatedTopic.coverFileId = firstImageId;
+            coverChanged = true;
           }
         }
       }
@@ -92,21 +107,31 @@ export const useTopics = ({
       updatedTopic.updatedAt = new Date().toISOString();
 
       if (isTauriEnvironment()) {
-        dbUpsertTopic({
-          id: updatedTopic.id,
-          parentId: updatedTopic.parentId,
-          name: updatedTopic.name,
-          description: updatedTopic.description,
-          topicType: updatedTopic.type,
-          coverFileId: updatedTopic.coverFileId,
-          backgroundFileId: updatedTopic.backgroundFileId,
-          coverCrop: updatedTopic.coverCrop,
-          peopleIds: updatedTopic.peopleIds,
-          fileIds: updatedTopic.fileIds,
-          sourceUrl: updatedTopic.sourceUrl,
-          createdAt: updatedTopic.createdAt ? new Date(updatedTopic.createdAt).getTime() : undefined,
-          updatedAt: updatedTopic.updatedAt ? new Date(updatedTopic.updatedAt).getTime() : undefined,
-        }).catch(e => console.error('Failed to update topic in DB:', e));
+        // 关联表：单行 INSERT OR IGNORE，不再走 split/join 全量写
+        if (targetFileIds.length > 0) {
+          dbAddFilesToTopic(topicId, targetFileIds).catch(e => console.error('Failed to add files to topic:', e));
+        }
+        if (targetPersonIds.length > 0) {
+          dbAddPeopleToTopic(topicId, targetPersonIds).catch(e => console.error('Failed to add people to topic:', e));
+        }
+        // 元数据变更（如 coverFileId）才 upsert topic
+        if (coverChanged) {
+          dbUpsertTopic({
+            id: updatedTopic.id,
+            parentId: updatedTopic.parentId,
+            name: updatedTopic.name,
+            description: updatedTopic.description,
+            type: updatedTopic.type,
+            coverFileId: updatedTopic.coverFileId,
+            backgroundFileId: updatedTopic.backgroundFileId,
+            coverCrop: updatedTopic.coverCrop,
+            peopleIds: [],
+            fileIds: [],
+            sourceUrl: updatedTopic.sourceUrl,
+            createdAt: updatedTopic.createdAt ? new Date(updatedTopic.createdAt).getTime() : undefined,
+            updatedAt: updatedTopic.updatedAt ? new Date(updatedTopic.updatedAt).getTime() : undefined,
+          }).catch(e => console.error('Failed to update topic metadata in DB:', e));
+        }
       }
 
       return {
@@ -136,17 +161,18 @@ export const useTopics = ({
     setState(prev => ({ ...prev, topics: { ...prev.topics, [id]: newTopic } }));
 
     if (isTauriEnvironment()) {
+      // db_upsert_topic 仅写元数据，关联成员（fileIds/peopleIds）为空，新建时无需 set_topic_files
       dbUpsertTopic({
         id: newTopic.id,
         parentId: newTopic.parentId,
         name: newTopic.name,
         description: newTopic.description,
-        topicType: newTopic.type,
+        type: newTopic.type,
         coverFileId: newTopic.coverFileId,
         backgroundFileId: newTopic.backgroundFileId,
         coverCrop: newTopic.coverCrop,
-        peopleIds: newTopic.peopleIds,
-        fileIds: newTopic.fileIds,
+        peopleIds: [],
+        fileIds: [],
         sourceUrl: newTopic.sourceUrl,
         createdAt: newTopic.createdAt ? new Date(newTopic.createdAt).getTime() : undefined,
         updatedAt: newTopic.updatedAt ? new Date(newTopic.updatedAt).getTime() : undefined,
@@ -163,6 +189,7 @@ export const useTopics = ({
       const updatedTopic = { ...prev.topics[topicId], ...updates, updatedAt: new Date().toISOString() };
 
       if (isTauriEnvironment()) {
+        // 仅元数据更新走 db_upsert_topic；成员变更须调用方用 dbAddFilesToTopic/dbRemoveFileFromTopic
         dbUpsertTopic({
           id: updatedTopic.id,
           parentId: updatedTopic.parentId,
@@ -172,8 +199,8 @@ export const useTopics = ({
           coverFileId: updatedTopic.coverFileId,
           backgroundFileId: updatedTopic.backgroundFileId,
           coverCrop: updatedTopic.coverCrop,
-          peopleIds: updatedTopic.peopleIds,
-          fileIds: updatedTopic.fileIds,
+          peopleIds: [],
+          fileIds: [],
           sourceUrl: updatedTopic.sourceUrl,
           createdAt: updatedTopic.createdAt ? new Date(updatedTopic.createdAt).getTime() : undefined,
           updatedAt: updatedTopic.updatedAt ? new Date(updatedTopic.updatedAt).getTime() : undefined,

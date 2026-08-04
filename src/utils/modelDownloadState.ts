@@ -39,8 +39,8 @@ async function startGlobalListener() {
 
   try {
     await listenClipModelDownloadProgress((data: ClipModelDownloadProgress) => {
-      // 使用当前正在下载的模型名称
-      const modelName = globalModelDownloadState.currentModelName || data.file_name;
+      // 优先使用 Rust 端事件中携带的模型名，避免多模型并发下载时串台
+      const modelName = data.model_name || globalModelDownloadState.currentModelName || data.file_name;
       const displayName = globalModelDownloadState.currentDisplayName || data.file_name;
       
       const info: ModelDownloadInfo = {

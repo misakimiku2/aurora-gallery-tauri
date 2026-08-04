@@ -50,19 +50,23 @@ impl ModelSpec for SigLIP2Base {
             ModelFile::new(
                 "model.onnx",
                 "https://hf-mirror.com/onnx-community/siglip2-base-patch16-224-ONNX/resolve/main/onnx/model.onnx",
-            ),
+            )
+            .with_expected_size(1_501_285_826),
             ModelFile::new(
                 "tokenizer.json",
                 "https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer.json",
-            ),
+            )
+            .with_expected_size(34_363_039),
             ModelFile::new(
                 "tokenizer_config.json",
                 "https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/tokenizer_config.json",
-            ),
+            )
+            .with_expected_size(47_164),
             ModelFile::new(
                 "special_tokens_map.json",
                 "https://hf-mirror.com/google/siglip2-base-patch16-224/resolve/main/special_tokens_map.json",
-            ),
+            )
+            .with_expected_size(636),
         ]
     }
 

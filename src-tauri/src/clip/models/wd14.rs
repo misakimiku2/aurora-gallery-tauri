@@ -46,7 +46,8 @@ impl ModelSpec for WdEva02LargeV3 {
             ModelFile::new(
                 "model.onnx",
                 "https://hf-mirror.com/deepghs/wd14_tagger_with_embeddings/resolve/main/SmilingWolf/wd-eva02-large-tagger-v3/model.onnx",
-            ),
+            )
+            .with_expected_size(1_260_436_067),
         ]
     }
 

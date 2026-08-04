@@ -117,6 +117,81 @@ pub fn get_metadata_under_path(conn: &Connection, root_path: &str) -> Result<Vec
     Ok(results)
 }
 
+/// 批量更新 category 字段（P1 内容分类用）。
+/// 每条记录 (file_id, category) 在单事务内执行 UPDATE，避免长事务锁库。
+pub fn update_category_batch(
+    conn: &Connection,
+    updates: &[(String, String)],
+) -> Result<()> {
+    if updates.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut stmt = tx.prepare(
+            "UPDATE file_metadata SET category = ?1, updated_at = ?2 WHERE file_id = ?3",
+        )?;
+        let now = chrono::Utc::now().timestamp();
+        for (file_id, category) in updates {
+            stmt.execute(params![category, now, file_id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+/// 取出所有有 tags 且在 file_index 中存在的记录的 (file_id, tags_json)，用于 P1 内容分类。
+/// JOIN file_index 过滤掉已删除文件的残留 metadata，避免创建指向无效文件的专题。
+pub fn get_all_tags_for_classification(conn: &Connection) -> Result<Vec<(String, serde_json::Value)>> {
+    let mut stmt = conn.prepare(
+        "SELECT m.file_id, m.tags FROM file_metadata m
+         INNER JOIN file_index f ON m.file_id = f.file_id
+         WHERE m.tags IS NOT NULL",
+    )?;
+    let iter = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, serde_json::Value>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in iter {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// 统计每个 category 的数量（仅含 file_index 中存在的文件）。
+pub fn get_category_stats(conn: &Connection) -> Result<Vec<(String, i64)>> {
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(m.category, ''), COUNT(*)
+         FROM file_metadata m
+         INNER JOIN file_index f ON m.file_id = f.file_id
+         GROUP BY m.category",
+    )?;
+    let iter = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for r in iter {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// 返回 file_index 总文件数（用于前端展示"待处理"比例）。
+pub fn count_indexed_files(conn: &Connection) -> Result<i64> {
+    conn.query_row("SELECT COUNT(*) FROM file_index", [], |row| row.get(0))
+}
+
+/// 返回有 tags 的文件数（已跑过 WD14 打标签的）。
+pub fn count_files_with_tags(conn: &Connection) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM file_metadata m
+         INNER JOIN file_index f ON m.file_id = f.file_id
+         WHERE m.tags IS NOT NULL",
+        [],
+        |row| row.get(0),
+    )
+}
+
 pub fn delete_metadata_by_path(conn: &Connection, path: &str) -> Result<()> {
     let normalized_path = path.replace("\\", "/");
     

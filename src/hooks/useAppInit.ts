@@ -142,6 +142,7 @@ export const useAppInit = ({
                       coverCrop: t.coverCrop,
                       peopleIds: t.peopleIds || [],
                       fileIds: t.fileIds || [],
+                      fileCount: t.fileCount ?? 0,
                       sourceUrl: t.sourceUrl,
                       createdAt: t.createdAt ? new Date(t.createdAt).toISOString() : undefined,
                       updatedAt: t.updatedAt ? new Date(t.updatedAt).toISOString() : undefined,

@@ -180,6 +180,31 @@ export const App: React.FC = () => {
     setFilesVersion(v => v + 1);
   }, [state.files]);
 
+  // P1: 监听自动分类完成事件，重新加载专题列表
+  useEffect(() => {
+    const handleTopicsChanged = async () => {
+      try {
+        const freshTopics = await dbGetAllTopics();
+        const topicsMap: Record<string, Topic> = {};
+        freshTopics.forEach(t => { topicsMap[t.id] = t; });
+        setState(prev => ({ ...prev, topics: topicsMap }));
+      } catch (e) {
+        console.error('Failed to reload topics after classification:', e);
+      }
+    };
+    window.addEventListener('topics-data-changed', handleTopicsChanged as EventListener);
+    return () => window.removeEventListener('topics-data-changed', handleTopicsChanged as EventListener);
+  }, []);
+
+  // P1: 监听"前往 AI视觉"事件，打开设置弹窗并切换到 aiVision 分类
+  useEffect(() => {
+    const handleNavigateAiVision = () => {
+      setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'aiVision' }));
+    };
+    window.addEventListener('navigate-to-ai-vision', handleNavigateAiVision);
+    return () => window.removeEventListener('navigate-to-ai-vision', handleNavigateAiVision);
+  }, []);
+
   // ... (keep all state variables and hooks identical)
   const [isLoading, setIsLoading] = useState(true);
   const [showSplash, setShowSplash] = useState(true);

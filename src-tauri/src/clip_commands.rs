@@ -675,6 +675,9 @@ pub async fn clip_generate_embeddings_batch(
 
 #[tauri::command]
 pub async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Result<(), String> {
+    // 重置模型下载取消标志
+    crate::clip::model::MODEL_DOWNLOAD_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
@@ -685,6 +688,13 @@ pub async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Resul
     
     // 加载模型
     guard.load_model(&app).await
+}
+
+/// 取消当前正在进行的模型下载
+#[tauri::command]
+pub fn clip_cancel_model_download() {
+    crate::clip::model::MODEL_DOWNLOAD_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    log::info!("Model download cancellation requested");
 }
 
 #[tauri::command]
@@ -767,15 +777,22 @@ pub async fn clip_get_model_status(model_name: String) -> Result<serde_json::Val
     
     for model_file in &model_files {
         let file_path = model_dir.join(&model_file.name);
-        let exists = file_path.exists();
-        if !exists {
-            is_downloaded = false;
-        } else {
-            if let Ok(metadata) = std::fs::metadata(&file_path) {
-                downloaded_size += metadata.len();
+        // 校验文件是否存在且大小完整（防止下载一半被截断的文件被误认为完整）
+        let valid = match std::fs::metadata(&file_path) {
+            Ok(metadata) => {
+                let size = metadata.len();
+                downloaded_size += size;
+                match model_file.expected_size {
+                    Some(expected) => size == expected,
+                    None => size > 0,
+                }
             }
+            Err(_) => false,
+        };
+        if !valid {
+            is_downloaded = false;
         }
-        files_status.insert(model_file.name.clone(), serde_json::json!(exists));
+        files_status.insert(model_file.name.clone(), serde_json::json!(valid));
     }
     
     let is_gpu_active = if let Some(model) = guard.model() {
@@ -2173,6 +2190,7 @@ pub async fn clip_create_work_topics(
 
         let custom_type = work_types.get(&work_name).and_then(|t| t.clone()).or(Some("TOPIC".to_string()));
 
+        let file_count = file_ids.len() as i32;
         let topic = db::topics::Topic {
             id: topic_id.clone(),
             parent_id: None,
@@ -2190,11 +2208,17 @@ pub async fn clip_create_work_topics(
             source_type: Some("auto_work".to_string()),
             work_name: Some(work_name.clone()),
             work_name_cn: Some(work_name_cn_value),
+            file_count,
         };
-        
+
         db::topics::upsert_topic(&conn, &topic)
             .map_err(|e| format!("Failed to create topic: {}", e))?;
-        
+        // Phase 0: 同步成员到 topic_files / topic_people 关联表
+        db::topics::set_topic_files(&conn, &topic_id, &topic.file_ids)
+            .map_err(|e| format!("Failed to set topic_files: {}", e))?;
+        db::topics::set_topic_people(&conn, &topic_id, &topic.people_ids)
+            .map_err(|e| format!("Failed to set topic_people: {}", e))?;
+
         created_topics.push(topic);
         log::info!("[clip_create_work_topics] Created topic for work: {}", work_name);
     }

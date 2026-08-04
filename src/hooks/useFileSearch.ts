@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { FileNode, FileType, TabState, SearchScope, FileGroup, AppState } from '../types';
+import { dbGetTopicFiles } from '../api/tauri-bridge';
+import { isTauriEnvironment } from '../utils/environment';
 
 interface UseFileSearchProps {
   state: AppState;
@@ -13,6 +15,27 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
 
   // 1. 缓存文件数组，避免重复执行 Object.values
   const allFiles = useMemo(() => Object.values(state.files || {}) as FileNode[], [state.files]);
+
+  // Phase 0：按主题搜索时 topic.fileIds 为空（列表态），懒加载全量 file_ids
+  const [topicFileIds, setTopicFileIds] = useState<string[] | null>(null);
+  const activeTopicId = activeTab.activeTopicId;
+  useEffect(() => {
+    if (!activeTopicId) { setTopicFileIds(null); return; }
+    const topic = state.topics[activeTopicId];
+    if (topic?.fileIds && topic.fileIds.length > 0) { setTopicFileIds(topic.fileIds); return; }
+    if (!isTauriEnvironment()) { setTopicFileIds([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const ids = await dbGetTopicFiles(activeTopicId);
+        if (!cancelled) setTopicFileIds(ids);
+      } catch (e) {
+        console.error('Failed to load topic files for search:', e);
+        if (!cancelled) setTopicFileIds([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeTopicId, state.topics]);
 
   // 2. 隔离搜索参数：只有这些参数变化才需要重新“检索”
   // 排除掉 scrollTop 等与检索无关的干扰项
@@ -88,8 +111,9 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
       const tagSet = new Set(searchCriteria.activeTags);
       candidates = allFiles.filter(f => f.type !== FileType.FOLDER && f.tags?.some(tag => tagSet.has(tag)));
     } else if (searchCriteria.activeTopicId) {
-      const topic = state.topics[searchCriteria.activeTopicId];
-      candidates = topic ? (topic.fileIds || []).map(id => state.files[id]).filter(Boolean) : [];
+      // Phase 0：列表态 topic.fileIds 为空，用懒加载的 topicFileIds
+      const ids = topicFileIds || state.topics[searchCriteria.activeTopicId]?.fileIds || [];
+      candidates = ids.map(id => state.files[id]).filter(Boolean);
     } else {
       if (!state.files[activeTab.folderId] && !searchCriteria.query) return [];
       if (searchCriteria.query) {
@@ -147,7 +171,7 @@ export const useFileSearch = ({ state, activeTab, groupBy, t }: UseFileSearchPro
       else res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
       return res * (searchCriteria.sortDirection === 'asc' ? 1 : -1);
     }).map(f => f.id);
-  }, [allFiles, searchCriteria, state.files, state.topics]);
+  }, [allFiles, searchCriteria, state.files, state.topics, topicFileIds]);
 
   const pageSize = allMatchingFileIds.length;
   const totalResults = allMatchingFileIds.length;
