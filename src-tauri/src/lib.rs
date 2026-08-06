@@ -2041,6 +2041,8 @@ pub fn run() {
         clip_commands::clip_get_embedding_status,
         clip_commands::clip_load_model,
         clip_commands::clip_cancel_model_download,
+        clip_commands::clip_pause_model_download,
+        clip_commands::clip_resume_model_download,
         clip_commands::clip_unload_model,
         clip_commands::clip_is_model_loaded,
         clip_commands::clip_get_embedding_count,

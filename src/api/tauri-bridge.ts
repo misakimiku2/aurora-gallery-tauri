@@ -2182,6 +2182,36 @@ export const clipCancelModelDownload = async (): Promise<void> => {
 };
 
 /**
+ * 暂停当前正在进行的模型下载（断点续传，保留已下载部分）
+ */
+export const clipPauseModelDownload = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke('clip_pause_model_download');
+  } catch (error) {
+    console.error('Failed to pause model download:', error);
+    throw error;
+  }
+};
+
+/**
+ * 继续已暂停的模型下载（基于 HTTP Range 断点续传）
+ */
+export const clipResumeModelDownload = async (): Promise<void> => {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+  try {
+    await invoke('clip_resume_model_download');
+  } catch (error) {
+    console.error('Failed to resume model download:', error);
+    throw error;
+  }
+};
+
+/**
  * 更新 CLIP 配置（如 GPU 加速）
  * @param useGpu 是否启用 GPU 加速
  */

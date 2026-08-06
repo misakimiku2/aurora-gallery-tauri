@@ -675,8 +675,9 @@ pub async fn clip_generate_embeddings_batch(
 
 #[tauri::command]
 pub async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Result<(), String> {
-    // 重置模型下载取消标志
+    // 重置模型下载取消/暂停标志（新的下载任务从非暂停状态开始）
     crate::clip::model::MODEL_DOWNLOAD_CANCEL.store(false, std::sync::atomic::Ordering::SeqCst);
+    crate::clip::model::MODEL_DOWNLOAD_PAUSE.store(false, std::sync::atomic::Ordering::SeqCst);
     
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
@@ -694,7 +695,29 @@ pub async fn clip_load_model(model_name: String, app: tauri::AppHandle) -> Resul
 #[tauri::command]
 pub fn clip_cancel_model_download() {
     crate::clip::model::MODEL_DOWNLOAD_CANCEL.store(true, std::sync::atomic::Ordering::SeqCst);
+    // 取消时同时清除暂停标志，避免"卡死"在暂停等待中
+    crate::clip::model::MODEL_DOWNLOAD_PAUSE.store(false, std::sync::atomic::Ordering::SeqCst);
     log::info!("Model download cancellation requested");
+}
+
+/// 暂停当前正在进行的模型下载（断点续传）
+#[tauri::command]
+pub fn clip_pause_model_download() -> Result<(), String> {
+    // 如果已暂停，则忽略
+    if crate::clip::model::MODEL_DOWNLOAD_PAUSE.load(std::sync::atomic::Ordering::SeqCst) {
+        return Ok(());
+    }
+    crate::clip::model::MODEL_DOWNLOAD_PAUSE.store(true, std::sync::atomic::Ordering::SeqCst);
+    log::info!("Model download pause requested");
+    Ok(())
+}
+
+/// 继续已暂停的模型下载（基于 HTTP Range 断点续传）
+#[tauri::command]
+pub fn clip_resume_model_download() -> Result<(), String> {
+    crate::clip::model::MODEL_DOWNLOAD_PAUSE.store(false, std::sync::atomic::Ordering::SeqCst);
+    log::info!("Model download resume requested");
+    Ok(())
 }
 
 #[tauri::command]

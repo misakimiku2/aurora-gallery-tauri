@@ -1226,7 +1226,8 @@ export const Sidebar: React.FC<{
     const unsubscribe = subscribeToModelDownload((modelName, info) => {
       setModelDownloads(prev => {
         const filtered = prev.filter(d => d.modelName !== modelName);
-        if (info.status === 'downloading') {
+        if (info.status === 'downloading' || info.status === 'paused') {
+          // 下载中或暂停都持续显示
           return [...filtered, info];
         } else if (info.status === 'completed' || info.status === 'error') {
           // 完成后短暂显示，然后移除
@@ -1673,27 +1674,35 @@ export const Sidebar: React.FC<{
       {modelDownloads.length > 0 && (
         <div className="p-2 bg-panel">
           {modelDownloads.map((download) => (
-            <div key={download.modelName} className="mb-2 last:mb-0">
+            <button
+              key={download.modelName}
+              onClick={() => window.dispatchEvent(new CustomEvent('navigate-to-ai-vision'))}
+              title="点击打开 AI 视觉模型下载设置"
+              className="w-full text-left mb-2 last:mb-0 p-2 bg-surface rounded-lg hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer group"
+            >
               <div className="flex items-center justify-between text-xs mb-1">
                 <div className="flex items-center text-gray-700 dark:text-gray-300">
-                  <Download size={12} className="mr-1.5 text-green-500" />
+                  <Download size={12} className={`mr-1.5 ${download.status === 'paused' ? 'text-yellow-500' : 'text-green-500'}`} />
                   <span className="font-medium">{download.displayName}</span>
                 </div>
-                <span className="text-gray-500 dark:text-gray-400">
+                <span className={`${download.status === 'paused' ? 'text-yellow-600' : 'text-gray-500 dark:text-gray-400'} flex items-center gap-1`}>
                   {download.status === 'completed' ? (
                     '完成'
                   ) : download.status === 'error' ? (
                     '失败'
+                  ) : download.status === 'paused' ? (
+                    '已暂停'
                   ) : (
                     `${download.fileIndex + 1}/${download.totalFiles} 文件`
                   )}
+                  <ChevronRight size={12} className="opacity-0 group-hover:opacity-100 transition-opacity" />
                 </span>
               </div>
-              {download.status === 'downloading' && (
+              {(download.status === 'downloading' || download.status === 'paused') && (
                 <>
                   <div className="w-full bg-surface h-1.5 rounded-full overflow-hidden">
                     <div 
-                      className="h-full bg-green-500 rounded-full transition-all duration-300" 
+                      className={`h-full rounded-full transition-all duration-300 ${download.status === 'paused' ? 'bg-yellow-500' : 'bg-green-500'}`} 
                       style={{ width: `${download.progress}%` }}
                     />
                   </div>
@@ -1701,14 +1710,18 @@ export const Sidebar: React.FC<{
                     <span className="truncate max-w-[45%]">{download.fileName}</span>
                     <span className="flex items-center gap-1 shrink-0">
                       {download.progress}%
-                      <span className={download.speed > 0 ? "text-green-600" : "text-gray-400"}>
-                        ({download.speed < 1024 ? `${download.speed} B/s` : download.speed < 1024 * 1024 ? `${(download.speed / 1024).toFixed(1)} KB/s` : `${(download.speed / 1024 / 1024).toFixed(1)} MB/s`})
-                      </span>
+                      {download.status === 'paused' ? (
+                        <span className="text-yellow-600">已暂停</span>
+                      ) : (
+                        <span className={download.speed > 0 ? "text-green-600" : "text-gray-400"}>
+                          ({download.speed < 1024 ? `${download.speed} B/s` : download.speed < 1024 * 1024 ? `${(download.speed / 1024).toFixed(1)} KB/s` : `${(download.speed / 1024 / 1024).toFixed(1)} MB/s`})
+                        </span>
+                      )}
                     </span>
                   </div>
                 </>
               )}
-            </div>
+            </button>
           ))}
         </div>
       )}

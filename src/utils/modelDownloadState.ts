@@ -13,7 +13,7 @@ export interface ModelDownloadInfo {
   downloaded: number;
   total: number;
   speed: number;
-  status: 'downloading' | 'completed' | 'error' | 'idle';
+  status: 'downloading' | 'paused' | 'completed' | 'error' | 'idle';
   errorMessage?: string;
 }
 
@@ -174,18 +174,60 @@ export function getModelDownloadInfo(modelName: string): ModelDownloadInfo | und
   return globalModelDownloadState.downloads[modelName];
 }
 
-// 获取所有活跃的下载
+// 获取所有活跃的下载（包含已暂停的，暂停的下载任务仍然存活）
 export function getActiveDownloads(): ModelDownloadInfo[] {
   return Object.values(globalModelDownloadState.downloads || {}).filter(
-    d => d.status === 'downloading'
+    d => d.status === 'downloading' || d.status === 'paused'
   );
 }
 
 // 是否有正在进行的下载
 export function hasActiveDownloads(): boolean {
   return Object.values(globalModelDownloadState.downloads || {}).some(
-    d => d.status === 'downloading'
+    d => d.status === 'downloading' || d.status === 'paused'
   );
+}
+
+// 标记模型下载为暂停状态
+export function pauseModelDownload(modelName: string): void {
+  const info = globalModelDownloadState.downloads[modelName];
+  if (!info) return;
+  info.status = 'paused';
+  info.speed = 0;
+  globalModelDownloadState.listeners.forEach(listener => {
+    listener(modelName, info);
+  });
+}
+
+// 标记模型下载为继续状态
+export function resumeModelDownload(modelName: string): void {
+  const info = globalModelDownloadState.downloads[modelName];
+  if (!info) return;
+  info.status = 'downloading';
+  globalModelDownloadState.listeners.forEach(listener => {
+    listener(modelName, info);
+  });
+}
+
+// 获取所有已暂停的下载
+export function getPausedDownloads(): ModelDownloadInfo[] {
+  return Object.values(globalModelDownloadState.downloads || {}).filter(
+    d => d.status === 'paused'
+  );
+}
+
+// 检查某个模型下载是否已暂停
+export function isModelDownloadPaused(modelName: string): boolean {
+  return globalModelDownloadState.downloads[modelName]?.status === 'paused';
+}
+
+// 获取某个模型下载失败的错误信息（没有则返回 undefined）
+export function getDownloadError(modelName: string): string | undefined {
+  const info = globalModelDownloadState.downloads[modelName];
+  if (info && info.status === 'error' && info.errorMessage) {
+    return info.errorMessage;
+  }
+  return undefined;
 }
 
 // 订阅下载进度变化

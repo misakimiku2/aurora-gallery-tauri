@@ -20,6 +20,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// 全局模型下载取消标志
 pub static MODEL_DOWNLOAD_CANCEL: AtomicBool = AtomicBool::new(false);
 
+/// 全局模型下载暂停标志（断点续传）
+pub static MODEL_DOWNLOAD_PAUSE: AtomicBool = AtomicBool::new(false);
+
+/// 模型下载是否被暂停
+pub fn is_model_download_paused() -> bool {
+    MODEL_DOWNLOAD_PAUSE.load(Ordering::SeqCst)
+}
+
 /// 嵌入中文标签翻译文件
 const TAGS_CN_CSV: &str = include_str!("Tags-cn_2024_ver-1.0.csv");
 
@@ -444,19 +452,37 @@ impl ClipModel {
         let file_path = cache_dir.join(file_name);
         let url = &model_file.url;
 
+        // 记录可断点续传的已下载字节数（若文件存在但未校验通过，则视为部分下载）
+        let mut resume_from: u64 = 0;
+
         // 检查文件是否存在且完整
         if file_path.exists() {
-            log::debug!("Model file exists: {:?}, verifying integrity...", file_path);
+            let partial_size = tokio::fs::metadata(&file_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0);
+            log::debug!("Model file exists: {:?} ({} bytes), verifying integrity...", file_path, partial_size);
             match Self::verify_file(&file_path, model_file.expected_size, model_file.expected_hash.as_deref()) {
                 Ok(()) => {
                     log::info!("Model file verified: {:?}", file_path);
                     return Ok(file_path);
                 }
                 Err(e) => {
-                    log::warn!("Model file verification failed: {}, re-downloading...", e);
-                    // 删除损坏的文件
-                    if let Err(delete_err) = tokio::fs::remove_file(&file_path).await {
-                        log::error!("Failed to delete corrupt file: {}", delete_err);
+                    log::warn!("Model file verification failed: {}", e);
+                    // 判断是否可作为断点续传：存在部分内容，且未超过预期大小（即尚未下载完整）
+                    let can_resume = partial_size > 0 && match model_file.expected_size {
+                        Some(expected) => partial_size < expected,
+                        None => true,
+                    };
+                    if can_resume {
+                        log::info!("Resuming download of {:?} from {} bytes (Range-based 断点续传)", file_path, partial_size);
+                        resume_from = partial_size;
+                    } else {
+                        log::warn!("Partial file is corrupted (size {}), deleting and re-downloading: {:?}", partial_size, file_path);
+                        // 删除损坏的文件
+                        if let Err(delete_err) = tokio::fs::remove_file(&file_path).await {
+                            log::error!("Failed to delete corrupt file: {}", delete_err);
+                        }
                     }
                 }
             }
@@ -475,25 +501,47 @@ impl ClipModel {
         for attempt in 1..=MAX_RETRY_COUNT {
             log::info!("Downloading model file from {} to {:?} (attempt {}/{})", url, file_path, attempt, MAX_RETRY_COUNT);
             
-            // 发送开始下载进度（0%）
+            // 发送开始下载进度（断点续传时携带已下载字节数）
             let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
                 "file_name": file_name,
                 "file_index": file_index,
                 "total_files": total_files,
-                "downloaded": 0,
-                "total": 0,
+                "downloaded": resume_from,
+                "total": resume_from,
                 "progress": 0,
                 "overall_progress": (file_index * 100) / total_files,
             }));
             
-            match Self::download_file_with_client(&client, model_name, url, &file_path, app_handle, file_index, total_files, file_name, model_file.expected_size).await {
+            match Self::download_file_with_client(
+                &client,
+                model_name,
+                url,
+                &file_path,
+                resume_from,
+                app_handle,
+                file_index,
+                total_files,
+                file_name,
+                model_file.expected_size,
+            ).await {
                 Ok(()) => {
                     log::info!("Downloaded model file: {:?}", file_path);
                     return Ok(file_path);
                 }
                 Err(e) => {
+                    // 若下载因暂停而中断，返回暂停信号，避免继续重试
+                    if e.contains("已暂停") || e.contains("paused") {
+                        log::info!("Model download paused: {:?}", file_path);
+                        return Err(format!("模型下载已暂停: {}", file_name));
+                    }
                     last_error = e;
                     log::warn!("Download attempt {}/{} failed: {}", attempt, MAX_RETRY_COUNT, last_error);
+
+                    // 失败后更新续传起点，避免下次重复写入已下载的字节
+                    resume_from = tokio::fs::metadata(&file_path)
+                        .await
+                        .map(|m| m.len())
+                        .unwrap_or(0);
                     
                     // 如果不是最后一次尝试，等待后重试
                     if attempt < MAX_RETRY_COUNT {
@@ -508,20 +556,31 @@ impl ClipModel {
         Err(format!("Failed to download after {} attempts: {}", MAX_RETRY_COUNT, last_error))
     }
     
-    /// 使用客户端下载文件
+    /// 使用客户端下载文件，支持 HTTP Range 断点续传与暂停/继续
     #[allow(clippy::too_many_arguments)]
     async fn download_file_with_client(
         client: &Client,
         model_name: &str,
         url: &str,
         file_path: &PathBuf,
+        resume_from: u64,
         app_handle: &tauri::AppHandle,
         file_index: usize,
         total_files: usize,
         file_name: &str,
         expected_size: Option<u64>,
     ) -> Result<(), String> {
-        let response = client.get(url)
+        // 暂停时先等待恢复（保持连接），也支持直接取消
+        Self::wait_while_paused().await?;
+
+        // 构建请求，若存在部分下载则通过 Range 头续传
+        let mut request = client.get(url);
+        if resume_from > 0 {
+            log::info!("Range 断点续传: {} bytes={}-", file_name, resume_from);
+            request = request.header("Range", format!("bytes={}-", resume_from));
+        }
+
+        let response = request
             .send()
             .await
             .map_err(|e| {
@@ -534,53 +593,86 @@ impl ClipModel {
                 }
             })?;
 
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}: {}", response.status(), url));
+        let status = response.status();
+        if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(format!("HTTP {}: {}", status, url));
         }
 
-        let total_size = response.content_length().unwrap_or(0);
-        
+        // 计算总大小与本次应写入的偏移量
+        let content_length = response.content_length().unwrap_or(0);
+        let total_size = if status == reqwest::StatusCode::PARTIAL_CONTENT && resume_from > 0 {
+            resume_from + content_length
+        } else {
+            content_length
+        };
+
+        // 打开文件：断点续传使用追加模式，新下载则创建/截断
+        let mut file = {
+            use tokio::fs::OpenOptions;
+            if resume_from > 0 {
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(file_path)
+                    .await
+                    .map_err(|e| format!("Failed to open file for resume: {}", e))?
+            } else {
+                tokio::fs::File::create(file_path)
+                    .await
+                    .map_err(|e| format!("Failed to create file: {}", e))?
+            }
+        };
+
         let mut stream = response.bytes_stream();
-        let mut downloaded: u64 = 0;
-        let mut file = tokio::fs::File::create(file_path)
-            .await
-            .map_err(|e| format!("Failed to create file: {}", e))?;
-        
+        let mut downloaded: u64 = resume_from;
+
         use futures_util::StreamExt;
-        
+
         let mut last_emit_time = Instant::now();
         let mut last_speed_time = Instant::now() - Duration::from_secs(1);
-        let mut last_downloaded_for_speed: u64 = 0;
+        let mut last_downloaded_for_speed: u64 = resume_from;
         let progress_emit_interval = Duration::from_millis(200);
         let speed_calc_interval = Duration::from_millis(500);
         let mut current_speed: u64 = 0;
-        
+
         loop {
             // 检查是否请求取消下载
             if MODEL_DOWNLOAD_CANCEL.load(Ordering::SeqCst) {
                 return Err("模型下载已取消".to_string());
             }
-            
+
+            // 检查是否暂停下载：暂停时挂起当前任务（连接保持），等待恢复或取消
+            if MODEL_DOWNLOAD_PAUSE.load(Ordering::SeqCst) {
+                log::info!("Model download paused for file: {}", file_name);
+                // 确保已下载的数据刷入磁盘，便于断点续传
+                tokio::io::AsyncWriteExt::flush(&mut file)
+                    .await
+                    .map_err(|e| format!("Failed to flush file while pausing: {}", e))?;
+                Self::wait_while_paused().await?;
+                log::info!("Model download resumed for file: {}", file_name);
+                continue;
+            }
+
             let chunk_result = tokio::time::timeout(progress_emit_interval, stream.next()).await;
-            
+
             match chunk_result {
                 Ok(Some(chunk)) => {
                     let chunk = chunk.map_err(|e| format!("Failed to download chunk: {}", e))?;
                     let chunk_size = chunk.len() as u64;
-                    
+
                     tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
                         .await
                         .map_err(|e| format!("Failed to write file chunk: {}", e))?;
-                    
+
                     downloaded += chunk_size;
                 }
                 Ok(None) => break,
                 Err(_) => {
                 }
             }
-            
+
             let now = Instant::now();
-            
+
             if now.duration_since(last_speed_time) >= speed_calc_interval {
                 let elapsed_secs = now.duration_since(last_speed_time).as_secs_f64();
                 if elapsed_secs > 0.0 {
@@ -590,16 +682,16 @@ impl ClipModel {
                 last_speed_time = now;
                 last_downloaded_for_speed = downloaded;
             }
-            
+
             if now.duration_since(last_emit_time) >= progress_emit_interval {
                 let file_progress = if total_size > 0 {
                     (downloaded as f64 / total_size as f64) * 100.0
                 } else {
                     0.0
                 };
-                
+
                 let overall_progress = ((file_index as f64 * 100.0) + file_progress) / total_files as f64;
-                
+
                 let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
                     "model_name": model_name,
                     "file_name": file_name,
@@ -611,15 +703,15 @@ impl ClipModel {
                     "overall_progress": overall_progress as u32,
                     "speed": current_speed,
                 }));
-                
+
                 last_emit_time = now;
             }
         }
-        
+
         tokio::io::AsyncWriteExt::flush(&mut file)
             .await
             .map_err(|e| format!("Failed to flush file: {}", e))?;
-        
+
         // 下载完成后校验文件大小，防止截断/不完整文件被误认为完整
         if let Some(expected) = expected_size {
             let actual = tokio::fs::metadata(file_path)
@@ -633,7 +725,7 @@ impl ClipModel {
                 ));
             }
         }
-        
+
         let overall_progress = ((file_index + 1) * 100) / total_files;
         let _ = app_handle.emit("clip-model-download-progress", serde_json::json!({
             "model_name": model_name,
@@ -646,7 +738,19 @@ impl ClipModel {
             "overall_progress": overall_progress,
             "speed": 0,
         }));
-        
+
+        Ok(())
+    }
+
+    /// 等待暂停结束（保持下载任务挂起），支持取消
+    async fn wait_while_paused() -> Result<(), String> {
+        while MODEL_DOWNLOAD_PAUSE.load(Ordering::SeqCst) {
+            // 暂停期间若收到取消指令，直接退出
+            if MODEL_DOWNLOAD_CANCEL.load(Ordering::SeqCst) {
+                return Err("模型下载已取消".to_string());
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         Ok(())
     }
     

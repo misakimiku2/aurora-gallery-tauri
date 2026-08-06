@@ -8,8 +8,8 @@ import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonit
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
-import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipUnloadModel, clipCancelModelDownload, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
-import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted } from '../utils/modelDownloadState';
+import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipUnloadModel, clipCancelModelDownload, clipPauseModelDownload, clipResumeModelDownload, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
+import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted, pauseModelDownload, resumeModelDownload, getPausedDownloads, getDownloadError } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
 import { LanSharePanel } from './settings/LanSharePanel';
 import { ConfirmModal } from './modals/ConfirmModal';
@@ -407,6 +407,22 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
     const activeDownloads = getActiveDownloads();
     return new Set(activeDownloads.map(d => d.modelName));
   });
+  // 已暂停下载的模型集合（用于显示 暂停/继续 按钮状态）
+  const [pausedDownloads, setPausedDownloads] = useState<Set<string>>(() => {
+    const paused = getPausedDownloads();
+    return new Set(paused.map(d => d.modelName));
+  });
+  // 下载失败的模型错误信息（模型名 -> 错误说明），用于在卡片中展示
+  const [downloadErrors, setDownloadErrors] = useState<Record<string, string>>(() => {
+    const errors: Record<string, string> = {};
+    CLIP_MODELS.forEach(m => {
+      const err = getDownloadError(m.name);
+      if (err) {
+        errors[m.name] = err;
+      }
+    });
+    return errors;
+  });
   const [embeddingCount, setEmbeddingCount] = useState(0);
   const [embeddingRootPath, setEmbeddingRootPath] = useState('');
   const [embeddingModelName, setEmbeddingModelName] = useState('');
@@ -474,10 +490,20 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         }
       }));
 
-      // 如果正在下载，更新 loadingModel 状态
-      if (info.status === 'downloading') {
+      // 如果正在下载或暂停，更新 loadingModel 状态
+      if (info.status === 'downloading' || info.status === 'paused') {
         setLoadingModel(modelName as ClipModelName);
         setDownloadingModels(prev => new Set(prev).add(modelName));
+        if (info.status === 'paused') {
+          setPausedDownloads(prev => new Set(prev).add(modelName));
+        }
+        // 重新下载/继续时清除该模型的错误提示
+        setDownloadErrors(prev => {
+          if (!prev[modelName]) return prev;
+          const next = { ...prev };
+          delete next[modelName];
+          return next;
+        });
       } else if (info.status === 'completed' || info.status === 'error') {
         // 下载完成或出错时，如果当前是这个模型，清除 loadingModel
         setLoadingModel(prev => prev === modelName ? null : prev);
@@ -486,6 +512,24 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
           next.delete(modelName);
           return next;
         });
+        setPausedDownloads(prev => {
+          const next = new Set(prev);
+          next.delete(modelName);
+          return next;
+        });
+        if (info.status === 'completed') {
+          // 下载成功清除错误
+          setDownloadErrors(prev => {
+            if (!prev[modelName]) return prev;
+            const next = { ...prev };
+            delete next[modelName];
+            return next;
+          });
+        } else if (info.status === 'error' && info.errorMessage) {
+          // 下载失败记录错误说明
+          const errorMsg: string = info.errorMessage;
+          setDownloadErrors(prev => ({ ...prev, [modelName]: errorMsg }));
+        }
       }
     });
 
@@ -692,6 +736,19 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
   const handleDownload = async (modelName: ClipModelName) => {
     setLoadingModel(modelName);
 
+    // 开始全新下载，清除该模型的暂停状态与错误提示，避免显示错误的"已暂停"UI
+    setPausedDownloads(prev => {
+      const next = new Set(prev);
+      next.delete(modelName);
+      return next;
+    });
+    setDownloadErrors(prev => {
+      if (!prev[modelName]) return prev;
+      const next = { ...prev };
+      delete next[modelName];
+      return next;
+    });
+
     // 清理之前的下载进度
     setDownloadProgress(prev => ({ ...prev, [modelName]: { fileName: '', fileIndex: 0, totalFiles: 3, progress: 0, downloaded: 0, total: 0, speed: 0 } }));
 
@@ -784,11 +841,44 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
       // 清空所有下载中的模型状态
       setLoadingModel(null);
       setDownloadingModels(new Set());
+      setPausedDownloads(new Set());
       setDownloadProgress({});
       onShowToast?.(`已停止下载`, 3000);
     } catch (error) {
       console.error('Failed to cancel model download:', error);
       onShowToast?.(`取消失败: ${error}`, 4000);
+    }
+  };
+
+  // 暂停当前正在进行的模型下载（断点续传）
+  const handlePauseDownload = async (modelName: ClipModelName) => {
+    try {
+      await clipPauseModelDownload();
+      // 标记该模型为暂停状态
+      setPausedDownloads(prev => new Set(prev).add(modelName));
+      pauseModelDownload(modelName);
+      onShowToast?.(`已暂停下载，可随时继续`, 3000);
+    } catch (error) {
+      console.error('Failed to pause model download:', error);
+      onShowToast?.(`暂停失败: ${error}`, 4000);
+    }
+  };
+
+  // 继续已暂停的模型下载（基于 HTTP Range 断点续传）
+  const handleResumeDownload = async (modelName: ClipModelName) => {
+    try {
+      await clipResumeModelDownload();
+      // 恢复下载状态
+      setPausedDownloads(prev => {
+        const next = new Set(prev);
+        next.delete(modelName);
+        return next;
+      });
+      resumeModelDownload(modelName);
+      onShowToast?.(`已继续下载`, 3000);
+    } catch (error) {
+      console.error('Failed to resume model download:', error);
+      onShowToast?.(`继续失败: ${error}`, 4000);
     }
   };
 
@@ -1212,11 +1302,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
             const status = modelStatuses[model.name];
             const isDownloaded = status?.is_downloaded ?? false;
             const isLoadingModel = downloadingModels.has(model.name);
-            // 是否有其他模型正在下载（用于禁用下载按钮，避免排队困惑）
+            const isPausedModel = pausedDownloads.has(model.name);
+            // 是否有其他模型正在下载/暂停（用于禁用下载按钮，避免排队困惑）
             const hasOtherDownloading = downloadingModels.size > 0 && !isLoadingModel;
             const cachedStatus = getCachedModelStatus(model.name);
             const isStatusLoading = showLoadingDelay && !status && !cachedStatus;
             const isCorrupted = corruptedModels.has(model.name);
+            // 该模型是否下载失败及错误说明
+            const downloadError = downloadErrors[model.name];
+            const hasDownloadError = !!downloadError;
 
             // 获取所有功能特性（包括支持和不支持的）
             const allFeatures = Object.entries(model.features);
@@ -1278,6 +1372,17 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                     <p className={`text-sm mb-2 ${showGreenBorder ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'}`}>
                       {model.description}
                     </p>
+                    {hasDownloadError && (
+                      <div className="mb-3 p-2.5 rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/50 text-xs text-red-600 dark:text-red-400">
+                        <div className="flex items-start gap-1.5">
+                          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="font-medium mb-0.5">模型下载失败</div>
+                            <div className="break-all leading-relaxed">{downloadError}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div className={`flex items-center gap-4 text-xs ${showGreenBorder ? 'text-white/90' : 'text-gray-400'}`}>
                       <span className="flex items-center">
                         <HardDrive size={12} className="mr-1" />
@@ -1340,13 +1445,41 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                           </button>
                         </>
                       ) : isLoadingModel ? (
+                        <>
+                          {/* 暂停/继续 按钮 */}
+                          <button
+                            onClick={() => isPausedModel
+                              ? handleResumeDownload(model.name)
+                              : handlePauseDownload(model.name)}
+                            className={`px-4 py-2 text-white rounded-lg text-sm font-medium transition-colors flex items-center ${
+                              isPausedModel
+                                ? 'bg-green-500 hover:bg-green-600'
+                                : 'bg-yellow-500 hover:bg-yellow-600'
+                            }`}
+                            title={isPausedModel ? '继续下载' : '暂停下载'}
+                          >
+                            {isPausedModel ? <Play size={16} className="mr-2" /> : <Pause size={16} className="mr-2" />}
+                            {isPausedModel ? '继续' : '暂停'}
+                          </button>
+                          {/* 停止下载按钮 */}
+                          <button
+                            onClick={() => handleCancelDownload()}
+                            className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                            title="停止下载"
+                          >
+                            <Square size={16} className="mr-2" />
+                            停止
+                          </button>
+                        </>
+                      ) : hasDownloadError ? (
                         <button
-                          onClick={() => handleCancelDownload()}
-                          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
-                          title="停止下载"
+                          onClick={() => settings.enabled && handleDownload(model.name)}
+                          disabled={hasOtherDownloading || clipLoading || !settings.enabled}
+                          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                          title={hasOtherDownloading ? '请先完成当前下载或停止后重试' : '下载失败，点击重试'}
                         >
-                          <Square size={16} className="mr-2" />
-                          停止
+                          <RefreshCw size={16} className="mr-2" />
+                          重试下载
                         </button>
                       ) : (
                         <button
@@ -1400,9 +1533,15 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                   <div className="mt-4 space-y-3">
                     <div className="flex items-center justify-between text-xs text-gray-500 mb-2">
                       <span>总体进度: {downloadProgress[model.name]?.fileIndex ?? 0} / {downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)} 个文件</span>
-                      <span className="text-green-600 font-medium">
-                        {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)) * 100)}%
-                      </span>
+                      {isPausedModel ? (
+                        <span className="text-yellow-600 font-medium">
+                          已暂停
+                        </span>
+                      ) : (
+                        <span className="text-green-600 font-medium">
+                          {Math.round(((downloadProgress[model.name]?.fileIndex ?? 0) + (downloadProgress[model.name]?.progress ?? 0) / 100) / (downloadProgress[model.name]?.totalFiles ?? (model.name === 'WD-EVA02-Large-Tagger-V3' ? 2 : 3)) * 100)}%
+                        </span>
+                      )}
                     </div>
                     {downloadProgress[model.name]?.fileName && (
                       <div className="bg-surface rounded-lg p-3">
@@ -1416,7 +1555,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                         </div>
                         <div className="h-1.5 bg-black/10 dark:bg-white/10 rounded-full overflow-hidden">
                           <div
-                            className="h-full bg-green-500 transition-all duration-300"
+                            className={`h-full transition-all duration-300 ${isPausedModel ? 'bg-yellow-500' : 'bg-green-500'}`}
                             style={{ width: `${downloadProgress[model.name].progress}%` }}
                           />
                         </div>
@@ -1425,9 +1564,13 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
                             {(downloadProgress[model.name].downloaded / 1024 / 1024).toFixed(1)} MB /
                             {(downloadProgress[model.name].total / 1024 / 1024).toFixed(1)} MB
                           </span>
-                          <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
-                            {formatSpeed(downloadProgress[model.name].speed)}
-                          </span>
+                          {isPausedModel ? (
+                            <span className="text-yellow-600">已暂停，可继续</span>
+                          ) : (
+                            <span className={downloadProgress[model.name].speed > 0 ? "text-green-600" : "text-gray-400"}>
+                              {formatSpeed(downloadProgress[model.name].speed)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     )}
