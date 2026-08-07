@@ -54,11 +54,17 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
 
     const layout: LayoutItem[] = [];
     let totalHeight = 0;
-    const GAP = 16;
-    const PADDING = 24;
-    
+
     // Ensure we have a reasonable width
-    const safeContainerWidth = containerWidth > 0 ? containerWidth : 1280; 
+    const safeContainerWidth = containerWidth > 0 ? containerWidth : 1280;
+
+    // 根据容器宽度区分手机端和平板端：
+    // - 手机端（<600px，如荣耀Magic2 ~393px）使用紧凑间距，避免左右两侧过宽
+    // - 平板/桌面端（>=600px，如三星Tab S8 ~800px）保持原间距
+    const isPhone = safeContainerWidth < 600;
+    const GAP = isPhone ? 10 : 16;
+    const PADDING = isPhone ? 8 : 24;
+
     const availableWidth = Math.max(100, safeContainerWidth - (PADDING * 2));
     const finalAvailableWidth = availableWidth;
 
@@ -315,7 +321,7 @@ self.onmessage = (e: MessageEvent<LayoutWorkerInput>) => {
             totalHeight = PADDING + rows * (itemHeight + GAP);
         }
     } else if (viewMode === 'folders-overview') {
-        const FOLDER_GAP = 10;
+        const FOLDER_GAP = isPhone ? 6 : 10;
         const FOLDER_TEXT_HEIGHT = 28;
         if (layoutMode === 'grid') {
             const minColWidth = thumbnailSize;

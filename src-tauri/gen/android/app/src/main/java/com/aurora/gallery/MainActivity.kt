@@ -14,8 +14,8 @@ import android.webkit.WebView
 import android.view.WindowInsetsController
 import android.graphics.Color
 import android.graphics.PixelFormat
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.view.WindowCompat
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import android.graphics.Bitmap
@@ -105,15 +105,35 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     val splashScreen = installSplashScreen()
-    enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     splashScreen.setKeepOnScreenCondition { false }
-    applyInitialStatusBarStyle()
+    // 启动期间沉浸式全屏，避免系统状态栏破坏启动界面；主界面加载完成后由前端通知退出沉浸。
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    enterStartupImmersive()
     requestMediaPermissions()
     setupBackPressedHandler()
     registerComponentCallbacks(componentCallbacks)
     ColorExtractionService.createChannel(this)
     setupNativeGalleryView()
+  }
+
+  private fun enterStartupImmersive() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+      val controller = window.insetsController
+      controller?.let {
+        it.hide(android.view.WindowInsets.Type.statusBars())
+        it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+      }
+    } else {
+      @Suppress("DEPRECATION")
+      window.decorView.systemUiVisibility = (
+        View.SYSTEM_UI_FLAG_FULLSCREEN
+          or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+          or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+          or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+      )
+    }
+    window.statusBarColor = Color.TRANSPARENT
   }
 
   override fun onDestroy() {
@@ -1041,21 +1061,25 @@ class MainActivity : TauriActivity() {
   fun setStatusBarStyle(isDark: Boolean) {
     runOnUiThread {
       val window = this.window
+      // 如果当前仍处于启动沉浸状态，先退出沉浸并显示状态栏，确保颜色生效
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val controller = window.insetsController
-        if (controller != null) {
-          if (isDark) {
-            controller.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
-          } else {
-            controller.setSystemBarsAppearance(
-              WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
-              WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
-            )
-          }
+        controller?.show(android.view.WindowInsets.Type.statusBars())
+        if (isDark) {
+          controller?.setSystemBarsAppearance(0, WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS)
+        } else {
+          controller?.setSystemBarsAppearance(
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS,
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+          )
         }
       } else {
+        @Suppress("DEPRECATION")
         val decorView = window.decorView
+        @Suppress("DEPRECATION")
         var systemUiVisibility = decorView.systemUiVisibility
+        systemUiVisibility = systemUiVisibility and View.SYSTEM_UI_FLAG_FULLSCREEN.inv()
+        systemUiVisibility = systemUiVisibility and View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY.inv()
         systemUiVisibility = if (isDark) {
           systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
         } else {
@@ -1063,13 +1087,18 @@ class MainActivity : TauriActivity() {
         }
         decorView.systemUiVisibility = systemUiVisibility
       }
-      window.statusBarColor = if (isDark) Color.parseColor("#262626") else Color.parseColor("#FFFFFF")
+      window.statusBarColor = if (isDark) Color.parseColor("#1a1a1a") else Color.parseColor("#e5e5e5")
     }
   }
 
   fun setImmersiveMode(immersive: Boolean) {
     runOnUiThread {
       val window = this.window
+      if (immersive) {
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+      } else {
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+      }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val controller = window.insetsController
         if (controller != null) {
@@ -1081,6 +1110,7 @@ class MainActivity : TauriActivity() {
           }
         }
       } else {
+        @Suppress("DEPRECATION")
         val decorView = window.decorView
         if (immersive) {
           decorView.systemUiVisibility = (

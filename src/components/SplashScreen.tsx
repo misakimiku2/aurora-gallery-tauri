@@ -1,4 +1,4 @@
-﻿import React from 'react';
+import React from 'react';
 import { AuroraLogo } from './Logo';
 
 interface SplashScreenProps {
@@ -90,9 +90,6 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ isVisible, loadingInfo = []
       {/* 背景装饰光晕 */}
       <div className="absolute top-[10%] -left-20 w-[400px] h-[400px] bg-blue-400/10 dark:bg-blue-600/5 rounded-full animate-pulse-glow delay-0" />
       <div className="absolute bottom-[10%] -right-20 w-[400px] h-[400px] bg-purple-400/10 dark:bg-purple-600/5 rounded-full animate-pulse-glow delay-neg-25" />
-
-      {/* 顶部覆盖条（针对Tauri自定义标题栏） */}
-      <div className="absolute top-0 left-0 right-0 h-10 bg-white/5 dark:bg-black/5 backdrop-blur-sm z-[1001]" />
 
       {/* 主内容容器 */}
       <div className="relative z-10 flex flex-col items-center max-w-md w-full px-12">

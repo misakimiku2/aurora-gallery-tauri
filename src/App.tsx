@@ -26,7 +26,7 @@ import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { lanNavStart, lanNavStep } from './utils/lanNavTrace';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
+import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
@@ -521,6 +521,18 @@ export const App: React.FC = () => {
     if (!isLoading) {
       setTimeout(() => {
         setShowSplash(false);
+        // 启动界面关闭后退出沉浸式全屏，显示系统状态栏，并同步当前软件主题色
+        if (isAndroidPlatformCached()) {
+          setAndroidImmersiveMode(false);
+          const theme = state.settings.theme;
+          let isDark = false;
+          if (theme === 'dark') isDark = true;
+          else if (theme === 'light') isDark = false;
+          else {
+            isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          }
+          setAndroidStatusBar(isDark);
+        }
       }, 100);
 
       if (state.roots.length === 0) {
@@ -530,7 +542,7 @@ export const App: React.FC = () => {
         }
       }
     }
-  }, [isLoading, state.roots.length]);
+  }, [isLoading, state.roots.length, state.settings.theme]);
 
   const handleWelcomeFinish = () => {
     localStorage.setItem('aurora_onboarded', 'true');
@@ -2964,9 +2976,6 @@ export const App: React.FC = () => {
 
       {/* ... (SVG filters) ... */}
       <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
-      {isAndroidPlatformCached() && (
-        <div className="shrink-0 bg-main" style={{ height: 'calc(env(safe-area-inset-top, 0px) + 10px)' }} />
-      )}
       {!isAndroidPlatformCached() && (
         <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
           // Check user's exit action preference from ref (always latest value)
@@ -2984,7 +2993,7 @@ export const App: React.FC = () => {
           }
         }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
       )}
-      <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
+      <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isAndroidPlatformCached() ? 'rounded-xl' : isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
         <div className="flex-1 flex overflow-hidden relative"
           style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
           <div

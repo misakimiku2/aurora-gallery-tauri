@@ -8,7 +8,7 @@ import {
   Search, Palette, Loader2, Sliders, Filter, LayoutGrid, List, Grid, LayoutTemplate,
   ArrowDownUp, Calendar, PanelRight, X, Tag,
   FileText, Folder, Globe, ChevronDown, Check, Sun, Moon, Monitor,
-  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload
+  ChevronUp, Users, Sparkles, Image as ImageIcon, Upload, MoreVertical
 } from 'lucide-react';
 
 interface TopBarProps {
@@ -590,6 +590,21 @@ export const TopBar: React.FC<TopBarProps> = ({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isCompactMode, setIsCompactMode] = useState(false);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [isPortrait, setIsPortrait] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches
+  );
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  // 竖屏手机端：将低频按钮整合到「更多」菜单
+  const isPhonePortrait = isAndroid && isPortrait;
+
+  useEffect(() => {
+    if (!isAndroid) return;
+    const mq = window.matchMedia('(orientation: portrait)');
+    const handler = (e: MediaQueryListEvent) => setIsPortrait(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, [isAndroid]);
 
   const getFolderDisplayName = () => {
     if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
@@ -674,6 +689,11 @@ export const TopBar: React.FC<TopBarProps> = ({
   useEffect(() => {
     if (!isAndroid) return;
     const handleAndroidBack = () => {
+      if (moreMenuOpen) {
+        setMoreMenuOpen(false);
+        (window as any).__androidBackHandled = true;
+        return;
+      }
       const openMenus = [sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen];
       if (openMenus.some(Boolean)) {
         setSortMenuOpen(false);
@@ -691,7 +711,7 @@ export const TopBar: React.FC<TopBarProps> = ({
     };
     window.addEventListener('android-back-press', handleAndroidBack);
     return () => window.removeEventListener('android-back-press', handleAndroidBack);
-  }, [isAndroid, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, isColorPickerVisible, onToggleColorPicker]);
+  }, [isAndroid, moreMenuOpen, sortMenuOpen, filterMenuOpen, tagsMenuOpen, scopeMenuOpen, viewMenuOpen, isColorPickerVisible, onToggleColorPicker]);
 
   const isColorSearchQuery = useMemo(() => toolbarQuery.startsWith('color:'), [toolbarQuery]);
   const isPaletteSearchQuery = useMemo(() => toolbarQuery.startsWith('palette:'), [toolbarQuery]);
@@ -768,9 +788,9 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <div className={`h-14 bg-content flex items-center px-4 justify-between shrink-0 z-30 space-x-4 ${isAndroid ? 'android-topbar' : ''}`}>
+    <div className={`h-14 bg-content grid grid-cols-[auto_1fr_auto] items-center px-4 shrink-0 z-30 ${isAndroid ? 'android-topbar' : ''}`}>
       {/* Left: Navigation */}
-      <div className="flex items-center space-x-2 min-w-fit">
+      <div className="flex items-center space-x-2 min-w-fit justify-self-start">
         <button onClick={onToggleSidebar} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center rounded-xl' : 'w-9 h-9 flex items-center justify-center rounded-lg'} hover:bg-surface ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
           <Sidebar size={18} />
         </button>
@@ -792,20 +812,22 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
         {isAndroid && !isCompactMode && (
           <>
-            <button onClick={() => {
-              if (!isSearchOpen) {
-                const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
-                const anyPanelOpen = state.layout.isSidebarVisible || state.layout.isMetadataVisible;
-                if (isPortrait && anyPanelOpen) {
-                  setIsCompactMode(true);
+            {!isPhonePortrait && (
+              <button onClick={() => {
+                if (!isSearchOpen) {
+                  const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
+                  const anyPanelOpen = state.layout.isSidebarVisible || state.layout.isMetadataVisible;
+                  if (isPortrait && anyPanelOpen) {
+                    setIsCompactMode(true);
+                  }
+                  searchToggleRef.current = true;
+                  setIsSearchOpen(true);
                 }
-                searchToggleRef.current = true;
-                setIsSearchOpen(true);
-              }
-            }} className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
-              <Search size={18} />
-            </button>
-            {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && !isCompactMode && (
+              }} className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
+                <Search size={18} />
+              </button>
+            )}
+            {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && !isCompactMode && !isPhonePortrait && (
               <div className="relative">
                 <button
                   onClick={() => setSortMenuOpen(!sortMenuOpen)}
@@ -873,22 +895,24 @@ export const TopBar: React.FC<TopBarProps> = ({
 
       {/* Center: Search or Folder Name */}
       {isAndroid && !isSearchOpen ? (
-        <div className="flex-1 flex items-center justify-center px-4">
-          <span className={`text-sm font-medium text-gray-700 dark:text-gray-300 truncate text-center ${
-            typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches
-              ? state.layout.isMetadataVisible
-                ? 'max-w-[3em]'
-                : state.layout.isSidebarVisible
-                  ? 'max-w-[8em]'
-                  : 'max-w-full'
-              : 'max-w-full'
+        <div className="flex items-center justify-center px-4 min-w-0">
+          <span className={`font-medium text-gray-700 dark:text-gray-300 truncate text-center ${
+            isPhonePortrait
+              ? 'text-base max-w-[10rem]'
+              : typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches
+                ? state.layout.isMetadataVisible
+                  ? 'text-sm max-w-[3em]'
+                  : state.layout.isSidebarVisible
+                    ? 'text-sm max-w-[8em]'
+                    : 'text-sm max-w-full'
+                : 'text-sm max-w-full'
           }`}>
             {getFolderDisplayName()}
           </span>
         </div>
       ) : (
-      <div className={`flex-1 ${isAndroid ? 'max-w-none' : 'max-w-2xl'} relative flex items-center`}>
-        <div className={`flex-1 flex items-center rounded-full px-3 py-1.5 transition-all border ${
+      <div className="relative flex items-center justify-center flex-1 min-w-0">
+        <div className={`w-full flex items-center rounded-full px-3 py-1.5 transition-all border ${isPhonePortrait ? 'max-w-none' : 'max-w-[500px]'} ${
           isColorSearchQuery
             ? 'bg-surface border-blue-500 shadow-sm'
             : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
@@ -1124,7 +1148,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       )}
 
       {/* Right: Tools & Settings */}
-      <div className="flex items-center space-x-2 min-w-fit">
+      <div className="flex items-center space-x-2 min-w-fit justify-self-end">
         
         {/* People View Sort & Group Menu */}
         {activeTab.viewMode === 'people-overview' && (
@@ -1265,7 +1289,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && !isPhonePortrait && (
           <>
           {isAndroid ? (
             <button
@@ -1355,7 +1379,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </>
         )}
 
-        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && (
+        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && !isPhonePortrait && (
           <div className="flex items-center space-x-2 mr-2">
             <button
               className={`w-9 h-9 flex items-center justify-center rounded-lg ${topicLayoutMode === 'grid' ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-surface'}`}
@@ -1376,7 +1400,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Folders overview layout menu */}
-        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && (
+        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && !isPhonePortrait && (
           <>
           {isAndroid ? (
             <button
@@ -1452,7 +1476,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Date Filter (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && !isPhonePortrait && (
         <div className="relative">
            <button
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
@@ -1494,7 +1518,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* All Tags Widget (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && (
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && !isPhonePortrait && (
         <div className="relative">
            <button
              onClick={() => setTagsMenuOpen(!tagsMenuOpen)}
@@ -1539,7 +1563,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
         )}
 
-        <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>
+        {!isPhonePortrait && <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>}
 
         {showLanUpload && (
           <button
@@ -1551,13 +1575,195 @@ export const TopBar: React.FC<TopBarProps> = ({
           </button>
         )}
 
-        <button
-          onClick={onToggleMetadata}
-          className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${state.layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
-          title={t('viewer.toggleMeta')}
-        >
-          <PanelRight size={18} />
-        </button>
+        {/* 手机竖屏搜索按钮 */}
+        {isPhonePortrait && !isCompactMode && (
+          <button onClick={() => {
+            if (!isSearchOpen) {
+              const anyPanelOpen = state.layout.isSidebarVisible || state.layout.isMetadataVisible;
+              if (anyPanelOpen) {
+                setIsCompactMode(true);
+              }
+              searchToggleRef.current = true;
+              setIsSearchOpen(true);
+            }
+          }} className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${isSearchOpen ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}>
+            <Search size={18} />
+          </button>
+        )}
+
+        {/* 手机竖屏「更多」菜单：整合排序/视图/日期/标签 */}
+        {isPhonePortrait && !isCompactMode && (
+          <div className="relative">
+            <button
+              onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+              className={`w-10 h-10 flex items-center justify-center rounded-xl hover:bg-surface ${moreMenuOpen ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+              title={t('context.more') || '更多'}
+            >
+              <MoreVertical size={18} />
+            </button>
+            {moreMenuOpen && !sortMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMoreMenuOpen(false)}></div>
+                <div className="absolute top-full right-0 mt-2 w-64 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                  {/* 排序 */}
+                  {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
+                    <button
+                      onClick={() => { setSortMenuOpen(true); }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center"><ArrowDownUp size={18} className="mr-3 opacity-70" />{t('sort.sortBy')}</span>
+                      <ChevronRight size={16} className="opacity-50" />
+                    </button>
+                  )}
+                  {/* 视图模式 - 普通视图 */}
+                  {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
+                    <button
+                      onClick={() => {
+                        const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
+                        const idx = cycle.indexOf(activeTab.layoutMode);
+                        onLayoutModeChange(cycle[(idx + 1) % cycle.length]);
+                      }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center">
+                        {activeTab.layoutMode === 'grid' && <Grid size={18} className="mr-3 opacity-70" />}
+                        {activeTab.layoutMode === 'adaptive' && <LayoutGrid size={18} className="mr-3 opacity-70" />}
+                        {activeTab.layoutMode === 'masonry' && <LayoutTemplate size={18} className="mr-3 opacity-70" />}
+                        {t('layout.mode')}
+                      </span>
+                    </button>
+                  )}
+                  {/* 视图模式 - folders overview */}
+                  {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && (
+                    <button
+                      onClick={() => {
+                        const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
+                        const idx = cycle.indexOf(folderLayoutMode || 'grid');
+                        onFolderLayoutModeChange(cycle[(idx + 1) % cycle.length]);
+                      }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center">
+                        {folderLayoutMode === 'grid' && <Grid size={18} className="mr-3 opacity-70" />}
+                        {folderLayoutMode === 'adaptive' && <LayoutGrid size={18} className="mr-3 opacity-70" />}
+                        {folderLayoutMode === 'masonry' && <LayoutTemplate size={18} className="mr-3 opacity-70" />}
+                        {t('layout.mode')}
+                      </span>
+                    </button>
+                  )}
+                  {/* 视图模式 - topics overview */}
+                  {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && (
+                    <button
+                      onClick={() => {
+                        const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
+                        const idx = cycle.indexOf(topicLayoutMode || 'grid');
+                        onTopicLayoutModeChange(cycle[(idx + 1) % cycle.length]);
+                      }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center">
+                        {topicLayoutMode === 'grid' && <Grid size={18} className="mr-3 opacity-70" />}
+                        {topicLayoutMode === 'adaptive' && <LayoutGrid size={18} className="mr-3 opacity-70" />}
+                        {topicLayoutMode === 'masonry' && <LayoutTemplate size={18} className="mr-3 opacity-70" />}
+                        {t('layout.mode')}
+                      </span>
+                    </button>
+                  )}
+                  {/* 日期筛选 */}
+                  {activeTab.viewMode !== 'topics-overview' && (
+                    <button
+                      onClick={() => { setFilterMenuOpen(true); setMoreMenuOpen(false); }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center"><Calendar size={18} className="mr-3 opacity-70" />{t('date.calendar')}</span>
+                      {activeTab.dateFilter.start && <Check size={18} className="text-blue-500 group-hover:text-white" />}
+                    </button>
+                  )}
+                  {/* 标签 */}
+                  {activeTab.viewMode !== 'topics-overview' && (
+                    <button
+                      onClick={() => { setTagsMenuOpen(true); setMoreMenuOpen(false); }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      <span className="flex items-center"><Tag size={18} className="mr-3 opacity-70" />{t('sidebar.allTags')}</span>
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+            {/* 排序子菜单（手机竖屏下挂在「更多」按钮下方） */}
+            {sortMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)}></div>
+                <div className="absolute top-full right-0 mt-2 w-64 bg-[#fafafa]/90 dark:bg-[#3a3a3a]/90 backdrop-blur-md border border-gray-200 dark:border-gray-800 rounded-xl shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgba(0,0,0,0.6)] z-50 py-2 animate-zoom-in">
+                  <div className="px-4 py-2 text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center">
+                    <button
+                      onClick={() => { setSortMenuOpen(false); setMoreMenuOpen(true); }}
+                      className="mr-2 p-1 rounded hover:bg-surface text-gray-500"
+                      title={t('common.back') || '返回'}
+                    >
+                      <ChevronLeft size={18} />
+                    </button>
+                    <span>{t('sort.sortBy')}</span>
+                  </div>
+                  {[
+                    { id: 'name', label: t('sort.name') },
+                    { id: 'date', label: t('sort.date') },
+                    { id: 'size', label: t('sort.size') }
+                  ].map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => { onSortOptionChange(opt.id as SortOption); }}
+                      className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                    >
+                      {opt.label}
+                      {state.sortBy === opt.id && <Check size={18} className="text-blue-500 group-hover:text-white" />}
+                    </button>
+                  ))}
+                  <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
+                  <button
+                    onClick={onSortDirectionChange}
+                    className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                  >
+                    {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
+                    <ArrowDownUp size={18} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
+                  </button>
+                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
+                    <>
+                      <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
+                      <div className="px-4 py-2 text-sm font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
+                      {[
+                        { id: 'none', label: t('groupBy.none') },
+                        { id: 'type', label: t('groupBy.type') },
+                        { id: 'date', label: t('groupBy.date') },
+                        { id: 'size', label: t('groupBy.size') }
+                      ].map(opt => (
+                        <button
+                          key={opt.id}
+                          onClick={() => onGroupByChange(opt.id as GroupByOption)}
+                          className="group mx-2 w-[calc(100%-1rem)] px-4 py-3 rounded-lg text-base hover:bg-blue-600 hover:text-white flex items-center justify-between text-gray-700 dark:text-gray-200"
+                        >
+                          {opt.label}
+                          {groupBy === opt.id && <Check size={18} className="text-blue-500 group-hover:text-white" />}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {!isPhonePortrait && (
+          <button
+            onClick={onToggleMetadata}
+            className={`w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface ${state.layout.isMetadataVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
+            title={t('viewer.toggleMeta')}
+          >
+            <PanelRight size={18} />
+          </button>
+        )}
       </div>
     </div>
   );

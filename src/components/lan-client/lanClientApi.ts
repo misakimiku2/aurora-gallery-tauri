@@ -297,10 +297,9 @@ class LanClientApi {
   }
 
   /**
-   * Upload a local file to the desktop server. NOTE: the desktop server does not
-   * yet implement `/api/upload` (added in Task 9); this method will return 404
-   * until that endpoint exists. The contract is multipart/form-data with fields
-   * `file` and `target_dir`.
+   * Upload a local file to the desktop server. Sends multipart/form-data with
+   * fields `file` and `target_dir`. The desktop server's `/api/upload` endpoint
+   * handles the upload and saves the file to the specified directory.
    */
   async uploadFile(
     file: File | Blob,

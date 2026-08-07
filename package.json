@@ -22,6 +22,7 @@
     "tauri:dev": "tauri dev",
     "tauri:android:dev": "node scripts/android-dev.mjs",
     "tauri:android:dev:reuse": "node scripts/android-dev-reuse.mjs",
+    "android:deploy-extra": "node scripts/android-deploy-extra.mjs",
     "tauri:build": "tauri build",
     "test": "vitest"
   },

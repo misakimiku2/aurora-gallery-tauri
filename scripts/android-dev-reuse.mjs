@@ -19,6 +19,37 @@ function getLocalIP() {
   return privateIP || candidates[0] || 'localhost';
 }
 
+function getConnectedDevices() {
+  try {
+    const output = execSync('adb devices', { encoding: 'utf-8' });
+    const lines = output.split('\n').filter(l => l.includes('\t'));
+    return lines
+      .map(l => {
+        const [serial, status] = l.split('\t');
+        return { serial, status: status.trim() };
+      })
+      .filter(d => d.status === 'device');
+  } catch {
+    return [];
+  }
+}
+
+// 检查多设备场景
+const devices = getConnectedDevices();
+const primaryDevice = devices[0]?.serial;
+
+if (devices.length > 1) {
+  console.log(`[android-reuse] 检测到 ${devices.length} 台设备：`);
+  devices.forEach((d, i) => console.log(`  ${i + 1}. ${d.serial}`));
+  console.log(`\n  tauri android dev 一次只能与一台设备建立调试连接。`);
+  console.log(`  将使用 ${primaryDevice} 作为主调试设备。`);
+  console.log(`  其他设备可通过以下方式手动部署：\n`);
+  console.log(`  1. 保持此终端运行`);
+  console.log(`  2. 新开终端，运行:`);
+  console.log(`     npm run android:deploy-extra\n`);
+  console.log(`  (按 Ctrl+C 取消，或等待自动继续...)\n`);
+}
+
 const ip = getLocalIP();
 console.log(`[android-reuse] IP: ${ip} (reusing Vite at http://${ip}:14422)`);
 
