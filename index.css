@@ -125,6 +125,147 @@ body {
   scrollbar-width: none;
 }
 
+/* ── 文件界面 / 右侧详情面板 / 左侧面板滚动条：静止隐藏、滚动/悬停显示（淡入淡出）、悬停放大 ── */
+/* Chromium 的 ::-webkit-scrollbar 伪元素不支持 transition/animation，
+   因此注册一个可插值变量 --scrollbar-alpha 并配合容器 transition，实现淡入淡出。 */
+@property --scrollbar-alpha {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/* 注意：此处不要写 scrollbar-width/scrollbar-color——标准属性在 Chromium 中会
+   覆盖 ::-webkit-scrollbar 伪元素样式，导致 thumb 的 border 放大效果失效。
+   Firefox 通过下方的 @-moz-document 单独设置。 */
+#file-grid-container,
+.custom-scrollbar,
+.auto-hide-scrollbar {
+  --scrollbar-thumb-rgb: 203, 213, 225; /* 亮色 #cbd5e1 */
+  --scrollbar-alpha: 0;
+  transition: --scrollbar-alpha 0.25s ease;
+}
+
+/* 文件网格：左右对称预留空间，内容宽度恒定、网格布局居中 */
+#file-grid-container {
+  scrollbar-gutter: stable both-edges;
+}
+
+/* 网格内容向左/右各扩展 14px 覆盖滚动条 gutter，
+   使视觉间距恢复为布局内部 padding（与修改前一致），同时保持居中；
+   布局宽度已在 FileGrid 中按容器全宽计算，二者对齐。 */
+.file-grid-content {
+  margin-left: -14px;
+  margin-right: -14px;
+}
+
+/* 详情面板：左右对称预留滚动条空间，内容宽度稳定且视觉居中 */
+.custom-scrollbar {
+  scrollbar-gutter: stable both-edges;
+}
+
+/* 内容向两侧扩展覆盖滚动条 gutter（14px），使视觉间距回到内容自身的 padding（约 20px），
+   同时保持水平居中；滚动条 thumb 由浏览器绘制在内容之上，仍可正常拖拽。
+   只覆盖 margin-left/right，避免影响子元素自身的 margin-top/bottom（如 -mt-8）。 */
+.custom-scrollbar > * {
+  margin-left: -14px;
+  margin-right: -14px;
+}
+
+/* 左侧面板：仅隐藏/悬停滚动条，不额外做内容居中处理 */
+
+.dark #file-grid-container,
+.dark .custom-scrollbar,
+.dark .auto-hide-scrollbar {
+  --scrollbar-thumb-rgb: 82, 82, 82; /* 深色 #525252 */
+}
+
+/* 滚动中：淡入显示（正常尺寸） */
+#file-grid-container.scrolling,
+.custom-scrollbar.scrolling,
+.auto-hide-scrollbar.scrolling {
+  --scrollbar-alpha: 1;
+}
+
+/* 悬停滚动条区域：淡入显示 + 颜色加深 + 放大（#94a3b8） */
+#file-grid-container.scrollbar-hover,
+.custom-scrollbar.scrollbar-hover,
+.auto-hide-scrollbar.scrollbar-hover {
+  --scrollbar-thumb-rgb: 148, 163, 184;
+  --scrollbar-alpha: 1;
+}
+
+.dark #file-grid-container.scrollbar-hover,
+.dark .custom-scrollbar.scrollbar-hover,
+.dark .auto-hide-scrollbar.scrollbar-hover {
+  --scrollbar-thumb-rgb: 115, 115, 115; /* #737373 */
+}
+
+#file-grid-container::-webkit-scrollbar,
+.custom-scrollbar::-webkit-scrollbar,
+.auto-hide-scrollbar::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+
+#file-grid-container::-webkit-scrollbar-track,
+.custom-scrollbar::-webkit-scrollbar-track,
+.auto-hide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#file-grid-container::-webkit-scrollbar-thumb,
+.custom-scrollbar::-webkit-scrollbar-thumb,
+.auto-hide-scrollbar::-webkit-scrollbar-thumb {
+  /* alpha 由容器变量驱动，随 class 切换而淡入淡出 */
+  background-color: rgba(var(--scrollbar-thumb-rgb), var(--scrollbar-alpha));
+  border-radius: 7px;
+  border: 4px solid transparent;
+  background-clip: content-box;
+}
+
+/* 悬停放大：border 收窄使可见滑块变宽（伪元素不支持过渡，瞬间生效） */
+#file-grid-container.scrollbar-hover::-webkit-scrollbar-thumb,
+.custom-scrollbar.scrollbar-hover::-webkit-scrollbar-thumb,
+.auto-hide-scrollbar.scrollbar-hover::-webkit-scrollbar-thumb,
+#file-grid-container.scrolling::-webkit-scrollbar-thumb:hover,
+.custom-scrollbar.scrolling::-webkit-scrollbar-thumb:hover,
+.auto-hide-scrollbar.scrolling::-webkit-scrollbar-thumb:hover,
+#file-grid-container:hover::-webkit-scrollbar-thumb:hover,
+.custom-scrollbar:hover::-webkit-scrollbar-thumb:hover,
+.auto-hide-scrollbar:hover::-webkit-scrollbar-thumb:hover {
+  border-width: 2px;
+}
+
+/* Firefox：无 ::-webkit-scrollbar，使用标准 scrollbar-width/scrollbar-color */
+@-moz-document url-prefix() {
+  #file-grid-container,
+  .custom-scrollbar,
+  .auto-hide-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  #file-grid-container.scrolling,
+  .custom-scrollbar.scrolling,
+  .auto-hide-scrollbar.scrolling {
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  #file-grid-container.scrollbar-hover,
+  .custom-scrollbar.scrollbar-hover,
+  .auto-hide-scrollbar.scrollbar-hover {
+    scrollbar-color: #94a3b8 transparent;
+  }
+  .dark #file-grid-container.scrolling,
+  .dark .custom-scrollbar.scrolling,
+  .dark .auto-hide-scrollbar.scrolling {
+    scrollbar-color: #525252 transparent;
+  }
+  .dark #file-grid-container.scrollbar-hover,
+  .dark .custom-scrollbar.scrollbar-hover,
+  .dark .auto-hide-scrollbar.scrollbar-hover {
+    scrollbar-color: #737373 transparent;
+  }
+}
+
 input[type=range] {
   -webkit-appearance: none;
   background: transparent;

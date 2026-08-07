@@ -1067,6 +1067,8 @@ export const FileGrid = React.memo(({
   isVisibleRef.current = isVisible;
 
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 滚动条显隐定时器：滚动结束后延迟隐藏滚动条（保留布局空间，仅隐藏 thumb 颜色）
+  const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
   const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -1220,7 +1222,12 @@ export const FileGrid = React.memo(({
         animationFrameId = requestAnimationFrame(() => {
             for (const entry of entries) {
                 if (entry.target === containerRef.current) {
-                    const newWidth = entry.contentRect.width;
+                    // 非 tags-overview 视图：使用容器全宽（含滚动条 gutter）作为布局宽度，
+                    // 配合内容负 margin 覆盖 gutter，使网格视觉间距恢复为布局内部 padding，
+                    // 同时 both-edges gutter 仍保证滚动条显示/隐藏时布局稳定。
+                    const newWidth = activeTab.viewMode === 'tags-overview'
+                        ? entry.contentRect.width
+                        : (containerRef.current?.getBoundingClientRect().width || entry.contentRect.width);
                     const newHeight = entry.contentRect.height;
                     setContainerRect(prev => ({ width: prev.width, height: newHeight }));
 
@@ -1248,8 +1255,16 @@ export const FileGrid = React.memo(({
     
     // Use a stable handler ref or check current status inside handler
     const handleScroll = () => {
-        if (containerRef.current) {
-            if (isRestoringScrollRef.current || containerRef.current.clientWidth === 0) {
+        const scroller = containerRef.current;
+        if (scroller) {
+            // 滚动中显示滚动条；停止滚动 800ms 后自动隐藏（thumb 透明，布局空间保留，保持居中稳定）
+            scroller.classList.add('scrolling');
+            if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+            scrollHideTimerRef.current = setTimeout(() => {
+                scroller.classList.remove('scrolling');
+            }, 800);
+
+            if (isRestoringScrollRef.current || scroller.clientWidth === 0) {
                 return;
             }
 
@@ -1289,11 +1304,29 @@ export const FileGrid = React.memo(({
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
 
+    // 鼠标悬停在滚动条区域（容器右缘）时添加 scrollbar-hover，滚动条显示并放大；
+    // 移开滚动条区域后移除，实现「仅在滚动条上悬停才显示/变大」。
+    const handlePointerMove = (e: MouseEvent) => {
+        const sc = containerRef.current;
+        if (!sc) return;
+        const rect = sc.getBoundingClientRect();
+        const nearScrollbar = e.clientX >= rect.right - 20 && e.clientX <= rect.right;
+        sc.classList.toggle('scrollbar-hover', nearScrollbar);
+    };
+    const handlePointerLeave = () => {
+        containerRef.current?.classList.remove('scrollbar-hover');
+    };
+    containerRef.current.addEventListener('mousemove', handlePointerMove);
+    containerRef.current.addEventListener('mouseleave', handlePointerLeave);
+
     return () => {
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
         observer.disconnect();
         containerRef?.current?.removeEventListener('scroll', handleScroll);
+        containerRef?.current?.removeEventListener('mousemove', handlePointerMove);
+        containerRef?.current?.removeEventListener('mouseleave', handlePointerLeave);
         if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
+        if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
     };
   }, [containerRef, activeTab.viewMode]);
 
@@ -1936,6 +1969,7 @@ export const FileGrid = React.memo(({
 
           <div
               ref={contentRef}
+              className="file-grid-content"
           >
           {displayFileIds.length === 0 && activeTab.viewMode === 'browser' ? (
               <EmptyFolderPlaceholder

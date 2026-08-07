@@ -1,5 +1,6 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
+import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 
 // 辅助函数：深度查找文件夹内的图片
 const findImagesDeeply = (
@@ -520,6 +521,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     const [toast, setToast] = useState<{ msg: string, visible: boolean }>({ msg: '', visible: false });
     const [paletteMenu, setPaletteMenu] = useState<{ visible: boolean, x: number, y: number, color: string | null }>({ visible: false, x: 0, y: 0, color: null });
     const panelRef = useRef<HTMLDivElement | null>(null);
+    // 详情面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
+    useAutoScrollbar(panelRef);
     const [toastPos, setToastPos] = useState<{ left?: number; bottom?: number } | null>(null);
     const toastRef = useRef<HTMLDivElement | null>(null);
     const [expandedTopicIds, setExpandedTopicIds] = useState<Set<string>>(new Set());
@@ -1273,7 +1276,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         };
 
         return (
-            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+            <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
                 <div className="relative w-full aspect-[3/4] bg-surface group shrink-0 overflow-hidden">
                     <div className="w-full h-full transition-transform duration-700 group-hover:scale-105">
                         <TopicCoverImage topic={topic} coverUrl={coverUrl} className="w-full h-full" />
@@ -1480,7 +1483,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 多选专题的情况
     if (selectedTopicCount > 1 && topics && selectedTopicIds && selectedTopicIds.length > 0) {
         return (
-            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+            <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
                 <div className="p-5 flex-shrink-0 bg-panel">
                     <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
                         {selectedTopicCount} {t('context.selectedTopics') || t('sidebar.topics')}
@@ -1672,7 +1675,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     // 多个人物选择情况
     if (isMultiPerson) {
         return (
-            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+            <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
                 <div className="p-5 flex-shrink-0 bg-panel">
                     <div className="font-bold text-lg text-gray-800 dark:text-white break-words leading-tight mb-1">
                         {selectedPeopleCount} {t('context.selectedPeople')}
@@ -1724,7 +1727,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
 
         return (
-            <div className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
+            <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
 
                 {/* Hero Header */}
                 <div className="relative">

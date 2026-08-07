@@ -594,9 +594,18 @@ export const TopBar: React.FC<TopBarProps> = ({
     typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches
   );
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  // 桌面端搜索框展开：记录窗口宽度与展开状态
+  const [windowWidth, setWindowWidth] = useState(() => typeof window !== 'undefined' ? window.innerWidth : 0);
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
 
   // 竖屏手机端：将低频按钮整合到「更多」菜单
   const isPhonePortrait = isAndroid && isPortrait;
+
+  // 桌面端：窄窗口（<=1380）且左右面板同时展开时，点击搜索框自动展开
+  const isDesktop = !isAndroid;
+  const isNarrowWindow = windowWidth <= 1380;
+  const isDualPanelOpen = state.layout.isSidebarVisible && state.layout.isMetadataVisible;
+  const canExpandSearch = isDesktop && isNarrowWindow && isDualPanelOpen;
 
   useEffect(() => {
     if (!isAndroid) return;
@@ -605,6 +614,33 @@ export const TopBar: React.FC<TopBarProps> = ({
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
   }, [isAndroid]);
+
+  // 桌面端：监听窗口宽度变化，用于搜索框展开条件判断
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // 桌面端：点击搜索框外部任意地方时退出展开状态
+  useEffect(() => {
+    if (!isSearchExpanded) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const el = document.getElementById('toolbar-search-expand-area');
+      if (el && !el.contains(e.target as Node)) {
+        setIsSearchExpanded(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isSearchExpanded]);
+
+  // 桌面端：窗口拉大（>1380）或左右面板不再同时展开时，自动退出展开状态
+  useEffect(() => {
+    if (isSearchExpanded && !canExpandSearch) {
+      setIsSearchExpanded(false);
+    }
+  }, [isSearchExpanded, canExpandSearch]);
 
   const getFolderDisplayName = () => {
     if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
@@ -788,7 +824,7 @@ export const TopBar: React.FC<TopBarProps> = ({
   };
 
   return (
-    <div className={`h-14 bg-content grid grid-cols-[auto_1fr_auto] items-center px-4 shrink-0 z-30 ${isAndroid ? 'android-topbar' : ''}`}>
+    <div className={`h-14 bg-content grid grid-cols-[auto_1fr_auto] items-center px-4 gap-x-2 shrink-0 z-30 ${isAndroid ? 'android-topbar' : ''}`}>
       {/* Left: Navigation */}
       <div className="flex items-center space-x-2 min-w-fit justify-self-start">
         <button onClick={onToggleSidebar} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center rounded-xl' : 'w-9 h-9 flex items-center justify-center rounded-lg'} hover:bg-surface ${state.layout.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`} title={t('viewer.toggleSidebar')}>
@@ -797,7 +833,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <button onClick={onGoBack} disabled={activeTab.history.currentIndex <= 0} className={`${isAndroid ? 'w-10 h-10 flex items-center justify-center rounded-xl' : 'w-9 h-9 flex items-center justify-center rounded-lg'} hover:bg-surface disabled:opacity-30 text-gray-600 dark:text-gray-300 ${isCompactMode ? 'hidden' : ''}`}>
           <ChevronLeft size={18} />
         </button>
-        {!isAndroid && (
+        {!isAndroid && !isSearchExpanded && (
           <>
             <button onClick={onGoForward} disabled={activeTab.history.currentIndex >= activeTab.history.stack.length - 1} className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface disabled:opacity-30 text-gray-600 dark:text-gray-300">
               <ChevronRight size={18} />
@@ -911,20 +947,23 @@ export const TopBar: React.FC<TopBarProps> = ({
           </span>
         </div>
       ) : (
-      <div className="relative flex items-center justify-center flex-1 min-w-0">
-        <div className={`w-full flex items-center rounded-full px-3 py-1.5 transition-all border ${isPhonePortrait ? 'max-w-none' : 'max-w-[500px]'} ${
-          isColorSearchQuery
-            ? 'bg-surface border-blue-500 shadow-sm'
-            : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
-              ? 'bg-surface border-green-500 shadow-sm shadow-green-500/20'
-              : isAISearchEnabled
-                ? 'bg-surface border-purple-500 shadow-sm shadow-purple-500/20'
-                : activeTab.searchQuery
-                  ? 'bg-surface border-blue-500 shadow-sm'
-                  : isSearchFocused
-                    ? 'bg-surface border-subtle'
-                    : 'bg-surface border-transparent hover:border-subtle'
-        }`}>
+      <div id="toolbar-search-expand-area" className="relative flex items-center justify-center flex-1 min-w-0">
+        <div
+          className={`flex items-center rounded-full px-3 py-1.5 border ${
+            isColorSearchQuery
+              ? 'bg-surface border-blue-500 shadow-sm'
+              : isClipSearchEnabled && clipEnabled && clipModelName !== 'WD-EVA02-Large-Tagger-V3'
+                ? 'bg-surface border-green-500 shadow-sm shadow-green-500/20'
+                : isAISearchEnabled
+                  ? 'bg-surface border-purple-500 shadow-sm shadow-purple-500/20'
+                  : activeTab.searchQuery
+                    ? 'bg-surface border-blue-500 shadow-sm'
+                    : isSearchFocused
+                      ? 'bg-surface border-subtle'
+                      : 'bg-surface border-transparent hover:border-subtle'
+          }`}
+          style={{ width: isPhonePortrait || isSearchExpanded ? '100%' : 'min(100%, 500px)' }}
+        >
           
           {activeTab.viewMode !== 'people-overview' && activeTab.viewMode !== 'tags-overview' && (
             <div className="relative flex-shrink-0">
@@ -1059,7 +1098,11 @@ export const TopBar: React.FC<TopBarProps> = ({
               }
             }}
             onKeyDown={handleKeyDown}
-            onFocus={() => setIsSearchFocused(true)}
+            onFocus={() => {
+              setIsSearchFocused(true);
+              // 桌面端窄窗口 + 双面板展开时，点击搜索框自动展开
+              if (canExpandSearch) setIsSearchExpanded(true);
+            }}
             onBlur={() => {
               setIsSearchFocused(false);
               if (isAndroid && !toolbarQuery && !searchToggleRef.current) {
@@ -1151,7 +1194,7 @@ export const TopBar: React.FC<TopBarProps> = ({
       <div className="flex items-center space-x-2 min-w-fit justify-self-end">
         
         {/* People View Sort & Group Menu */}
-        {activeTab.viewMode === 'people-overview' && (
+        {activeTab.viewMode === 'people-overview' && !isSearchExpanded && (
           <div className="relative">
              <button 
                onClick={() => setPersonSortMenuOpen(!personSortMenuOpen)}
@@ -1211,7 +1254,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
         
         {/* Sort & Group Menu (hidden on topics view, people view, and Android) */}
-        {!isAndroid && activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
+        {!isAndroid && !isSearchExpanded && activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'people-overview' && (
         <div className="relative">
            <button 
              onClick={() => setSortMenuOpen(!sortMenuOpen)}
@@ -1289,7 +1332,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && !isPhonePortrait && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
           <>
           {isAndroid ? (
             <button
@@ -1379,7 +1422,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           </>
         )}
 
-        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && !isPhonePortrait && (
+        {activeTab.viewMode === 'topics-overview' && onTopicLayoutModeChange && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
           <div className="flex items-center space-x-2 mr-2">
             <button
               className={`w-9 h-9 flex items-center justify-center rounded-lg ${topicLayoutMode === 'grid' ? 'bg-surface text-blue-500' : 'text-gray-600 dark:text-gray-300 hover:bg-surface'}`}
@@ -1400,7 +1443,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Folders overview layout menu */}
-        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && !isPhonePortrait && (
+        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
           <>
           {isAndroid ? (
             <button
@@ -1476,7 +1519,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Date Filter (hidden on topics view) */}
-        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && !isPhonePortrait && (
+        {activeTab.viewMode !== 'topics-overview' && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
         <div className="relative">
            <button
              onClick={() => setFilterMenuOpen(!filterMenuOpen)}
@@ -1563,9 +1606,9 @@ export const TopBar: React.FC<TopBarProps> = ({
         </div>
         )}
 
-        {!isPhonePortrait && <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>}
+        {!isPhonePortrait && !isSearchExpanded && <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-1"></div>}
 
-        {showLanUpload && (
+        {showLanUpload && !isSearchExpanded && (
           <button
             onClick={onUploadToLan}
             className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-surface text-blue-500 dark:text-blue-400"

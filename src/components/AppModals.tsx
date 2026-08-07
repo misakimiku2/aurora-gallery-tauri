@@ -164,6 +164,17 @@ export const AppModals: React.FC<AppModalsProps> = ({
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
+  // 需要背景毛玻璃效果的弹窗类型
+  const blurredModalTypes = new Set([
+    'copy-to-folder',
+    'move-to-folder',
+    'batch-rename',
+    'add-to-person',
+    'clear-person',
+    'add-to-topic',
+    'edit-tags',
+  ]);
+
   useEffect(() => {
     if (!isAndroidPlatformCached()) return;
     if (state.activeModal.type) {
@@ -182,7 +193,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
     <>
       {/* Main Modal Overlay */}
       {state.activeModal.type && (
-        <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4">
+        <div className={`fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4 ${blurredModalTypes.has(state.activeModal.type) ? 'backdrop-blur-sm' : ''}`}>
           {state.activeModal.type === 'alert' && state.activeModal.data && (
             <AlertModalComp
               message={state.activeModal.data.message}

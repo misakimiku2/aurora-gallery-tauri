@@ -41,58 +41,43 @@ const PersonRow = ({ index, style, data }: { index: number; style: React.CSSProp
         <div
             style={style}
             onClick={() => toggleSelection(person.id)}
-            className={`flex items-center px-2 py-1 rounded cursor-pointer group ${isSelected
+            className={`flex items-center px-2 py-1 mb-1 rounded-lg cursor-pointer group transition-colors ${isSelected
                 ? 'bg-blue-100 dark:bg-blue-900/30'
-                : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                : 'hover:bg-surface'
                 }`}
         >
-            <div className="relative mr-3 flex-shrink-0">
-                <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden">
-                    <div className="w-full h-full rounded-full overflow-hidden relative">
-                        {hasCover ? (
-                            person.faceBox ? (
-                                <img
-                                    src={convertFileSrc(coverFile.path)}
-                                    alt={person.name}
-                                    className="absolute"
-                                    decoding="async"
-                                    loading="lazy"
-                                    style={{
-                                        width: `${10000 / Math.max(person.faceBox!.w, 2.0)}%`,
-                                        height: `${10000 / Math.max(person.faceBox!.h, 2.0)}%`,
-                                        maxWidth: 'none',
-                                        minWidth: 'unset',
-                                        left: `${-person.faceBox!.x / Math.max(person.faceBox!.w, 2.0) * 100}%`,
-                                        top: `${-person.faceBox!.y / Math.max(person.faceBox!.h, 2.0) * 100}%`,
-                                        imageRendering: 'auto'
-                                    }}
-                                />
-                            ) : (
-                                <img
-                                    src={convertFileSrc(coverFile.path)}
-                                    alt={person.name}
-                                    className="w-full h-full object-cover"
-                                    decoding="async"
-                                    loading="lazy"
-                                    style={{ imageRendering: 'auto' }}
-                                />
-                            )
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center">
-                                <User size={14} className="text-gray-400 dark:text-gray-500" />
-                            </div>
-                        )}
-                    </div>
-                </div>
-                {isSelected && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
-                        <Check size={10} className="text-white" />
-                    </div>
+            <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative flex-shrink-0">
+                {hasCover ? (
+                    person.faceBox ? (
+                        <img
+                            src={convertFileSrc(coverFile.path)}
+                            alt={person.name}
+                            className="absolute"
+                            decoding="async"
+                            loading="lazy"
+                            style={{
+                                width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                                height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                maxWidth: 'none',
+                                minWidth: 'unset',
+                                left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
+                                top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                imageRendering: 'auto'
+                            }}
+                        />
+                    ) : (
+                        <img src={convertFileSrc(coverFile.path)} alt={person.name} className="w-full h-full object-cover" decoding="async" loading="lazy" style={{ imageRendering: 'auto' }} />
+                    )
+                ) : (
+                    <User size={14} className="text-gray-400 dark:text-gray-500" />
                 )}
             </div>
-            <span className={`text-sm truncate ${isSelected ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
+            <span className={`text-sm truncate flex-1 ${isSelected ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
                 {person.name}
             </span>
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? 'border-blue-600 bg-blue-600' : 'border-gray-300 dark:border-gray-600'}`}>
+                {isSelected && <Check size={12} className="text-white" strokeWidth={3} />}
+            </div>
         </div>
     );
 };
@@ -135,21 +120,21 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
     }), [filteredPeople, files, selectedIds, toggleSelection]);
 
     return (
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in">
+        <div className="bg-content rounded-xl p-6 shadow-2xl border border-subtle w-80 max-h-[500px] flex flex-col animate-zoom-in">
             <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPerson')}</h3>
             <div className="relative mb-3">
-                <Search size={14} className="absolute left-2.5 top-2.5 text-gray-400" />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                 <input
                     id="add-to-person-search"
                     name="add-to-person-search"
-                    className="w-full border dark:border-gray-600 rounded pl-8 pr-2 py-2 bg-transparent text-gray-900 dark:text-white focus:outline-none focus:ring-2 ring-blue-500 text-sm"
-                    placeholder={t('search.placeholder')}
+                    className="w-full bg-surface border border-subtle rounded-lg pl-9 pr-2 py-2 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                    placeholder={t('search.placeholderPeople')}
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     autoFocus
                 />
             </div>
-            <div className="flex-1 min-h-0 mb-4 border border-gray-100 dark:border-gray-700 rounded overflow-hidden">
+            <div className="flex-1 min-h-0 mb-4 bg-panel rounded-xl p-1 overflow-hidden">
                 {filteredPeople.length === 0 ? (
                     <div className="flex items-center justify-center h-full text-gray-500 text-sm py-8">
                         {t('sidebar.noPeople')}
@@ -171,39 +156,44 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                             <div
                                 key={person.id}
                                 onClick={() => toggleSelection(person.id)}
-                                className={`flex items-center px-2 py-1 rounded cursor-pointer ${selectedIds.has(person.id)
+                                className={`flex items-center px-2 py-1 mb-1 rounded-lg cursor-pointer transition-colors ${selectedIds.has(person.id)
                                     ? 'bg-blue-100 dark:bg-blue-900/30'
-                                    : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                                    : 'hover:bg-surface'
                                     }`}
                                 style={{ height: ITEM_HEIGHT }}
                             >
-                                <div className="relative mr-3 flex-shrink-0">
-                                    <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden">
-                                        <div className="w-full h-full rounded-full overflow-hidden relative">
-                                            {files[person.coverFileId] ? (
-                                                <img
-                                                    src={convertFileSrc(files[person.coverFileId].path)}
-                                                    alt={person.name}
-                                                    className="w-full h-full object-cover"
-                                                    decoding="async"
-                                                    loading="lazy"
-                                                />
-                                            ) : (
-                                                <div className="w-full h-full flex items-center justify-center">
-                                                    <User size={14} className="text-gray-400 dark:text-gray-500" />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                    {selectedIds.has(person.id) && (
-                                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-blue-500 rounded-full flex items-center justify-center">
-                                            <Check size={10} className="text-white" />
-                                        </div>
+                                <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative flex-shrink-0">
+                                    {files[person.coverFileId] ? (
+                                        person.faceBox ? (
+                                            <img
+                                                src={convertFileSrc(files[person.coverFileId].path)}
+                                                alt={person.name}
+                                                className="absolute"
+                                                decoding="async"
+                                                loading="lazy"
+                                                style={{
+                                                    width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
+                                                    height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
+                                                    maxWidth: 'none',
+                                                    minWidth: 'unset',
+                                                    left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
+                                                    top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                                    imageRendering: 'auto'
+                                                }}
+                                            />
+                                        ) : (
+                                            <img src={convertFileSrc(files[person.coverFileId].path)} alt={person.name} className="w-full h-full object-cover" decoding="async" loading="lazy" style={{ imageRendering: 'auto' }} />
+                                        )
+                                    ) : (
+                                        <User size={14} className="text-gray-400 dark:text-gray-500" />
                                     )}
                                 </div>
-                                <span className={`text-sm truncate ${selectedIds.has(person.id) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
+                                <span className={`text-sm truncate flex-1 ${selectedIds.has(person.id) ? 'text-blue-600 dark:text-blue-400 font-medium' : 'text-gray-800 dark:text-gray-200'}`}>
                                     {person.name}
                                 </span>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${selectedIds.has(person.id) ? 'border-blue-600 bg-blue-600' : 'border-gray-300 dark:border-gray-600'}`}>
+                                    {selectedIds.has(person.id) && <Check size={12} className="text-white" strokeWidth={3} />}
+                                </div>
                             </div>
                         ))}
                     </div>
@@ -214,13 +204,13 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                     {selectedIds.size > 0 ? `${t('context.selected')}: ${selectedIds.size}` : ''}
                 </span>
                 <div className="flex space-x-2">
-                    <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">
+                    <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-surface rounded-lg text-sm transition-colors">
                         {t('settings.cancel')}
                     </button>
                     <button
                         onClick={handleConfirm}
                         disabled={selectedIds.size === 0}
-                        className={`px-3 py-1.5 rounded text-sm text-white transition-colors ${selectedIds.size > 0
+                        className={`px-3 py-1.5 rounded-lg text-sm text-white transition-colors ${selectedIds.size > 0
                             ? 'bg-blue-600 hover:bg-blue-700'
                             : 'bg-gray-400 cursor-not-allowed'
                             }`}

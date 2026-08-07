@@ -48,7 +48,7 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
         <div
             style={style}
             onClick={() => handleTogglePerson(p.id)}
-            className={`flex items-center p-2 rounded cursor-pointer group border border-transparent ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 shadow-md font-semibold' : 'hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+            className={`flex items-center px-2 py-1 mb-1 rounded-lg cursor-pointer group border border-transparent transition-colors ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-l-4 border-blue-500 font-semibold' : 'hover:bg-surface'}`}
         >
             <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 overflow-hidden mr-3 flex items-center justify-center relative flex-shrink-0">
                 {hasCover ? (
@@ -77,8 +77,8 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
                 )}
             </div>
             <span className={`text-sm flex-1 truncate ${isSelected ? 'text-blue-700 dark:text-blue-300' : 'text-gray-800 dark:text-gray-200'}`}>{p.name}</span>
-            <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ${isSelected ? 'border-blue-600 bg-blue-600 ring-2 ring-blue-300/50 dark:ring-blue-700/50 shadow-sm' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800'}`}>
-                {isSelected && <Check size={14} className="text-white" strokeWidth={3} />}
+            <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${isSelected ? 'border-blue-600 bg-blue-600' : 'border-gray-300 dark:border-gray-600'}`}>
+                {isSelected && <Check size={12} className="text-white" strokeWidth={3} />}
             </div>
         </div>
     );
@@ -125,16 +125,16 @@ export const ClearPersonModal: React.FC<ClearPersonModalProps> = ({ files, fileI
     }), [peopleList, files, selectedPeople, handleTogglePerson]);
 
     return (
-        <div className="bg-white dark:bg-gray-800 rounded-lg p-6 shadow-xl w-80 max-h-[500px] flex flex-col animate-zoom-in">
+        <div className="bg-content rounded-xl p-6 shadow-2xl border border-subtle w-80 max-h-[500px] flex flex-col animate-zoom-in">
             <h3 className="font-bold text-lg mb-4 text-gray-900 dark:text-white">{t('context.selectPeopleToClear')}</h3>
             <div className="flex justify-between items-center mb-3 text-sm">
                 <span className="text-gray-600 dark:text-gray-400">{t('context.selected')} {selectedPeople.length} / {peopleList.length}</span>
                 <div className="space-x-2">
-                    <button onClick={handleSelectAll} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200">{t('context.selectAll')}</button>
-                    <button onClick={handleSelectNone} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200">{t('context.selectNone')}</button>
+                    <button onClick={handleSelectAll} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors">{t('context.selectAll')}</button>
+                    <button onClick={handleSelectNone} className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors">{t('context.selectNone')}</button>
                 </div>
             </div>
-            <div className="flex-1 min-h-[200px] mb-4 border border-gray-100 dark:border-gray-700 rounded p-1">
+            <div className="flex-1 min-h-[200px] mb-4 bg-panel rounded-xl p-1">
                 {peopleList.length === 0 ? (
                     <div className="flex items-center justify-center h-full text-gray-500 text-sm">
                         {t('sidebar.noPeople')}
@@ -164,8 +164,8 @@ export const ClearPersonModal: React.FC<ClearPersonModalProps> = ({ files, fileI
                 )}
             </div>
             <div className="flex justify-end space-x-2">
-                <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 rounded text-sm">{t('settings.cancel')}</button>
-                <button onClick={() => onConfirm(selectedPeople)} className="bg-blue-600 text-white px-3 py-1.5 rounded hover:bg-blue-700 text-sm">{t('settings.confirm')}</button>
+                <button onClick={onClose} className="px-3 py-1.5 text-gray-600 dark:text-gray-400 hover:bg-surface rounded-lg text-sm transition-colors">{t('settings.cancel')}</button>
+                <button onClick={() => onConfirm(selectedPeople)} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 text-sm transition-colors">{t('settings.confirm')}</button>
             </div>
         </div>
     );

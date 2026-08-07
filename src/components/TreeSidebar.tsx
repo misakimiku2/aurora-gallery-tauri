@@ -21,6 +21,7 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { lanClientApi } from './lan-client/lanClientApi';
 import NetworkSection from './lan-client/NetworkSection';
 import { PeopleCanvas } from './PeopleCanvas';
+import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const isLan = file.source === 'lan' && !!file.remotePath;
@@ -331,6 +332,8 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   const availableHeight = Math.max(200, listHeight - 180);
   
   const containerRef = useRef<HTMLDivElement>(null);
+  // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
+  useAutoScrollbar(containerRef);
   const [containerWidth, setContainerWidth] = useState(200);
   const [localScrollTop, setLocalScrollTop] = useState(0);
   const [selectedPersonId, setSelectedPersonId] = useState<string | undefined>();
@@ -440,7 +443,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           {expanded && (
            <div 
              ref={containerRef}
-             className={`pl-5 pr-3 pb-3 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0 bg-panel`}
+             className={`pl-5 pr-3 pb-3 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} min-h-0 bg-panel`}
              style={{ 
                maxHeight: `${availableHeight}px`,
              }}
@@ -508,6 +511,9 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const tagListRef = useRef<HTMLDivElement | null>(null);
+  // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
+  useAutoScrollbar(tagListRef);
 
   const availableHeight = Math.max(200, listHeight - 180);
 
@@ -792,7 +798,8 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
 
       {expanded && (
         <div 
-          className={`pl-5 pr-3 pb-3 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} bg-panel`}
+          ref={tagListRef}
+          className={`pl-5 pr-3 pb-3 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} bg-panel`}
           style={{ 
             maxHeight: `${availableHeight}px`,
             contentVisibility: 'auto'
@@ -957,6 +964,8 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered,
   sortMode = 'name', sortOrder = 'asc', onToggleSort, onNavigateHome
 }) => {
+  // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
+  useAutoScrollbar(containerRef);
   const isSingleRoot = roots.length === 1;
   const rootId = roots[0];
   const rootNode = files[rootId];
@@ -1152,7 +1161,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
         <div 
           ref={containerRef} 
           onScroll={onScroll} 
-          className={`overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'scrollbar-thin'} min-h-0`}
+          className={`overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} min-h-0`}
           style={{ 
             maxHeight: `${availableHeight}px`,
             contentVisibility: 'auto'

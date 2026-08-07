@@ -8,6 +8,7 @@ import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonit
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
+import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { getColorDbStats, getColorDbErrorFiles, retryColorExtraction, deleteColorDbErrorFiles, ColorDbStats, ColorDbErrorFile, getAssetUrl, deleteFile, openExternalLink, clipGetModelStatus, clipDeleteModel, clipLoadModel, clipUnloadModel, clipCancelModelDownload, clipPauseModelDownload, clipResumeModelDownload, clipGenerateEmbeddingsBatch, clipGetEmbeddingCount, clipGetEmbeddingStats, ClipModelStatus, ClipBatchEmbeddingResult, getAllImageFiles, clipCancelEmbeddingGeneration, clipPauseEmbeddingGeneration, clipResumeEmbeddingGeneration, listenClipEmbeddingProgress, listenClipEmbeddingCompleted, listenClipEmbeddingCancelled, listenClipModelDownloadProgress, ClipModelDownloadProgress, addPendingFilesToDb, resumeColorExtraction, pauseColorExtraction, cancelColorExtraction, androidBatchExtractColors, isAndroidPlatformCached, getGlobalCacheRoot, androidHideTaskNotification, androidUpdateTaskNotification, androidGetCacheSize, androidClearThumbnailCache, writeFileFromBytes } from '../api/tauri-bridge';
 import { updateModelDownloadProgress, completeModelDownload, errorModelDownload, subscribeToModelDownload, getActiveDownloads, setCurrentDownloadingModel, getCachedModelStatuses, setCachedModelStatuses, getCachedModelStatus, markModelAsCorrupted, markModelAsNormal, getCorruptedModels, isModelCorrupted, pauseModelDownload, resumeModelDownload, getPausedDownloads, getDownloadError } from '../utils/modelDownloadState';
 import { ClipSettings, ClipModelInfo, ClipModelName, ModelSeries, ModelSeriesInfo, ModelFeatures, LanShareSettings, ConnectedDevice } from '../types';
@@ -1918,6 +1919,9 @@ interface SettingsModalProps {
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, onUpdateSettings, onUpdateSettingsData, onUpdatePath, onUpdateAIConnectionStatus, onClipEnabledChange, clipLoading, t, updateInfo, onCheckUpdate, isCheckingUpdate, downloadProgress, onInstallUpdate, onOpenDownloadFolder, onShowToast, onClipSearchDisabled, onRefresh, onNavigateToFile }) => {
   const [isAndroid, setIsAndroid] = useState(false);
+  // 设置面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
+  const settingsScrollRef = useRef<HTMLDivElement | null>(null);
+  useAutoScrollbar(settingsScrollRef);
 
   useEffect(() => {
     isAndroidPlatform().then(setIsAndroid);
@@ -2721,7 +2725,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
           </div>
         </div>
 
-        <div id="settings-scroll" className="flex-1 overflow-y-auto p-8" style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}>
+        <div id="settings-scroll" ref={settingsScrollRef} className={`flex-1 overflow-y-auto p-8 ${isAndroid ? '' : 'custom-scrollbar'}`} style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}>
           {isAndroid && <style dangerouslySetInnerHTML={{ __html: '#settings-scroll::-webkit-scrollbar{display:none;width:0!important;height:0!important}' }} />}
           {state.settingsCategory === 'general' && (
             /* ... General Settings Content ... */
