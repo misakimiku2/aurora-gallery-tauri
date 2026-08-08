@@ -23,6 +23,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.net.Uri
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import coil.ImageLoader
@@ -104,6 +105,7 @@ class NativeGalleryView @JvmOverloads constructor(
         val height: Int,
         val isLan: Boolean,
         val thumbnailUrl: String?, // LAN 缩略图 URL 或本地缩略图路径
+        val contentUri: String = "", // 本地图片的 content:// URI（优先使用，兼容 Scoped Storage）
         // 元数据（用于抽屉展示）
         val size: Long = 0,
         val format: String = "",
@@ -769,7 +771,7 @@ class NativeGalleryView @JvmOverloads constructor(
         // Section 3: 全览图（用 Coil 加载缩略图或原图）
         val previewUrl = item.thumbnailUrl ?: item.path
         val req = ImageRequest.Builder(context)
-            .data(if (item.isLan) previewUrl else File(item.path))
+            .data(if (item.isLan) previewUrl else if (item.contentUri.isNotEmpty()) Uri.parse(item.contentUri) else File(item.path))
             .target(drawerPreviewImage)
             .precision(Precision.INEXACT)
             .build()
@@ -1417,6 +1419,21 @@ class NativeGalleryView @JvmOverloads constructor(
         updateTitle()
     }
 
+    /**
+     * 解析图片加载的数据源。
+     * LAN 图片用 HTTP URL；本地图片优先用 content:// URI（通过 ContentResolver 读取，
+     * 兼容 Scoped Storage 和华为/荣耀等厂商的文件访问限制），fallback 到 File 路径。
+     */
+    private fun resolveLoadData(item: ImageItem): Any {
+        return if (item.isLan) {
+            item.path
+        } else if (item.contentUri.isNotEmpty()) {
+            Uri.parse(item.contentUri)
+        } else {
+            File(item.path)
+        }
+    }
+
     private fun loadCurrent(animateIn: Boolean) {
         loadIntoView(activeView, currentIndex)
         preloadNeighbors()
@@ -1439,7 +1456,7 @@ class NativeGalleryView @JvmOverloads constructor(
         }
 
         val request = ImageRequest.Builder(context)
-            .data(if (item.isLan) item.path else File(item.path))
+            .data(resolveLoadData(item))
             .target(
                 onSuccess = { drawable ->
                     if (showProgress) progressBar.visibility = GONE
@@ -1464,7 +1481,7 @@ class NativeGalleryView @JvmOverloads constructor(
             if (idx < 0 || idx >= images.size) continue
             val item = images[idx]
             val request = ImageRequest.Builder(context)
-                .data(if (item.isLan) item.path else File(item.path))
+                .data(resolveLoadData(item))
                 .precision(Precision.INEXACT)
                 .build()
             imageLoader.enqueue(request)

@@ -15,6 +15,7 @@ import android.widget.ImageView
 import coil.ImageLoader
 import coil.request.ImageRequest
 import coil.size.Precision
+import android.net.Uri
 import java.io.File
 
 /**
@@ -302,7 +303,7 @@ class SlideshowView(
     private fun loadImage(view: ImageView, index: Int, onSuccess: () -> Unit) {
         val item = images.getOrNull(index) ?: run { onSuccess(); return }
         val request = ImageRequest.Builder(context)
-            .data(if (item.isLan) item.path else File(item.path))
+            .data(if (item.isLan) item.path else if (item.contentUri.isNotEmpty()) Uri.parse(item.contentUri) else File(item.path))
             .target(
                 onSuccess = { drawable ->
                     view.setImageDrawable(drawable)

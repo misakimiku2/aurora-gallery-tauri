@@ -11,6 +11,7 @@ import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
 import coil.ImageLoader
 import coil.request.ImageRequest
+import android.net.Uri
 import java.io.File
 
 /**
@@ -63,6 +64,7 @@ class ThumbnailStripAdapter(
         val data: Any = when {
             !item.thumbnailUrl.isNullOrEmpty() -> item.thumbnailUrl
             item.isLan -> item.path
+            item.contentUri.isNotEmpty() -> Uri.parse(item.contentUri)
             else -> File(item.path)
         }
         val request = ImageRequest.Builder(context)

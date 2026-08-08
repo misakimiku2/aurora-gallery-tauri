@@ -62,6 +62,7 @@ import { useExternalDragDrop } from './hooks/useExternalDragDrop';
 import { usePersistence } from './hooks/usePersistence';
 import { useFileSelection } from './hooks/useFileSelection';
 import { useFolderSettings } from './hooks/useFolderSettings';
+import { usePanelSwipeGesture } from './hooks/usePanelSwipeGesture';
 import { GlobalToasts } from './components/GlobalToasts';
 import { asyncPool } from './utils/async';
 
@@ -766,7 +767,7 @@ export const App: React.FC = () => {
   const showDragHint = selectedCount > 1 && activeTab.viewMode !== 'topics-overview' && activeTaskCount === 0 && !isScrolling && !isModalOpen && !isAndroidDevice;
 
   // Ref to share FileGrid layout data with marquee selection for DOM-free collision detection
-  const fileGridLayoutRef = useRef<import('../hooks/useMarqueeSelection').LayoutItem[]>([]);
+  const fileGridLayoutRef = useRef<import('./hooks/useMarqueeSelection').LayoutItem[]>([]);
 
   const {
     isSelecting,
@@ -2463,6 +2464,49 @@ export const App: React.FC = () => {
   const nativeViewerActiveRef = useRef(nativeViewerActive);
   nativeViewerActiveRef.current = nativeViewerActive;
 
+  // 面板滑动手势所需的 DOM ref（安卓端左右面板跟手展开/收起）
+  const panelRowRef = useRef<HTMLDivElement>(null);
+  const sidebarOuterRef = useRef<HTMLDivElement>(null);
+  const sidebarInnerRef = useRef<HTMLDivElement>(null);
+  const metadataOuterRef = useRef<HTMLDivElement>(null);
+  const metadataInnerRef = useRef<HTMLDivElement>(null);
+  const colorPickerOuterRef = useRef<HTMLDivElement>(null);
+  const colorPickerInnerRef = useRef<HTMLDivElement>(null);
+
+  // 安卓端面板滑动手势的显式开关回调（与 toggle 逻辑一致，但不依赖当前可见状态）
+  const openSidebarPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: true, isMetadataVisible: false, isColorPickerVisible: false } }));
+  const closeSidebarPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: false } }));
+  const openMetadataPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: true, isSidebarVisible: false, isColorPickerVisible: false } }));
+  const closeRightPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: false, isColorPickerVisible: false } }));
+
+  // 手势仅在安卓端、无弹窗/选择/原生查看器/右键菜单遮挡时启用
+  // （原生查看器为覆盖在 WebView 之上的原生视图，触摸本就不会到达此处，nativeViewerActive 仅作额外保险）
+  const panelGestureEnabled = isAndroidSync()
+    && state.activeModal.type === null
+    && !state.isSettingsOpen
+    && !showCloseConfirmation
+    && !isAndroidSelectionMode
+    && !nativeViewerActive
+    && !contextMenu.visible;
+
+  usePanelSwipeGesture({
+    rowRef: panelRowRef,
+    sidebarOuterRef,
+    sidebarInnerRef,
+    metadataOuterRef,
+    metadataInnerRef,
+    colorPickerOuterRef,
+    colorPickerInnerRef,
+    enabled: panelGestureEnabled,
+    isSidebarVisible: state.layout.isSidebarVisible,
+    isMetadataVisible: state.layout.isMetadataVisible,
+    isColorPickerVisible: state.layout.isColorPickerVisible,
+    openSidebar: openSidebarPanel,
+    closeSidebar: closeSidebarPanel,
+    openMetadata: openMetadataPanel,
+    closeRightPanel,
+  });
+
   // 序列化图片列表供原生层使用
   const serializeImagesForNativeViewer = useCallback(() => {
     const imageFileIds = displayFileIds.filter(id => state.files[id]?.type === FileType.IMAGE);
@@ -2498,6 +2542,7 @@ export const App: React.FC = () => {
         base.thumbnailUrl = lanClientApi.getThumbnailUrl(remotePath);
       } else {
         base.path = f.path;
+        base.contentUri = f.contentUri || '';
         base.isLan = false;
         base.thumbnailUrl = '';
       }
@@ -2994,12 +3039,14 @@ export const App: React.FC = () => {
         }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
       )}
       <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isAndroidPlatformCached() ? 'rounded-xl' : isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
-        <div className="flex-1 flex overflow-hidden relative"
+        <div ref={panelRowRef} className="flex-1 flex overflow-hidden relative"
           style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
           <div
+            ref={sidebarOuterRef}
             className="shrink-0 z-40 overflow-hidden bg-panel"
             style={{ width: state.layout.isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
             <div
+              ref={sidebarInnerRef}
               className="h-full flex flex-col"
               style={{ width: '16rem', transform: state.layout.isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
             <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} lanRoots={lanRoots} lanConnected={lanConnected} lanLoading={lanLoading} onNavigateNetworkFolder={handleNavigateNetworkFolder} onNavigateNetworkHome={handleNavigateNetworkHome} onOpenLanSettings={handleOpenLanSettings} />
@@ -3161,6 +3208,10 @@ export const App: React.FC = () => {
                 }
               }}
               onSortOptionChange={(opt) => {
+                // Reset scroll to top so the user sees the beginning of the new ordering
+                // instead of jumping to a random place (the old scroll offset now maps
+                // to different items after reordering).
+                updateActiveTab({ scrollTop: 0 });
                 setState(s => ({ ...s, sortBy: opt }));
                 // If not remembering this folder, update global default
                 if (!state.folderSettings[activeTab.folderId]) {
@@ -3177,6 +3228,8 @@ export const App: React.FC = () => {
                 }
               }}
               onSortDirectionChange={() => {
+                // Reset scroll to top (see onSortOptionChange for rationale).
+                updateActiveTab({ scrollTop: 0 });
                 const newDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
                 setState(s => ({ ...s, sortDirection: newDirection }));
                 // If not remembering this folder, update global default
@@ -3551,6 +3604,8 @@ export const App: React.FC = () => {
                     getFileNode={getFileNode}
                     files={activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'people-overview' ? state.files : undefined}
                     activeTab={activeTab}
+                    sortBy={state.sortBy}
+                    sortDirection={state.sortDirection}
                     renamingId={state.renamingId}
                     thumbnailSize={state.thumbnailSize}
                     resourceRoot={state.settings.paths.resourceRoot}
@@ -3617,9 +3672,11 @@ export const App: React.FC = () => {
           </div>
         </div>
         <div
+          ref={metadataOuterRef}
           className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-panel"
           style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
           <div
+            ref={metadataInnerRef}
             className="h-full flex flex-col"
             style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
             <MetadataPanel
@@ -3650,9 +3707,11 @@ export const App: React.FC = () => {
         </div>
         {isAndroidPlatformCached() && (
           <div
+            ref={colorPickerOuterRef}
             className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-panel"
             style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
             <div
+              ref={colorPickerInnerRef}
               className="h-full flex flex-col"
               style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
               <MobileColorPickerSheet

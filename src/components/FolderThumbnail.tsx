@@ -124,7 +124,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
               if (url) {
                   cache.set(img.path, url);
                   const isUpgrading = isThumbnailUpgrading(img.path);
-                  console.log('[FolderThumbnail] getThumbnail result:', img.path, 'upgrading=', isUpgrading);
                   if (isUpgrading) {
                     setUpgradingPaths(prev => new Set(prev).add(img.path));
                   }

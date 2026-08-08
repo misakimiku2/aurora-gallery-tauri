@@ -1311,6 +1311,7 @@ class MainActivity : TauriActivity() {
             height = o.optInt("height", 0),
             isLan = isLan,
             thumbnailUrl = thumbUrl,
+            contentUri = o.optString("contentUri", ""),
             size = o.optLong("size", 0),
             format = o.optString("format", ""),
             createdAt = o.optString("createdAt", ""),

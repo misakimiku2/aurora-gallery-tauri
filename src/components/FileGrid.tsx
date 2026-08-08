@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
-import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic } from '../types';
+import { LayoutMode, FileNode, FileType, TabState, Person, GroupByOption, FileGroup, Topic, SortOption, SortDirection } from '../types';
 import { getFolderPreviewImages, formatSize } from '../utils/mockFileSystem';
 import { Image as ImageIcon, Check, Folder, Tag, User, ChevronDown, Book, Film } from 'lucide-react';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
@@ -925,6 +925,10 @@ interface FileGridProps {
   personGroupBy?: import('../types').PersonGroupByOption;
   onRefresh?: () => Promise<void>;
   panelWidthRem?: number;
+  // Sort option/direction for file list (used to detect sort changes and avoid
+  // FLIP anchor logic jumping to a random place after reordering)
+  sortBy?: SortOption;
+  sortDirection?: SortDirection;
 }
 
 export const FileGrid = React.memo(({
@@ -992,7 +996,9 @@ export const FileGrid = React.memo(({
   personSortDirection = 'desc',
   personGroupBy = 'none',
   onRefresh,
-  panelWidthRem
+  panelWidthRem,
+  sortBy = 'name',
+  sortDirection = 'asc',
 }: FileGridProps) => {
   // #region agent log
   // Removed debug logs
@@ -1073,6 +1079,14 @@ export const FileGrid = React.memo(({
   const lastScrollTopRef = useRef(0);
   const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevScrollTopForFlipRef = useRef(0);
+  // Track previous sort option/direction to detect sort changes and bypass the
+  // FLIP anchor logic (which would otherwise preserve an anchor's screen
+  // position and jump to a random place after the items reorder).
+  const prevSortByRef = useRef<SortOption>(sortBy);
+  const prevSortDirectionRef = useRef<SortDirection>(sortDirection);
+  // Timestamp of the last sort-change reset; used by the sort-reset window in the
+  // FLIP effect to skip the anchor logic while layout recompute is still settling.
+  const lastSortResetTimeRef = useRef(0);
   // Layout transition tracking: increases buffer so cards in the NEW viewport
   // are mounted before the FLIP WAAPI animation runs.
   const [isLayoutTransitioning, setIsLayoutTransitioning] = useState(false);
@@ -1429,6 +1443,33 @@ export const FileGrid = React.memo(({
     const prevPositions = prevLayoutPositionsRef.current;
     const logId = ++flipDebugLogRef.current;
 
+    // Detect sort option/direction change: when sorting changes the entire ordering
+    // intentionally, so the FLIP anchor logic (which tries to keep an anchor card at
+    // the same screen position) must NOT run — it would scroll to a random place.
+    // Instead, reset scroll to top so the user sees the beginning of the new order.
+    const sortChanged = prevSortByRef.current !== sortBy || prevSortDirectionRef.current !== sortDirection;
+    prevSortByRef.current = sortBy;
+    prevSortDirectionRef.current = sortDirection;
+    if (sortChanged) {
+      lastSortResetTimeRef.current = Date.now();
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      const container = containerRef?.current;
+      if (container && container.scrollTop !== 0) {
+        isRestoringScrollRef.current = true;
+        container.scrollTop = 0;
+        setScrollTop(0);
+        throttledOnScrollTopChange?.(0);
+        if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+        restoreTimeoutRef.current = setTimeout(() => { isRestoringScrollRef.current = false; }, 50);
+      }
+      prevScrollTopForFlipRef.current = 0;
+      hasRestoredRef.current = true;
+      if (flipPhase === 1) setFlipPhase(0);
+      return;
+    }
+
     // First render or empty layout: just record positions
     if (prevPositions.size === 0 || layout.length === 0) {
       const map = new Map<string, { x: number; y: number }>();
@@ -1472,6 +1513,33 @@ export const FileGrid = React.memo(({
 
     console.log(`[FLIP-FileGrid] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount}`);
     console.log(`[FLIP-FileGrid] #${logId}   scrollTop: live=${oldScrollTop.toFixed(1)}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(oldScrollTop - staleScrollTop).toFixed(1)}`);
+
+    // Sort-reset window: after a sort change, displayFileIds/layout recompute is
+    // asynchronous and may trigger this effect a SECOND time (with sortChanged=false
+    // because prevSortByRef was already updated on the first trigger). During that
+    // window the anchor logic would pick a card that moved far away (e.g. oldY=24 →
+    // newY=7012) and jump scroll to keep it on-screen — the "random jump" bug.
+    // Fix: within 500ms of a sort reset, force scrollTop=0 and skip the anchor logic.
+    {
+      const sinceSort = lastSortResetTimeRef.current ? Date.now() - lastSortResetTimeRef.current : -1;
+      if (sinceSort >= 0 && sinceSort < 500) {
+        const map = new Map<string, { x: number; y: number }>();
+        layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+        prevLayoutPositionsRef.current = map;
+        const cont = containerRef?.current;
+        if (cont && cont.scrollTop !== 0) {
+          isRestoringScrollRef.current = true;
+          cont.scrollTop = 0;
+          setScrollTop(0);
+          throttledOnScrollTopChange?.(0);
+          if (restoreTimeoutRef.current) clearTimeout(restoreTimeoutRef.current);
+          restoreTimeoutRef.current = setTimeout(() => { isRestoringScrollRef.current = false; }, 50);
+        }
+        prevScrollTopForFlipRef.current = 0;
+        if (flipPhase === 1) setFlipPhase(0);
+        return;
+      }
+    }
 
     // Find anchor card: the card closest to viewport top (oldScreenY >= 0) in previous layout
     let anchorId: string | null = null;
@@ -1622,7 +1690,7 @@ export const FileGrid = React.memo(({
         console.log(`[FLIP-FileGrid] #${logId} TRANSITION END (post-FLIP 400ms)`);
       }, 400);
     }
-  }, [layout, isNonGroupedView, flipPhase]);
+  }, [layout, isNonGroupedView, flipPhase, sortBy, sortDirection]);
 
   useLayoutEffect(() => {
       if (!isVisible) return;
