@@ -3,7 +3,7 @@ import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react'
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
-import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
+import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { lanClientApi } from './lan-client/lanClientApi';
 import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';

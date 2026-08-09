@@ -80,7 +80,17 @@ pub async fn batch_get_colors(
 
     let result = tokio::task::spawn_blocking(move || {
         let mut conn = pool.get_connection();
-        color_db::get_colors_by_file_paths(&mut conn, &file_paths)
+        let mut all = std::collections::HashMap::new();
+        // 分块查询：SQLite 单个 IN 子句的参数不能超过上限（默认 32766），
+        // 大目录（数万张图）一次性全传会触发 "variable number must be between ?1 and ?32766"。
+        const BATCH_SIZE: usize = 500;
+        for chunk in file_paths.chunks(BATCH_SIZE) {
+            match color_db::get_colors_by_file_paths(&mut conn, chunk) {
+                Ok(map) => all.extend(map),
+                Err(e) => return Err(e),
+            }
+        }
+        Ok::<std::collections::HashMap<String, Vec<String>>, String>(all)
     }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
 
     result.map_err(|e| format!("批量获取颜色数据失败: {}", e))

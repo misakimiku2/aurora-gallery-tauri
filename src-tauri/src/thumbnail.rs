@@ -35,8 +35,6 @@ fn is_avif(buffer: &[u8]) -> bool {
 
 // Core thumbnail generation (kept synchronous; invoked from spawn_blocking)
 pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Option<String> {
-    use std::io::BufWriter;
-
     let image_path = Path::new(file_path);
     if !image_path.exists() || file_path.contains(".Aurora_Cache") {
         return None;
@@ -66,6 +64,25 @@ pub(crate) fn process_single_thumbnail(file_path: &str, cache_root: &Path) -> Op
     if webp_cache_file_path.exists() {
         return Some(webp_cache_file_path.to_str().unwrap_or_default().to_string());
     }
+
+    // 缓存未命中，需要现场解码。获取全局并发额度（信号量，作用域结束自动释放），
+    // 限制同时解码数量，避免滚动时批量缩略图请求把全部 CPU 核心打满导致 UI 卡顿。
+    let _permit = crate::image_utils::acquire_thumb_decode();
+    process_thumbnail_decode(file_path, cache_root, &jpg_cache_file_path, &webp_cache_file_path)
+}
+
+fn process_thumbnail_decode(
+    file_path: &str,
+    cache_root: &Path,
+    jpg_cache_file_path: &std::path::PathBuf,
+    webp_cache_file_path: &std::path::PathBuf,
+) -> Option<String> {
+    use std::io::BufWriter;
+
+    let image_path = Path::new(file_path);
+    let mut file = fs::File::open(image_path).ok()?;
+    let mut buffer = [0u8; 4096];
+    let bytes_read = file.read(&mut buffer).unwrap_or(0);
 
     let format = image::guess_format(&buffer[..bytes_read]).ok();
     

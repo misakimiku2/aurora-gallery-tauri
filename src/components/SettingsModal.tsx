@@ -5,6 +5,7 @@ import { Settings, Sliders, Palette, Database, Globe, Check, Sun, Moon, Monitor,
 import { AppState, SettingsCategory, AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption, UpdateInfo, DownloadProgress, AI_SERVICE_PRESETS, AIServicePreset, AIModelOption, FileType } from '../types';
 import { AuroraLogo } from './Logo';
 import { performanceMonitor, PerformanceMetric } from '../utils/performanceMonitor';
+import { setScrollProfilerEnabled, isScrollProfilerEnabled } from '../utils/scrollProfiler';
 import { aiService } from '../services/aiService';
 import { isAndroidPlatform } from '../utils/androidPlatform';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
@@ -1891,6 +1892,7 @@ const AIVisionPanel: React.FC<AIVisionPanelProps> = ({ t, settings, onUpdateSett
         />
       </div>
     )}
+
     </>
   );
 };
@@ -1922,6 +1924,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
   // 设置面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   const settingsScrollRef = useRef<HTMLDivElement | null>(null);
   useAutoScrollbar(settingsScrollRef);
+  // 清空日志确认弹窗
+  const [showClearLogsConfirm, setShowClearLogsConfirm] = useState(false);
 
   useEffect(() => {
     isAndroidPlatform().then(setIsAndroid);
@@ -4477,6 +4481,75 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                     </button>
                   </div>
 
+                  {/* 滚动性能记录卡片 */}
+                  <div className="bg-surface rounded-xl p-4 border border-subtle mt-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="text-md font-semibold text-gray-800 dark:text-white flex items-center">
+                        <BarChart2 size={16} className="mr-2 text-blue-500" />
+                        {t('settings.performance.scrollProfiling')}
+                      </h4>
+                      <button
+                        onClick={() => {
+                          const newValue = !(state.settings.performance?.scrollProfiling ?? isScrollProfilerEnabled());
+                          onUpdateSettingsData({
+                            performance: {
+                              ...state.settings.performance,
+                              refreshInterval: state.settings.performance?.refreshInterval || 5000,
+                              scrollProfiling: newValue
+                            }
+                          });
+                          setScrollProfilerEnabled(newValue);
+                          onShowToast?.(newValue
+                            ? t('settings.performance.scrollProfilingEnabledToast')
+                            : t('settings.performance.scrollProfilingDisabledToast'));
+                        }}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${(state.settings.performance?.scrollProfiling ?? isScrollProfilerEnabled()) ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'}`}
+                      >
+                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${(state.settings.performance?.scrollProfiling ?? isScrollProfilerEnabled()) ? 'translate-x-5' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
+
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">{t('settings.performance.scrollProfilingDesc')}</p>
+
+                    {/* 打开目录 / 清空日志 */}
+                    <div className="flex space-x-3">
+                      <button
+                        onClick={() => {
+                          const cacheRoot = getGlobalCacheRoot();
+                          if (!cacheRoot) {
+                            onShowToast?.(t('settings.performance.clearLogsEmpty'));
+                            return;
+                          }
+                          const norm = cacheRoot.replace(/[\\/]+$/, '');
+                          const sep = norm.includes('\\') ? '\\' : '/';
+                          const parent = norm.lastIndexOf(sep) > 0 ? norm.slice(0, norm.lastIndexOf(sep)) : norm;
+                          const logDir = `${parent}${sep}scroll-perf`;
+                          import('../api/tauri-bridge').then(({ openPath, ensureDirectory }) => {
+                            // 目录不存在时先创建，保证能打开
+                            ensureDirectory(logDir)
+                              .then(() => openPath(logDir))
+                              .catch(() => {
+                                openPath(logDir).catch(() => {
+                                  onShowToast?.(t('settings.performance.clearLogsEmpty'));
+                                });
+                              });
+                          });
+                        }}
+                        className="flex-1 px-4 py-2 bg-panel hover:bg-panel/70 text-gray-700 dark:text-gray-200 rounded-lg transition-colors border border-subtle text-sm flex items-center justify-center"
+                      >
+                        <FolderOpen size={14} className="mr-2" />
+                        {t('settings.performance.openLogDir')}
+                      </button>
+                      <button
+                        onClick={() => setShowClearLogsConfirm(true)}
+                        className="flex-1 px-4 py-2 bg-panel hover:bg-panel/70 text-red-500 dark:text-red-400 rounded-lg transition-colors border border-subtle text-sm flex items-center justify-center"
+                      >
+                        <Trash2 size={14} className="mr-2" />
+                        {t('settings.performance.clearLogs')}
+                      </button>
+                    </div>
+                  </div>
+
                   <div className="space-y-4 pt-4">
                     <div className="flex items-center justify-between" style={isAndroid ? { height: '55px' } : undefined}>
                       <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{t('settings.performance.refreshInterval')}</span>
@@ -4512,6 +4585,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
                         {t('settings.performance.clearData')}
                       </button>
                     </div>
+
                   </div>
                 </div>
               </section>
@@ -4622,6 +4696,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
               </p>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* 清空日志确认弹窗 */}
+      {showClearLogsConfirm && (
+        <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4">
+          <ConfirmModal
+            title={t('settings.performance.clearLogs')}
+            message={t('settings.performance.clearLogsConfirm')}
+            confirmText={t('settings.performance.clearLogs')}
+            confirmIcon={Trash2}
+            onClose={() => setShowClearLogsConfirm(false)}
+            onConfirm={() => {
+              setShowClearLogsConfirm(false);
+              const cacheRoot = getGlobalCacheRoot();
+              if (!cacheRoot) {
+                onShowToast?.(t('settings.performance.clearLogsEmpty'));
+                return;
+              }
+              const norm = cacheRoot.replace(/[\\/]+$/, '');
+              const sep = norm.includes('\\') ? '\\' : '/';
+              const parent = norm.lastIndexOf(sep) > 0 ? norm.slice(0, norm.lastIndexOf(sep)) : norm;
+              const logDir = `${parent}${sep}scroll-perf`;
+              deleteFile(logDir)
+                .then(() => onShowToast?.(t('settings.performance.clearLogsSuccess')))
+                .catch(() => onShowToast?.(t('settings.performance.clearLogsEmpty')));
+            }}
+            t={t}
+          />
         </div>
       )}
     </div>

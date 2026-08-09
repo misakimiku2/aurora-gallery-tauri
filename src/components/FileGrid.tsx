@@ -15,7 +15,7 @@ import { TagsList, TagIndexBar } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { getThumbnailPrefetcher } from '../utils/thumbnailPrefetch';
-import { throttle } from '../utils/debounce';
+import { throttle, debounce } from '../utils/debounce';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
 import { Folder3DIcon } from './Folder3DIcon';
@@ -25,6 +25,7 @@ import { InlineRenameInput } from './InlineRenameInput';
 import { FileListItem } from './FileListItem';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { lanNavStep, lanNavActive, lanNavId } from '../utils/lanNavTrace';
+import { scrollProfiler } from '../utils/scrollProfiler';
 import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
@@ -1010,6 +1011,13 @@ export const FileGrid = React.memo(({
   const effectiveCachePath = cachePath || settings?.paths?.cacheRoot || (settings?.paths?.resourceRoot ? `${settings.paths.resourceRoot}${settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined);
   const isAndroid = effectiveResourceRoot === 'android_media_store';
 
+  // 渲染计数（供滚动性能记录器统计滚动期间 FileGrid 的重渲染次数）
+  const _perfWin = typeof window !== 'undefined' ? (window as any) : undefined;
+  if (_perfWin) {
+    _perfWin.__AURORA_RENDER_COUNTS__ = _perfWin.__AURORA_RENDER_COUNTS__ || {};
+    _perfWin.__AURORA_RENDER_COUNTS__.fileGridRenders = (_perfWin.__AURORA_RENDER_COUNTS__.fileGridRenders || 0) + 1;
+  }
+
   const contentRef = useRef<HTMLDivElement>(null);
   const pullDistanceRef = useRef(0);
   // Track the currently highlighted drop target and debounced RAF for safe DOM mutation
@@ -1064,6 +1072,11 @@ export const FileGrid = React.memo(({
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
   const [scrollTop, setScrollTop] = useState(0);
   const containerWidthRef = useRef(0);
+  // 按需虚拟化：记录「已挂载卡片的渲染窗口」[min, max]（含 buffer）。
+  // 卡片是绝对定位 + 原生滚动，滚动本身由浏览器合成器处理（React 不参与）。
+  // 仅当视口 [scrollTop, scrollTop+height] 越过该窗口边界时才触发重渲染挂载新卡片，
+  // 从而把滚动期间的重渲染从「每帧一次」降到「每跨过一个窗口才一次」。
+  const renderWindowRef = useRef<{ min: number; max: number }>({ min: -Infinity, max: Infinity });
 
   const widthDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevPanelWidthRemRef = useRef<number | undefined>(undefined);
@@ -1073,6 +1086,9 @@ export const FileGrid = React.memo(({
   isVisibleRef.current = isVisible;
 
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 滚动节流 RAF：scroll 事件高频触发，将 scrollTop 状态更新合并到每帧一次，
+  // 避免 React 在单个滚动 tick 内因多次 setScrollTop 而重渲染（渲染风暴）。
+  const scrollRafRef = useRef<number | null>(null);
   // 滚动条显隐定时器：滚动结束后延迟隐藏滚动条（保留布局空间，仅隐藏 thumb 颜色）
   const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
@@ -1103,6 +1119,12 @@ export const FileGrid = React.memo(({
 
   const throttledOnScrollTopChange = useMemo(() => 
     onScrollTopChange ? throttle(onScrollTopChange, 100) : undefined
+  , [onScrollTopChange]);
+  // 滚动位置保存：滚动停止 300ms 后才更新 activeTab.scrollTop（App 状态）。
+  // 滚动期间不触发 App 重渲染，消除滚动中 onScrollTopChange 每 100ms 引发
+  // FileGrid 重渲染的第二个来源（与按需虚拟化配合，滚动时 React 几乎完全静止）。
+  const debouncedOnScrollTopChange = useMemo(() => 
+    onScrollTopChange ? debounce(onScrollTopChange, 300) : undefined
   , [onScrollTopChange]);
 
   const handleTagClickStable = useCallback((tag: string, e: React.MouseEvent) => {
@@ -1311,12 +1333,28 @@ export const FileGrid = React.memo(({
                 }, 300);
             }
 
-            setScrollTop(currentScroll);
-            throttledOnScrollTopChange?.(currentScroll);
+            // 按需虚拟化：滚动期间 React 状态保持不动（卡片绝对定位 + 原生滚动，
+            // 由浏览器合成器处理）。仅当视口 [currentScroll, +height] 越过
+            // 已挂载卡片的渲染窗口边界时，才触发一次重渲染挂载新卡片。
+            const win = renderWindowRef.current;
+            const containerH = scroller.clientHeight || 0;
+            const needsUpdate = currentScroll < win.min || currentScroll + containerH > win.max;
+            if (needsUpdate && scrollRafRef.current === null) {
+                scrollRafRef.current = requestAnimationFrame(() => {
+                    scrollRafRef.current = null;
+                    const scroller2 = containerRef.current;
+                    if (scroller2) {
+                        setScrollTop(scroller2.scrollTop);
+                    }
+                });
+            }
+            debouncedOnScrollTopChange?.(currentScroll);
             onScroll?.();
         }
     };
     containerRef.current.addEventListener('scroll', handleScroll, { passive: true });
+    // 滚动性能记录器：测量滚动期间帧耗时 / Long Task / 渲染次数等
+    scrollProfiler.attach(containerRef.current);
 
     // 鼠标悬停在滚动条区域（容器右缘）时添加 scrollbar-hover，滚动条显示并放大；
     // 移开滚动条区域后移除，实现「仅在滚动条上悬停才显示/变大」。
@@ -1335,12 +1373,16 @@ export const FileGrid = React.memo(({
 
     return () => {
         if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
         observer.disconnect();
         containerRef?.current?.removeEventListener('scroll', handleScroll);
         containerRef?.current?.removeEventListener('mousemove', handlePointerMove);
         containerRef?.current?.removeEventListener('mouseleave', handlePointerLeave);
+        scrollProfiler.detach();
         if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
         if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+        // 取消待执行的滚动位置保存（debounce），避免组件卸载后仍更新 App 状态
+        debouncedOnScrollTopChange?.cancel?.();
     };
   }, [containerRef, activeTab.viewMode]);
 
@@ -1790,6 +1832,8 @@ export const FileGrid = React.memo(({
       const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
+      // 记录本次挂载的渲染窗口，供滚动事件判断是否需要按需重渲染
+      renderWindowRef.current = { min: minY, max: maxY };
       if (layout.length === 0 || sortedByY.length === 0) return [];
       // sortedByY is sorted by layout[idx].y; binary-search the first index whose y
       // is >= minY - SAFE_MARGIN (margin covers max item height so items whose top is

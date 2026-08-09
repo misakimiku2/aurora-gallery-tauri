@@ -6,7 +6,7 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
-import { isThumbnailUpgrading, getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
+import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 
 const findImagesDeeply = (
@@ -81,13 +81,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     });
     return set;
   });
-
-  const [scrollState, setScrollState] = useState(getGlobalScrollState());
-
-  useEffect(() => {
-    if (!isAndroid) return;
-    return subscribeScrollState(setScrollState);
-  }, [isAndroid]);
 
   const previewCountedRef = useRef<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(previewSrcs.length > 0);
@@ -265,7 +258,7 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
             count={file.children?.length}
             category={file.category}
          />
-         {hasUpgrading && (scrollState === 'idle' || !isAndroid) && (
+         {hasUpgrading && (
            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
              <svg className="animate-spin h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none">
                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />

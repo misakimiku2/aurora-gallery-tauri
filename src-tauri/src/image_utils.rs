@@ -8,6 +8,32 @@ use log;
 pub static ACTIVE_HEAVY_DECODES: AtomicUsize = AtomicUsize::new(0);
 pub const MAX_CONCURRENT_HEAVY_DECODES: usize = 3;
 
+/// 全局缩略图解码并发计数（覆盖所有格式，避免滚动时批量请求把全部 CPU 核心打满）
+pub static ACTIVE_THUMB_DECODES: AtomicUsize = AtomicUsize::new(0);
+/// 缩略图解码最大并发数：同时最多解码 3 张，保证 UI 主线程有 CPU 余量。
+/// 数值越小滚动越顺，但首次浏览大目录时缩略图出现越慢；3 是平衡点。
+pub const MAX_CONCURRENT_THUMB_DECODES: usize = 3;
+
+/// 获取缩略图解码并发额度（同步阻塞式，用于 spawn_blocking 内）。
+/// 返回的 guard 在作用域结束时自动释放。
+pub struct ThumbDecodeGuard(());
+
+impl Drop for ThumbDecodeGuard {
+    fn drop(&mut self) {
+        ACTIVE_THUMB_DECODES.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// 等待缩略图解码并发额度
+pub fn acquire_thumb_decode() -> ThumbDecodeGuard {
+    use std::sync::atomic::Ordering;
+    while ACTIVE_THUMB_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_THUMB_DECODES {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    ACTIVE_THUMB_DECODES.fetch_add(1, Ordering::SeqCst);
+    ThumbDecodeGuard(())
+}
+
 pub fn is_jxl(buffer: &[u8]) -> bool {
     if buffer.starts_with(&[0xFF, 0x0A]) {
         return true;

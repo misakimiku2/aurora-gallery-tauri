@@ -117,7 +117,8 @@ export const App: React.FC = () => {
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
-        refreshInterval: 5000 // 默锟斤拷5锟斤拷刷锟斤拷一锟斤拷
+        refreshInterval: 5000, // 默锟斤拷5锟斤拷刷锟斤拷一锟斤拷
+        scrollProfiling: false // 滚动性能记录（默认关闭，设置-性能界面可开启）
       },
       ai: {
         provider: 'ollama',

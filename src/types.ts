@@ -378,6 +378,7 @@ export interface AppSettings {
   clip: ClipSettings;
   performance: {
     refreshInterval: number; // 毫秒
+    scrollProfiling?: boolean; // 滚动性能记录（默认关闭）
   };
   lanShare: LanShareSettings;
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析

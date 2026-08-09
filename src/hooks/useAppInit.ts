@@ -5,6 +5,7 @@ import { isTauriEnvironment, detectTauriEnvironmentAsync } from '../utils/enviro
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermission, scanAndroidFolders, scanAndroidImages, loadFolderCache, loadScanCache, saveScanCache } from '../utils/androidPlatform';
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { setScrollProfilerEnabled } from '../utils/scrollProfiler';
 import { memoryPressureMonitor } from '../utils/memoryPressureMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { aiService } from '../services/aiService';
@@ -166,6 +167,8 @@ export const useAppInit = ({
                 port: finalSettings.lanShare?.serverPort,
                 tokenPrefix: finalSettings.lanShare?.serverAccessToken?.slice(0, 8),
               });
+              // 恢复滚动性能记录开关（设置-性能界面控制，默认关闭）
+              setScrollProfilerEnabled(!!finalSettings.performance?.scrollProfiling);
               savedDataLoadedRef.current = true;
               setSavedDataLoaded(true);
 

@@ -186,6 +186,30 @@ body {
   --scrollbar-alpha: 1;
 }
 
+/* 滚动性能优化：滚动期间暂停文件卡片上的所有过渡/动画。
+   FileCard 通过 transform 定位，滚动帧中无需为大量 CSS transition
+   （hover 缩放、3D 文件夹展开等）做动画计算，可显著降低每帧开销。 */
+#file-grid-container.scrolling .file-item,
+#file-grid-container.scrolling .file-item *,
+#file-grid-container.scrolling .file-item *::before,
+#file-grid-container.scrolling .file-item *::after {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+  animation-duration: 0ms !important;
+  animation-delay: 0ms !important;
+  animation-play-state: paused !important;
+}
+
+/* 滚动期间禁用高成本的 filter / backdrop-filter / mix-blend-mode，
+   避免滚动帧内为这些合成效果反复重绘（文件夹 3D 图标的 drop-shadow、
+   badge 的 backdrop-blur、overlay 图标的 blend 等）。滚动停止后自动恢复。 */
+#file-grid-container.scrolling .file-item * {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  mix-blend-mode: normal !important;
+}
+
 /* 悬停滚动条区域：淡入显示 + 颜色加深 + 放大（#94a3b8） */
 #file-grid-container.scrollbar-hover,
 .custom-scrollbar.scrollbar-hover,
