@@ -133,6 +133,18 @@ impl ColorDbPool {
     pub fn get_connection(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap()
     }
+
+    // 打开一个独立的只读连接（WAL 模式支持多读）。
+    // 用于启动时的批量颜色查询，避免与后台缓存预热线程争抢唯一的
+    // Mutex<Connection> 而导致启动卡顿。
+    pub fn open_read_connection(&self) -> Result<Connection> {
+        let path = self.db_path.read().map_err(|e| e.to_string())?.clone();
+        let conn = Connection::open(&path)
+            .map_err(|e| format!("Failed to open read connection: {}", e))?;
+        // 只读 + 足够长的 busy_timeout，避免误写和短时锁冲突
+        let _ = conn.execute_batch("PRAGMA query_only=ON; PRAGMA busy_timeout=15000; PRAGMA temp_store=MEMORY;");
+        Ok(conn)
+    }
     
     
     // 手动执行WAL检查点
@@ -331,58 +343,85 @@ impl ColorDbPool {
         self.cache_inited.load(Ordering::SeqCst)
     }
 
-    // Load DB rows in batches and append to cache to avoid big IO/CPU spike
+    // Load DB rows in batches and append to cache to avoid big IO/CPU spike.
+    // Uses keyset pagination (WHERE file_path > last) instead of OFFSET so that
+    // each batch only scans the next 500 rows instead of re-scanning the whole table.
     pub fn refresh_cache_in_batches(&self, batch_size: usize) -> Result<()> {
-        let mut offset: i64 = 0;
+        let mut last_file_path: Option<String> = None;
         loop {
-            let batch = self.load_from_db_internal_batch(offset, batch_size as i64)?;
-            if batch.is_empty() {
+            let batch = self.load_from_db_internal_batch(last_file_path.as_deref(), batch_size as i64)?;
+            let batch_len = batch.len();
+            if batch_len == 0 {
                 break;
             }
+            last_file_path = batch.last().map(|c| c.file_path.clone());
 
             {
                 let mut cache = self.cache.write().map_err(|e| e.to_string())?;
-                cache.extend(batch.into_iter());
+                cache.extend(batch);
+            }
+
+            if batch_len < batch_size {
+                break;
             }
 
             // Small pause to reduce IO burst on startup
-            std::thread::sleep(Duration::from_millis(20));
-
-            offset += batch_size as i64;
+            std::thread::sleep(Duration::from_millis(2));
         }
 
         Ok(())
     }
 
-    fn load_from_db_internal_batch(&self, offset: i64, limit: i64) -> Result<Vec<CachedImage>> {
+    fn load_from_db_internal_batch(&self, after: Option<&str>, limit: i64) -> Result<Vec<CachedImage>> {
         let conn = self.conn.lock().map_err(|e| format!("Get connection failed: {}", e))?;
 
-        let mut stmt = conn.prepare(
-            "SELECT file_path, colors FROM dominant_colors WHERE status = 'extracted' LIMIT ? OFFSET ?"
-        ).map_err(|e| e.to_string())?;
+        // 统一的行映射函数（两个分支共用，保证 match 类型一致）
+        fn map_row(row: &rusqlite::Row) -> rusqlite::Result<(String, String)> {
+            let file_path: String = row.get(0)?;
+            let colors_json: String = row.get(1)?;
+            Ok((file_path, colors_json))
+        }
 
-        let rows = stmt.query_map(params![limit, offset], |row| {
-             let file_path: String = row.get(0)?;
-             let colors_json: String = row.get(1)?;
-             Ok((file_path, colors_json))
-         }).map_err(|e| e.to_string())?;
+        let mut stmt;
+        let rows: Vec<(String, String)> = match after {
+            Some(last) => {
+                stmt = conn.prepare(
+                    "SELECT file_path, colors FROM dominant_colors
+                     WHERE status = 'extracted' AND file_path > ?1
+                     ORDER BY file_path LIMIT ?2"
+                ).map_err(|e| e.to_string())?;
+                stmt.query_map(params![last, limit], map_row)
+                    .map_err(|e| e.to_string())?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(|e| e.to_string())?
+            },
+            None => {
+                stmt = conn.prepare(
+                    "SELECT file_path, colors FROM dominant_colors
+                     WHERE status = 'extracted'
+                     ORDER BY file_path LIMIT ?1"
+                ).map_err(|e| e.to_string())?;
+                stmt.query_map(params![limit], map_row)
+                    .map_err(|e| e.to_string())?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(|e| e.to_string())?
+            }
+        };
 
-         let mut results = Vec::new();
-         for row in rows {
-             if let Ok((file_path, colors_json)) = row {
-                 if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
-                     let labs = colors.into_iter()
-                         .filter_map(|c| hex_to_lab(&c.hex))
-                         .collect();
+        let mut results = Vec::new();
+        for (file_path, colors_json) in rows {
+            if let Ok(colors) = serde_json::from_str::<Vec<ColorResult>>(&colors_json) {
+                let labs = colors.into_iter()
+                    .filter_map(|c| hex_to_lab(&c.hex))
+                    .collect();
 
-                     results.push(CachedImage {
-                         file_path,
-                         labs,
-                     });
-                 }
-             }
-         }
-         Ok(results)
+                    results.push(CachedImage {
+                        file_path,
+                        labs,
+                    });
+                }
+        }
+        Ok(results)
     }
 
     pub fn move_colors(&self, old_path: &str, new_path: &str) -> Result<()> {
@@ -898,6 +937,13 @@ pub fn init_db(conn: &mut Connection) -> Result<()> {
         [],
     ).map_err(|e| e.to_string())?;
     
+    // 复合索引：让 "WHERE status=? AND file_path>? ORDER BY file_path" 的
+    // keyset 分页（缓存预热）走索引，避免全表重扫
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_status_file_path ON dominant_colors(status, file_path)",
+        [],
+    ).map_err(|e| e.to_string())?;
+    
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_created_at ON dominant_colors(created_at)",
         [],
@@ -1272,4 +1318,59 @@ pub fn cleanup_nonexistent_error_files(
     }
 
     Ok(existing_files)
+}
+
+/// 清理主色调数据库中磁盘上已不存在的文件记录（残留记录）
+///
+/// `valid_paths` 是扫描后确认存在的文件路径集合（来自 metadata.db 的 file_index）。
+/// 删除 `dominant_colors` 及 `image_color_indices` 中不在该集合内的记录，
+/// 使数据库总记录数反映当前目录真实文件数，避免累计残留。
+pub fn cleanup_stale_color_records(
+    conn: &mut Connection,
+    valid_paths: &std::collections::HashSet<String>,
+) -> Result<usize> {
+    if valid_paths.is_empty() {
+        return Ok(0);
+    }
+
+    // 收集数据库中所有路径（独立作用域，确保 stmt 在事务前释放）
+    let stale_paths: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT file_path FROM dominant_colors")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+
+        let mut stale_paths: Vec<String> = Vec::new();
+        for row in rows {
+            let path = row.map_err(|e| e.to_string())?;
+            let normalized = path.replace('\\', "/");
+            if !valid_paths.contains(&normalized) {
+                stale_paths.push(normalized);
+            }
+        }
+        stale_paths
+    };
+
+    if stale_paths.is_empty() {
+        return Ok(0);
+    }
+
+    // 删除残留记录（含颜色索引）
+    let mut total_deleted = 0usize;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut del_main = tx.prepare("DELETE FROM dominant_colors WHERE file_path = ?")
+            .map_err(|e| e.to_string())?;
+        let mut del_index = tx.prepare("DELETE FROM image_color_indices WHERE file_path = ?")
+            .map_err(|e| e.to_string())?;
+        for path in &stale_paths {
+            del_main.execute(params![path]).map_err(|e| e.to_string())?;
+            del_index.execute(params![path]).map_err(|e| e.to_string())?;
+            total_deleted += 1;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+
+    eprintln!("Cleaned up {} stale color records", total_deleted);
+    Ok(total_deleted)
 }

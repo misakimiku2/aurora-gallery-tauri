@@ -307,6 +307,20 @@ export class PerformanceMonitor {
   }
 
   /**
+   * 仅清除指定名称的指标（计时与计数器）
+   * 用于切换资源根目录后，重置与目录相关的性能统计（文件扫描、缩略图加载等）
+   */
+  clearMetricsByNames(names: string[]): void {
+    if (!names || names.length === 0) return;
+    const nameSet = new Set(names);
+    this.metrics = this.metrics.filter(m => !nameSet.has(m.name));
+    for (const name of nameSet) {
+      this.counters.delete(name);
+    }
+    this.saveHistory();
+  }
+
+  /**
    * 保存历史数据到本地存储
    */
   private saveHistory(): void {
@@ -469,6 +483,13 @@ export const performanceMonitor = {
    */
   clearMetrics: () => {
     getPerformanceMonitor().clearMetrics();
+  },
+
+  /**
+   * 清除指定名称的指标（用于切换资源根目录后重置相关统计）
+   */
+  clearMetricsByNames: (names: string[]) => {
+    getPerformanceMonitor().clearMetricsByNames(names);
   },
 
   /**

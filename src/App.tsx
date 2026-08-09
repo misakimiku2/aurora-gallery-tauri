@@ -561,14 +561,7 @@ export const App: React.FC = () => {
       }
     }
 
-    // 恢复后台颜色提取，让主色处理开始
-    (async () => {
-      try {
-        await resumeColorExtraction();
-      } catch (err) {
-        console.warn('Failed to resume color extraction:', err);
-      }
-    })();
+    // 主色调提取为纯手动功能：启动/进入主界面时不再自动启动
   };
 
   // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟皆匡拷锟斤拷锟斤拷母锟斤拷锟斤拷锟斤拷位锟斤拷
@@ -1795,7 +1788,7 @@ export const App: React.FC = () => {
 
   useAppInit({
     state, setState, savedDataLoadedRef, setSavedDataLoaded,
-    setIsLoading, setShowSplash, setShowWelcome, exitActionRef, setGroupBy,
+    setIsLoading, setShowSplash, setShowWelcome, setLoadingInfo, exitActionRef, setGroupBy,
   });
 
   const { handleRememberFolderSettings } = useFolderSettings({

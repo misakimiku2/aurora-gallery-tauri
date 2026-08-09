@@ -179,7 +179,7 @@ pub async fn check_for_updates(
     github_token: Option<&str>,
 ) -> Result<UpdateCheckResult, String> {
     log::info!("Checking for updates...");
-    if let Some(token) = github_token {
+    if let Some(_token) = github_token {
         log::debug!("Using GitHub Token for authentication");
     }
     // 首先尝试使用 GitHub API (latest)

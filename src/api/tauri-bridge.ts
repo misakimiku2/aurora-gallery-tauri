@@ -400,7 +400,14 @@ class ThumbnailBatcher {
     signal?: AbortSignal;
   }>> = new Map();
   private timeoutId: ReturnType<typeof setTimeout> | null = null;
+  // 在飞批次计数：允许最多 MAX_INFLIGHT 批并行发送，新请求可立即进入
+  // 新批次，不必等旧批次整批完成（后端信号量仍保证解码不超载）。
+  private inflight = 0;
   private readonly BATCH_DELAY = 50; // 50ms 聚合时间
+  // 每批最多发送的路径数：清空缓存重建时避免一批堆积过多请求，
+  // 防止"视口上方已滚过的请求"占满后端并发，当前视口迟迟轮不到。
+  private readonly MAX_BATCH_SIZE = 8;
+  private readonly MAX_INFLIGHT = 2;
 
   add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void, signal?: AbortSignal): Promise<string | null> {
     return new Promise((resolve, reject) => {
@@ -450,30 +457,48 @@ class ThumbnailBatcher {
 
   private async processBatch() {
     this.timeoutId = null;
-    if (this.batch.size === 0) return;
+    // 有在飞批次时不重复调度（完成后会自己继续），
+    // 但若 batch 非空且还有并发额度，则立即发送新批次。
+    while (this.batch.size > 0 && this.inflight < this.MAX_INFLIGHT) {
+      // 取出全部，最新优先（Map 插入顺序：旧在前、新在后，反转后新在前）
+      const entries = Array.from(this.batch.entries()).reverse();
+      this.batch.clear();
 
-    // 取出所有待处理项
-    // Filter out aborted requests before processing
-    const currentBatch = new Map<string, Array<{
-      resolve: (value: string | null) => void;
-      reject: (reason?: any) => void;
-      cacheRoot: string;
-      onColors?: (colors: DominantColor[] | null) => void;
-      signal?: AbortSignal;
-    }>>();
-
-    for (const [path, requests] of this.batch.entries()) {
-      const activeRequests = requests.filter(r => !r.signal?.aborted);
-      if (activeRequests.length > 0) {
-        currentBatch.set(path, activeRequests);
+      const toSend = new Map(entries.slice(0, this.MAX_BATCH_SIZE));
+      // 剩余放回，下一轮继续（仍然是"最新优先"选取）
+      for (const [path, requests] of entries.slice(this.MAX_BATCH_SIZE)) {
+        this.batch.set(path, requests);
       }
+
+      // 过滤已取消的请求
+      for (const [path, requests] of toSend) {
+        const active = requests.filter(r => !r.signal?.aborted);
+        if (active.length > 0) toSend.set(path, active);
+        else toSend.delete(path);
+      }
+      if (toSend.size === 0) continue;
+
+      this.inflight++;
+      // fire-and-forget：不阻塞本循环，允许并行新批次（当前视口请求立即发送）
+      this.sendBatch(toSend).finally(() => {
+        this.inflight--;
+        // 批次完成，若还有积压则继续调度下一批
+        if (this.batch.size > 0 && this.inflight < this.MAX_INFLIGHT) {
+          this.processBatch();
+        }
+      });
     }
-    this.batch.clear();
+  }
 
-    if (currentBatch.size === 0) return;
-
+  private async sendBatch(currentBatch: Map<string, Array<{
+    resolve: (value: string | null) => void;
+    reject: (reason?: any) => void;
+    cacheRoot: string;
+    onColors?: (colors: DominantColor[] | null) => void;
+    signal?: AbortSignal;
+  }>>) {
     try {
-      // 按照 cacheRoot 分组
+      // 按照 cacheRoot 分组（保持优先级顺序）
       const batchesByRoot: Record<string, string[]> = {};
 
       for (const [path, items] of currentBatch.entries()) {
@@ -537,6 +562,13 @@ class ThumbnailBatcher {
                 pathCache.set(path, url);
 
                 const src = convertFileSrc(url);
+                // 无论请求方是否已 abort（滚动离开视口），后端已生成缩略图，
+                // 无条件写入内存缓存：组件滚动回来重新挂载时可直接命中，
+                // 避免"磁盘缓存已有但前端不显示、需再次滚动才触发"的问题。
+                const globalCache = getGlobalCache();
+                if (globalCache.get(path) !== src) {
+                  globalCache.set(path, src);
+                }
                 items.forEach(item => {
                   if (!item.signal?.aborted) item.resolve(src);
                 });
@@ -618,6 +650,10 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   let cachePath: string;
   if (cachePathOverride && cachePathOverride.trim() !== '') {
     cachePath = cachePathOverride;
+  } else if (rootPath && rootPath.trim() !== '' && rootPath !== 'android_media_store') {
+    // 桌面端：缓存统一放在资源根目录下的 .Aurora_Cache（与图片缩略图一致），
+    // 而非 _globalCacheRoot（AppData），避免文件夹图标与图片缓存路径分叉。
+    cachePath = `${rootPath}${rootPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
   } else if (_globalCacheRoot) {
     cachePath = _globalCacheRoot;
   } else if (rootPath && rootPath.trim() !== '') {
@@ -628,7 +664,7 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
   }
 
   if (_isAndroid) {
-    const timerId = performanceMonitor.start('getThumbnail', undefined, false);
+    const timerId = performanceMonitor.start('getThumbnail', undefined, true);
     try {
       const result = await invoke<{ path: string; thumbnailPath: string | null; width: number; height: number; upgrading: boolean } | null>(
         'android_get_thumbnail',
@@ -650,7 +686,7 @@ export const getThumbnail = async (filePath: string, modified?: string, rootPath
     }
   }
 
-  const timerId = performanceMonitor.start('getThumbnail', undefined, false);
+  const timerId = performanceMonitor.start('getThumbnail', undefined, true);
   try {
     const res = await thumbnailBatcher.add(filePath, cachePath, onColors, signal);
 
@@ -1277,6 +1313,24 @@ export const cancelColorExtraction = async (): Promise<boolean> => {
 };
 
 /**
+ * 彻底停止主色调提取（桌面端）：终止 worker 并丢弃其内存任务队列。
+ * 用于切换资源根目录、手动"停止"按钮等场景。
+ */
+export const shutdownColorExtraction = async (): Promise<boolean> => {
+  if (isAndroidPlatformCached()) {
+    // Android 使用独立的取消机制
+    return cancelColorExtraction();
+  }
+  try {
+    const result = await invoke<boolean>('shutdown_color_extraction');
+    return result;
+  } catch (error) {
+    console.error('Failed to shutdown color extraction:', error);
+    return false;
+  }
+};
+
+/**
  * 批量添加文件到 pending 表（用于首次扫描）
  * @param filePaths 文件路径列表
  * @returns 实际添加的文件数量
@@ -1792,6 +1846,17 @@ export interface ColorDbErrorFile {
  * 获取主色调数据库统计信息
  * @returns 数据库统计信息
  */
+export const cleanupStaleColorRecords = async (): Promise<number> => {
+  if (!isTauriEnvironment()) return 0;
+  try {
+    const result = await invoke<number>('cleanup_stale_color_records');
+    return result;
+  } catch (e) {
+    console.error('Failed to cleanup stale color records:', e);
+    return 0;
+  }
+};
+
 export const getColorDbStats = async (): Promise<ColorDbStats | null> => {
   if (!isTauriEnvironment()) return null;
   try {

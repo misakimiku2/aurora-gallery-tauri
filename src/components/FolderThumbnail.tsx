@@ -59,7 +59,7 @@ const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ fil
 
 export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
   const isAndroid = resourceRoot === 'android_media_store';
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '1200px' });
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '600px' });
 
   const imageChildren = useMemo(() => {
       if (!file.children || file.children.length === 0) return [];
@@ -100,7 +100,9 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
         return;
     }
 
-    if ((isInView || wasInView) && resourceRoot && imageChildren.length > 0) {
+    // 组件被虚拟化渲染即表示在视口附近，直接加载（不依赖 IntersectionObserver，
+    // 否则快速滚动时 observer 回调延迟会导致缩略图永远不加载）
+    if (resourceRoot && imageChildren.length > 0) {
       const controller = new AbortController();
       const loadPreviews = async () => {
         try {

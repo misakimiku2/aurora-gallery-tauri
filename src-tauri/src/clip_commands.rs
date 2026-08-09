@@ -471,7 +471,6 @@ pub async fn clip_generate_embeddings_batch(
         
         let batch_start = std::time::Instant::now();
         let batch_paths: Vec<String> = batch.iter().map(|(path, _)| path.clone()).collect();
-        let batch_file_ids: Vec<String> = batch.iter().map(|(_, id)| id.clone()).collect();
         
         log::info!("Processing batch {}/{}: {} files", batch_idx + 1, total_batches, batch.len());
         
@@ -499,7 +498,7 @@ pub async fn clip_generate_embeddings_batch(
                     let embedding_store = guard.embedding_store().ok_or("Embedding store not available")?;
                     
                     let mut batch_embeddings = Vec::with_capacity(batch.len());
-                    for (i, ((_path, file_id), result)) in batch.iter().zip(embeddings.iter()).enumerate() {
+                    for (_i, ((_path, file_id), result)) in batch.iter().zip(embeddings.iter()).enumerate() {
                         // 保存标签（如果是 Tagger 且开启了自动添加标签）
                         if auto_add_tags_enabled {
                             if let Some(tags) = &result.tags {
@@ -1210,7 +1209,7 @@ pub async fn clip_generate_tags_from_embeddings(
         .ok_or("CLIP manager not initialized")?;
     
     // 获取嵌入存储
-    let (embeddings, root_path, model_cache_dir) = {
+    let (embeddings, _root_path, _model_cache_dir) = {
         let mut guard = manager.write().await;
         
         // 切换到 WD14 模型
@@ -1323,7 +1322,7 @@ pub struct TagsPreviewResult {
 
 #[tauri::command]
 pub async fn clip_preview_tags_from_embeddings(
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
     model_name: Option<String>,
     threshold: f32,
     language: Option<String>,
@@ -1338,7 +1337,7 @@ pub async fn clip_preview_tags_from_embeddings(
     let manager = crate::clip::get_clip_manager().await
         .ok_or("CLIP manager not initialized")?;
     
-    let (embeddings, model_cache_dir) = {
+    let (embeddings, _model_cache_dir) = {
         let mut guard = manager.write().await;
         guard.switch_model(&requested_model)?;
         
@@ -1440,6 +1439,7 @@ pub async fn clip_get_character_tags(
     model_name: Option<String>,
     language: Option<String>,
 ) -> Result<Vec<CharacterTag>, String> {
+    let _ = &language;
     let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
     
     if requested_model != "WD-EVA02-Large-Tagger-V3" {
@@ -1537,7 +1537,7 @@ pub async fn clip_get_detected_characters(
     min_count: usize,
     model_name: Option<String>,
     language: Option<String>,
-    app: tauri::AppHandle,
+    _app: tauri::AppHandle,
 ) -> Result<Vec<DetectedCharacter>, String> {
     let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
     let lang = language.unwrap_or_else(|| "en".to_string());
@@ -1698,7 +1698,7 @@ pub async fn clip_get_work_topics(
     use std::collections::HashMap;
     
     let requested_model = model_name.unwrap_or_else(|| "WD-EVA02-Large-Tagger-V3".to_string());
-    let lang = language.unwrap_or_else(|| "en".to_string());
+    let _lang = language.unwrap_or_else(|| "en".to_string());
     
     if requested_model != "WD-EVA02-Large-Tagger-V3" {
         return Err("作品专题仅支持 WD-EVA02-Large-Tagger-V3 模型".to_string());

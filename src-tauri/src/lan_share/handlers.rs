@@ -469,7 +469,7 @@ pub async fn handle_browse(
             None
         }).await.unwrap_or(None);
         
-        if let Some((folders, mut images)) = result {
+        if let Some((folders, images)) = result {
             let __t_sb_elapsed = __t_sb_start.elapsed();
             // 跳过 fill_image_palette：palette 仅在元数据面板/图片查看器中使用，
             // 文件夹浏览不需要。跳过可节省 ~38ms 服务端时间 + 减小 JSON payload。

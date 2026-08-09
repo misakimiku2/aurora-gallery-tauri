@@ -249,14 +249,29 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
     Ok(result_node)
 }
 
-#[tauri::command]
-pub async fn ensure_directory(path: String) -> Result<(), String> {
-    let cache_path = Path::new(&path);
-    if !cache_path.exists() {
-        fs::create_dir_all(cache_path)
+/// 确保目录存在；若目录为 .Aurora_Cache（缩略图缓存目录），
+/// 在 Windows 上额外设置隐藏属性，避免它在资源根目录中作为普通文件夹显示。
+pub fn ensure_aurora_cache_dir(path: &str) -> Result<(), String> {
+    let dir = Path::new(path);
+    if !dir.exists() {
+        fs::create_dir_all(dir)
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
+    #[cfg(windows)]
+    {
+        let is_aurora_cache = path.replace('\\', "/").ends_with(".Aurora_Cache");
+        if is_aurora_cache {
+            // attrib +h 为 Windows 内置命令，仅设置当前目录的隐藏属性（不影响子内容）
+            use std::process::Command;
+            let _ = Command::new("attrib").arg("+h").arg(path).output();
+        }
+    }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn ensure_directory(path: String) -> Result<(), String> {
+    ensure_aurora_cache_dir(&path)
 }
 
 #[tauri::command]

@@ -1996,6 +1996,7 @@ pub fn run() {
         color_commands::batch_get_colors,
         color_worker::pause_color_extraction,
         color_worker::resume_color_extraction,
+        color_worker::shutdown_color_extraction,
         db_commands::force_wal_checkpoint,
         db_commands::get_wal_info,
         db_commands::db_get_all_people,
@@ -2025,6 +2026,7 @@ pub fn run() {
         db_commands::get_color_db_error_files,
         db_commands::retry_color_extraction,
         db_commands::delete_color_db_error_files,
+        db_commands::cleanup_stale_color_records,
         update_commands::check_for_updates_command,
         system_commands::open_external_link,
         update_commands::start_update_download,
@@ -2182,6 +2184,8 @@ pub fn run() {
     
     builder
         .setup(|app| {
+            let setup_start = std::time::Instant::now();
+            log::info!("[Setup] begin");
             #[cfg(not(target_os = "android"))]
             {
                 let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
@@ -2238,6 +2242,7 @@ pub fn run() {
             }
             
             let (db_path, app_db_path) = get_initial_db_paths(app.handle());
+            log::info!("[Setup] opening color DB at {}", db_path.display());
             
             let pool = match color_db::ColorDbPool::new(&db_path) {
                 Ok(pool_instance) => {
@@ -2264,9 +2269,11 @@ pub fn run() {
                 }
             };
             
+            log::info!("[Setup] color DB ready in {:?}", setup_start.elapsed());
             let pool_arc = Arc::new(pool);
             app.manage(pool_arc.clone());
 
+            log::info!("[Setup] opening app DB at {}", app_db_path.display());
             let app_db_pool = match AppDbPool::new(&app_db_path) {
                 Ok(pool) => {
                     {
@@ -2285,10 +2292,6 @@ pub fn run() {
             
             #[cfg(not(target_os = "android"))]
             app.manage(LanShareState::new());
-            
-            let batch_size = 50;
-            let app_handle_new = app.handle().clone();
-            let app_handle_arc = Arc::new(app_handle_new);
 
             let cache_root = {
                 let home = std::env::var("HOME")
@@ -2350,15 +2353,8 @@ pub fn run() {
                 });
             }
             
-            #[cfg(not(target_os = "android"))]
-            tauri::async_runtime::spawn(async move {
-                color_worker::color_extraction_worker(
-                    pool_arc,
-                    batch_size,
-                    Some(app_handle_arc),
-                    cache_root
-                ).await;
-            });
+            // 注意：主色调提取 worker 不在启动时自动启动，
+            // 由用户手动触发 resume_color_extraction 时才启动（纯手动功能）。
             
             #[cfg(not(target_os = "android"))]
             if let Some(window) = app.get_webview_window("main") {
@@ -2381,6 +2377,7 @@ pub fn run() {
                     let _ = window.center();
                 }
                 let _ = window.show();
+                log::info!("[Setup] window shown, setup took {:?}", setup_start.elapsed());
             }
 
             Ok(())

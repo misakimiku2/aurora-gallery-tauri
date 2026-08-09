@@ -12,6 +12,7 @@ use image::ImageFormat;
 use image;
 use rayon::prelude::*;
 use crate::color_extractor;
+use crate::file_operations::ensure_aurora_cache_dir;
 
 #[derive(Clone, Serialize)]
 pub struct BatchResult {
@@ -180,7 +181,7 @@ fn process_thumbnail_decode(
             let pixels = dst_image.buffer();
             let has_actual_transparency = pixels.chunks_exact(4).any(|p| p[3] < 255);
 
-            if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
+            if !cache_root.exists() { let _ = ensure_aurora_cache_dir(cache_root.to_str().unwrap_or("")); }
 
             if has_actual_transparency {
                 let cache_file = fs::File::create(&webp_cache_file_path).ok()?;
@@ -211,7 +212,7 @@ fn process_thumbnail_decode(
             let mut resizer = fr::Resizer::new(fr::ResizeAlg::Convolution(fr::FilterType::Hamming));
             resizer.resize(&src_image.view(), &mut dst_image.view_mut()).ok()?;
 
-            if !cache_root.exists() { let _ = fs::create_dir_all(cache_root); }
+            if !cache_root.exists() { let _ = ensure_aurora_cache_dir(cache_root.to_str().unwrap_or("")); }
             let cache_file = fs::File::create(&jpg_cache_file_path).ok()?;
             let mut writer = BufWriter::new(cache_file);
             let mut encoder = JpegEncoder::new_with_quality(&mut writer, 80);
@@ -230,6 +231,7 @@ fn process_thumbnail_decode(
 }
 
 #[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ThumbnailBatchResult {
     pub path: String,
     pub url: Option<String>,
@@ -241,7 +243,7 @@ pub struct ThumbnailBatchResult {
 pub async fn get_thumbnail(file_path: String, cache_root: String) -> Result<Option<String>, String> {
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
-        if !root.exists() { let _ = fs::create_dir_all(root); }
+        if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
         process_single_thumbnail(&file_path, root)
     }).await;
 
@@ -258,7 +260,7 @@ pub async fn get_thumbnails_batch(
     let file_paths_clone2 = file_paths;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = Path::new(&cache_root);
-        if !root.exists() { let _ = fs::create_dir_all(root); }
+        if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
 
         file_paths_clone2.par_iter().for_each(|path| {
             use std::fs;
@@ -339,7 +341,7 @@ pub async fn save_remote_thumbnail(
         let cache_filename = if hash_str.len() >= 24 { hash_str[..24].to_string() } else { format!("{:0>24}", hash_str) };
 
         let root = Path::new(&cache_root);
-        if !root.exists() { let _ = fs::create_dir_all(root); }
+        if !root.exists() { let _ = ensure_aurora_cache_dir(root.to_str().unwrap_or("")); }
 
         // 解析 Base64 数据
         // 期望格式: "data:image/jpeg;base64,..." 或直接是 Base64
@@ -522,7 +524,7 @@ pub async fn generate_drag_preview(
         // 保存预览图到缓存目录
         let cache_path = Path::new(&cache_root);
         if !cache_path.exists() {
-            let _ = fs::create_dir_all(cache_path);
+            let _ = ensure_aurora_cache_dir(cache_path.to_str().unwrap_or(""));
         }
         
         let preview_file = cache_path.join("_drag_preview.png");

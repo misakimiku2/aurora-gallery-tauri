@@ -8,30 +8,59 @@ use log;
 pub static ACTIVE_HEAVY_DECODES: AtomicUsize = AtomicUsize::new(0);
 pub const MAX_CONCURRENT_HEAVY_DECODES: usize = 3;
 
-/// 全局缩略图解码并发计数（覆盖所有格式，避免滚动时批量请求把全部 CPU 核心打满）
-pub static ACTIVE_THUMB_DECODES: AtomicUsize = AtomicUsize::new(0);
-/// 缩略图解码最大并发数：同时最多解码 3 张，保证 UI 主线程有 CPU 余量。
-/// 数值越小滚动越顺，但首次浏览大目录时缩略图出现越慢；3 是平衡点。
-pub const MAX_CONCURRENT_THUMB_DECODES: usize = 3;
+/// 缩略图解码最大并发数：同时最多解码 5 张，保证 UI 主线程有 CPU 余量。
+/// 数值越小滚动越顺，但首次浏览大目录（或清空缓存重建）时缩略图出现越慢；
+/// 5 在排队延迟与主线程余量之间取得更好平衡。
+pub const MAX_CONCURRENT_THUMB_DECODES: usize = 5;
 
-/// 获取缩略图解码并发额度（同步阻塞式，用于 spawn_blocking 内）。
-/// 返回的 guard 在作用域结束时自动释放。
-pub struct ThumbDecodeGuard(());
+/// 基于 Mutex + Condvar 的计数信号量（替代 std::sync::Semaphore，
+/// 兼容当前工具链；等待线程真正挂起、不空转 CPU，排队延迟不再叠加
+/// 5ms 轮询开销，清空缓存后大批量重建缩略图时排队时间显著缩短）。
+pub struct ThumbDecodeSemaphore {
+    count: std::sync::Mutex<usize>,
+    cond: std::sync::Condvar,
+}
 
-impl Drop for ThumbDecodeGuard {
-    fn drop(&mut self) {
-        ACTIVE_THUMB_DECODES.fetch_sub(1, Ordering::SeqCst);
+impl ThumbDecodeSemaphore {
+    pub const fn new(max_concurrent: usize) -> Self {
+        Self {
+            count: std::sync::Mutex::new(max_concurrent),
+            cond: std::sync::Condvar::new(),
+        }
+    }
+
+    pub fn acquire(&self) -> ThumbDecodeGuard<'_> {
+        let mut count = self.count.lock().unwrap();
+        while *count == 0 {
+            count = self.cond.wait(count).unwrap();
+        }
+        *count -= 1;
+        ThumbDecodeGuard { sem: self }
+    }
+
+    fn release(&self) {
+        let mut count = self.count.lock().unwrap();
+        *count += 1;
+        self.cond.notify_one();
     }
 }
 
-/// 等待缩略图解码并发额度
-pub fn acquire_thumb_decode() -> ThumbDecodeGuard {
-    use std::sync::atomic::Ordering;
-    while ACTIVE_THUMB_DECODES.load(Ordering::Relaxed) >= MAX_CONCURRENT_THUMB_DECODES {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+pub static THUMB_DECODE_SEMAPHORE: ThumbDecodeSemaphore =
+    ThumbDecodeSemaphore::new(MAX_CONCURRENT_THUMB_DECODES);
+
+/// 获取缩略图解码并发额度（阻塞式）。Drop 时自动释放额度。
+pub struct ThumbDecodeGuard<'a> {
+    sem: &'a ThumbDecodeSemaphore,
+}
+
+impl Drop for ThumbDecodeGuard<'_> {
+    fn drop(&mut self) {
+        self.sem.release();
     }
-    ACTIVE_THUMB_DECODES.fetch_add(1, Ordering::SeqCst);
-    ThumbDecodeGuard(())
+}
+
+pub fn acquire_thumb_decode() -> ThumbDecodeGuard<'static> {
+    THUMB_DECODE_SEMAPHORE.acquire()
 }
 
 pub fn is_jxl(buffer: &[u8]) -> bool {

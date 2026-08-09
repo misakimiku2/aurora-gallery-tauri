@@ -200,11 +200,11 @@ body {
   animation-play-state: paused !important;
 }
 
-/* 滚动期间禁用高成本的 filter / backdrop-filter / mix-blend-mode，
-   避免滚动帧内为这些合成效果反复重绘（文件夹 3D 图标的 drop-shadow、
-   badge 的 backdrop-blur、overlay 图标的 blend 等）。滚动停止后自动恢复。 */
+/* 滚动期间禁用高成本的 backdrop-filter / mix-blend-mode，
+   避免滚动帧内为这些合成效果反复重绘（badge 的 backdrop-blur、
+   overlay 图标的 blend 等）。滚动停止后自动恢复。
+   注意：不再禁用 filter —— 文件夹 3D 图标的 drop-shadow 投影在滚动时也保持显示。 */
 #file-grid-container.scrolling .file-item * {
-  filter: none !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   mix-blend-mode: normal !important;

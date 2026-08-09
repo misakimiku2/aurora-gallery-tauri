@@ -72,6 +72,22 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
 
         {/* Preview Images */}
         <div className="absolute left-[15%] right-[15%] top-[20%] bottom-[20%] z-10 transition-transform duration-300 group-hover:-translate-y-3 group-hover:scale-105">
+          {images.length === 0 && (
+            /* 占位矩形：无缩略图时用三张灰阶矩形模拟卡片堆叠，
+               最前方为白色、越往后越灰，形成层次；缩略图生成后无缝替换。
+               悬停时与真实三张缩略图一样扇形展开（cardBase + cardHover）。 */
+            <>
+              <div className={`absolute inset-0 shadow-md z-0 border-[2px] border-white rounded-sm transition-transform duration-300 ${cardBase[2]} ${cardHover[2]}`}>
+                <div className="w-full h-full bg-gray-400 dark:bg-gray-600" />
+              </div>
+              <div className={`absolute inset-0 shadow-md z-10 border-[2px] border-white rounded-sm transition-transform duration-300 ${cardBase[1]} ${cardHover[1]}`}>
+                <div className="w-full h-full bg-gray-300 dark:bg-gray-700" />
+              </div>
+              <div className={`absolute inset-0 shadow-md z-20 border-[2px] border-white rounded-sm transition-transform duration-300 ${cardBase[0]} ${cardHover[0]}`}>
+                <div className="w-full h-full bg-white dark:bg-gray-500" />
+              </div>
+            </>
+          )}
           {images[2] && (
             <div className={`absolute inset-0 bg-white shadow-md z-0 border-[2px] border-white rounded-sm overflow-hidden transition-transform duration-300 ${cardBase[2]} ${fan ? cardHover[2] : ''}`}>
               <img 
@@ -116,12 +132,12 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
             <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
           </svg>
           
-          <div className="absolute inset-0 flex items-center justify-center opacity-50 mix-blend-overlay">
-            <Icon size={32} className="text-white" strokeWidth={1.5} />
+          <div className="absolute inset-0 flex items-center justify-center opacity-40 text-blue-900/70 dark:text-white/80">
+            <Icon size={32} strokeWidth={1.5} />
           </div>
-          
+
           {count !== undefined && (
-            <div className="absolute bottom-2 right-3 bg-black/20 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full backdrop-blur-sm shadow-sm">
+            <div className="absolute bottom-2 right-3 bg-black/35 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ring-white/15">
               {count}
             </div>
           )}

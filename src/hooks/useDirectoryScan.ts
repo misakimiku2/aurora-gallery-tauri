@@ -4,14 +4,14 @@ import { DUMMY_TAB } from '../constants';
 import { isTauriEnvironment } from '../utils/environment';
 import { normalizePath, generateId } from '../utils/pathUtils';
 import { performanceMonitor } from '../utils/performanceMonitor';
+import { getGlobalCache } from '../utils/thumbnailCache';
 import {
   scanDirectory,
   openDirectory,
   saveUserData as tauriSaveUserData,
   ensureDirectory,
   switchRootDatabase,
-  pauseColorExtraction,
-  resumeColorExtraction,
+  shutdownColorExtraction,
   addPendingFilesToDb,
   dbGetAllPeople,
   dbGetAllTopics,
@@ -49,18 +49,35 @@ export const useDirectoryScan = ({
   updateTask,
 }: UseDirectoryScanProps) => {
 
+  // 切换资源根目录后重置与目录相关的性能统计（文件扫描、缩略图加载等），
+  // 使性能面板反映新目录的数据，而不是旧目录的累积统计
+  const resetDirectoryPerformanceStats = () => {
+    performanceMonitor.clearMetricsByNames([
+      'scanDirectory',
+      'filesScanned',
+      'getThumbnail',
+      'thumbnailCacheHit',
+      'thumbnailCacheMiss',
+    ]);
+    // 清空缩略图内存缓存，避免新目录复用旧目录的缩略图
+    getGlobalCache().clear();
+  };
+
   const scanAndMerge = async (path: string, force: boolean = false) => {
     const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
     try {
       const result = await scanDirectory(path, force);
 
+      // 只统计图片节点（不含文件夹），使"扫描文件数"反映真实图片数量
+      const imageCount = Object.values(result.files || {}).filter(f => f.type === FileType.IMAGE).length;
+
       performanceMonitor.end(scanTimer, 'scanDirectory', {
         path,
-        fileCount: Object.keys(result.files).length,
+        fileCount: imageCount,
         rootCount: result.roots.length
       });
 
-      performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
+      performanceMonitor.increment('filesScanned', imageCount);
 
       const imagePaths: string[] = [];
       Object.values(result.files || {}).forEach(file => {
@@ -89,7 +106,9 @@ export const useDirectoryScan = ({
             ...prev.settings,
             paths: {
               ...prev.settings.paths,
-              resourceRoot: path
+              resourceRoot: path,
+              // 同步缓存目录：统一放到资源根目录下的 .Aurora_Cache
+              cacheRoot: `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`
             }
           },
           isScanning: false
@@ -108,7 +127,11 @@ export const useDirectoryScan = ({
         if (isTauriEnvironment()) {
           const cachePath = `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
           await ensureDirectory(cachePath);
+          // 彻底停止当前主色调提取，切换后提取将服务于新目录
+          await shutdownColorExtraction();
           await switchRootDatabase(path);
+          // 重置文件扫描/缩略图加载等性能统计，使其反映新目录
+          resetDirectoryPerformanceStats();
         }
 
         const skeletonId = generateId(path);
@@ -145,18 +168,20 @@ export const useDirectoryScan = ({
             expandedFolderIds: Array.from(new Set([...prev.expandedFolderIds, skeletonId])),
             tabs: updatedTabs,
             activeTabId: updatedTabs[0].id,
-            settings: { ...prev.settings, paths: { ...prev.settings.paths, resourceRoot: path } },
+            settings: {
+              ...prev.settings,
+              paths: {
+                ...prev.settings.paths,
+                resourceRoot: path,
+                // 同步缓存目录：统一放到资源根目录下的 .Aurora_Cache
+                cacheRoot: `${path}${path.includes('\\') ? '\\' : '/'}.Aurora_Cache`
+              }
+            },
             isScanning: true
           };
         });
 
         (async () => {
-          try {
-            await pauseColorExtraction();
-          } catch (err) {
-            console.warn('Failed to pause color extraction:', err);
-          }
-
           try {
             const dbPeople = await dbGetAllPeople();
             if (Array.isArray(dbPeople)) {
@@ -318,8 +343,11 @@ export const useDirectoryScan = ({
       if (isTauriEnvironment()) {
         const cachePath = `${selectedPath}${selectedPath.includes('\\') ? '\\' : '/'}.Aurora_Cache`;
         await ensureDirectory(cachePath);
-        await pauseColorExtraction();
+        // 彻底停止当前主色调提取（旧目录的任务/弹窗一并终止），切换后提取将服务于新目录
+        await shutdownColorExtraction();
         await switchRootDatabase(selectedPath);
+        // 重置文件扫描/缩略图加载等性能统计，使其反映新目录
+        resetDirectoryPerformanceStats();
       }
 
       const newSettings = {
@@ -361,7 +389,16 @@ export const useDirectoryScan = ({
       }
 
       try {
+        const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
         const result = await scanDirectory(selectedPath);
+        // 只统计图片节点（不含文件夹），使"扫描文件数"反映真实图片数量
+        const imageCount = Object.values(result.files || {}).filter(f => f.type === FileType.IMAGE).length;
+        performanceMonitor.end(scanTimer, 'scanDirectory', {
+          path: selectedPath,
+          fileCount: imageCount,
+          rootCount: result.roots.length
+        });
+        performanceMonitor.increment('filesScanned', imageCount);
 
         if (unlistenProgress) unlistenProgress();
 
@@ -466,13 +503,7 @@ export const useDirectoryScan = ({
 
         showToast(t('settings.success'));
 
-        (async () => {
-          try {
-            await resumeColorExtraction();
-          } catch (err) {
-            console.warn('Failed to resume color extraction:', err);
-          }
-        })();
+        // 主色调提取为手动功能：切换根目录后保持暂停状态，由用户手动启动
 
       } catch (e) {
         if (unlistenProgress) unlistenProgress();

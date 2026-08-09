@@ -3,13 +3,19 @@ use crate::update_downloader;
 
 #[tauri::command]
 pub async fn check_for_updates_command(github_token: Option<String>) -> Result<updater::UpdateCheckResult, String> {
+    let start = std::time::Instant::now();
     let current_version = env!("CARGO_PKG_VERSION");
     let owner = "misakimiku2";
     let repo = "aurora-gallery-tauri";
     
     let token = github_token.as_deref();
     
-    updater::check_for_updates(current_version, owner, repo, token).await
+    let result = updater::check_for_updates(current_version, owner, repo, token).await;
+    match &result {
+        Ok(r) => log::info!("[Updater] check_for_updates done in {:?}, has_update={}", start.elapsed(), r.has_update),
+        Err(e) => log::warn!("[Updater] check_for_updates failed in {:?}: {}", start.elapsed(), e),
+    }
+    result
 }
 
 #[tauri::command]

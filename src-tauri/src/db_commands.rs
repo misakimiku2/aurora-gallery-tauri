@@ -3,7 +3,7 @@ use crate::db::{self, normalize_path, AppDbPool};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[tauri::command]
 pub async fn force_wal_checkpoint(app: tauri::AppHandle) -> Result<bool, String> {
@@ -44,23 +44,29 @@ pub async fn save_user_data(app_handle: tauri::AppHandle, data: serde_json::Valu
 
 #[tauri::command]
 pub async fn load_user_data(app_handle: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let start = std::time::Instant::now();
     let app_data_dir = app_handle.path().app_data_dir().map_err(|e| e.to_string())?;
     let config_path = app_data_dir.join("user_data.json");
     
     if !config_path.exists() {
+        log::info!("[DBCommands] load_user_data: no user_data.json in {:?}", start.elapsed());
         return Ok(None);
     }
     
     let json_str = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
     let data = serde_json::from_str(&json_str).map_err(|e| e.to_string())?;
     
+    log::info!("[DBCommands] load_user_data: {} bytes in {:?}", json_str.len(), start.elapsed());
     Ok(Some(data))
 }
 
 #[tauri::command]
 pub fn db_get_all_people(pool: tauri::State<AppDbPool>) -> Result<Vec<db::persons::Person>, String> {
+    let start = std::time::Instant::now();
     let conn = pool.get_connection();
-    db::persons::get_all_people(&conn).map_err(|e| e.to_string())
+    let r = db::persons::get_all_people(&conn).map_err(|e| e.to_string())?;
+    log::info!("[DBCommands] db_get_all_people: {} people in {:?}", r.len(), start.elapsed());
+    Ok(r)
 }
 
 #[tauri::command]
@@ -88,8 +94,11 @@ pub fn db_update_person_avatar(
 
 #[tauri::command]
 pub fn db_get_all_topics(pool: tauri::State<AppDbPool>) -> Result<Vec<db::topics::Topic>, String> {
+    let start = std::time::Instant::now();
     let conn = pool.get_connection();
-    db::topics::get_all_topics(&conn).map_err(|e| e.to_string())
+    let r = db::topics::get_all_topics(&conn).map_err(|e| e.to_string())?;
+    log::info!("[DBCommands] db_get_all_topics: {} topics in {:?}", r.len(), start.elapsed());
+    Ok(r)
 }
 
 #[tauri::command]
@@ -203,9 +212,14 @@ pub async fn db_get_all_file_metadata(
 #[tauri::command]
 pub async fn switch_root_database(
     new_root_path: String,
+    app: tauri::AppHandle,
     app_db_pool: tauri::State<'_, AppDbPool>,
     color_db_pool: tauri::State<'_, Arc<color_db::ColorDbPool>>,
 ) -> Result<(), String> {
+    // 切换根目录前彻底停止当前主色调提取 worker：
+    // 原有 worker 的任务队列里存的是旧目录的文件，若只是暂停，切换后继续会继续处理旧目录
+    crate::color_worker::stop_color_extraction().await;
+
     let root = Path::new(&new_root_path);
     
     let aurora_dir = root.join(".aurora");
@@ -225,7 +239,30 @@ pub async fn switch_root_database(
         guard.switch_root(root.to_path_buf()).await?;
         log::info!("CLIP embedding database switched to: {:?}", new_root_path);
     }
-    
+
+    // 通知前端重置主色调提取状态（弹窗/进度清零，恢复到手动启动状态）
+    let _ = app.emit("color-extraction-notification-action", serde_json::json!({"action": "cancel"}));
+
+    // 切换完成后异步清理新库中的残留记录（新目录若尚未扫描，file_index 为空则自动跳过）
+    let app_cleanup = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let app_db_pool = app_cleanup.state::<AppDbPool>().inner().clone();
+        let color_pool = app_cleanup.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+        tokio::task::spawn_blocking(move || {
+            let valid_paths: std::collections::HashSet<String> = {
+                let conn = app_db_pool.get_connection();
+                db::file_index::get_all_image_files(&conn).unwrap_or_default()
+                    .into_iter()
+                    .map(|e| e.path.replace('\\', "/"))
+                    .collect()
+            };
+            if !valid_paths.is_empty() {
+                let mut conn = color_pool.get_connection();
+                let _ = color_db::cleanup_stale_color_records(&mut conn, &valid_paths);
+            }
+        });
+    });
+
     Ok(())
 }
 
@@ -260,6 +297,38 @@ pub async fn get_color_db_stats(app: tauri::AppHandle) -> Result<serde_json::Val
     }).await.map_err(|e| format!("Failed to get color db stats: {}", e))?;
     
     Ok(result)
+}
+
+/// 清理主色调数据库中磁盘上已不存在的文件记录（残留记录）
+///
+/// 以 metadata.db 的 file_index（当前扫描后的真实文件清单）为对照，
+/// 删除 colors.db 的 dominant_colors 中不在该清单内的记录。
+/// 仅当 file_index 非空时执行，避免误删尚未扫描的新目录数据。
+#[tauri::command]
+pub async fn cleanup_stale_color_records(app: tauri::AppHandle) -> Result<usize, String> {
+    let app_db_pool = app.state::<AppDbPool>().inner().clone();
+    let color_pool = app.state::<Arc<color_db::ColorDbPool>>().inner().clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        // 1. 从 metadata.db 的 file_index 读取真实存在的图片文件路径
+        let valid_paths: std::collections::HashSet<String> = {
+            let conn = app_db_pool.get_connection();
+            let entries = db::file_index::get_all_image_files(&conn).unwrap_or_default();
+            entries.into_iter()
+                .map(|e| e.path.replace('\\', "/"))
+                .collect()
+        };
+
+        // 2. 仅当索引非空时清理，防止误删尚未扫描的新目录数据
+        if valid_paths.is_empty() {
+            return Ok(0usize);
+        }
+
+        let mut conn = color_pool.get_connection();
+        color_db::cleanup_stale_color_records(&mut conn, &valid_paths)
+    }).await.map_err(|e| format!("Failed to cleanup stale color records: {}", e))?;
+
+    result.map_err(|e| format!("Failed to cleanup stale color records: {}", e))
 }
 
 #[tauri::command]

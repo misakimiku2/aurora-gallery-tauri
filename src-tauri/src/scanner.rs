@@ -105,6 +105,8 @@ fn sort_children(all_files: &mut HashMap<String, FileNode>) {
 
 #[tauri::command]
 pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri::AppHandle) -> Result<HashMap<String, FileNode>, String> {
+    let scan_start = std::time::Instant::now();
+    log::info!("[Scanner] scan_directory start: path={}, force={}", path, force_rescan.unwrap_or(false));
     let force = force_rescan.unwrap_or(false);
     let root_path_os = Path::new(&path);
     
@@ -293,6 +295,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
             sort_children(&mut all_files);
 
             let _ = app.emit("scan-progress", ScanProgress { processed: all_files.len(), total: all_files.len() });
+            log::info!("[Scanner] scan_directory from cache: {} nodes in {:?}", all_files.len(), scan_start.elapsed());
             
             return Ok(all_files);
         }
@@ -600,6 +603,7 @@ pub async fn scan_directory(path: String, force_rescan: Option<bool>, app: tauri
         });
     }
 
+    log::info!("[Scanner] scan_directory full scan: {} nodes in {:?}", all_files.len(), scan_start.elapsed());
     Ok(all_files)
 }
 

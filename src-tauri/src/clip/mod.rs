@@ -211,6 +211,7 @@ pub async fn get_clip_manager() -> Option<Arc<RwLock<ClipManager>>> {
 
 /// 初始化全局 CLIP 管理器
 pub async fn init_clip_manager(root_path: PathBuf, cache_root: PathBuf) -> Result<Arc<RwLock<ClipManager>>, String> {
+    let start = std::time::Instant::now();
     let config = ClipConfig {
         root_path,
         model_cache_dir: cache_root.join("clip"),
@@ -229,6 +230,7 @@ pub async fn init_clip_manager(root_path: PathBuf, cache_root: PathBuf) -> Resul
         .set(manager.clone())
         .map_err(|_| "CLIP manager already initialized")?;
 
+    log::info!("[CLIP] init_clip_manager done in {:?}", start.elapsed());
     Ok(manager)
 }
 

@@ -30,6 +30,7 @@ interface UseAppInitProps {
   setIsLoading: (v: boolean) => void;
   setShowSplash: (v: boolean) => void;
   setShowWelcome: (v: boolean) => void;
+  setLoadingInfo: React.Dispatch<React.SetStateAction<string[]>>;
   exitActionRef: React.MutableRefObject<'ask' | 'minimize' | 'exit'>;
   setGroupBy: (groupBy: any) => void;
 }
@@ -42,6 +43,7 @@ export const useAppInit = ({
   setIsLoading,
   setShowSplash,
   setShowWelcome,
+  setLoadingInfo,
   exitActionRef,
   setGroupBy,
 }: UseAppInitProps) => {
@@ -49,16 +51,36 @@ export const useAppInit = ({
     if (isAppInitialized) return;
     isAppInitialized = true;
 
+    // 兜底：大图库启动初始化（首次扫描、批量颜色查询）可能很慢，
+    // 若超时仍未完成则强制关闭启动界面，避免永久卡在 splash（数据可继续后台加载）
+    const splashFallbackTimer = setTimeout(() => {
+      setIsLoading(false);
+      setShowSplash(false);
+    }, 30000);
+
     const init = async () => {
+      // 启动步骤计时与日志：显示在 splash 上，同时经 plugin-log 转发到终端
+      const startupT0 = performance.now();
+      const logStep = (msg: string) => {
+        console.log(`[Startup][+${(performance.now() - startupT0).toFixed(0)}ms] ${msg}`);
+        setLoadingInfo(prev => [...prev, msg]);
+      };
+      logStep('启动初始化开始');
+
       const isTauriEnv = await detectTauriEnvironmentAsync();
+      logStep(isTauriEnv ? '检测到 Tauri 环境' : '非 Tauri 环境，使用模拟文件系统');
       if (isTauriEnv) {
         const isTauriSyncEnv = isTauriEnvironment();
         let isSavedDataLoaded = false;
 
         if (isTauriSyncEnv) {
           try {
+            logStep('获取默认路径...');
             const defaults = await tauriGetDefaultPaths();
+            logStep(`获取默认路径完成 (cacheRoot=${defaults.cacheRoot || 'N/A'})`);
+            logStep('加载用户数据...');
             const savedData = await tauriLoadUserData();
+            logStep(savedData ? '用户数据加载完成' : '用户数据加载完成（无历史数据）');
 
             if (defaults.cacheRoot) {
               setGlobalCacheRoot(defaults.cacheRoot);
@@ -81,6 +103,13 @@ export const useAppInit = ({
                 ...defaults,
               }
             };
+
+            // 桌面端：统一缩略图缓存到资源根目录下的 .Aurora_Cache。
+            // （migratedSettings.paths 中的旧 cacheRoot 若指向 AppData 会在 savedData 分支再次覆盖）
+            if (!isAndroidNow && finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
+              const sep = finalSettings.paths.resourceRoot.includes('\\') ? '\\' : '/';
+              finalSettings.paths.cacheRoot = `${finalSettings.paths.resourceRoot}${sep}.Aurora_Cache`;
+            }
 
             if (savedData) {
               isSavedDataLoaded = true;
@@ -116,9 +145,19 @@ export const useAppInit = ({
                 }
               };
 
+              // 桌面端：缩略图缓存统一放到资源根目录下的 .Aurora_Cache，
+              // 覆盖旧数据中可能残留的 AppData cacheRoot / 空值，避免与图片缩略图缓存路径分叉。
+              // Android 端（resourceRoot=android_media_store）保持使用系统缓存目录。
+              if (!isAndroidNow && finalSettings.paths.resourceRoot && finalSettings.paths.resourceRoot !== 'android_media_store') {
+                const sep = finalSettings.paths.resourceRoot.includes('\\') ? '\\' : '/';
+                finalSettings.paths.cacheRoot = `${finalSettings.paths.resourceRoot}${sep}.Aurora_Cache`;
+              }
+
               let peopleData = savedData.people || {};
               try {
+                logStep('加载人物数据...');
                 const dbPeople = await dbGetAllPeople();
+                logStep(`人物数据加载完成 (${Array.isArray(dbPeople) ? dbPeople.length : 0} 人)`);
                 if (Array.isArray(dbPeople) && dbPeople.length > 0) {
                   const dbPeopleMap: Record<string, Person> = {};
                   dbPeople.forEach((p: any) => { dbPeopleMap[p.id] = p; });
@@ -128,7 +167,9 @@ export const useAppInit = ({
 
               let topicsData = savedData.topics || {};
               try {
+                logStep('加载专题数据...');
                 const dbTopics = await dbGetAllTopics();
+                logStep(`专题数据加载完成 (${Array.isArray(dbTopics) ? dbTopics.length : 0} 个)`);
                 if (Array.isArray(dbTopics) && dbTopics.length > 0) {
                   const dbTopicsMap: Record<string, Topic> = {};
                   dbTopics.forEach((t: any) => {
@@ -509,17 +550,22 @@ export const useAppInit = ({
               const savedMetadata = savedData?.fileMetadata || {};
               for (const p of pathsToScan) {
                 try {
+                  logStep(`扫描目录: ${p}`);
                   const scanTimer = performanceMonitor.start('scanDirectory', undefined, true);
 
                   const result = await scanDirectory(p);
 
+                  // 只统计图片节点（不含文件夹），使"扫描文件数"反映真实图片数量
+                  const imageCount = Object.values(result.files || {}).filter((f: any) => f.type === FileType.IMAGE).length;
+                  logStep(`目录扫描完成: ${imageCount} 张图片`);
+
                   performanceMonitor.end(scanTimer, 'scanDirectory', {
                     path: p,
-                    fileCount: Object.keys(result.files).length,
+                    fileCount: imageCount,
                     rootCount: result.roots.length
                   });
 
-                  performanceMonitor.increment('filesScanned', Object.keys(result.files).length);
+                  performanceMonitor.increment('filesScanned', imageCount);
 
                   Object.values(result.files || {}).forEach((f: any) => {
                     const saved = savedMetadata[f.path];
@@ -554,20 +600,42 @@ export const useAppInit = ({
                 });
 
                 if (imagePaths.length > 0) {
-                  try {
-                    const palettes = await batchGetColors(imagePaths);
-                    for (const [dbPath, palette] of Object.entries(palettes)) {
-                      if (palette.length === 0) continue;
-                      const file = Object.values(allFiles).find((f: any) =>
-                        f.path === dbPath || f.path?.replace(/\\/g, '/') === dbPath
-                      );
-                      if (file && file.meta) {
-                        file.meta.palette = palette;
-                      }
+                  // 方案A：批量颜色查询放到后台异步执行，不阻塞启动进入主界面。
+                  // 点击图片查看时 ImageViewer 有 getDominantColors 按需提取兜底；
+                  // 按颜色搜索走 ColorDbPool 的内存缓存（预热线程），与此无关。
+                  logStep(`批量查询颜色 (${imagePaths.length} 张图片，后台执行)...`);
+                  void (async () => {
+                    try {
+                      const palettes = await batchGetColors(imagePaths);
+                      logStep('批量颜色查询完成');
+
+                      // 预构建 path → file 哈希索引，避免对每个 palette 都线性扫描全部文件
+                      // （旧实现是 O(N²)，数万张图会导致启动卡顿数十秒）
+                      const fileByPath = new Map<string, any>();
+                      setState(prev => {
+                        const files = { ...prev.files };
+                        for (const f of Object.values(files)) {
+                          if (!f?.path) continue;
+                          fileByPath.set(f.path, f);
+                          const normalized = f.path.replace(/\\/g, '/');
+                          if (normalized !== f.path) fileByPath.set(normalized, f);
+                        }
+
+                        let changed = false;
+                        for (const [dbPath, palette] of Object.entries(palettes)) {
+                          if (!palette || palette.length === 0) continue;
+                          const file = fileByPath.get(dbPath);
+                          if (file && file.meta) {
+                            file.meta.palette = palette;
+                            changed = true;
+                          }
+                        }
+                        return changed ? { ...prev, files } : prev;
+                      });
+                    } catch (e) {
+                      console.warn('Failed to batch load palettes:', e);
                     }
-                  } catch (e) {
-                    console.warn('Failed to batch load palettes:', e);
-                  }
+                  })();
                 }
 
                 const globalLayoutSettings = savedData?.settings?.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
@@ -604,6 +672,7 @@ export const useAppInit = ({
                   };
                 });
 
+                logStep('初始化完成，进入主界面');
                 savedDataLoadedRef.current = true;
                 setSavedDataLoaded(true);
                 setIsLoading(false);
@@ -628,6 +697,7 @@ export const useAppInit = ({
           setState(prev => ({ ...prev, roots, files, people: {}, expandedFolderIds: roots, tabs: [defaultTab], activeTabId: defaultTab.id }));
         }
 
+        logStep('初始化完成（无历史数据），进入主界面');
         savedDataLoadedRef.current = true;
         setSavedDataLoaded(true);
         console.debug('[Init] Initialization complete (no saved data)');

@@ -72,6 +72,8 @@ pub async fn batch_get_colors(
     file_paths: Vec<String>,
     app: tauri::AppHandle,
 ) -> Result<HashMap<String, Vec<String>>, String> {
+    let start = std::time::Instant::now();
+    let total_paths = file_paths.len();
     if file_paths.is_empty() {
         return Ok(HashMap::new());
     }
@@ -79,7 +81,9 @@ pub async fn batch_get_colors(
     let pool = app.state::<std::sync::Arc<color_db::ColorDbPool>>().inner().clone();
 
     let result = tokio::task::spawn_blocking(move || {
-        let mut conn = pool.get_connection();
+        // 使用独立只读连接，避免与后台缓存预热线程争抢同一把 Mutex<Connection>，
+        // 否则数万张图查询会被预热进程拖慢数秒。
+        let mut conn = pool.open_read_connection()?;
         let mut all = std::collections::HashMap::new();
         // 分块查询：SQLite 单个 IN 子句的参数不能超过上限（默认 32766），
         // 大目录（数万张图）一次性全传会触发 "variable number must be between ?1 and ?32766"。
@@ -93,7 +97,9 @@ pub async fn batch_get_colors(
         Ok::<std::collections::HashMap<String, Vec<String>>, String>(all)
     }).await.map_err(|e| format!("Failed to execute database query: {}", e))?;
 
-    result.map_err(|e| format!("批量获取颜色数据失败: {}", e))
+    let r = result.map_err(|e| format!("批量获取颜色数据失败: {}", e))?;
+    log::info!("[ColorCommands] batch_get_colors: {} paths -> {} results in {:?}", total_paths, r.len(), start.elapsed());
+    Ok(r)
 }
 
 #[tauri::command]

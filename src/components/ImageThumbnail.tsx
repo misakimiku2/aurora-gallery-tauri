@@ -34,7 +34,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   cachePath?: string;
   mediaStoreId?: number;
 }) => {
-  const [ref, isInView, wasInView] = useInView({ rootMargin: '2000px' }); 
+  const [ref, isInView, wasInView] = useInView({ rootMargin: '800px' }); 
   
   const [thumbnailSrc, setThumbnailSrc] = useState<string | null>(() => {
       if (!filePath) return null;
@@ -54,6 +54,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   const isAndroid = resourceRoot === 'android_media_store';
   const hitRecordedRef = useRef(false);
   const lanThumbReqLoggedRef = useRef(false);
+  const loadedRef = useRef<string | null>(null); // 跟踪已成功加载的 URL，避免重复 setState / 重跑 effect
+  const mountedRef = useRef(true); // 跟踪当前 effect 实例是否还挂载（防止卸载后 setState 警告 + 失效）
 
   useEffect(() => {
     if (thumbnailSrc && !hitRecordedRef.current) {
@@ -74,10 +76,19 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   useEffect(() => {
     // LAN source: thumbnail URL is resolved directly, skip local generation
     if (isLanPath(filePath)) return;
-    if (!(isInView || wasInView) || !filePath || !resourceRoot) return;
+    if (!filePath || !resourceRoot) return;
+    mountedRef.current = true; // 本次 effect 实例挂载中
 
     const cache = getGlobalCache();
-    const key = filePath; 
+    const key = filePath;
+
+    // 缓存恢复：上次请求可能被 abort（滚动离开视口），但后端已生成并写入了
+    // 内存缓存。组件重新进入视口时，若缓存已有则直接恢复显示，不再重新请求。
+    const cachedNow = cache.get(key);
+    if (cachedNow && thumbnailSrc !== cachedNow) {
+      setThumbnailSrc(cachedNow);
+      return;
+    }
 
     if (thumbnailSrc && cache.get(key) === thumbnailSrc) {
         if (!hitRecordedRef.current) {
@@ -87,20 +98,33 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
         return;
     }
 
+    // 注意：依赖数组故意省略 thumbnailSrc，否则 setThumbnailSrc 会
+    // 立刻重跑 effect 并 abort 当前 controller，导致已 resolve 的
+    // thumbnailSrc 被回滚为 null（页面看不到缩略图）。
+
     const controller = new AbortController();
     const loadThumbnail = async () => {
       try {
         const { getThumbnail } = await import('../api/tauri-bridge');
 
         const thumbnail = await getThumbnail(filePath, modified, resourceRoot, controller.signal, undefined, cachePath, mediaStoreId);
-        
-        if (!controller.signal.aborted && thumbnail) {
-          if (cache.get(key) !== thumbnail) {
-              cache.set(key, thumbnail);
-              setThumbnailSrc(thumbnail);
-          }
+
+        if (controller.signal.aborted || !thumbnail) return;
+
+        // 写缓存：组件已卸载也照写，下次重挂载通过 loadedRef 恢复
+        if (cache.get(key) !== thumbnail) {
+          cache.set(key, thumbnail);
+        }
+        if (loadedRef.current === thumbnail) return; // 已经是同一个 URL，跳过 setState
+
+        loadedRef.current = thumbnail;
+        if (mountedRef.current) {
+          // 组件仍挂载：正常 setState 触发渲染
+          setThumbnailSrc(thumbnail);
           setUpgrading(isThumbnailUpgrading(filePath));
         }
+        // 组件已卸载：不调用 setState（避免 React 警告 + 无效更新）
+        // 下次重挂载 effect 会从 cache 读取恢复显示
       } catch (error) {
         if (!controller.signal.aborted) {
           console.error('Failed to load thumbnail:', error);
@@ -111,9 +135,10 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     loadThumbnail();
 
     return () => {
+      mountedRef.current = false;
       controller.abort();
     };
-  }, [filePath, modified, resourceRoot, isInView, wasInView, thumbnailSrc]);
+  }, [filePath, modified, resourceRoot, isInView, wasInView]);
 
   useEffect(() => {
     if (!filePath) return;

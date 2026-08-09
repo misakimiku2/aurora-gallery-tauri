@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   copyFile, moveFile, scanFile, scanDirectory, writeFileFromBytes,
   deleteFile, createFolder, renameFile, copyImageColors,
-  dbCopyFileMetadata, addPendingFilesToDb, resumeColorExtraction
+  dbCopyFileMetadata, addPendingFilesToDb
 } from '../api/tauri-bridge';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { info as logInfo, debug as logDebug } from '../utils/logger';
@@ -473,12 +473,11 @@ export const useFileOperations = ({
       updateTask(taskId, { status: 'completed', current: files.length });
       showToast(t('context.copied'));
 
-      // 如果有图片文件，触发主色调提取
+      // 如果有图片文件，记录待处理（不自动启动主色调提取——该功能为手动触发）
       if (copiedImagePaths.length > 0 && isTauriEnvironment()) {
         addPendingFilesToDb(copiedImagePaths).catch(err => {
           console.error('Failed to add pending files for color extraction:', err);
         });
-        resumeColorExtraction().catch(() => {});
       }
 
       setTimeout(() => setState(prev => ({ ...prev, tasks: prev.tasks.filter(t => t.id !== taskId) })), 1000);

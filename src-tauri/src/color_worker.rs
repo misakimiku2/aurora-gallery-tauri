@@ -9,7 +9,7 @@ use std::fs::{self, File};
 use std::io::{BufReader, Read};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use serde::Serialize;
 use crossbeam_channel::{unbounded, Sender, Receiver};
 use tokio::task;
@@ -18,11 +18,14 @@ use crate::color_db::{self, ColorDbPool};
 use crate::color_extractor;
 use crate::image_utils::{is_jxl, ACTIVE_HEAVY_DECODES, MAX_CONCURRENT_HEAVY_DECODES};
 
-// 全局暂停状态
-static IS_PAUSED: AtomicBool = AtomicBool::new(false);
+// 全局暂停状态（默认暂停：主色调提取必须手动启动）
+static IS_PAUSED: AtomicBool = AtomicBool::new(true);
 
 // 全局关闭状态
 static IS_SHUTTING_DOWN: AtomicBool = AtomicBool::new(false);
+
+// 全局 worker 是否已启动（保证只启动一次）
+static IS_STARTED: AtomicBool = AtomicBool::new(false);
 
 // 全局批次ID计数器
 static BATCH_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -65,16 +68,77 @@ pub async fn save_and_pause_color_extraction() -> bool {
 // 关闭主色调提取任务（保存缓冲区并设置关闭标志）
 #[tauri::command]
 pub async fn shutdown_color_extraction() -> bool {
+    stop_color_extraction().await
+}
+
+// 彻底停止主色调提取：设置停止标志并等待 worker 完全退出
+// （worker 退出后其内存任务队列被丢弃，不会再处理旧目录的文件）
+pub async fn stop_color_extraction() -> bool {
     IS_SHUTTING_DOWN.store(true, Ordering::SeqCst);
     IS_PAUSED.store(true, Ordering::SeqCst);
+
+    // 等待 worker 完全退出（最多 10 秒），确保任务队列被销毁
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while IS_STARTED.load(Ordering::SeqCst) && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // 复位关闭标志：worker 已退出（或从未启动），旧任务队列已销毁，
+    // 这样下次手动启动时可正常启动新 worker，不会因残留标志立即退出
+    IS_SHUTTING_DOWN.store(false, Ordering::SeqCst);
     true
 }
 
-// 恢复主色调提取
+// 检查 worker 是否已启动
+pub fn is_worker_started() -> bool {
+    IS_STARTED.load(Ordering::SeqCst)
+}
+
+// 恢复（手动启动）主色调提取
+// 主色调提取是手动功能：首次调用时才真正启动后台 worker，
+// 此后调用仅恢复（取消暂停）。软件启动时不会自动启动。
 #[tauri::command]
-pub fn resume_color_extraction() -> bool {
+pub async fn resume_color_extraction(app: tauri::AppHandle) -> bool {
+    // 若旧 worker 正在退出（例如刚切换了根目录），先等待其完全退出再启动新 worker，
+    // 避免新 worker 与旧 worker 并发操作不同的数据库
+    while IS_STARTED.load(Ordering::SeqCst) && IS_SHUTTING_DOWN.load(Ordering::SeqCst) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
     IS_PAUSED.store(false, Ordering::SeqCst);
+
+    // 若 worker 尚未启动，则启动它
+    if !IS_STARTED.swap(true, Ordering::SeqCst) {
+        let pool = app.state::<Arc<ColorDbPool>>().inner().clone();
+        let batch_size = 50usize;
+        let app_handle_arc = Arc::new(app.clone());
+        let cache_root = default_cache_root();
+
+        tauri::async_runtime::spawn(async move {
+            color_extraction_worker(pool, batch_size, Some(app_handle_arc), cache_root).await;
+            // worker 结束后允许再次启动
+            IS_STARTED.store(false, Ordering::SeqCst);
+            IS_PAUSED.store(true, Ordering::SeqCst);
+            IS_SHUTTING_DOWN.store(false, Ordering::SeqCst);
+        });
+    }
     true
+}
+
+// 计算缩略图缓存根目录（与 lib.rs setup 中的逻辑一致）
+fn default_cache_root() -> Option<std::path::PathBuf> {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok();
+    home.map(|h| {
+        if cfg!(windows) {
+            std::path::Path::new(&h).join("AppData").join("Local").join("Aurora").join("Cache")
+        } else if cfg!(target_os = "macos") {
+            std::path::Path::new(&h).join("Library").join("Application Support").join("Aurora").join("Cache")
+        } else {
+            std::path::Path::new(&h).join(".local").join("share").join("aurora").join("cache")
+        }
+    })
 }
 
 // 检查是否暂停
@@ -534,10 +598,12 @@ async fn result_processor(
                         tokio::task::spawn_blocking(move || {
                             let _ = pool_clone.force_wal_checkpoint();
                         }).await.unwrap_or_else(|_| ());
-                        
-                        last_checkpoint_time = tokio::time::Instant::now();
-                        total_processed_since_checkpoint = 0;
                     }
+
+                    // 无论是否真正执行了检查点，都重置计数与计时，
+                    // 否则 wal 较小时会每个结果都进入检查并反复打印 WAL info 日志刷屏
+                    last_checkpoint_time = tokio::time::Instant::now();
+                    total_processed_since_checkpoint = 0;
                 }
             },
             Err(crossbeam_channel::TryRecvError::Empty) => {
@@ -598,10 +664,9 @@ async fn result_processor(
                 match result {
                     Ok((_bid, file_path, colors)) => {
                         result_buffer.push((file_path, colors));
-                        total_success_count += 1;
                     },
                     Err((_bid, _e)) => {
-                        total_error_count += 1;
+                        // 关闭阶段仅丢弃失败项
                     }
                 }
                 if result_buffer.len() >= batch_save_threshold {
