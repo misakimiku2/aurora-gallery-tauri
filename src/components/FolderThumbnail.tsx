@@ -9,11 +9,27 @@ import { Folder3DIcon } from './Folder3DIcon';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 
+// 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
+// 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
+// 用 children 指纹（数量 + 头尾 id + 文件夹自身 updatedAt）判断内容是否变化，变化才重算。
+const _deepImageCache = new Map<string, { fingerprint: string; images: FileNode[] }>();
+
+const childrenFingerprint = (rootFolder: FileNode): string => {
+    const kids = rootFolder.children || [];
+    const first = kids[0]?.id || '';
+    const last = kids[kids.length - 1]?.id || '';
+    return `${kids.length}|${first}|${last}|${rootFolder.updatedAt || rootFolder.createdAt || ''}`;
+};
+
 const findImagesDeeply = (
     rootFolder: FileNode,
     getFileNode: GetFileNode,
     limit: number = 3
 ): FileNode[] => {
+    const fp = childrenFingerprint(rootFolder);
+    const cached = _deepImageCache.get(rootFolder.id);
+    if (cached && cached.fingerprint === fp) return cached.images;
+
     const images: FileNode[] = [];
     const stack: string[] = [...(rootFolder.children || [])];
     const visited = new Set<string>();
@@ -37,9 +53,11 @@ const findImagesDeeply = (
         }
     }
 
-    return images
+    const result = images
         .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
         .slice(0, limit);
+    _deepImageCache.set(rootFolder.id, { fingerprint: fp, images: result });
+    return result;
 };
 
 const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ file }) => {

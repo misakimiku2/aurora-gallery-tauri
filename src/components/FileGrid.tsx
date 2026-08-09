@@ -1317,7 +1317,7 @@ export const FileGrid = React.memo(({
             lastScrollTimeRef.current = now;
             lastScrollTopRef.current = currentScroll;
 
-            if (isAndroid && dt > 0) {
+            if (dt > 0) {
                 const velocity = dy / dt;
                 if (velocity > 3 || dt < 32) {
                     setGlobalScrollState('fast');

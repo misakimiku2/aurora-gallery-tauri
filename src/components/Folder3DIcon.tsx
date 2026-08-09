@@ -66,7 +66,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
       {/* Square container to maintain aspect ratio */}
       <div className="relative w-full aspect-square">
         {/* Back Plate */}
-        <svg viewBox="0 0 100 100" className={`absolute w-full h-full drop-shadow-sm transition-colors ${style.back}`} preserveAspectRatio="none">
+        <svg viewBox="0 0 100 100" className={`absolute w-full h-full drop-shadow-sm dark:drop-shadow-none transition-colors ${style.back}`} preserveAspectRatio="none">
           <path d="M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z" fill="currentColor" />
         </svg>
 
@@ -94,6 +94,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                 src={images[2]} 
                 className="w-full h-full object-cover" 
                 loading="lazy" 
+                decoding="async"
                 draggable="false"
                 onError={() => onImageError?.(2)}
               />
@@ -105,6 +106,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                 src={images[1]} 
                 className="w-full h-full object-cover" 
                 loading="lazy" 
+                decoding="async"
                 draggable="false"
                 onError={() => onImageError?.(1)}
               />
@@ -116,6 +118,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
                 src={images[0]} 
                 className="w-full h-full object-cover" 
                 loading="lazy" 
+                decoding="async"
                 draggable="false"
                 onError={() => onImageError?.(0)}
               />
@@ -128,7 +131,7 @@ export const Folder3DIcon = ({ previewSrcs, count, category = 'general', classNa
           className="absolute left-0 right-0 bottom-0 h-[60%] z-20 transition-transform duration-300 origin-bottom"
           style={{ transform: 'perspective(800px) rotateX(-10deg)' }}
         >
-          <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg ${style.front}`} preserveAspectRatio="none">
+          <svg viewBox="0 0 100 65" className={`w-full h-full drop-shadow-lg dark:drop-shadow-none ${style.front}`} preserveAspectRatio="none">
             <path d="M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z" fill="currentColor" />
           </svg>
           
