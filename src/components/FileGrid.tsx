@@ -1378,7 +1378,7 @@ export const FileGrid = React.memo(({
         containerRef?.current?.removeEventListener('scroll', handleScroll);
         containerRef?.current?.removeEventListener('mousemove', handlePointerMove);
         containerRef?.current?.removeEventListener('mouseleave', handlePointerLeave);
-        scrollProfiler.detach();
+        scrollProfiler.detach(containerRef.current);
         if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
         if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
         // 取消待执行的滚动位置保存（debounce），避免组件卸载后仍更新 App 状态

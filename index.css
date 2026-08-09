@@ -210,6 +210,21 @@ body {
   mix-blend-mode: normal !important;
 }
 
+/* 滚动性能优化：滚动期间暂停文件夹树节点上的所有过渡/动画。
+   TreeNode 行有 hover 背景过渡（transition-colors），滚动帧中鼠标移动
+   会反复触发过渡计算；滚动时禁用可显著降低每帧样式/绘制开销。
+   滚动停止 800ms 后自动恢复（与 FileGrid 的 .file-item 规则同理）。 */
+.auto-hide-scrollbar.scrolling .tree-node-row,
+.auto-hide-scrollbar.scrolling .tree-node-row *,
+.auto-hide-scrollbar.scrolling .tree-node-row *::before,
+.auto-hide-scrollbar.scrolling .tree-node-row *::after {
+  transition-duration: 0ms !important;
+  transition-delay: 0ms !important;
+  animation-duration: 0ms !important;
+  animation-delay: 0ms !important;
+  animation-play-state: paused !important;
+}
+
 /* 悬停滚动条区域：淡入显示 + 颜色加深 + 放大（#94a3b8） */
 #file-grid-container.scrollbar-hover,
 .custom-scrollbar.scrollbar-hover,

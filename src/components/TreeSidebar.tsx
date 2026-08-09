@@ -22,6 +22,7 @@ import { lanClientApi } from './lan-client/lanClientApi';
 import NetworkSection from './lan-client/NetworkSection';
 import { PeopleCanvas } from './PeopleCanvas';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
+import { scrollProfiler } from '../utils/scrollProfiler';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
   const isLan = file.source === 'lan' && !!file.remotePath;
@@ -160,7 +161,7 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
   );
 
   return (
-    <div className="select-none text-sm text-gray-600 dark:text-gray-300">
+    <div className="select-none text-sm text-gray-600 dark:text-gray-300 tree-node-row">
       <div 
         className={`flex items-center px-2 cursor-pointer transition-colors border border-transparent group relative
           ${isDragOverNode ? 'bg-blue-500/30 dark:bg-blue-900/50 border-2 border-blue-400 dark:border-blue-500 ring-2 ring-blue-300/50 dark:ring-blue-700/50' : ''}
@@ -219,8 +220,6 @@ interface PeopleSectionControlledProps extends PeopleSectionProps {
   expanded: boolean;
   onToggleExpand: () => void;
   listHeight: number;
-  scrollTop: number;
-  isHovered: boolean;
 }
 
 const ROW_HEIGHT = 88;
@@ -228,7 +227,7 @@ const COLS = 3;
 
 const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({ 
   people, files, onPersonSelect, onNavigateAllPeople, onContextMenu, onStartRenamePerson, onCreatePerson, t, isSelected, 
-  expanded, onToggleExpand, listHeight, scrollTop, isHovered, roots
+  expanded, onToggleExpand, listHeight, roots
 }) => {
   const isAndroid = isAndroidPlatformCached();
   const iconSize = isAndroid ? 18 : 14;
@@ -492,18 +491,14 @@ interface TagSectionControlledProps extends TagSectionProps {
   onToggleExpand: () => void;
   listHeight: number;
   rowHeight: number;
-  scrollTop: number;
-  bufferRows: number;
   FixedSizeListComp: any;
-  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
-  isHovered: boolean;
   filesVersion?: number;
 }
 
 const TagSection: React.FC<TagSectionControlledProps> = React.memo(({ 
   files, customTags, onTagSelect, onNavigateAllTags, onContextMenu, 
   isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, t, expanded, onToggleExpand, isSelected, 
-  listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, onScroll, isHovered, roots, filesVersion
+  listHeight, rowHeight, FixedSizeListComp, roots, filesVersion
 }) => {
     const [hoveredTag, setHoveredTag] = useState<string | null>(null);
     const [hoveredTagPos, setHoveredTagPos] = useState<{top: number, left: number} | null>(null);
@@ -524,18 +519,35 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   const chevronMr = isAndroid ? 'mr-1.5' : 'mr-1';
 
-  // Performance Optimization: Freeze sidebar rendering when not hovered
-  const frozenScrollTop = useRef(scrollTop);
-  useEffect(() => {
-    if (isAndroid || isHovered) {
-      frozenScrollTop.current = scrollTop;
-    }
-  }, [scrollTop, isHovered, isAndroid]);
+  // 按需虚拟化（与 FolderSection / FileGrid 相同的 renderWindow 思路）：
+  // 仅当视口越过已渲染窗口边界时才触发重渲染，窗口内滚动 React 完全不动。
+  // 注意：此处 buffer 不能沿用 FileGrid 的 400px！树行高仅 28-35px，400px ≈ 12 行，
+  // 会让 DOM 节点数翻倍、每帧合成/绘制成本上升（实测 p50 19ms → 23ms 恶化）。
+  // 小 buffer(3 行) 保持 DOM 精简；重渲染本身开销很小（实测重渲染率与 p50 无关）。
+  const bufferRows = 3;
+  const [localScrollTop, setLocalScrollTop] = useState(0);
+  const renderWindowRef = useRef<{ min: number; max: number } | null>(null);
+  const tagScrollRafRef = useRef<number | null>(null);
 
-  // Force update when roots change (indicates a database switch)
+  // 展开/收起或根目录切换时重置滚动位置与渲染窗口
   useEffect(() => {
-    frozenScrollTop.current = scrollTop;
-  }, [roots]);
+    renderWindowRef.current = null;
+    setLocalScrollTop(0);
+    if (tagScrollRafRef.current !== null) {
+      cancelAnimationFrame(tagScrollRafRef.current);
+      tagScrollRafRef.current = null;
+    }
+  }, [expanded, roots]);
+
+  // 卸载时取消挂起的 rAF
+  useEffect(() => {
+    return () => {
+      if (tagScrollRafRef.current !== null) {
+        cancelAnimationFrame(tagScrollRafRef.current);
+        tagScrollRafRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (isCreatingTag) {
@@ -608,6 +620,29 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
     return res;
   }, [hoveredTag, files]);
 
+  const handleTagScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const st = e.currentTarget.scrollTop;
+    const win = renderWindowRef.current;
+    // 用缓存的 availableHeight 代替 clientHeight——clientHeight 会强制同步布局
+    const containerH = availableHeight;
+    // 创建标签时输入框需实时跟随列表，强制每帧更新窗口
+    if (!isCreatingTag && win && st >= win.min && st + containerH <= win.max) return;
+    // 越过窗口边界 → rAF 合并到每帧一次，更新渲染窗口并重渲染
+    if (tagScrollRafRef.current !== null) return;
+    tagScrollRafRef.current = requestAnimationFrame(() => {
+      tagScrollRafRef.current = null;
+      const el = tagListRef.current;
+      if (!el) return;
+      const st2 = el.scrollTop;
+      const total = sortedTags.length;
+      const viewportRows = Math.ceil(availableHeight / rowHeight);
+      const first = Math.max(0, Math.floor(st2 / rowHeight) - bufferRows);
+      const last = Math.min(total, first + viewportRows + bufferRows * 2);
+      renderWindowRef.current = { min: first * rowHeight, max: last * rowHeight };
+      setLocalScrollTop(st2);
+    });
+  }, [availableHeight, sortedTags.length, rowHeight, bufferRows, isCreatingTag]);
+
   const handleMouseEnter = useCallback((e: React.MouseEvent, tag: string) => {
     const target = e.currentTarget as HTMLElement;
     if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
@@ -638,8 +673,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       return !isCreatingTag && <div className="text-xs text-gray-400 italic px-2 py-1">{t('sidebar.rightClickToAdd')}</div>;
     }
 
-    // Force real scrollTop if currently creating a tag to ensure the new input and list stay in sync
-    const currentST = (isAndroid || isHovered || isCreatingTag) ? scrollTop : frozenScrollTop.current;
+    const currentST = localScrollTop;
 
     if (FixedSizeListComp) {
       return (
@@ -714,18 +748,25 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
     const viewportRows = Math.ceil(availableHeight / rowHeight);
     const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
     const last = Math.min(total, first + viewportRows + bufferRows * 2);
-    const topHeight = first * rowHeight;
-    const bottomHeight = Math.max(0, (total - last) * rowHeight);
     const slice = sortedTags.slice(first, last);
 
+    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致），
+    // 滚动时浏览器只做合成平移、不重新布局，避免文档流强制重排。
     return (
       <div style={{ height: totalHeight, position: 'relative' }}>
-        <div style={{ height: topHeight }} />
-        {slice.map(tag => (
+        {slice.map((tag, i) => (
           <div 
             key={tag}
             className="relative group"
-            style={{ height: rowHeight }}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: rowHeight,
+              transform: `translateY(${(first + i) * rowHeight}px)`,
+              willChange: 'transform'
+            }}
             onMouseEnter={(e) => handleMouseEnter(e, tag)}
             onMouseLeave={handleMouseLeave}
             onContextMenu={(e) => !isAndroid && onContextMenu(e, 'tag', tag)}
@@ -769,10 +810,9 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
             )}
           </div>
         ))}
-        <div style={{ height: bottomHeight }} />
       </div>
     );
-  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, (isAndroid || isHovered || isCreatingTag ? scrollTop : null), sortedTags.length]);
+  }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, localScrollTop, sortedTags.length, isCreatingTag]);
 
   return (
     <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
@@ -802,9 +842,10 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
           className={`pl-5 pr-3 pb-3 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} bg-panel`}
           style={{ 
             maxHeight: `${availableHeight}px`,
-            contentVisibility: 'auto'
+            // 合成边界：把滚动容器的布局/绘制与外部隔离，减少滚动时每帧重新合成的范围
+            contain: 'layout paint style'
           }}
-          onScroll={onScroll}
+          onScroll={handleTagScroll}
           onContextMenu={(e) => { 
             if (isAndroid) return;
             e.preventDefault(); 
@@ -946,13 +987,9 @@ interface FolderSectionProps {
   onToggleExpand: () => void;
   listHeight: number;
   rowHeight: number;
-  scrollTop: number;
-  bufferRows: number;
   FixedSizeListComp: any;
   containerRef: React.RefObject<HTMLDivElement>;
-  onScroll: (e: React.UIEvent<HTMLDivElement>) => void;
   t: (key: string) => string;
-  isHovered: boolean;
   sortMode?: 'name' | 'date';
   sortOrder?: 'asc' | 'desc';
   onToggleSort?: () => void;
@@ -961,11 +998,21 @@ interface FolderSectionProps {
 
 const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   visibleNodes, files, roots, currentFolderId, expandedSet, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-  expanded, onToggleExpand, listHeight, rowHeight, scrollTop, bufferRows, FixedSizeListComp, containerRef, onScroll, t, isHovered,
+  expanded, onToggleExpand, listHeight, rowHeight, FixedSizeListComp, containerRef, t,
   sortMode = 'name', sortOrder = 'asc', onToggleSort, onNavigateHome
 }) => {
   // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   useAutoScrollbar(containerRef);
+  // 滚动性能记录器：测量文件夹树滚动期间的帧耗时/掉帧（与文件网格共用「滚动性能记录」开关，
+  // 会话按目标独立记录，报告区分文件网格与文件夹树）
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    scrollProfiler.attach(el, 'tree-sidebar');
+    return () => {
+      scrollProfiler.detach(el);
+    };
+  }, [containerRef, expanded]);
   const isSingleRoot = roots.length === 1;
   const rootId = roots[0];
   const rootNode = files[rootId];
@@ -1019,18 +1066,77 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     } catch (err) {}
   };
 
-  // Performance Optimization: Freeze sidebar rendering when not hovered to improve main grid scroll performance
-  const frozenScrollTop = useRef(scrollTop);
-  useEffect(() => {
-    if (isAndroid || isHovered) {
-      frozenScrollTop.current = scrollTop;
-    }
-  }, [scrollTop, isHovered, isAndroid]);
+  // 按需虚拟化（与 FileGrid 相同的 renderWindow 思路）：
+  // scrollTop 由本组件局部管理，仅当视口越过已渲染窗口边界时才触发重渲染；
+  // 窗口内滚动时 React 完全不动，滚动帧零 JS 重渲染，消除"滚动即整树重渲染"的掉帧根源。
+  // 注意：此处 buffer 不能沿用 FileGrid 的 400px！树行高仅 28-35px，400px ≈ 12 行，
+  // 会让 DOM 节点数翻倍、每帧合成/绘制成本上升（实测 p50 19ms → 23ms 恶化）。
+  // 小 buffer(3 行) 保持 DOM 精简；重渲染本身开销很小（实测重渲染率与 p50 无关）。
+  const bufferRows = 3;
+  const [localScrollTop, setLocalScrollTop] = useState(0);
+  const renderWindowRef = useRef<{ min: number; max: number } | null>(null);
+  const sectionScrollRafRef = useRef<number | null>(null);
 
-  // Force update scroll position when roots change (e.g. after a root directory switch)
+  // 滚动窗口变化后同步 DOM 节点数（供滚动性能记录器统计树节点挂载量）
   useEffect(() => {
-    frozenScrollTop.current = scrollTop;
-  }, [roots]);
+    const el = containerRef.current;
+    if (!el) return;
+    const win = window as any;
+    win.__AURORA_RENDER_COUNTS__ = win.__AURORA_RENDER_COUNTS__ || {};
+    try {
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el.querySelectorAll('span.truncate').length;
+    } catch {
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = 0;
+    }
+  }, [localScrollTop, expanded]);
+
+  const handleSectionScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const st = e.currentTarget.scrollTop;
+    const win = renderWindowRef.current;
+    // 用缓存的 availableHeight 代替 clientHeight——clientHeight 会强制同步布局
+    const containerH = availableHeight;
+    // 视口仍在已渲染窗口内 → 完全不触发 React 更新
+    if (win && st >= win.min && st + containerH <= win.max) return;
+    // 越过窗口边界 → rAF 合并到每帧一次，更新渲染窗口并重渲染
+    if (sectionScrollRafRef.current !== null) return;
+    sectionScrollRafRef.current = requestAnimationFrame(() => {
+      sectionScrollRafRef.current = null;
+      const el = containerRef.current;
+      if (!el) return;
+      const st2 = el.scrollTop;
+      const total = displayNodes.length;
+      const viewportRows = Math.ceil(availableHeight / rowHeight);
+      const first = Math.max(0, Math.floor(st2 / rowHeight) - bufferRows);
+      const last = Math.min(total, first + viewportRows + bufferRows * 2);
+      renderWindowRef.current = { min: first * rowHeight, max: last * rowHeight };
+      setLocalScrollTop(st2);
+      // 统计真正的滚动窗口更新次数（供滚动性能记录器使用，不含 hover 等非滚动因素）
+      const _win = window as any;
+      if (_win.__AURORA_RENDER_COUNTS__) {
+        _win.__AURORA_RENDER_COUNTS__.treeSidebarRenders = (_win.__AURORA_RENDER_COUNTS__.treeSidebarRenders || 0) + 1;
+      }
+    });
+  }, [availableHeight, displayNodes.length, rowHeight, bufferRows]);
+
+  // 展开/收起或根目录切换时重置滚动位置与渲染窗口
+  useEffect(() => {
+    renderWindowRef.current = null;
+    setLocalScrollTop(0);
+    if (sectionScrollRafRef.current !== null) {
+      cancelAnimationFrame(sectionScrollRafRef.current);
+      sectionScrollRafRef.current = null;
+    }
+  }, [expanded, roots]);
+
+  // 卸载时取消挂起的 rAF
+  useEffect(() => {
+    return () => {
+      if (sectionScrollRafRef.current !== null) {
+        cancelAnimationFrame(sectionScrollRafRef.current);
+        sectionScrollRafRef.current = null;
+      }
+    };
+  }, []);
 
   const listContent = useMemo(() => {
     if (!expanded) return null;
@@ -1042,7 +1148,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
       );
     }
 
-    const currentST = (isAndroid || isHovered) ? scrollTop : frozenScrollTop.current;
+    const currentST = localScrollTop;
 
     if (FixedSizeListComp) {
       return (
@@ -1084,15 +1190,26 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     const viewportRows = Math.ceil(availableHeight / rowHeight);
     const first = Math.max(0, Math.floor(currentST / rowHeight) - bufferRows);
     const last = Math.min(total, first + viewportRows + bufferRows * 2);
-    const topHeight = first * rowHeight;
-    const bottomHeight = Math.max(0, (total - last) * rowHeight);
     const slice = displayNodes.slice(first, last);
 
+    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致）：
+    // 每个节点绝对定位 + translateY，滚动时浏览器只做合成平移、不重新布局，
+    // 避免文档流布局在滚动帧中的强制重排（这是此前 p50 卡在 ~22ms 的根因）。
     return (
       <div style={{ height: totalHeight, position: 'relative' }}>
-        <div style={{ height: topHeight }} />
-        {slice.map((nodeItem) => (
-          <div key={nodeItem.id} style={{ height: rowHeight }}>
+        {slice.map((nodeItem, i) => (
+          <div
+            key={nodeItem.id}
+            style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              height: rowHeight,
+              transform: `translateY(${(first + i) * rowHeight}px)`,
+              willChange: 'transform'
+            }}
+          >
             <TreeNode
               node={nodeItem.node}
               nodeId={nodeItem.id}
@@ -1108,13 +1225,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
             />
           </div>
         ))}
-        <div style={{ height: bottomHeight }} />
       </div>
     );
   }, [
     expanded, displayNodes, rowHeight, availableHeight, FixedSizeListComp, 
     currentFolderId, expandedSet, t, onToggle, onNavigate, onContextMenu, onDropOnFolder,
-    (isAndroid || isHovered ? scrollTop : null), displayNodes.length
+    localScrollTop, displayNodes.length
   ]);
 
   return (
@@ -1160,11 +1276,12 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
       {expanded && (
         <div 
           ref={containerRef} 
-          onScroll={onScroll} 
+          onScroll={handleSectionScroll} 
           className={`overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} min-h-0`}
           style={{ 
             maxHeight: `${availableHeight}px`,
-            contentVisibility: 'auto'
+            // 合成边界：把滚动容器的布局/绘制与外部隔离，减少滚动时每帧重新合成的范围
+            contain: 'layout paint style'
           }}
         >
           {listContent}
@@ -1351,20 +1468,6 @@ export const Sidebar: React.FC<{
   const sidebarHeightRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
   const rowHeight = isAndroidPlatformCached() ? 35 : 32;
-  const [scrollTop, setScrollTop] = useState(0);
-  const rafRef = useRef<number | null>(null);
-  const bufferRows = 2;
-  const lastLogRef = useRef<number>(0);
-
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.currentTarget;
-    const st = target.scrollTop;
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => {
-      setScrollTop(st);
-      rafRef.current = null;
-    });
-  }, []);
 
   useEffect(() => {
     const el = sidebarHeightRef.current;
@@ -1375,8 +1478,6 @@ export const Sidebar: React.FC<{
     ro.observe(el);
     // set initial
     setListHeight(el.clientHeight);
-    // reset scroll top when switching sections to avoid carry-over
-    setScrollTop(0);
     return () => ro.disconnect();
   }, [activeSection, roots]);
 
@@ -1518,19 +1619,15 @@ export const Sidebar: React.FC<{
              }}
              listHeight={listHeight}
              rowHeight={rowHeight}
-             scrollTop={scrollTop}
-             bufferRows={bufferRows}
              FixedSizeListComp={FixedSizeListComp}
              containerRef={containerRef}
-             onScroll={handleScroll}
              t={t}
              roots={roots}
-             isHovered={isSidebarHovered}
              sortMode={folderSortMode}
              sortOrder={folderSortOrder}
              onToggleSort={handleToggleFolderSort}
              onNavigateHome={onNavigateHome}
-          />
+             />
 
           {isAndroidPlatformCached() && (
             <NetworkSection
@@ -1563,8 +1660,6 @@ export const Sidebar: React.FC<{
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
             listHeight={listHeight}
-            scrollTop={scrollTop}
-            isHovered={isSidebarHovered}
             roots={roots}
           />
 
@@ -1584,11 +1679,7 @@ export const Sidebar: React.FC<{
           isSelected={activeViewMode === 'tags-overview'}
           listHeight={listHeight}
           rowHeight={28} /* Estimated height for tag item */
-          scrollTop={scrollTop}
-          bufferRows={bufferRows}
           FixedSizeListComp={FixedSizeListComp}
-          onScroll={handleScroll}
-          isHovered={isSidebarHovered}
           roots={roots}
           filesVersion={filesVersion}
         />
