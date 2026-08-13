@@ -206,7 +206,6 @@ export const useAppInit = ({
                 hasToken: !!finalSettings.lanShare?.serverAccessToken,
                 host: finalSettings.lanShare?.serverHost,
                 port: finalSettings.lanShare?.serverPort,
-                tokenPrefix: finalSettings.lanShare?.serverAccessToken?.slice(0, 8),
               });
               // 恢复滚动性能记录开关（设置-性能界面控制，默认关闭）
               setScrollProfilerEnabled(!!finalSettings.performance?.scrollProfiling);

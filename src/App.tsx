@@ -802,7 +802,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     const ls = state.settings.lanShare;
     lanTokenRef.current = ls.serverAccessToken;
-    console.log('[LAN useEffect] token/host/port:', ls.serverAccessToken, ls.serverHost, ls.serverPort);
+    console.log('[LAN useEffect] host/port:', ls.serverHost, ls.serverPort);
     if (ls.serverAccessToken && ls.serverHost && ls.serverPort) {
       // 卡死保护：如果 lanLoadingRef 被某个挂起的 fetch 卡住超过 25s，强制重置
       if (lanLoadingRef.current) {

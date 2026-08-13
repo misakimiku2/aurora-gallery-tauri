@@ -16,8 +16,8 @@ const _deepImageCache = new Map<string, { fingerprint: string; images: FileNode[
 
 const childrenFingerprint = (rootFolder: FileNode): string => {
     const kids = rootFolder.children || [];
-    const first = kids[0]?.id || '';
-    const last = kids[kids.length - 1]?.id || '';
+    const first = kids[0] || '';
+    const last = kids[kids.length - 1] || '';
     return `${kids.length}|${first}|${last}|${rootFolder.updatedAt || rootFolder.createdAt || ''}`;
 };
 
