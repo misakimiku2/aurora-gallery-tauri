@@ -13,7 +13,6 @@ import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/log
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { lanNavStart, lanNavStep } from './utils/lanNavTrace';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
 import { ArrowUp, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, Trash2, Undo2, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronsDown, ChevronsUp, FolderPlus, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, Type, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
@@ -49,7 +48,7 @@ import { asyncPool } from './utils/async';
 import { ToastItem } from './components/ToastItem';
 import { TaskProgressModal } from './components/TaskProgressModal';
 import { getPinyinGroup } from './utils/textUtils';
-import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS, LAN_ROOT_IMAGES_ID } from './constants';
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from './constants';
 import SplashScreen from './components/SplashScreen';
 import { SvgColorFilters } from './components/SvgColorFilters';
 import { LanDownloadOverlay } from './components/LanDownloadOverlay';
