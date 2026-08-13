@@ -30,15 +30,9 @@ import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserDa
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
 import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
-import md5 from 'md5';
 
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener, isAndroidSync } from './utils/androidPlatform';
-
-// Helper: normalize path to use forward slashes consistently
-const normalizePath = (path: string) => path.replace(/\\/g, '/');
-
-// Helper: generate a stable ID from a path (compat with Rust backend)
-const generateId = (path: string) => md5(normalizePath(path)).substring(0, 9);
+import { generateId } from './utils/pathUtils';
 
 // ... (helper components remain unchanged)
 import { useTasks } from './hooks/useTasks';
