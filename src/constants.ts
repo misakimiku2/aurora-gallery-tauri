@@ -1,5 +1,8 @@
 import { TabState, LayoutMode, SortOption, SortDirection, GroupByOption } from './types';
 
+// LAN 根目录虚拟文件夹 ID：容纳资源根目录下未归入子文件夹的散落图片
+export const LAN_ROOT_IMAGES_ID = '__lan_root_images__';
+
 export const DUMMY_TAB: TabState = {
     id: 'dummy',
     folderId: '',

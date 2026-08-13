@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -33,8 +32,6 @@ import { aiService } from './services/aiService';
 
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener, isAndroidSync } from './utils/androidPlatform';
 import { generateId } from './utils/pathUtils';
-
-// ... (helper components remain unchanged)
 import { useTasks } from './hooks/useTasks';
 import { useFileSearch } from './hooks/useFileSearch';
 import { useFileOperations } from './hooks/useFileOperations';
@@ -59,21 +56,18 @@ import { useFolderSettings } from './hooks/useFolderSettings';
 import { usePanelSwipeGesture } from './hooks/usePanelSwipeGesture';
 import { GlobalToasts } from './components/GlobalToasts';
 import { asyncPool } from './utils/async';
-
 import { ToastItem } from './components/ToastItem';
 import { TaskProgressModal } from './components/TaskProgressModal';
-
 import { getPinyinGroup } from './utils/textUtils';
-import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from './constants';
-
-
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS, LAN_ROOT_IMAGES_ID } from './constants';
 import SplashScreen from './components/SplashScreen';
+import { SvgColorFilters } from './components/SvgColorFilters';
+import { LanDownloadOverlay } from './components/LanDownloadOverlay';
 import { DragDropOverlay, DropAction } from './components/DragDropOverlay';
 import { ContextMenu } from './components/ContextMenu';
 import { AppModals } from './components/AppModals';
-
-// 锟斤拷锟斤拷统一锟侥伙拷锟斤拷锟斤拷夤わ拷锟?
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
+import { getInitialLayout } from './utils/layoutSettings';
 
 // 锟斤拷展 Window 锟接匡拷锟皆帮拷锟斤拷锟斤拷锟角碉拷全锟街猴拷锟斤拷
 declare global {
@@ -85,19 +79,7 @@ declare global {
 // Global initialization guard to prevent double execution in React Strict Mode
 let isAppInitialized = false;
 
-// LAN 根目录虚拟文件夹 ID：容纳资源根目录下未归入子文件夹的散落图片
-const LAN_ROOT_IMAGES_ID = '__lan_root_images__';
-
 export const App: React.FC = () => {
-  const getInitialLayout = () => {
-    const isAndroid = isAndroidSync();
-    if (isAndroid) {
-      const isPortrait = typeof window !== 'undefined' && window.matchMedia('(orientation: portrait)').matches;
-      return { isSidebarVisible: !isPortrait, isMetadataVisible: false, isColorPickerVisible: false };
-    }
-    return { isSidebarVisible: true, isMetadataVisible: true, isColorPickerVisible: false };
-  };
-
   const [state, setState] = useState<AppState>({
     roots: [], files: {}, people: {}, topics: {}, expandedFolderIds: [], tabs: [], activeTabId: '', sortBy: 'name', sortDirection: 'asc', thumbnailSize: 180, renamingId: null, clipboard: { action: null, items: { type: 'file', ids: [] } }, customTags: [], folderSettings: {}, layout: getInitialLayout(),
     slideshowConfig: { interval: 3000, transition: 'fade', isRandom: false, enableZoom: true },
@@ -2977,25 +2959,7 @@ export const App: React.FC = () => {
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
 
       {/* LAN 桌面图片下载进度遮罩 */}
-      {lanDownloadProgress.active && (
-        <div className="fixed inset-0 z-[400] bg-black/50 backdrop-blur-sm flex items-center justify-center pointer-events-auto">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl px-8 py-6 flex flex-col items-center min-w-[220px]">
-            <Loader2 size={28} className="text-blue-500 animate-spin mb-3" />
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-2">
-              {t('lanClient.downloading') || '正在下载桌面图片'}
-            </div>
-            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-blue-500 rounded-full transition-all duration-200"
-                style={{ width: `${lanDownloadProgress.total > 0 ? (lanDownloadProgress.completed / lanDownloadProgress.total) * 100 : 0}%` }}
-              />
-            </div>
-            <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-              {lanDownloadProgress.completed} / {lanDownloadProgress.total}
-            </div>
-          </div>
-        </div>
-      )}
+      <LanDownloadOverlay progress={lanDownloadProgress} t={t} />
 
       {/* 锟解部锟斤拷拽锟斤拷锟角诧拷 */}
       <DragDropOverlay
@@ -3007,8 +2971,8 @@ export const App: React.FC = () => {
         targetPath={state.files[activeTab.folderId]?.path}
       />
 
-      {/* ... (SVG filters) ... */}
-      <svg style={{ display: 'none' }}><defs><filter id="channel-r"><feColorMatrix type="matrix" values="1 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-g"><feColorMatrix type="matrix" values="0 0 0 0 0  0 1 0 0 0  0 0 0 0 0  0 0 0 1 0" /></filter><filter id="channel-b"><feColorMatrix type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 1 0 0  0 0 0 1 0" /></filter><filter id="channel-l"><feColorMatrix type="saturate" values="0" /></filter></defs></svg>
+      {/* 全局 SVG 颜色通道滤镜 */}
+      <SvgColorFilters />
       {!isAndroidPlatformCached() && (
         <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
           // Check user's exit action preference from ref (always latest value)
