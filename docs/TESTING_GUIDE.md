@@ -22,7 +22,7 @@ npm run build
 npx vitest run
 ```
 
-**预期结果**：最后出现 `Test Files 1 passed (1)`、`Tests 2 passed (2)`。
+**预期结果**：最后出现 `Test Files 7 passed (7)`、`Tests 39 passed (39)`。
 
 ## 3. 桌面应用启动测试（冒烟测试）
 
@@ -42,6 +42,9 @@ npm run tauri:dev
 | 点左侧"人物"标签 | 人物视图正常显示（空列表也可以） |
 | 点"专题"标签 | 专题视图正常显示 |
 | 点右上角齿轮（设置） | 设置窗口打开，各选项卡能切换 |
+| 顶部标签栏：新建标签、切换标签、点 × 关闭 | 都正常响应，当前内容随之切换 |
+| 在图片上点右键 | 右键菜单弹出，删除/重命名/复制等操作生效 |
+| 顶部搜索框输入关键字搜索 | 搜索结果正常显示，可清除筛选 |
 | 关闭窗口 | 应用退出，终端没有红色报错 |
 
 **注意**：`tauri:dev` 会一直占用终端，测试完按 `Ctrl+C` 停止。
@@ -76,4 +79,4 @@ npm run tauri:dev
 - **端口被占用**（`EADDRINUSE`）：运行 `npm run clean` 后再试。
 - **改了代码后应用没反应**：`tauri:dev` 下改前端代码会自动刷新；改 Rust 代码需要重启（Ctrl+C 再 `npm run tauri:dev`）。
 
-> 最后更新：批次 C（tauri-bridge 拆分 + CI + App.tsx 重复代码清理）之后
+> 最后更新：App.tsx 拆分（阶段 1-3，拆出 `src/components/app/` 8 个组件 + `useLanClientSync` hook）之后

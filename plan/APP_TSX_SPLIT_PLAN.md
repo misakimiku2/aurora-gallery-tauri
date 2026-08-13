@@ -180,3 +180,31 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
    - 拆出了哪些文件
    - 请用户做的测试（`npm run tauri:dev` + 冒烟清单）
    - 未完成的部分（如有）与原因
+
+---
+
+## 八、执行结果记录（2026-08-13 已完成，供后续会话参考）
+
+> 本方案已按第四节执行完毕（阶段 1 + 阶段 2 + 阶段 3 的 LAN 部分）。以下为实际结果。
+
+### 行数变化
+- `src/App.tsx`：3433 行 → **2686 行**（用 `(Get-Content src/App.tsx | Measure-Object -Line).Lines` 统计）
+
+### 提交记录（按顺序）
+| commit | 内容 |
+|---|---|
+| `479e7bc` | 阶段 1：import 上移整理、`LAN_ROOT_IMAGES_ID` → constants.ts、`getInitialLayout` → `src/utils/layoutSettings.ts`、SVG filters → `SvgColorFilters.tsx`、LAN 下载遮罩 → `LanDownloadOverlay.tsx` |
+| `90c0e26` | 阶段 2：JSX 组装层拆为 `src/components/app/` 下 8 个组件（TabBarWrapper / SidebarPane / ViewerPane / ToolbarPane / FilterChipsBar / OverviewBar / MainContentArea / RightPanel） |
+| `e726d88` | 阶段 3：LAN 客户端逻辑提取为 `src/hooks/useLanClientSync.ts`（连接恢复/重试/心跳/浏览/刷新/上传） |
+| `3781d61` | 清理 LAN 提取后残留的未使用 import |
+
+### 验收（全部通过）
+- `npx tsc --noEmit`：0 错误
+- `npm run build`：成功
+- `npx vitest run`：39 passed / 7 files
+- `npm run build:lan-share`：成功
+
+### 注意事项（后续会话）
+- 阶段 3 仅完成了 LAN 候选（收益最大、最独立）。方案第四节列出的其余候选（useViewerHandlers / useTabHandlers / usePersonTopicHandlers / useExternalDragDrop）**尚未执行**，如需继续减行可按原方法进行。
+- 拆分过程中发现 `docs/TESTING_GUIDE.md` 第 25 行的测试数量为旧数据（已更新为 7 files / 39 tests）。
+- App.tsx 中仍存在少量历史遗留的未使用 import（如 `convertFileSrc`、`initializeFileSystem` 等，拆分前就存在），按铁律 4 未做清理；如后续做代码清洁可一并处理。
