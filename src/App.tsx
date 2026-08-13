@@ -1,21 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Sidebar } from './components/TreeSidebar';
 import { lanClientApi } from './components/lan-client/lanClientApi';
 import { downloadLanImagesBatched } from './components/lan-client/lanDownload';
-import { MetadataPanel } from './components/MetadataPanel';
-import { MobileColorPickerSheet } from './components/MobileColorPickerSheet';
-import { ImageViewer } from './components/ImageViewer';
-import { ImageComparer } from './components/ImageComparer';
-import { TabBar } from './components/TabBar';
-import { TopBar } from './components/TopBar';
-import { AndroidSelectionBar } from './components/AndroidSelectionBar';
-import { FileGrid } from './components/FileGrid';
 import { InlineRenameInput } from './components/InlineRenameInput';
 import { ImageThumbnail } from './components/ImageThumbnail';
-import { TopicModule } from './components/TopicModule';
-import { FoldersOverview } from './components/FoldersOverview';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
@@ -27,7 +16,7 @@ import { performanceMonitor } from './utils/performanceMonitor';
 import { lanNavStart, lanNavStep } from './utils/lanNavTrace';
 import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
-import { Search, Folder, Image as ImageIcon, ArrowUp, X, FolderOpen, Tag, Folder as FolderIcon, Settings, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronLeft, ChevronDown, FileText, Filter, Trash2, Undo2, Globe, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronRight, HardDrive, ChevronsDown, ChevronsUp, FolderPlus, Calendar, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, User, Type, Brain, Sparkles, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
+import { ArrowUp, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, Trash2, Undo2, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronsDown, ChevronsUp, FolderPlus, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, Type, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
 import { aiService } from './services/aiService';
 
 import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener, isAndroidSync } from './utils/androidPlatform';
@@ -66,6 +55,14 @@ import { LanDownloadOverlay } from './components/LanDownloadOverlay';
 import { DragDropOverlay, DropAction } from './components/DragDropOverlay';
 import { ContextMenu } from './components/ContextMenu';
 import { AppModals } from './components/AppModals';
+import { TabBarWrapper } from './components/app/TabBarWrapper';
+import { SidebarPane } from './components/app/SidebarPane';
+import { ViewerPane } from './components/app/ViewerPane';
+import { ToolbarPane } from './components/app/ToolbarPane';
+import { FilterChipsBar } from './components/app/FilterChipsBar';
+import { OverviewBar } from './components/app/OverviewBar';
+import { MainContentArea } from './components/app/MainContentArea';
+import { RightPanel } from './components/app/RightPanel';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
 import { getInitialLayout } from './utils/layoutSettings';
 
@@ -2973,707 +2970,275 @@ export const App: React.FC = () => {
 
       {/* 全局 SVG 颜色通道滤镜 */}
       <SvgColorFilters />
-      {!isAndroidPlatformCached() && (
-        <TabBar tabs={state.tabs} activeTabId={state.activeTabId} files={state.files} topics={state.topics} people={peopleWithDisplayCounts} onSwitchTab={handleSwitchTab} onCloseTab={handleCloseTab} onNewTab={handleNewTab} onContextMenu={(e, id) => handleContextMenu(e, 'tab', id)} onCloseWindow={async () => {
-          // Check user's exit action preference from ref (always latest value)
-          const exitAction = exitActionRef.current;
-
-          if (exitAction === 'minimize') {
-            // Minimize to tray
-            await hideWindow();
-          } else if (exitAction === 'exit') {
-            // Exit immediately
-            await exitApp();
-          } else {
-            // Ask user (default behavior)
-            setShowCloseConfirmation(true);
-          }
-        }} t={t} showWindowControls={!showSplash} isReferenceMode={isReferenceMode} onHoverChange={handleTopBarHoverChange} />
-      )}
+      <TabBarWrapper
+        tabs={state.tabs}
+        activeTabId={state.activeTabId}
+        files={state.files}
+        topics={state.topics}
+        people={peopleWithDisplayCounts}
+        onSwitchTab={handleSwitchTab}
+        onCloseTab={handleCloseTab}
+        onNewTab={handleNewTab}
+        onContextMenu={handleContextMenu}
+        t={t}
+        showWindowControls={!showSplash}
+        isReferenceMode={isReferenceMode}
+        onHoverChange={handleTopBarHoverChange}
+        exitActionRef={exitActionRef}
+        setShowCloseConfirmation={setShowCloseConfirmation}
+      />
       <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isAndroidPlatformCached() ? 'rounded-xl' : isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
         <div ref={panelRowRef} className="flex-1 flex overflow-hidden relative"
           style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
-          <div
-            ref={sidebarOuterRef}
-            className="shrink-0 z-40 overflow-hidden bg-panel"
-            style={{ width: state.layout.isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
-            <div
-              ref={sidebarInnerRef}
-              className="h-full flex flex-col"
-              style={{ width: '16rem', transform: state.layout.isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
-            <Sidebar roots={state.roots} files={state.files} people={peopleWithDisplayCounts} customTags={state.customTags} currentFolderId={activeTab.folderId} expandedIds={state.expandedFolderIds} tasks={tasks} onToggle={handleToggleFolder} onNavigate={handleNavigateFolder} onTagSelect={enterTagView} onNavigateAllTags={enterTagsOverview} onPersonSelect={enterPersonView} onNavigateAllPeople={enterPeopleOverview} onContextMenu={handleContextMenu} isCreatingTag={isCreatingTag} onStartCreateTag={handleCreateNewTag} onSaveNewTag={handleSaveNewTag} onCancelCreateTag={handleCancelCreateTag} onOpenSettings={toggleSettings} onRestoreTask={onRestoreTask} onPauseResume={onPauseResume} onStartRenamePerson={onStartRenamePerson} onCreatePerson={handleCreatePerson} onNavigateTopics={handleNavigateTopics} onCreateTopic={handleCreateRootTopic} onDropOnFolder={handleDropOnFolder} onOpenCanvas={handleOpenCanvas} onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined} activeViewMode={activeTab.viewMode} aiConnectionStatus={state.aiConnectionStatus} t={t} filesVersion={filesVersion} lanRoots={lanRoots} lanConnected={lanConnected} lanLoading={lanLoading} onNavigateNetworkFolder={handleNavigateNetworkFolder} onNavigateNetworkHome={handleNavigateNetworkHome} onOpenLanSettings={handleOpenLanSettings} />
-          </div>
-        </div>
+          <SidebarPane
+            sidebarOuterRef={sidebarOuterRef}
+            sidebarInnerRef={sidebarInnerRef}
+            isSidebarVisible={state.layout.isSidebarVisible}
+            roots={state.roots}
+            files={state.files}
+            people={peopleWithDisplayCounts}
+            customTags={state.customTags}
+            currentFolderId={activeTab.folderId}
+            expandedIds={state.expandedFolderIds}
+            tasks={tasks}
+            onToggle={handleToggleFolder}
+            onNavigate={handleNavigateFolder}
+            onTagSelect={enterTagView}
+            onNavigateAllTags={enterTagsOverview}
+            onPersonSelect={enterPersonView}
+            onNavigateAllPeople={enterPeopleOverview}
+            onContextMenu={handleContextMenu}
+            isCreatingTag={isCreatingTag}
+            onStartCreateTag={handleCreateNewTag}
+            onSaveNewTag={handleSaveNewTag}
+            onCancelCreateTag={handleCancelCreateTag}
+            onOpenSettings={toggleSettings}
+            onRestoreTask={onRestoreTask}
+            onPauseResume={onPauseResume}
+            onStartRenamePerson={onStartRenamePerson}
+            onCreatePerson={handleCreatePerson}
+            onNavigateTopics={handleNavigateTopics}
+            onCreateTopic={handleCreateRootTopic}
+            onDropOnFolder={handleDropOnFolder}
+            onOpenCanvas={handleOpenCanvas}
+            onNavigateHome={isAndroidPlatformCached() ? handleNavigateHome : undefined}
+            activeViewMode={activeTab.viewMode}
+            aiConnectionStatus={state.aiConnectionStatus}
+            t={t}
+            filesVersion={filesVersion}
+            lanRoots={lanRoots}
+            lanConnected={lanConnected}
+            lanLoading={lanLoading}
+            onNavigateNetworkFolder={handleNavigateNetworkFolder}
+            onNavigateNetworkHome={handleNavigateNetworkHome}
+            onOpenLanSettings={handleOpenLanSettings}
+          />
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-content">
-          {activeTab.viewingFileId && !isAndroidSync() && (
-            <ImageViewer
-              file={state.files[activeTab.viewingFileId]}
-              sortedFileIds={displayFileIds.filter(id => state.files[id].type === FileType.IMAGE)}
-              files={state.files}
-              layout={state.layout}
-              slideshowConfig={state.slideshowConfig}
-              onLayoutToggle={onLayoutToggle}
-              onClose={closeViewer}
-              onNext={(random) => handleViewerNavigate(random ? 'random' : 'next')}
-              onPrev={() => handleViewerNavigate('prev')}
-              onNavigateBack={goBack}
-              onNavigateForward={goForward}
-              canGoBack={activeTab.history.currentIndex > 0}
-              canGoForward={activeTab.history.currentIndex < activeTab.history.stack.length - 1}
-              onDelete={(id) => isAndroidDevice ? handleAndroidDelete([id]) : requestDelete([id])}
-              onViewInExplorer={handleViewInExplorer}
-              onCopyToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'copy-to-folder', data: { fileIds: [fileId] } } }))}
-              onMoveToFolder={(fileId) => setState(s => ({ ...s, activeModal: { type: 'move-to-folder', data: { fileIds: [fileId] } } }))}
-              onNavigateToFolder={(fid, options) => enterFolder(fid, options && options.targetId ? { scrollToItemId: options.targetId } : undefined)}
-              searchQuery={activeTab.searchQuery}
-              onSearch={handleViewerSearch}
-              searchScope={activeTab.searchScope}
-              onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
-              onUpdateSlideshowConfig={(cfg) => setState(s => ({ ...s, slideshowConfig: cfg }))}
-              onPasteTags={(id) => handlePasteTags([id])}
-              onEditTags={() => setState(s => ({ ...s, activeModal: { type: 'edit-tags', data: { fileId: activeTab.viewingFileId } } }))}
-              onCopyTags={() => handleCopyTags([activeTab.viewingFileId!])}
-              onAIAnalysis={(id) => handleAIAnalysis([id])}
-              isAISearchEnabled={state.settings.search.isAISearchEnabled}
-              onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
-              t={t}
-              activeTab={activeTab}
-              tabs={state.tabs}
-              handleOpenCompareInNewTab={handleOpenCompareAndClearSelection}
-              handleAddToCompareCanvas={handleAddToCompareCanvas}
-            />
-          )}
-          {state.tabs.map(tab => tab.isCompareMode && (
-            <div key={tab.id} className={`w-full h-full flex-1 flex flex-col overflow-hidden ${tab.id === state.activeTabId ? 'flex' : 'hidden'}`}>
-              <ImageComparer
-                selectedFileIds={tab.selectedFileIds}
-                files={state.files}
-                people={state.people}
-                topics={state.topics}
-                customTags={state.customTags}
-                resourceRoot={state.settings.paths.resourceRoot}
-                cachePath={state.settings.paths.cacheRoot}
-                isActiveTab={tab.id === state.activeTabId}
-                onClose={() => {
-                  updateTabById(tab.id, { isCompareMode: false });
-                  setIsReferenceMode(false);
-                }}
-                onCloseTab={() => {
-                  handleCloseTab({ stopPropagation: () => { } } as any, tab.id);
-                  setIsReferenceMode(false);
-                }}
-                onReady={() => {
-                  // 图片加载完成后的回调，不需要清空 selectedFileIds
-                  // 保留此回调用于未来可能的用途
-                }}
-                onLayoutToggle={onLayoutToggle}
-                onNavigateBack={goBack}
-                onSelect={(id) => updateTabById(tab.id, { selectedFileIds: [id] })}
-                onSelectedFileIdsChange={(ids) => updateTabById(tab.id, { selectedFileIds: ids })}
-                sessionName={tab.sessionName}
-                onSessionNameChange={(name) => updateTabById(tab.id, { sessionName: name })}
-                layoutProp={state.layout}
-                canGoBack={tab.history.currentIndex > 0}
-                t={t}
-                onReferenceModeChange={handleReferenceModeChange}
-                isReferenceMode={isReferenceMode}
-              />
-            </div>
-          ))}
+          <ViewerPane
+            activeTab={activeTab}
+            state={state}
+            displayFileIds={displayFileIds}
+            t={t}
+            onLayoutToggle={onLayoutToggle}
+            closeViewer={closeViewer}
+            handleViewerNavigate={handleViewerNavigate}
+            goBack={goBack}
+            goForward={goForward}
+            isAndroidDevice={isAndroidDevice}
+            handleAndroidDelete={handleAndroidDelete}
+            requestDelete={requestDelete}
+            handleViewInExplorer={handleViewInExplorer}
+            setState={setState}
+            enterFolder={enterFolder}
+            handleViewerSearch={handleViewerSearch}
+            updateActiveTab={updateActiveTab}
+            handlePasteTags={handlePasteTags}
+            handleCopyTags={handleCopyTags}
+            handleAIAnalysis={handleAIAnalysis}
+            handleOpenCompareAndClearSelection={handleOpenCompareAndClearSelection}
+            handleAddToCompareCanvas={handleAddToCompareCanvas}
+            updateTabById={updateTabById}
+            handleCloseTab={handleCloseTab}
+            setIsReferenceMode={setIsReferenceMode}
+            handleReferenceModeChange={handleReferenceModeChange}
+            isReferenceMode={isReferenceMode}
+          />
           <div className={`flex-1 flex flex-col min-w-0 relative ${activeTab.viewingFileId || activeTab.isCompareMode ? 'hidden' : 'flex'}`} style={{ height: '100%' }}>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              ref={lanUploadInputRef}
-              onChange={handleUploadFilesSelected}
-              className="hidden"
-              aria-hidden="true"
-            />
-            {isAndroidDevice && isAndroidSelectionMode ? (
-              <AndroidSelectionBar
-                selectedCount={activeTab.selectedFileIds.length}
-                totalCount={activeTab.viewMode === 'folders-overview' ? state.roots.filter(rid => state.files[rid]?.type === 'folder').length : displayFileIds.length}
-                selectedFileIds={activeTab.selectedFileIds}
-                files={state.files}
-                activeTab={activeTab}
-                peopleWithDisplayCounts={peopleWithDisplayCounts}
-                t={t}
-                onSelectAll={() => {
-                  if (activeTab.viewMode === 'folders-overview') {
-                    const folderIds = state.roots.filter(rid => state.files[rid]?.type === 'folder');
-                    updateActiveTab({ selectedFileIds: folderIds });
-                  } else {
-                    updateActiveTab({ selectedFileIds: displayFileIds });
-                  }
-                }}
-                onClearSelection={handleExitAndroidSelectionMode}
-                onDeselectAll={handleDeselectAllAndroid}
-                onDelete={handleAndroidDelete}
-                onShowContextMenu={(x: number, y: number) => {
-                  const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
-                  const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
-                  let menuType: 'file-single' | 'file-multi' | 'folder-single' | 'folder-multi';
-                  if (activeTab.selectedFileIds.length === 1) {
-                    const file = state.files[activeTab.selectedFileIds[0]];
-                    menuType = file?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
-                  } else {
-                    menuType = allAreFolders ? 'folder-multi' : 'file-multi';
-                  }
-                  setContextMenu({ visible: true, x, y, type: menuType, targetId: activeTab.selectedFileIds[0] });
-                }}
-              />
-            ) : (
-            <TopBar
+            <ToolbarPane
+              lanUploadInputRef={lanUploadInputRef}
+              handleUploadFilesSelected={handleUploadFilesSelected}
+              isAndroidDevice={isAndroidDevice}
+              isAndroidSelectionMode={isAndroidSelectionMode}
               activeTab={activeTab}
               state={state}
+              displayFileIds={displayFileIds}
+              peopleWithDisplayCounts={peopleWithDisplayCounts}
+              t={t}
+              updateActiveTab={updateActiveTab}
+              handleExitAndroidSelectionMode={handleExitAndroidSelectionMode}
+              handleDeselectAllAndroid={handleDeselectAllAndroid}
+              handleAndroidDelete={handleAndroidDelete}
+              setContextMenu={setContextMenu}
               toolbarQuery={toolbarQuery}
               groupedTags={groupedTags}
               tagSearchQuery={tagSearchQuery}
-              onToggleSidebar={toggleSidebar}
-              onGoBack={goBack}
-              onGoForward={goForward}
-              onNavigateUp={handleNavigateUp}
-              onSetTagSearchQuery={setTagSearchQuery}
-              onTagClick={handleTagClick}
-              onRefresh={handleRefresh}
-              onSearchScopeChange={(scope) => updateActiveTab({ searchScope: scope })}
-              onPerformSearch={handlePerformSearch}
-              onSetToolbarQuery={setToolbarQuery}
-              onSetPersonSearchQuery={setPersonSearchQuery}
+              setTagSearchQuery={setTagSearchQuery}
+              toggleSidebar={toggleSidebar}
+              goBack={goBack}
+              goForward={goForward}
+              handleNavigateUp={handleNavigateUp}
+              handleTagClick={handleTagClick}
+              handleRefresh={handleRefresh}
+              handlePerformSearch={handlePerformSearch}
+              setToolbarQuery={setToolbarQuery}
+              setPersonSearchQuery={setPersonSearchQuery}
               personSearchQuery={personSearchQuery}
-              onLayoutModeChange={(mode) => {
-                updateActiveTab({ layoutMode: mode });
-                // If not remembering this folder, update global default
-                if (!state.folderSettings[activeTab.folderId]) {
-                  setState(s => ({
-                    ...s,
-                    settings: {
-                      ...s.settings,
-                      defaultLayoutSettings: {
-                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
-                        layoutMode: mode
-                      }
-                    }
-                  }));
-                }
-              }}
-              onSortOptionChange={(opt) => {
-                // Reset scroll to top so the user sees the beginning of the new ordering
-                // instead of jumping to a random place (the old scroll offset now maps
-                // to different items after reordering).
-                updateActiveTab({ scrollTop: 0 });
-                setState(s => ({ ...s, sortBy: opt }));
-                // If not remembering this folder, update global default
-                if (!state.folderSettings[activeTab.folderId]) {
-                  setState(s => ({
-                    ...s,
-                    settings: {
-                      ...s.settings,
-                      defaultLayoutSettings: {
-                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
-                        sortBy: opt
-                      }
-                    }
-                  }));
-                }
-              }}
-              onSortDirectionChange={() => {
-                // Reset scroll to top (see onSortOptionChange for rationale).
-                updateActiveTab({ scrollTop: 0 });
-                const newDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
-                setState(s => ({ ...s, sortDirection: newDirection }));
-                // If not remembering this folder, update global default
-                if (!state.folderSettings[activeTab.folderId]) {
-                  setState(s => ({
-                    ...s,
-                    settings: {
-                      ...s.settings,
-                      defaultLayoutSettings: {
-                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
-                        sortDirection: newDirection
-                      }
-                    }
-                  }));
-                }
-              }}
-              onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
-              onToggleMetadata={toggleMetadata}
-              onToggleColorPicker={toggleColorPicker}
-              isColorPickerVisible={state.layout.isColorPickerVisible}
-              onToggleSettings={toggleSettings}
-              onUpdateDateFilter={(f) => updateActiveTab({ dateFilter: f })}
-              // Pagination
-              totalResults={totalResults}
-              pageSize={pageSize}
-              onPageChange={(page) => updateActiveTab({ currentPage: page, scrollTop: 0 })}
-              groupBy={groupBy}
-              onGroupByChange={(groupByOption) => {
-                setGroupBy(groupByOption);
-                // If not remembering this folder, update global default
-                if (!state.folderSettings[activeTab.folderId]) {
-                  setState(s => ({
-                    ...s,
-                    settings: {
-                      ...s.settings,
-                      defaultLayoutSettings: {
-                        ...(s.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS),
-                        groupBy: groupByOption
-                      }
-                    }
-                  }));
-                }
-              }}
-              isAISearchEnabled={state.settings.search.isAISearchEnabled}
-              onToggleAISearch={() => setState(s => ({ ...s, settings: { ...s.settings, search: { ...s.settings.search, isAISearchEnabled: !s.settings.search.isAISearchEnabled } } }))}
-              onRememberFolderSettings={activeTab.viewMode === 'browser' ? handleRememberFolderSettings : undefined}
-              // Topic layout control (used when in topics-overview)
               topicLayoutMode={topicLayoutMode}
-              onTopicLayoutModeChange={handleTopicLayoutModeChange}
+              handleTopicLayoutModeChange={handleTopicLayoutModeChange}
               folderLayoutMode={folderLayoutMode}
-              onFolderLayoutModeChange={handleFolderLayoutModeChange}
-              hasFolderSettings={activeTab.viewMode === 'browser' ? !!state.folderSettings[activeTab.folderId] : false}
-              // People view sort and group
+              handleFolderLayoutModeChange={handleFolderLayoutModeChange}
               personSortBy={personSortBy}
               personSortDirection={personSortDirection}
               personGroupBy={personGroupBy}
-              onPersonSortByChange={handlePersonSortByChange}
-              onPersonSortDirectionChange={handlePersonSortDirectionChange}
-              onPersonGroupByChange={handlePersonGroupByChange}
-              t={t}
-              // CLIP Search
+              handlePersonSortByChange={handlePersonSortByChange}
+              handlePersonSortDirectionChange={handlePersonSortDirectionChange}
+              handlePersonGroupByChange={handlePersonGroupByChange}
               isClipSearchEnabled={isClipSearchEnabled}
-              onToggleClipSearch={() => setIsClipSearchEnabled(!isClipSearchEnabled)}
-              clipEnabled={state.settings.clip.enabled}
-              clipModelName={state.settings.clip.modelName}
-              onOpenClipSettings={openClipSettings}
+              setIsClipSearchEnabled={setIsClipSearchEnabled}
+              openClipSettings={openClipSettings}
               showToast={showToast}
               showLanUpload={showLanUpload}
-              onUploadToLan={handleUploadToLan}
+              handleUploadToLan={handleUploadToLan}
+              totalResults={totalResults}
+              pageSize={pageSize}
+              groupBy={groupBy}
+              setGroupBy={setGroupBy}
+              handleRememberFolderSettings={handleRememberFolderSettings}
+              setState={setState}
+              toggleMetadata={toggleMetadata}
+              toggleColorPicker={toggleColorPicker}
+              toggleSettings={toggleSettings}
             />
-            )}
-            {/* ... (Filter UI, same as before) ... */}
-            {(activeTab.activeTags.length > 0 || activeTab.dateFilter.start || activeTab.activePersonId || activeTab.aiFilter || activeTab.searchQuery || totalResults > pageSize) && (
-              <div className="flex items-center px-4 py-2 bg-content space-x-2 overflow-x-auto shrink-0 z-20">
-                <div className="flex items-center text-xs text-gray-500 dark:text-gray-400 mr-2 shrink-0">
-                  <Filter size={12} className="mr-1" />
-                  {t('context.filters')}
-                </div>
-
-                {activeTab.searchQuery && !activeTab.aiFilter && (
-                  <div className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
-                    {activeTab.searchScope === 'file' ? <FileText size={10} className="mr-1" /> :
-                      activeTab.searchScope === 'tag' ? <Tag size={10} className="mr-1" /> :
-                        activeTab.searchScope === 'folder' ? <Folder size={10} className="mr-1" /> :
-                          <Globe size={10} className="mr-1" />}
-                    <span>{activeTab.searchQuery}</span>
-                    <button onClick={() => { setToolbarQuery(''); onPerformSearch(''); }} className="ml-1.5 hover:text-red-500 font-bold"><X size={12} /></button>
-                  </div>
-                )}
-
-                {activeTab.aiFilter && (
-                  activeTab.aiFilter.originalQuery.startsWith('color:') ? (
-                    <div className="flex items-center bg-surface text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-subtle whitespace-nowrap shadow-sm">
-                      <div
-                        className="w-3 h-3 rounded-full border border-gray-300 dark:border-gray-500 mr-1.5 flex-shrink-0 shadow-sm"
-                        style={{ backgroundColor: activeTab.aiFilter.originalQuery.replace('color:', '').startsWith('#') ? activeTab.aiFilter.originalQuery.replace('color:', '') : '#' + activeTab.aiFilter.originalQuery.replace('color:', '') }}
-                      />
-                      <span className="font-mono">{activeTab.aiFilter.originalQuery.replace('color:', '')}</span>
-                      <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12} /></button>
-                    </div>
-                  ) : activeTab.aiFilter.originalQuery.startsWith('palette:') ? (
-                    <div className="flex items-center bg-surface text-gray-800 dark:text-gray-200 px-2 py-0.5 rounded-full text-xs border border-subtle whitespace-nowrap shadow-sm">
-                      <div className="flex -space-x-1 mr-1.5">
-                        {activeTab.aiFilter.originalQuery.replace('palette:', '').split(',').map((c, i) => (
-                          <div
-                            key={i}
-                            className="w-3 h-3 rounded-full border border-white dark:border-gray-700 flex-shrink-0 shadow-sm z-10"
-                            style={{ backgroundColor: c.startsWith('#') ? c : '#' + c }}
-                          />
-                        ))}
-                      </div>
-                      <span className="font-mono text-[10px] text-gray-500 dark:text-gray-400">{t('meta.atmosphere')}</span>
-                      <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500 text-gray-400"><X size={12} /></button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
-                      <Brain size={10} className="mr-1" />
-                      <span>{t('settings.aiSmartSearch')}: "{activeTab.aiFilter.originalQuery}"</span>
-                      <button onClick={() => updateActiveTab({ aiFilter: null })} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
-                    </div>
-                  )
-                )}
-
-                {activeTab.dateFilter.start && (
-                  <div className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
-                    <Calendar size={10} className="mr-1" />
-                    <span>{new Date(activeTab.dateFilter.start).toLocaleDateString()} {activeTab.dateFilter.end ? `- ${new Date(activeTab.dateFilter.end).toLocaleDateString()}` : ''}</span>
-                    <button onClick={() => updateActiveTab({ dateFilter: { start: null, end: null, mode: 'created' as const } })} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
-                  </div>
-                )}
-
-                {activeTab.activePersonId && peopleWithDisplayCounts[activeTab.activePersonId] && (
-                  <div className="flex items-center bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 px-2 py-0.5 rounded-full text-xs border border-purple-200 dark:border-purple-800 whitespace-nowrap">
-                    <Brain size={10} className="mr-1" />
-                    <span>{peopleWithDisplayCounts[activeTab.activePersonId].name}</span>
-                    <button onClick={() => handleClearPersonFilter()} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
-                  </div>
-                )}
-
-                {activeTab.activeTags.map(tag => (
-                  <div key={tag} className="flex items-center bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full text-xs border border-blue-200 dark:border-blue-800 whitespace-nowrap">
-                    <span>{tag}</span>
-                    <button onClick={() => handleClearTagFilter(tag)} className="ml-1.5 hover:text-red-500"><X size={12} /></button>
-                  </div>
-                ))}
-
-                <button onClick={() => {
-                  setToolbarQuery('');
-                  updateActiveTab({
-                    activeTags: [],
-                    activePersonId: null,
-                    searchQuery: '',
-                    dateFilter: { start: null, end: null, mode: 'created' as const },
-                    aiFilter: null
-                  });
-                }} className="text-xs text-gray-500 hover:text-red-500 underline ml-2 whitespace-nowrap">{t('context.clearAll')}</button>
-
-                {/* Pagination & Count Display */}
-                <div className="flex-1" />
-                {totalResults > 0 && (
-                  totalResults > pageSize ? (
-                    <div className="flex items-center gap-1 ml-4 pr-1 px-1 bg-surface rounded shadow-sm border border-subtle">
-                      <button
-                        disabled={(activeTab.currentPage || 1) <= 1}
-                        onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) - 1, scrollTop: 0 })}
-                        className="p-1 hover:bg-surface/70 disabled:opacity-20 rounded transition-colors"
-                        title={t('search.prevPage')}
-                      >
-                        <ChevronLeft size={14} />
-                      </button>
-                      <div className="flex items-center text-[11px] font-medium px-2 min-w-[60px] justify-center select-none">
-                        <span className="text-blue-500 font-bold">{activeTab.currentPage || 1}</span>
-                        <span className="mx-1 text-gray-400">/</span>
-                        <span className="text-gray-600 dark:text-gray-400">{Math.ceil(totalResults / pageSize)}</span>
-                        <span className="ml-1 text-[9px] text-gray-400 font-normal">({totalResults})</span>
-                      </div>
-                      <button
-                        disabled={(activeTab.currentPage || 1) >= Math.ceil(totalResults / pageSize)}
-                        onClick={() => updateActiveTab({ currentPage: (activeTab.currentPage || 1) + 1, scrollTop: 0 })}
-                        className="p-1 hover:bg-surface/70 disabled:opacity-20 rounded transition-colors"
-                        title={t('search.nextPage')}
-                      >
-                        <ChevronRight size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    (activeTab.searchQuery || activeTab.aiFilter || activeTab.activeTags.length > 0 || activeTab.activePersonId) && (
-                      <div className="flex items-center text-[11px] font-medium px-2 py-0.5 bg-surface rounded border border-subtle text-gray-500">
-                        {totalResults} {t('context.items')}
-                      </div>
-                    )
-                  )
-                )}
-              </div>
-            )}
+            <FilterChipsBar
+              activeTab={activeTab}
+              t={t}
+              setToolbarQuery={setToolbarQuery}
+              onPerformSearch={onPerformSearch}
+              updateActiveTab={updateActiveTab}
+              peopleWithDisplayCounts={peopleWithDisplayCounts}
+              handleClearPersonFilter={handleClearPersonFilter}
+              handleClearTagFilter={handleClearTagFilter}
+              totalResults={totalResults}
+              pageSize={pageSize}
+            />
 
             <div className="flex-1 flex flex-col relative bg-content overflow-hidden">
-              {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && state.settings.paths.resourceRoot !== 'android_media_store' && (
-                <div className="h-[30px] flex items-center justify-between px-4 text-xs text-gray-500 dark:text-gray-400 bg-content backdrop-blur shrink-0 relative z-20">
-                  {activeTab.viewMode === 'tags-overview' ? (
-                    <div className="flex items-center w-full">
-                      <div className="flex items-center">
-                        <Tag size={12} className="mr-1" />
-                        <span className="font-medium">{t('context.allTagsOverview')}</span>
-                      </div>
-                      <div className="flex-1 flex justify-end">
-                        <button
-                          onClick={() => setState(s => ({ ...s, activeModal: { type: 'auto-generate-tags' } }))}
-                          className="flex items-center px-3 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-lg transition-colors"
-                        >
-                          <Sparkles size={14} className="mr-1.5" />
-                          {t('tags.autoGenerate') || '自动生成标签'}
-                        </button>
-                      </div>
-                    </div>
-                  ) : activeTab.viewMode === 'people-overview' ? (
-                    <div className="flex items-center w-full">
-                      <div className="flex items-center">
-                        <User size={12} className="mr-1" />
-                        <span>{t('context.allPeople')}</span>
-                      </div>
-                      <div className="flex-1 flex justify-end items-center gap-3">
-                        <span className="text-[10px] opacity-60">
-                          {Object.keys(peopleWithDisplayCounts).length} {t('context.items')}
-                        </span>
-                        <button
-                          onClick={() => setState(s => ({ ...s, activeModal: { type: 'smart-create-person', data: {} } }))}
-                          className="flex items-center px-3 py-1.5 text-xs font-medium text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-lg transition-colors"
-                        >
-                          <Sparkles size={14} className="mr-1.5" />
-                          {t('context.smartCreatePerson') || '智能生成人物'}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center w-full justify-between">
-                      <div className="flex items-center space-x-1 overflow-hidden">
-                        {!(activeTab.searchQuery || activeTab.aiFilter || activeTab.activeTags.length > 0 || activeTab.activePersonId || (activeTab.dateFilter.start && activeTab.dateFilter.end)) ? (
-                          <>
-                            <HardDrive size={12} />
-                            <span>/</span>
-                            {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
-                          </>
-                        ) : (
-                          <>
-                            <Search size={12} className="text-blue-500" />
-                            <span className="font-medium text-blue-500">{t('search.scopeAll')}</span>
-                          </>
-                        )}
-                        {activeTab.activeTags.length > 0 && activeTab.searchScope !== 'tag' && <span className="text-blue-600 font-bold ml-2">{t('context.filtered')}</span>}
-                      </div>
-                      <div className="text-[10px] opacity-60">
-                        {displayFileIds.length} {t('context.items')}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              <div className="flex-1 overflow-hidden relative" id="main-content-area">
-                <div style={{ display: activeTab.viewMode === 'folders-overview' ? 'contents' : 'none' }}>
-                  <FoldersOverview
-                    roots={state.roots}
-                    getFileNode={getFileNode}
-                    resourceRoot={state.settings.paths.resourceRoot}
-                    cachePath={state.settings.paths.cacheRoot}
-                    onFolderClick={enterFolder}
-                    thumbnailSize={state.thumbnailSize}
-                    onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
-                    t={t}
-                    isLoadingImages={state.isScanning}
-                    layoutMode={folderLayoutMode}
-                    onLayoutModeChange={handleFolderLayoutModeChange}
-                    isVisible={activeTab.viewMode === 'folders-overview'}
-                    scrollTop={activeTab.viewMode === 'folders-overview' ? activeTab.scrollTop : undefined}
-                    onScrollTopChange={handleFolderScrollTopChange}
-                    isAndroidSelectionMode={isAndroidSelectionMode}
-                    selectedFileIds={activeTab.selectedFileIds}
-                    onFileLongPress={handleFolderLongPress}
-                    onShowContextMenuForFile={handleShowContextMenuForFile}
-                    onAndroidRangeSelect={handleFolderAndroidRangeSelect}
-                    onFolderSelect={handleFolderSelect}
-                    sortBy={state.sortBy}
-                    sortDirection={state.sortDirection}
-                    dateFilter={activeTab.dateFilter}
-                    onRefresh={() => handleRefresh()}
-                    panelWidthRem={panelWidthRem}
-                  />
-                </div>
-                <div style={{ display: activeTab.viewMode === 'lan-folders-overview' ? 'contents' : 'none' }}>
-                  <FoldersOverview
-                    roots={lanRoots}
-                    getFileNode={getFileNode}
-                    resourceRoot={state.settings.paths.resourceRoot}
-                    cachePath={state.settings.paths.cacheRoot}
-                    onFolderClick={handleNavigateNetworkFolder}
-                    thumbnailSize={state.thumbnailSize}
-                    onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
-                    t={t}
-                    isLoadingImages={lanLoading}
-                    layoutMode={folderLayoutMode}
-                    onLayoutModeChange={handleFolderLayoutModeChange}
-                    isVisible={activeTab.viewMode === 'lan-folders-overview'}
-                    isAndroidSelectionMode={isAndroidSelectionMode}
-                    selectedFileIds={activeTab.selectedFileIds}
-                    onFileLongPress={handleFolderLongPress}
-                    onShowContextMenuForFile={handleShowContextMenuForFile}
-                    onAndroidRangeSelect={handleFolderAndroidRangeSelect}
-                    onFolderSelect={handleFolderSelect}
-                    sortBy={state.sortBy}
-                    sortDirection={state.sortDirection}
-                    onRefresh={handleLanRefresh}
-                    panelWidthRem={panelWidthRem}
-                  />
-                </div>
-                {activeTab.viewMode === 'topics-overview' ? (
-                  <TopicModule
-                    topics={state.topics}
-                    files={state.files}
-                    people={peopleForOverview}
-                    currentTopicId={activeTab.activeTopicId || null}
-                    selectedTopicIds={activeTab.selectedTopicIds || []} // Pass selectedTopicIds
-                    onNavigateTopic={handleNavigateTopic}
-                    onUpdateTopic={handleUpdateTopic}
-                    onCreateTopic={handleCreateTopic}
-                    onDeleteTopic={handleDeleteTopic}
-                    onSelectTopics={(ids, lastId) => {
-                      updateActiveTab({ selectedTopicIds: ids, selectedFileIds: [], selectedPersonIds: [], lastSelectedId: lastId ?? null });
-                    }}
-                    // onSelectFiles now accepts lastSelectedId; update to set both selectedFileIds and lastSelectedId
-                    onSelectFiles={(ids, lastId) => {
-                      updateActiveTab({ selectedFileIds: ids, selectedTopicIds: [], selectedPersonIds: [], lastSelectedId: lastId ?? null });
-                    }}
-                    onSelectPeople={(ids) => {
-                      updateActiveTab({ selectedPersonIds: ids, selectedFileIds: [], selectedTopicIds: [] });
-                    }}
-                    onSelectPerson={(pid, e) => {
-                      const isMultiSelect = e.ctrlKey || e.metaKey || e.shiftKey;
-                      if (!isMultiSelect) {
-                        updateActiveTab({ selectedFileIds: [], selectedTopicIds: [] });
-                      }
-                      handlePersonClick(pid, e);
-                    }}
-                    onNavigatePerson={handleNavigatePerson}
-                    onOpenTopicInNewTab={handleOpenTopicInNewTab}
-                    // New-tab & open-folder handlers for people/files inside TopicModule
-                    onOpenPersonInNewTab={handleOpenPersonInNewTab}
-                    onOpenFileInNewTab={handleOpenInNewTab}
-                    onOpenFileFolder={handleNavigateFolder}
-                    selectedFileIds={activeTab.selectedFileIds}
-                    selectedPersonIds={activeTab.selectedPersonIds}
-                    lastSelectedId={activeTab.lastSelectedId}
-                    // Provide resource root / cache for thumbnails and open action
-                    resourceRoot={state.settings.paths.resourceRoot}
-                    cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-                    onOpenFile={handleFileDoubleClick}
-                    onFileLongPress={handleFileLongPress}
-                    t={t}
-                    scrollTop={activeTab.scrollTop}
-                    onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
-                    isVisible={!activeTab.viewingFileId}
-                    topicLayoutMode={(topicLayoutMode === 'grid' || topicLayoutMode === 'adaptive' || topicLayoutMode === 'masonry') ? topicLayoutMode : 'grid'}
-                    onTopicLayoutModeChange={handleTopicLayoutModeChange}
-                    onShowToast={showToast}
-                    hoverPlayingId={hoverPlayingId}
-                    onSetHoverPlayingId={setHoverPlayingId}
-                    onSmartCreateTopic={() => setState(prev => ({ ...prev, activeModal: { type: 'smart-create-topic', data: {} } }))}
-                  />
-                ) : (
-                  <FileGrid
-                    displayFileIds={displayFileIds}
-                    isVisible={!activeTab.viewingFileId}
-                    getFileNode={getFileNode}
-                    files={activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'people-overview' ? state.files : undefined}
-                    activeTab={activeTab}
-                    sortBy={state.sortBy}
-                    sortDirection={state.sortDirection}
-                    renamingId={state.renamingId}
-                    thumbnailSize={state.thumbnailSize}
-                    resourceRoot={state.settings.paths.resourceRoot}
-                    cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-                    hoverPlayingId={hoverPlayingId}
-                    onSetHoverPlayingId={setHoverPlayingId}
-                    onFileClick={handleFileClick}
-                    onFileDoubleClick={handleFileDoubleClick}
-                    onContextMenu={(e, id) => handleContextMenu(e, 'file', id)}
-                    onRenameSubmit={handleRenameSubmit}
-                    onRenameCancel={() => setState(s => ({ ...s, renamingId: null }))}
-                    onStartRename={startRename}
-                    settings={state.settings}
-                    containerRef={selectionRef}
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseUp={handleMouseUp}
-                    onBackgroundContextMenu={(e) => handleContextMenu(e, 'background', '')}
-                    people={peopleForOverview}
-                    topics={state.topics}
-                    groupedTags={groupedTags}
-                    onPersonClick={(pid, e) => handlePersonClick(pid, e)}
-                    onPersonContextMenu={(e, pid) => handleContextMenu(e, 'person', pid)}
-                    onPersonDoubleClick={(pid) => enterPersonView(pid)}
-                    onStartRenamePerson={(personId) => setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId } } }))}
-                    onTagClick={(tag, e) => handleOverviewTagClick(tag, e)}
-                    onTagContextMenu={(e, tag) => handleContextMenu(e, 'tag', tag)}
-                    onTagDoubleClick={(tag) => enterTagView(tag)}
-                    groupedFiles={groupedFiles}
-                    groupBy={groupBy}
-                    collapsedGroups={collapsedGroups}
-                    onToggleGroup={toggleGroup}
-                    isSelecting={isSelecting}
-                    layoutItemsRef={fileGridLayoutRef}
-                    marqueeOverlayRef={overlayRef}
-                    onScrollTopChange={(scrollTop) => { updateActiveTab({ scrollTop }); }}
-                    onConsumeScrollToItem={() => updateActiveTab({ scrollToItemId: undefined })}
-                    onScroll={handleScroll}
-                    t={t}
-                    onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
-                    onUpdateFile={handleUpdateFile}
-                    onDropOnFolder={handleDropOnFolder}
-                    onDragStart={(fileIds) => setState(s => ({ ...s, dragState: { ...s.dragState, isDragging: true, draggedFileIds: fileIds } }))}
-                    onDragEnd={() => setState(s => ({ ...s, dragState: { ...s.dragState, isDragging: false } }))}
-                    isDraggingOver={isExternalDragging}
-                    dragOverTarget={state.dragState.dragOverFolderId}
-                    isDraggingInternal={isDraggingInternal}
-                    setIsDraggingInternal={setIsDraggingInternal}
-                    setDraggedFilePaths={setDraggedFilePaths}
-                    draggedFileIds={state.dragState.draggedFileIds}
-                    onFileLongPress={handleFileLongPress}
-                    onShowContextMenuForFile={handleShowContextMenuForFile}
-                    isAndroidSelectionMode={isAndroidSelectionMode}
-                    onAndroidRangeSelect={handleAndroidRangeSelect}
-                    personSortBy={personSortBy}
-                    personSortDirection={personSortDirection}
-                    personGroupBy={personGroupBy}
-                    onRefresh={() => handleRefresh(activeTab.folderId)}
-                    panelWidthRem={panelWidthRem}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-        <div
-          ref={metadataOuterRef}
-          className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-panel"
-          style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
-          <div
-            ref={metadataInnerRef}
-            className="h-full flex flex-col"
-            style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
-            <MetadataPanel
-              files={state.files}
-              selectedFileIds={activeTab.selectedFileIds}
-              people={peopleWithDisplayCounts}
-              topics={state.topics}
-              selectedPersonIds={activeTab.selectedPersonIds}
-              selectedTopicIds={activeTab.selectedTopicIds}
-              onUpdate={handleUpdateFile}
-              onUpdatePerson={handleUpdatePerson}
-              onUpdateTopic={handleUpdateTopic}
-              onDeleteTopic={handleDeleteTopic}
-              onSelectTopic={handleNavigateTopic}
-              onSelectPerson={handleNavigatePerson}
-              onNavigateToFolder={handleNavigateFolder}
-              onNavigateToTag={enterTagView}
-              onSearch={onPerformSearch}
-              t={t}
+            <OverviewBar
               activeTab={activeTab}
-              resourceRoot={state.settings.paths.resourceRoot}
-              cachePath={state.settings.paths.cacheRoot || (state.settings.paths.resourceRoot ? `${state.settings.paths.resourceRoot}${state.settings.paths.resourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache` : undefined)}
-              filesVersion={filesVersion}
-              settings={state.settings}
-              aiConnectionStatus={state.aiConnectionStatus}
+              state={state}
+              t={t}
+              setState={setState}
+              peopleWithDisplayCounts={peopleWithDisplayCounts}
+              displayFileIds={displayFileIds}
             />
-          </div>
-        </div>
-        {isAndroidPlatformCached() && (
-          <div
-            ref={colorPickerOuterRef}
-            className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-panel"
-            style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
-            <div
-              ref={colorPickerInnerRef}
-              className="h-full flex flex-col"
-              style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
-              <MobileColorPickerSheet
-                onSearch={(color) => handlePerformSearch(`color:${color}`)}
-                onClose={toggleColorPicker}
+              <MainContentArea
+                activeTab={activeTab}
+                state={state}
+                displayFileIds={displayFileIds}
+                getFileNode={getFileNode}
                 t={t}
+                peopleForOverview={peopleForOverview}
+                groupedTags={groupedTags}
+                groupBy={groupBy}
+                collapsedGroups={collapsedGroups}
+                toggleGroup={toggleGroup}
+                isSelecting={isSelecting}
+                fileGridLayoutRef={fileGridLayoutRef}
+                overlayRef={overlayRef}
+                selectionRef={selectionRef}
+                handleScroll={handleScroll}
+                enterFolder={enterFolder}
+                handleFolderScrollTopChange={handleFolderScrollTopChange}
+                handleFolderLayoutModeChange={handleFolderLayoutModeChange}
+                folderLayoutMode={folderLayoutMode}
+                isAndroidSelectionMode={isAndroidSelectionMode}
+                handleFolderLongPress={handleFolderLongPress}
+                handleShowContextMenuForFile={handleShowContextMenuForFile}
+                handleFolderAndroidRangeSelect={handleFolderAndroidRangeSelect}
+                handleFolderSelect={handleFolderSelect}
+                handleRefresh={handleRefresh}
+                panelWidthRem={panelWidthRem}
+                lanRoots={lanRoots}
+                handleNavigateNetworkFolder={handleNavigateNetworkFolder}
+                lanLoading={lanLoading}
+                handleLanRefresh={handleLanRefresh}
+                handleNavigateTopic={handleNavigateTopic}
+                handleUpdateTopic={handleUpdateTopic}
+                handleCreateTopic={handleCreateTopic}
+                handleDeleteTopic={handleDeleteTopic}
+                updateActiveTab={updateActiveTab}
+                handlePersonClick={handlePersonClick}
+                handleNavigatePerson={handleNavigatePerson}
+                handleOpenTopicInNewTab={handleOpenTopicInNewTab}
+                handleOpenPersonInNewTab={handleOpenPersonInNewTab}
+                handleOpenInNewTab={handleOpenInNewTab}
+                handleNavigateFolder={handleNavigateFolder}
+                handleFileDoubleClick={handleFileDoubleClick}
+                handleFileLongPress={handleFileLongPress}
+                topicLayoutMode={topicLayoutMode}
+                handleTopicLayoutModeChange={handleTopicLayoutModeChange}
+                showToast={showToast}
+                hoverPlayingId={hoverPlayingId}
+                setHoverPlayingId={setHoverPlayingId}
+                handleFileClick={handleFileClick}
+                handleContextMenu={handleContextMenu}
+                handleRenameSubmit={handleRenameSubmit}
+                startRename={startRename}
+                handleMouseDown={handleMouseDown}
+                handleMouseMove={handleMouseMove}
+                handleMouseUp={handleMouseUp}
+                handleOverviewTagClick={handleOverviewTagClick}
+                enterPersonView={enterPersonView}
+                enterTagView={enterTagView}
+                groupedFiles={groupedFiles}
+                setState={setState}
+                handleUpdateFile={handleUpdateFile}
+                handleDropOnFolder={handleDropOnFolder}
+                isExternalDragging={isExternalDragging}
+                isDraggingInternal={isDraggingInternal}
+                setIsDraggingInternal={setIsDraggingInternal}
+                setDraggedFilePaths={setDraggedFilePaths}
+                handleAndroidRangeSelect={handleAndroidRangeSelect}
+                personSortBy={personSortBy}
+                personSortDirection={personSortDirection}
+                personGroupBy={personGroupBy}
               />
             </div>
           </div>
-        )}
+        </div>
+        <RightPanel
+          metadataOuterRef={metadataOuterRef}
+          metadataInnerRef={metadataInnerRef}
+          colorPickerOuterRef={colorPickerOuterRef}
+          colorPickerInnerRef={colorPickerInnerRef}
+          state={state}
+          activeTab={activeTab}
+          peopleWithDisplayCounts={peopleWithDisplayCounts}
+          filesVersion={filesVersion}
+          t={t}
+          handleUpdateFile={handleUpdateFile}
+          handleUpdatePerson={handleUpdatePerson}
+          handleUpdateTopic={handleUpdateTopic}
+          handleDeleteTopic={handleDeleteTopic}
+          handleNavigateTopic={handleNavigateTopic}
+          handleNavigatePerson={handleNavigatePerson}
+          handleNavigateFolder={handleNavigateFolder}
+          enterTagView={enterTagView}
+          onPerformSearch={onPerformSearch}
+          handlePerformSearch={handlePerformSearch}
+          toggleColorPicker={toggleColorPicker}
+        />
         </div>
         <TaskProgressModal
           tasks={tasks}
