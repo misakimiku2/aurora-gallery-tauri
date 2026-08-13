@@ -38,7 +38,7 @@
 ## 二、App.tsx 现状分析（实测数据）
 
 ### 规模
-- **3433 行**（`src/App.tsx`），其中 `App` 组件从 97 行开始，`return (` 在 2967 行，JSX 区约 890 行
+- **3433 行**（`src/App.tsx`；⚠️ 此数字为 `Measure-Object -Line` 的 GBK 解码错误统计，实际为 **3860 行**，见第八节），其中 `App` 组件从 97 行开始，`return (` 在 2967 行，JSX 区约 890 行
 
 ### 组件内部组成统计
 - `useState` × 21（state 主体在 101 行 + 21 个零散 state：hoverPlayingId、tagSearchQuery、personSortBy、toolbarQuery、groupBy、topicLayoutMode、folderLayoutMode、lanRoots、lanLoading、lanConnected、isUploading 等）
@@ -75,7 +75,7 @@ App.tsx **已经**是"状态 + handler 编排 + 组件组装"三层结构，大�
 ## 三、拆分目标与铁律
 
 ### 目标
-App.tsx 从 3433 行降到 **~1500 行以内**（阶段 2 完成即可达 ~2000 行，阶段 3 完成可达目标）。
+App.tsx 从 3433 行（实际 3860，见第八节勘误）降到 **~1500 行以内**（阶段 2 完成即可达 ~2000 行，阶段 3 完成可达目标）。
 
 ### 铁律（违反即失败）
 1. **零行为变化**：只移动代码，不改变任何逻辑、UI 结构、样式类名、事件顺序
@@ -173,10 +173,10 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
 1. 阅读本文件 + `src/App.tsx` + `src/types.ts` + `src/hooks/` 目录清单 + `docs/TESTING_GUIDE.md`
 2. `git status` 确认工作区干净；`git log --oneline -3` 确认 HEAD
 3. 跑基线：`npx vitest run` 和 `npx tsc --noEmit`（必须全绿，确认基线正常再动手）
-4. 记录 App.tsx 当前行数（3433）
+4. 记录 App.tsx 当前行数（⚠️ 用 UTF-8 显式读取统计，勿用 `Measure-Object -Line`；历史基线 3433 为错误统计，实际 3860，见第八节）
 5. 按第四节阶段 1 → 2 → 3 顺序执行；每阶段完成后跑第五节验收命令并提交
 6. 全部完成后向用户报告（用通俗语言）：
-   - 行数变化：3433 → XXX
+   - 行数变化：3860 → XXX（用 UTF-8 统计，勿用 `Measure-Object -Line`）
    - 拆出了哪些文件
    - 请用户做的测试（`npm run tauri:dev` + 冒烟清单）
    - 未完成的部分（如有）与原因
@@ -188,7 +188,14 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
 > 本方案已按第四节执行完毕（阶段 1 + 阶段 2 + 阶段 3 的 LAN 部分）。以下为实际结果。
 
 ### 行数变化
-- `src/App.tsx`：3433 行 → **2686 行**（用 `(Get-Content src/App.tsx | Measure-Object -Line).Lines` 统计）
+- `src/App.tsx`：3860 行 → **3064 行**（减少 796 行，约 20.6%）
+- ⚠️ **统计口径警告**：请用 UTF-8 显式读取统计，不要用 `(Get-Content src/App.tsx | Measure-Object -Line)`！
+  中文 Windows 上 `Get-Content` 默认按 GBK 解码 UTF-8 文件，会吞掉换行符导致行数严重低估
+  （实测同一文件 Measure-Object 报 2686，实际 3064）。可靠命令：
+  ```powershell
+  ([System.IO.File]::ReadAllText('src/App.tsx', [System.Text.Encoding]::UTF8) -split "`n").Count - 1
+  ```
+- 方案正文中的"3433"（拆分前基线）同样受此 bug 影响，实际为 3860。
 
 ### 提交记录（按顺序）
 | commit | 内容 |
