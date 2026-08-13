@@ -68,7 +68,7 @@ import { RightPanel } from './components/app/RightPanel';
 import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
 import { getInitialLayout } from './utils/layoutSettings';
 
-// 锟斤拷展 Window 锟接匡拷锟皆帮拷锟斤拷锟斤拷锟角碉拷全锟街猴拷锟斤拷
+// 扩展 Window 接口：声明全局颜色更新函数
 declare global {
   interface Window {
     __UPDATE_FILE_COLORS__?: (filePath: string, colors: string[]) => void;
@@ -92,7 +92,7 @@ export const App: React.FC = () => {
       paths: { resourceRoot: 'C:\\Users\\User\\Pictures\\AuroraGallery', cacheRoot: 'C:\\AppData\\Local\\Aurora\\Cache' },
       search: { isAISearchEnabled: false },
       performance: {
-        refreshInterval: 5000, // 默锟斤拷5锟斤拷刷锟斤拷一锟斤拷
+        refreshInterval: 5000, // 默认 5 秒刷新一次
         scrollProfiling: false // 滚动性能记录（默认关闭，设置-性能界面可开启）
       },
       ai: {
@@ -137,7 +137,7 @@ export const App: React.FC = () => {
     isScanning: false,
     isSettingsOpen: false, settingsCategory: 'general', activeModal: { type: null }, tasks: [],
     aiConnectionStatus: 'checking',
-    // 锟斤拷拽状态
+    // 拖拽状态
     dragState: {
       isDragging: false,
       draggedFileIds: [],
@@ -188,19 +188,19 @@ export const App: React.FC = () => {
   const [hasShownWelcome, setHasShownWelcome] = useState(false);
   const [loadingInfo, setLoadingInfo] = useState<string[]>([]);
 
-  // 锟斤拷锟叫讹拷锟绞憋拷锟斤拷锟斤拷呒锟?
+  // 组件卸载时的清理逻辑
   useEffect(() => {
     return () => {
-      // 锟斤拷锟斤拷锟斤拷锟叫讹拷时锟斤拷
+      // 组件卸载时清除定时器
       // timerRefs.current.forEach((timer) => {
       //   clearInterval(timer);
       // });
       // timerRefs.current.clear();
 
-      // 取锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟?
+      // 取消防抖的任务更新
       // debouncedTaskUpdate.cancel();
 
-      // 应锟斤拷锟斤拷锟斤拷锟捷达拷锟斤拷锟斤拷锟斤拷锟铰ｏ拷确锟斤拷锟斤拷锟斤拷一锟斤拷锟斤拷
+      // 应用关闭前确保任务状态持久化一次
       /*
       if (taskUpdatesRef.current.size > 0) {
         setState(prev => {
@@ -353,18 +353,18 @@ export const App: React.FC = () => {
   const [isDraggingInternal, setIsDraggingInternal] = useState(false);
   const [draggedFilePaths, setDraggedFilePaths] = useState<string[]>([]);
 
-  // 锟皆讹拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟节革拷锟斤拷锟侥硷拷锟斤拷色
+  // 监听颜色提取完成事件，更新文件主色调
   useEffect(() => {
-    // 锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷
+    // 监听颜色提取事件
     const handleColorUpdate = (event: CustomEvent) => {
       const { filePath, colors } = event.detail;
       if (!filePath || !colors) return;
 
-      // 锟揭碉拷锟斤拷应锟斤拷锟侥硷拷ID
+      // 查找对应的文件 ID
       const fileEntry = Object.entries(state.files).find(([id, file]) => file.path === filePath);
       if (fileEntry) {
         const [fileId, file] = fileEntry;
-        // 锟斤拷锟斤拷锟侥硷拷锟斤拷 meta.palette锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷 meta 锟街段诧拷锟斤拷
+        // 更新文件的 meta.palette（保留 meta 其他字段）
         const currentMeta = file.meta;
         if (currentMeta) {
           handleUpdateFile(fileId, {
@@ -374,7 +374,7 @@ export const App: React.FC = () => {
             }
           });
         } else {
-          // 锟斤拷锟矫伙拷锟?meta锟斤拷锟斤拷锟斤拷一锟斤拷锟斤拷锟斤拷锟斤拷 meta 锟斤拷锟斤拷
+          // 文件没有 meta 时，创建一个新的 meta
           handleUpdateFile(fileId, {
             meta: {
               width: 0,
@@ -390,16 +390,16 @@ export const App: React.FC = () => {
       }
     };
 
-    // 锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷
+    // 监听颜色提取事件
     window.addEventListener('color-update', handleColorUpdate as EventListener);
 
-    // 锟斤拷锟斤拷锟斤拷锟斤拷
+    // 移除监听
     return () => {
       window.removeEventListener('color-update', handleColorUpdate as EventListener);
     };
-  }, [state.files]); // 锟斤拷锟斤拷 files锟斤拷确锟斤拷锟斤拷锟斤拷确锟揭碉拷锟侥硷拷
+  }, [state.files]); // 依赖 files，确保回调引用最新文件数据
 
-  // 锟斤拷锟斤拷锟斤拷色锟斤拷锟斤拷取锟斤拷锟斤拷锟铰硷拷 (moved to useTasks hook)
+  // 批量颜色提取的任务处理（已移至 useTasks hook）
 
   const [showWelcome, setShowWelcome] = useState(false);
 
@@ -532,9 +532,9 @@ export const App: React.FC = () => {
     // 主色调提取为纯手动功能：启动/进入主界面时不再自动启动
   };
 
-  // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟皆匡拷锟斤拷锟斤拷母锟斤拷锟斤拷锟斤拷位锟斤拷
+  // 更新 CSS 变量：根据元数据面板可见性调整宽度
   useEffect(() => {
-    // 锟斤拷锟斤拷CSS锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥可硷拷锟皆碉拷锟斤拷锟斤拷锟斤拷锟斤拷位锟斤拷
+    // 同步元数据面板宽度到 CSS 变量，供布局过渡使用
     document.documentElement.style.setProperty(
       '--metadata-panel-width',
       state.layout.isMetadataVisible ? '20rem' : '0rem'
@@ -546,7 +546,7 @@ export const App: React.FC = () => {
 
   // Lazy load dimensions when file is selected
   useEffect(() => {
-    // 目前锟斤拷锟斤拷Tauri锟斤拷锟斤拷锟斤拷支锟斤拷锟接迟硷拷锟斤拷图片锟竭达拷
+    // 目前仅在 Tauri 环境支持懒加载图片尺寸
   }, [activeTab.selectedFileIds, activeTab.viewingFileId]);
 
   // Listen for scan progress and scan mode events emitted by backend
@@ -690,17 +690,17 @@ export const App: React.FC = () => {
     handleContextMenu
   } = useContextMenu({ state, activeTab, updateActiveTab });
 
-  // 锟斤拷锟斤拷锟斤拷锟侥硷拷选锟斤拷锟斤拷示锟街撅拷锟斤拷拽锟斤拷示
+  // 计算选中文件数量，用于拖拽提示
   const selectedCount = activeTab.selectedFileIds.length;
-  // 锟斤拷锟斤拷专锟斤拷锟斤拷图锟斤拷锟斤拷示锟斤拷锟斤拷示锟斤拷专锟斤拷锟斤拷图没锟斤拷锟斤拷拽锟斤拷锟解部锟斤拷锟竭硷拷锟斤拷
-  // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷未锟斤拷小锟斤拷锟侥猴拷台锟斤拷锟今弹达拷时锟斤拷锟斤拷示锟斤拷锟斤拷锟斤拷锟节碉拷锟斤拷锟今弹达拷锟斤拷
+  // 专题视图没有拖拽操作，减少误触
+  // 有未最小化的任务运行时不显示拖拽提示（防止弹窗时误触）
   const activeTaskCount = state.tasks.filter(t => !t.minimized).length;
 
-  // 锟斤拷锟斤拷状态锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷锟斤拷示锟斤拷息
+  // 滚动状态，用于控制拖拽提示的显示
   const [isScrolling, setIsScrolling] = useState(false);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // 锟斤拷锟斤拷锟斤拷锟斤拷锟铰硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷锟斤拷示
+  // 滚动时隐藏拖拽提示，停止滚动后恢复显示
   const handleScroll = useCallback(() => {
     setIsScrolling(true);
     if (scrollTimeoutRef.current) {
@@ -711,7 +711,7 @@ export const App: React.FC = () => {
     }, 150);
   }, []);
 
-  // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟绞憋拷锟斤拷
+  // 组件卸载时清除滚动定时器
   useEffect(() => {
     return () => {
       if (scrollTimeoutRef.current) {
@@ -720,7 +720,7 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // 锟叫断讹拷锟斤拷锟角凤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷示锟斤拷息锟斤拷模态锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷
+  // 模态框打开时不显示拖拽提示，防止误触
   const isAndroidDevice = state.settings.paths.resourceRoot === 'android_media_store';
 
   const isModalOpen = state.activeModal.type !== null || state.isSettingsOpen;
@@ -777,7 +777,7 @@ export const App: React.FC = () => {
     handleUploadFilesSelected,
   } = useLanClientSync({ state, setState, activeTab, t, showToast, enterFolder });
 
-  // 锟叫断讹拷锟斤拷锟角凤拷锟斤拷要锟斤拷锟斤拷锟斤拷锟斤拷示锟斤拷示锟斤拷息锟斤拷模态锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时锟斤拷锟斤拷锟斤拷
+  // 判断是否显示 LAN 上传入口（安卓端 + LAN 文件夹 + 允许上传且未在上传中）
   const currentLanFolder = state.files[activeTab.folderId];
   const showLanUpload = isAndroidDevice && !!currentLanFolder && currentLanFolder.source === 'lan' && lanAllowUpload && !isUploading;
 
@@ -1352,8 +1352,8 @@ export const App: React.FC = () => {
 
 
 
-  // 锟斤拷锟斤拷锟侥硷拷锟叫变化锟斤拷锟皆讹拷应锟矫憋拷锟斤拷锟斤拷锟斤拷锟?
-  // 使锟斤拷 ref 锟斤拷锟斤拷锟解将 folderSettings 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷循锟斤拷
+  // 用 ref 跟踪 folderSettings 的最新引用
+  // 使用 ref 缓存 folderSettings，避免依赖数组造成循环引用
   const folderSettingsRef = useRef(state.folderSettings);
   // Guard to prevent overwriting saved folder settings during initial load
   const savedDataLoadedRef = useRef(false);
@@ -1401,7 +1401,7 @@ export const App: React.FC = () => {
     }
   }, [activeTab.folderId, activeTab.id, activeTab.viewMode, savedDataLoaded]);
 
-  // 锟斤拷锟斤拷锟斤拷锟矫变化锟斤拷同锟斤拷锟斤拷锟斤拷锟窖憋拷锟斤拷锟斤拷募锟斤拷锟斤拷锟斤拷锟?
+  // 当文件夹设置变化时，同步保存到 folderSettings
   useEffect(() => {
     // Prevent overwriting saved folder settings during initial data load
     if (!savedDataLoaded) return;
@@ -1466,7 +1466,7 @@ export const App: React.FC = () => {
         ? prev.expandedFolderIds.filter(fid => fid !== id)
         : [...prev.expandedFolderIds, id];
 
-      // 锟斤拷锟斤拷锟斤拷锟斤拷欠锟斤拷锟侥凤拷锟斤拷锟剿变化 - 锟饺较筹拷锟饺猴拷锟斤拷锟斤拷
+      // 展开状态没有变化时避免触发不必要的渲染
       if (newExpandedIds.length === prev.expandedFolderIds.length &&
         newExpandedIds.every(id => prev.expandedFolderIds.includes(id))) {
         return prev;
@@ -1525,9 +1525,6 @@ export const App: React.FC = () => {
   }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible, state.layout.isColorPickerVisible]);
 
   /* handleViewerNavigate / handleViewerJump: delegated to `useViewerHandlers` */
-
-  // 锟芥换 App.tsx 锟叫碉拷 onPerformSearch
-
 
   const {
     handlePersonClick, handleRenamePerson, handleUpdatePerson,
@@ -1674,7 +1671,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    // 确锟斤拷路锟斤拷锟角撅拷锟斤拷路锟斤拷
+    // 确保路径为绝对路径
     const targetPath = file.path;
     logDebug('[App] handleViewInExplorer', { id, path: targetPath, type: file.type, name: file.name });
 
@@ -2245,13 +2242,13 @@ export const App: React.FC = () => {
       onDrop={handleExternalDrop}
       onDragLeave={handleExternalDragLeave}
     >
-      {/* 锟斤拷锟斤拷锟斤拷锟斤拷 */}
+      {/* 启动画面 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
 
       {/* LAN 桌面图片下载进度遮罩 */}
       <LanDownloadOverlay progress={lanDownloadProgress} t={t} />
 
-      {/* 锟解部锟斤拷拽锟斤拷锟角诧拷 */}
+      {/* 外部拖拽遮罩 */}
       <DragDropOverlay
         isVisible={isExternalDragging && !activeTab.isCompareMode}
         fileCount={externalDragItems.length}
