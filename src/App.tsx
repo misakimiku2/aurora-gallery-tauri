@@ -2,14 +2,13 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { lanClientApi } from './components/lan-client/lanClientApi';
-import { downloadLanImagesBatched } from './components/lan-client/lanDownload';
 import { InlineRenameInput } from './components/InlineRenameInput';
 import { ImageThumbnail } from './components/ImageThumbnail';
 import { SettingsModal } from './components/SettingsModal';
 import { AuroraLogo } from './components/Logo';
 import { CloseConfirmationModal } from './components/CloseConfirmationModal';
 import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
-import { debug as logDebug, info as logInfo, warn as logWarn } from './utils/logger';
+import { debug as logDebug, warn as logWarn } from './utils/logger';
 import { translations } from './utils/translations';
 import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
@@ -43,6 +42,9 @@ import { useFileSelection } from './hooks/useFileSelection';
 import { useFolderSettings } from './hooks/useFolderSettings';
 import { usePanelSwipeGesture } from './hooks/usePanelSwipeGesture';
 import { useLanClientSync } from './hooks/useLanClientSync';
+import { useTabHandlers } from './hooks/useTabHandlers';
+import { useViewerHandlers } from './hooks/useViewerHandlers';
+import { usePersonTopicHandlers } from './hooks/usePersonTopicHandlers';
 import { GlobalToasts } from './components/GlobalToasts';
 import { asyncPool } from './utils/async';
 import { ToastItem } from './components/ToastItem';
@@ -799,21 +801,53 @@ export const App: React.FC = () => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
   }, [updateActiveTab]);
 
-  const handleOpenCompareAndClearSelection = useCallback((imageIds: string[]) => {
-    // 安卓端：限制为单个画布，先关闭所有现有比较模式 tab（避免无 TabBar UI 切换导致画布堆积）
-    if (isAndroidPlatformCached()) {
-      setState(prev => {
-        const newTabs = prev.tabs.filter(t => !t.isCompareMode);
-        // 若过滤后无 tab（异常情况），保留原 tabs 不动
-        if (newTabs.length === 0) return prev;
-        return { ...prev, tabs: newTabs };
-      });
-    }
-    handleOpenCompareInNewTab(imageIds);
-    if (isAndroidSelectionMode) {
-      setIsAndroidSelectionMode(false);
-    }
-  }, [handleOpenCompareInNewTab, isAndroidSelectionMode, setState]);
+  // 标签页/画布相关 handlers（新标签页、比较画布、关闭标签页等）
+  const {
+    handleOpenInNewTab,
+    handleOpenTopicInNewTab,
+    handleOpenPersonInNewTab,
+    handleOpenCanvas,
+    handleOpenCompareAndClearSelection,
+    handleAddToCompareCanvas,
+    handleCloseAllTabs,
+    handleCloseOtherTabs,
+  } = useTabHandlers({
+    state, setState, setGroupBy,
+    isAndroidSelectionMode, setIsAndroidSelectionMode,
+    handleOpenCompareInNewTab,
+    setLanDownloadProgress,
+    showToast, t,
+  });
+
+  // 查看器相关 handlers（关闭查看器、上一张/下一张/随机导航、跳转）
+  const {
+    closeViewer,
+    handleViewerNavigate,
+    handleViewerJump,
+  } = useViewerHandlers({
+    activeTab, state, displayFileIds, selectionRef,
+    updateActiveTab, pushHistory,
+  });
+
+  // 人物/专题/标签视图导航与筛选 handlers
+  const {
+    handleNavigateTopic,
+    handleNavigatePerson,
+    handleNavigateTopics,
+    enterTagView,
+    enterTagsOverview,
+    enterPeopleOverview,
+    enterPersonView,
+    handleClearPersonFilter,
+    handleNavigateHome,
+    handleNavigateNetworkHome,
+    handleNavigateUp,
+  } = usePersonTopicHandlers({
+    state, setState, activeTab, activeTabRef,
+    pushHistory, enterFolder, updateActiveTab,
+    handleOpenPersonInNewTab,
+    lanConnected, handleOpenLanSettings,
+  });
 
   const handleDeselectAllAndroid = useCallback(() => {
     updateActiveTab({ selectedFileIds: [], lastSelectedId: null });
@@ -1304,45 +1338,6 @@ export const App: React.FC = () => {
 
 
   // Navigation helpers
-  const handleOpenInNewTab = useCallback((fileId: string) => {
-    const file = state.files[fileId];
-    if (!file) return;
-    const isFolder = file.type === FileType.FOLDER;
-    const targetFolderId = isFolder ? fileId : (file.parentId || fileId);
-    const targetViewingId = isFolder ? null : fileId;
-
-    // Check for folder-specific settings, otherwise use global defaults
-    const savedFolderSettings = state.folderSettings[targetFolderId];
-    const globalSettings = state.settings.defaultLayoutSettings || DEFAULT_LAYOUT_SETTINGS;
-
-    const layoutMode = savedFolderSettings?.layoutMode || globalSettings.layoutMode;
-    const sortBy = savedFolderSettings?.sortBy || globalSettings.sortBy;
-    const sortDirection = savedFolderSettings?.sortDirection || globalSettings.sortDirection;
-    const groupBySetting = savedFolderSettings?.groupBy || globalSettings.groupBy;
-
-    const newTab: TabState = {
-      ...DUMMY_TAB,
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: targetFolderId,
-      viewingFileId: targetViewingId,
-      layoutMode: layoutMode as any,
-      selectedFileIds: [fileId],
-      lastSelectedId: fileId,
-      isCompareMode: false,
-      history: { stack: [{ folderId: targetFolderId, viewingId: targetViewingId, viewMode: 'browser', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
-    };
-
-    // Apply groupBy and sort settings
-    setGroupBy(groupBySetting as any);
-    setState(prev => ({
-      ...prev,
-      tabs: [...prev.tabs, newTab],
-      activeTabId: newTab.id,
-      sortBy: sortBy,
-      sortDirection: sortDirection
-    }));
-  }, [state.files, state.folderSettings, state.settings.defaultLayoutSettings, setState]);
-
   const handleNavigateToFile = useCallback((filePath: string) => {
     const fileEntry = Object.values(state.files).find(f => f.path === filePath);
     if (!fileEntry) return;
@@ -1351,76 +1346,6 @@ export const App: React.FC = () => {
     setState(prev => ({ ...prev, isSettingsOpen: false }));
     pushHistory(folderId, null, 'browser', '', 'all', [], null, 0, null, null, [], [], fileId);
   }, [state.files, setState, pushHistory]);
-
-  const handleOpenTopicInNewTab = useCallback((topicId: string) => {
-    const newTab: TabState = {
-      ...DUMMY_TAB,
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: state.roots[0] || '',
-      viewMode: 'topics-overview',
-      activeTopicId: topicId,
-      selectedTopicIds: [topicId],
-      isCompareMode: false,
-      history: { stack: [{ folderId: state.roots[0] || '', viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
-    };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [state.roots, setState]);
-
-  const handleOpenPersonInNewTab = useCallback((personId: string) => {
-    const newTab: TabState = {
-      ...DUMMY_TAB,
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: state.roots[0] || '',
-      viewMode: 'people-overview',
-      activePersonId: personId,
-      selectedPersonIds: [personId],
-      isCompareMode: false,
-      history: { stack: [{ folderId: state.roots[0] || '', viewingId: null, viewMode: 'people-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: personId }], currentIndex: 0 }
-    };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [state.roots, setState]);
-
-  const handleOpenCanvas = useCallback(() => {
-    // 生成新的画布名称
-    const generateCanvasName = () => {
-      const existingNames = state.tabs
-        .filter(tab => tab.isCompareMode)
-        .map(tab => tab.sessionName)
-        .filter((name): name is string => !!name);
-
-      let maxNum = 0;
-      existingNames.forEach(name => {
-        const match = name.match(/^画布(\d+)$/);
-        if (match) {
-          maxNum = Math.max(maxNum, parseInt(match[1], 10));
-        }
-      });
-
-      return `画布${String(maxNum + 1).padStart(2, '0')}`;
-    };
-
-    const newTab: TabState = {
-      ...DUMMY_TAB,
-      id: Math.random().toString(36).substr(2, 9),
-      folderId: state.roots[0] || '',
-      selectedFileIds: [],
-      isCompareMode: true,
-      sessionName: generateCanvasName(),
-      history: {
-        stack: [{
-          folderId: state.roots[0] || '',
-          viewingId: null,
-          viewMode: 'browser',
-          searchQuery: '',
-          searchScope: 'all',
-          activeTags: [],
-          activePersonId: null
-        }],
-        currentIndex: 0
-      }
-    };
-    setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-  }, [state.roots, state.tabs, setState]);
 
   /* pushHistory: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
 
@@ -1523,140 +1448,6 @@ export const App: React.FC = () => {
 
   /* handleOpenCompareInNewTab: delegated to `useNavigation` */
 
-  // 添加图片到现有的图片对比画布
-  const handleAddToCompareCanvas = useCallback(async (tabId: string, imageIds: string[]) => {
-    const targetTab = state.tabs.find(t => t.id === tabId);
-    if (!targetTab || !targetTab.isCompareMode) return;
-
-    const currentCount = targetTab.selectedFileIds.length;
-    const maxCount = 24;
-    const remainingSpace = maxCount - currentCount;
-
-    if (remainingSpace <= 0) {
-      showToast(t('context.canvasFull') || '画布已满');
-      return;
-    }
-
-    // 只添加能容纳的图片
-    let idsToAdd = imageIds.slice(0, remainingSpace);
-
-    // 处理 LAN 来源图片：先下载到本地缓存，再以本地节点加入画布
-    const lanIds = idsToAdd.filter(id => state.files[id]?.source === 'lan' && state.files[id]?.remotePath);
-    if (lanIds.length > 0) {
-      const cacheRoot = state.settings.paths.cacheRoot;
-      if (!cacheRoot) {
-        showToast(t('lanClient.downloadNoCache') || '缓存目录未配置，无法下载桌面图片');
-        return;
-      }
-      const remotePaths = lanIds.map(id => state.files[id].remotePath!);
-      setLanDownloadProgress({ active: true, completed: 0, total: lanIds.length });
-      try {
-        const results = await downloadLanImagesBatched(remotePaths, cacheRoot, (completed, total) => {
-          setLanDownloadProgress({ active: true, completed, total });
-        });
-
-        // 为下载成功的图片创建本地 FileNode（复制 LAN 节点信息，改写路径与来源）
-        const newLocalNodes: Record<string, FileNode> = {};
-        const idMap: Record<string, string> = {};
-        let failedCount = 0;
-        results.forEach((res, idx) => {
-          const lanId = lanIds[idx];
-          const lanFile = state.files[lanId];
-          if (res.success && lanFile) {
-            const newId = generateId(res.localPath);
-            newLocalNodes[newId] = {
-              ...lanFile,
-              id: newId,
-              path: res.localPath,
-              source: 'local',
-              remotePath: undefined,
-              parentId: null,
-            };
-            idMap[lanId] = newId;
-          } else {
-            failedCount++;
-          }
-        });
-
-        // 合并本地节点到 state.files
-        if (Object.keys(newLocalNodes).length > 0) {
-          setState(prev => ({
-            ...prev,
-            files: { ...prev.files, ...newLocalNodes },
-          }));
-        }
-
-        // 用新的本地 id 替换 LAN id；下载失败的 LAN id 予以剔除
-        idsToAdd = idsToAdd
-          .map(id => idMap[id] || id)
-          .filter(id => !lanIds.includes(id) || idMap[id]);
-
-        if (failedCount > 0) {
-          showToast((t('lanClient.downloadPartialFail') || '部分桌面图片下载失败：{count} 张').replace('{count}', String(failedCount)));
-        }
-      } catch (err) {
-        console.error('[LAN] Download failed:', err);
-        showToast(t('lanClient.downloadFailed') || '下载桌面图片失败');
-        // 下载整体失败时剔除所有 LAN id，仅添加本地图片
-        idsToAdd = idsToAdd.filter(id => !lanIds.includes(id));
-      } finally {
-        setLanDownloadProgress({ active: false, completed: 0, total: 0 });
-      }
-    }
-
-    const actuallyAdded = idsToAdd.length;
-    if (actuallyAdded === 0) return;
-
-    const sourceTabId = state.activeTabId;
-
-    setState(prev => ({
-      ...prev,
-      activeTabId: tabId,
-      tabs: prev.tabs.map(tab =>
-        tab.id === tabId
-          ? { ...tab, selectedFileIds: [...tab.selectedFileIds, ...idsToAdd] }
-          : tab.id === sourceTabId
-            ? { ...tab, selectedFileIds: [], lastSelectedId: null }
-            : tab
-      )
-    }));
-
-    // 退出 Android 多选模式
-    if (isAndroidSelectionMode) {
-      setIsAndroidSelectionMode(false);
-    }
-
-    // 显示提示
-    if (actuallyAdded < imageIds.length) {
-      showToast(t('context.partiallyAdded')?.replace('{added}', String(actuallyAdded)).replace('{total}', String(imageIds.length)) || `已添加 ${actuallyAdded}/${imageIds.length} 张图片（画布已满）`);
-    } else {
-      showToast(t('context.addedToCanvas') || '已添加到画布');
-    }
-  }, [state.tabs, state.files, state.settings.paths.cacheRoot, setState, showToast, t]);
-
-  const handleNavigateTopic = useCallback((topicId: string | null) => {
-    pushHistory(activeTab.folderId, null, 'topics-overview', '', 'all', [], null, 0, null, topicId, topicId ? [topicId] : []);
-  }, [activeTab.folderId, pushHistory]);
-
-  const handleNavigatePerson = useCallback((personId: string | null) => {
-    pushHistory(activeTab.folderId, null, 'people-overview', '', 'all', [], null, 0, null, null, [], personId ? [personId] : []);
-  }, [activeTab.folderId, pushHistory]);
-
-  const handleNavigateTopics = useCallback(() => {
-    if (activeTabRef.current.isCompareMode) {
-      const newTab: TabState = {
-        ...DUMMY_TAB,
-        id: Math.random().toString(36).substr(2, 9),
-        folderId: activeTabRef.current.folderId,
-        viewMode: 'topics-overview',
-        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'topics-overview', searchQuery: '', searchScope: 'all', activeTags: [], activePersonId: null }], currentIndex: 0 }
-      };
-      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-    } else {
-      handleNavigateTopic(null);
-    }
-  }, [handleNavigateTopic, setState]);
-
   const {
     handleSmartCreateTopic, handleManualAddToTopic,
     handleCreateTopic, handleUpdateTopic, handleDeleteTopic, handleCreateRootTopic,
@@ -1691,17 +1482,6 @@ export const App: React.FC = () => {
   const toggleSettings = useCallback(() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen })), []);
 
   /* goBack / goForward / setNavigationTimestamp: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
-
-  const closeViewer = () => {
-    const currentScroll = selectionRef.current?.scrollTop || 0;
-    if (activeTab.history.stack[activeTab.history.currentIndex].viewingId) {
-      logInfo('[App] closeViewer.pop', { action: 'closeViewer', mode: 'pop', container: 'main', containerScroll: currentScroll });
-      pushHistory(activeTab.folderId, null, activeTab.viewMode as any, activeTab.searchQuery, activeTab.searchScope, activeTab.activeTags, activeTab.activePersonId, activeTab.scrollTop, activeTab.aiFilter, activeTab.activeTopicId);
-    } else {
-      logInfo('[App] closeViewer.clear', { action: 'closeViewer', mode: 'clear', container: 'main', containerScroll: currentScroll });
-      updateActiveTab({ viewingFileId: null });
-    }
-  };
 
   /* enterViewer: delegated to `useNavigation` */
 
@@ -1744,102 +1524,10 @@ export const App: React.FC = () => {
     prevLayoutRef.current = state.layout;
   }, [state.layout.isSidebarVisible, state.layout.isMetadataVisible, state.layout.isColorPickerVisible]);
 
-  const handleViewerNavigate = (direction: 'next' | 'prev' | 'random') => {
-    if (!activeTab.viewingFileId) return;
-
-    // Filter to get only image file IDs
-    const imageFileIds = displayFileIds.filter(id => state.files[id].type === FileType.IMAGE);
-    if (imageFileIds.length === 0) return;
-
-    const currentFile = state.files[activeTab.viewingFileId];
-    let currentIndex = imageFileIds.indexOf(activeTab.viewingFileId);
-
-    // If current file is not in image list (shouldn't happen), start from beginning
-    if (currentIndex === -1) {
-      currentIndex = 0;
-    }
-
-    let nextIndex = currentIndex;
-    if (direction === 'random') {
-      nextIndex = Math.floor(Math.random() * imageFileIds.length);
-    } else if (direction === 'next') {
-      nextIndex = (currentIndex + 1) % imageFileIds.length;
-    } else {
-      nextIndex = (currentIndex - 1 + imageFileIds.length) % imageFileIds.length;
-    }
-
-    const nextId = imageFileIds[nextIndex];
-    updateActiveTab(prev => {
-      const newStack = [...prev.history.stack];
-      if (prev.history.currentIndex >= 0 && prev.history.currentIndex < newStack.length) {
-        newStack[prev.history.currentIndex] = { ...newStack[prev.history.currentIndex], viewingId: nextId };
-      }
-      return { viewingFileId: nextId, selectedFileIds: [nextId], lastSelectedId: nextId, history: { ...prev.history, stack: newStack } };
-    });
-  };
-  const handleViewerJump = (fileId: string) => {
-    updateActiveTab(prev => {
-      const newStack = [...prev.history.stack];
-      if (prev.history.currentIndex >= 0 && prev.history.currentIndex < newStack.length) {
-        newStack[prev.history.currentIndex] = { ...newStack[prev.history.currentIndex], viewingId: fileId };
-      }
-      return { viewingFileId: fileId, selectedFileIds: [fileId], lastSelectedId: fileId, history: { ...prev.history, stack: newStack } };
-    });
-  };
-
+  /* handleViewerNavigate / handleViewerJump: delegated to `useViewerHandlers` */
 
   // 锟芥换 App.tsx 锟叫碉拷 onPerformSearch
 
-
-  const enterTagView = useCallback((tagName: string) => {
-    if (activeTabRef.current.isCompareMode) {
-      const newTab: TabState = {
-        ...DUMMY_TAB,
-        id: Math.random().toString(36).substr(2, 9),
-        folderId: activeTabRef.current.folderId,
-        viewMode: 'browser',
-        searchScope: 'tag',
-        activeTags: [tagName],
-        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'browser', searchQuery: '', searchScope: 'tag', activeTags: [tagName], activePersonId: null }], currentIndex: 0 }
-      };
-      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-    } else {
-      pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'tag', [tagName], null, 0);
-    }
-  }, [pushHistory, setState]);
-
-
-  const enterTagsOverview = useCallback(() => {
-    if (activeTabRef.current.isCompareMode) {
-      const newTab: TabState = {
-        ...DUMMY_TAB,
-        id: Math.random().toString(36).substr(2, 9),
-        folderId: activeTabRef.current.folderId,
-        viewMode: 'tags-overview',
-        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'tags-overview', searchQuery: activeTabRef.current.searchQuery, searchScope: activeTabRef.current.searchScope, activeTags: activeTabRef.current.activeTags, activePersonId: null }], currentIndex: 0 }
-      };
-      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-    } else {
-      pushHistory(activeTabRef.current.folderId, null, 'tags-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0);
-    }
-  }, [pushHistory, setState]);
-
-  let enterPeopleOverview: () => void;
-
-  enterPeopleOverview = useCallback(() => {
-    if (activeTabRef.current.isCompareMode) {
-      const newTab: TabState = {
-        ...DUMMY_TAB,
-        id: Math.random().toString(36).substr(2, 9),
-        folderId: activeTabRef.current.folderId,
-        viewMode: 'people-overview',
-        history: { stack: [{ folderId: activeTabRef.current.folderId, viewingId: null, viewMode: 'people-overview', searchQuery: activeTabRef.current.searchQuery, searchScope: activeTabRef.current.searchScope, activeTags: activeTabRef.current.activeTags, activePersonId: null }], currentIndex: 0 }
-      };
-      setState(prev => ({ ...prev, tabs: [...prev.tabs, newTab], activeTabId: newTab.id }));
-    } else {
-      pushHistory(activeTabRef.current.folderId, null, 'people-overview', activeTabRef.current.searchQuery, activeTabRef.current.searchScope, activeTabRef.current.activeTags, null, 0);
-    }
-  }, [pushHistory, setState]);
 
   const {
     handlePersonClick, handleRenamePerson, handleUpdatePerson,
@@ -1855,60 +1543,6 @@ export const App: React.FC = () => {
     isSelecting, closeContextMenu, updateActiveTab, enterPeopleOverview,
   });
 
-  const enterPersonView = useCallback((personId: string) => {
-    if (activeTabRef.current.isCompareMode) {
-      handleOpenPersonInNewTab(personId);
-    } else {
-      pushHistory(activeTabRef.current.folderId, null, 'browser', '', 'all', [], personId, 0);
-    }
-  }, [pushHistory, handleOpenPersonInNewTab]);
-
-  const handleClearPersonFilter = () => updateActiveTab({ activePersonId: null });
-
-  const handleNavigateHome = useCallback(() => {
-    pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
-  }, [pushHistory]);
-
-  const handleNavigateNetworkHome = useCallback(() => {
-    if (!lanConnected) {
-      handleOpenLanSettings();
-      return;
-    }
-    pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
-  }, [pushHistory, lanConnected, handleOpenLanSettings]);
-
-  const handleNavigateUp = () => {
-    if (activeTab.activeTopicId) {
-      const currentTopic = state.topics[activeTab.activeTopicId];
-      if (currentTopic) handleNavigateTopic(currentTopic.parentId || null);
-    } else if (activeTab.activePersonId) {
-      enterPeopleOverview();
-    } else if (activeTab.viewMode === 'folders-overview') {
-      return;
-    } else if (activeTab.viewMode === 'lan-folders-overview') {
-      return;
-    } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
-      const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
-      if (isAndroid) {
-        pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
-      } else {
-        enterFolder(activeTab.folderId);
-      }
-    } else {
-      const current = state.files[activeTab.folderId];
-      if (current && current.parentId) {
-        enterFolder(current.parentId);
-      } else if (current?.source === 'lan') {
-        // LAN 子文件夹无父级时回到网络总览视图
-        pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
-      } else {
-        const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
-        if (isAndroid && activeTab.viewMode === 'browser') {
-          pushHistory('__android_folders_root__', null, 'folders-overview', '', 'all', [], null, 0);
-        }
-      }
-    }
-  };
   const minimizeTask = (id: string) => updateTask(id, { minimized: true });
   const onRestoreTask = (id: string) => updateTask(id, { minimized: false });
 
@@ -2561,23 +2195,7 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('android-back-press', handleAndroidBackPress);
   }, [state.activeModal.type, state.isSettingsOpen, showCloseConfirmation, setState, setIsReferenceMode]);
 
-  const handleCloseAllTabs = () => {
-    setState(prev => {
-      if (prev.tabs.length <= 1) return prev;
-      // 保留第一个 tab，关闭其他所有 tab
-      const firstTab = prev.tabs[0];
-      return { ...prev, tabs: [firstTab], activeTabId: firstTab.id };
-    });
-  };
-  const handleCloseOtherTabs = (id: string) => {
-    setState(prev => {
-      const keptTab = prev.tabs.find(t => t.id === id);
-      if (!keptTab) return prev;
-      return { ...prev, tabs: [keptTab], activeTabId: id };
-    });
-  };
-
-  // 锟捷癸拷锟饺★拷锟斤拷锟斤拷锟斤拷募锟斤拷锟絀D
+  // 获取文件夹下所有子文件夹的 ID（含递归）
   const getAllSubFolderIds = (folderId: string): string[] => {
     const folder = state.files[folderId];
     if (!folder || folder.type !== FileType.FOLDER || !folder.children) {
