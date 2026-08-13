@@ -2002,7 +2002,7 @@ pub async fn clip_create_work_topics(
             .map(|(i, &v)| (i, v))
             .filter(|(_, v)| *v > 0.1)
             .collect();
-        high_vals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        high_vals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         log::info!("[clip_create_work_topics] 第一个 embedding 前10个高分值: {:?}", high_vals.iter().take(10).collect::<Vec<_>>());
     }
     
@@ -2132,7 +2132,7 @@ pub async fn clip_create_work_topics(
     let mut created_people: Vec<db::persons::Person> = Vec::new();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
     
     for work_name in work_names {

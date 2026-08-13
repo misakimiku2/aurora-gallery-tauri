@@ -926,8 +926,12 @@ fn try_get_thumbnail(file_path: &str, cache_dir: &std::path::Path) -> Result<Str
 
     if is_jpeg {
         match crate::android::generate_thumbnail(file_path, cache_dir) {
-            Ok(r) if r.thumbnail_path.is_some() => return Ok(r.thumbnail_path.unwrap()),
-            Ok(_) | Err(_) => {
+            Ok(r) => {
+                if let Some(tp) = r.thumbnail_path {
+                    return Ok(tp);
+                }
+            }
+            Err(_) => {
                 log::warn!("[ColorExtract-Android] Rust JPEG thumbnail failed, trying Kotlin for: {}", file_path);
             }
         }
@@ -1940,6 +1944,8 @@ pub fn run() {
     let builder = builder.plugin(
         tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Debug)
+            .max_file_size(5_000_000)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
             .targets([
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
@@ -1951,6 +1957,8 @@ pub fn run() {
     let builder = builder.plugin(
         tauri_plugin_log::Builder::default()
             .level(log::LevelFilter::Info)
+            .max_file_size(5_000_000)
+            .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepAll)
             .targets([
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
                 tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
@@ -1970,6 +1978,7 @@ pub fn run() {
         color_commands::add_pending_files_to_db,
         system_commands::get_platform,
         system_commands::get_default_paths,
+        system_commands::get_log_dir,
         get_thumbnail,
         get_thumbnails_batch,
         save_remote_thumbnail,
@@ -2087,6 +2096,7 @@ pub fn run() {
         db_commands::load_user_data,
         system_commands::get_platform,
         system_commands::get_default_paths,
+        system_commands::get_log_dir,
         get_thumbnail,
         get_thumbnails_batch,
         save_remote_thumbnail,

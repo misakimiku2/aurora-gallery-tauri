@@ -53,8 +53,7 @@ pub async fn lan_share_start(
 
     let mut server_guard = state.server.write().await;
     
-    if server_guard.is_some() {
-        let server = server_guard.as_mut().unwrap();
+    if let Some(server) = server_guard.as_mut() {
         if server.is_running() {
             log::warn!("[LAN Share] 启动失败 - 服务器已在运行中");
             return Err("Server is already running".to_string());

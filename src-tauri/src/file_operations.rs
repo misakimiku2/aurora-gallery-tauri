@@ -77,7 +77,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             created_at: metadata
                 .created()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())
@@ -85,7 +85,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             updated_at: metadata
                 .modified()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())
@@ -113,7 +113,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             created_at: metadata
                 .created()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())
@@ -121,7 +121,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             updated_at: metadata
                 .modified()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())
@@ -134,7 +134,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 created: metadata
                     .created()
                     .ok()
-                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                     .and_then(|secs| {
                         chrono::DateTime::from_timestamp(secs as i64, 0)
                             .map(|dt| dt.to_rfc3339())
@@ -143,7 +143,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
                 modified: metadata
                     .modified()
                     .ok()
-                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                    .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                     .and_then(|secs| {
                         chrono::DateTime::from_timestamp(secs as i64, 0)
                             .map(|dt| dt.to_rfc3339())
@@ -184,7 +184,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             created_at: metadata
                 .created()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())
@@ -192,7 +192,7 @@ pub async fn scan_file(file_path: String, parent_id: Option<String>, app: tauri:
             updated_at: metadata
                 .modified()
                 .ok()
-                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap().as_secs())
+                .map(|t| t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs())
                 .and_then(|secs| {
                     chrono::DateTime::from_timestamp(secs as i64, 0)
                         .map(|dt| dt.to_rfc3339())

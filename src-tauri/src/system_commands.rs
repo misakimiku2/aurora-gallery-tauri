@@ -307,3 +307,13 @@ pub async fn proxy_http_request(
         Err(format!("HTTP {}: {}", status, text))
     }
 }
+
+/// 返回应用日志目录路径（供前端"打开日志文件夹"使用）
+#[tauri::command]
+pub fn get_log_dir(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    app.path()
+        .app_log_dir()
+        .map(|p| p.to_string_lossy().to_string())
+        .map_err(|e| format!("Failed to get log dir: {}", e))
+}

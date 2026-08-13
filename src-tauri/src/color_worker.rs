@@ -290,7 +290,10 @@ async fn producer_loop(
             continue;
         }
         
-        let deadline = debounce_deadline.unwrap();
+        let deadline = match debounce_deadline {
+            Some(d) => d,
+            None => continue,
+        };
         let now = tokio::time::Instant::now();
         
         if pending_count > last_pending_count {

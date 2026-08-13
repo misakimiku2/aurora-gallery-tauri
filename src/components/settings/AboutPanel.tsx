@@ -3,7 +3,7 @@ import { getVersion } from '@tauri-apps/api/app';
 import { Info, Code2, Check, Download, FolderOpen, RefreshCw, ExternalLink, Github, Shield, Heart } from 'lucide-react';
 import { UpdateInfo, DownloadProgress } from '../../types';
 import { AuroraLogo } from '../Logo';
-import { openExternalLink } from '../../api/tauri-bridge';
+import { openExternalLink, getLogDir, openPath } from '../../api/tauri-bridge';
 
 // 关于面板组件
 interface AboutPanelProps {
@@ -27,6 +27,13 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
 
   const handleOpenLink = (url: string) => {
     openExternalLink(url);
+  };
+
+  const handleOpenLogFolder = async () => {
+    const logDir = await getLogDir();
+    if (logDir) {
+      openPath(logDir, true);
+    }
   };
 
   return (
@@ -182,6 +189,27 @@ const AboutPanel: React.FC<AboutPanelProps> = ({ t, onCheckUpdate, updateInfo, i
               </div>
             </div>
           )}
+        </div>
+      </section>
+
+      {/* 诊断 */}
+      <section>
+        <h4 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4 flex items-center">
+          <FolderOpen size={16} className="mr-2" />
+          诊断
+        </h4>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            onClick={handleOpenLogFolder}
+            className="flex items-center gap-3 p-4 bg-surface rounded-xl border border-subtle hover:border-blue-500/50 hover:bg-blue-500/5 transition-all text-left"
+            title="打开应用日志文件夹，遇到问题时可将里面的日志文件发给开发者"
+          >
+            <FolderOpen size={20} className="text-gray-600 dark:text-gray-400" />
+            <div>
+              <div className="text-sm font-medium text-gray-800 dark:text-white">打开日志文件夹</div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">错误记录保存在这里</div>
+            </div>
+          </button>
         </div>
       </section>
 

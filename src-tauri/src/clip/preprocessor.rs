@@ -214,8 +214,8 @@ impl TextPreprocessor {
     /// 返回 (input_ids, attention_mask)
     pub fn preprocess(&self, text: &str) -> Result<(Vec<i64>, Vec<i64>), String> {
         // 记录分词器加载状态 - 诊断搜索失效的关键
-        if self.tokenizer.is_some() {
-            log::info!("[CLIP Preprocess] Using loaded tokenizer (Vocab size: {})", self.tokenizer.as_ref().unwrap().get_vocab_size(true));
+        if let Some(tokenizer) = &self.tokenizer {
+            log::info!("[CLIP Preprocess] Using loaded tokenizer (Vocab size: {})", tokenizer.get_vocab_size(true));
         } else {
             log::warn!("[CLIP Preprocess] FALLBACK TOKENIZER IN USE! This will cause semantic search failure.");
         }

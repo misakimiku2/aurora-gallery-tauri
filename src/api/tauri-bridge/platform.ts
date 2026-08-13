@@ -68,3 +68,15 @@ export const getAssetUrl = (filePath: string, contentUri?: string): string => {
   }
   return convertFileSrc(filePath);
 };
+
+/**
+ * 获取应用日志目录路径（用于"打开日志文件夹"排查问题）
+ */
+export const getLogDir = async (): Promise<string | null> => {
+  try {
+    return await invoke('get_log_dir') as string;
+  } catch (error) {
+    console.error('Failed to get log dir:', error);
+    return null;
+  }
+};

@@ -3,17 +3,17 @@
 
 import * as tauriLog from '@tauri-apps/plugin-log';
 
-// Vite 提供的开发模式检测标志
-// NOTE: 强制启用日志（开发阶段），取消基于环境的自动识别
-const IS_DEV = true
+// Vite 提供的开发模式检测标志（生产构建为 false）
+// 生产环境只保留 warn/error 级别日志，避免大量调试日志写入日志文件
+const IS_DEV = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.DEV);
 /**
  * 日志配置
  */
 const LOG_CONFIG = {
-  // 仅在开发模式下输出浏览器控制台日志
-  enableBrowserConsole: IS_DEV,
-  // 仅在开发模式下通过 Tauri 控制台输出（生产构建不输出）
-  enableTauriConsole: IS_DEV,
+  // 仅开发模式输出所有级别；生产模式由 log() 内按级别过滤
+  enableBrowserConsole: true,
+  // 是否通过 Tauri 日志插件输出（写入日志文件）
+  enableTauriConsole: true,
 };
 
 // 在页面层面确保 `__AURORA_DEBUG_LOGS__` 已初始化（便于在 DevTools 直接查看）
@@ -47,8 +47,8 @@ const pushToOverlay = (level: string, message: string, ...args: any[]) => {
  * @param args 额外参数
  */
 const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...args: any[]) => {
-  // 如果不是开发模式，直接返回，不输出调试信息
-  if (!IS_DEV) return;
+  // 生产环境只保留 warn/error（错误需要写入日志文件供排查），调试级别静默
+  if (!IS_DEV && level !== 'warn' && level !== 'error') return;
 
   // 输出到浏览器控制台
   if (LOG_CONFIG.enableBrowserConsole) {
@@ -72,7 +72,7 @@ const log = (level: 'debug' | 'info' | 'warn' | 'error', message: string, ...arg
     }
   }
 
-  // 输出到Tauri应用窗口控制台（仅开发模式）
+  // 输出到Tauri日志插件（写入日志文件）
   if (LOG_CONFIG.enableTauriConsole && typeof window !== 'undefined' && '__TAURI__' in window) {
     let logMessage = message;
     if (args.length > 0) {
@@ -153,12 +153,28 @@ export const setupGlobalLogger = () => {
 
   if (!IS_DEV && !(typeof window !== 'undefined' && '__TAURI__' in window && FORCE_DEV_LOGS)) {
     if (typeof console !== 'undefined') {
-      // 保留 error/warn 也一并静默（仅在真正生产环境时静默）
-      console.log = (() => {}) as any;
-      console.debug = (() => {}) as any;
-      console.info = (() => {}) as any;
-      console.warn = (() => {}) as any;
-      console.error = (() => {}) as any;
+      if (typeof window !== 'undefined' && '__TAURI__' in window) {
+        // 生产环境（Tauri 内）：静默调试级别，保留 warn/error 转发到日志文件供排查
+        const originalConsole = { warn: console.warn, error: console.error };
+        console.log = (() => {}) as any;
+        console.debug = (() => {}) as any;
+        console.info = (() => {}) as any;
+        console.warn = (message: any, ...args: any[]) => {
+          originalConsole.warn(message, ...args);
+          tauriLog.warn(String(message) + ' ' + args.map(a => String(a)).join(' ')).catch(() => {});
+        };
+        console.error = (message: any, ...args: any[]) => {
+          originalConsole.error(message, ...args);
+          tauriLog.error(String(message) + ' ' + args.map(a => String(a)).join(' ')).catch(() => {});
+        };
+      } else {
+        // 纯浏览器生产环境：全部静默
+        console.log = (() => {}) as any;
+        console.debug = (() => {}) as any;
+        console.info = (() => {}) as any;
+        console.warn = (() => {}) as any;
+        console.error = (() => {}) as any;
+      }
     }
     return;
   }
