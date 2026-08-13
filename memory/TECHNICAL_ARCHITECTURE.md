@@ -265,8 +265,7 @@ const results = await aiService.generateFileNames(
 ### 3. 数据访问层 (Data Access Layer)
 
 #### Tauri Bridge API
-**位置**: `src/api/tauri-bridge.ts`  
-**行数**: 2151 行（以源码为准 · 已同步）  
+**位置**: `src/api/tauri-bridge/`（目录，原单文件 `src/api/tauri-bridge.ts` 已按领域拆分，`index.ts` 聚合导出）  
 **功能**: 前后端通信桥接
 
 **核心功能**:

@@ -73,7 +73,9 @@
 
 ## 前端 API (TypeScript)
 
-### 1. 文件系统 API (`src/api/tauri-bridge.ts`)
+### 1. 文件系统 API (`src/api/tauri-bridge/files.ts`)
+
+> 注：`src/api/tauri-bridge.ts` 已拆分为 `src/api/tauri-bridge/` 目录（按领域分模块，`index.ts` 统一 re-export）。下方所有 API 的 import 路径 `'./api/tauri-bridge'` 均不变。
 
 #### `scanDirectory`
 ```typescript

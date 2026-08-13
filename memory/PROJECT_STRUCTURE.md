@@ -9,7 +9,7 @@
 aurora-gallery-tauri/
 ├── 📁 src/                          # 前端 React 代码 (TypeScript)
 │   ├── 📁 api/                      # API 桥接层
-│   │   └── tauri-bridge.ts          # Tauri 原生功能桥接 (2151 行)
+│   │   └── 📁 tauri-bridge/         # Tauri 功能桥接（原单文件拆分：index.ts + files/thumbnail/color/db/clip/lan/updater 等 14 个模块）
 │   ├── 📁 components/               # React 组件库
 │   │   ├── 📁 modals/               # 模态框组件集合
 │   │   │   ├── AddToPersonModal.tsx     # 添加到人物 (180 行)
@@ -450,7 +450,7 @@ src-tauri/src/
 - `src-tauri/src/clip_commands.rs`: CLIP AI 搜索命令 (2155 行)
 - `src-tauri/src/lan_share_commands.rs`: 局域网共享命令 (164 行)
 - `src-tauri/src/work_extractor.rs`: 作品提取器 (199 行)
-- `src/api/tauri-bridge.ts`: 前后端通信桥接 (2151 行)
+- `src/api/tauri-bridge/`: 前后端通信桥接（目录，原单文件拆分；index.ts 聚合，导入路径不变）
 - `src/types.ts`: TypeScript 类型定义 (699 行)
 - `src/constants.ts`: 全局常量定义 (29 行)
 - `src/hooks/`: 自定义 Hooks 集合 (23个文件, ~6400行) [P1+P2模块化重构核心产出]
@@ -482,7 +482,7 @@ src-tauri/src/
 ## 开发工作流
 
 1. **功能开发**: 在 `src/` 目录下开发 React 组件
-2. **API 扩展**: 在 `tauri-bridge.ts` 添加前端 API
+2. **API 扩展**: 在 `src/api/tauri-bridge/` 对应领域模块添加前端 API（如文件操作进 `files.ts`、CLIP 进 `clip.ts`），`index.ts` 会自动聚合导出
 3. **后端实现**: 在 `src-tauri/src/` 对应模块实现 Rust 命令
 4. **类型定义**: 在 `types.ts` 更新类型定义
 5. **文档更新**: 在 `docs/` 或 `memory/` 更新相关文档

@@ -177,7 +177,7 @@ npm install
 
 ## 核心 API 参考
 
-### 前端 API (src/api/tauri-bridge.ts)
+### 前端 API (src/api/tauri-bridge/ 目录，原单文件拆分；index.ts 聚合，导入路径不变)
 
 #### 文件系统
 ```typescript

@@ -4,9 +4,20 @@
 
 ### 1. API 桥接层 (`src/api/`)
 
-#### `tauri-bridge.ts` - 核心桥接模块
-**位置**: `src/api/tauri-bridge.ts`  
-**行数**: 2151 行  
+#### `tauri-bridge/` - 核心桥接模块（目录）
+**位置**: `src/api/tauri-bridge/`（原单文件 `src/api/tauri-bridge.ts` 已按领域拆分为 14 个模块，`index.ts` 统一 re-export，外部 import 路径不变）
+**模块划分**:
+- `files.ts` — 文件系统操作（scanDirectory / renameFile / copyFile / moveFile 等）
+- `thumbnail.ts` — 缩略图（getThumbnail / ThumbnailBatcher / androidThumbnailNavigate）
+- `color.ts` / `color_db.ts` — 颜色提取控制与颜色数据库管理
+- `db.ts` — 数据库 API（人物 / 专题 / 文件元数据）
+- `clip.ts` — CLIP 搜索、嵌入、标签与内容分类（proxyHttpRequest 亦在此）
+- `lan.ts` — 局域网共享
+- `updater.ts` — 应用更新
+- `state.ts` — 共享模块状态（缓存根 / 缩略图升级 / 滚动状态 / Android 平台标志）
+- `platform.ts` / `window.ts` / `search.ts` / `drag.ts` — 平台 / 窗口 / 色彩搜索 / 拖拽
+- `index.ts` — 仅 `export *` 聚合，保证原有 `'../api/tauri-bridge'` 导入兼容
+
 **功能分类**:
 
 **文件系统操作**:
@@ -1071,7 +1082,12 @@ App.tsx (2557 行) [Hook 编排层: 原始5211行, 重构后减少51%]
 │   ├── aiService.ts (624 行)
 │   └── faceRecognitionService.ts (63 行)
 ├── api/
-│   └── tauri-bridge.ts (2151 行)
+│   └── tauri-bridge/ (目录，原单文件拆分而来)
+│       ├── index.ts (re-export 聚合)
+│       ├── state.ts / platform.ts / search.ts / window.ts
+│       ├── files.ts / thumbnail.ts / drag.ts
+│       ├── color.ts / color_db.ts / db.ts
+│       ├── clip.ts / lan.ts / updater.ts
 ├── lan-share/ (局域网共享客户端)
 │   ├── LanShareApp.tsx (299 行)
 │   ├── api.ts (149 行)
@@ -1179,7 +1195,7 @@ Tools
 5. **TopicModule.tsx** (2485 行) - 专题管理功能丰富
 6. **MetadataPanel.tsx** (2409 行) - 元数据面板功能丰富
 7. **handlers.rs** (903 行) - 局域网共享请求处理器
-8. **tauri-bridge.ts** (2151 行) - API 桥接层，包含 CLIP、更新、颜色数据库等 API
+8. **tauri-bridge/** (已拆分) - API 桥接层已按领域拆分为 14 个模块（最大 clip.ts 约 880 行），不再是大单体
 9. **color_db.rs** (1124 行) - 颜色数据库操作复杂
 10. **model.rs** (1099 行) - CLIP 模型接口复杂
 
@@ -1217,7 +1233,7 @@ Tools
 1. **~~组件拆分~~** ✅ 已完成: App.tsx 已从 5211 行重构为 2557 行（51% 代码拆分至 23 个自定义 Hooks）
 2. **JSX 子组件化**: App.tsx 当前仍包含完整 JSX 渲染逻辑（~1500 行），可进一步按视图区域拆分为子组件（如 MainView、ViewerPanel、SettingsPanel 等）
 3. **状态管理**: 考虑引入 Zustand 或 Redux 进行更精细的状态管理，减少 props drilling
-4. **API 分层**: tauri-bridge.ts 可以按功能进一步拆分（文件操作、数据库操作、窗口管理等）
+4. **~~API 分层~~** ✅ 已完成: tauri-bridge.ts 已按功能拆分为 `src/api/tauri-bridge/` 目录（files / thumbnail / color / db / clip / lan / updater 等 14 个模块）
 5. **测试覆盖**: 为 23 个自定义 Hook 添加单元测试和集成测试
 6. **类型安全**: 完善 TypeScript 类型定义，提高代码可维护性
 7. **Worker 扩展**: 考虑将更多计算密集型任务（如 AI 分析预处理）移到 Worker
