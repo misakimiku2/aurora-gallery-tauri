@@ -211,7 +211,25 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
 - `npx vitest run`：39 passed / 7 files
 - `npm run build:lan-share`：成功
 
+### 追加记录（2026-08-13 第二轮，阶段 3 剩余 + 注释清理）
+
+> 本轮完成阶段 3 剩余候选（查看器/标签页/人物专题）+ App.tsx 乱码注释清理。
+
+- `src/App.tsx`：3064 行 → **2679 行**（累计 3860 → 2679，减少 1181 行，约 30.6%）
+- 新增 hooks（共 553 行）：
+  - `src/hooks/useViewerHandlers.ts`（82 行）：closeViewer / handleViewerNavigate / handleViewerJump
+  - `src/hooks/useTabHandlers.ts`（298 行）：handleOpenInNewTab / handleOpenTopicInNewTab / handleOpenPersonInNewTab / handleOpenCanvas / handleOpenCompareAndClearSelection / handleAddToCompareCanvas / handleCloseAllTabs / handleCloseOtherTabs
+  - `src/hooks/usePersonTopicHandlers.ts`（173 行）：handleNavigateTopic / handleNavigatePerson / handleNavigateTopics / enterTagView / enterTagsOverview / enterPeopleOverview / enterPersonView / handleClearPersonFilter / handleNavigateHome / handleNavigateNetworkHome / handleNavigateUp
+- 提交记录：
+  | commit | 内容 |
+  |---|---|
+  | `66e290c` | 阶段 3 剩余：提取查看器/标签页/人物专题 handler 为 3 个 hooks（useViewerHandlers / useTabHandlers / usePersonTopicHandlers） |
+  | `e58d885` | 清理 App.tsx 全部 36 处乱码注释（锟斤拷系 UTF-8 被按 GBK 解码的产物），改为可读中文注释或删除 |
+- 验收：tsc 0 错误 / build 成功 / vitest 39 passed / build:lan-share 成功
+- 方法要点：useCallback 依赖数组逐字保留；hook 放在 useFileSearch 之后（依赖 displayFileIds/pushHistory/setLanDownloadProgress 等均已就绪）；`enterPeopleOverview`/`handleNavigateTopics` 在 hook 返回后传给 usePeople/useTopics（调用顺序保持在其之前）
+
 ### 注意事项（后续会话）
-- 阶段 3 仅完成了 LAN 候选（收益最大、最独立）。方案第四节列出的其余候选（useViewerHandlers / useTabHandlers / usePersonTopicHandlers / useExternalDragDrop）**尚未执行**，如需继续减行可按原方法进行。
-- 拆分过程中发现 `docs/TESTING_GUIDE.md` 第 25 行的测试数量为旧数据（已更新为 7 files / 39 tests）。
-- App.tsx 中仍存在少量历史遗留的未使用 import（如 `convertFileSrc`、`initializeFileSystem` 等，拆分前就存在），按铁律 4 未做清理；如后续做代码清洁可一并处理。
+- 阶段 3 仅剩 `useExternalDragDrop` 候选（现有 `src/hooks/useExternalDragDrop.ts` 已够用，无需再动）；方案第四节其余候选已全部完成。
+- ⚠️ `src/components/FileGrid.tsx` 中仍有 **68 处**同样的乱码注释（拖拽相关逻辑），本轮未清理（用户只要求 App.tsx）；如需清理可按相同方法处理。
+- App.tsx 中仍存在少量历史遗留的未使用 import（如 `convertFileSrc`、`initializeFileSystem`、`asyncPool`、`ToastItem`、`AuroraLogo`、`SettingsModal`、`InlineRenameInput`、`ImageThumbnail`、`logWarn` 等，拆分前就存在），按铁律 4 未做清理；如后续做代码清洁可一并处理。
+- 行数统计请始终用 UTF-8 显式读取（见上方统计口径警告），勿用 `Measure-Object -Line`。
