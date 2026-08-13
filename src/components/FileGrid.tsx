@@ -88,66 +88,66 @@ const FileCard = React.memo(({
     e.stopPropagation();
     setIsDragging(true);
     
-    // 锟斤拷锟斤拷募锟轿达拷锟窖★拷校锟斤拷锟阶憋拷远锟窖★拷锟??
+    // 未选中的文件在拖拽前先选中它
     if (!isSelected) {
       onFileClick(e, file.id);
     }
     
-    // 锟斤拷锟斤拷锟斤拷拽锟斤拷锟捷ｏ拷锟斤拷锟斤拷募锟斤拷锟窖★拷校锟斤拷锟阶э拷锟斤拷锟窖★拷械锟斤拷募锟斤拷锟斤拷锟斤拷锟街伙拷锟阶э拷锟角帮拷锟??
+    // 确定拖拽文件：已多选时拖拽全部选中文件，否则只拖拽当前文件
     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
       ? selectedFileIds 
       : [file.id];
     
-    // 锟秸硷拷锟斤拷锟斤拷拽锟侥硷拷锟斤拷实锟斤拷路锟斤拷
+    // 获取要拖拽文件的实际路径
     const filePaths = filesToDrag.map((fileId: string) => getFileNode(fileId)?.path || '').filter(Boolean);
     
-    // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
+    // 标记为内部拖拽
     if (setIsDraggingInternal && setDraggedFilePaths) {
       setIsDraggingInternal(true);
       setDraggedFilePaths(filePaths);
     }
     
-    // 锟斤拷锟斤拷锟斤拷拽锟斤拷锟斤拷
+    // 设置拖拽数据
     try {
-      // 1. 锟斤拷锟斤拷JSON锟斤拷式锟斤拷锟斤拷拽锟斤拷锟捷ｏ拷锟斤拷锟斤拷锟节诧拷锟斤拷锟斤拷
+      // 1. 使用 JSON 格式传递内部拖拽数据
       e.dataTransfer.setData('application/json', JSON.stringify({
         type: 'file',
         ids: filesToDrag,
         sourceFolderId: file.parentId,
-        internalDrag: true // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
+        internalDrag: true // 标记为内部拖拽
       }));
       
-      // 2. 锟斤拷锟斤拷text/uri-list锟斤拷式锟斤拷锟斤拷锟斤拷锟解部锟侥硷拷锟斤拷??
+      // 2. 使用 text/uri-list 格式传递（供外部程序识别）
       const uriList = filePaths.map((path: string) => `file://${path.replace(/\\/g, '/')}`).join('\n');
       e.dataTransfer.setData('text/uri-list', uriList);
       
-      // 3. 锟斤拷锟矫简单碉拷锟侥憋拷锟斤拷锟捷ｏ拷锟斤拷锟斤拷锟斤拷示锟斤拷拽锟斤拷??
+      // 3. 使用纯文本格式传递（用于显示拖拽数量）
       const textData = `${filesToDrag.length} file${filesToDrag.length > 1 ? 's' : ''} selected`;
       e.dataTransfer.setData('text/plain', textData);
       
-      // 锟斤拷锟斤拷锟斤拷拽效锟斤拷
+      // 设置拖拽效果
       e.dataTransfer.effectAllowed = 'copyMove';
     } catch (error) {
       // Error handling for drag data setup
     }
     
-    // 锟斤拷锟斤拷锟斤拷拽锟斤拷锟斤拷图锟斤拷??
-    // 锟斤拷锟斤拷锟斤拷图锟斤拷锟叫★拷锟轿э拷锟?00px-480px
-    // 锟斤拷拽锟斤拷锟斤拷图锟斤拷小锟斤拷围锟斤拷100px-380px
-    // 锟斤拷锟斤拷映锟戒：dragThumbSize = 100 + (mainThumbSize - 100) * (280 / 380)
-    const mainThumbSize = thumbnailSize; // 锟斤拷锟斤拷锟斤拷图锟斤拷锟??
+    // 创建拖拽预览图片
+    // 主缩略图尺寸范围：100px-480px
+    // 拖拽缩略图大小范围：100px-380px
+    // 线性映射：dragThumbSize = 100 + (mainThumbSize - 100) * (280 / 380)
+    const mainThumbSize = thumbnailSize; // 主缩略图尺寸
     const minMainSize = 100;
     const maxMainSize = 480;
     const minDragSize = 100;
     const maxDragSize = 380;
     
-    // 锟斤拷锟斤拷映锟斤拷锟斤拷锟斤拷锟阶э拷锟斤拷锟酵硷拷锟叫?
+    // 按比例映射计算拖拽缩略图尺寸
     const dragThumbSize = Math.min(maxDragSize, Math.max(minDragSize, 
         minDragSize + (mainThumbSize - minMainSize) * ((maxDragSize - minDragSize) / (maxMainSize - minMainSize))
     ));
     
-    // 锟脚伙拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时DOM元锟斤拷锟斤拷为锟斤拷拽预锟斤拷
-    // 锟斤拷锟街凤拷锟斤拷锟斤拷Canvas锟斤拷锟缴匡拷锟斤拷锟斤拷锟斤拷锟斤拷Canvas锟斤拷锟狡碉拷时锟斤拷锟斤拷??
+    // 拖拽时动态创建 DOM 元素作为拖拽预览
+    // 使用 DOM 元素绘制拖拽预览（兼容性更好）
     const dragImageContainer = document.createElement('div');
     dragImageContainer.style.position = 'absolute';
     dragImageContainer.style.left = '-9999px';
@@ -164,10 +164,10 @@ const FileCard = React.memo(({
     dragImageContainer.style.boxShadow = 'none';
     dragImageContainer.style.padding = '0px';
     
-    // 锟斤拷取全锟街伙拷锟斤拷
+    // 获取全局缓存
     const cache = getGlobalCache();
     
-    // 锟斤拷锟斤拷锟斤拷锟斤拷图锟斤拷??
+    // 创建缩略图容器
     const thumbnailsContainer = document.createElement('div');
     thumbnailsContainer.style.position = 'relative';
     thumbnailsContainer.style.width = '100%';
@@ -176,38 +176,38 @@ const FileCard = React.memo(({
     thumbnailsContainer.style.alignItems = 'center';
     thumbnailsContainer.style.justifyContent = 'center';
     
-    // 锟斤拷锟斤拷锟??锟斤拷锟斤拷锟斤拷图
+    // 最多预览 3 张图片
     const previewCount = Math.min(filesToDrag.length, 3);
     
-    // 确锟斤拷锟斤拷拽锟斤拷锟侥硷拷锟斤拷示锟斤拷预锟斤拷锟叫ｏ拷锟斤拷锟斤拷锟斤拷锟饺硷拷锟斤拷??
-    // 1. 锟斤拷锟斤拷锟斤拷锟接碉拷前锟斤拷拽锟斤拷锟侥硷拷锟斤拷file锟斤拷锟斤拷锟斤拷锟斤拷锟矫伙拷锟斤拷锟斤拷锟斤拷拽锟斤拷锟侥硷拷锟斤拷
-    // 2. 然锟斤拷锟绞ｏ拷锟窖★拷械锟斤拷募锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷募锟斤拷锟斤拷锟斤拷锟斤拷????
+    // 确定拖拽文件的预览列表（只显示部分文件）
+    // 1. 优先显示当前拖拽的文件
+    // 2. 再显示其他选中的文件（最多 3 个）
     const previewFiles: string[] = [];
     
-    // 确锟斤拷锟斤拷前锟斤拷拽锟斤拷锟侥硷拷锟斤拷预锟斤拷??
+    // 确保当前拖拽文件在预览中
     previewFiles.push(file.id);
     
-    // 锟斤拷剩锟斤拷选锟叫碉拷锟侥硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟侥硷拷锟斤拷锟斤拷锟斤拷锟斤拷??
+    // 补充其他选中的文件直到达到预览上限
     for (const fileId of filesToDrag) {
       if (fileId !== file.id && previewFiles.length < previewCount) {
         previewFiles.push(fileId);
       }
     }
     
-    // 锟斤拷锟斤拷每锟斤拷锟侥硷拷锟斤拷锟斤拷锟斤拷图
+    // 为每个预览文件创建缩略图
     for (let i = 0; i < previewFiles.length; i++) {
       const draggedFileId = previewFiles[i];
       const draggedFile = getFileNode(draggedFileId);
       if (!draggedFile) continue;
       
-      // 锟斤拷取锟斤拷锟斤拷锟斤拷锟斤拷锟酵?
+      // 获取缓存缩略图
       const cachedThumb = draggedFile.type === FileType.IMAGE ? cache.get(draggedFile.path) : null;
       
-      // 锟斤拷锟姐单锟斤拷锟斤拷锟斤拷图锟竭寸（锟斤拷锟斤拷锟斤拷拽锟斤拷锟斤拷锟斤拷小??
-      // 锟斤拷锟接碉拷锟斤拷锟斤拷锟斤拷图锟竭寸，锟斤拷锟斤拷锟斤拷锟斤拷75%锟斤拷锟斤拷??0%锟斤拷确锟斤拷锟节诧拷锟斤拷示锟斤拷锟斤拷锟斤拷图锟斤拷??
-      const singleThumbSize = dragThumbSize * 0.9; // 锟斤拷锟斤拷锟斤拷锟斤拷图锟竭达拷为锟斤拷锟斤拷??0%
+      // 计算单个缩略图尺寸（基于拖拽缩略图大小）
+      // 单个缩略图尺寸约为拖拽图的 75%~90%，确保内部完整显示图片
+      const singleThumbSize = dragThumbSize * 0.9; // 单个缩略图大小为主拖拽图的 90%
       
-      // 锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷图元??
+      // 创建缩略图元素
       const thumbElement = document.createElement('div');
       thumbElement.style.position = 'absolute';
       thumbElement.style.width = `${singleThumbSize}px`;
@@ -220,20 +220,20 @@ const FileCard = React.memo(({
       thumbElement.style.justifyContent = 'center';
       thumbElement.style.overflow = 'hidden';
       
-      // 锟斤拷锟斤拷z-index锟斤拷确锟斤拷锟斤拷拽锟斤拷锟侥硷拷锟斤拷示锟斤拷锟斤拷前锟斤拷
+      // 设置 z-index 确保拖拽文件显示在最前
       thumbElement.style.zIndex = `${previewCount - i}`;
       
-      // 锟斤拷锟斤拷位锟矫猴拷锟斤拷转锟斤拷使锟斤拷CSS锟戒换??
+      // 设置位置偏移与旋转（使用 CSS 变换）
       const rotation = i === 0 ? 0 : (i === 1 ? -8 : 8);
-      // 偏锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷
-      const offsetScale = singleThumbSize / 150; // 锟斤拷锟斤拷150px锟侥伙拷准锟斤拷??
+      // 偏移量随缩略图尺寸缩放
+      const offsetScale = singleThumbSize / 150; // 以 150px 为标准缩放比例
       const offsetX = i === 0 ? 0 : (i === 1 ? -10 * offsetScale : 10 * offsetScale);
       const offsetY = i * 12 * offsetScale;
       thumbElement.style.transform = `translate(${offsetX}px, ${offsetY}px) rotate(${rotation}deg)`;
       
-      // 锟斤拷锟斤拷锟斤拷锟斤拷图锟斤拷占位??
+      // 有缓存缩略图时填充图片
       if (cachedThumb) {
-        // 使锟斤拷锟窖伙拷锟斤拷锟斤拷锟斤拷锟酵糢RL
+        // 使用缓存图片 URL
         const img = document.createElement('img');
         img.src = cachedThumb;
         img.style.width = '100%';
@@ -243,7 +243,7 @@ const FileCard = React.memo(({
         img.draggable = false;
         thumbElement.appendChild(img);
       } else {
-        // 锟斤拷锟斤拷占位??
+        // 无缓存时使用占位图
         if (draggedFile.type === FileType.IMAGE) {
           // 图片占位??
           thumbElement.innerHTML = `<div style="font-size: 32px;">????/div>`;
@@ -283,7 +283,7 @@ const FileCard = React.memo(({
             </div>
           `;
         } else {
-          // 锟斤拷锟斤拷锟侥硷拷锟斤拷锟斤拷占位??
+          // 其他类型文件的占位图
           thumbElement.innerHTML = `<div style="font-size: 32px;">??</div>`;
         }
       }
@@ -291,13 +291,13 @@ const FileCard = React.memo(({
       thumbnailsContainer.appendChild(thumbElement);
     }
     
-    // 锟斤拷锟斤拷锟侥硷拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟??锟斤拷锟斤拷
+    // 拖拽文件超过 3 个时显示数量徽标
     if (filesToDrag.length > 3) {
       const count = filesToDrag.length - 3;
       const countBadge = document.createElement('div');
       countBadge.style.position = 'absolute';
-      // 锟斤拷锟斤拷锟斤拷锟斤拷位锟矫帮拷锟斤拷锟斤拷锟斤拷??
-      const badgeSize = 40 * (dragThumbSize / 200); // 锟斤拷锟斤拷200px锟斤拷锟斤拷??0px锟斤拷锟斤拷
+      // 徽标位置随拖拽图尺寸缩放
+      const badgeSize = 40 * (dragThumbSize / 200); // 以 200px 为基准：40px 徽标随尺寸缩放
       countBadge.style.right = `${12 * (dragThumbSize / 200)}px`;
       countBadge.style.bottom = `${12 * (dragThumbSize / 200)}px`;
       countBadge.style.width = `${badgeSize}px`;
@@ -314,58 +314,58 @@ const FileCard = React.memo(({
       thumbnailsContainer.appendChild(countBadge);
     }
     
-    // 锟斤拷锟接碉拷锟斤拷??
+    // 将预览容器挂载到页面
     dragImageContainer.appendChild(thumbnailsContainer);
     document.body.appendChild(dragImageContainer);
     
-    // 锟斤拷锟斤拷锟斤拷拽图锟斤拷
+    // 设置拖拽预览图
     try {
-      // 锟斤拷拽图锟斤拷偏锟斤拷锟斤拷应为锟斤拷锟斤拷锟竭达拷锟揭伙拷耄凤拷锟斤拷锟斤拷指锟斤拷锟斤拷锟斤拷??
+      // 拖拽图片偏移为中心，使鼠标指针位于图片中心
       const dragOffset = dragThumbSize / 2;
       e.dataTransfer.setDragImage(dragImageContainer, dragOffset, dragOffset);
     } catch (error) {
       // Error handling for drag image setup
     }
     
-    // 锟斤拷锟斤拷锟斤拷拽效锟斤拷为move锟斤拷锟斤拷锟斤拷锟节诧拷锟斤拷??
+    // 设置拖拽效果为 move（内部拖拽）
     e.dataTransfer.effectAllowed = 'move';
     
-    // 锟斤拷取要锟斤拷拽锟斤拷实锟斤拷锟侥硷拷路锟斤拷
+    // 获取要拖拽文件的实际路径
     const draggedFiles = filesToDrag.map((fileId: string) => getFileNode(fileId)).filter((Boolean as unknown) as (file: FileNode | undefined) => file is FileNode);
     const draggedFilePaths = draggedFiles.map((file: FileNode) => file.path);
     
-    // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
+    // 标记为内部拖拽
     if (setIsDraggingInternal) {
       setIsDraggingInternal(true);
     }
     
-    // 锟斤拷锟斤拷锟斤拷拽锟斤拷锟侥硷拷路??
+    // 设置拖拽文件路径
     if (setDraggedFilePaths) {
       setDraggedFilePaths(draggedFilePaths);
     }
     
     try {
-      // 锟斤拷锟斤拷JSON锟斤拷式锟斤拷锟斤拷拽锟斤拷锟捷ｏ拷锟斤拷锟斤拷锟节诧拷锟斤拷锟斤拷
+      // 使用 JSON 格式传递内部拖拽数据
       e.dataTransfer.setData('application/json', JSON.stringify({
         type: 'file',
         ids: filesToDrag,
         sourceFolderId: file.parentId,
-        // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷锟?
+        // 标记为内部拖拽
         internalDrag: true
       }));
       
-      // 锟斤拷锟斤拷锟斤拷锟解部锟斤拷拽锟斤拷锟捷ｏ拷锟斤拷锟解触锟斤拷锟解部锟斤拷拽锟斤拷为
-      // 锟斤拷锟角斤拷锟斤拷锟斤拷拽锟斤拷锟斤拷时锟斤拷锟斤拷欠锟斤拷锟阶э拷锟斤拷锟斤拷锟??
+      // 提供外部拖拽数据（供外部程序使用）
+      // 外部拖拽场景无需额外设置
     } catch (error) {
       console.error('Drag data setup error:', error);
     }
     
-    // 通知锟斤拷锟斤拷锟斤拷锟绞硷拷锟??
+    // 通知父组件拖拽开始
     if (onDragStart) {
       onDragStart(filesToDrag);
     }
     
-    // 锟斤拷锟斤拷拽锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷锟斤拷时元锟斤拷
+    // 拖拽结束后清理临时元素
     const cleanupDragImage = () => {
       if (dragImageContainer.parentNode) {
         dragImageContainer.parentNode.removeChild(dragImageContainer);
@@ -382,7 +382,7 @@ const FileCard = React.memo(({
     e.stopPropagation();
     setIsDragging(false);
     
-    // 锟斤拷锟斤拷诓锟斤拷锟阶э拷锟斤拷
+    // 清除内部拖拽状态
     if (setIsDraggingInternal) {
       setIsDraggingInternal(false);
     }
@@ -418,16 +418,16 @@ const FileCard = React.memo(({
             if (e.button === 0) {
                 e.stopPropagation();
                 
-                // 锟斤拷住 Alt 锟斤拷时锟斤拷锟斤拷锟斤拷锟解部锟斤拷拽锟斤拷锟斤拷锟斤拷锟侥硷拷锟斤拷锟解部应锟矫ｏ拷
+                // 按住 Alt 键时启动外部拖拽（拖到外部应用）
                 if (e.altKey && isTauriEnvironment()) {
                     e.preventDefault();
                     
-                    // 锟斤拷取要锟斤拷拽锟斤拷锟侥硷拷
+                    // 获取要拖拽的文件
                     const filesToDrag = isSelected && selectedFileIds && selectedFileIds.length > 0 
                         ? selectedFileIds 
                         : [file.id];
                     
-                    // 锟秸硷拷锟斤拷锟斤拷拽锟侥硷拷锟斤拷实锟斤拷路锟斤拷
+                    // 获取要拖拽文件的实际路径
                     const filePaths = filesToDrag
                         .map((fileId: string) => getFileNode(fileId)?.path || '')
                         .filter(Boolean);
@@ -435,19 +435,19 @@ const FileCard = React.memo(({
                     if (filePaths.length > 0) {
                         setIsDragging(true);
                         
-                        // 锟斤拷锟斤拷锟节诧拷锟斤拷拽锟斤拷牵锟斤拷锟街癸拷锟斤拷锟斤拷獠匡拷锟斤拷敫诧拷遣锟?
+                        // 同步内部拖拽状态
                         if (setIsDraggingInternal) {
                             setIsDraggingInternal(true);
                         }
                         
-                        // 锟斤拷取锟斤拷锟斤拷图路锟斤拷锟斤拷锟斤拷??锟斤拷锟斤拷
+                        // 获取缩略图路径（供外部拖拽使用）
                         const pathCache = getThumbnailPathCache();
                         const thumbnailPaths = filePaths
                             .slice(0, 3)
                             .map((fp: string) => pathCache.get(fp))
                             .filter((p: string | undefined): p is string => !!p);
                         
-                        // 锟斤拷锟姐缓锟斤拷目录
+                        // 计算缓存目录
                         const cacheDir = effectiveResourceRoot 
                             ? `${effectiveResourceRoot}${effectiveResourceRoot.includes('\\') ? '\\' : '/'}.Aurora_Cache`
                             : undefined;
@@ -2008,7 +2008,7 @@ export const FileGrid = React.memo(({
           allFolders.forEach(el => delete (el as HTMLElement).dataset.dropTarget);
           dragHoverRef.current = null;
           
-          // 锟斤拷锟斤拷欠锟斤拷锟阶э拷锟斤拷囟锟斤拷募锟??
+          // 判断是否拖拽到文件夹上
           const target = e.target as HTMLElement;
           const folderElement = target.closest('.file-item[data-id]');
           
@@ -2018,23 +2018,23 @@ export const FileGrid = React.memo(({
                   const targetFolder = getFileNode(targetFolderId);
                   
                   if (targetFolder && targetFolder.type === FileType.FOLDER) {
-                      // 锟斤拷拽锟斤拷锟侥硷拷锟斤拷
+                      // 拖拽到文件夹上：交给父组件处理
                       if (onDropOnFolder) {
                           onDropOnFolder(targetFolderId, ids);
                       }
                   }
               }
           } else {
-              // 锟斤拷拽锟斤拷锟秸帮拷锟斤拷锟斤拷锟狡讹拷锟斤拷锟斤拷前目录锟斤拷
+              // 拖拽到空白处：视为拖拽到当前目录
               const currentFolderId = activeTab.folderId;
               if (currentFolderId && onDropOnFolder) {
-                  // 锟斤拷锟斤拷欠锟斤拷锟斤拷锟斤拷募锟斤拷锟斤拷丫锟斤拷诘锟角帮拷募锟斤拷锟??
+                  // 判断所有文件是否已在当前目录
                   const allFilesInCurrentFolder = ids.every((id: string) => {
                       const file = getFileNode(id);
                       return file && file.parentId === currentFolderId;
                   });
                   
-                  // 锟斤拷锟斤拷锟斤拷锟斤拷募锟斤拷锟斤拷诘锟角帮拷募锟斤拷锟斤拷校锟斤拷锟街达拷锟斤拷魏尾锟??
+                  // 已在当前目录时无需处理，直接返回
                   if (allFilesInCurrentFolder) {
                       return;
                   }

@@ -230,6 +230,6 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
 
 ### 注意事项（后续会话）
 - 阶段 3 仅剩 `useExternalDragDrop` 候选（现有 `src/hooks/useExternalDragDrop.ts` 已够用，无需再动）；方案第四节其余候选已全部完成。
-- ⚠️ `src/components/FileGrid.tsx` 中仍有 **68 处**同样的乱码注释（拖拽相关逻辑），本轮未清理（用户只要求 App.tsx）；如需清理可按相同方法处理。
+- ⚠️ `src/components/FileGrid.tsx` 中另有 **68 处**同样的乱码注释（拖拽相关逻辑），已于后续会话清理完毕（commit `b7d0d3f`）。
 - App.tsx 中仍存在少量历史遗留的未使用 import（如 `convertFileSrc`、`initializeFileSystem`、`asyncPool`、`ToastItem`、`AuroraLogo`、`SettingsModal`、`InlineRenameInput`、`ImageThumbnail`、`logWarn` 等，拆分前就存在），按铁律 4 未做清理；如后续做代码清洁可一并处理。
 - 行数统计请始终用 UTF-8 显式读取（见上方统计口径警告），勿用 `Measure-Object -Line`。
