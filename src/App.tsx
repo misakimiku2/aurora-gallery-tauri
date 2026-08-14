@@ -1,23 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { lanClientApi } from './components/lan-client/lanClientApi';
-import { InlineRenameInput } from './components/InlineRenameInput';
-import { ImageThumbnail } from './components/ImageThumbnail';
-import { SettingsModal } from './components/SettingsModal';
-import { AuroraLogo } from './components/Logo';
-import { CloseConfirmationModal } from './components/CloseConfirmationModal';
-import { initializeFileSystem, formatSize } from './utils/mockFileSystem';
-import { debug as logDebug, warn as logWarn } from './utils/logger';
+import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
-import { debounce } from './utils/debounce';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { scanDirectory, scanFile, openDirectory, saveUserData as tauriSaveUserData, loadUserData as tauriLoadUserData, getDefaultPaths as tauriGetDefaultPaths, ensureDirectory, createFolder, renameFile, deleteFile, deleteAndroidFiles, clearScanCache, getThumbnail, hideWindow, showWindow, exitApp, copyFile, moveFile, writeFileFromBytes, pauseColorExtraction, resumeColorExtraction, searchByColor, searchByPalette, getAssetUrl, openPath, dbGetAllPeople, dbUpsertPerson, dbDeletePerson, dbUpdatePersonAvatar, dbUpsertFileMetadata, dbGetAllFileMetadata, addPendingFilesToDb, switchRootDatabase, dbGetAllTopics, dbUpsertTopic, dbDeleteTopic, copyImageToClipboard, getColorDbStats, lanShareStart, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, androidHideTaskNotification, isAndroidPlatformCached, androidCheckStorageManager, androidRequestAllFilesAccess } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, SlideshowConfig, AppSettings, SearchScope, SortOption, TabState, LayoutMode, SUPPORTED_EXTENSIONS, DateFilter, SettingsCategory, AiData, TaskProgress, Person, Topic, HistoryItem, AiFace, GroupByOption, FileGroup, DeletionTask, AiSearchFilter, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
-import { ArrowUp, Moon, Sun, Monitor, RotateCcw, Copy, Move, ChevronDown, Trash2, Undo2, Shield, QrCode, Smartphone, ExternalLink, Sliders, Plus, Layout, List, Grid, Maximize, AlertTriangle, Merge, FilePlus, ChevronsDown, ChevronsUp, FolderPlus, Server, Loader2, Database, Palette, Check, RefreshCw, Scan, Cpu, Cloud, FileCode, Edit3, Minus, Type, Crop, LogOut, XCircle, Pause, MoveHorizontal, Clipboard, Link } from 'lucide-react';
-import { aiService } from './services/aiService';
+import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached } from './api/tauri-bridge';
+import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
 
-import { isAndroidPlatform, ensureAndroidPermissionAndScan, scanAndroidMedia, initAndroidPermissionListener, isAndroidSync } from './utils/androidPlatform';
+import { isAndroidSync } from './utils/androidPlatform';
 import { generateId } from './utils/pathUtils';
 import { useTasks } from './hooks/useTasks';
 import { useFileSearch } from './hooks/useFileSearch';
@@ -46,8 +37,6 @@ import { useTabHandlers } from './hooks/useTabHandlers';
 import { useViewerHandlers } from './hooks/useViewerHandlers';
 import { usePersonTopicHandlers } from './hooks/usePersonTopicHandlers';
 import { GlobalToasts } from './components/GlobalToasts';
-import { asyncPool } from './utils/async';
-import { ToastItem } from './components/ToastItem';
 import { TaskProgressModal } from './components/TaskProgressModal';
 import { getPinyinGroup } from './utils/textUtils';
 import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from './constants';
@@ -65,7 +54,7 @@ import { FilterChipsBar } from './components/app/FilterChipsBar';
 import { OverviewBar } from './components/app/OverviewBar';
 import { MainContentArea } from './components/app/MainContentArea';
 import { RightPanel } from './components/app/RightPanel';
-import { isTauriEnvironment, detectTauriEnvironmentAsync } from './utils/environment';
+import { isTauriEnvironment } from './utils/environment';
 import { getInitialLayout } from './utils/layoutSettings';
 
 // 扩展 Window 接口：声明全局颜色更新函数
