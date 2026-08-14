@@ -228,8 +228,18 @@ npm run build:lan-share # 必须成功（阶段 2/3 涉及共享代码时跑）
 - 验收：tsc 0 错误 / build 成功 / vitest 39 passed / build:lan-share 成功
 - 方法要点：useCallback 依赖数组逐字保留；hook 放在 useFileSearch 之后（依赖 displayFileIds/pushHistory/setLanDownloadProgress 等均已就绪）；`enterPeopleOverview`/`handleNavigateTopics` 在 hook 返回后传给 usePeople/useTopics（调用顺序保持在其之前）
 
+### 追加记录（2026-08-13 第三轮，未使用 import 清理 + memory 文档同步）
+
+> 本轮完成拆分后的收尾工作。
+
+- `src/App.tsx` 清理 **107 个**历史遗留未使用命名导入（11 行 import 被删除或收缩），行数 2679 → **2670**
+  - 清理方法：剥离 `//` 注释后按 `\b标识符\b` 全文计数，0 次即删除；`tsc --noEmit` 兜底（误删会导致 Cannot find name）
+  - 例：`convertFileSrc` / `initializeFileSystem` / `asyncPool` / `ToastItem` / `AuroraLogo` / `SettingsModal` / `InlineRenameInput` / `ImageThumbnail` / `logWarn` / 整条 lucide-react import（图标已随 JSX 移入子组件）等
+- 同步更新文档：memory/MODULE_DISTRIBUTION.md、PROJECT_STRUCTURE.md、CHANGELOG.md（新增 1.3.0）、QUICK_REFERENCE.md、plan/ANDROID_DEVELOPMENT_PLAN.md（状态表刷新至 2026-08 实际进度）
+- 验收：tsc 0 错误 / vitest 39 passed / build 成功 / build:lan-share 成功
+
 ### 注意事项（后续会话）
 - 阶段 3 仅剩 `useExternalDragDrop` 候选（现有 `src/hooks/useExternalDragDrop.ts` 已够用，无需再动）；方案第四节其余候选已全部完成。
 - ⚠️ `src/components/FileGrid.tsx` 中另有 **68 处**同样的乱码注释（拖拽相关逻辑），已于后续会话清理完毕（commit `dd2d4a4`）。
-- App.tsx 中仍存在少量历史遗留的未使用 import（如 `convertFileSrc`、`initializeFileSystem`、`asyncPool`、`ToastItem`、`AuroraLogo`、`SettingsModal`、`InlineRenameInput`、`ImageThumbnail`、`logWarn` 等，拆分前就存在），按铁律 4 未做清理；如后续做代码清洁可一并处理。
+- App.tsx 的历史遗留未使用 import 已于 2026-08-13 第三轮清理完毕（共 107 个命名导入），见上方第三轮追加记录。
 - 行数统计请始终用 UTF-8 显式读取（见上方统计口径警告），勿用 `Measure-Object -Line`。

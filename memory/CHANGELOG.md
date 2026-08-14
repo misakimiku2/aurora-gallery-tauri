@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-08-13
+
+### 🔧 Refactor
+
+#### App.tsx 二轮拆分（阶段 1-3）
+- App.tsx 从 **3860 行** 降至 **2670 行**（累计较最初 5211 行减少 **48.8%**）
+- 阶段 1：import 上移整理、`LAN_ROOT_IMAGES_ID` → constants.ts、`getInitialLayout` → utils/layoutSettings.ts、SVG filters → `SvgColorFilters.tsx`、LAN 下载遮罩 → `LanDownloadOverlay.tsx`
+- 阶段 2：JSX 组装层拆为 `src/components/app/` **8 个子组件**（TabBarWrapper / SidebarPane / ViewerPane / ToolbarPane / FilterChipsBar / OverviewBar / MainContentArea / RightPanel）
+- 阶段 3：提取 **4 个领域 Hook**（useLanClientSync / useTabHandlers / useViewerHandlers / usePersonTopicHandlers），自定义 Hooks 总计 **27 个**
+- 清理 App.tsx（36 处）与 FileGrid.tsx（68 处）乱码注释为可读中文注释
+
+### 🧹 Cleanup
+- 清理 App.tsx **107 个**历史遗留未使用 import（11 行），tsc/build/vitest 全绿（39 passed / 7 files）
+
+---
+
 ## [1.2.0] - 2026-04-18
 
 ### ✨ New Features

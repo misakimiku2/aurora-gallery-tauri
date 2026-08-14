@@ -824,6 +824,12 @@ ls -la ~/.config/aurora-gallery-tauri/
 - 添加 Vitest 测试框架支持
 - 新增 OCR 和翻译功能支持
 
+### 2026-08-13 更新
+- App.tsx 二轮拆分完成：3860 行 → 2670 行（累计较 5211 行减少 48.8%）
+- 新增 4 个领域 Hooks：`useLanClientSync` / `useTabHandlers` / `useViewerHandlers` / `usePersonTopicHandlers`（自定义 Hooks 总计 27 个）
+- 新增 `src/components/app/` 8 个 JSX 组装层子组件（TabBarWrapper / SidebarPane / ViewerPane / ToolbarPane / FilterChipsBar / OverviewBar / MainContentArea / RightPanel）
+- 清理 App.tsx 107 个未使用 import，及 App.tsx / FileGrid.tsx 乱码注释
+
 ### 2026-01-14 更新
 - 新增 PersonGrid 组件
 - 优化 AI 分析流程（移除 dominantColors AI 分析）
@@ -833,6 +839,6 @@ ls -la ~/.config/aurora-gallery-tauri/
 
 ---
 
-**文档版本**: 1.5  
-**更新日期**: 2026-03-14  
+**文档版本**: 1.6  
+**更新日期**: 2026-08-13  
 **维护者**: Aurora Gallery Team

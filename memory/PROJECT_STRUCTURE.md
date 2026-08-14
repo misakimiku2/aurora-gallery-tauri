@@ -39,11 +39,20 @@ aurora-gallery-tauri/
 │   │   │   ├── ComparerContextMenu.tsx  # 对比视图右键菜单 (134 行)
 │   │   │   ├── EditOverlay.tsx          # 编辑覆盖层 (474 行)
 │   │   │   └── types.ts                 # 对比组件类型定义 (60 行)
+│   │   ├── 📁 app/                  # App.tsx JSX 组装层子组件 [2026-08 二轮拆分新增]
+│   │   │   ├── TabBarWrapper.tsx        # 标签栏包装
+│   │   │   ├── SidebarPane.tsx          # 左侧栏外层布局
+│   │   │   ├── ViewerPane.tsx           # 查看器区域
+│   │   │   ├── ToolbarPane.tsx          # 工具栏区域
+│   │   │   ├── FilterChipsBar.tsx       # 筛选条
+│   │   │   ├── OverviewBar.tsx          # 概览条
+│   │   │   ├── MainContentArea.tsx      # 中央主内容区
+│   │   │   └── RightPanel.tsx           # 右侧面板
 │   │   ├── 📁 __tests__/            # 测试文件
 │   │   │   └── EmptyFolderPlaceholder.spec.tsx  # 空文件夹占位符测试
 │   │   ├── 📁 settings/             # 设置面板组件 [新增]
 │   │   │   └── LanSharePanel.tsx        # 局域网共享设置面板 (346 行)
-│   │   ├── App.tsx                  # 主应用组件 (2557 行) [重构: 从5211行拆分至23个自定义Hooks]
+│   │   ├── App.tsx                  # 主应用组件 (2670 行) [二轮拆分后: 27个Hooks + app/ 8子组件]
 │   │   ├── AppModals.tsx            # 应用模态框集中渲染入口 (575 行)
 │   │   ├── PersonGrid.tsx           # 人物网格组件 (440 行)
 │   │   ├── PeopleCanvas.tsx         # 人物画布组件 (342 行) [新增]
@@ -76,7 +85,7 @@ aurora-gallery-tauri/
 │   │   ├── AIRenameButton.tsx       # AI 重命名按钮 (36 行)
 │   │   ├── AIRenamePreview.tsx      # AI 重命名预览 (38 行)
 │   │   └── useLayoutHook.ts         # 布局管理 Hook (80 行)
-│   ├── 📁 hooks/                    # 自定义 Hooks (23个, 共约6400行)
+│   ├── 📁 hooks/                    # 自定义 Hooks (27个, 共约7300行)
 │   │   ├── useAppInit.ts            # 应用初始化 Hook (378 行) [P1提取]
 │   │   ├── useDirectoryScan.ts      # 目录扫描 Hook (501 行) [P1提取]
 │   │   ├── useWindowLifecycle.ts    # 窗口生命周期 Hook (157 行) [P1提取]
@@ -99,7 +108,12 @@ aurora-gallery-tauri/
 │   │   ├── useInView.ts             # 视口检测 Hook (37 行)
 │   │   ├── useKeyboardShortcuts.ts  # 键盘快捷键管理 Hook (78 行)
 │   │   ├── useToasts.ts             # Toast 通知管理 Hook (42 行)
-│   │   └── useUpdateCheck.ts        # 更新检查 Hook (307 行)
+│   │   ├── useUpdateCheck.ts        # 更新检查 Hook (307 行)
+│   │   ├── useLanClientSync.ts      # LAN 客户端同步 Hook (~340 行) [2026-08 二轮提取]
+│   │   ├── useTabHandlers.ts        # 标签页 handler Hook (298 行) [2026-08 二轮提取]
+│   │   ├── useViewerHandlers.ts     # 查看器 handler Hook (82 行) [2026-08 二轮提取]
+│   │   ├── usePersonTopicHandlers.ts # 人物/专题导航 Hook (173 行) [2026-08 二轮提取]
+│   │   └── usePinchZoom.ts 等        # 另有移动端手势类 hooks: usePinchZoom/usePullToRefresh/useLongPress/usePanelSwipeGesture/useAutoScrollbar
 │   ├── 📁 services/                 # 业务服务层
 │   │   ├── aiService.ts             # AI 服务 (624 行)
 │   │   └── faceRecognitionService.ts # 人脸识别服务 (63 行)
@@ -357,7 +371,7 @@ npm run clean        # 清理缓存
 
 ### 前端架构
 - **组件化**: 基于 React 的组件化架构
-- **Hook 模块化**: 核心业务逻辑已拆分至 23 个自定义 Hooks (P1: 7个 + P2: 4个 + 原有: 12个)
+- **Hook 模块化**: 核心业务逻辑已拆分至 27 个自定义 Hooks (P1: 7个 + P2: 4个 + 原有: 12个 + 二轮: 4个)，视图组装层拆至 components/app/ 8 个子组件
 - **类型安全**: 完整的 TypeScript 类型定义
 - **响应式设计**: 支持多种屏幕尺寸
 - **国际化**: 多语言支持 (translations.ts)
@@ -443,7 +457,7 @@ src-tauri/src/
 ## 关键文件说明
 
 ### 核心文件
-- `src/App.tsx`: 主应用组件，负责 UI 状态、视图路由与 Hook 编排 (2557 行) [重构后: 从5211行降至2557行, 51%代码已拆分至23个自定义Hooks]
+- `src/App.tsx`: 主应用组件，负责 UI 状态、视图路由与 Hook 编排 (2670 行) [二轮拆分后: 从5211行降至2670行, 业务逻辑拆至27个Hooks + JSX组装拆至components/app/ 8子组件]
 - `src-tauri/src/main.rs`: Rust 主程序入口 (359 行)
 - `src-tauri/src/file_types.rs`: 核心类型定义 (62 行)
 - `src-tauri/src/scanner.rs`: 目录扫描核心逻辑 (547 行)
@@ -453,10 +467,12 @@ src-tauri/src/
 - `src/api/tauri-bridge/`: 前后端通信桥接（目录，原单文件拆分；index.ts 聚合，导入路径不变）
 - `src/types.ts`: TypeScript 类型定义 (699 行)
 - `src/constants.ts`: 全局常量定义 (29 行)
-- `src/hooks/`: 自定义 Hooks 集合 (23个文件, ~6400行) [P1+P2模块化重构核心产出]
+- `src/hooks/`: 自定义 Hooks 集合 (27个核心 hooks, ~7300行) [P1+P2 + 二轮拆分核心产出]
   - **P1 Hooks** (7个): useAppInit, useDirectoryScan, useWindowLifecycle, useSearch, usePeople, useTopics, useTags
   - **P2 Hooks** (4个): useExternalDragDrop, usePersistence, useFileSelection, useFolderSettings
   - **原有 Hooks** (12个): useTasks, useNavigation, useAIAnalysis, useAIRename, useContextMenu, useFileOperations, useFileSearch, useInView, useKeyboardShortcuts, useMarqueeSelection, useToasts, useUpdateCheck
+  - **二轮 Hooks** (4个, 2026-08): useLanClientSync, useTabHandlers, useViewerHandlers, usePersonTopicHandlers
+  - 另有移动端手势类 hooks: usePinchZoom, usePullToRefresh, useLongPress, usePanelSwipeGesture, useAutoScrollbar
 - `src/shared/`: 共享模块（主应用与 LAN Share 客户端共用）
 - `src/lan-share/`: 局域网共享独立客户端应用
 
@@ -503,6 +519,6 @@ src-tauri/src/
 
 ---
 
-**文档版本**: 2.0
-**更新日期**: 2026-04-18
+**文档版本**: 2.1
+**更新日期**: 2026-08-13
 **维护者**: Aurora Gallery Team

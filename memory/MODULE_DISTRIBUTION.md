@@ -132,11 +132,11 @@ export async function exitApp(): Promise<void>
 
 #### `App.tsx` - 主应用组件（Hook 编排层）
 **位置**: `src/App.tsx`
-**行数**: 2557 行（重构后，原 5211 行，减少 51%）
+**行数**: 2670 行（原 5211 行；2026-04 一轮重构后 2557 行；2026-08 二轮拆分后 2679 行、清理未使用 import 后 2670 行，累计减少 48.8%）
 
 **概览**:
-- `App.tsx` 已从大型单体组件重构为 **Hook 编排层**，核心业务逻辑已拆分至 23 个自定义 Hooks。当前职责聚焦于：状态声明、派生状态计算（useMemo/useCallback）、JSX 渲染、以及 Hook 调用与依赖传递。
-- 本次重构提取了 **P1（7个）** + **P2（4个）** 共 11 个新 Hook，加上原有 12 个 Hook，总计 23 个。
+- `App.tsx` 已从大型单体组件重构为 **Hook 编排层 + JSX 组装层**，核心业务逻辑拆分至 27 个自定义 Hooks、视图 JSX 拆分至 `src/components/app/` 8 个子组件。当前职责聚焦于：状态声明、派生状态计算（useMemo/useCallback）、Hook 调用与依赖传递、以及薄薄的 JSX 组装。
+- 2026-04 一轮重构提取了 **P1（7个）** + **P2（4个）** 共 11 个 Hook；2026-08 二轮拆分提取了 **4 个领域 Hook**（LAN 客户端/标签页/查看器/人物专题）并拆出 **8 个 app 子组件**。总计 27 个自定义 Hooks。
 
 **当前保留在 App.tsx 中的内容**:
 - **状态声明**: 完整 `AppState` 初始化（root 列表、files、people、topics、tabs、视图排序/分组、thumbnailSize、clipboard、customTags、folderSettings、layout、settings.ai、拖拽/选择相关状态等）
@@ -161,6 +161,25 @@ export async function exitApp(): Promise<void>
 | `usePersistence` | 持久化：自动保存 useEffect | 53 |
 | `useFileSelection` | 文件选择交互：handleFileClick（Ctrl/Shift/点击选择） | 69 |
 | `useFolderSettings` | 文件夹设置记忆：handleRememberFolderSettings + useEffects | 120 |
+
+**二轮拆分新增 Hook**（2026-08-13，阶段 3）:
+
+| Hook | 提取的功能 | 行数 |
+|------|-----------|------|
+| `useLanClientSync` | LAN 客户端连接恢复/重试/心跳/浏览/刷新/上传 | 约 340 |
+| `useTabHandlers` | 标签页：新开标签/专题/人物/画布、对比清选、关闭全部/其他 | 298 |
+| `useViewerHandlers` | 查看器：closeViewer / handleViewerNavigate / handleViewerJump | 82 |
+| `usePersonTopicHandlers` | 人物/专题导航：enterTagView/PeopleOverview/PersonView、清除人物过滤、返回上级等 | 173 |
+
+**二轮拆分子组件**（2026-08-13，阶段 2，`src/components/app/`）:
+
+| 组件 | 职责 |
+|------|------|
+| `TabBarWrapper` | 标签栏包装（含 onCloseWindow 等内联回调） |
+| `SidebarPane` | 左侧栏外层布局（约 40 个 props） |
+| `ViewerPane` / `ToolbarPane` / `FilterChipsBar` / `OverviewBar` | 查看器/工具栏/筛选条/概览条区域 |
+| `MainContentArea` | 中央区（ImageViewer/FileGrid/FoldersOverview/TopicModule 切换） |
+| `RightPanel` | 右侧元数据面板/移动端颜色选择区域 |
 
 **原有 12 个 Hook**（未变）:
 
@@ -189,10 +208,10 @@ useUpdateCheck → useWindowLifecycle → useExternalDragDrop → useFileSelecti
 ```
 
 **小结**:
-- App.tsx 已从 5211 行降至 2557 行（减少 51%），不再是"单体组件"
-- 当前角色转变为 **编排层**：声明状态 → 计算派生数据 → 调用 Hooks → 渲染 JSX
+- App.tsx 已从 5211 行降至 2670 行（累计减少 48.8%），不再是"单体组件"
+- 当前角色转变为 **编排层**：声明状态 → 计算派生数据 → 调用 Hooks → 渲染 JSX 组装
 - 各 Hook 通过 props 接收 state/setState 及所需派生值，内部封装完整业务逻辑
-- 未来可进一步考虑将 JSX 部分拆分为子组件（如 SettingsPanel、ViewerPanel 等）
+- JSX 组装层已拆分为 `src/components/app/` 8 个子组件（2026-08 完成）
 
 ---
 
@@ -1005,7 +1024,7 @@ pub struct Topic {
 ## 依赖关系图
 
 ```
-App.tsx (2557 行) [Hook 编排层: 原始5211行, 重构后减少51%]
+App.tsx (2670 行) [Hook 编排层: 原始5211行, 二轮拆分后累计减少48.8%]
 ├── components/
 │   ├── modals/ (22 个模态框)
 │   │   ├── AddImageModal.tsx (1163 行)
@@ -1200,7 +1219,7 @@ Tools
 10. **model.rs** (1099 行) - CLIP 模型接口复杂
 
 ### 中等复杂度模块
-1. **App.tsx** (2557 行) [重构后] - Hook 编排层，状态声明 + 派生计算 + JSX 渲染（已从 5211 行降至 2557 行）
+1. **App.tsx** (2670 行) [二轮拆分后] - Hook 编排层，状态声明 + 派生计算 + JSX 组装（已从 5211 行降至 2670 行，JSX 组装拆至 components/app/ 8 个子组件）
 2. **useAIAnalysis.ts** (629 行) - AI 分析 Hook
 3. **useSearch.ts** (640 行) - 搜索功能 Hook（AI/CLIP/相似图片）
 4. **ImageViewer.tsx** (1482 行) - 图片查看器功能完整
@@ -1230,8 +1249,8 @@ Tools
 
 ## 架构改进建议
 
-1. **~~组件拆分~~** ✅ 已完成: App.tsx 已从 5211 行重构为 2557 行（51% 代码拆分至 23 个自定义 Hooks）
-2. **JSX 子组件化**: App.tsx 当前仍包含完整 JSX 渲染逻辑（~1500 行），可进一步按视图区域拆分为子组件（如 MainView、ViewerPanel、SettingsPanel 等）
+1. **~~组件拆分~~** ✅ 已完成: App.tsx 已从 5211 行重构为 2670 行（业务逻辑拆分至 27 个自定义 Hooks）
+2. **~~JSX 子组件化~~** ✅ 已完成: 视图组装层已拆分为 `src/components/app/` 8 个子组件（TabBarWrapper/SidebarPane/ViewerPane/ToolbarPane/FilterChipsBar/OverviewBar/MainContentArea/RightPanel，2026-08-13）
 3. **状态管理**: 考虑引入 Zustand 或 Redux 进行更精细的状态管理，减少 props drilling
 4. **~~API 分层~~** ✅ 已完成: tauri-bridge.ts 已按功能拆分为 `src/api/tauri-bridge/` 目录（files / thumbnail / color / db / clip / lan / updater 等 14 个模块）
 5. **测试覆盖**: 为 23 个自定义 Hook 添加单元测试和集成测试
@@ -1240,7 +1259,7 @@ Tools
 
 ---
 
-**文档版本**: 2.0
-**更新日期**: 2026-04-18
-**覆盖范围**: 所有前端和后端模块（含局域网共享模块、Hook 模块化重构）
+**文档版本**: 2.1
+**更新日期**: 2026-08-13
+**覆盖范围**: 所有前端和后端模块（含局域网共享模块、Hook 模块化重构、二轮 App.tsx 拆分）
 **详细程度**: 高
