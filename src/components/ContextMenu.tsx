@@ -4,7 +4,7 @@ import {
   Layout, ExternalLink, FolderOpen, Copy, MoveHorizontal, Link,
   Type, Sparkles, User, XCircle, Tag, Clipboard, Image as ImageIcon,
   Trash2, FolderPlus, ChevronsDown, ChevronsUp, Edit3, Crop,
-  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search
+  RefreshCw, MousePointer2, Scan, ChevronRight, Plus, Search, Download
 } from 'lucide-react';
 import { FileType, FileNode, Person, TabState, ClipSettings } from '../types';
 
@@ -61,6 +61,7 @@ interface ContextMenuProps {
   handleCopyImageToClipboard: (fileId: string) => void;
   handleSearchSimilarImages?: (imageId: string) => void;
   openClipSettings?: () => void;
+  handleDownloadAndroidFiles?: (ids: string[]) => void;
 }
 
 export const ContextMenu: React.FC<ContextMenuProps> = ({
@@ -106,7 +107,8 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   handleAddToCompareCanvas,
   handleCopyImageToClipboard,
   handleSearchSimilarImages,
-  openClipSettings
+  openClipSettings,
+  handleDownloadAndroidFiles
 }) => {
   const [compareSubmenuOpen, setCompareSubmenuOpen] = useState(false);
   const compareMenuTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -265,6 +267,20 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             {t('context.copyImage')}
           </div>
         )}
+        {/* 下载安卓设备图片到本地（桌面端连接安卓端） */}
+        {!isAndroidDevice && (contextMenu.type === 'file-single' || contextMenu.type === 'file-multi') && handleDownloadAndroidFiles && (() => {
+          const targetIds = activeTab.selectedFileIds.length > 0
+            ? activeTab.selectedFileIds
+            : (contextMenu.targetId ? [contextMenu.targetId] : []);
+          const hasAndroidImages = targetIds.some(id => files[id]?.source === 'android' && files[id]?.type === FileType.IMAGE);
+          if (!hasAndroidImages) return null;
+          return (
+            <div className={menuItemClass} style={menuItemStyle} onClick={() => { handleDownloadAndroidFiles(targetIds); closeContextMenu(); }}>
+              <Download size={iconSize} className="mr-2 opacity-70" />
+              {t('context.downloadToLocal') || '下载到本地'}
+            </div>
+          );
+        })()}
         {!isAndroidDevice && contextMenu.type === 'file-single' && contextMenu.targetId && files[contextMenu.targetId]?.type === FileType.IMAGE && clipSettings?.enabled && handleSearchSimilarImages && (
           <div className={isAndroidDevice
             ? 'mx-2 px-4 rounded hover:bg-cyan-600 hover:text-white cursor-pointer flex items-center'

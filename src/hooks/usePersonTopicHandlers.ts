@@ -134,6 +134,8 @@ export const usePersonTopicHandlers = ({
       return;
     } else if (activeTab.viewMode === 'lan-folders-overview') {
       return;
+    } else if (activeTab.viewMode === 'android-folders-overview') {
+      return;
     } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
       const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
       if (isAndroid) {
@@ -148,6 +150,18 @@ export const usePersonTopicHandlers = ({
       } else if (current?.source === 'lan') {
         // LAN 子文件夹无父级时回到网络总览视图
         pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
+      } else if (current?.source === 'android') {
+        // 安卓设备文件夹无父级时回到该设备的总览视图
+        pushHistory(
+          `__android_folders_root__:${current.remoteDeviceKey || ''}`,
+          null,
+          'android-folders-overview',
+          '',
+          'all',
+          [],
+          null,
+          0
+        );
       } else {
         const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
         if (isAndroid && activeTab.viewMode === 'browser') {

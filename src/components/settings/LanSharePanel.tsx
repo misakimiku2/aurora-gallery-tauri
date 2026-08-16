@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Wifi, Copy, RefreshCw, Shield, Smartphone, ExternalLink, Check, AlertCircle, Loader2, Monitor, Tablet } from 'lucide-react';
+import { Wifi, Copy, RefreshCw, Shield, Smartphone, ExternalLink, Check, AlertCircle, Loader2, Monitor, Tablet, Link2, LogOut } from 'lucide-react';
 import { listen } from '@tauri-apps/api/event';
-import { LanShareSettings, ConnectedDevice } from '../../types';
+import { LanShareSettings, ConnectedDevice, AndroidClientConnection } from '../../types';
 import {
   lanShareStart,
   lanShareStop,
@@ -10,10 +10,12 @@ import {
   lanShareRenameDevice,
   lanShareUpdateConfig,
   lanShareGetLocalIp,
+  lanShareRemoveDevice,
   LanShareStatus,
 } from '../../api/tauri-bridge';
 import { isAndroidPlatform } from '../../utils/androidPlatform';
 import { LanClientPanel } from '../lan-client/LanClientPanel';
+import { androidClientRegistry } from '../android-client/androidClientApi';
 
 interface LanSharePanelProps {
   t: (key: string) => string;
@@ -218,7 +220,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
   const [editingDeviceId, setEditingDeviceId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
-  const handleStartEdit = useCallback((device: ConnectedDevice) => {
+  const handleStartEdit = useCallback((device: { id: string; name: string }) => {
     setEditingDeviceId(device.id);
     setEditingName(device.name);
   }, []);
@@ -242,21 +244,100 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
       setConnectedDevices(prev =>
         prev.map(d => (d.id === deviceId ? { ...d, name: trimmed } : d))
       );
+      // 同步侧边栏设备名：按 IP 更新对应安卓设备连接的 serverName
+      const device = connectedDevices.find(d => d.id === deviceId);
+      if (device) {
+        const clients = settings.androidClients || [];
+        const idx = clients.findIndex(c => c.host === device.ip);
+        if (idx >= 0) {
+          const newClients = [...clients];
+          newClients[idx] = { ...newClients[idx], serverName: trimmed };
+          onUpdateSettings({ ...settings, androidClients: newClients });
+        }
+      }
     }
     setEditingDeviceId(null);
     setEditingName('');
-  }, [editingName, connectedDevices]);
+  }, [editingName, connectedDevices, settings, onUpdateSettings]);
 
-  const onlineCount = connectedDevices.length;
   const isLoading = isStarting || isStopping;
+
+  // 融合后的设备列表：桌面端服务端已连接设备 + 桌面端反向连接的安卓设备（按 IP 去重）。
+  // 扫码连接（双向融合）后，同一台手机在两个方向各有一条记录，这里合并为一行。
+  // hasServerSession = 手机作为客户端连着桌面端；clientKey = 桌面端反向连着手机。
+  const androidClients: AndroidClientConnection[] = settings.androidClients || [];
+  const clientByHost = new Map(androidClients.map((c) => [c.host, c]));
+  const mergedDevices: {
+    id: string;
+    name: string;
+    ip: string;
+    deviceType: string;
+    clientKey?: string;
+    hasServerSession: boolean;
+    isEditable: boolean;
+  }[] = [
+    ...connectedDevices.map((d) => ({
+      id: d.id,
+      name: d.name,
+      ip: d.ip,
+      deviceType: d.deviceType,
+      clientKey: clientByHost.get(d.ip)?.key,
+      hasServerSession: true,
+      isEditable: true,
+    })),
+    ...androidClients
+      .filter((c) => !connectedDevices.some((d) => d.ip === c.host))
+      .map((c) => ({
+        id: c.key,
+        name: c.serverName || '安卓设备',
+        ip: c.host,
+        deviceType: 'phone',
+        clientKey: c.key,
+        hasServerSession: false,
+        isEditable: false,
+      })),
+  ];
+
+  // 断开与某台设备的连接（双向融合：两个方向都彻底断开）。
+  // 1. 桌面端 → 手机：注销反向客户端并移除连接配置；
+  // 2. 手机 → 桌面端：踢出该设备在桌面端服务端的会话（手机心跳收到 401 后自动清理）。
+  const handleDisconnectAndroidDevice = useCallback(
+    async (device: {
+      id: string;
+      clientKey?: string;
+      hasServerSession: boolean;
+    }) => {
+      if (device.clientKey) {
+        const client = androidClientRegistry.get(device.clientKey);
+        if (client) {
+          await client.disconnect().catch(() => {});
+        }
+        androidClientRegistry.unregister(device.clientKey);
+      }
+      if (device.hasServerSession) {
+        await lanShareRemoveDevice(device.id).catch(() => {});
+      }
+      onUpdateSettings({
+        ...settings,
+        androidClients: (settings.androidClients || []).filter(
+          (c) => c.key !== device.clientKey
+        ),
+      });
+    },
+    [settings, onUpdateSettings]
+  );
 
   if (isAndroid) {
     return (
-      <LanClientPanel
-        t={t}
-        settings={settings}
-        onUpdateSettings={onUpdateSettings}
-      />
+      <div className="space-y-5 animate-fade-in">
+        {/* 双向融合单面板：本机共享状态已并入连接卡片，不再有独立的
+            "停止共享"卡（扫码连接自动开启本机共享，断开即彻底断开） */}
+        <LanClientPanel
+          t={t}
+          settings={settings}
+          onUpdateSettings={onUpdateSettings}
+        />
+      </div>
     );
   }
 
@@ -449,13 +530,13 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                 {t('settings.lanShare.connectedDevices') || '已连接设备'}
               </h4>
               <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 text-xs font-medium rounded-full">
-                {onlineCount} {t('settings.lanShare.online') || '在线'}
+                {mergedDevices.length} {t('settings.lanShare.online') || '在线'}
               </span>
             </div>
 
-            {connectedDevices.length > 0 ? (
+            {mergedDevices.length > 0 ? (
               <div className="space-y-2">
-                {connectedDevices.map((device) => {
+                {mergedDevices.map((device) => {
                   const DeviceIcon = getDeviceIcon(device.deviceType);
                   const isEditing = editingDeviceId === device.id;
                   return (
@@ -489,9 +570,11 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                             />
                           ) : (
                             <div
-                              className="text-sm font-medium text-gray-800 dark:text-white cursor-text hover:text-blue-500 transition-colors truncate"
-                              onClick={() => handleStartEdit(device)}
-                              title={t('settings.lanShare.clickToEdit') || '点击编辑名称'}
+                              className={`text-sm font-medium text-gray-800 dark:text-white truncate ${device.isEditable ? 'cursor-text hover:text-blue-500 transition-colors' : ''}`}
+                              onClick={() => {
+                                if (device.isEditable) handleStartEdit(device);
+                              }}
+                              title={device.isEditable ? (t('settings.lanShare.clickToEdit') || '点击编辑名称') : undefined}
                             >
                               {device.name}
                             </div>
@@ -502,9 +585,30 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 ml-2">
+                        {device.clientKey && device.hasServerSession && (
+                          <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-[10px] font-medium rounded-full flex items-center gap-0.5">
+                            <Link2 size={10} />
+                            {t('settings.lanShare.bidirectional') || '双向'}
+                          </span>
+                        )}
+                        <button
+                          onClick={() =>
+                            handleDisconnectAndroidDevice({
+                              id: device.id,
+                              clientKey: device.clientKey,
+                              hasServerSession: device.hasServerSession,
+                            })
+                          }
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                          title={t('settings.lanShare.androidClient.disconnect') || '断开'}
+                        >
+                          <LogOut size={13} />
+                        </button>
                         <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                         <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {t('settings.lanShare.active') || '活跃'}
+                          {device.hasServerSession
+                            ? (t('settings.lanShare.active') || '活跃')
+                            : (t('settings.lanShare.connected') || '已连接')}
                         </span>
                       </div>
                     </div>
@@ -515,7 +619,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
               <div className="text-center py-6 text-gray-500 dark:text-gray-400">
                 <Wifi size={32} className="mx-auto mb-2 opacity-50" />
                 <p className="text-sm">
-                  {t('settings.lanShare.noDevices') || '暂无设备连接'}
+                  {t('settings.lanShare.noDevices') || '暂无设备连接，等待安卓端扫码连接'}
                 </p>
               </div>
             )}
@@ -526,7 +630,7 @@ export const LanSharePanel: React.FC<LanSharePanelProps> = ({
             <p>
               {t('settings.lanShare.tip') || '确保设备连接到同一 Wi-Fi 网络'}
               {' '}
-              {t('settings.lanShare.androidConnectTip') || '安卓端可通过此服务连接'}
+              {t('settings.lanShare.androidConnectTip') || '安卓端扫码连接后自动建立双向互联，可在左侧边栏浏览手机图片'}
             </p>
           </div>
         </div>

@@ -831,10 +831,10 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             return;
         }
 
-        // LAN 图片：browse 时不返回 palette，按需从服务端获取。
+        // 远程图片（桌面端服务/安卓设备）：browse 时不返回 palette，按需从服务端获取。
         // preloadPaletteToCache 会异步请求 /api/palette，结果通过
         // PALETTE_CACHE_UPDATE_EVENT 事件回传，由上方的 useEffect 监听更新。
-        if (file.path && file.source === 'lan') {
+        if (file.path && (file.source === 'lan' || file.source === 'android' || file.path.startsWith('android://'))) {
             preloadPaletteToCache(file.path);
         }
 
@@ -1954,9 +1954,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             (async () => {
                                                 try {
                                                     let hexColors: string[] = [];
-                                                    if (file.path.startsWith('lan://')) {
-                                                        const { lanClientApi } = await import('./lan-client/lanClientApi');
-                                                        hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+                                                    if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
+                                                        const { getRemotePalette } = await import('../utils/remoteSource');
+                                                        hexColors = await getRemotePalette(file.path);
                                                     } else {
                                                         const { getDominantColors } = await import('../api/tauri-bridge');
 
@@ -2039,9 +2039,9 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                             setLoadingPalette(true);
                                             try {
                                                 let hexColors: string[] = [];
-                                                if (file.path.startsWith('lan://')) {
-                                                    const { lanClientApi } = await import('./lan-client/lanClientApi');
-                                                    hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+                                                if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
+                                                    const { getRemotePalette } = await import('../utils/remoteSource');
+                                                    hexColors = await getRemotePalette(file.path);
                                                 } else {
                                                     const { getDominantColors } = await import('../api/tauri-bridge');
                                                     const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;

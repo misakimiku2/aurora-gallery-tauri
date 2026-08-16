@@ -260,6 +260,18 @@ impl LanShareServer {
         s || d
     }
 
+    /// 主动移除某个设备（会话 + 设备记录），返回是否存在该设备会话。
+    /// 双向连接融合：桌面端"断开"设备时调用，手机端下一次心跳将收到 401
+    /// 并自动清理本机连接状态，实现整条链路的彻底断开。
+    pub async fn remove_device(&self, device_id: &str) -> bool {
+        let removed = self.sessions.remove_session_by_device(device_id).await;
+        self.devices.remove_device(device_id).await;
+        if removed {
+            log::info!("[LAN Share] 设备已被移除 - {}", device_id);
+        }
+        removed
+    }
+
     pub fn is_running(&self) -> bool {
         self.server_handle.is_some()
     }

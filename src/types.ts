@@ -76,8 +76,10 @@ export interface FileNode {
   updatedAt?: string;
   lastRefresh?: number;
   isRefreshing?: boolean;
-  source?: 'local' | 'lan';
+  source?: 'local' | 'lan' | 'android';
   remotePath?: string;
+  /** 远程设备标识（安卓多设备支持）：android://<key>/<id> 中的 <key> */
+  remoteDeviceKey?: string;
 }
 
 export interface Person {
@@ -343,6 +345,43 @@ export interface LanShareSettings {
   serverPort?: number;
   serverAccessToken?: string;
   savedServers?: SavedServer[];
+  // 桌面端 → 安卓设备客户端配置（桌面端使用，安卓端忽略）
+  androidClient?: AndroidClientSettings;
+  // 多设备支持：桌面端同时连接的多台安卓设备
+  androidClients?: AndroidClientConnection[];
+  // 桌面端保存的安卓设备连接记录（最近设备，无 token）
+  savedAndroidDevices?: SavedAndroidDevice[];
+}
+
+/** 桌面端保存的安卓设备连接记录。 */
+export interface SavedAndroidDevice {
+  host: string;
+  port: number;
+  name?: string;
+  lastConnected: number;
+}
+
+/** 桌面端安卓客户端连接配置（持久化于 settings.lanShare.androidClient）。 */
+export interface AndroidClientSettings {
+  host?: string;
+  port?: number;
+  accessToken?: string;
+  deviceName?: string;
+  serverName?: string;
+  savedDevices?: SavedAndroidDevice[];
+  lastConnectedAt?: number;
+}
+
+/** 桌面端已连接的单台安卓设备（多设备支持）。 */
+export interface AndroidClientConnection {
+  /** 设备唯一标识 = "host:port" */
+  key: string;
+  host: string;
+  port: number;
+  accessToken?: string;
+  /** 设备显示名（手机端自报，如"三星Tab S8+"） */
+  serverName?: string;
+  connectedAt?: number;
 }
 
 export interface SavedServer {
@@ -432,7 +471,7 @@ export interface FileGroup {
 export interface HistoryItem {
   folderId: string;
   viewingId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'android-folders-overview';
   searchQuery: string;
   searchScope: SearchScope;
   activeTags: string[];
@@ -449,7 +488,7 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'android-folders-overview';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;

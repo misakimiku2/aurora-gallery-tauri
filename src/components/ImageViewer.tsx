@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 're
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { lanClientApi } from './lan-client/lanClientApi';
+import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl } from '../utils/remoteSource';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
@@ -107,13 +107,12 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
   const cached = getBlobCacheSync(path);
   if (cached) return cached;
 
-  // LAN source: 直接缓存 HTTP URL，跳过 fetch blob。
+  // 远程来源（桌面端服务/安卓设备）：直接缓存 HTTP URL，跳过 fetch blob。
   // 原因：在 Android WebView 中，response.blob() 对 3-4MB 的 LAN 图片极其缓慢
   // （实测 5-8 秒），而 <img> 直接加载 HTTP URL 时浏览器只需 300-1000ms 下载。
   // 浏览器会自动缓存已下载的 HTTP 响应，不需要手动创建 blob URL。
-  if (path.startsWith('lan://')) {
-    const remotePath = path.slice('lan://'.length);
-    const httpUrl = lanClientApi.getImageUrl(remotePath);
+  if (isRemotePath(path)) {
+    const httpUrl = getRemoteImageUrl(path);
 
     blobCache.set(path, httpUrl);
     blobCacheSizes.set(path, 0);
@@ -234,11 +233,10 @@ const loadPaletteToCache = async (path: string, existingPalette?: string[]): Pro
     try {
       let hexColors: string[] = [];
 
-      if (path.startsWith('lan://')) {
-        // LAN 图片：从服务端按需获取 palette（browse 时不返回 palette 以节省传输）
-        const remotePath = path.slice('lan://'.length);
-        const { lanClientApi } = await import('./lan-client/lanClientApi');
-        hexColors = await lanClientApi.getPalette(remotePath);
+      if (isRemotePath(path)) {
+        // 远程图片（桌面端服务/安卓设备）：从服务端按需获取 palette
+        // （browse 时不返回 palette 以节省传输）
+        hexColors = await getRemotePalette(path);
       } else {
         // 本地图片：通过 Tauri 命令提取主色调
         const { getDominantColors } = await import('../api/tauri-bridge');
@@ -613,12 +611,12 @@ export const ImageViewer: React.FC<ViewerProps> = ({
       }
     }
 
-    // LAN 图片（非幻灯片模式）：先立即显示 256px 缩略图，原图下载后渐变替换。
-    // 无论 blobCache 命中与否，浏览器可能尚未下载原图字节，所以总是先显示缩略图。
-    const isLan = path.startsWith('lan://') && !slideshowActiveRef.current;
+    // 远程图片（桌面端服务/安卓设备，非幻灯片模式）：先立即显示 256px 缩略图，
+    // 原图下载后渐变替换。无论 blobCache 命中与否，浏览器可能尚未下载原图字节，
+    // 所以总是先显示缩略图。
+    const isLan = isRemotePath(path) && !slideshowActiveRef.current;
     if (isLan) {
-      const remotePath = path.slice('lan://'.length);
-      const thumbUrl = lanClientApi.getThumbnailUrl(remotePath);
+      const thumbUrl = getRemoteThumbnailUrl(path);
       setLanThumbUrl(thumbUrl);
       setLanFadeIn(true);
     }

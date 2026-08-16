@@ -11,12 +11,22 @@ import {
   Clock,
   Link2,
   Check,
+  Copy,
   ArrowRight,
 } from 'lucide-react';
+import { listen } from '@tauri-apps/api/event';
 import { LanShareSettings, SavedServer } from '../../types';
 import { lanClientApi } from './lanClientApi';
 import { ensureCameraPermission } from '../../utils/androidPlatform';
-import { lanShareSaveServer, lanShareRemoveServer } from '../../api/tauri-bridge';
+import {
+  lanShareSaveServer,
+  lanShareRemoveServer,
+  lanShareAndroidStart,
+  lanShareAndroidStop,
+  lanShareAndroidGetStatus,
+  lanShareAndroidGetDevices,
+  AndroidLanServerStatus,
+} from '../../api/tauri-bridge';
 import { QrScannerModal } from './QrScannerModal';
 import { parseQrData } from './qrParseUtils';
 
@@ -64,6 +74,98 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
   const [connected, setConnected] = useState(false);
   const [deviceCount, setDeviceCount] = useState<number | null>(null);
   const [scanning, setScanning] = useState(false);
+  // 双向连接融合：本机服务端上的设备数（>0 表示桌面端已反向连接本机）
+  const [myServerDeviceCount, setMyServerDeviceCount] = useState<number | null>(null);
+  // 双向连接融合：本机服务端运行状态（地址/验证码等，融合显示在连接卡片中）
+  const [myServerStatus, setMyServerStatus] = useState<AndroidLanServerStatus | null>(null);
+  const [serverCopied, setServerCopied] = useState(false);
+
+  const myServerUrl = myServerStatus?.is_running && myServerStatus.local_ip
+    ? `http://${myServerStatus.local_ip}:${myServerStatus.port}`
+    : null;
+
+  const generateLocalCode = (): string => {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+  };
+
+  /**
+   * 双向连接融合：连接桌面端前确保本机共享服务端已运行，
+   * 并返回本机服务端信息（供 authenticate 携带 peer_server，
+   * 让桌面端自动反向连接本机）。
+   * startedNow 表示服务端是否由本次调用自动开启（连接失败时用于回滚，
+   * 避免留下无人消费的"孤儿服务端"）。
+   * 服务端名称回退使用客户端设备名（如"三星Tab S8+"），
+   * 保证桌面端侧边栏显示的设备名与局域网共享面板一致。
+   */
+  const ensureOwnServer = useCallback(async (): Promise<{ port: number; accessCode: string; startedNow: boolean } | null> => {
+    try {
+      const status = await lanShareAndroidGetStatus();
+      if (status.is_running) {
+        return { port: status.port, accessCode: settings.accessCode, startedNow: false };
+      }
+      const code = settings.accessCode || generateLocalCode();
+      const serverName = settings.serverName || deviceName.trim();
+      const updates: LanShareSettings = {
+        ...settings,
+        enabled: true,
+        accessCode: code,
+        serverName,
+      };
+      await lanShareAndroidStart({
+        enabled: true,
+        port: updates.port,
+        access_code: code,
+        server_name: serverName,
+      });
+      onUpdateSettings(updates);
+      return { port: updates.port, accessCode: code, startedNow: true };
+    } catch (e: any) {
+      console.warn('[LAN Fusion] ensure own server failed:', e);
+      // 服务已在运行（竞态）时仍返回当前配置
+      if (String(e?.message || e).includes('already running')) {
+        return { port: settings.port, accessCode: settings.accessCode, startedNow: false };
+      }
+      return null;
+    }
+  }, [settings, onUpdateSettings, deviceName]);
+
+  // 连接失败时回滚本次自动开启的服务端（此前已在运行的服务端不受影响）
+  const rollbackServerIfStarted = useCallback(
+    (peer: { startedNow: boolean } | null | undefined) => {
+      if (peer?.startedNow) {
+        lanShareAndroidStop().catch(() => {});
+      }
+    },
+    []
+  );
+
+  // 本机服务端状态：挂载时拉取一次，服务端启停（含通知栏"停止共享"）时实时刷新
+  useEffect(() => {
+    lanShareAndroidGetStatus().then(setMyServerStatus).catch(() => {});
+    const unlistenPromise = listen('lan-share-android-status-changed', () => {
+      lanShareAndroidGetStatus().then(setMyServerStatus).catch(() => {});
+    });
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, []);
+
+  // 双向状态：已连接桌面端时轮询本机服务端的设备列表与运行状态
+  useEffect(() => {
+    if (!connected) {
+      setMyServerDeviceCount(null);
+      return;
+    }
+    const poll = () => {
+      lanShareAndroidGetDevices()
+        .then((devices) => setMyServerDeviceCount(devices.length))
+        .catch(() => {});
+      lanShareAndroidGetStatus().then(setMyServerStatus).catch(() => {});
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [connected]);
 
   const refreshDevices = useCallback(async () => {
     try {
@@ -120,11 +222,15 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
     }
 
     setConnecting(true);
+    let peer: { port: number; accessCode: string; startedNow: boolean } | null = null;
     try {
+      // 双向连接融合：先确保本机共享已开启，认证时携带本机服务端信息
+      peer = await ensureOwnServer();
       lanClientApi.setBaseUrl(`http://${trimmedHost}:${portNum}`);
       const res = await lanClientApi.authenticate(
         trimmedCode,
-        deviceName.trim() || undefined
+        deviceName.trim() || undefined,
+        peer ?? undefined
       );
       if (res.success && res.token) {
         const saved = lanShareSaveServer(settings, trimmedHost, portNum, res.server_name);
@@ -138,6 +244,8 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
         setConnected(true);
         refreshDevices();
       } else {
+        // 连接失败：回滚本次自动开启的本机共享，避免留下"孤儿服务端"
+        rollbackServerIfStarted(peer);
         setError(
           res.error ||
             t('settings.lanShare.client.authFailed') ||
@@ -145,6 +253,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
         );
       }
     } catch (e: any) {
+      rollbackServerIfStarted(peer);
       setError(
         e?.message ||
           t('settings.lanShare.client.connectFailed') ||
@@ -153,18 +262,35 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
     } finally {
       setConnecting(false);
     }
-  }, [host, port, code, deviceName, settings, onUpdateSettings, refreshDevices, t]);
+  }, [host, port, code, deviceName, settings, onUpdateSettings, refreshDevices, ensureOwnServer, rollbackServerIfStarted, t]);
+
+  const handleCopyServerUrl = useCallback(() => {
+    if (myServerUrl) {
+      navigator.clipboard.writeText(myServerUrl);
+      setServerCopied(true);
+      setTimeout(() => setServerCopied(false), 2000);
+    }
+  }, [myServerUrl]);
 
   const handleDisconnect = useCallback(async () => {
     await lanClientApi.disconnect();
+    // 双向连接融合：断开与桌面端的连接时同步停止本机共享服务端，
+    // 彻底断开整条链路（桌面端随后通过心跳失败自动移除本设备）。
+    try {
+      await lanShareAndroidStop();
+    } catch (e) {
+      console.warn('[LAN Fusion] stop own server on disconnect failed:', e);
+    }
     onUpdateSettings({
       ...settings,
+      enabled: false,
       serverAccessToken: undefined,
       serverHost: undefined,
       serverPort: undefined,
     });
     setConnected(false);
     setDeviceCount(null);
+    setMyServerDeviceCount(null);
     setCode('');
     setError(null);
   }, [settings, onUpdateSettings]);
@@ -202,11 +328,15 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
 
     setCode(parsed.code);
     setConnecting(true);
+    let peer: { port: number; accessCode: string; startedNow: boolean } | null = null;
     try {
+      // 双向连接融合：先确保本机共享已开启，认证时携带本机服务端信息
+      peer = await ensureOwnServer();
       lanClientApi.setBaseUrl(`http://${parsed.host}:${parsed.port}`);
       const res = await lanClientApi.authenticate(
         parsed.code,
-        deviceName.trim() || undefined
+        deviceName.trim() || undefined,
+        peer ?? undefined
       );
       if (res.success && res.token) {
         const saved = lanShareSaveServer(settings, parsed.host, parsed.port, res.server_name);
@@ -220,6 +350,8 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
         setConnected(true);
         refreshDevices();
       } else {
+        // 连接失败：回滚本次自动开启的本机共享，避免留下"孤儿服务端"
+        rollbackServerIfStarted(peer);
         setError(
           res.error ||
             t('settings.lanShare.client.authFailed') ||
@@ -227,6 +359,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
         );
       }
     } catch (e: any) {
+      rollbackServerIfStarted(peer);
       setError(
         e?.message ||
           t('settings.lanShare.client.connectFailed') ||
@@ -235,7 +368,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
     } finally {
       setConnecting(false);
     }
-  }, [deviceName, settings, onUpdateSettings, refreshDevices, t]);
+  }, [deviceName, settings, onUpdateSettings, refreshDevices, ensureOwnServer, rollbackServerIfStarted, t]);
 
   const handleSelectServer = useCallback((s: SavedServer) => {
     setHost(s.host);
@@ -259,11 +392,11 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
       <div>
         <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
           <Wifi size={20} className="mr-2 text-blue-500" />
-          {t('settings.lanShare.client.title') || '局域网客户端'}
+          {t('settings.lanShare.client.title') || '连接桌面端'}
         </h3>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
           {t('settings.lanShare.client.description') ||
-            '连接到桌面端服务器，浏览和管理远程图库'}
+            '扫码连接桌面端后，桌面端可浏览本机图片（双向互联）'}
         </p>
       </div>
 
@@ -310,6 +443,64 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                 </div>
               </div>
             </div>
+
+            {/* 双向连接状态 */}
+            <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+              <div className={`flex items-center gap-2 text-xs ${myServerDeviceCount !== null && myServerDeviceCount > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+                {myServerDeviceCount !== null && myServerDeviceCount > 0 ? (
+                  <>
+                    <Check size={14} className="shrink-0" />
+                    <span>
+                      {t('settings.lanShare.client.bidirectionalOn') || '双向连接已建立：桌面端已自动连接本机'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 size={14} className="shrink-0 animate-spin" />
+                    <span>
+                      {t('settings.lanShare.client.bidirectionalWaiting') || '等待桌面端自动连接本机…'}
+                    </span>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* 本机共享状态（双向融合：与桌面端连接是一个整体，无独立停止按钮；
+                断开即彻底断开，通知栏"停止共享"同样断开整条链路） */}
+            {myServerStatus?.is_running && (
+              <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0 text-xs text-gray-500 dark:text-gray-400">
+                    <span className="text-green-600 dark:text-green-400 font-medium">
+                      {t('settings.lanShare.androidServer.running') || '共享中'}
+                    </span>
+                    {myServerUrl && (
+                      <span className="font-mono"> · {myServerUrl}</span>
+                    )}
+                    <span>
+                      {' '}
+                      · {t('settings.lanShare.androidServer.accessCode') || '访问验证码'}：
+                      <span className="font-mono font-bold text-gray-800 dark:text-white">
+                        {settings.accessCode || '----'}
+                      </span>
+                    </span>
+                    {myServerDeviceCount !== null && myServerDeviceCount > 0 && (
+                      <span> · {myServerDeviceCount} {t('settings.lanShare.online') || '在线'}</span>
+                    )}
+                  </div>
+                  {myServerUrl && (
+                    <button
+                      onClick={handleCopyServerUrl}
+                      className="px-2.5 py-1.5 flex items-center gap-1 text-xs bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors shrink-0"
+                    >
+                      {serverCopied
+                        ? (t('settings.lanShare.copied') || '已复制')
+                        : (t('settings.lanShare.copy') || '复制')}
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex gap-3">

@@ -4,7 +4,7 @@ import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
-import { lanClientApi } from './lan-client/lanClientApi';
+import { isRemotePath, getRemoteThumbnailUrl } from '../utils/remoteSource';
 import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 
@@ -16,10 +16,9 @@ const isVideoFile = (filePath?: string, format?: string): boolean => {
   return ext ? VIDEO_EXTENSIONS.has(ext) : false;
 };
 
-// LAN source files use a synthetic `lan://<remotePath>` path marker.
-const LAN_PREFIX = 'lan://';
-const isLanPath = (p?: string): boolean => !!p && p.startsWith(LAN_PREFIX);
-const lanRemotePath = (p: string): string => p.slice(LAN_PREFIX.length);
+// 远程来源文件使用合成路径标记：`lan://<remotePath>`（桌面端服务）
+// 或 `android://<mediaStoreId>`（安卓设备）。
+const isRemote = (p?: string | null): boolean => isRemotePath(p);
 
 export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modified, size, isHovering, fileMeta, resourceRoot, cachePath, mediaStoreId }: { 
   src: string; 
@@ -40,9 +39,9 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       if (!filePath) return null;
       // 视频文件没有缩略图端点，直接返回 null（由 renderThumbnail 显示视频图标）
       if (isVideoFile(filePath, fileMeta?.format)) return null;
-      // LAN source: use remote thumbnail URL directly (no local generation)
-      if (isLanPath(filePath)) {
-        return lanClientApi.getThumbnailUrl(lanRemotePath(filePath));
+      // 远程来源：直接使用远程缩略图 URL（无需本地生成）
+      if (isRemote(filePath)) {
+        return getRemoteThumbnailUrl(filePath);
       }
       const cache = getGlobalCache();
       return cache.get(filePath) || null;
@@ -66,7 +65,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
 
   // LAN 导航管道：首个 LAN 缩略图 URL 就绪时记录「Thumbnail 请求开始」
   useEffect(() => {
-    if (lanNavActive() && filePath && isLanPath(filePath) && thumbnailSrc && !lanThumbReqLoggedRef.current) {
+    if (lanNavActive() && filePath && isRemote(filePath) && thumbnailSrc && !lanThumbReqLoggedRef.current) {
       lanThumbReqLoggedRef.current = true;
       const fileName = filePath.split('/').pop() || filePath;
       lanNavStep('===== FIRST THUMB REQUEST =====', `file=${fileName}`);
@@ -74,8 +73,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   }, [thumbnailSrc, filePath]);
 
   useEffect(() => {
-    // LAN source: thumbnail URL is resolved directly, skip local generation
-    if (isLanPath(filePath)) return;
+    // 远程来源：缩略图 URL 直连，跳过本地生成
+    if (isRemote(filePath)) return;
     if (!filePath || !resourceRoot) return;
     mountedRef.current = true; // 本次 effect 实例挂载中
 
@@ -164,8 +163,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   }, [filePath, thumbnailSrc]);
 
   useEffect(() => {
-    // LAN source: no local thumbnail upgrade pipeline
-    if (isLanPath(filePath)) return;
+    // 远程来源：无本地缩略图升级管线
+    if (isRemote(filePath)) return;
     if (!upgrading || !filePath || !resourceRoot) return;
     let cancelled = false;
     let retryCount = 0;
@@ -202,8 +201,8 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
     let isMounted = true;
 
     const loadAnimation = async () => {
-      // LAN source: animation preview needs local file access; skip for remote files
-      if (isLanPath(filePath)) {
+      // 远程来源：动画预览需要本地文件访问；远程文件跳过
+      if (isRemote(filePath)) {
         if (isMounted) setAnimSrc(null);
         return;
       }
@@ -254,7 +253,7 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
   // LAN 导航管道：首个缩略图 <img> onLoad 时记录「Thumbnail 加载完成」
   const lanThumbLoadLoggedRef = useRef(false);
   const handleThumbLoad = useCallback(() => {
-    if (lanNavActive() && filePath && isLanPath(filePath) && !lanThumbLoadLoggedRef.current) {
+    if (lanNavActive() && filePath && isRemote(filePath) && !lanThumbLoadLoggedRef.current) {
       lanThumbLoadLoggedRef.current = true;
       const fileName = filePath.split('/').pop() || filePath;
       lanNavStep('===== FIRST THUMB LOADED =====', `file=${fileName}`);

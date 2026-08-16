@@ -144,7 +144,11 @@ class LanClientApi {
     return response.json() as Promise<T>;
   }
 
-  async authenticate(code: string, deviceName?: string): Promise<AuthResponse> {
+  async authenticate(
+    code: string,
+    deviceName?: string,
+    peerServer?: { port: number; accessCode: string }
+  ): Promise<AuthResponse> {
     if (!this.baseUrl) {
       throw new Error('Not connected: base URL is not set');
     }
@@ -158,6 +162,15 @@ class LanClientApi {
         code,
         device_name: deviceName || this.getDeviceName(),
         device_id: this.getDeviceId(),
+        // 双向连接融合：携带本机服务端信息，让对端自动反向连接本机
+        ...(peerServer && peerServer.accessCode
+          ? {
+              peer_server: {
+                port: peerServer.port,
+                access_code: peerServer.accessCode,
+              },
+            }
+          : {}),
       }),
     });
 

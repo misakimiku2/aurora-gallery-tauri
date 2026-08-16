@@ -97,6 +97,19 @@ pub struct AuthRequest {
     /// 避免同一设备重连时在线计数累加；否则回退到随机 UUID。
     #[serde(default)]
     pub device_id: Option<String>,
+    /// 对端服务端信息（双向连接融合）：
+    /// 客户端在认证时若携带此字段，服务端会通过
+    /// `lan-share-peer-pairing` 事件通知本机前端自动反向连接对端，
+    /// 使一次扫码/一次连接即可建立双向互联。
+    #[serde(default)]
+    pub peer_server: Option<PeerServerInfo>,
+}
+
+/// 对端局域网共享服务端信息（用于自动反向配对）。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PeerServerInfo {
+    pub port: u16,
+    pub access_code: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback, useLayoutEffect } from 'react';
 import * as RW from 'react-window';
 
 // Resolve FixedSizeList component from various module shapes
@@ -18,27 +18,27 @@ import { convertFileSrc } from '@tauri-apps/api/core';
 import { pauseColorExtraction, resumeColorExtraction, getThumbnail, isAndroidPlatformCached } from '../api/tauri-bridge';
 import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from '../utils/modelDownloadState';
 import { getGlobalCache } from '../utils/thumbnailCache';
-import { lanClientApi } from './lan-client/lanClientApi';
+import { isRemotePath, getRemoteThumbnailUrl } from '../utils/remoteSource';
 import NetworkSection from './lan-client/NetworkSection';
 import { PeopleCanvas } from './PeopleCanvas';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { scrollProfiler } from '../utils/scrollProfiler';
 
 const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceRoot?: string }) => {
-  const isLan = file.source === 'lan' && !!file.remotePath;
+  const isLan = isRemotePath(file.path) || (file.source === 'lan' && !!file.remotePath);
   const [src, setSrc] = useState<string | null>(() => {
     if (!file.path) return null;
-    // LAN source: use remote thumbnail URL directly
-    if (isLan) {
-      return lanClientApi.getThumbnailUrl(file.remotePath!);
+    // 远程来源（桌面端服务/安卓设备）：直接使用远程缩略图 URL
+    if (isLan && file.remotePath) {
+      return getRemoteThumbnailUrl(file.path);
     }
     return getGlobalCache().get(file.path) || null;
   });
 
   useEffect(() => {
     let active = true;
-    // LAN source: thumbnail URL is direct, skip local generation
-    if (isLan) return () => { active = false; };
+    // 远程来源：缩略图 URL 直连，跳过本地生成
+    if (isLan && file.remotePath) return () => { active = false; };
     if (file.type === FileType.IMAGE && resourceRoot && !src) {
       getThumbnail(file.path, file.meta?.modified, resourceRoot).then(url => {
         if (active && url) {
@@ -48,11 +48,11 @@ const TagPreviewThumbnail = ({ file, resourceRoot }: { file: FileNode; resourceR
       });
     }
     return () => { active = false; };
-  }, [file.path, file.meta?.modified, resourceRoot, src, isLan]);
+  }, [file.path, file.meta?.modified, resourceRoot, src, isLan, file.remotePath]);
 
-  // LAN source: use remote thumbnail URL; fall back to local convertFileSrc otherwise
-  const displaySrc = isLan
-    ? (src || lanClientApi.getThumbnailUrl(file.remotePath!))
+  // 远程来源：使用远程缩略图 URL；本地文件回退到 convertFileSrc
+  const displaySrc = (isLan && file.remotePath)
+    ? (src || getRemoteThumbnailUrl(file.path))
     : (src || convertFileSrc(file.path));
 
   return (
@@ -328,8 +328,8 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
     return result;
   }, [sortedPeopleList]);
   
-  const availableHeight = Math.max(200, listHeight - 180);
-  
+  const availableHeight = Math.max(120, listHeight);
+
   const containerRef = useRef<HTMLDivElement>(null);
   // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   useAutoScrollbar(containerRef);
@@ -392,7 +392,10 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
   };
 
   return (
-      <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+      <div
+        data-sidebar-section="people"
+        className="select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 flex-none"
+      >
         <div 
           className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
           style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#a855f7' } : {}) }}
@@ -442,6 +445,7 @@ const PeopleSection: React.FC<PeopleSectionControlledProps> = React.memo(({
           {expanded && (
            <div 
              ref={containerRef}
+             data-sidebar-list
              className={`pl-5 pr-3 pb-3 mt-1 overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} min-h-0 bg-panel`}
              style={{ 
                maxHeight: `${availableHeight}px`,
@@ -510,7 +514,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   // 左侧面板滚动条：滚动中显示、停止滚动后淡出，悬停滚动条区域时显示并放大（样式见 index.css）
   useAutoScrollbar(tagListRef);
 
-  const availableHeight = Math.max(200, listHeight - 180);
+  const availableHeight = Math.max(120, listHeight);
 
   const isAndroid = isAndroidPlatformCached();
   const iconSize = isAndroid ? 18 : 14;
@@ -750,7 +754,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
     const last = Math.min(total, first + viewportRows + bufferRows * 2);
     const slice = sortedTags.slice(first, last);
 
-    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致），
+    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致）。
     // 滚动时浏览器只做合成平移、不重新布局，避免文档流强制重排。
     return (
       <div style={{ height: totalHeight, position: 'relative' }}>
@@ -815,7 +819,10 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
   }, [expanded, sortedTags, tagCounts, onTagSelect, onContextMenu, rowHeight, availableHeight, FixedSizeListComp, handleMouseEnter, handleMouseLeave, hoveredTag, previewImages, hoveredTagPos, t, localScrollTop, sortedTags.length, isCreatingTag]);
 
   return (
-    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+    <div
+      data-sidebar-section="tags"
+      className="select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 flex-none"
+    >
        <div 
         className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
         style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#5391f6' } : {}) }}
@@ -839,6 +846,7 @@ const TagSection: React.FC<TagSectionControlledProps> = React.memo(({
       {expanded && (
         <div 
           ref={tagListRef}
+          data-sidebar-list
           className={`pl-5 pr-3 pb-3 space-y-0.5 min-h-[40px] overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} bg-panel`}
           style={{ 
             maxHeight: `${availableHeight}px`,
@@ -918,7 +926,7 @@ const TopicSection: React.FC<TopicSectionProps> = React.memo(({ onNavigateTopics
   const textClass = isAndroid ? 'text-sm' : 'text-xs';
   const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
-      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
+      <div data-sidebar-section="topic" className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
         <div
           className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
           style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#ee5ea5' } : {}) }}
@@ -955,7 +963,7 @@ const CanvasSection: React.FC<CanvasSectionProps> = React.memo(({ onOpenCanvas, 
   const textClass = isAndroid ? 'text-sm' : 'text-xs';
   const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
   return (
-      <div className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
+      <div data-sidebar-section="canvas" className="select-none text-sm text-gray-600 dark:text-gray-300 relative mt-2 first:mt-0">
         <div 
           className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative ${isSelected ? 'text-white rounded-lg' : 'hover:bg-surface rounded-lg'}`}
           style={{ height: isAndroid ? '55px' : '40px', minHeight: isAndroid ? '55px' : '40px', flexShrink: 0, margin: '0 12px', ...(isSelected ? { backgroundColor: '#10b981' } : {}) }}
@@ -1033,7 +1041,8 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   }, [visibleNodes, isSingleRoot, rootId]);
 
   // Calculate actual viewport height available for the list
-  const availableHeight = Math.max(200, listHeight - 180);
+  // （由侧边栏按各分区固定部分实测后传入，见 Sidebar 中 listCap 计算）
+  const availableHeight = Math.max(120, listHeight);
 
   const handleHeaderClick = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('.expand-icon')) {
@@ -1067,7 +1076,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   };
 
   // 按需虚拟化（与 FileGrid 相同的 renderWindow 思路）：
-  // scrollTop 由本组件局部管理，仅当视口越过已渲染窗口边界时才触发重渲染；
+  // scrollTop 由本组件局部管理，仅当视口越过已渲染窗口边界时才触发重渲染。
   // 窗口内滚动时 React 完全不动，滚动帧零 JS 重渲染，消除"滚动即整树重渲染"的掉帧根源。
   // 注意：此处 buffer 不能沿用 FileGrid 的 400px！树行高仅 28-35px，400px ≈ 12 行，
   // 会让 DOM 节点数翻倍、每帧合成/绘制成本上升（实测 p50 19ms → 23ms 恶化）。
@@ -1110,7 +1119,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
       const last = Math.min(total, first + viewportRows + bufferRows * 2);
       renderWindowRef.current = { min: first * rowHeight, max: last * rowHeight };
       setLocalScrollTop(st2);
-      // 统计真正的滚动窗口更新次数（供滚动性能记录器使用，不含 hover 等非滚动因素）
+      // 统计真正的滚动窗口更新次数（供滚动性能记录器使用，不含 hover 等非滚动因素）。
       const _win = window as any;
       if (_win.__AURORA_RENDER_COUNTS__) {
         _win.__AURORA_RENDER_COUNTS__.treeSidebarRenders = (_win.__AURORA_RENDER_COUNTS__.treeSidebarRenders || 0) + 1;
@@ -1192,8 +1201,8 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     const last = Math.min(total, first + viewportRows + bufferRows * 2);
     const slice = displayNodes.slice(first, last);
 
-    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致）：
-    // 每个节点绝对定位 + translateY，滚动时浏览器只做合成平移、不重新布局，
+    // 用 absolute + transform 合成层定位（与 FileGrid 卡片一致）。
+    // 每个节点绝对定位 + translateY，滚动时浏览器只做合成平移、不重新布局。
     // 避免文档流布局在滚动帧中的强制重排（这是此前 p50 卡在 ~22ms 的根因）。
     return (
       <div style={{ height: totalHeight, position: 'relative' }}>
@@ -1234,7 +1243,10 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
   ]);
 
   return (
-    <div className={`select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 ${expanded ? 'flex-initial' : 'flex-none'}`}>
+    <div
+      data-sidebar-section="folder"
+      className="select-none text-sm text-gray-600 dark:text-gray-300 relative flex flex-col min-h-0 mt-2 first:mt-0 flex-none"
+    >
       <div 
         className={`flex items-center px-3 cursor-pointer transition-colors border border-transparent group relative
           ${isDragOver ? 'bg-blue-500/30 border-2 border-blue-400 ring-2 ring-blue-300/50' : ''}
@@ -1276,6 +1288,7 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
       {expanded && (
         <div 
           ref={containerRef} 
+          data-sidebar-list
           onScroll={handleSectionScroll} 
           className={`overflow-y-auto ${isAndroid ? 'no-scrollbar' : 'auto-hide-scrollbar'} min-h-0`}
           style={{ 
@@ -1326,11 +1339,16 @@ export const Sidebar: React.FC<{
   onNavigateNetworkFolder?: (folderId: string) => void;
   onNavigateNetworkHome?: () => void;
   onOpenLanSettings?: () => void;
+  androidDevices?: import('./android-client/androidClientTypes').AndroidDeviceInfo[];
+  androidActiveKey?: string;
+  onNavigateAndroidFolder?: (folderId: string) => void;
+  onNavigateAndroidHome?: (key: string) => void;
+  onOpenAndroidSettings?: () => void;
   t: (key: string) => string;
   aiConnectionStatus?: 'connected' | 'disconnected' | 'checking';
   activeViewMode?: string;
   filesVersion?: number;
-}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, onNavigateHome, lanRoots, lanConnected = false, lanLoading = false, onNavigateNetworkFolder, onNavigateNetworkHome, onOpenLanSettings, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
+}> = React.memo(({ roots, files, people, customTags, currentFolderId, expandedIds, tasks, onToggle, onNavigate, onTagSelect, onNavigateAllTags, onPersonSelect, onNavigateAllPeople, onContextMenu, isCreatingTag, onStartCreateTag, onSaveNewTag, onCancelCreateTag, onOpenSettings, onRestoreTask, onPauseResume, onStartRenamePerson, onCreatePerson, onNavigateTopics, onCreateTopic, onDropOnFolder, onOpenCanvas, onNavigateHome, lanRoots, lanConnected = false, lanLoading = false, onNavigateNetworkFolder, onNavigateNetworkHome, onOpenLanSettings, androidDevices = [], androidActiveKey = '', onNavigateAndroidFolder, onNavigateAndroidHome, onOpenAndroidSettings, activeViewMode = 'browser', t, aiConnectionStatus = 'disconnected', filesVersion }) => {
   
   const minimizedTasks = tasks ? tasks.filter(task => task.minimized) : [];
   
@@ -1383,6 +1401,21 @@ export const Sidebar: React.FC<{
 
   // active section controls which primary section is expanded in the sidebar
   const [activeSection, setActiveSection] = useState<'roots' | 'people' | 'tags' | 'topics' | 'lanNetwork' | null>('roots');
+  // 桌面端：当前展开文件夹列表的安卓设备 key（与 activeSection 互斥机制联动，
+  // 同一时间只允许展开一个分区）
+  const [expandedAndroidKey, setExpandedAndroidKey] = useState<string | null>(null);
+
+  // 切换到其他分区时收起安卓设备文件夹列表（分区互斥）
+  useEffect(() => {
+    if (activeSection !== 'lanNetwork' && expandedAndroidKey !== null) {
+      setExpandedAndroidKey(null);
+    }
+  }, [activeSection, expandedAndroidKey]);
+
+  const handleToggleAndroidDevice = useCallback((key: string) => {
+    setActiveSection('lanNetwork');
+    setExpandedAndroidKey((prev) => (prev === key ? null : key));
+  }, []);
 
   // Sidebar sorting state with persistence
   const [folderSortMode, setFolderSortMode] = useState<'name' | 'date'>(() => 
@@ -1467,6 +1500,11 @@ export const Sidebar: React.FC<{
   const containerRef = useRef<HTMLDivElement>(null);
   const sidebarHeightRef = useRef<HTMLDivElement | null>(null);
   const [listHeight, setListHeight] = useState(400);
+  // 当前展开分区列表的精确可用高度 = 侧边栏内容高度 - 容器内边距 -
+  // 各分区固定部分（标题行/设备行 + 外边距，展开分区的列表容器除外）。
+  // 由下方 useLayoutEffect 实测计算，保证展开列表既不超出视口、也不挤压
+  // 或覆盖下方栏目（此前按常量估算导致设备文件夹列表与"人物/所有标签"重叠）。
+  const [listCap, setListCap] = useState(300);
   const rowHeight = isAndroidPlatformCached() ? 35 : 32;
 
   useEffect(() => {
@@ -1479,7 +1517,32 @@ export const Sidebar: React.FC<{
     // set initial
     setListHeight(el.clientHeight);
     return () => ro.disconnect();
-  }, [activeSection, roots]);
+  }, []);
+
+  // 精确测量各分区固定部分高度并计算展开列表可用高度。
+  // 依赖为影响分区固定部分的因素：分区切换、设备行数、画布入口有无、
+  // 侧边栏高度；测量结果变化超过 1px 时才更新，避免渲染死循环。
+  useLayoutEffect(() => {
+    const container = sidebarHeightRef.current;
+    if (!container) return;
+    const sections = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-sidebar-section]')
+    );
+    let fixedTotal = 0;
+    for (const el of sections) {
+      const cs = window.getComputedStyle(el);
+      const mt = parseFloat(cs.marginTop) || 0;
+      const mb = parseFloat(cs.marginBottom) || 0;
+      const listEl = el.querySelector<HTMLElement>('[data-sidebar-list]');
+      const listH = listEl ? listEl.offsetHeight : 0;
+      fixedTotal += el.offsetHeight + mt + mb - listH;
+    }
+    const cs = window.getComputedStyle(container);
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const padBottom = parseFloat(cs.paddingBottom) || 0;
+    const cap = Math.max(120, listHeight - padTop - padBottom - fixedTotal);
+    setListCap((prev) => (Math.abs(prev - cap) < 1 ? prev : cap));
+  }, [activeSection, expandedAndroidKey, listHeight, androidDevices.length, !!onOpenCanvas]);
 
   // Cache to store folder-only children pointers to avoid repeating O(N) filtering of large mixed directories
   // Keyed by folder ID, tracks the children array reference and sorting to detect structural changes vs metadata-only changes
@@ -1617,7 +1680,7 @@ export const Sidebar: React.FC<{
                }
                setActiveSection(prev => prev === 'roots' ? null : 'roots');
              }}
-             listHeight={listHeight}
+             listHeight={listCap}
              rowHeight={rowHeight}
              FixedSizeListComp={FixedSizeListComp}
              containerRef={containerRef}
@@ -1629,23 +1692,28 @@ export const Sidebar: React.FC<{
              onNavigateHome={onNavigateHome}
              />
 
-          {isAndroidPlatformCached() && (
-            <NetworkSection
-              expanded={activeSection === 'lanNetwork'}
-              onToggleExpand={() => setActiveSection(prev => prev === 'lanNetwork' ? null : 'lanNetwork')}
-              onNavigateHome={() => { setActiveSection('lanNetwork'); onNavigateNetworkHome?.(); }}
-              onNavigateFolder={(id) => { setActiveSection('lanNetwork'); onNavigateNetworkFolder?.(id); }}
-              onOpenSettings={() => onOpenLanSettings?.()}
-              connected={lanConnected}
-              loading={lanLoading}
-              isSelected={activeViewMode === 'lan-folders-overview'}
-              lanRoots={lanRoots || []}
-              files={files}
-              currentFolderId={currentFolderForNodes}
-              listHeight={listHeight}
-              t={t}
-            />
-          )}
+          <NetworkSection
+            expanded={activeSection === 'lanNetwork'}
+            onToggleExpand={() => setActiveSection(prev => prev === 'lanNetwork' ? null : 'lanNetwork')}
+            onNavigateHome={() => { setActiveSection('lanNetwork'); onNavigateNetworkHome?.(); }}
+            onNavigateFolder={(id) => { setActiveSection('lanNetwork'); onNavigateNetworkFolder?.(id); }}
+            onOpenSettings={() => onOpenLanSettings?.()}
+            connected={lanConnected}
+            loading={lanLoading}
+            isSelected={activeViewMode === 'lan-folders-overview'}
+            lanRoots={lanRoots || []}
+            files={files}
+            currentFolderId={currentFolderForNodes}
+            listHeight={listCap}
+            t={t}
+            androidDevices={androidDevices}
+            androidActiveKey={androidActiveKey}
+            expandedAndroidKey={expandedAndroidKey}
+            onToggleAndroidDevice={handleToggleAndroidDevice}
+            onNavigateAndroidHome={(key) => { setActiveSection('lanNetwork'); onNavigateAndroidHome?.(key); }}
+            onNavigateAndroidFolder={(id) => { setActiveSection('lanNetwork'); onNavigateAndroidFolder?.(id); }}
+            onOpenAndroidSettings={() => onOpenAndroidSettings?.()}
+          />
 
           <PeopleSection
             people={people}
@@ -1659,7 +1727,7 @@ export const Sidebar: React.FC<{
             isSelected={activeViewMode === 'people-overview'}
             expanded={activeSection === 'people'}
             onToggleExpand={() => setActiveSection(prev => prev === 'people' ? null : 'people')}
-            listHeight={listHeight}
+            listHeight={listCap}
             roots={roots}
           />
 
@@ -1677,7 +1745,7 @@ export const Sidebar: React.FC<{
           expanded={activeSection === 'tags'}
           onToggleExpand={() => setActiveSection(prev => prev === 'tags' ? null : 'tags')}
           isSelected={activeViewMode === 'tags-overview'}
-          listHeight={listHeight}
+          listHeight={listCap}
           rowHeight={28} /* Estimated height for tag item */
           FixedSizeListComp={FixedSizeListComp}
           roots={roots}

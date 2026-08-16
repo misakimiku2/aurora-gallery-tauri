@@ -85,6 +85,20 @@ impl SessionManager {
         }
     }
 
+    /// 按 device_id 移除会话（桌面端主动"断开"设备时使用），返回是否移除成功。
+    pub async fn remove_session_by_device(&self, device_id: &str) -> bool {
+        let session = {
+            let mut sessions = self.sessions.write().await;
+            sessions.remove(device_id)
+        };
+        if let Some(session) = session {
+            let mut token_map = self.token_to_device.write().await;
+            token_map.remove(&session.token);
+            return true;
+        }
+        false
+    }
+
     async fn remove_session_internal(&self, device_id: &str, token: &str) {
         let mut sessions = self.sessions.write().await;
         sessions.remove(device_id);

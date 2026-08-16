@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { listen } from '@tauri-apps/api/event';
 import { lanClientApi } from '../components/lan-client/lanClientApi';
+import {
+  isAndroidPlatformCached,
+  lanShareAndroidStop,
+  lanShareAndroidGetStatus,
+} from '../api/tauri-bridge';
 import { lanNavStart, lanNavStep } from '../utils/lanNavTrace';
 import { LAN_ROOT_IMAGES_ID } from '../constants';
 import { AppState, FileNode, FileType, TabState } from '../types';
@@ -166,18 +172,89 @@ export const useLanClientSync = ({
   }, [state.settings.lanShare.serverAccessToken, state.settings.lanShare.serverHost, state.settings.lanShare.serverPort, lanConnected]);
 
   // 心跳：连接成功后每 5s 发送一次，保持服务端设备列表中本设备"在线"。
-  // 客户端关闭后心跳停止，服务端在 ONLINE_TIMEOUT_SECS（15s）后将其从列表移除。
+  // 双向连接融合：与桌面端清理手机设备（连续 3 次失败）的逻辑对称——
+  // 401（被桌面端踢出）立即清理；连续 3 次失败（约 15s，桌面端服务已停止）
+  // 自动清理本机连接状态并提示，避免 UI 永远停留在"已连接"。
+  const heartbeatFailuresRef = useRef(0);
+
+  // 彻底断开与桌面端的连接并停止本机共享服务端（双向融合：
+  // 本机共享与桌面端连接是一个整体，任何一侧断开都整条链路断开）。
+  const clearConnection = useCallback(() => {
+    heartbeatFailuresRef.current = 0;
+    // 同步清除 token 引用，避免状态事件监听器重复触发清理
+    lanTokenRef.current = undefined;
+    lanClientApi.disconnect();
+    if (isAndroidPlatformCached()) {
+      lanShareAndroidStop().catch(() => {});
+    }
+    setState((s) => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        lanShare: { ...s.settings.lanShare, serverAccessToken: undefined },
+      },
+    }));
+    showToast((t('settings.lanShare.client.connectionLost') || '与桌面端的连接已断开'));
+  }, [setState, showToast, t]);
+
   useEffect(() => {
-    if (!lanConnected) return;
+    if (!lanConnected) {
+      heartbeatFailuresRef.current = 0;
+      return;
+    }
     const sendHeartbeat = () => {
-      lanClientApi.heartbeat().catch((err) => {
-        console.warn('[LAN] Heartbeat failed:', (err as Error).message);
-      });
+      lanClientApi
+        .heartbeat()
+        .then(() => {
+          heartbeatFailuresRef.current = 0;
+        })
+        .catch((err) => {
+          const msg = (err as Error).message || '';
+          const isAuthFailure =
+            msg.includes('Authentication failed') ||
+            msg.includes('token expired') ||
+            msg.includes('HTTP 401');
+          heartbeatFailuresRef.current += 1;
+          console.warn(
+            `[LAN] Heartbeat failed (${heartbeatFailuresRef.current}/3):`,
+            msg
+          );
+          if (isAuthFailure || heartbeatFailuresRef.current >= 3) {
+            clearConnection();
+          }
+        });
     };
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 5000);
     return () => clearInterval(interval);
-  }, [lanConnected]);
+  }, [lanConnected, clearConnection]);
+
+  // 通知栏"停止共享"（或任何路径停止本机服务端）时，同步清理与桌面端的连接：
+  // 双向融合下本机共享与桌面端连接是一个整体，服务端停止即彻底断开。
+  useEffect(() => {
+    if (!isAndroidPlatformCached()) return;
+    let disposed = false;
+    let unlistenFn: (() => void) | undefined;
+    listen('lan-share-android-status-changed', () => {
+      if (disposed) return;
+      lanShareAndroidGetStatus()
+        .then((status) => {
+          if (disposed || status.is_running) return;
+          if (lanTokenRef.current) {
+            clearConnection();
+          }
+        })
+        .catch(() => {});
+    })
+      .then((un) => {
+        unlistenFn = un;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlistenFn?.();
+    };
+  }, [clearConnection]);
 
   // 统一处理 LAN 根目录加载结果：文件夹 + 散落图片（聚合成虚拟文件夹）
   const applyLanRoots = useCallback((folders: FileNode[], images: FileNode[], allowUpload: boolean) => {

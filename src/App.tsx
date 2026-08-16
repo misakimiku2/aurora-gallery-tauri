@@ -2,11 +2,13 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { lanClientApi } from './components/lan-client/lanClientApi';
+import { androidClientRegistry, androidDeviceKeyOf } from './components/android-client/androidClientApi';
+import * as remoteSourceUtil from './utils/remoteSource';
 import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta } from './types';
+import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
 import { generateId } from './utils/pathUtils';
@@ -33,6 +35,7 @@ import { useFileSelection } from './hooks/useFileSelection';
 import { useFolderSettings } from './hooks/useFolderSettings';
 import { usePanelSwipeGesture } from './hooks/usePanelSwipeGesture';
 import { useLanClientSync } from './hooks/useLanClientSync';
+import { useAndroidClient } from './hooks/useAndroidClient';
 import { useTabHandlers } from './hooks/useTabHandlers';
 import { useViewerHandlers } from './hooks/useViewerHandlers';
 import { usePersonTopicHandlers } from './hooks/usePersonTopicHandlers';
@@ -766,6 +769,189 @@ export const App: React.FC = () => {
     handleUploadFilesSelected,
   } = useLanClientSync({ state, setState, activeTab, t, showToast, enterFolder });
 
+  // 桌面端 → 安卓设备客户端同步（多设备：连接恢复/根目录加载/心跳/浏览/刷新）
+  const {
+    androidDevices,
+    androidConnectedCount,
+    handleNavigateAndroidFolder,
+    handleAndroidRefresh,
+    reloadCurrentAndroidFolder,
+    handleAndroidDisconnect,
+    handleOpenAndroidSettings,
+  } = useAndroidClient({ state, setState, activeTab, t, showToast, enterFolder });
+
+  // 安卓总览视图的活跃设备 key（历史标记 __android_folders_root__:<key>）
+  const ANDROID_OVERVIEW_PREFIX = '__android_folders_root__:';
+  const androidActiveKey =
+    activeTab.viewMode === 'android-folders-overview' &&
+    activeTab.folderId.startsWith(ANDROID_OVERVIEW_PREFIX)
+      ? activeTab.folderId.slice(ANDROID_OVERVIEW_PREFIX.length)
+      : '';
+  const activeAndroidDevice = androidDevices.find((d) => d.key === androidActiveKey);
+  const androidRoots = activeAndroidDevice?.roots || [];
+  const androidLoading = activeAndroidDevice?.loading || false;
+
+  // 侧边栏"安卓设备"节点入口：未连接时打开设置面板，已连接时进入该设备总览视图
+  const handleNavigateAndroidHome = useCallback(
+    (key: string) => {
+      const device = androidDevices.find((d) => d.key === key);
+      if (!device || !device.connected) {
+        handleOpenAndroidSettings();
+        return;
+      }
+      pushHistory(`${ANDROID_OVERVIEW_PREFIX}${key}`, null, 'android-folders-overview', '', 'all', [], null, 0);
+    },
+    [androidDevices, handleOpenAndroidSettings, pushHistory]
+  );
+
+  // 当前活跃设备的总览刷新
+  const handleAndroidRefreshActive = useCallback(async () => {
+    if (androidActiveKey) {
+      await handleAndroidRefresh(androidActiveKey);
+    }
+  }, [androidActiveKey, handleAndroidRefresh]);
+
+  // 下载安卓设备图片到本地（右键菜单"下载到本地"，按文件携带的设备 key 分发）
+  const handleDownloadAndroidFiles = useCallback(async (ids: string[]) => {
+    const files = ids
+      .map((id) => state.files[id])
+      .filter(
+        (f): f is FileNode =>
+          !!f && f.source === 'android' && !!f.remotePath && !!f.remoteDeviceKey && f.type === FileType.IMAGE
+      );
+    if (files.length === 0) return;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: true, title: '选择保存文件夹' });
+      const destDir = Array.isArray(selected) ? selected[0] : selected;
+      if (!destDir) return;
+      let success = 0;
+      for (const f of files) {
+        const client = androidClientRegistry.get(f.remoteDeviceKey);
+        if (!client) continue;
+        const fileName = f.name || `${f.remotePath}.jpg`;
+        const destPath = `${destDir.replace(/[/\\]+$/, '')}/${fileName}`;
+        try {
+          await client.downloadImage(f.remotePath!, destPath);
+          success++;
+        } catch (e) {
+          console.error('[AndroidClient] download failed:', e);
+        }
+      }
+      showToast(
+        (t('settings.lanShare.androidClient.downloadDone') || '已下载 {x}/{n} 张图片')
+          .replace('{x}', String(success))
+          .replace('{n}', String(files.length))
+      );
+    } catch (e) {
+      console.error('[AndroidClient] download dialog failed:', e);
+      showToast((t('settings.lanShare.androidClient.downloadFailed') || '下载失败'));
+    }
+  }, [state.files, showToast, t]);
+
+  // 双向连接融合：服务端收到对端配对请求（认证携带 peer_server）时，
+  // 自动反向连接对端，使一次扫码/一次连接即可建立双向互联。
+  const handlePeerPairing = useCallback(async (host: string, port: number, accessCode: string, peerDeviceName?: string) => {
+    if (!host || !port || !accessCode) return;
+    if (host === '127.0.0.1' || host === 'localhost' || host === '::1') return;
+    if (isAndroidPlatformCached()) {
+      // 手机端：桌面服务端请求配对 → 自动连接桌面端
+      try {
+        lanClientApi.setBaseUrl(`http://${host}:${port}`);
+        const res = await lanClientApi.authenticate(accessCode);
+        if (res.success && res.token) {
+          setState((s) => ({
+            ...s,
+            settings: {
+              ...s.settings,
+              lanShare: {
+                ...s.settings.lanShare,
+                clientMode: true,
+                serverHost: host,
+                serverPort: port,
+                serverAccessToken: res.token,
+              },
+            },
+          }));
+          showToast((t('settings.lanShare.client.bidirectionalOn') || '双向连接已建立：已自动连接桌面端'));
+        }
+      } catch (e) {
+        console.warn('[PeerPairing] android connect failed:', e);
+      }
+    } else {
+      // 桌面端：手机服务端请求配对 → 自动连接手机（加入多设备列表）
+      try {
+        const key = androidDeviceKeyOf(host, port);
+        const client = androidClientRegistry.register(key, `http://${host}:${port}`, null);
+        const res = await client.authenticate(accessCode);
+        if (res.success && res.token) {
+          client.setToken(res.token);
+          setState((s) => {
+            const conn: AndroidClientConnection = {
+              key,
+              host,
+              port,
+              accessToken: res.token,
+              // 优先手机服务端自报名称，回退配对事件携带的对端设备名
+              serverName: res.server_name || peerDeviceName,
+              connectedAt: Date.now(),
+            };
+            const clients = (s.settings.lanShare.androidClients || []).filter(
+              (c) => c.key !== key
+            );
+            clients.push(conn);
+            const savedDevices = (s.settings.lanShare.savedAndroidDevices || []).filter(
+              (d) => !(d.host === host && d.port === port)
+            );
+            savedDevices.unshift({
+              host,
+              port,
+              name: res.server_name || peerDeviceName,
+              lastConnected: Date.now(),
+            });
+            return {
+              ...s,
+              settings: {
+                ...s.settings,
+                lanShare: {
+                  ...s.settings.lanShare,
+                  androidClients: clients,
+                  savedAndroidDevices: savedDevices.slice(0, 10),
+                },
+              },
+            };
+          });
+          showToast((t('settings.lanShare.androidClient.bidirectionalOn') || '双向连接已建立：已自动连接手机'));
+        }
+      } catch (e) {
+        console.warn('[PeerPairing] desktop connect failed:', e);
+      }
+    }
+  }, [setState, showToast, t]);
+
+  // 监听服务端配对事件（服务端在认证时携带对端信息则触发）
+  useEffect(() => {
+    let disposed = false;
+    let unlistenFn: (() => void) | undefined;
+    listen('lan-share-peer-pairing', (event: any) => {
+      if (disposed) return;
+      const payload = event?.payload;
+      if (payload?.host && payload?.port && payload?.accessCode) {
+        handlePeerPairing(payload.host, payload.port, payload.accessCode, payload.deviceName);
+      }
+    })
+      .then((un) => {
+        unlistenFn = un;
+      })
+      .catch((e) => {
+        console.warn('Failed to listen lan-share-peer-pairing:', e);
+      });
+    return () => {
+      disposed = true;
+      unlistenFn?.();
+    };
+  }, [handlePeerPairing]);
+
   // 判断是否显示 LAN 上传入口（安卓端 + LAN 文件夹 + 允许上传且未在上传中）
   const currentLanFolder = state.files[activeTab.folderId];
   const showLanUpload = isAndroidDevice && !!currentLanFolder && currentLanFolder.source === 'lan' && lanAllowUpload && !isUploading;
@@ -1235,6 +1421,17 @@ export const App: React.FC = () => {
     state, setState, activeTab, t, showToast, startTask, updateTask,
   });
 
+  // 刷新分发：本地文件夹走文件系统扫描，安卓设备文件夹走客户端重载
+  const handleRefreshAnySource = useCallback(async (folderId?: string) => {
+    const targetId = folderId || activeTab.folderId;
+    const folder = state.files[targetId];
+    if (folder?.source === 'android') {
+      await reloadCurrentAndroidFolder();
+      return;
+    }
+    await handleRefresh(folderId);
+  }, [handleRefresh, activeTab.folderId, state.files, reloadCurrentAndroidFolder]);
+
   const {
     handleCopyFiles, handleMoveFiles, handleExternalCopyFiles, handleExternalMoveFiles,
     handleDropOnFolder, handleBatchRename, handleAIBatchRename, handleRenameSubmit, requestDelete,
@@ -1685,7 +1882,7 @@ export const App: React.FC = () => {
     onSwitchTab: handleSwitchTab,
     onCloseTab: handleCloseTab,
     onNewTab: handleNewTab,
-    onRefresh: handleRefresh,
+    onRefresh: handleRefreshAnySource,
     onRequestDelete: requestDelete,
     selectedFileIds: activeTab.selectedFileIds,
     isReferenceMode
@@ -1775,7 +1972,7 @@ export const App: React.FC = () => {
     return imageFileIds.map(id => {
       const f = state.files[id];
       if (!f) return null;
-      const isLan = f.path.startsWith('lan://');
+      const isLan = f.path.startsWith('lan://') || f.path.startsWith('android://');
       const base: any = {
         fileId: id,
         name: f.name,
@@ -1798,10 +1995,9 @@ export const App: React.FC = () => {
         } : null,
       };
       if (isLan) {
-        const remotePath = f.path.slice('lan://'.length);
-        base.path = lanClientApi.getImageUrl(remotePath);
+        base.path = remoteSourceUtil.getRemoteImageUrl(f.path);
         base.isLan = true;
-        base.thumbnailUrl = lanClientApi.getThumbnailUrl(remotePath);
+        base.thumbnailUrl = remoteSourceUtil.getRemoteThumbnailUrl(f.path);
       } else {
         base.path = f.path;
         base.contentUri = f.contentUri || '';
@@ -1937,9 +2133,8 @@ export const App: React.FC = () => {
         if (!file?.path) return;
         let hexColors: string[] = [];
         try {
-          if (file.path.startsWith('lan://')) {
-            const { lanClientApi } = await import('./components/lan-client/lanClientApi');
-            hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+          if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
+            hexColors = await remoteSourceUtil.getRemotePalette(file.path);
           } else {
             const { getDominantColors } = await import('./api/tauri-bridge');
             const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
@@ -2053,9 +2248,8 @@ export const App: React.FC = () => {
     (async () => {
       let hexColors: string[] = [];
       try {
-        if (file.path.startsWith('lan://')) {
-          const { lanClientApi } = await import('./components/lan-client/lanClientApi');
-          hexColors = await lanClientApi.getPalette(file.path.slice('lan://'.length));
+        if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
+          hexColors = await remoteSourceUtil.getRemotePalette(file.path);
         } else {
           const { getDominantColors } = await import('./api/tauri-bridge');
           const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
@@ -2157,6 +2351,23 @@ export const App: React.FC = () => {
             pushHistoryRef.current(current.parentId, null, 'browser', '', 'all', [], null, 0);
           } else {
             pushHistoryRef.current('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
+          }
+          return;
+        }
+        if (current?.source === 'android') {
+          if (current.parentId) {
+            pushHistoryRef.current(current.parentId, null, 'browser', '', 'all', [], null, 0);
+          } else {
+            pushHistoryRef.current(
+              `__android_folders_root__:${current.remoteDeviceKey || ''}`,
+              null,
+              'android-folders-overview',
+              '',
+              'all',
+              [],
+              null,
+              0
+            );
           }
           return;
         }
@@ -2311,6 +2522,11 @@ export const App: React.FC = () => {
             onNavigateNetworkFolder={handleNavigateNetworkFolder}
             onNavigateNetworkHome={handleNavigateNetworkHome}
             onOpenLanSettings={handleOpenLanSettings}
+            androidDevices={androidDevices}
+            androidActiveKey={androidActiveKey}
+            onNavigateAndroidFolder={handleNavigateAndroidFolder}
+            onNavigateAndroidHome={handleNavigateAndroidHome}
+            onOpenAndroidSettings={handleOpenAndroidSettings}
           />
 
         <div className="flex-1 flex flex-col min-w-0 relative bg-content">
@@ -2368,7 +2584,7 @@ export const App: React.FC = () => {
               goForward={goForward}
               handleNavigateUp={handleNavigateUp}
               handleTagClick={handleTagClick}
-              handleRefresh={handleRefresh}
+              handleRefresh={handleRefreshAnySource}
               handlePerformSearch={handlePerformSearch}
               setToolbarQuery={setToolbarQuery}
               setPersonSearchQuery={setPersonSearchQuery}
@@ -2446,12 +2662,16 @@ export const App: React.FC = () => {
                 handleShowContextMenuForFile={handleShowContextMenuForFile}
                 handleFolderAndroidRangeSelect={handleFolderAndroidRangeSelect}
                 handleFolderSelect={handleFolderSelect}
-                handleRefresh={handleRefresh}
+                handleRefresh={handleRefreshAnySource}
                 panelWidthRem={panelWidthRem}
                 lanRoots={lanRoots}
                 handleNavigateNetworkFolder={handleNavigateNetworkFolder}
                 lanLoading={lanLoading}
                 handleLanRefresh={handleLanRefresh}
+                androidRoots={androidRoots}
+                handleNavigateAndroidFolder={handleNavigateAndroidFolder}
+                androidLoading={androidLoading}
+                handleAndroidRefresh={handleAndroidRefreshActive}
                 handleNavigateTopic={handleNavigateTopic}
                 handleUpdateTopic={handleUpdateTopic}
                 handleCreateTopic={handleCreateTopic}
@@ -2649,7 +2869,7 @@ export const App: React.FC = () => {
         handleCloseTab={handleCloseTab}
         handleCloseOtherTabs={handleCloseOtherTabs}
         handleCloseAllTabs={handleCloseAllTabs}
-        handleRefresh={handleRefresh}
+        handleRefresh={handleRefreshAnySource}
         handleCreateNewTag={handleCreateNewTag}
         handleCopyTags={handleCopyTags}
         handlePasteTags={handlePasteTags}
@@ -2660,6 +2880,7 @@ export const App: React.FC = () => {
         handleCopyImageToClipboard={handleCopyImageToClipboard}
         handleSearchSimilarImages={handleSearchSimilarImages}
         openClipSettings={openClipSettings}
+        handleDownloadAndroidFiles={handleDownloadAndroidFiles}
       />
     </div>
   );

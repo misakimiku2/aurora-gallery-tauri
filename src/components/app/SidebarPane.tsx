@@ -44,6 +44,11 @@ interface SidebarPaneProps {
   onNavigateNetworkFolder: (folderId: string) => void;
   onNavigateNetworkHome: () => void;
   onOpenLanSettings: () => void;
+  androidDevices: import('../android-client/androidClientTypes').AndroidDeviceInfo[];
+  androidActiveKey: string;
+  onNavigateAndroidFolder: (folderId: string) => void;
+  onNavigateAndroidHome: (key: string) => void;
+  onOpenAndroidSettings: () => void;
 }
 
 // 左侧边栏外层布局 + Sidebar 组装（宽度/位移动画由 App 的滑动手势 ref 控制）
@@ -89,6 +94,11 @@ export const SidebarPane = ({
   onNavigateNetworkFolder,
   onNavigateNetworkHome,
   onOpenLanSettings,
+  androidDevices,
+  androidActiveKey,
+  onNavigateAndroidFolder,
+  onNavigateAndroidHome,
+  onOpenAndroidSettings,
 }: SidebarPaneProps) => {
   return (
     <div
@@ -138,6 +148,11 @@ export const SidebarPane = ({
           onNavigateNetworkFolder={onNavigateNetworkFolder}
           onNavigateNetworkHome={onNavigateNetworkHome}
           onOpenLanSettings={onOpenLanSettings}
+          androidDevices={androidDevices}
+          androidActiveKey={androidActiveKey}
+          onNavigateAndroidFolder={onNavigateAndroidFolder}
+          onNavigateAndroidHome={onNavigateAndroidHome}
+          onOpenAndroidSettings={onOpenAndroidSettings}
         />
       </div>
     </div>

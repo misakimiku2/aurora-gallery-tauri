@@ -38,6 +38,32 @@ fn emit_devices_changed(app_handle: &AppHandle) {
     }
 }
 
+/// 双向连接融合：客户端认证时携带了 peer_server 信息，通知前端自动
+/// 反向连接对端服务端（前端收到事件后用对应客户端 API 完成配对）。
+/// device_name 为对端客户端自报的设备名（如"三星Tab S8+"），
+/// 供前端在对端 server_name 为空时作为设备显示名回退。
+fn emit_peer_pairing(
+    app_handle: &AppHandle,
+    host: &str,
+    peer: &PeerServerInfo,
+    peer_device_name: &str,
+) {
+    if host.is_empty() || peer.access_code.is_empty() {
+        return;
+    }
+    if let Err(e) = app_handle.emit(
+        "lan-share-peer-pairing",
+        serde_json::json!({
+            "host": host,
+            "port": peer.port,
+            "accessCode": peer.access_code,
+            "deviceName": peer_device_name,
+        }),
+    ) {
+        log::warn!("[LAN Share] 发送 lan-share-peer-pairing 事件失败: {}", e);
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct BrowseQuery {
     pub path: Option<String>,
@@ -159,6 +185,18 @@ pub async fn handle_auth(
     let session = state.sessions.create_session(device_id.clone(), device_name.clone(), ip.clone()).await;
     state.devices.register_device(&session, &device_type).await;
     emit_devices_changed(&state.app_handle);
+
+    // 双向连接融合：客户端携带了对端服务端信息，通知前端自动反向连接
+    if let Some(ref peer) = payload.peer_server {
+        let peer_host = addr.ip().to_string();
+        emit_peer_pairing(&state.app_handle, &peer_host, peer, &device_name);
+        log::info!(
+            "[LAN Share] 收到对端服务端信息，请求双向配对 - 对端: {}:{}, 来自: {}",
+            peer_host,
+            peer.port,
+            device_name
+        );
+    }
 
     log::info!("[LAN Share] 认证成功 - 设备: {} ({}), IP: {}, 设备类型: {}, Token: {}...",
         device_name, device_id, ip, device_type, &session.token[..8]);

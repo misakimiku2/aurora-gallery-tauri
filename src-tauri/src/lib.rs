@@ -19,7 +19,8 @@ pub mod clip;
 pub mod clip_commands;
 #[cfg(not(target_os = "android"))]
 pub mod work_extractor;
-#[cfg(not(target_os = "android"))]
+// lan_share 的 types/session/device_manager 为平台无关代码，
+// 安卓端 HTTP 服务端（android/server）复用；handlers/server 仅桌面端编译。
 pub mod lan_share;
 #[cfg(not(target_os = "android"))]
 pub mod lan_share_commands;
@@ -2087,7 +2088,8 @@ pub fn run() {
         lan_share_commands::lan_share_get_local_ip,
         lan_share_commands::lan_share_check_port,
         lan_share_commands::lan_share_update_config,
-        lan_share_commands::lan_share_rename_device
+        lan_share_commands::lan_share_rename_device,
+        lan_share_commands::lan_share_remove_device
     ]);
 
     #[cfg(target_os = "android")]
@@ -2185,6 +2187,11 @@ pub fn run() {
         android_native_viewer_set_slideshow,
         android_native_viewer_set_rotation,
         android_native_viewer_set_lan_token,
+        android::lan_server_commands::lan_share_android_start,
+        android::lan_server_commands::lan_share_android_stop,
+        android::lan_server_commands::lan_share_android_get_status,
+        android::lan_server_commands::lan_share_android_get_devices,
+        android::lan_server_commands::lan_share_android_update_config,
         color_commands::add_pending_files_to_db,
         db_commands::get_color_db_stats,
         db_commands::get_color_db_error_files,

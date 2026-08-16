@@ -42,6 +42,11 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <service
+            android:name=".LanShareService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <provider
           android:name="androidx.core.content.FileProvider"
           android:authorities="${applicationId}.fileprovider"

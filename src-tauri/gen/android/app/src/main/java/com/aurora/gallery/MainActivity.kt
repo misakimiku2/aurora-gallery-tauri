@@ -24,6 +24,7 @@ import android.content.ComponentCallbacks2
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.util.DisplayMetrics
 import java.io.File
 import java.io.FileOutputStream
@@ -1056,6 +1057,80 @@ class MainActivity : TauriActivity() {
         } catch (_: Exception) {}
       }
     }
+  }
+
+  // ===== 局域网共享服务端（桌面端连接安卓端） =====
+
+  /** 由 Rust lan_share_android_start 调用：启动局域网共享前台服务。 */
+  fun startLanShareService(port: Int, ip: String) {
+    android.util.Log.i("LanShareService", "startLanShareService called: port=$port ip=$ip")
+    LanShareService.createChannel(this)
+    requestPostNotificationPermission()
+    val effectiveIp = if (ip.isNotEmpty() && ip != "127.0.0.1") ip else getLocalIpAddress()
+    val intent = Intent(this, LanShareService::class.java).apply {
+      action = LanShareService.ACTION_START
+      putExtra(LanShareService.EXTRA_PORT, port)
+      putExtra(LanShareService.EXTRA_IP, effectiveIp)
+    }
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      startForegroundService(intent)
+    } else {
+      startService(intent)
+    }
+  }
+
+  /** 由 Rust lan_share_android_stop 调用：停止局域网共享前台服务。 */
+  fun stopLanShareService() {
+    android.util.Log.i("LanShareService", "stopLanShareService called")
+    val intent = Intent(this, LanShareService::class.java).apply {
+      action = LanShareService.ACTION_STOP
+    }
+    startService(intent)
+  }
+
+  /** 获取本机局域网 IP（Wi-Fi）。返回空串表示获取失败。 */
+  @Suppress("DEPRECATION")
+  fun getLocalIpAddress(): String {
+    try {
+      val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+      val ip = wifiManager.connectionInfo?.ipAddress ?: 0
+      android.util.Log.i("LanShareService", "getLocalIpAddress: wifiManager ip=$ip")
+      if (ip > 0) {
+        val ipStr = String.format(
+          java.util.Locale.US,
+          "%d.%d.%d.%d",
+          ip and 0xff,
+          (ip shr 8) and 0xff,
+          (ip shr 16) and 0xff,
+          (ip shr 24) and 0xff
+        )
+        android.util.Log.i("LanShareService", "getLocalIpAddress: wifiManager result=$ipStr")
+        return ipStr
+      }
+    } catch (e: Exception) {
+      android.util.Log.w("LanShareService", "getLocalIpAddress wifi failed: ${e.message}")
+    }
+    // 回退：遍历网络接口（ConnectivityManager linkProperties）
+    try {
+      val connectivityManager = getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+      for (network in connectivityManager.allNetworks) {
+        val caps = connectivityManager.getNetworkCapabilities(network) ?: continue
+        if (!caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) continue
+        val linkProps = connectivityManager.getLinkProperties(network) ?: continue
+        for (addr in linkProps.linkAddresses) {
+          val host = addr.address
+          if (!host.isLoopbackAddress && host is java.net.Inet4Address) {
+            val ipStr = host.hostAddress ?: ""
+            android.util.Log.i("LanShareService", "getLocalIpAddress: connectivity result=$ipStr")
+            return ipStr
+          }
+        }
+      }
+    } catch (e: Exception) {
+      android.util.Log.w("LanShareService", "getLocalIpAddress connectivity failed: ${e.message}")
+    }
+    android.util.Log.w("LanShareService", "getLocalIpAddress: all attempts failed, returning empty")
+    return ""
   }
 
   fun setStatusBarStyle(isDark: Boolean) {

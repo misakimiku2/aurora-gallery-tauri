@@ -6,7 +6,7 @@ import { setWindowMinSize, setAndroidImmersiveMode, setAndroidStatusBar } from '
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
 import { convertFileSrc } from '@tauri-apps/api/core';
-import { lanClientApi } from './lan-client/lanClientApi';
+import { isRemotePath, getRemoteImageUrl } from '../utils/remoteSource';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
 import { EditOverlay } from './comparer/EditOverlay';
 import { AnnotationLayer } from './comparer/AnnotationLayer';
@@ -20,11 +20,12 @@ import { ComparisonSessionManifest, ComparisonSessionViewport, ComparisonSession
 import { invoke } from '@tauri-apps/api/core';
 import { useToasts } from '../hooks/useToasts';
 
-// Resolve a FileNode's full-image URL: LAN files load from the remote desktop
-// server, local files use Tauri's convertFileSrc.
+// Resolve a FileNode's full-image URL: remote files (desktop server / android
+// device) load from the remote HTTP server, local files use convertFileSrc.
+// FileNode.path 对远程文件已带 lan:// 或 android:// 前缀。
 const resolveImageSrc = (file: FileNode): string =>
-  file.source === 'lan' && file.remotePath
-    ? lanClientApi.getImageUrl(file.remotePath)
+  isRemotePath(file.path)
+    ? getRemoteImageUrl(file.path)
     : convertFileSrc(file.path);
 
 interface ImageComparerProps {

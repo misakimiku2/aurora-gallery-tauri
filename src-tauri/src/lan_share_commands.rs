@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::RwLock;
 
 use crate::db::AppDbPool;
@@ -199,6 +199,28 @@ pub async fn lan_share_rename_device(
     if let Some(server) = server_guard.as_ref() {
         let ok = server.rename_device(&device_id, &name).await;
         Ok(ok)
+    } else {
+        Err("LAN share server is not running".to_string())
+    }
+}
+
+#[tauri::command]
+pub async fn lan_share_remove_device(
+    device_id: String,
+    state: State<'_, LanShareState>,
+    app: AppHandle,
+) -> Result<bool, String> {
+    log::info!("[LAN Share] 移除设备 - {}", device_id);
+
+    let server_guard = state.server.read().await;
+    if let Some(server) = server_guard.as_ref() {
+        let removed = server.remove_device(&device_id).await;
+        drop(server_guard);
+        if removed {
+            // 设备列表发生变化，通知前端立即刷新（桌面端面板/侧边栏联动）
+            let _ = app.emit("lan-share-devices-changed", ());
+        }
+        Ok(removed)
     } else {
         Err("LAN share server is not running".to_string())
     }

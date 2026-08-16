@@ -9,7 +9,7 @@ import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
 import { Folder, Check } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
-import { lanClientApi } from './lan-client/lanClientApi';
+import { getRemoteThumbnailUrl } from '../utils/remoteSource';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -115,9 +115,9 @@ const FolderCard = React.memo(({
       return;
     }
 
-    // LAN 封面：直接生成 URL，不走 Tauri getThumbnail（lanClientApi 内含 token）
-    if (effectiveCoverPath.startsWith('lan://')) {
-      const url = lanClientApi.getThumbnailUrl(effectiveCoverPath.slice('lan://'.length));
+    // 远程封面（桌面端服务/安卓设备）：直接生成 URL，不走 Tauri getThumbnail
+    if (effectiveCoverPath.startsWith('lan://') || effectiveCoverPath.startsWith('android://')) {
+      const url = getRemoteThumbnailUrl(effectiveCoverPath);
       cache.set(effectiveCoverPath, url);
       setCoverSrc(url);
       return;

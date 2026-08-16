@@ -20,7 +20,7 @@ export const useNavigation = (
     (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
   }, []);
 
-  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
+  const pushHistory = useCallback((folderId: string, viewingId: string | null, viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'android-folders-overview' = 'browser', searchQuery: string = '', searchScope: SearchScope = 'all', activeTags: string[] = [], activePersonId: string | null = null, nextScrollTop: number = 0, aiFilter: AiSearchFilter | null | undefined = null, activeTopicId: string | null = null, selectedTopicIds: string[] = [], selectedPersonIds: string[] = [], scrollToItemId?: string) => {
     // preserve original behaviour: set timestamp BEFORE state update
     (window as any).__AURORA_NAV_TIMESTAMP__ = Date.now();
 
