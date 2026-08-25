@@ -188,11 +188,15 @@ body {
 
 /* 滚动性能优化：滚动期间暂停文件卡片上的所有过渡/动画。
    FileCard 通过 transform 定位，滚动帧中无需为大量 CSS transition
-   （hover 缩放、3D 文件夹展开等）做动画计算，可显著降低每帧开销。 */
-#file-grid-container.scrolling .file-item,
-#file-grid-container.scrolling .file-item *,
-#file-grid-container.scrolling .file-item *::before,
-#file-grid-container.scrolling .file-item *::after {
+   （hover 缩放、3D 文件夹展开等）做动画计算，可显著降低每帧开销。
+   注意：暂停只绑定在 .anim-freeze 上（滚动事件持续时保留、滚动停止后立即移除），
+   不再绑定 .scrolling（滚动条显隐，停止滚动 800ms 后淡出）——
+   否则滚动停止后的滚动条淡出窗口内 hover 过渡（如文件夹扇形展开）会被冻结为 0ms、
+   只有三张图瞬间摊开而无过渡动画。 */
+#file-grid-container.anim-freeze .file-item,
+#file-grid-container.anim-freeze .file-item *,
+#file-grid-container.anim-freeze .file-item *::before,
+#file-grid-container.anim-freeze .file-item *::after {
   transition-duration: 0ms !important;
   transition-delay: 0ms !important;
   animation-duration: 0ms !important;
@@ -200,11 +204,21 @@ body {
   animation-play-state: paused !important;
 }
 
+/* 滚动停止恢复过渡时重播 hover 动画：
+   anim-freeze 期间 transition 被冻结为 0ms，若滚动停止瞬间鼠标已悬停在卡片上，
+   hover 状态（如文件夹 3D 图标的扇形展开）会被瞬间应用、不播放过渡动画。
+   该 class 将悬停卡片内带 group-hover transform 的元素强制重置为无变换并禁用过渡，
+   下一帧移除后浏览器从堆叠态平滑过渡到摊开态，恢复扇形动画。 */
+.replay-fan [class*="group-hover:"] {
+  transform: none !important;
+  transition: none !important;
+}
+
 /* 滚动期间禁用高成本的 backdrop-filter / mix-blend-mode，
    避免滚动帧内为这些合成效果反复重绘（badge 的 backdrop-blur、
    overlay 图标的 blend 等）。滚动停止后自动恢复。
    注意：不再禁用 filter —— 文件夹 3D 图标的 drop-shadow 投影在滚动时也保持显示。 */
-#file-grid-container.scrolling .file-item * {
+#file-grid-container.anim-freeze .file-item * {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   mix-blend-mode: normal !important;

@@ -1,32 +1,28 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Maximize, Maximize2, Minimize2, RefreshCcw, Sidebar, PanelRight, ChevronLeft, Magnet, Move, X, Scan, Eye, MoreVertical } from 'lucide-react';
+import { Maximize, Maximize2, Minimize2, RefreshCcw, Magnet, Move, Scan } from 'lucide-react';
 import { getCurrentWindow, LogicalSize, LogicalPosition } from '@tauri-apps/api/window';
 import { FileNode, Person, Topic, FileType } from '../types';
 import { setWindowMinSize, setAndroidImmersiveMode, setAndroidStatusBar } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 import { isAndroidSync } from '../utils/androidPlatform';
-import { convertFileSrc } from '@tauri-apps/api/core';
-import { isRemotePath, getRemoteImageUrl } from '../utils/remoteSource';
 import { ComparisonItem, Annotation, ComparisonSession } from './comparer/types';
+import { resolveImageSrc } from './comparer/imageSource';
+import { getBestMipmapLevel, createMipmapLevels } from './comparer/mipmap';
+import { rotatePointAround, pointInRotatedItem, worldToLocalPoint, computeAABB, aabbOverlap } from './comparer/geometry';
+import { packImages } from './comparer/layout';
+import { getFileExtension, getMimeType, serializeSessionToZip, readSessionFile, extractZipImage } from './comparer/session-io';
+import { zoomAtPoint, computeFitTransform } from './comparer/viewport';
 import { EditOverlay } from './comparer/EditOverlay';
 import { AnnotationLayer } from './comparer/AnnotationLayer';
 import { ComparerContextMenu } from './comparer/ComparerContextMenu';
+import { ComparerToolbar } from './comparer/ComparerToolbar';
 import { AddImageModal } from './modals/AddImageModal';
-import { writeTextFile, readTextFile, writeFile, readFile } from '@tauri-apps/plugin-fs';
+import { writeFile } from '@tauri-apps/plugin-fs';
 import { save, open } from '@tauri-apps/plugin-dialog';
 import { Plus, Save, FolderOpen, Trash2 } from 'lucide-react';
-import JSZip from 'jszip';
-import { ComparisonSessionManifest, ComparisonSessionViewport, ComparisonSessionLayout } from './comparer/types';
-import { invoke } from '@tauri-apps/api/core';
 import { useToasts } from '../hooks/useToasts';
-
-// Resolve a FileNode's full-image URL: remote files (desktop server / android
-// device) load from the remote HTTP server, local files use convertFileSrc.
-// FileNode.path 对远程文件已带 lan:// 或 android:// 前缀。
-const resolveImageSrc = (file: FileNode): string =>
-  isRemotePath(file.path)
-    ? getRemoteImageUrl(file.path)
-    : convertFileSrc(file.path);
+import { useImageLoader } from '../hooks/useImageLoader';
+import { useComparerShortcuts } from '../hooks/useComparerShortcuts';
 
 interface ImageComparerProps {
   selectedFileIds: string[];
@@ -51,69 +47,6 @@ interface ImageComparerProps {
   onReferenceModeChange?: (isReferenceMode: boolean) => void;
   isReferenceMode?: boolean;
   isActiveTab?: boolean;
-}
-
-interface ImageLayoutInfo {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  src: string;
-}
-
-// 多级 Mipmap 缓存结构
-interface MipmapCache {
-  original: HTMLImageElement;
-  levels: {
-    scale: number;
-    canvas: HTMLCanvasElement;
-  }[];
-}
-
-// 获取最适合当前缩放比例的缓存级别
-function getBestMipmapLevel(cache: MipmapCache, targetScale: number): HTMLImageElement | HTMLCanvasElement {
-  if (targetScale >= 0.8 || cache.levels.length === 0) {
-    return cache.original;
-  }
-
-  let bestLevel = cache.levels[0];
-  let bestScore = Infinity;
-
-  for (const level of cache.levels) {
-    const effectiveScale = targetScale / level.scale;
-    const score = Math.abs(Math.log(effectiveScale));
-    if (score < bestScore) {
-      bestScore = score;
-      bestLevel = level;
-    }
-  }
-
-  return bestLevel.canvas;
-}
-
-// 创建多级 Mipmap
-function createMipmapLevels(img: HTMLImageElement, originalWidth: number, originalHeight: number, androidOptimized = false): MipmapCache['levels'] {
-  const levels: MipmapCache['levels'] = [];
-  // 安卓端减少级别数量以节省内存和创建时间
-  const scales = androidOptimized
-    ? [0.5, 0.25, 0.125, 0.0625]
-    : [0.75, 0.5, 0.375, 0.25, 0.1875, 0.125, 0.0625];
-
-  for (const scale of scales) {
-    const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.floor(originalWidth * scale));
-    canvas.height = Math.max(1, Math.floor(originalHeight * scale));
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-    }
-    levels.push({ scale, canvas });
-  }
-
-  return levels;
 }
 
 export const ImageComparer: React.FC<ImageComparerProps> = ({
@@ -248,11 +181,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     onReferenceModeChangeRef.current = onReferenceModeChange;
   }, [layoutProp, onLayoutToggle, onReferenceModeChange]);
 
-  // 多级 Mipmap 缓存
-  const imagesCache = useRef<Map<string, MipmapCache>>(new Map());
-  const loadingIdsRef = useRef<Set<string>>(new Set());
-  const [loadedCount, setLoadedCount] = useState(0);
-
   // 使用 ref 存储 transform 以避免动画循环中的闭包问题
   const transformRef = useRef(transform);
   useEffect(() => {
@@ -382,117 +310,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       .filter(file => file && file.path);
   }, [internalSelectedIds, files, sessionFiles]);
 
-  // 基于实际缓存状态判断加载进度，loadedCount 作为触发器确保重渲染
-  const isLoadingCanvas = useMemo(() => {
-    if (imageFiles.length === 0) return false;
-    const cachedCount = imageFiles.filter(file => imagesCache.current.has(file.id)).length;
-    return cachedCount < imageFiles.length;
-  }, [imageFiles, loadedCount]);
-
-  // 同步 loadedCount 与实际缓存，避免计数器不同步导致加载覆盖层卡住
-  const realLoadedCount = useMemo(() => {
-    return imageFiles.filter(file => imagesCache.current.has(file.id)).length;
-  }, [imageFiles, loadedCount]);
-
-  // Load images & create mipmap levels (batch loading on Android)
-  useEffect(() => {
-    const filesToLoad = imageFiles.filter(
-      file => !imagesCache.current.has(file.id) && !loadingIdsRef.current.has(file.id)
-    );
-
-    if (filesToLoad.length === 0) return;
-
-    const batchSize = isAndroid ? 4 : 8;
-    let loadIndex = 0;
-    let cancelled = false;
-    const pendingRafs: number[] = [];
-    const pendingTimeouts: ReturnType<typeof setTimeout>[] = [];
-
-    const loadNextBatch = () => {
-      if (cancelled) return;
-      const batch = filesToLoad.slice(loadIndex, loadIndex + batchSize);
-      if (batch.length === 0) return;
-      loadIndex += batchSize;
-
-      batch.forEach(file => {
-        if (cancelled || loadingIdsRef.current.has(file.id)) return;
-        loadingIdsRef.current.add(file.id);
-        const img = new Image();
-        const loadStart = performance.now();
-        img.src = resolveImageSrc(file);
-        img.onload = () => {
-          if (cancelled) return;
-          const w = file.meta?.width || img.width;
-          const h = file.meta?.height || img.height;
-          const loadTime = performance.now() - loadStart;
-
-          if (isAndroid) {
-            console.log(`[Canvas] Image loaded: ${w}x${h} (${(w * h / 1000000).toFixed(1)}MP) in ${loadTime.toFixed(0)}ms - ${file.path.split('/').pop()}`);
-          }
-
-          if (isAndroid && w * h > 2000000) {
-            const cacheStart = performance.now();
-            const thumbScale = Math.min(256 / w, 256 / h, 1);
-            const thumbCanvas = document.createElement('canvas');
-            thumbCanvas.width = Math.round(w * thumbScale);
-            thumbCanvas.height = Math.round(h * thumbScale);
-            const thumbCtx = thumbCanvas.getContext('2d')!;
-            thumbCtx.imageSmoothingEnabled = true;
-            thumbCtx.imageSmoothingQuality = 'high';
-            thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
-            imagesCache.current.set(file.id, {
-              original: img,
-              levels: [{ canvas: thumbCanvas, scale: thumbScale }]
-            });
-            setLoadedCount(prev => prev + 1);
-            console.log(`[Canvas] Cache with thumbnail: ${thumbCanvas.width}x${thumbCanvas.height} in ${(performance.now() - cacheStart).toFixed(0)}ms`);
-            const rafId = requestAnimationFrame(() => {
-              if (cancelled) return;
-              const mipmapStart = performance.now();
-              const levels = createMipmapLevels(img, w, h, true);
-              const mipmapTime = performance.now() - mipmapStart;
-              console.log(`[Canvas] Mipmap created: ${levels.length} levels in ${mipmapTime.toFixed(0)}ms for ${w}x${h}`);
-              if (!cancelled && imagesCache.current.has(file.id)) {
-                imagesCache.current.set(file.id, { original: img, levels });
-              }
-            });
-            pendingRafs.push(rafId);
-          } else {
-            const cacheStart = performance.now();
-            const levels = createMipmapLevels(img, w, h, isAndroid);
-            imagesCache.current.set(file.id, {
-              original: img,
-              levels
-            });
-            if (isAndroid) {
-              console.log(`[Canvas] Cache with mipmap: ${levels.length} levels in ${(performance.now() - cacheStart).toFixed(0)}ms`);
-            }
-            setLoadedCount(prev => prev + 1);
-          }
-        };
-        img.onerror = () => {
-          if (cancelled) return;
-          console.warn(`[Canvas] Failed to load: ${file.path}`);
-          setLoadedCount(prev => prev + 1);
-        };
-      });
-
-      if (loadIndex < filesToLoad.length) {
-        const tid = setTimeout(loadNextBatch, isAndroid ? 200 : 50);
-        pendingTimeouts.push(tid);
-      }
-    };
-
-    loadNextBatch();
-
-    return () => {
-      cancelled = true;
-      pendingRafs.forEach(id => cancelAnimationFrame(id));
-      pendingTimeouts.forEach(id => clearTimeout(id));
-      // 清理正在加载的ID，防止下次加载时跳过这些已被取消的图片
-      loadingIdsRef.current.clear();
-    };
-  }, [imageFiles]);
+  const { imagesCache, loadingIdsRef, loadedCount, setLoadedCount, isLoadingCanvas, realLoadedCount } = useImageLoader(imageFiles, isAndroid);
 
   // Initialize internal selection and respond to external changes
   useEffect(() => {
@@ -545,81 +363,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
     const layoutStart = isAndroid ? performance.now() : 0;
 
-    const spacing = 40;
-    const items: ImageLayoutInfo[] = [];
-
-    const packOrder = imageFiles.slice().sort((a, b) => {
-      const sizeA = (a.meta?.width || 0) * (a.meta?.height || 0);
-      const sizeB = (b.meta?.width || 0) * (b.meta?.height || 0);
-      return sizeB - sizeA;
-    });
-
-    const checkOverlap = (rect: { x: number; y: number; w: number; h: number }, existing: ImageLayoutInfo[]) => {
-      for (const item of existing) {
-        if (
-          rect.x < item.x + item.width + spacing - 1 &&
-          rect.x + rect.w + spacing - 1 > item.x &&
-          rect.y < item.y + item.height + spacing - 1 &&
-          rect.y + rect.h + spacing - 1 > item.y
-        ) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    const first = packOrder[0];
-    const firstW = first.meta?.width || 1000;
-    const firstH = first.meta?.height || 750;
-
-    items.push({
-      id: first.id,
-      x: -firstW / 2,
-      y: -firstH / 2,
-      width: firstW,
-      height: firstH,
-      src: resolveImageSrc(first)
-    });
-
-    for (let i = 1; i < packOrder.length; i++) {
-      const file = packOrder[i];
-      const w = file.meta?.width || 1000;
-      const h = file.meta?.height || 750;
-
-      let bestPos = { x: 0, y: 0 };
-      let minDistance = Infinity;
-      const candidates: { x: number; y: number }[] = [];
-
-      items.forEach(item => {
-        candidates.push({ x: item.x + item.width + spacing, y: item.y });
-        candidates.push({ x: item.x - w - spacing, y: item.y });
-        candidates.push({ x: item.x, y: item.y + item.height + spacing });
-        candidates.push({ x: item.x, y: item.y - h - spacing });
-        candidates.push({ x: item.x + item.width + spacing, y: item.y + item.height - h });
-        candidates.push({ x: item.x - w - spacing, y: item.y + item.height - h });
-        candidates.push({ x: item.x + item.width - w, y: item.y + item.height + spacing });
-        candidates.push({ x: item.x, y: item.y - h - spacing });
-      });
-
-      for (const cand of candidates) {
-        if (!checkOverlap({ x: cand.x, y: cand.y, w: w, h: h }, items)) {
-          const dist = Math.sqrt(Math.pow(cand.x + w / 2, 2) + Math.pow(cand.y + h / 2, 2));
-          if (dist < minDistance) {
-            minDistance = dist;
-            bestPos = cand;
-          }
-        }
-      }
-
-      items.push({
-        id: file.id,
-        x: bestPos.x,
-        y: bestPos.y,
-        width: w,
-        height: h,
-        src: resolveImageSrc(file)
-      });
-    }
+    const items = packImages(imageFiles);
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     items.forEach(item => {
@@ -738,15 +482,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     onSelectedFileIdsChange?.(activeImageIds);
   }, [activeImageIds]);
 
-  const rotatePointAround = (x: number, y: number, cx: number, cy: number, angleDeg: number) => {
-    const rad = angleDeg * Math.PI / 180;
-    const dx = x - cx;
-    const dy = y - cy;
-    const rx = dx * Math.cos(rad) - dy * Math.sin(rad);
-    const ry = dx * Math.sin(rad) + dy * Math.cos(rad);
-    return { x: rx + cx, y: ry + cy };
-  };
-
   const computeAndSetGroupBounds = () => {
     if (activeImageIds.length <= 1) {
       setGroupBounds(null);
@@ -794,42 +529,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       setGroupBounds(null);
     }
   }, [activeImageIds]);
-
-  const pointInRotatedItem = (worldX: number, worldY: number, it: ComparisonItem) => {
-    const cx = it.x + it.width / 2;
-    const cy = it.y + it.height / 2;
-    const local = rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
-    return local.x >= it.x && local.x <= it.x + it.width && local.y >= it.y && local.y <= it.y + it.height;
-  };
-
-  const worldToLocalPoint = (worldX: number, worldY: number, it: ComparisonItem) => {
-    const cx = it.x + it.width / 2;
-    const cy = it.y + it.height / 2;
-    return rotatePointAround(worldX, worldY, cx, cy, -it.rotation);
-  };
-
-  const worldToScreen = (wx: number, wy: number) => ({
-    x: wx * transform.scale + transform.x,
-    y: wy * transform.scale + transform.y
-  });
-
-  const computeAABB = (it: ComparisonItem) => {
-    const cx = it.x + it.width / 2;
-    const cy = it.y + it.height / 2;
-    const corners = [
-      { x: it.x, y: it.y },
-      { x: it.x + it.width, y: it.y },
-      { x: it.x + it.width, y: it.y + it.height },
-      { x: it.x, y: it.y + it.height }
-    ].map(c => rotatePointAround(c.x, c.y, cx, cy, it.rotation));
-    const xs = corners.map(c => c.x);
-    const ys = corners.map(c => c.y);
-    return { minX: Math.min(...xs), minY: Math.min(...ys), maxX: Math.max(...xs), maxY: Math.max(...ys) };
-  };
-
-  const aabbOverlap = (a: { minX: number; minY: number; maxX: number; maxY: number }, b: { minX: number; minY: number; maxX: number; maxY: number }) => {
-    return !(a.maxX < b.minX || a.minX > b.maxX || a.maxY < b.minY || a.minY > b.maxY);
-  };
 
   const itemsOverlap = (idA: string, idB: string) => {
     const a = layoutItemMap[idA];
@@ -1039,22 +738,19 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   // Initial auto-zoom and center
   useEffect(() => {
     if (layout.totalWidth > 0 && containerSize.width > 0 && !userInteractedRef.current && !autoZoomAppliedRef.current) {
-      const padding = 60;
-      const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
-      const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
-      const initialScale = Math.min(scaleX, scaleY, 1.2);
+      const newTransform = computeFitTransform(
+        containerSize.width,
+        containerSize.height,
+        { minX: 0, minY: 0, maxX: layout.totalWidth, maxY: layout.totalHeight }
+      );
 
-      const newTransform = {
-        x: (containerSize.width - layout.totalWidth * initialScale) / 2,
-        y: (containerSize.height - layout.totalHeight * initialScale) / 2,
-        scale: initialScale
-      };
+      if (newTransform) {
+        setTransform(newTransform);
+        autoZoomAppliedRef.current = true;
 
-      setTransform(newTransform);
-      autoZoomAppliedRef.current = true;
-
-      if (isAndroid) {
-        console.log(`[Canvas] Auto-zoom: scale=${initialScale.toFixed(4)}, content=${layout.totalWidth}x${layout.totalHeight}, container=${containerSize.width}x${containerSize.height}`);
+        if (isAndroid) {
+          console.log(`[Canvas] Auto-zoom: scale=${newTransform.scale.toFixed(4)}, content=${layout.totalWidth}x${layout.totalHeight}, container=${containerSize.width}x${containerSize.height}`);
+        }
       }
     }
   }, [layout.totalWidth, layout.totalHeight, containerSize.width, containerSize.height]);
@@ -1083,12 +779,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     const mouseY = e.clientY - rect.top;
 
     // 直接更新 transform，不使用动画，以获得即时响应
-    setTransform(prev => {
-      const newScale = Math.min(Math.max(prev.scale * factor, 0.01), 20);
-      const newX = mouseX - (mouseX - prev.x) * (newScale / prev.scale);
-      const newY = mouseY - (mouseY - prev.y) * (newScale / prev.scale);
-      return { x: newX, y: newY, scale: newScale };
-    });
+    setTransform(prev => zoomAtPoint(prev, mouseX, mouseY, factor));
   };
 
   // Dragging
@@ -1656,11 +1347,6 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
     setContextMenu({ x: rect.right - 10, y: rect.bottom + 20 });
   };
 
-  const getFileExtension = (filePath: string): string => {
-    const match = filePath.match(/\.([^.]+)$/);
-    return match ? match[1].toLowerCase() : 'png';
-  };
-
   const handleSaveSession = async () => {
     try {
       const path = await save({
@@ -1668,62 +1354,14 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         defaultPath: `${sessionName}.aurora`
       });
       if (path) {
-        const zip = new JSZip();
-
-        const manifest: ComparisonSessionManifest = {
-          version: '2.0',
-          createdAt: Date.now(),
-          sessionName
-        };
-        zip.file('manifest.json', JSON.stringify(manifest));
-
-        const viewport: ComparisonSessionViewport = {
-          scale: transform.scale,
-          x: transform.x,
-          y: transform.y
-        };
-        zip.file('viewport.json', JSON.stringify(viewport));
-
-        const imagesFolder = zip.folder('images');
-        const imageFileNames: Record<string, string> = {};
-
-        for (let i = 0; i < layout.items.length; i++) {
-          const item = layout.items[i];
-          const file = files[item.id];
-          if (file && file.path) {
-            try {
-              const base64Data = await invoke<string>('read_file_as_base64', { filePath: file.path });
-              if (base64Data) {
-                const base64Content = base64Data.includes(',')
-                  ? base64Data.split(',')[1]
-                  : base64Data;
-                const imageBytes = Uint8Array.from(atob(base64Content), c => c.charCodeAt(0));
-                const ext = getFileExtension(file.path);
-                const fileName = `img_${i}.${ext}`;
-                imageFileNames[item.id] = fileName;
-                imagesFolder?.file(fileName, imageBytes);
-              }
-            } catch {}
-          }
-        }
-
-        const layoutData: ComparisonSessionLayout = {
-          items: layout.items.map(it => ({
-            id: it.id,
-            path: files[it.id]?.path || '',
-            x: it.x,
-            y: it.y,
-            width: it.width,
-            height: it.height,
-            rotation: it.rotation,
-            imageFileName: imageFileNames[it.id] || ''
-          })),
-          annotations: annotations,
+        const zipBlob = await serializeSessionToZip({
+          sessionName,
+          viewport: { scale: transform.scale, x: transform.x, y: transform.y },
+          items: layout.items,
+          files,
+          annotations,
           zOrder: zOrderIds
-        };
-        zip.file('layout.json', JSON.stringify(layoutData));
-
-        const zipBlob = await zip.generateAsync({ type: 'uint8array' });
+        });
         await writeFile(path, zipBlob);
       }
     } catch {}
@@ -1735,44 +1373,20 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
         filters: [{ name: 'Aurora Comparison', extensions: ['aurora'] }]
       });
       if (path && typeof path === 'string') {
-        let isZipFormat = false;
-        try {
-          const textContent = await readTextFile(path);
-          const parsed = JSON.parse(textContent);
-          if (parsed.version && parsed.items) {
-            await loadLegacySession(parsed as ComparisonSession);
-            return;
-          }
-        } catch {
-          isZipFormat = true;
+        const content = await readSessionFile(path);
+
+        if (content.format === 'legacy') {
+          await loadLegacySession(content.session);
+          return;
         }
 
-        if (isZipFormat) {
-          const zipBytes = await readFile(path);
-          const zip = await JSZip.loadAsync(zipBytes);
-
-          const manifestFile = zip.file('manifest.json');
-          if (!manifestFile) {
-            throw new Error('Invalid .aurora file: manifest.json not found');
-          }
-          const manifest: ComparisonSessionManifest = JSON.parse(await manifestFile.async('string'));
-
-          const viewportFile = zip.file('viewport.json');
-          let viewport: ComparisonSessionViewport | null = null;
-          if (viewportFile) {
-            viewport = JSON.parse(await viewportFile.async('string'));
-          }
-
-          const layoutFile = zip.file('layout.json');
-          if (!layoutFile) {
-            throw new Error('Invalid .aurora file: layout.json not found');
-          }
-          const layoutData: ComparisonSessionLayout = JSON.parse(await layoutFile.async('string'));
+        if (content.format === 'zip') {
+          const { manifest, layoutData, zip } = content;
 
           // 使用读取的文件名作为 sessionName
-        const fileName = path.split(/[/\\]/).pop()?.replace(/\.aurora$/i, '') || manifest.sessionName || '画布01';
-        setSessionName(fileName);
-        onSessionNameChange?.(fileName);
+          const fileName = path.split(/[/\\]/).pop()?.replace(/\.aurora$/i, '') || manifest.sessionName || '画布01';
+          setSessionName(fileName);
+          onSessionNameChange?.(fileName);
 
           autoZoomAppliedRef.current = false;
           userInteractedRef.current = false;
@@ -1785,14 +1399,10 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
           for (const item of layoutData.items) {
             if (item.imageFileName) {
-              const imageFile = zip.file(`images/${item.imageFileName}`);
-              if (imageFile) {
-                const imageBytes = await imageFile.async('uint8array');
+              const imageBytes = await extractZipImage(zip, item.imageFileName);
+              if (imageBytes) {
                 const ext = getFileExtension(item.imageFileName);
-                const mimeType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' :
-                                 ext === 'png' ? 'image/png' :
-                                 ext === 'gif' ? 'image/gif' :
-                                 ext === 'webp' ? 'image/webp' : 'image/png';
+                const mimeType = getMimeType(ext);
                 const blob = new Blob([imageBytes.buffer as ArrayBuffer], { type: mimeType });
                 const objectUrl = URL.createObjectURL(blob);
                 imageBlobUrls[item.id] = objectUrl;
@@ -1810,7 +1420,7 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
                     sizeKb: 0,
                     created: new Date().toISOString(),
                     modified: new Date().toISOString(),
-                    format: getFileExtension(item.imageFileName)
+                    format: ext
                   }
                 } as FileNode;
               }
@@ -2199,20 +1809,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   const handleReset = () => {
     setManualLayouts({});
     if (layout.totalWidth > 0) {
-      const padding = 60;
-      const scaleX = (containerSize.width - padding * 2) / layout.totalWidth;
-      const scaleY = (containerSize.height - padding * 2) / layout.totalHeight;
-      const initialScale = Math.min(scaleX, scaleY, 1.2);
-
-      const newTransform = {
-        x: (containerSize.width - layout.totalWidth * initialScale) / 2,
-        y: (containerSize.height - layout.totalHeight * initialScale) / 2,
-        scale: initialScale
-      };
-
-      startAnimation(newTransform);
-      userInteractedRef.current = true;
-      autoZoomAppliedRef.current = true;
+      const newTransform = computeFitTransform(
+        containerSize.width,
+        containerSize.height,
+        { minX: 0, minY: 0, maxX: layout.totalWidth, maxY: layout.totalHeight }
+      );
+      if (newTransform) {
+        startAnimation(newTransform);
+        userInteractedRef.current = true;
+        autoZoomAppliedRef.current = true;
+      }
     }
   };
 
@@ -2227,28 +1833,12 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       maxY = Math.max(maxY, item.y + item.height);
     });
 
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
-
-    if (contentWidth <= 0 || contentHeight <= 0) return;
-
-    const padding = 60;
-    const scaleX = (containerSize.width - padding * 2) / contentWidth;
-    const scaleY = (containerSize.height - padding * 2) / contentHeight;
-    const initialScale = Math.min(scaleX, scaleY, 1.2);
-
-    const contentCenterX = minX + contentWidth / 2;
-    const contentCenterY = minY + contentHeight / 2;
-
-    const newTransform = {
-      x: containerSize.width / 2 - contentCenterX * initialScale,
-      y: containerSize.height / 2 - contentCenterY * initialScale,
-      scale: initialScale
-    };
-
-    startAnimation(newTransform);
-    userInteractedRef.current = true;
-    autoZoomAppliedRef.current = true;
+    const newTransform = computeFitTransform(containerSize.width, containerSize.height, { minX, minY, maxX, maxY });
+    if (newTransform) {
+      startAnimation(newTransform);
+      userInteractedRef.current = true;
+      autoZoomAppliedRef.current = true;
+    }
   };
 
   const handleViewAll = () => {
@@ -2273,29 +1863,13 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
       });
     });
 
-    const contentWidth = maxX - minX;
-    const contentHeight = maxY - minY;
-
-    if (contentWidth <= 0 || contentHeight <= 0) return;
-
-    const padding = 60;
-    const scaleX = (containerSize.width - padding * 2) / contentWidth;
-    const scaleY = (containerSize.height - padding * 2) / contentHeight;
-    const newScale = Math.min(scaleX, scaleY, 1.2);
-
-    const contentCenterX = minX + contentWidth / 2;
-    const contentCenterY = minY + contentHeight / 2;
-
-    const newTransform = {
-      x: containerSize.width / 2 - contentCenterX * newScale,
-      y: containerSize.height / 2 - contentCenterY * newScale,
-      scale: newScale
-    };
-
-    startAnimation(newTransform);
-    userInteractedRef.current = true;
-    setContextMenu(null);
-    setMenuTargetId(null);
+    const newTransform = computeFitTransform(containerSize.width, containerSize.height, { minX, minY, maxX, maxY });
+    if (newTransform) {
+      startAnimation(newTransform);
+      userInteractedRef.current = true;
+      setContextMenu(null);
+      setMenuTargetId(null);
+    }
   };
 
   const selectedMenuOptions = [
@@ -2537,34 +2111,16 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
   }, [isReferenceMode, isAndroid]);
 
   // Keyboard support
-  useEffect(() => {
-    if (!isActiveTab) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        // 优先级1: 如果添加图片窗口打开，关闭它
-        if (isAddImageModalOpen) {
-          setIsAddImageModalOpen(false);
-          return;
-        }
-        // 优先级2: 如果处于参考模式，退出参考模式
-        if (isReferenceMode) {
-          toggleReferenceMode();
-          return;
-        }
-        // 优先级3: 关闭标签页
-        if (onCloseTab) onCloseTab();
-        else onClose();
-      }
-      if (e.key === 'a' || e.key === 'A') {
-        setIsSnappingEnabled(prev => !prev);
-      }
-      if (e.key === 'r' || e.key === 'R') {
-        toggleReferenceMode();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose, onCloseTab, toggleReferenceMode, isAddImageModalOpen, isReferenceMode, isActiveTab]);
+  useComparerShortcuts({
+    isActiveTab,
+    isAddImageModalOpen,
+    setIsAddImageModalOpen,
+    isReferenceMode,
+    toggleReferenceMode,
+    onClose,
+    onCloseTab,
+    setIsSnappingEnabled
+  });
 
   // Handle mouse side buttons
   useEffect(() => {
@@ -2665,161 +2221,30 @@ export const ImageComparer: React.FC<ImageComparerProps> = ({
 
       {/* Header - hidden in reference mode */}
       {!isReferenceMode && (
-      <div
-        id="comparer-toolbar"
-        className={`bg-white/90 dark:bg-[#262626]/90 backdrop-blur-md flex items-center px-4 justify-between shrink-0 transition-transform duration-200 ease-out h-14 relative z-10`}
-      >
-        <div className="flex items-center space-x-2">
-          {!isReferenceMode && (
-            <button
-              onClick={() => onLayoutToggle?.('sidebar')}
-              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isSidebarVisible ? 'text-blue-500' : 'text-gray-600 dark:text-gray-300'}`}
-              title={t('viewer.toggleSidebar')}
-            >
-              <Sidebar size={18} />
-            </button>
-          )}
-
-          <button
-            onClick={() => { onCloseTab ? onCloseTab() : onClose(); }}
-            className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-            title={t('viewer.close')}
-          >
-            <ChevronLeft size={18} />
-          </button>
-        </div>
-
-        <div className="flex-1 text-center truncate px-4 font-medium text-gray-800 dark:text-gray-200 flex justify-center items-center">
-          <div className="text-gray-900 dark:text-gray-100 font-semibold flex items-center text-lg">
-            {isEditingTitle ? (
-              <input
-                autoFocus
-                className="bg-transparent border-b-2 border-blue-500 outline-none text-center px-2 py-1 min-w-[200px]"
-                value={sessionName}
-                onChange={(e) => {
-                  if (isEditingTitle) {
-                    setSessionName(e.currentTarget.value);
-                    onSessionNameChange?.(e.currentTarget.value);
-                  }
-                }}
-                onBlur={() => setIsEditingTitle(false)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') setIsEditingTitle(false);
-                }}
-              />
-            ) : (
-              <div
-                className="cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 px-4 py-1 rounded transition-colors flex items-center"
-                onClick={() => setIsEditingTitle(true)}
-              >
-                <Scan size={20} className="mr-3 text-blue-500" />
-                {sessionName}
-              </div>
-            )}
-            <span className="ml-3 text-sm font-normal text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-[#3a3a3a] px-3 py-1 rounded-full">
-              {imageFiles.length} / 24
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-2">
-          {!isAndroid && (
-            <button
-              onClick={() => setIsSnappingEnabled(!isSnappingEnabled)}
-              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'}`}
-              title={`吸附功能 (A): ${isSnappingEnabled ? 'ON' : 'OFF'}`}
-            >
-              <Magnet size={18} className={isSnappingEnabled ? 'text-blue-500' : 'text-gray-400'} />
-            </button>
-          )}
-
-          {!isAndroid && (
-            <button
-              onClick={toggleReferenceMode}
-              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 transition-all ${isReferenceMode ? 'text-blue-500' : 'text-gray-400'}`}
-              title={`参考模式 (R): ${isReferenceMode ? 'ON' : 'OFF'}`}
-            >
-              <Eye size={18} className={isReferenceMode ? 'text-blue-500' : 'text-gray-400'} />
-            </button>
-          )}
-
-          {/* Android 添加图片按钮 */}
-          {isAndroid && (
-            <button
-              onClick={handleOpenAddImageModal}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-              title="添加图片"
-            >
-              <Plus size={18} />
-            </button>
-          )}
-
-          {/* Android 更多按钮 */}
-          {isAndroid && (
-            <button
-              onMouseDown={handleOpenAndroidMenu}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-              title="更多"
-            >
-              <MoreVertical size={18} />
-            </button>
-          )}
-
-          {!isAndroid && (
-            <button
-              onClick={handleSaveSession}
-              disabled={imageFiles.length === 0}
-              className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300`}
-              title="保存对比信息"
-            >
-              <Save size={18} />
-            </button>
-          )}
-
-          {!isAndroid && (
-            <button
-              onClick={handleLoadSession}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300"
-              title="读取对比信息"
-            >
-              <FolderOpen size={18} />
-            </button>
-          )}
-
-          {!isAndroid && <div className="w-px h-4 bg-gray-200 dark:bg-gray-700 mx-1" />}
-
-          {!isAndroid && (
-            <button
-              onClick={handleViewAll}
-              disabled={imageFiles.length === 0}
-              className={`p-2 rounded ${imageFiles.length === 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-100 dark:hover:bg-gray-800'} text-gray-600 dark:text-gray-300 transition-colors`}
-              title="查看全部"
-            >
-              <Scan size={18} />
-            </button>
-          )}
-
-          {!isAndroid && (
-            <button
-              onClick={handleReset}
-              className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-300 transition-colors"
-              title="重置画布"
-            >
-              <RefreshCcw size={18} />
-            </button>
-          )}
-
-          {!isReferenceMode && (
-            <button
-              onClick={() => onLayoutToggle?.('metadata')}
-              className={`p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 ${layoutProp?.isMetadataVisible ? 'text-blue-500 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400'}`}
-              title={t('viewer.toggleMeta')}
-            >
-              <PanelRight size={18} />
-            </button>
-          )}
-        </div>
-      </div>
+        <ComparerToolbar
+          isReferenceMode={isReferenceMode}
+          isAndroid={isAndroid}
+          isSnappingEnabled={isSnappingEnabled}
+          isEditingTitle={isEditingTitle}
+          sessionName={sessionName}
+          imageCount={imageFiles.length}
+          layoutProp={layoutProp}
+          t={t}
+          onLayoutToggle={onLayoutToggle}
+          onClose={onClose}
+          onCloseTab={onCloseTab}
+          setIsSnappingEnabled={setIsSnappingEnabled}
+          toggleReferenceMode={toggleReferenceMode}
+          handleOpenAddImageModal={handleOpenAddImageModal}
+          handleOpenAndroidMenu={handleOpenAndroidMenu}
+          handleSaveSession={handleSaveSession}
+          handleLoadSession={handleLoadSession}
+          handleViewAll={handleViewAll}
+          handleReset={handleReset}
+          setIsEditingTitle={setIsEditingTitle}
+          setSessionName={setSessionName}
+          onSessionNameChange={onSessionNameChange}
+        />
       )}
 
       {/* Canvas Container */}

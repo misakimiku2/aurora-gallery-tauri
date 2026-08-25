@@ -1091,6 +1091,9 @@ export const FileGrid = React.memo(({
   const scrollRafRef = useRef<number | null>(null);
   // 滚动条显隐定时器：滚动结束后延迟隐藏滚动条（保留布局空间，仅隐藏 thumb 颜色）
   const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 过渡冻结定时器：滚动停止后立即移除 anim-freeze（恢复卡片过渡），
+  // 与滚动条淡出的 800ms 解耦，避免滚动停止后 hover 过渡被冻结为 0ms。
+  const animFreezeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
   const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
@@ -1300,6 +1303,29 @@ export const FileGrid = React.memo(({
                 scroller.classList.remove('scrolling');
             }, 800);
 
+            // 过渡冻结：滚动事件持续期间暂停卡片过渡（性能优化）；
+            // 滚动停止后立即恢复（不等滚动条 800ms 淡出），避免滚动停止后
+            // 一段时间内 hover 扇形展开等过渡被冻结为 0ms、瞬间跳变。
+            scroller.classList.add('anim-freeze');
+            if (animFreezeTimerRef.current) clearTimeout(animFreezeTimerRef.current);
+            animFreezeTimerRef.current = setTimeout(() => {
+                const sc = containerRef.current;
+                if (!sc) return;
+                // 若滚动停止瞬间鼠标已悬停在卡片上（过渡曾被冻结、hover 态已瞬间应用），
+                // 强制重播一次过渡：先定格为堆叠态，恢复 transition 后移除，播放摊开动画。
+                const hovered = sc.querySelector('.file-item:hover');
+                if (hovered) {
+                    hovered.classList.add('replay-fan');
+                }
+                sc.classList.remove('anim-freeze');
+                if (hovered) {
+                    void sc.offsetHeight; // 强制 reflow：让 base 态 + 恢复的 transition 生效
+                    requestAnimationFrame(() => {
+                        hovered.classList.remove('replay-fan');
+                    });
+                }
+            }, 30);
+
             if (isRestoringScrollRef.current || scroller.clientWidth === 0) {
                 return;
             }
@@ -1381,6 +1407,8 @@ export const FileGrid = React.memo(({
         scrollProfiler.detach(containerRef.current);
         if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
         if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
+        if (animFreezeTimerRef.current) clearTimeout(animFreezeTimerRef.current);
+        containerRef?.current?.classList.remove('anim-freeze');
         // 取消待执行的滚动位置保存（debounce），避免组件卸载后仍更新 App 状态
         debouncedOnScrollTopChange?.cancel?.();
     };
