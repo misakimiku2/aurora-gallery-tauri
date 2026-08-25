@@ -205,6 +205,65 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.serverAccessToken, settings.serverHost, settings.serverPort]);
 
+  // 共享的连接核心流程：确保本机服务端运行 → 认证（携带 peer_server 双向配对）。
+  // 成功时保存最近服务器（含访问码，供一键重连）并写入连接配置；
+  // 失败时回滚本次自动开启的服务端并展示错误。
+  const performConnect = useCallback(
+    async (targetHost: string, targetPort: number, targetCode: string): Promise<void> => {
+      setConnecting(true);
+      let peer: { port: number; accessCode: string; startedNow: boolean } | null = null;
+      try {
+        // 双向连接融合：先确保本机共享已开启，认证时携带本机服务端信息
+        peer = await ensureOwnServer();
+        if (!peer) {
+          // 本机服务端启动失败：融合连接无法建立（桌面端无法浏览本机图片），
+          // 直接失败并提示，避免出现"已连接但共享缺失"的半连接状态
+          setError(
+            t('settings.lanShare.client.ownServerStartFailed') ||
+              '本机共享启动失败，无法建立双向连接，请检查端口是否被占用'
+          );
+          return;
+        }
+        lanClientApi.setBaseUrl(`http://${targetHost}:${targetPort}`);
+        const res = await lanClientApi.authenticate(
+          targetCode,
+          deviceName.trim() || undefined,
+          peer ?? undefined
+        );
+        if (res.success && res.token) {
+          const saved = lanShareSaveServer(settings, targetHost, targetPort, res.server_name, targetCode);
+          onUpdateSettings({
+            ...saved,
+            clientMode: true,
+            serverHost: targetHost,
+            serverPort: targetPort,
+            serverAccessToken: res.token,
+          });
+          setConnected(true);
+          refreshDevices();
+        } else {
+          // 连接失败：回滚本次自动开启的本机共享，避免留下"孤儿服务端"
+          rollbackServerIfStarted(peer);
+          setError(
+            res.error ||
+              t('settings.lanShare.client.authFailed') ||
+              '访问码错误，连接失败'
+          );
+        }
+      } catch (e: any) {
+        rollbackServerIfStarted(peer);
+        setError(
+          e?.message ||
+            t('settings.lanShare.client.connectFailed') ||
+            '连接失败，请检查地址与网络'
+        );
+      } finally {
+        setConnecting(false);
+      }
+    },
+    [deviceName, settings, onUpdateSettings, refreshDevices, ensureOwnServer, rollbackServerIfStarted, t]
+  );
+
   const handleConnect = useCallback(async () => {
     setError(null);
     const trimmedHost = host.trim();
@@ -220,49 +279,8 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
       setError(t('settings.lanShare.client.enterCode') || '请输入访问码');
       return;
     }
-
-    setConnecting(true);
-    let peer: { port: number; accessCode: string; startedNow: boolean } | null = null;
-    try {
-      // 双向连接融合：先确保本机共享已开启，认证时携带本机服务端信息
-      peer = await ensureOwnServer();
-      lanClientApi.setBaseUrl(`http://${trimmedHost}:${portNum}`);
-      const res = await lanClientApi.authenticate(
-        trimmedCode,
-        deviceName.trim() || undefined,
-        peer ?? undefined
-      );
-      if (res.success && res.token) {
-        const saved = lanShareSaveServer(settings, trimmedHost, portNum, res.server_name);
-        onUpdateSettings({
-          ...saved,
-          clientMode: true,
-          serverHost: trimmedHost,
-          serverPort: portNum,
-          serverAccessToken: res.token,
-        });
-        setConnected(true);
-        refreshDevices();
-      } else {
-        // 连接失败：回滚本次自动开启的本机共享，避免留下"孤儿服务端"
-        rollbackServerIfStarted(peer);
-        setError(
-          res.error ||
-            t('settings.lanShare.client.authFailed') ||
-            '访问码错误，连接失败'
-        );
-      }
-    } catch (e: any) {
-      rollbackServerIfStarted(peer);
-      setError(
-        e?.message ||
-          t('settings.lanShare.client.connectFailed') ||
-          '连接失败，请检查地址与网络'
-      );
-    } finally {
-      setConnecting(false);
-    }
-  }, [host, port, code, deviceName, settings, onUpdateSettings, refreshDevices, ensureOwnServer, rollbackServerIfStarted, t]);
+    await performConnect(trimmedHost, portNum, trimmedCode);
+  }, [host, port, code, performConnect, t]);
 
   const handleCopyServerUrl = useCallback(() => {
     if (myServerUrl) {
@@ -327,54 +345,36 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
     }
 
     setCode(parsed.code);
-    setConnecting(true);
-    let peer: { port: number; accessCode: string; startedNow: boolean } | null = null;
-    try {
-      // 双向连接融合：先确保本机共享已开启，认证时携带本机服务端信息
-      peer = await ensureOwnServer();
-      lanClientApi.setBaseUrl(`http://${parsed.host}:${parsed.port}`);
-      const res = await lanClientApi.authenticate(
-        parsed.code,
-        deviceName.trim() || undefined,
-        peer ?? undefined
-      );
-      if (res.success && res.token) {
-        const saved = lanShareSaveServer(settings, parsed.host, parsed.port, res.server_name);
-        onUpdateSettings({
-          ...saved,
-          clientMode: true,
-          serverHost: parsed.host,
-          serverPort: parsed.port,
-          serverAccessToken: res.token,
-        });
-        setConnected(true);
-        refreshDevices();
-      } else {
-        // 连接失败：回滚本次自动开启的本机共享，避免留下"孤儿服务端"
-        rollbackServerIfStarted(peer);
-        setError(
-          res.error ||
-            t('settings.lanShare.client.authFailed') ||
-            '访问码错误，连接失败'
-        );
-      }
-    } catch (e: any) {
-      rollbackServerIfStarted(peer);
-      setError(
-        e?.message ||
-          t('settings.lanShare.client.connectFailed') ||
-          '连接失败，请检查地址与网络'
-      );
-    } finally {
-      setConnecting(false);
-    }
-  }, [deviceName, settings, onUpdateSettings, refreshDevices, ensureOwnServer, rollbackServerIfStarted, t]);
+    await performConnect(parsed.host, parsed.port, parsed.code);
+  }, [performConnect, t]);
 
   const handleSelectServer = useCallback((s: SavedServer) => {
     setHost(s.host);
     setPort(String(s.port));
+    setCode(s.accessCode || '');
     setError(null);
   }, []);
+
+  // 最近服务器一键重连：使用上次保存的访问码直接连接；
+  // 未保存访问码（旧数据）时回退为填充表单让用户补填。
+  const handleReconnect = useCallback(
+    async (s: SavedServer) => {
+      if (connecting) return;
+      setHost(s.host);
+      setPort(String(s.port));
+      setError(null);
+      if (!s.accessCode) {
+        setCode('');
+        setError(
+          (t('settings.lanShare.client.reconnectNeedCode') || '该服务器未保存访问码，请输入访问码后点击连接')
+        );
+        return;
+      }
+      setCode(s.accessCode);
+      await performConnect(s.host, s.port, s.accessCode);
+    },
+    [connecting, performConnect, t]
+  );
 
   const handleRemoveServer = useCallback(
     (s: SavedServer) => {
@@ -390,11 +390,11 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
   return (
     <div className="space-y-6 animate-fade-in">
       <div>
-        <h3 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
+        <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center border-subtle pb-2">
           <Wifi size={20} className="mr-2 text-blue-500" />
           {t('settings.lanShare.client.title') || '连接桌面端'}
         </h3>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        <p className="text-sm text-gray-500 dark:text-gray-400">
           {t('settings.lanShare.client.description') ||
             '扫码连接桌面端后，桌面端可浏览本机图片（双向互联）'}
         </p>
@@ -409,32 +409,34 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
 
       {connected ? (
         <div className="space-y-4">
-          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-6 border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="w-10 h-10 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
-                <Check size={20} className="text-green-500" />
+          {/* 连接状态头卡：绿色调突出"已连接"，与详情卡形成层次 */}
+          <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-4 border border-green-200 dark:border-green-800/40 flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center shrink-0 shadow-sm">
+              <Check size={24} className="text-white" strokeWidth={3} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-base font-bold text-green-700 dark:text-green-400">
+                {t('settings.lanShare.client.connected') || '已连接'}
               </div>
-              <div>
-                <div className="text-sm font-medium text-gray-800 dark:text-white">
-                  {t('settings.lanShare.client.connected') || '已连接'}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 flex items-center mt-0.5">
-                  <Monitor size={12} className="mr-1" />
-                  {currentHost}:{currentPort}
-                </div>
+              <div className="text-xs font-mono text-green-600/80 dark:text-green-400/70 flex items-center mt-0.5">
+                <Monitor size={12} className="mr-1 shrink-0" />
+                {currentHost}:{currentPort}
               </div>
             </div>
+          </div>
 
-            <div className="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-              <div>
+          {/* 连接详情卡片：统计小块 + 双向状态 + 本机共享 */}
+          <div className="bg-surface rounded-xl p-4 border border-subtle space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-panel rounded-lg p-3 border border-subtle">
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {t('settings.lanShare.client.onlineDevices') || '在线设备'}
                 </div>
-                <div className="text-lg font-semibold text-gray-800 dark:text-white mt-1">
+                <div className="text-xl font-bold text-gray-800 dark:text-white mt-1">
                   {deviceCount !== null ? deviceCount : '--'}
                 </div>
               </div>
-              <div>
+              <div className="bg-panel rounded-lg p-3 border border-subtle">
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {t('settings.lanShare.client.serverAddress') || '服务器地址'}
                 </div>
@@ -445,49 +447,33 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
             </div>
 
             {/* 双向连接状态 */}
-            <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
-              <div className={`flex items-center gap-2 text-xs ${myServerDeviceCount !== null && myServerDeviceCount > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                {myServerDeviceCount !== null && myServerDeviceCount > 0 ? (
-                  <>
-                    <Check size={14} className="shrink-0" />
-                    <span>
-                      {t('settings.lanShare.client.bidirectionalOn') || '双向连接已建立：桌面端已自动连接本机'}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <Loader2 size={14} className="shrink-0 animate-spin" />
-                    <span>
-                      {t('settings.lanShare.client.bidirectionalWaiting') || '等待桌面端自动连接本机…'}
-                    </span>
-                  </>
-                )}
-              </div>
+            <div className={`flex items-center gap-2 text-xs pt-1 ${myServerDeviceCount !== null && myServerDeviceCount > 0 ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-400'}`}>
+              {myServerDeviceCount !== null && myServerDeviceCount > 0 ? (
+                <>
+                  <Check size={14} className="shrink-0" />
+                  <span>
+                    {t('settings.lanShare.client.bidirectionalOn') || '双向连接已建立：桌面端已自动连接本机'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Loader2 size={14} className="shrink-0 animate-spin" />
+                  <span>
+                    {t('settings.lanShare.client.bidirectionalWaiting') || '等待桌面端自动连接本机…'}
+                  </span>
+                </>
+              )}
             </div>
 
             {/* 本机共享状态（双向融合：与桌面端连接是一个整体，无独立停止按钮；
                 断开即彻底断开，通知栏"停止共享"同样断开整条链路） */}
             {myServerStatus?.is_running && (
-              <div className="pt-3 mt-3 border-t border-gray-200 dark:border-gray-700">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0 text-xs text-gray-500 dark:text-gray-400">
-                    <span className="text-green-600 dark:text-green-400 font-medium">
-                      {t('settings.lanShare.androidServer.running') || '共享中'}
-                    </span>
-                    {myServerUrl && (
-                      <span className="font-mono"> · {myServerUrl}</span>
-                    )}
-                    <span>
-                      {' '}
-                      · {t('settings.lanShare.androidServer.accessCode') || '访问验证码'}：
-                      <span className="font-mono font-bold text-gray-800 dark:text-white">
-                        {settings.accessCode || '----'}
-                      </span>
-                    </span>
-                    {myServerDeviceCount !== null && myServerDeviceCount > 0 && (
-                      <span> · {myServerDeviceCount} {t('settings.lanShare.online') || '在线'}</span>
-                    )}
-                  </div>
+              <div className="bg-panel rounded-lg p-3 border border-subtle">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-bold text-green-600 dark:text-green-400 flex items-center gap-1.5">
+                    <Wifi size={14} className="shrink-0" />
+                    {t('settings.lanShare.androidServer.running') || '共享中'}
+                  </span>
                   {myServerUrl && (
                     <button
                       onClick={handleCopyServerUrl}
@@ -497,6 +483,20 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                         ? (t('settings.lanShare.copied') || '已复制')
                         : (t('settings.lanShare.copy') || '复制')}
                     </button>
+                  )}
+                </div>
+                {myServerUrl && (
+                  <div className="text-xs font-mono text-gray-600 dark:text-gray-400 truncate">
+                    {myServerUrl}
+                  </div>
+                )}
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {t('settings.lanShare.androidServer.accessCode') || '访问验证码'}：
+                  <span className="font-mono font-bold text-gray-800 dark:text-white">
+                    {settings.accessCode || '----'}
+                  </span>
+                  {myServerDeviceCount !== null && myServerDeviceCount > 0 && (
+                    <span> · {myServerDeviceCount} {t('settings.lanShare.online') || '在线'}</span>
                   )}
                 </div>
               </div>
@@ -515,7 +515,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
             )}
             <button
               onClick={handleDisconnect}
-              className="flex-1 h-[55px] flex items-center justify-center gap-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 text-red-600 dark:text-red-400 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-medium transition-colors"
+              className="flex-1 h-[55px] flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors"
             >
               <LogOut size={16} />
               {t('settings.lanShare.client.disconnect') || '断开'}
@@ -524,24 +524,37 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-6 border border-gray-200 dark:border-gray-700 space-y-4">
+          <div className="bg-surface rounded-xl p-4 border border-subtle space-y-4">
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center mb-2">
-                <Monitor size={14} className="mr-1.5" />
+              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                 {t('settings.lanShare.client.serverHost') || '服务器地址'}
               </label>
-              <input
-                type="text"
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                placeholder="192.168.1.100"
-                inputMode="decimal"
-                className="w-full h-[55px] px-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
-              />
+              {/* 移动端操作逻辑：扫码按钮内嵌在地址输入框右侧，仅图标 + 竖线分隔 */}
+              <div className="relative">
+                <input
+                  type="text"
+                  value={host}
+                  onChange={(e) => setHost(e.target.value)}
+                  placeholder="192.168.1.100"
+                  inputMode="decimal"
+                  className="w-full h-[55px] pl-4 pr-12 bg-panel rounded-lg border border-subtle text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-colors"
+                />
+                <div className="absolute right-0 top-0 h-full flex items-center">
+                  <div className="w-px h-6 bg-subtle" />
+                  <button
+                    onClick={handleScan}
+                    disabled={connecting}
+                    className="h-full px-3 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-blue-500 disabled:opacity-50 transition-colors"
+                    title={t('settings.lanShare.client.scanToConnect') || '扫码连接'}
+                  >
+                    <Scan size={20} />
+                  </button>
+                </div>
+              </div>
             </div>
 
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                 {t('settings.lanShare.client.port') || '端口'}
               </label>
               <input
@@ -550,12 +563,12 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                 onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, ''))}
                 placeholder="8080"
                 inputMode="numeric"
-                className="w-full h-[55px] px-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
+                className="w-full h-[55px] px-4 bg-panel rounded-lg border border-subtle text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-colors"
               />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                 {t('settings.lanShare.client.accessCode') || '访问码'}
               </label>
               <input
@@ -565,12 +578,12 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                 placeholder="----"
                 inputMode="numeric"
                 maxLength={4}
-                className="w-full h-[55px] px-4 bg-gray-900 text-white border border-gray-200 dark:border-gray-700 rounded-lg text-2xl font-mono font-bold tracking-[0.5em] text-center placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors"
+                className="w-full h-[55px] px-4 bg-gray-900 dark:bg-gray-800 text-white border border-subtle rounded-lg text-2xl font-mono font-bold tracking-[0.5em] text-center placeholder-gray-500 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-colors"
               />
             </div>
 
             <div>
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 block">
+              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                 {t('settings.lanShare.client.deviceName') || '设备名称'}
               </label>
               <input
@@ -587,7 +600,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                   t('settings.lanShare.client.deviceNamePlaceholder') || '如：三星Tab S8+'
                 }
                 maxLength={30}
-                className="w-full h-[55px] px-4 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors"
+                className="w-full h-[55px] px-4 bg-panel rounded-lg border border-subtle text-base text-gray-800 dark:text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 transition-colors"
               />
             </div>
 
@@ -608,20 +621,11 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                 </>
               )}
             </button>
-
-            <button
-              onClick={handleScan}
-              disabled={connecting}
-              className="w-full h-[55px] flex items-center justify-center gap-2 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 rounded-lg text-sm font-medium transition-colors"
-            >
-              <Scan size={16} />
-              {t('settings.lanShare.client.scanToConnect') || '扫码连接'}
-            </button>
           </div>
 
           {savedServers.length > 0 && (
-            <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-4 border border-gray-200 dark:border-gray-700">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3 flex items-center">
+            <div className="bg-surface rounded-xl p-4 border border-subtle">
+              <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-3 flex items-center">
                 <Clock size={14} className="mr-1.5" />
                 {t('settings.lanShare.client.recentServers') || '最近服务器'}
               </h4>
@@ -629,7 +633,7 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                 {savedServers.map((s) => (
                   <div
                     key={`${s.host}:${s.port}`}
-                    className="flex items-center justify-between h-[55px] px-3 bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
+                    className="flex items-center justify-between h-[55px] px-3 bg-panel rounded-lg border border-subtle"
                   >
                     <button
                       onClick={() => handleSelectServer(s)}
@@ -645,11 +649,18 @@ export const LanClientPanel: React.FC<LanClientPanelProps> = ({
                           </div>
                         )}
                       </div>
-                      <RefreshCw size={14} className="text-gray-400 flex-shrink-0 ml-2" />
+                    </button>
+                    <button
+                      onClick={() => handleReconnect(s)}
+                      disabled={connecting}
+                      className="ml-2 p-2 text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-lg transition-colors flex-shrink-0 disabled:opacity-50"
+                      title={t('settings.lanShare.client.reconnect') || '重新连接'}
+                    >
+                      <RefreshCw size={16} />
                     </button>
                     <button
                       onClick={() => handleRemoveServer(s)}
-                      className="ml-2 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex-shrink-0"
+                      className="ml-1 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors flex-shrink-0"
                       title={t('settings.lanShare.client.remove') || '移除'}
                     >
                       <Trash2 size={16} />

@@ -389,6 +389,8 @@ export interface SavedServer {
   port: number;
   name?: string;
   lastConnected: number;
+  // 上次成功连接使用的访问码（用于"最近服务器"一键重连；桌面端重新生成验证码后重连失败会回退到手动填写）
+  accessCode?: string;
 }
 
 // 已连接设备信息

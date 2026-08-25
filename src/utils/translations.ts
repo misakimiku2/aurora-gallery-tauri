@@ -750,7 +750,10 @@ export const translations = {
           deviceNamePlaceholder: '如：三星Tab S8+',
           bidirectionalOn: '双向连接已建立：桌面端已自动连接本机',
           bidirectionalWaiting: '等待桌面端自动连接本机…',
-          connectionLost: '与桌面端的连接已断开'
+          connectionLost: '与桌面端的连接已断开',
+          ownServerStartFailed: '本机共享启动失败，无法建立双向连接，请检查端口是否被占用',
+          reconnect: '重新连接',
+          reconnectNeedCode: '该服务器未保存访问码，请输入访问码后点击连接'
         },
         androidClient: {
           title: '连接安卓设备',
@@ -1751,7 +1754,10 @@ export const translations = {
           deviceNamePlaceholder: 'e.g. Galaxy Tab S8+',
           bidirectionalOn: 'Two-way connection established: desktop has connected to this device',
           bidirectionalWaiting: 'Waiting for desktop to connect back...',
-          connectionLost: 'Connection to the desktop was lost'
+          connectionLost: 'Connection to the desktop was lost',
+          ownServerStartFailed: 'Failed to start sharing on this device; cannot establish the two-way connection. Check whether the port is in use',
+          reconnect: 'Reconnect',
+          reconnectNeedCode: 'No access code saved for this server. Enter the code and tap Connect'
         },
         androidClient: {
           title: 'Connect Android Device',

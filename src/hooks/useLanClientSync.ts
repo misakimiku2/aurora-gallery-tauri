@@ -177,6 +177,11 @@ export const useLanClientSync = ({
   // 自动清理本机连接状态并提示，避免 UI 永远停留在"已连接"。
   const heartbeatFailuresRef = useRef(0);
 
+  // 本机服务端在本会话中是否曾处于运行状态：
+  // 用于区分"用户通过通知栏停止了共享"（曾运行 → 已停止 → 需断开整条链路）
+  // 与"App 重启后服务端未自动恢复"（从未运行 → 保持现状，见文档已知限制）。
+  const ownServerWasRunningRef = useRef(false);
+
   // 彻底断开与桌面端的连接并停止本机共享服务端（双向融合：
   // 本机共享与桌面端连接是一个整体，任何一侧断开都整条链路断开）。
   const clearConnection = useCallback(() => {
@@ -223,6 +228,23 @@ export const useLanClientSync = ({
             clearConnection();
           }
         });
+      // 融合兜底校验：通知栏"停止共享"时 App 通常处于后台，状态事件可能
+      // 到不了被挂起的 WebView——待 App 回到前台后由心跳周期检测"本机服务端
+      // 曾运行、现已停止"并彻底断开整条链路，不再停留在"等待桌面端连接"的
+      // 中间态（与 App 重启后服务端未恢复的情形区分开）。
+      if (isAndroidPlatformCached()) {
+        lanShareAndroidGetStatus()
+          .then((status) => {
+            if (status.is_running) {
+              ownServerWasRunningRef.current = true;
+              return;
+            }
+            if (ownServerWasRunningRef.current && lanTokenRef.current) {
+              clearConnection();
+            }
+          })
+          .catch(() => {});
+      }
     };
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 5000);
@@ -231,15 +253,19 @@ export const useLanClientSync = ({
 
   // 通知栏"停止共享"（或任何路径停止本机服务端）时，同步清理与桌面端的连接：
   // 双向融合下本机共享与桌面端连接是一个整体，服务端停止即彻底断开。
+  // 注意：注册时不拦截 isAndroidPlatformCached()——App 异步初始化完成前该缓存
+  // 仍为 false，会导致监听器漏注册；事件只在安卓端产生，桌面端注册无害。
   useEffect(() => {
-    if (!isAndroidPlatformCached()) return;
     let disposed = false;
     let unlistenFn: (() => void) | undefined;
     listen('lan-share-android-status-changed', () => {
-      if (disposed) return;
+      if (disposed || !isAndroidPlatformCached()) return;
       lanShareAndroidGetStatus()
         .then((status) => {
-          if (disposed || status.is_running) return;
+          if (disposed) return;
+          ownServerWasRunningRef.current =
+            ownServerWasRunningRef.current || status.is_running;
+          if (status.is_running) return;
           if (lanTokenRef.current) {
             clearConnection();
           }

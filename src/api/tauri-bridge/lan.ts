@@ -317,18 +317,20 @@ export const lanShareUpdateConfig = async (config: LanShareSettings): Promise<vo
 };
 
 /**
- * 保存服务器到最近连接列表（仅前端逻辑，操作 savedServers 数组）
+ * 保存服务器到最近连接列表（仅前端逻辑，操作 savedServers 数组）。
+ * accessCode 一并保存，供"最近服务器"一键重连使用。
  */
 export const lanShareSaveServer = (
   currentSettings: LanShareSettings,
   host: string,
   port: number,
-  name?: string
+  name?: string,
+  accessCode?: string
 ): LanShareSettings => {
   const existing = currentSettings.savedServers || [];
   const filtered = existing.filter(s => !(s.host === host && s.port === port));
   const updated: SavedServer[] = [
-    { host, port, name, lastConnected: Date.now() },
+    { host, port, name, lastConnected: Date.now(), accessCode },
     ...filtered,
   ].slice(0, 10); // keep last 10
   return { ...currentSettings, savedServers: updated };
