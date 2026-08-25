@@ -2,55 +2,29 @@ import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import React, { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 
-// 辅助函数：深度查找文件夹内的图片
-const findImagesDeeply = (
-    rootFolder: FileNode,
-    allFiles: Record<string, FileNode>,
-    limit: number = 3
-): FileNode[] => {
-    const images: FileNode[] = [];
-    // 使用栈进�?DFS
-    const stack: string[] = [...(rootFolder.children || [])];
-    const visited = new Set<string>(); // 防止循环引用
-
-    // 设置一个遍历上限，防止超大文件夹卡�?UI
-    let traversalCount = 0;
-    const MAX_TRAVERSAL = 200;
-
-    while (stack.length > 0 && images.length < limit && traversalCount < MAX_TRAVERSAL) {
-        const id = stack.pop()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        traversalCount++;
-
-        const node = allFiles[id];
-        if (!node) continue;
-
-        if (node.type === FileType.IMAGE) {
-            images.push(node);
-        } else if (node.type === FileType.FOLDER && node.children) {
-            stack.push(...node.children);
-        }
-    }
-
-    // 排序并切�?
-    return images
-        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
-        .slice(0, limit);
-};
 import { createPortal } from 'react-dom';
 import { FileNode, FileType, Person, TabState, Topic, AppSettings, AppState } from '../types';
 import { formatSize, getFolderStats, getFolderPreviewImages } from '../utils/mockFileSystem';
-import { Tag, Link, HardDrive, FileText, Globe, FolderOpen, Copy, X, MoreHorizontal, Folder as FolderIcon, Calendar, Clock, PieChart, Edit3, Check, Save, Search, ChevronDown, ChevronUp, ChevronRight, Scan, Sparkles, Smile, User, Languages, Book, Film, Folder, ExternalLink, Image as ImageIcon, Palette as PaletteIcon, Trash2, RefreshCw, Layout } from 'lucide-react';
-import { Folder3DIcon } from './Folder3DIcon';
-import { AIRenameButton } from './AIRenameButton';
-import { AIRenamePreview } from './AIRenamePreview';
+import { HardDrive, FileText, FolderOpen, Copy, Folder as FolderIcon, Calendar, Clock, Edit3, Check, Save, Search, ChevronDown, ChevronUp, Sparkles, User, ExternalLink, Image as ImageIcon, Trash2, Layout } from 'lucide-react';
 import { useAIRename } from '../hooks/useAIRename';
+import ImagePreview from './metadata/ImagePreview';
+import PersonAvatar from './metadata/PersonAvatar';
+import TopicCoverImage from './metadata/TopicCoverImage';
+import CategorySelector from './metadata/CategorySelector';
+import DistributionChart from './metadata/DistributionChart';
+import FileInfoSection from './metadata/FileInfoSection';
+import BatchStatsSection from './metadata/BatchStatsSection';
+import PaletteSection from './metadata/PaletteSection';
+import FolderInfoSection from './metadata/FolderInfoSection';
+import AIAnalysisSection from './metadata/AIAnalysisSection';
+import EditSection from './metadata/EditSection';
+import { findImagesDeeply } from '../utils/fileTree';
+import { getGlobalCache } from '../utils/thumbnailCache';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
-import { getBlobCacheSync, preloadToCache, getPaletteCacheSync, preloadPaletteToCache, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
-import { isAndroidPlatformCached, dbFindTopicsContainingFile } from '../api/tauri-bridge';
+import { getPaletteCacheSync, preloadPaletteToCache, PALETTE_CACHE_UPDATE_EVENT } from './ImageViewer';
+import { dbFindTopicsContainingFile } from '../api/tauri-bridge';
 import { isTauriEnvironment } from '../utils/environment';
 
 interface MetadataProps {
@@ -78,375 +52,9 @@ interface MetadataProps {
     aiConnectionStatus?: AppState['aiConnectionStatus'];
 }
 
-// Image Preview Component for Tauri
-// 获取或初始化全局缓存 (与FileGrid.tsx共享)
-const getGlobalCache = () => {
-    // 使用类型断言来访问全局缓存，避免重新定义LRUCache类型
-    const win = window as any;
-
-    // 只在缓存不存在时创建新实�?
-    if (!win.__AURORA_THUMBNAIL_CACHE__) {
-        // 这里不重新定义LRUCache类，因为它已经在FileGrid.tsx中定义了
-        // 我们假设当FileGrid组件加载时，已经初始化了缓存
-        return null;
-    }
-
-    return win.__AURORA_THUMBNAIL_CACHE__;
-};
-
-const ImagePreview = ({ file, resourceRoot, cachePath }: { file: FileNode, resourceRoot?: string, cachePath?: string }) => {
-    // 初始化时优先�?ImageViewer 的高分辨�?Blob 缓存获取
-    const [imageUrl, setImageUrl] = useState<string | null>(() => {
-        if (!file.path) return null;
-        // 优先使用高分辨率缓存
-        const blobUrl = getBlobCacheSync(file.path);
-        if (blobUrl) return blobUrl;
-        // 其次使用缩略图缓�?
-        const cache = getGlobalCache();
-        return cache?.get(file.path) || null;
-    });
-
-    const [isLoading, setIsLoading] = useState(!imageUrl);
-
-    useEffect(() => {
-        const controller = new AbortController();
-
-        const loadImage = async () => {
-            if (!file.path) {
-                setImageUrl(null);
-                setIsLoading(false);
-                return;
-            }
-
-            // 优先检�?ImageViewer 的高分辨�?Blob 缓存
-            const blobUrl = getBlobCacheSync(file.path);
-            if (blobUrl) {
-                setImageUrl(blobUrl);
-                setIsLoading(false);
-                return;
-            }
-
-            // 检查全局缩略图缓�?
-            const cache = getGlobalCache();
-            const cachedUrl = cache?.get(file.path);
-
-            if (cachedUrl) {
-                setImageUrl(cachedUrl);
-                setIsLoading(false);
-                return;
-            }
-
-            // 如果缓存中没有，才显示加载状�?
-            setIsLoading(true);
-
-            try {
-                // Use getThumbnail for preview (smaller, faster)
-                const { getThumbnail } = await import('../api/tauri-bridge');
-
-                if (controller.signal.aborted) return;
-
-                let dataUrl = await getThumbnail(file.path, undefined, resourceRoot, controller.signal);
-
-                if (controller.signal.aborted) return;
-
-                // Fallback or use full image if thumbnail generation fails or returns null
-                // But do not fallback if it was aborted!
-                if (!dataUrl && file.path && !controller.signal.aborted) {
-                    const { convertFileSrc } = await import('@tauri-apps/api/core');
-                    dataUrl = convertFileSrc(file.path);
-                }
-
-                if (dataUrl) {
-                    // 更新全局缓存
-                    if (cache) cache.set(file.path, dataUrl);
-                    if (!controller.signal.aborted) setImageUrl(dataUrl);
-                } else {
-                    if (!controller.signal.aborted) setImageUrl(null);
-                }
-            } catch (error) {
-                console.error('Failed to load preview image:', error);
-                if (!controller.signal.aborted) setImageUrl(null);
-            } finally {
-                if (!controller.signal.aborted) setIsLoading(false);
-            }
-        };
-
-        loadImage();
-
-        return () => {
-            controller.abort();
-        };
-    }, [file.path, file.id, resourceRoot]);
-
-    return (
-        <div className="flex flex-col items-center">
-            <div className="w-full rounded-lg overflow-hidden bg-surface border border-subtle flex justify-center items-center p-2 mb-2 shadow-sm min-h-[200px]">
-                {isLoading ? (
-                    <div className="flex items-center justify-center">
-                        <ImageIcon className="animate-pulse text-gray-400" size={32} />
-                    </div>
-                ) : imageUrl ? (
-                    <img
-                        src={imageUrl}
-                        className="max-w-full max-h-[300px] object-contain rounded"
-                        alt={file.name}
-                        decoding="async"
-                        style={{
-                            willChange: 'transform, width, height',
-                            WebkitBackfaceVisibility: 'hidden',
-                            backfaceVisibility: 'hidden',
-                            transform: 'translate3d(0, 0, 0)',
-                        }}
-                    />
-                ) : (
-                    <div className="flex items-center justify-center">
-                        <ImageIcon className="text-gray-400" size={32} />
-                    </div>
-                )}
-            </div>
-        </div>
-    );
-};
 
 
-const PersonAvatar = ({ person, coverFile, size = 80, className = '' }: {
-    person: Person;
-    coverFile?: FileNode;
-    size?: number;
-    className?: string;
-}) => {
-    const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
 
-    const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
-        const img = e.currentTarget;
-        setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-    }, []);
-
-    const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
-    const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
-
-    let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
-
-    if (hasFaceBox) {
-        renderCrop = {
-            x: person.faceBox!.x,
-            y: person.faceBox!.y,
-            width: person.faceBox!.w,
-            height: person.faceBox!.h
-        };
-    } else if (imgDimensions) {
-        const { width: imgW, height: imgH } = imgDimensions;
-        const minDim = Math.min(imgW, imgH);
-        const cropX = (imgW - minDim) / 2;
-        const cropY = (imgH - minDim) / 2;
-
-        const cropWPercent = (minDim / imgW) * 100;
-        const cropHPercent = (minDim / imgH) * 100;
-        const cropXPercent = (cropX / imgW) * 100;
-        const cropYPercent = (cropY / imgH) * 100;
-
-        renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
-    }
-
-    if (!coverUrl) {
-        return (
-            <div
-                className={`w-full h-full flex items-center justify-center bg-surface text-gray-400 ${className}`}
-                style={{ width: size, height: size }}
-            >
-                <User size={size * 0.4} strokeWidth={1.5} />
-            </div>
-        );
-    }
-
-    return (
-        <div
-            className={`overflow-hidden relative ${className}`}
-            style={{ width: size, height: size }}
-        >
-            {renderCrop ? (
-                <img
-                    src={coverUrl}
-                    alt={person.name}
-                    className="absolute"
-                    decoding="async"
-                    onLoad={!hasFaceBox ? handleImageLoad : undefined}
-                    style={{
-                        width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
-                        height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
-                        maxWidth: 'none',
-                        minWidth: 'unset',
-                        left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
-                        top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
-                        imageRendering: 'auto'
-                    }}
-                />
-            ) : (
-                <img
-                    src={coverUrl}
-                    alt={person.name}
-                    className="absolute"
-                    decoding="async"
-                    onLoad={!hasFaceBox ? handleImageLoad : undefined}
-                    style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        objectPosition: 'center',
-                        left: 0,
-                        top: 0,
-                        imageRendering: 'auto'
-                    }}
-                />
-            )}
-        </div>
-    );
-};
-
-const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
-    topic: Topic;
-    coverUrl: string | null;
-    className?: string;
-}) => {
-    const [imgDimensions, setImgDimensions] = useState<{ width: number; height: number } | null>(null);
-
-    const handleImageLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
-        const img = e.currentTarget;
-        setImgDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-    }, []);
-
-    const hasCrop = topic.coverCrop && topic.coverCrop.width > 0 && topic.coverCrop.height > 0;
-
-    let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
-
-    if (hasCrop) {
-        renderCrop = topic.coverCrop!;
-    } else if (imgDimensions) {
-        const { width: imgW, height: imgH } = imgDimensions;
-        const targetAspect = 3 / 4;
-        const imgAspect = imgW / imgH;
-
-        let cropW: number, cropH: number, cropX: number, cropY: number;
-
-        if (imgAspect > targetAspect) {
-            cropH = 100;
-            cropW = (targetAspect / imgAspect) * 100;
-            cropX = (100 - cropW) / 2;
-            cropY = 0;
-        } else {
-            cropW = 100;
-            cropH = (imgAspect / targetAspect) * 100;
-            cropX = 0;
-            cropY = (100 - cropH) / 2;
-        }
-
-        renderCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
-    }
-
-    if (!coverUrl) {
-        return (
-            <div className={`w-full h-full flex flex-col items-center justify-center text-gray-300 dark:text-gray-600 ${className}`}>
-                <Layout size={64} className="mb-4 opacity-20" />
-                <span className="text-xs uppercase tracking-[0.2em] font-medium">Topic</span>
-            </div>
-        );
-    }
-
-    return (
-        <div className={`overflow-hidden relative ${className}`}>
-            {renderCrop ? (
-                <img
-                    src={coverUrl}
-                    alt={topic.name}
-                    className="absolute"
-                    decoding="async"
-                    onLoad={!hasCrop ? handleImageLoad : undefined}
-                    style={{
-                        width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
-                        height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
-                        maxWidth: 'none',
-                        minWidth: 'unset',
-                        left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
-                        top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
-                        imageRendering: 'auto'
-                    }}
-                />
-            ) : (
-                <img
-                    src={coverUrl}
-                    alt={topic.name}
-                    className="absolute"
-                    decoding="async"
-                    onLoad={!hasCrop ? handleImageLoad : undefined}
-                    style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        objectPosition: 'center',
-                        left: 0,
-                        top: 0,
-                        imageRendering: 'auto'
-                    }}
-                />
-            )}
-        </div>
-    );
-};
-
-
-const CategorySelector = ({ current, onChange, t }: any) => (
-    <div className="space-y-2 pt-4 border-t border-subtle">
-        <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider font-semibold mb-2">{t('meta.folderCategory')}</div>
-        <div className="flex bg-surface p-1.5 rounded-xl gap-2">
-            {['general', 'book', 'sequence'].map((cat) => {
-                const isActive = current === cat;
-                return (
-                    <button
-                        key={cat}
-                        onClick={() => onChange(cat)}
-                        className={`flex-1 flex flex-col items-center justify-center py-3 rounded-lg text-xs font-medium transition-all ${isActive
-                            ? 'bg-white dark:bg-gray-700 text-blue-600 dark:text-blue-400 shadow-md ring-1 ring-black/5 dark:ring-white/10'
-                            : 'text-gray-500 hover:bg-surface hover:text-gray-900 dark:hover:text-gray-100'
-                            }`}
-                    >
-                        {cat === 'general' && <Folder size={20} className={`mb-1.5 ${isActive ? 'fill-blue-100 dark:fill-blue-900/30' : ''}`} />}
-                        {cat === 'book' && <Book size={20} className={`mb-1.5 ${isActive ? 'fill-amber-100 dark:fill-amber-900/30' : ''}`} />}
-                        {cat === 'sequence' && <Film size={20} className={`mb-1.5 ${isActive ? 'fill-purple-100 dark:fill-purple-900/30' : ''}`} />}
-                        {t(`meta.cat${cat.charAt(0).toUpperCase() + cat.slice(1)}`)}
-                    </button>
-                );
-            })}
-        </div>
-    </div>
-);
-
-const DistributionChart = ({ data, totalFiles }: { data: { label: string, value: number, color: string }[], totalFiles: number }) => {
-    const max = Math.max(...data.map(d => d.value), 1);
-
-    return (
-        <div className="space-y-3">
-            {data.map((item) => (
-                <div key={item.label} className="flex items-center text-xs group">
-                    <div className="w-20 text-gray-500 dark:text-gray-400 font-medium truncate shrink-0" title={item.label}>
-                        {item.label}
-                    </div>
-                    <div className="flex-1 mx-3 h-2 bg-surface rounded-full overflow-hidden">
-                        <div
-                            className={`h-full rounded-full ${item.color} shadow-sm transition-all duration-700 ease-out`}
-                            style={{ width: `${(item.value / max) * 100}%` }}
-                        />
-                    </div>
-                    <div className="w-12 text-right text-gray-700 dark:text-gray-300 font-mono font-medium">
-                        {item.value}
-                    </div>
-                </div>
-            ))}
-            {data.length === 0 && (
-                <div className="text-center text-gray-400 text-xs py-2 italic">No files found</div>
-            )}
-        </div>
-    );
-};
 
 export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files, people, topics, selectedPersonIds, selectedTopicIds, onUpdate, onUpdatePerson, onUpdateTopic, onDeleteTopic, onSelectTopic, onSelectPerson, onNavigateToFolder, onNavigateToTag, onSearch, t, activeTab, resourceRoot, cachePath, filesVersion, settings, aiConnectionStatus }) => {
     const isMulti = selectedFileIds.length > 1;
@@ -688,11 +296,15 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         }
 
         setNewTagInput('');
-        setShowSavedDesc(false);
-        setShowSavedSource(false);
         setShowSavedPerson(false);
         setPaletteMenu({ visible: false, x: 0, y: 0, color: null });
     }, [file?.id, file?.description, file?.aiData, selectedFileIds.join(','), isMulti, person?.id, topic?.id, topics]);
+
+    // 切换文件/选择时重置"已保存"提示（不随 description/sourceUrl 变化重置，避免保存后提示立即消失）
+    useEffect(() => {
+        setShowSavedDesc(false);
+        setShowSavedSource(false);
+    }, [file?.id, selectedFileIds.join(',')]);
 
     useEffect(() => {
         if (!file || isMulti || file.type !== FileType.IMAGE || !file.path) return;
@@ -898,12 +510,6 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         return null;
     }, [file?.id, filesVersion]);
 
-    // 获取或初始化全局缓存 (与FileGrid.tsx共享)
-    const getGlobalCache = () => {
-        const win = window as any;
-        return win.__AURORA_THUMBNAIL_CACHE__ || null;
-    };
-
     // 文件夹预览图，与主界面保持一�?
     const [folderPreviewImages, setFolderPreviewImages] = useState<string[]>([]);
     const [folderPreviewLoaded, setFolderPreviewLoaded] = useState(false);
@@ -1106,22 +712,40 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
     }, [batchStats, t]);
 
     const handleUpdateMeta = () => {
+        let descChanged = false;
+        let sourceChanged = false;
+
         if (isMulti) {
             selectedFileIds.forEach(id => {
+                const f = files[id];
+                if (!f) return;
                 const updates: Partial<FileNode> = {};
-                if (!isDescMixed && batchDesc) updates.description = batchDesc;
-                if (!isSourceMixed && batchSource) updates.sourceUrl = batchSource;
+                if (!isDescMixed && batchDesc && batchDesc !== (f.description || '')) {
+                    updates.description = batchDesc;
+                    descChanged = true;
+                }
+                if (!isSourceMixed && batchSource && batchSource !== (f.sourceUrl || '')) {
+                    updates.sourceUrl = batchSource;
+                    sourceChanged = true;
+                }
                 if (Object.keys(updates).length > 0) onUpdate(id, updates);
             });
         } else if (file) {
-            onUpdate(file.id, { name, description: desc, sourceUrl: source });
+            if (desc !== (file.description || '')) descChanged = true;
+            if (source !== (file.sourceUrl || '')) sourceChanged = true;
+            if (descChanged || sourceChanged) {
+                onUpdate(file.id, { name, description: desc, sourceUrl: source });
+            }
         }
-        setShowSavedDesc(true);
-        setShowSavedSource(true);
-        setTimeout(() => {
-            setShowSavedDesc(false);
-            setShowSavedSource(false);
-        }, 2000);
+
+        if (descChanged) setShowSavedDesc(true);
+        if (sourceChanged) setShowSavedSource(true);
+        if (descChanged || sourceChanged) {
+            setTimeout(() => {
+                setShowSavedDesc(false);
+                setShowSavedSource(false);
+            }, 2000);
+        }
     };
 
     const handleUpdatePersonMeta = () => {
@@ -1856,64 +1480,31 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
     return (
         <div ref={panelRef} className="h-full flex flex-col bg-panel overflow-y-auto custom-scrollbar relative">
-            <div className="p-5 flex-shrink-0 bg-panel">
-                {/* 文件名区域 - 使用相对定位，按钮绝对定位在右下角 */}
-                <div className="relative">
-                    <div className={`font-bold text-lg text-gray-800 dark:text-white break-all leading-tight mb-1 ${!isMulti && file && file.type === FileType.IMAGE && settings && !previewName ? 'pr-7' : ''}`}>
-                        {isMulti ? `${selectedFileIds.length} ${t('meta.items')}` : file?.name}
-                    </div>
-
-                    {/* 按钮绝对定位在右下角 */}
-                    {!isMulti && file && file.type === FileType.IMAGE && settings && aiConnectionStatus === 'connected' && !previewName && (
-                        <div className="absolute bottom-0 right-0">
-                            <AIRenameButton
-                                onClick={() => generateName(file)}
-                                isGenerating={isGenerating}
-                                t={t}
-                            />
-                        </div>
-                    )}
-                </div>
-
-                {/* 父文件夹名称 */}
-                {!isMulti && file && (
-                    <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                        {files[file.parentId || '']?.name || 'Root'}
-                    </div>
-                )}
-
-                {/* AI 重命名预览 - 显示在文件名下方 */}
-                {!isMulti && file && previewName && (
-                    <AIRenamePreview
-                        previewName={previewName}
-                        onApply={() => applyRename(file)}
-                        onCancel={cancelRename}
-                        t={t}
-                    />
-                )}
-            </div>
+            <FileInfoSection
+                isMulti={isMulti}
+                file={file}
+                files={files}
+                selectedCount={selectedFileIds.length}
+                t={t}
+                settings={settings}
+                aiConnectionStatus={aiConnectionStatus}
+                previewName={previewName}
+                isGenerating={isGenerating}
+                onGenerateName={generateName}
+                onApplyRename={applyRename}
+                onCancelRename={cancelRename}
+            />
 
             <div className="p-5 space-y-6">
 
                 {/* Multi-Selection Composition Chart */}
-                {isMulti && batchStats && (
-                    <div className="bg-surface rounded-lg border border-subtle p-4 shadow-sm">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
-                            <PieChart size={12} className="mr-1.5" /> {t('meta.typeDistribution')}
-                        </div>
-                        <DistributionChart data={batchChartData} totalFiles={selectedFileIds.length} />
-
-                        {/* Total Files Summary */}
-                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-subtle">
-                            <span>{t('meta.totalFiles')}</span>
-                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{selectedFileIds.length}</span>
-                        </div>
-                        {/* Total Size Summary */}
-                        <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-2">
-                            <span>{t('meta.totalSize')}</span>
-                            <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{formatSize(batchStats.totalSize)}</span>
-                        </div>
-                    </div>
+                {isMulti && (
+                    <BatchStatsSection
+                        batchStats={batchStats}
+                        batchChartData={batchChartData}
+                        totalFiles={selectedFileIds.length}
+                        t={t}
+                    />
                 )}
 
                 {/* Large Preview Image (Single Image Only) */}
@@ -1923,456 +1514,42 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
 
                 {/* Color Palette (8 Card Grid) */}
                 {!isMulti && file && file.type === FileType.IMAGE && (
-                    <div>
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center justify-between">
-                            <div className="flex items-center">
-                                <PaletteIcon size={12} className="mr-1.5" /> {t('meta.palette')}
-                            </div>
-                            <div className="flex items-center gap-1">
-                                <button
-                                    onClick={async () => {
-                                        if (colors.length > 0) {
-                                            const atmosphereColors = colors.slice(0, 5);
-                                            const searchQuery = `palette:${atmosphereColors.map(c => c.replace('#', '')).join(',')}`;
-                                            onSearch(searchQuery);
-                                        }
-                                    }}
-                                    className="p-1 px-2 flex items-center gap-1 hover:bg-surface rounded-md transition-colors text-[10px] text-gray-500 font-medium"
-                                    title={t('meta.searchAtmosphere')}
-                                >
-                                    <Sparkles size={10} className="text-purple-500" />
-                                    {t('meta.atmosphere')}
-                                </button>
-
-                                <button
-                                    onClick={() => {
-                                        if (file && file.type === FileType.IMAGE && file.path) {
-                                            // Remove from cache to force re-extraction
-                                            extractedCache.current.delete(file.id);
-
-                                            // Re-extract palette using direct file path
-                                            (async () => {
-                                                try {
-                                                    let hexColors: string[] = [];
-                                                    if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
-                                                        const { getRemotePalette } = await import('../utils/remoteSource');
-                                                        hexColors = await getRemotePalette(file.path);
-                                                    } else {
-                                                        const { getDominantColors } = await import('../api/tauri-bridge');
-
-                                                        let thumbnailPath: string | null = null;
-                                                        const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                                        if (pathCache && pathCache.get) {
-                                                            thumbnailPath = pathCache.get(file.path!);
-                                                        }
-
-                                                        if (!thumbnailPath && resourceRoot) {
-                                                            try {
-                                                                const { getThumbnail } = await import('../api/tauri-bridge');
-                                                                const thumbUrl = await getThumbnail(file.path!, undefined, resourceRoot);
-                                                                if (thumbUrl) {
-                                                                    thumbnailPath = pathCache.get(file.path!);
-                                                                }
-                                                            } catch (err) {
-                                                                console.log('Failed to generate thumbnail:', err);
-                                                            }
-                                                        }
-
-                                                        const colors = await getDominantColors(file.path!, 8, thumbnailPath || undefined);
-                                                        if (colors && colors.length > 0) {
-                                                            hexColors = colors.map(c => c.hex);
-                                                        }
-                                                    }
-
-                                                    onUpdate(file.id, {
-                                                        meta: { ...file.meta!, palette: hexColors }
-                                                    });
-                                                } catch (err) {
-                                                    console.error('Failed to extract palette:', err);
-                                                    onUpdate(file.id, {
-                                                        meta: { ...file.meta!, palette: [] }
-                                                    });
-                                                }
-                                            })();
-                                        }
-                                    }}
-                                    className="p-1.5 hover:bg-surface rounded-md transition-colors flex items-center justify-center"
-                                    title={t('meta.regeneratePalette')}
-                                >
-                                    <RefreshCw size={12} className="text-gray-500 dark:text-gray-400" />
-                                </button>
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap gap-2 justify-center">
-                            {colors.length > 0 ? (
-                                colors.slice(0, 8).map((color, i) => (
-                                    <div
-                                        key={i}
-                                        className="w-6 h-6 rounded-full cursor-pointer hover:scale-110 transition-transform shadow-sm ring-1 ring-black/10 dark:ring-white/10"
-                                        style={{ backgroundColor: color }}
-                                        onClick={() => onSearch(`color:${color.replace('#', '')}`)}
-                                        onContextMenu={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            const menuWidth = 180;
-                                            const isRightmost = i === 7;
-                                            const x = isRightmost ? e.clientX - menuWidth : e.clientX;
-                                            setPaletteMenu({ visible: true, x, y: e.clientY, color });
-                                        }}
-                                        title={color}
-                                    />
-                                ))
-                            ) : isAndroidPlatformCached() ? (
-                                loadingPalette ? (
-                                    Array.from({ length: 8 }).map((_, i) => (
-                                        <div
-                                            key={i}
-                                            className="w-6 h-6 rounded-full bg-surface animate-pulse ring-1 ring-black/5 dark:ring-white/5"
-                                        />
-                                    ))
-                                ) : (
-                                    <button
-                                        onClick={async () => {
-                                            if (!file?.path) return;
-                                            const fileId = file.id;
-                                            currentExtractFileRef.current = fileId;
-                                            setLoadingPalette(true);
-                                            try {
-                                                let hexColors: string[] = [];
-                                                if (file.path.startsWith('lan://') || file.path.startsWith('android://')) {
-                                                    const { getRemotePalette } = await import('../utils/remoteSource');
-                                                    hexColors = await getRemotePalette(file.path);
-                                                } else {
-                                                    const { getDominantColors } = await import('../api/tauri-bridge');
-                                                    const pathCache = (window as any).__AURORA_THUMBNAIL_PATH_CACHE__;
-                                                    let thumbnailPath: string | undefined = undefined;
-                                                    if (pathCache?.get) {
-                                                        thumbnailPath = pathCache.get(file.path);
-                                                    }
-                                                    const result = await getDominantColors(file.path, 8, thumbnailPath);
-                                                    if (result && result.length > 0) {
-                                                        hexColors = result.map(c => c.hex);
-                                                    }
-                                                }
-                                                if (hexColors.length > 0) {
-                                                    onUpdate(file.id, {
-                                                        meta: { ...file.meta!, palette: hexColors }
-                                                    });
-                                                }
-                                            } catch (err) {
-                                                console.error('[Single-extract] Failed to extract palette:', err);
-                                            } finally {
-                                                if (currentExtractFileRef.current === fileId) {
-                                                    setLoadingPalette(false);
-                                                }
-                                            }
-                                        }}
-                                        className="px-4 py-1.5 text-xs font-medium rounded-full border border-subtle text-gray-600 dark:text-gray-400 hover:bg-surface hover:border-gray-400 dark:hover:border-gray-500 transition-colors"
-                                    >
-                                        {t('meta.extractColor')}
-                                    </button>
-                                )
-                            ) : (
-                                Array.from({ length: 8 }).map((_, i) => (
-                                    <div
-                                        key={i}
-                                        className="w-6 h-6 rounded-full bg-surface animate-pulse ring-1 ring-black/5 dark:ring-white/5"
-                                    />
-                                ))
-                            )}
-                        </div>
-                    </div>
+                    <PaletteSection
+                        file={file}
+                        colors={colors}
+                        loadingPalette={loadingPalette}
+                        resourceRoot={resourceRoot}
+                        t={t}
+                        onSearch={onSearch}
+                        onUpdate={onUpdate}
+                        extractedCache={extractedCache}
+                        currentExtractFileRef={currentExtractFileRef}
+                        onPaletteMenu={setPaletteMenu}
+                        onLoadingPalette={setLoadingPalette}
+                    />
                 )}
 
                 {/* Folder Thumbnail */}
-                {!isMulti && file && file.type === FileType.FOLDER && (
-                    <div className="flex flex-col">
-                        <div className="w-full rounded-lg overflow-hidden bg-surface border border-subtle flex justify-center items-center py-8 mb-4 shadow-sm relative group">
-                            <div className="w-[200px] h-[200px]">
-                                <Folder3DIcon
-                                    previewSrcs={folderPreviewImages}
-                                    count={file.children?.length}
-                                    category={file.category}
-                                    className="w-full h-full text-blue-500 dark:text-blue-400"
-                                />
-                            </div>
-                        </div>
-
-                        {/* File Type Distribution */}
-                        {folderDetails && (
-                            <div className="bg-surface rounded-lg border border-subtle p-4 shadow-sm">
-                                <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-4 flex items-center">
-                                    <PieChart size={12} className="mr-1.5" /> {t('meta.fileDistribution')}
-                                </div>
-                                <DistributionChart data={chartData} totalFiles={folderDetails.totalFiles + folderDetails.subFolderCount} />
-
-                                {/* Total Files Summary */}
-                                <div className="text-xs text-gray-400 dark:text-gray-500 flex justify-between items-center pt-3 mt-3 border-t border-subtle">
-                                    <span>{t('meta.totalFiles')}</span>
-                                    <span className="font-bold text-gray-600 dark:text-gray-300 bg-surface px-2 py-0.5 rounded-full">{folderDetails.totalFiles}</span>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
+                <FolderInfoSection
+                    file={file}
+                    folderPreviewImages={folderPreviewImages}
+                    folderDetails={folderDetails}
+                    chartData={chartData}
+                    t={t}
+                />
 
                 {/* AI Analysis Section */}
-                {(isMulti || (!isMulti && file && file.aiData)) && (
-                    // Check if any selected file has AI data
-                    selectedFileIds.some(id => files[id]?.aiData) && (
-                        <div className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-900/10 dark:to-blue-900/10 rounded-xl p-4 border border-purple-100 dark:border-purple-900/30">
-                            <div className="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-3 flex items-center justify-between">
-                                <div className="flex items-center"><Sparkles size={12} className="mr-1.5" /> {t('meta.aiSection')}</div>
-                                {(
-                                    (!isMulti && file && file.aiData) ||
-                                    (isMulti && selectedFileIds.some(id => files[id]?.aiData))
-                                ) && (
-                                        isMulti ? (
-                                            <button
-                                                onClick={() => {
-                                                    selectedFileIds.forEach(id => {
-                                                        if (files[id]?.aiData) {
-                                                            onUpdate(id, { aiData: undefined });
-                                                        }
-                                                    });
-                                                }}
-                                                className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
-                                                title={t('meta.clearAllAiData')}
-                                                aria-label={t('meta.clearAllAiData')}
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        ) : (
-                                            <button
-                                                onClick={() => file && onUpdate(file.id, { aiData: undefined })}
-                                                className="p-2 rounded-md hover:bg-red-600/10 dark:hover:bg-red-500/20 text-red-600 dark:text-red-300 transition"
-                                                title={t('meta.clearAiData')}
-                                                aria-label={t('meta.clearAiData')}
-                                            >
-                                                <Trash2 size={16} />
-                                            </button>
-                                        )
-                                    )}
-                            </div>
-
-                            {isMulti ? (
-                                // Multi-selection AI analysis summary
-                                <div className="space-y-3">
-                                    {/* Count of files with AI data */}
-                                    <div className="bg-surface p-2 rounded border border-subtle">
-                                        <div className="text-gray-400 text-xs mb-1">{t('meta.aiFilesCount')}</div>
-                                        <div className="font-medium text-gray-800 dark:text-gray-200">
-                                            {selectedFileIds.filter(id => files[id]?.aiData).length} / {selectedFileIds.length}
-                                        </div>
-                                    </div>
-
-                                    {/* Scene Categories */}
-                                    {(() => {
-                                        // Get all unique scene categories from selected files
-                                        const sceneCategories = new Map<string, number>();
-                                        selectedFileIds.forEach(id => {
-                                            const aiData = files[id]?.aiData;
-                                            if (aiData?.sceneCategory) {
-                                                const category = aiData.sceneCategory;
-                                                sceneCategories.set(category, (sceneCategories.get(category) || 0) + 1);
-                                            }
-                                        });
-
-                                        if (sceneCategories.size > 0) {
-                                            return (
-                                                <div className="bg-surface p-2 rounded border border-subtle">
-                                                    <div className="text-gray-400 text-xs mb-2 flex items-center">
-                                                        <span className="mr-1.5">{t('meta.aiScene')}</span>
-                                                        <span className="text-gray-500">({sceneCategories.size} {t('context.items')})</span>
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {Array.from(sceneCategories.entries())
-                                                            .sort(([, a], [, b]) => b - a)
-                                                            .slice(0, 8)
-                                                            .map(([category, count]) => (
-                                                                <span key={category} className="px-2 py-1 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle flex items-center">
-                                                                    <span className="mr-1 font-medium">{category}</span>
-                                                                    <span className="text-gray-500">({count})</span>
-                                                                </span>
-                                                            ))}
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-
-                                    {/* Detected Faces */}
-                                    {(() => {
-                                        // Get all unique faces from selected files
-                                        const faceNames = new Set<string>();
-                                        selectedFileIds.forEach(id => {
-                                            const aiData = files[id]?.aiData;
-                                            if (aiData?.faces) {
-                                                aiData.faces.forEach(face => {
-                                                    if (face.name) {
-                                                        faceNames.add(face.name);
-                                                    }
-                                                });
-                                            }
-                                        });
-
-                                        if (faceNames.size > 0) {
-                                            return (
-                                                <div className="bg-surface p-2 rounded border border-subtle">
-                                                    <div className="text-gray-400 text-xs mb-2 flex items-center">
-                                                        <span className="mr-1.5">{t('meta.aiFaces')}</span>
-                                                        <span className="text-gray-500">({faceNames.size} {t('context.items')})</span>
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {Array.from(faceNames)
-                                                            .sort()
-                                                            .slice(0, 8)
-                                                            .map(name => {
-                                                                const personEntry = people ? Object.values(people).find(p => p.name === name) : null;
-                                                                return (
-                                                                    <span
-                                                                        key={name}
-                                                                        className={`px-2 py-1 bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400 text-[10px] rounded border border-purple-100 dark:border-purple-900/30 flex items-center transition-all ${personEntry ? 'cursor-pointer hover:bg-purple-100 dark:hover:bg-purple-800/30 active:scale-95' : ''}`}
-                                                                        onClick={() => personEntry && onSelectPerson && onSelectPerson(personEntry.id)}
-                                                                    >
-                                                                        {name}
-                                                                    </span>
-                                                                );
-                                                            })}
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-
-                                    {/* Detected Objects */}
-                                    {(() => {
-                                        // Get all unique objects from selected files
-                                        const objects = new Map<string, number>();
-                                        selectedFileIds.forEach(id => {
-                                            const aiData = files[id]?.aiData;
-                                            if (aiData?.objects) {
-                                                aiData.objects.forEach(obj => {
-                                                    objects.set(obj, (objects.get(obj) || 0) + 1);
-                                                });
-                                            }
-                                        });
-
-                                        if (objects.size > 0) {
-                                            return (
-                                                <div className="bg-surface p-2 rounded border border-subtle">
-                                                    <div className="text-gray-400 text-xs mb-2 flex items-center">
-                                                        <span className="mr-1.5">{t('meta.aiObjects')}</span>
-                                                        <span className="text-gray-500">({objects.size} {t('context.items')})</span>
-                                                    </div>
-                                                    <div className="flex flex-wrap gap-1.5">
-                                                        {Array.from(objects.entries())
-                                                            .sort(([, a], [, b]) => b - a)
-                                                            .slice(0, 12)
-                                                            .map(([obj, count]) => (
-                                                                <span key={obj} className="px-1.5 py-0.5 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle flex items-center">
-                                                                    <span className="mr-1">{obj}</span>
-                                                                    <span className="text-gray-500 text-[9px]">({count})</span>
-                                                                </span>
-                                                            ))}
-                                                    </div>
-                                                </div>
-                                            );
-                                        }
-                                        return null;
-                                    })()}
-
-
-                                </div>
-                            ) : (
-                                // Single file AI analysis details
-                                file && file.aiData && (
-                                    <div className="space-y-3">
-                                        <div className="grid grid-cols-2 gap-2 text-xs">
-                                            <div className="bg-surface p-2 rounded border border-subtle">
-                                                <div className="text-gray-400 mb-1">{t('meta.aiScene')}</div>
-                                                <div className="font-medium text-gray-800 dark:text-gray-200">{file.aiData.sceneCategory}</div>
-                                            </div>
-                                            <div className="bg-surface p-2 rounded border border-subtle">
-                                                <div className="text-gray-400 mb-1">{t('meta.aiConfidence')}</div>
-                                                <div className="font-medium text-gray-800 dark:text-gray-200">{Math.round(file.aiData.confidence * 100)}%</div>
-                                            </div>
-                                        </div>
-
-                                        {file.aiData.faces.length > 0 && (
-                                            <div>
-                                                <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Smile size={10} className="mr-1" /> {t('meta.aiFaces')}</div>
-                                                <div className="flex flex-wrap gap-1.5">
-                                                    {file.aiData.faces.map((face, i) => (
-                                                        <div
-                                                            key={`${face.id}-${i}`}
-                                                            className={`flex items-center bg-surface px-2 py-1 rounded-full border border-purple-100 dark:border-purple-900/30 text-xs shadow-sm transition-all ${face.personId ? 'cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900/20 active:scale-95' : ''}`}
-                                                            onClick={() => face.personId && onSelectPerson && onSelectPerson(face.personId)}
-                                                        >
-                                                            <User size={10} className="mr-1 text-purple-500" />
-                                                            <span className="text-gray-700 dark:text-gray-300">{face.name}</span>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {file.aiData.objects.length > 0 && (
-                                            <div>
-                                                <div className="text-[10px] text-gray-400 font-bold mb-1.5 flex items-center"><Scan size={10} className="mr-1" /> {t('meta.aiObjects')}</div>
-                                                <div className="flex flex-wrap gap-1">
-                                                    {file.aiData.objects.map((obj, i) => (
-                                                        <span key={`${obj}-${i}`} className="px-1.5 py-0.5 bg-surface text-gray-600 dark:text-gray-400 text-[10px] rounded border border-subtle">
-                                                            {obj}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {file.aiData.extractedText && (
-                                            <div className="mt-2 bg-surface p-2 rounded border border-subtle">
-                                                <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
-                                                    <div className="flex items-center"><FileText size={10} className="mr-1" /> {t('meta.aiExtractedText')}</div>
-                                                    <button
-                                                        onClick={() => copyToClipboard(file.aiData?.extractedText || '')}
-                                                        className="ml-2 p-1 rounded hover:bg-surface text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
-                                                        title={t('context.copy')}
-                                                        aria-label={t('context.copy')}
-                                                    >
-                                                        <Copy size={12} />
-                                                    </button>
-                                                </div>
-                                                <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{file.aiData.extractedText}</p>
-                                            </div>
-                                        )}
-
-                                        {file.aiData.translatedText && (
-                                            <div className="mt-2 bg-surface p-2 rounded border border-subtle">
-                                                <div className="text-[10px] text-gray-400 font-bold mb-1 flex items-center justify-between">
-                                                    <div className="flex items-center"><Languages size={10} className="mr-1" /> {t('meta.aiTranslatedText')}</div>
-                                                    <button
-                                                        onClick={() => copyToClipboard(file.aiData?.translatedText || '')}
-                                                        className="ml-2 p-1 rounded hover:bg-surface text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition"
-                                                        title={t('context.copy')}
-                                                        aria-label={t('context.copy')}
-                                                    >
-                                                        <Copy size={12} />
-                                                    </button>
-                                                </div>
-                                                <p className="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{file.aiData.translatedText}</p>
-                                            </div>
-                                        )}
-
-
-                                    </div>
-                                )
-                            )}
-                        </div>
-                    )
-                )}
+                <AIAnalysisSection
+                    isMulti={isMulti}
+                    file={file}
+                    files={files}
+                    selectedFileIds={selectedFileIds}
+                    people={people}
+                    onUpdate={onUpdate}
+                    onSelectPerson={onSelectPerson}
+                    onCopyToClipboard={copyToClipboard}
+                    t={t}
+                />
 
                 {/* Open Folder Button */}
                 {!isMulti && file && (
@@ -2471,157 +1648,34 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                     </div>
                 )}
 
-                {/* Tags Section */}
-                {!isMulti && file && file.type !== FileType.FOLDER && (
-                    <div>
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2 flex items-center">
-                            <Tag size={12} className="mr-1.5" /> {t('meta.tags')}
-                        </div>
-                        <div className="flex flex-wrap gap-2 mb-2">
-                            {file?.tags?.map((tag) => (
-                                <span key={tag} className="inline-flex items-center px-2 py-1 rounded bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 text-xs border border-blue-100 dark:border-blue-900/30 group">
-                                    <span className="cursor-pointer" onClick={() => onNavigateToTag(tag)}>{tag}</span>
-                                    <button onClick={() => handleRemoveTag(tag)} className="ml-1 text-blue-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <X size={10} />
-                                    </button>
-                                </span>
-                            ))}
-                            {file?.tags.length === 0 && (
-                                <span className="text-xs text-gray-400 italic py-1">{t('context.noTags')}</span>
-                            )}
-                        </div>
-                        <div className="relative">
-                            <input
-                                type="text"
-                                value={newTagInput}
-                                onChange={(e) => setNewTagInput(e.target.value)}
-                                onKeyDown={(e) => e.key === 'Enter' && handleAddTag(newTagInput)}
-                                placeholder={t('meta.addTagPlaceholder')}
-                                className="w-full bg-surface border border-subtle rounded-md py-2 px-3 text-sm text-gray-700 dark:text-gray-300 focus:ring-2 ring-blue-500/50 placeholder-gray-400 focus:border-blue-500 outline-none transition-all"
-                            />
-                            {newTagInput && (
-                                <button
-                                    onClick={() => handleAddTag(newTagInput)}
-                                    className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 bg-blue-500 text-white rounded hover:bg-blue-600 dark:hover:bg-blue-700"
-                                >
-                                    <Check size={12} />
-                                </button>
-                            )}
-
-                            {/* Tag Autocomplete Suggestions */}
-                            {newTagInput && systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).length > 0 && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-surface border border-subtle rounded shadow-lg z-10 max-h-32 overflow-y-auto">
-                                    {systemTags.filter(t => t.toLowerCase().includes(newTagInput.toLowerCase()) && !file?.tags?.includes(t)).map(tag => (
-                                        <div
-                                            key={tag}
-                                            className="px-3 py-1.5 hover:bg-blue-50 dark:hover:bg-blue-900/30 cursor-pointer text-xs flex items-center text-gray-700 dark:text-gray-200"
-                                            onClick={() => handleAddTag(tag)}
-                                        >
-                                            <Tag size={10} className="mr-2 opacity-50" /> {tag}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {/* Description Section */}
-                {!isMulti && (
-                    <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center">
-                                <FileText size={12} className="mr-1.5" /> {t('meta.description')}
-                            </div>
-                            {showSavedDesc && <span className="text-green-500 flex items-center text-[10px] animate-fade-in"><Check size={10} className="mr-1" />{t('meta.saved')}</span>}
-                        </div>
-                        {isMulti && isDescMixed ? (
-                            <div className="text-xs text-orange-500 italic mb-2 bg-orange-50 dark:bg-orange-900/20 px-2 py-1 rounded">{t('meta.mixedValues')}</div>
-                        ) : null}
-                        <div className="relative">
-                            <textarea
-                                ref={textareaRef}
-                                value={isMulti ? batchDesc : desc}
-                                onChange={(e) => isMulti ? setBatchDesc(e.target.value) : setDesc(e.target.value)}
-                                onBlur={handleUpdateMeta}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey || e.shiftKey)) {
-                                        e.preventDefault();
-                                        handleUpdateMeta();
-                                    }
-                                }}
-                                placeholder={t('meta.addDesc')}
-                                className="w-full bg-surface border border-subtle rounded-lg p-3 text-sm text-gray-700 dark:text-gray-300 resize-none focus:ring-2 ring-blue-500/50 min-h-[80px] leading-relaxed outline-none transition-all focus:border-blue-500"
-                            />
-                        </div>
-                        <div className="flex justify-between items-center mt-2 text-[10px] text-gray-400">
-                            <span>{t('meta.descSaveHint')}</span>
-                            <button
-                                onClick={handleUpdateMeta}
-                                className="flex items-center px-3 py-1.5 bg-blue-600 dark:bg-blue-500 hover:bg-blue-700 dark:hover:bg-blue-400 text-white rounded-md font-medium transition-colors"
-                            >
-                                <Save size={12} className="mr-1.5" /> {t('meta.save')}
-                            </button>
-                        </div>
-                    </div>
-                )}
-
-                {/* Source URL Section */}
-                <div>
-                    <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider flex items-center">
-                            <Globe size={12} className="mr-1.5" /> {t('meta.sourceUrl')}
-                        </div>
-                        {showSavedSource && <span className="text-green-500 flex items-center text-[10px] animate-fade-in"><Check size={10} className="mr-1" />{t('meta.saved')}</span>}
-                    </div>
-                    {isMulti && isSourceMixed ? (
-                        <div className="text-xs text-orange-500 italic mb-2 bg-orange-50 dark:bg-orange-900/20 px-2 py-1 rounded">{t('meta.mixedValues')}</div>
-                    ) : null}
-                    <div className="flex items-center bg-surface rounded-lg border border-subtle focus-within:ring-2 focus-within:ring-blue-500/50 transition-all focus-within:border-blue-500">
-                        <input
-                            type="text"
-                            value={isMulti ? batchSource : source}
-                            onChange={(e) => isMulti ? setBatchSource(e.target.value) : setSource(e.target.value)}
-                            onBlur={handleUpdateMeta}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                    handleUpdateMeta();
-                                }
-                            }}
-                            placeholder="https://..."
-                            className="flex-1 bg-transparent border-none py-2 px-3 text-sm text-blue-600 dark:text-blue-400 placeholder-gray-400 focus:outline-none"
-                        />
-                        {(isMulti ? batchSource : source) && (
-                            <button
-                                onClick={() => window.open(isMulti ? batchSource : source, '_blank')}
-                                className="p-2 text-gray-400 hover:text-blue-500"
-                                title={t('meta.openSource')}
-                            >
-                                <ExternalLink size={14} />
-                            </button>
-                        )}
-                    </div>
-                    {isMulti && (
-                        <div className="mt-3 space-y-2 max-h-40 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700 pr-1">
-                            {selectedFileIds.map(id => {
-                                const f = files[id];
-                                if (!f || !f.sourceUrl) return null;
-                                return (
-                                    <div key={id} className="flex items-center text-xs group bg-surface/50 p-1.5 rounded border border-transparent hover:border-subtle transition-colors">
-                                        <div className="text-gray-500 dark:text-gray-400 w-20 truncate mr-2 font-medium shrink-0" title={f.name}>{f.name}</div>
-                                        <button
-                                            onClick={() => f.sourceUrl && window.open(f.sourceUrl, '_blank')}
-                                            className="text-blue-500 dark:text-blue-400 truncate flex-1 text-left p-0 bg-transparent border-none hover:underline"
-                                            title={f.sourceUrl}
-                                        >
-                                            {f.sourceUrl}
-                                        </button>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                </div>
+                {/* Tags / Description / Source URL Sections */}
+                <EditSection
+                    isMulti={isMulti}
+                    file={file}
+                    files={files}
+                    selectedFileIds={selectedFileIds}
+                    newTagInput={newTagInput}
+                    onNewTagInputChange={setNewTagInput}
+                    systemTags={systemTags}
+                    onAddTag={handleAddTag}
+                    onRemoveTag={handleRemoveTag}
+                    onNavigateToTag={onNavigateToTag}
+                    desc={desc}
+                    onDescChange={setDesc}
+                    batchDesc={batchDesc}
+                    onBatchDescChange={setBatchDesc}
+                    isDescMixed={isDescMixed}
+                    showSavedDesc={showSavedDesc}
+                    textareaRef={textareaRef}
+                    source={source}
+                    onSourceChange={setSource}
+                    batchSource={batchSource}
+                    onBatchSourceChange={setBatchSource}
+                    isSourceMixed={isSourceMixed}
+                    showSavedSource={showSavedSource}
+                    onUpdateMeta={handleUpdateMeta}
+                    t={t}
+                />
             </div>
 
             {/* Palette Context Menu */}
