@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { Topic, FileNode, Person, FileType, CoverCropData } from '../types';
+import { cropToImgStyle, faceBoxToCrop, centerCrop, CropRect } from '../utils/cropStyle';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { Image, User, Plus, Trash2, Folder, ExternalLink, ChevronRight, Layout, ArrowLeft, MoreHorizontal, Edit2, FileImage, ExternalLinkIcon, Grid3X3, Rows, Columns, FolderOpen, ArrowDownUp, Check, Sparkles, Filter, Wand2 } from 'lucide-react';
 import { AutoClassificationPanel } from './AutoClassificationPanel';
@@ -736,36 +737,15 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const crop = topic.coverCrop;
         const hasValidCrop = crop && crop.width > 0 && crop.height > 0;
 
-        let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+        let renderCrop: CropRect | null = null;
 
         if (hasValidCrop) {
             renderCrop = crop;
         } else if (imgDimensions) {
-            const { width: imgW, height: imgH } = imgDimensions;
-            const targetAspect = 3 / 4;
-            const imgAspect = imgW / imgH;
-
-            let cropW: number, cropH: number, cropX: number, cropY: number;
-
-            if (imgAspect > targetAspect) {
-                cropH = 100;
-                cropW = (targetAspect / imgAspect) * 100;
-                cropX = (100 - cropW) / 2;
-                cropY = 0;
-            } else {
-                cropW = 100;
-                cropH = (imgAspect / targetAspect) * 100;
-                cropX = 0;
-                cropY = (100 - cropH) / 2;
-            }
-
-            renderCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
+            renderCrop = centerCrop(imgDimensions.width, imgDimensions.height, 3 / 4);
         }
 
         if (renderCrop) {
-            const safeWidth = Math.min(Math.max(renderCrop.width, 0.1), 99.9);
-            const safeHeight = Math.min(Math.max(renderCrop.height, 0.1), 99.9);
-
             return (
                 <div className={`overflow-hidden relative ${className || ''}`}>
                     <img
@@ -775,12 +755,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         decoding="async"
                         onLoad={!hasValidCrop ? handleImageLoad : undefined}
                         style={{
-                            width: `${10000 / safeWidth}%`,
-                            height: `${10000 / safeHeight}%`,
-                            maxWidth: 'none',
-                            minWidth: 'unset',
-                            left: `${-renderCrop.x / safeWidth * 100}%`,
-                            top: `${-renderCrop.y / safeHeight * 100}%`,
+                            ...cropToImgStyle(renderCrop),
                             imageRendering: 'auto'
                         }}
                     />
@@ -821,27 +796,12 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
         const coverUrl = coverFile?.path ? convertFileSrc(coverFile.path) : null;
         const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
 
-        let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+        let renderCrop: CropRect | null = null;
 
         if (hasFaceBox) {
-            renderCrop = {
-                x: person.faceBox!.x,
-                y: person.faceBox!.y,
-                width: person.faceBox!.w,
-                height: person.faceBox!.h
-            };
+            renderCrop = faceBoxToCrop(person.faceBox!);
         } else if (imgDimensions) {
-            const { width: imgW, height: imgH } = imgDimensions;
-            const minDim = Math.min(imgW, imgH);
-            const cropX = (imgW - minDim) / 2;
-            const cropY = (imgH - minDim) / 2;
-
-            const cropWPercent = (minDim / imgW) * 100;
-            const cropHPercent = (minDim / imgH) * 100;
-            const cropXPercent = (cropX / imgW) * 100;
-            const cropYPercent = (cropY / imgH) * 100;
-
-            renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
+            renderCrop = centerCrop(imgDimensions.width, imgDimensions.height, 1);
         }
 
         if (!coverUrl) {
@@ -865,12 +825,7 @@ export const TopicModule: React.FC<TopicModuleProps> = ({
                         decoding="async"
                         onLoad={!hasFaceBox ? handleImageLoad : undefined}
                         style={{
-                            width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
-                            height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
-                            maxWidth: 'none',
-                            minWidth: 'unset',
-                            left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
-                            top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+                            ...cropToImgStyle(renderCrop),
                             imageRendering: 'auto'
                         }}
                     />

@@ -4,6 +4,7 @@ import { FolderOpen, Check, Sparkles, X, Users, Image, AlertTriangle } from 'luc
 import { Grid } from 'react-window';
 import * as RW from 'react-window';
 import { WorkTopicInfo, Topic, Person, FileNode, WorkCharacter } from '../../types';
+import { cropToImgStyle, centerCrop } from '../../utils/cropStyle';
 import { clipGetWorkTopics, clipCreateWorkTopics } from '../../api/tauri-bridge';
 import { ImageThumbnail } from '../ImageThumbnail';
 
@@ -43,20 +44,9 @@ const SharpImage = React.memo(({ src, aspect = 3 / 4, className = "" }: { src: s
 
   let imgStyle: React.CSSProperties = { objectFit: 'cover' };
   if (dim) {
-    const imgAspect = dim.w / dim.h;
-    let cw, ch, cx, cy;
-    if (imgAspect > aspect) {
-      ch = 100; cw = (aspect / imgAspect) * 100; cx = (100 - cw) / 2; cy = 0;
-    } else {
-      cw = 100; ch = (imgAspect / aspect) * 100; cx = 0; cy = (100 - ch) / 2;
-    }
     imgStyle = {
       position: 'absolute',
-      width: `${10000 / cw}%`,
-      height: `${10000 / ch}%`,
-      left: `${-cx / cw * 100}%`,
-      top: `${-cy / ch * 100}%`,
-      maxWidth: 'none',
+      ...cropToImgStyle(centerCrop(dim.w, dim.h, aspect)),
       imageRendering: 'auto'
     };
   }

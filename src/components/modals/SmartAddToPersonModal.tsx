@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { User, Sparkles, X, Plus, Check, CheckSquare, Square, AlertCircle, RefreshCw } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { FileNode, Person as PersonType, ClipSearchResult, FileType } from '../../types';
+import { cropToImgStyle, faceBoxToCrop } from '../../utils/cropStyle';
 import { clipSearchByCharacterTag, getThumbnail, clipGetEmbeddingStatus, clipGenerateEmbeddingsBatch } from '../../api/tauri-bridge';
 import { ImageThumbnail } from '../ImageThumbnail';
 
@@ -312,15 +313,7 @@ export const SmartAddToPersonModal: React.FC<SmartAddToPersonModalProps> = ({
                     src={avatarOriginalSrc}
                     alt={person.name}
                     className="absolute"
-                    style={person.faceBox ? {
-                      width: `${10000 / person.faceBox.w}%`,
-                      height: `${10000 / person.faceBox.h}%`,
-                      maxWidth: 'none',
-                      minWidth: 'unset',
-                      left: `${-person.faceBox.x / person.faceBox.w * 100}%`,
-                      top: `${-person.faceBox.y / person.faceBox.h * 100}%`,
-                      imageRendering: 'auto'
-                    } : {
+                    style={person.faceBox ? { ...cropToImgStyle(faceBoxToCrop(person.faceBox)), imageRendering: 'auto' } : {
                       width: '100%',
                       height: '100%',
                       objectFit: 'cover',

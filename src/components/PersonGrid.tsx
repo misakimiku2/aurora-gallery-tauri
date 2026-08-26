@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Person, FileNode, TabState, PersonSortOption, PersonGroupByOption, SortDirection, Topic } from '../types';
+import { cropToImgStyle, faceBoxToCrop, centerCrop, CropRect } from '../utils/cropStyle';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { User, ChevronDown } from 'lucide-react';
 import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
@@ -65,27 +66,12 @@ const PersonCard = React.memo(({
 
   const hasFaceBox = person.faceBox && person.faceBox.w > 0 && person.faceBox.h > 0;
 
-  let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+  let renderCrop: CropRect | null = null;
 
   if (hasFaceBox) {
-    renderCrop = {
-      x: person.faceBox!.x,
-      y: person.faceBox!.y,
-      width: person.faceBox!.w,
-      height: person.faceBox!.h
-    };
+    renderCrop = faceBoxToCrop(person.faceBox!);
   } else if (imgDimensions) {
-    const { width: imgW, height: imgH } = imgDimensions;
-    const minDim = Math.min(imgW, imgH);
-    const cropX = (imgW - minDim) / 2;
-    const cropY = (imgH - minDim) / 2;
-
-    const cropWPercent = (minDim / imgW) * 100;
-    const cropHPercent = (minDim / imgH) * 100;
-    const cropXPercent = (cropX / imgW) * 100;
-    const cropYPercent = (cropY / imgH) * 100;
-
-    renderCrop = { x: cropXPercent, y: cropYPercent, width: cropWPercent, height: cropHPercent };
+    renderCrop = centerCrop(imgDimensions.width, imgDimensions.height, 1);
   }
 
   return (
@@ -123,12 +109,7 @@ const PersonCard = React.memo(({
                   decoding="async"
                   onLoad={!hasFaceBox ? handleImageLoad : undefined}
                   style={{
-                    width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
-                    height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
-                    maxWidth: 'none',
-                    minWidth: 'unset',
-                    left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
-                    top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+                    ...cropToImgStyle(renderCrop),
                     imageRendering: 'auto'
                   }}
                 />

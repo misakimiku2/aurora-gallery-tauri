@@ -3,6 +3,7 @@ import { Search, User, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import * as RW from 'react-window';
 import { Person, FileNode } from '../../types';
+import { cropToImgStyle, faceBoxToCrop } from '../../utils/cropStyle';
 
 const FixedSizeListComp: any = (() => {
     const mod: any = RW as any;
@@ -56,12 +57,7 @@ const PersonRow = ({ index, style, data }: { index: number; style: React.CSSProp
                             decoding="async"
                             loading="lazy"
                             style={{
-                                width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                                height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                maxWidth: 'none',
-                                minWidth: 'unset',
-                                left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
-                                top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                ...cropToImgStyle(faceBoxToCrop(person.faceBox)),
                                 imageRendering: 'auto'
                             }}
                         />
@@ -172,12 +168,7 @@ export const AddToPersonModal: React.FC<AddToPersonModalProps> = ({ people, file
                                                 decoding="async"
                                                 loading="lazy"
                                                 style={{
-                                                    width: `${10000 / Math.max(person.faceBox.w, 2.0)}%`,
-                                                    height: `${10000 / Math.max(person.faceBox.h, 2.0)}%`,
-                                                    maxWidth: 'none',
-                                                    minWidth: 'unset',
-                                                    left: `${-person.faceBox.x / Math.max(person.faceBox.w, 2.0) * 100}%`,
-                                                    top: `${-person.faceBox.y / Math.max(person.faceBox.h, 2.0) * 100}%`,
+                                                    ...cropToImgStyle(faceBoxToCrop(person.faceBox)),
                                                     imageRendering: 'auto'
                                                 }}
                                             />

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Layout } from 'lucide-react';
 import { Topic } from '../../types';
+import { cropToImgStyle, centerCrop, CropRect } from '../../utils/cropStyle';
 
 const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
     topic: Topic;
@@ -16,30 +17,12 @@ const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
 
     const hasCrop = topic.coverCrop && topic.coverCrop.width > 0 && topic.coverCrop.height > 0;
 
-    let renderCrop: { x: number; y: number; width: number; height: number } | null = null;
+    let renderCrop: CropRect | null = null;
 
     if (hasCrop) {
         renderCrop = topic.coverCrop!;
     } else if (imgDimensions) {
-        const { width: imgW, height: imgH } = imgDimensions;
-        const targetAspect = 3 / 4;
-        const imgAspect = imgW / imgH;
-
-        let cropW: number, cropH: number, cropX: number, cropY: number;
-
-        if (imgAspect > targetAspect) {
-            cropH = 100;
-            cropW = (targetAspect / imgAspect) * 100;
-            cropX = (100 - cropW) / 2;
-            cropY = 0;
-        } else {
-            cropW = 100;
-            cropH = (imgAspect / targetAspect) * 100;
-            cropX = 0;
-            cropY = (100 - cropH) / 2;
-        }
-
-        renderCrop = { x: cropX, y: cropY, width: cropW, height: cropH };
+        renderCrop = centerCrop(imgDimensions.width, imgDimensions.height, 3 / 4);
     }
 
     if (!coverUrl) {
@@ -61,12 +44,7 @@ const TopicCoverImage = ({ topic, coverUrl, className = '' }: {
                     decoding="async"
                     onLoad={!hasCrop ? handleImageLoad : undefined}
                     style={{
-                        width: `${10000 / Math.max(renderCrop.width, 0.1)}%`,
-                        height: `${10000 / Math.max(renderCrop.height, 0.1)}%`,
-                        maxWidth: 'none',
-                        minWidth: 'unset',
-                        left: `${-renderCrop.x / Math.max(renderCrop.width, 0.1) * 100}%`,
-                        top: `${-renderCrop.y / Math.max(renderCrop.height, 0.1) * 100}%`,
+                        ...cropToImgStyle(renderCrop),
                         imageRendering: 'auto'
                     }}
                 />

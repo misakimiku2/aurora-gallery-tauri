@@ -20,6 +20,7 @@ import AIAnalysisSection from './metadata/AIAnalysisSection';
 import EditSection from './metadata/EditSection';
 import { findImagesDeeply } from '../utils/fileTree';
 import { getGlobalCache } from '../utils/thumbnailCache';
+import { cropToBackgroundStyle, cropToImgStyle } from '../utils/cropStyle';
 
 
 // 导入 ImageViewer 的高分辨率缓存和调色板缓存
@@ -866,7 +867,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
         // 计算文件数量
         const topicFileCount = topic.fileCount ?? topic.fileIds?.length ?? 0;
 
-        // 获取封面样式 - �?TopicModule 保持一致的算法
+        // 获取封面样式 - 与 TopicModule 保持一致的算法
         const getCoverStyle = (t: Topic, overrideUrl?: string | null): React.CSSProperties => {
             const url = overrideUrl || getCoverUrlInternal(t);
             if (!url) return {};
@@ -877,21 +878,8 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
             };
 
             const crop = t.coverCrop;
-            // 复用 TopicModule.tsx 中的裁剪算法，确保显示一�?
             if (crop && crop.width > 0 && crop.height > 0) {
-                const safeWidth = Math.min(Math.max(crop.width, 0.1), 99.9);
-                const safeHeight = Math.min(Math.max(crop.height, 0.1), 99.9);
-
-                const sizeW = 10000 / safeWidth;
-                const sizeH = 10000 / safeHeight;
-
-                // 计算位置百分�? (offset / remaining_space) * 100
-                // �?safeWidth �?100 时，分母�?0，所以上面做�?99.9 的限�?
-                const posX = (crop.x / (100 - safeWidth)) * 100;
-                const posY = (crop.y / (100 - safeHeight)) * 100;
-
-                style.backgroundSize = `${sizeW}% ${sizeH}%`;
-                style.backgroundPosition = `${posX}% ${posY}%`;
+                Object.assign(style, cropToBackgroundStyle(crop));
             } else {
                 style.backgroundSize = 'cover';
                 style.backgroundPosition = 'center';
@@ -1175,13 +1163,7 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                                                                 className="absolute max-w-none"
                                                                 decoding="async"
                                                                 style={{
-                                                                    width: `${10000 / Math.max(topic.coverCrop.width, 2.0)}%`,
-                                                                    height: `${10000 / Math.max(topic.coverCrop.height, 2.0)}%`,
-                                                                    left: 0,
-                                                                    top: 0,
-                                                                    transformOrigin: 'top left',
-                                                                    transform: `translate3d(${-topic.coverCrop.x}%, ${-topic.coverCrop.y}%, 0)`,
-                                                                    willChange: 'transform, width, height',
+                                                                    ...cropToImgStyle(topic.coverCrop),
                                                                     backfaceVisibility: 'hidden',
                                                                     imageRendering: 'auto'
                                                                 }}

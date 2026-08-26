@@ -3,6 +3,7 @@ import { User, Check } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import * as RW from 'react-window';
 import { Person, FileNode, FileType, AiFace } from '../../types';
+import { cropToImgStyle, faceBoxToCrop } from '../../utils/cropStyle';
 
 // Resolve FixedSizeList component from various module shapes
 const FixedSizeListComp: any = (() => {
@@ -60,12 +61,7 @@ const PersonRow = React.memo(({ index, style, data }: PersonRowProps) => {
                             decoding="async"
                             loading="lazy"
                             style={{
-                                width: `${10000 / Math.max(p.faceBox.w, 2.0)}%`,
-                                height: `${10000 / Math.max(p.faceBox.h, 2.0)}%`,
-                                maxWidth: 'none',
-                                minWidth: 'unset',
-                                left: `${-p.faceBox.x / Math.max(p.faceBox.w, 2.0) * 100}%`,
-                                top: `${-p.faceBox.y / Math.max(p.faceBox.h, 2.0) * 100}%`,
+                                ...cropToImgStyle(faceBoxToCrop(p.faceBox)),
                                 imageRendering: 'auto'
                             }}
                         />

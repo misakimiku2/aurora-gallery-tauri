@@ -3,6 +3,7 @@ import { Search, User, Check, Sparkles, X } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import * as RW from 'react-window';
 import { FileNode, CharacterTag, DetectedCharacter, ClipSearchResult, Person } from '../../types';
+import { cropToImgStyle, faceBoxToCrop } from '../../utils/cropStyle';
 import { clipGetCharacterTags, clipSearchByCharacterTag, clipGetDetectedCharacters, getThumbnail } from '../../api/tauri-bridge';
 import { ImageThumbnail } from '../ImageThumbnail';
 
@@ -750,14 +751,7 @@ export const SmartCreatePersonModal: React.FC<SmartCreatePersonModalProps> = ({
                     src={coverSrc}
                     alt={name || 'Avatar'}
                     className="absolute"
-                    style={coverFaceBox ? {
-                      width: `${10000 / coverFaceBox.w}%`,
-                      height: `${10000 / coverFaceBox.h}%`,
-                      maxWidth: 'none',
-                      minWidth: 'unset',
-                      left: `${-coverFaceBox.x / coverFaceBox.w * 100}%`,
-                      top: `${-coverFaceBox.y / coverFaceBox.h * 100}%`
-                    } : {
+                    style={coverFaceBox ? cropToImgStyle(faceBoxToCrop(coverFaceBox)) : {
                       width: '100%',
                       height: '100%',
                       objectFit: 'cover',
