@@ -10,6 +10,10 @@ export const translations = {
       notImplemented: '此功能尚未实现',
       available: '可用'
     },
+    empty: {
+      noFolders: '没有找到相册',
+      loading: '加载中…'
+    },
     welcome: {
       title: '欢迎使用极光图库',
       step1Title: '设置您的图库',
@@ -784,7 +788,9 @@ export const translations = {
           connectionLost: '与「{name}」的连接已断开',
           bidirectionalOn: '双向连接已建立：手机已自动连接本机',
           bidirectionalWaiting: '等待手机自动连接本机…',
-          bidirectionalHint: '开启上方桌面端共享后，手机将自动连接本机（双向互联）'
+          bidirectionalHint: '开启上方桌面端共享后，手机将自动连接本机（双向互联）',
+          reconnecting: '正在重新连接「{name}」…',
+          reconnectFailed: '无法连接「{name}」，请确认手机端已开启共享且处于同一局域网'
         },
         androidServer: {
           title: '本机共享（供桌面端访问）',
@@ -1013,6 +1019,10 @@ export const translations = {
       maxTabsWarning: 'Maximum 20 tabs allowed',
       notImplemented: 'Function not implemented',
       available: 'available'
+    },
+    empty: {
+      noFolders: 'No albums found',
+      loading: 'Loading…'
     },
     welcome: {
       title: 'Welcome to Aurora Gallery',
@@ -1788,7 +1798,9 @@ export const translations = {
           connectionLost: 'Connection to "{name}" was lost',
           bidirectionalOn: 'Two-way connection established: phone has connected to this device',
           bidirectionalWaiting: 'Waiting for phone to connect back...',
-          bidirectionalHint: 'Enable the desktop sharing above and the phone will connect back automatically (two-way)'
+          bidirectionalHint: 'Enable the desktop sharing above and the phone will connect back automatically (two-way)',
+          reconnecting: 'Reconnecting to "{name}"...',
+          reconnectFailed: 'Could not reach "{name}". Make sure sharing is on and both devices are on the same network'
         },
         androidServer: {
           title: 'This Device Sharing (for desktop)',

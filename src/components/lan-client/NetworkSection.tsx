@@ -146,6 +146,13 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                         flexShrink: 0,
                         margin: '0 10px',
                       }}
+                      title={
+                        device.lastError
+                          ? `${device.name} · ${device.lastError}`
+                          : device.connected
+                            ? device.name
+                            : `${device.name} · ${androidHint}`
+                      }
                       onClick={() => onNavigateAndroidHome?.(device.key)}
                     >
                       <div
@@ -180,6 +187,16 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                         >
                           {device.name}
                         </span>
+                        {/* 未连通时给出明确状态：重连中 / 未连接（点击即重试） */}
+                        {!device.connected && (
+                          <span
+                            className={`text-[10px] shrink-0 ml-1.5 ${
+                              isActive ? 'text-white/80' : 'text-gray-400 dark:text-gray-500'
+                            }`}
+                          >
+                            {device.loading ? loadingHint : androidHint}
+                          </span>
+                        )}
                       </div>
                     </div>
                     {isDeviceExpanded && (

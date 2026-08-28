@@ -4,7 +4,7 @@ import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
-import { isRemotePath, getRemoteThumbnailUrl } from '../utils/remoteSource';
+import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { lanNavStep, lanNavActive } from '../utils/lanNavTrace';
 import { Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
 
@@ -71,6 +71,19 @@ export const ImageThumbnail = React.memo(({ src, alt, isSelected, filePath, modi
       lanNavStep('===== FIRST THUMB REQUEST =====', `file=${fileName}`);
     }
   }, [thumbnailSrc, filePath]);
+
+  // 远程来源：设备重连/token 刷新后重新解析缩略图 URL。
+  // 断线期间解析到的是空串（或过期 token 的 URL），不重算就会一直裂图。
+  useEffect(() => {
+    if (!filePath || !isRemote(filePath)) return;
+    const path = filePath;
+    const refresh = () => {
+      const url = getRemoteThumbnailUrl(path);
+      setThumbnailSrc((prev) => (prev === url ? prev : url));
+    };
+    refresh();
+    return subscribeRemoteChange(refresh);
+  }, [filePath]);
 
   useEffect(() => {
     // 远程来源：缩略图 URL 直连，跳过本地生成

@@ -1,11 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   androidClientRegistry,
   androidDeviceKeyOf,
 } from '../components/android-client/androidClientApi';
 import { AndroidDeviceInfo } from '../components/android-client/androidClientTypes';
 import { ANDROID_ROOT_IMAGES_ID } from '../constants';
+import { notifyRemoteChange } from '../utils/remoteSource';
 import { AppState, AndroidClientConnection, FileNode, FileType, TabState } from '../types';
+
+/**
+ * 失效连接判定阈值：本次会话中从未连通的设备，连续重连失败达到该次数后
+ * 视为上次运行遗留的失效记录并移除（对端 App 重启后服务端不会自动恢复，
+ * 不清理会永远残留一个反复重连的灰节点）。
+ * 本次会话中成功连通过的设备不在此列——那类掉线由心跳（连续 3 次失败）处理。
+ */
+const MAX_STALE_ATTEMPTS = 4;
 
 interface UseAndroidClientParams {
   state: AppState;
@@ -30,8 +39,18 @@ export const useAndroidClient = ({
   enterFolder,
 }: UseAndroidClientParams) => {
   const [androidDevices, setAndroidDevices] = useState<AndroidDeviceInfo[]>([]);
+  // 供定时器/异步回调读取最新设备状态（避免闭包读到过期值）
+  const androidDevicesRef = useRef<AndroidDeviceInfo[]>(androidDevices);
+  androidDevicesRef.current = androidDevices;
 
-  const loadingKeysRef = useRef<Set<string>>(new Set());
+  // 每台设备正在进行的加载任务（key → Promise），复用而非重复发起
+  const pendingLoadsRef = useRef<Map<string, Promise<boolean>>>(new Map());
+  // 每台设备连续失败次数 / 本次会话是否曾成功连通
+  const staleAttemptsRef = useRef<Map<string, number>>(new Map());
+  const everConnectedRef = useRef<Set<string>>(new Set());
+  // 本次会话内由用户主动建立（扫码/手动连接）的设备 key。
+  // 只有这些连接会被保留、加载与自动重连；其余一律视为磁盘残留并清理。
+  const sessionEstablishedRef = useRef<Set<string>>(new Set());
 
   const conns: AndroidClientConnection[] = state.settings.lanShare.androidClients || [];
   const connKeys = conns.map((c) => c.key).join('|');
@@ -68,6 +87,36 @@ export const useAndroidClient = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.settings.lanShare.androidClient, state.settings.lanShare.androidClients]);
+
+  /**
+   * 重启恢复策略：从磁盘恢复的 `androidClients` 记录**不再自动重连**，直接清理。
+   *
+   * 桌面端会记住多台安卓设备，若开机即逐台自动重连，侧边栏会冒出一堆用户
+   * 本次并未连接的设备节点；且对端 App 重启后服务端不会自动恢复，这类重连
+   * 注定失败，只会留下一个反复重试的灰节点。因此需要重新访问某台设备时，
+   * 在手机端重新扫码即可（扫码为主动建立，会被标记为本会话连接并正常重连）。
+   */
+  useEffect(() => {
+    const restored = conns.filter((c) => !sessionEstablishedRef.current.has(c.key));
+    if (restored.length === 0) return;
+    for (const c of restored) {
+      androidClientRegistry.unregister(c.key);
+      cleanupDeviceFiles(c.key);
+    }
+    setState((s) => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        lanShare: {
+          ...s.settings.lanShare,
+          androidClients: (s.settings.lanShare.androidClients || []).filter((c) =>
+            sessionEstablishedRef.current.has(c.key)
+          ),
+        },
+      },
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connKeys]);
 
   // 同步设备状态列表与注册表（连接变化时重建）
   const prevKeysRef = useRef<string[]>([]);
@@ -159,54 +208,8 @@ export const useAndroidClient = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conns.map((c) => `${c.key}:${c.serverName || ''}`).join('|')]);
 
-  // 每台设备的根目录加载（指数退避重试）
-  useEffect(() => {
-    for (const c of conns) {
-      if (!c.accessToken || !c.host || !c.port) continue;
-      if (loadingKeysRef.current.has(c.key)) continue;
-      loadingKeysRef.current.add(c.key);
-      const client = androidClientRegistry.register(
-        c.key,
-        `http://${c.host}:${c.port}`,
-        c.accessToken
-      );
-      setDeviceLoading(c.key, true);
-
-      const backoff = [2000, 4000, 8000, 12000, 20000];
-      const loadRoots = async (attempt: number): Promise<void> => {
-        try {
-          const { folders, rootImages } = await client.getAllImageFolders();
-          applyDeviceRoots(c.key, folders, rootImages);
-          setDeviceConnected(c.key, true);
-        } catch (err) {
-          const msg = (err as Error).message || '';
-          if (
-            msg.includes('Authentication failed') ||
-            msg.includes('token expired') ||
-            msg.includes('HTTP 401')
-          ) {
-            // token 失效：清除该设备连接
-            console.warn(`[AndroidClient] device ${c.key} token invalid, removing`);
-            client.disconnect();
-            removeConnectionFromSettings(c.key);
-            return;
-          }
-          if (attempt < backoff.length) {
-            await new Promise((r) => setTimeout(r, backoff[attempt]));
-            return loadRoots(attempt + 1);
-          }
-          console.error(`[AndroidClient] device ${c.key} failed to load roots:`, err);
-          setDeviceConnected(c.key, false);
-        }
-      };
-
-      loadRoots(0).finally(() => {
-        loadingKeysRef.current.delete(c.key);
-        setDeviceLoading(c.key, false);
-      });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connKeys]);
+  // 根目录加载（指数退避重试 + 定时自动重连）统一在 loadDeviceRoots 中实现，
+  // 定义见下方（需依赖 applyDeviceRoots / removeConnectionFromSettings 等）。
 
   const setDeviceLoading = useCallback((key: string, loading: boolean) => {
     setAndroidDevices((prev) =>
@@ -217,6 +220,12 @@ export const useAndroidClient = ({
   const setDeviceConnected = useCallback((key: string, connected: boolean) => {
     setAndroidDevices((prev) =>
       prev.map((d) => (d.key === key ? { ...d, connected } : d))
+    );
+  }, []);
+
+  const setDeviceError = useCallback((key: string, lastError: string) => {
+    setAndroidDevices((prev) =>
+      prev.map((d) => (d.key === key ? { ...d, lastError } : d))
     );
   }, []);
 
@@ -276,6 +285,174 @@ export const useAndroidClient = ({
       }));
     },
     [setState]
+  );
+
+  /**
+   * 单台设备的根目录加载（指数退避重试），返回是否成功。
+   * 成功即视为该设备已连通（侧边栏转绿）；失败仅记录错误，由自动重连定时器
+   * 或用户点击再次尝试（手机端可能尚未开启共享/首次扫描超时）。
+   * 例外：本次会话从未连通且连续失败达上限 → 判定为失效的遗留记录并移除。
+   */
+  const runDeviceRootsLoad = useCallback(
+    async (
+      c: AndroidClientConnection,
+      // 重试退避序列；传空数组表示只尝试一次（自动重连/手动重连，避免长时间占用）
+      backoff: number[] = [2000, 4000, 8000, 12000, 20000]
+    ): Promise<boolean> => {
+      if (!c.accessToken || !c.host || !c.port) return false;
+      const client = androidClientRegistry.register(
+        c.key,
+        `http://${c.host}:${c.port}`,
+        c.accessToken
+      );
+      setDeviceLoading(c.key, true);
+
+      const loadRoots = async (attempt: number): Promise<boolean> => {
+        try {
+          const { folders, rootImages } = await client.getAllImageFolders();
+          const wasConnected =
+            androidDevicesRef.current.find((d) => d.key === c.key)?.connected ?? false;
+          applyDeviceRoots(c.key, folders, rootImages);
+          setDeviceConnected(c.key, true);
+          setDeviceError(c.key, '');
+          staleAttemptsRef.current.delete(c.key);
+          everConnectedRef.current.add(c.key);
+          // 由断线恢复为连通：远程 URL 里的 token 已更换，失效缓存并让
+          // 已渲染的缩略图/封面重新解析，避免重连后仍是裂图。
+          if (!wasConnected) notifyRemoteChange();
+          return true;
+        } catch (err) {
+          const msg = (err as Error).message || '';
+          if (
+            msg.includes('Authentication failed') ||
+            msg.includes('token expired') ||
+            msg.includes('HTTP 401')
+          ) {
+            // token 失效：清除该设备连接
+            console.warn(`[AndroidClient] device ${c.key} token invalid, removing`);
+            staleAttemptsRef.current.delete(c.key);
+            client.disconnect();
+            removeConnectionFromSettings(c.key);
+            return false;
+          }
+
+          const failures = (staleAttemptsRef.current.get(c.key) || 0) + 1;
+          staleAttemptsRef.current.set(c.key, failures);
+
+          // 失效连接清理：本次会话中从未连通过的设备（基本都是上次运行遗留的
+          // 连接记录——对端 App 重启后服务端不会自动恢复）在连续失败达上限后
+          // 直接移除，侧边栏回到"移动设备"占位、设置面板"已连接设备"同步清空，
+          // 不再长期残留一个反复重连却永远连不上的灰节点。
+          if (!everConnectedRef.current.has(c.key) && failures >= MAX_STALE_ATTEMPTS) {
+            console.warn(
+              `[AndroidClient] device ${c.key} unreachable after ${failures} attempts, dropping stale connection`
+            );
+            staleAttemptsRef.current.delete(c.key);
+            androidClientRegistry.unregister(c.key);
+            cleanupDeviceFiles(c.key);
+            removeConnectionFromSettings(c.key);
+            return false;
+          }
+
+          if (attempt < backoff.length) {
+            await new Promise((r) => setTimeout(r, backoff[attempt]));
+            return loadRoots(attempt + 1);
+          }
+          console.error(`[AndroidClient] device ${c.key} failed to load roots:`, err);
+          setDeviceConnected(c.key, false);
+          setDeviceError(c.key, msg);
+          return false;
+        }
+      };
+
+      try {
+        return await loadRoots(0);
+      } finally {
+        setDeviceLoading(c.key, false);
+      }
+    },
+    [
+      applyDeviceRoots,
+      cleanupDeviceFiles,
+      removeConnectionFromSettings,
+      setDeviceConnected,
+      setDeviceError,
+      setDeviceLoading,
+    ]
+  );
+
+  /**
+   * 对外的加载入口：同一设备已有加载在进行时**复用其 Promise**，
+   * 而不是立刻返回 false——否则点击"加载中"的设备会被误判为连接失败。
+   */
+  const loadDeviceRoots = useCallback(
+    async (
+      c: AndroidClientConnection,
+      backoff?: number[]
+    ): Promise<boolean> => {
+      const pending = pendingLoadsRef.current.get(c.key);
+      if (pending) return pending;
+
+      const task = backoff ? runDeviceRootsLoad(c, backoff) : runDeviceRootsLoad(c);
+      pendingLoadsRef.current.set(c.key, task);
+      try {
+        return await task;
+      } finally {
+        pendingLoadsRef.current.delete(c.key);
+      }
+    },
+    [runDeviceRootsLoad]
+  );
+
+  // 连接配置变化时，为本会话主动建立的设备触发一次根目录加载
+  // （从磁盘恢复的记录不在此列，已在上方被清理）
+  useEffect(() => {
+    for (const c of conns) {
+      if (!sessionEstablishedRef.current.has(c.key)) continue;
+      if (!c.accessToken || !c.host || !c.port) continue;
+      void loadDeviceRoots(c);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connKeys]);
+
+  // 自动重连：未连通的设备每 15s 重试一次。
+  // 覆盖"手机端共享尚未开启/服务刚启动/首次全量扫描超时/息屏后恢复"等场景，
+  // 手机端恢复共享后侧边栏节点会自动转绿，无需重新扫码或重启桌面端。
+  useEffect(() => {
+    if (conns.length === 0) return;
+    let cancelled = false;
+    const retry = async () => {
+      for (const c of conns) {
+        if (cancelled) return;
+        // 仅重连本次会话主动建立的连接
+        if (!sessionEstablishedRef.current.has(c.key)) continue;
+        if (!c.accessToken || !c.host || !c.port) continue;
+        const dev = androidDevicesRef.current.find((d) => d.key === c.key);
+        if (!dev || dev.connected || dev.loading) continue;
+        // 单次尝试：定时器每 15s 会再次触发，无需在此长时间退避
+        await loadDeviceRoots(c, []);
+      }
+    };
+    const timer = setTimeout(retry, 15000);
+    const interval = setInterval(retry, 15000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      clearInterval(interval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connKeys]);
+
+  /** 手动重连指定设备（侧边栏点击未连通节点时调用）。 */
+  const reconnectDevice = useCallback(
+    async (key: string): Promise<boolean> => {
+      const c = conns.find((cc) => cc.key === key);
+      if (!c) return false;
+      // 手动重连只尝试一次，失败立即反馈（有自动重连定时器兜底后续恢复）
+      return loadDeviceRoots(c, []);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [connKeys]
   );
 
   // 心跳：为每台已连接的设备每 5s 发送一次。
@@ -454,19 +631,37 @@ export const useAndroidClient = ({
     setState((s) => ({ ...s, isSettingsOpen: true, settingsCategory: 'lanShare' }));
   }, [setState]);
 
-  const androidConnectedCount = androidDevices.filter((d) => d.connected).length;
+  /**
+   * 标记某台设备为"本次会话主动建立"：扫码/手动连接成功后调用。
+   * 未标记的连接记录会在下一次 connKeys 变化时被视为磁盘残留直接清理，
+   * 不加载、不重连、不显示。
+   */
+  const markDeviceEstablished = useCallback((key: string) => {
+    sessionEstablishedRef.current.add(key);
+  }, []);
+
+  // 对外只暴露本会话主动建立的设备：从磁盘恢复的记录即使尚未被清理 effect
+  // 移除（useEffect 在绘制后执行），也不会在侧边栏/面板上闪现。
+  const visibleDevices = useMemo(
+    () => androidDevices.filter((d) => sessionEstablishedRef.current.has(d.key)),
+    [androidDevices]
+  );
+
+  const androidConnectedCount = visibleDevices.filter((d) => d.connected).length;
 
   return {
-    androidDevices,
+    androidDevices: visibleDevices,
     androidConnectedCount,
     getDeviceRoots: (key: string): string[] =>
-      androidDevices.find((d) => d.key === key)?.roots || [],
+      visibleDevices.find((d) => d.key === key)?.roots || [],
     getDeviceState: (key: string): AndroidDeviceInfo | undefined =>
-      androidDevices.find((d) => d.key === key),
+      visibleDevices.find((d) => d.key === key),
     handleNavigateAndroidFolder,
     handleAndroidRefresh,
     reloadCurrentAndroidFolder,
     handleAndroidDisconnect,
     handleOpenAndroidSettings,
+    reconnectDevice,
+    markDeviceEstablished,
   };
 };

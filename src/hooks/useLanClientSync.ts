@@ -7,6 +7,7 @@ import {
   lanShareAndroidGetStatus,
 } from '../api/tauri-bridge';
 import { lanNavStart, lanNavStep } from '../utils/lanNavTrace';
+import { notifyRemoteChange } from '../utils/remoteSource';
 import { LAN_ROOT_IMAGES_ID } from '../constants';
 import { AppState, FileNode, FileType, TabState } from '../types';
 
@@ -79,6 +80,8 @@ export const useLanClientSync = ({
           const { folders, rootImages, allowUpload } = await lanClientApi.getAllImageFolders();
           applyLanRoots(folders, rootImages, allowUpload);
           setLanConnected(true);
+          // 重连后 token 可能已更换：失效缓存的远程 URL 并让缩略图重新解析
+          notifyRemoteChange();
           console.log(`[LAN loadRoots] success: ${folders.length} folders, ${rootImages.length} root images`);
         } catch (err) {
           const msg = (err as Error).message || '';
@@ -144,6 +147,7 @@ export const useLanClientSync = ({
         .then(({ folders, rootImages, allowUpload }) => {
           applyLanRoots(folders, rootImages, allowUpload);
           setLanConnected(true);
+          notifyRemoteChange();
           console.log(`[LAN] Periodic retry: roots loaded (${folders.length} folders, ${rootImages.length} root images)`);
         })
         .catch((err) => {

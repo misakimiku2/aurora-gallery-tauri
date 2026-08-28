@@ -11,6 +11,8 @@ export interface AndroidDeviceInfo {
   connected: boolean;
   loading: boolean;
   roots: string[];
+  /** 最近一次连接/加载失败的原因（用于侧边栏悬浮提示与重连提示）。 */
+  lastError?: string;
 }
 
 /** 下载结果。 */

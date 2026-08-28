@@ -35,6 +35,27 @@ export class LRUCache<T> {
     return this.cache.has(key);
   }
 
+  delete(key: string): boolean {
+    this.releaseBitmapForKey(key);
+    return this.cache.delete(key);
+  }
+
+  /**
+   * 按前缀批量删除。用于远程连接变化后清理失效的远程缩略图 URL
+   * （URL 内嵌访问 token，重连后会更换；断线期间生成的还可能是空串）。
+   */
+  deleteByPrefix(prefix: string): number {
+    let removed = 0;
+    for (const key of Array.from(this.cache.keys())) {
+      if (key.startsWith(prefix)) {
+        this.releaseBitmapForKey(key);
+        this.cache.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   clear(): void {
     this.releaseAllBitmaps();
     this.cache.clear();

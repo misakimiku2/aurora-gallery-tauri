@@ -3,7 +3,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState, useMemo } from 're
 import { createPortal } from 'react-dom';
 import { FileNode, SlideshowConfig, SearchScope, TabState } from '../types';
 import { debounce } from '../utils/debounce';
-import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl } from '../utils/remoteSource';
+import { isRemotePath, getRemoteImageUrl, getRemotePalette, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import { ColorPickerPopover } from './ColorPickerPopover';
 import {
   X, ChevronLeft, ChevronRight, Search, Sidebar, PanelRight,
@@ -103,6 +103,18 @@ const preloadLanImage = (path: string, httpUrl: string, priority: 'high' | 'low'
   setTimeout(doPreload, 1500);
 };
 
+// 远程连接变化（设备重连/token 刷新）：缓存的远程原图 URL 内嵌旧 token，
+// 必须整体失效，否则重连后查看器仍用旧 URL 请求 → 401 → 裂图。
+subscribeRemoteChange(() => {
+  for (const key of Array.from(blobCache.keys())) {
+    if (isRemotePath(key)) {
+      blobCache.delete(key);
+      blobCacheSizes.delete(key);
+    }
+  }
+  preloadedImages.clear();
+});
+
 const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Promise<string> => {
   const cached = getBlobCacheSync(path);
   if (cached) return cached;
@@ -114,12 +126,16 @@ const loadToCache = async (path: string, priority: 'high' | 'low' = 'low'): Prom
   if (isRemotePath(path)) {
     const httpUrl = getRemoteImageUrl(path);
 
-    blobCache.set(path, httpUrl);
-    blobCacheSizes.set(path, 0);
-    evictBlobCache();
-    // 触发预下载+预解码：持有 Image 对象引用，让浏览器保留解码位图。
-    // 切换时 <img> 命中浏览器内部缓存，跳过下载+解码（DECODE 从 3.2s 降到 ~0ms）。
-    preloadLanImage(path, httpUrl, priority);
+    // 设备断开时客户端不在注册表，解析结果为空串——绝不写入缓存，
+    // 否则重连后命中缓存拿到空串，原图永久裂图。
+    if (httpUrl) {
+      blobCache.set(path, httpUrl);
+      blobCacheSizes.set(path, 0);
+      evictBlobCache();
+      // 触发预下载+预解码：持有 Image 对象引用，让浏览器保留解码位图。
+      // 切换时 <img> 命中浏览器内部缓存，跳过下载+解码（DECODE 从 3.2s 降到 ~0ms）。
+      preloadLanImage(path, httpUrl, priority);
+    }
     return httpUrl;
   }
 
@@ -583,6 +599,11 @@ export const ImageViewer: React.FC<ViewerProps> = ({
   useEffect(() => { slideshowTransitionRef.current = slideshowConfig.transition; }, [slideshowConfig.transition]);
   useEffect(() => { displayUrlRef.current = displayUrl; }, [displayUrl]);
 
+  // 远程连接变化（设备重连/token 刷新）时自增，强制重新解析当前图片 URL，
+  // 否则查看器会一直显示断线时解析出的空 URL / 旧 token URL。
+  const [remoteEpoch, setRemoteEpoch] = useState(0);
+  useEffect(() => subscribeRemoteChange(() => setRemoteEpoch((n) => n + 1)), []);
+
   // 简化的图片加载逻辑：缓存命中时立即切换，未命中时保留当前图片直到新图就绪
   useEffect(() => {
     if (!file.path) {
@@ -790,7 +811,7 @@ export const ImageViewer: React.FC<ViewerProps> = ({
         }
       });
     }
-  }, [file.path]);
+  }, [file.path, remoteEpoch]);
 
   // 清理过渡计时器
   useEffect(() => {

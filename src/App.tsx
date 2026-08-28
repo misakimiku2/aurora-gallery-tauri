@@ -778,6 +778,8 @@ export const App: React.FC = () => {
     reloadCurrentAndroidFolder,
     handleAndroidDisconnect,
     handleOpenAndroidSettings,
+    reconnectDevice,
+    markDeviceEstablished,
   } = useAndroidClient({ state, setState, activeTab, t, showToast, enterFolder });
 
   // 安卓总览视图的活跃设备 key（历史标记 __android_folders_root__:<key>）
@@ -790,18 +792,48 @@ export const App: React.FC = () => {
   const activeAndroidDevice = androidDevices.find((d) => d.key === androidActiveKey);
   const androidRoots = activeAndroidDevice?.roots || [];
   const androidLoading = activeAndroidDevice?.loading || false;
+  // 重连期间文件区（否则纯白）显示的提示，与侧边栏设备行的转圈保持一致
+  const androidLoadingLabel = androidLoading
+    ? (t('settings.lanShare.androidClient.reconnecting') || '正在重新连接「{name}」…').replace(
+        '{name}',
+        activeAndroidDevice?.name || '安卓设备'
+      )
+    : undefined;
 
-  // 侧边栏"安卓设备"节点入口：未连接时打开设置面板，已连接时进入该设备总览视图
+  // 侧边栏"安卓设备"节点入口：已连接时进入该设备总览视图；
+  // 未连通时先立即重连一次（手机端可能刚开启共享/上次扫描超时），
+  // 重连成功则直接进总览，仍失败才打开设置面板并提示原因。
   const handleNavigateAndroidHome = useCallback(
-    (key: string) => {
+    async (key: string) => {
       const device = androidDevices.find((d) => d.key === key);
-      if (!device || !device.connected) {
-        handleOpenAndroidSettings();
+      if (!device) return;
+      // 正在重连中：直接进入该设备文件区（那里显示重连动画），
+      // 既不重复发起连接，也不该弹出"无法连接"——它还没失败。
+      if (!device.connected && device.loading) {
+        pushHistory(`${ANDROID_OVERVIEW_PREFIX}${key}`, null, 'android-folders-overview', '', 'all', [], null, 0);
         return;
+      }
+      if (!device.connected) {
+        const name = device.name || '安卓设备';
+        showToast(
+          (t('settings.lanShare.androidClient.reconnecting') || '正在重新连接「{name}」…').replace(
+            '{name}',
+            name
+          )
+        );
+        const ok = await reconnectDevice(key);
+        if (!ok) {
+          showToast(
+            (t('settings.lanShare.androidClient.reconnectFailed') ||
+              '无法连接「{name}」，请确认手机端已开启共享且处于同一局域网').replace('{name}', name)
+          );
+          handleOpenAndroidSettings();
+          return;
+        }
       }
       pushHistory(`${ANDROID_OVERVIEW_PREFIX}${key}`, null, 'android-folders-overview', '', 'all', [], null, 0);
     },
-    [androidDevices, handleOpenAndroidSettings, pushHistory]
+    [androidDevices, handleOpenAndroidSettings, pushHistory, reconnectDevice, showToast, t]
   );
 
   // 当前活跃设备的总览刷新
@@ -886,6 +918,8 @@ export const App: React.FC = () => {
         const res = await client.authenticate(accessCode);
         if (res.success && res.token) {
           client.setToken(res.token);
+          // 扫码配对 = 本次会话主动建立：允许加载/自动重连（从磁盘恢复的旧记录会被丢弃）
+          markDeviceEstablished(key);
           setState((s) => {
             const conn: AndroidClientConnection = {
               key,
@@ -927,7 +961,7 @@ export const App: React.FC = () => {
         console.warn('[PeerPairing] desktop connect failed:', e);
       }
     }
-  }, [setState, showToast, t]);
+  }, [setState, showToast, t, markDeviceEstablished]);
 
   // 监听服务端配对事件（服务端在认证时携带对端信息则触发）
   useEffect(() => {
@@ -2671,6 +2705,7 @@ export const App: React.FC = () => {
                 androidRoots={androidRoots}
                 handleNavigateAndroidFolder={handleNavigateAndroidFolder}
                 androidLoading={androidLoading}
+                androidLoadingLabel={androidLoadingLabel}
                 handleAndroidRefresh={handleAndroidRefreshActive}
                 handleNavigateTopic={handleNavigateTopic}
                 handleUpdateTopic={handleUpdateTopic}

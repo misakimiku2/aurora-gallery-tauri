@@ -1,6 +1,7 @@
 import { FileNode } from '../types';
 import { lanClientApi } from '../components/lan-client/lanClientApi';
 import { androidClientRegistry } from '../components/android-client/androidClientApi';
+import { getGlobalCache } from './thumbnailCache';
 
 /**
  * 远程图片来源统一分发：
@@ -91,6 +92,33 @@ export const isRemoteFile = (file?: FileNode | null): boolean => {
   if (!file) return false;
   if (file.source === 'lan' || file.source === 'android') return true;
   return isRemotePath(file.path);
+};
+
+/**
+ * 远程连接变化通知（设备上线/重连、token 刷新）。
+ *
+ * 远程 URL 内嵌访问 token，重连后会换成新 token；设备断开期间客户端不在
+ * 注册表中，解析出的 URL 更是空串。这些 URL 一旦被组件缓存/写入缩略图缓存，
+ * 重连后不会自动失效，表现为"重连了但缩略图依然是裂图"。
+ * 因此连接恢复时必须：先清掉缓存里的远程条目，再通知订阅者重新解析。
+ */
+type RemoteChangeListener = () => void;
+const remoteChangeListeners = new Set<RemoteChangeListener>();
+
+/** 订阅远程连接变化，返回取消订阅函数。 */
+export const subscribeRemoteChange = (fn: RemoteChangeListener): (() => void) => {
+  remoteChangeListeners.add(fn);
+  return () => {
+    remoteChangeListeners.delete(fn);
+  };
+};
+
+/** 广播远程连接变化（调用方在设备重连/token 刷新后调用）。 */
+export const notifyRemoteChange = (): void => {
+  const cache = getGlobalCache();
+  cache.deleteByPrefix(LAN_PREFIX);
+  cache.deleteByPrefix(ANDROID_PREFIX);
+  remoteChangeListeners.forEach((fn) => fn());
 };
 
 /** 远程文件节点的来源标识：'lan' 或 'android'。 */

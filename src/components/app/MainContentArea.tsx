@@ -39,6 +39,7 @@ interface MainContentAreaProps {
   androidRoots: string[];
   handleNavigateAndroidFolder: (folderId: string) => void;
   androidLoading: boolean;
+  androidLoadingLabel?: string;
   handleAndroidRefresh: () => Promise<void>;
   handleNavigateTopic: (topicId: string | null) => void;
   handleUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
@@ -117,6 +118,7 @@ export const MainContentArea = ({
   androidRoots,
   handleNavigateAndroidFolder,
   androidLoading,
+  androidLoadingLabel,
   handleAndroidRefresh,
   handleNavigateTopic,
   handleUpdateTopic,
@@ -227,6 +229,7 @@ export const MainContentArea = ({
           onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
           t={t}
           isLoadingImages={androidLoading}
+          loadingLabel={androidLoadingLabel}
           layoutMode={folderLayoutMode}
           onLayoutModeChange={handleFolderLayoutModeChange}
           isVisible={activeTab.viewMode === 'android-folders-overview'}

@@ -18,6 +18,8 @@ import {
  */
 
 const FETCH_TIMEOUT_MS = 15000;
+/** 全量扫描（all_image_folders）专用超时：手机端每次都重扫 MediaStore，图库大时较慢。 */
+const SCAN_TIMEOUT_MS = 60000;
 const DEVICE_ID_KEY = 'aurora_desktop_android_device_id';
 
 /** 持久化的桌面端设备标识（各台安卓设备共用同一桌面身份）。 */
@@ -105,16 +107,24 @@ export class AndroidDeviceClient {
     }
   }
 
-  private async fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
+  private async fetchJson<T>(
+    url: string,
+    options?: RequestInit,
+    timeoutMs: number = FETCH_TIMEOUT_MS
+  ): Promise<T> {
     const headers: HeadersInit = { ...options?.headers };
     if (this.token) {
       (headers as Record<string, string>)['Authorization'] = `Bearer ${this.token}`;
     }
 
-    const response = await this.fetchWithTimeout(`${this.baseUrl}${url}`, {
-      ...options,
-      headers,
-    });
+    const response = await this.fetchWithTimeout(
+      `${this.baseUrl}${url}`,
+      {
+        ...options,
+        headers,
+      },
+      timeoutMs
+    );
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -231,8 +241,13 @@ export class AndroidDeviceClient {
     };
   }
 
-  /** 所有含图文件夹（扁平列表）+ 根目录散落图片。 */
-  async getAllImageFolders(): Promise<{
+  /**
+   * 所有含图文件夹（扁平列表）+ 根目录散落图片。
+   *
+   * 手机端该接口每次都会全量扫描 MediaStore（无服务端缓存），图库较大时
+   * 耗时可能远超普通请求，因此单独放宽超时（默认 60s，可用参数覆盖）。
+   */
+  async getAllImageFolders(timeoutMs: number = SCAN_TIMEOUT_MS): Promise<{
     folders: FileNode[];
     rootImages: FileNode[];
     allowEdit: boolean;
@@ -243,7 +258,7 @@ export class AndroidDeviceClient {
       root_images: BrowseItem[];
       allow_edit?: boolean;
       allow_upload?: boolean;
-    }>('/api/all_image_folders');
+    }>('/api/all_image_folders', undefined, timeoutMs);
     const folders = response.folders.map((item) => this.folderItemToFileNode(item));
     const rootImages = response.root_images.map((item) => this.imageItemToFileNode(item));
     return {

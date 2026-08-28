@@ -6,10 +6,10 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { getThumbnail, isThumbnailUpgrading, getGlobalScrollState, setGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { useLayout, LayoutItem, GetFileNode } from './useLayoutHook';
-import { Folder, Check } from 'lucide-react';
+import { Folder, Check, Loader2 } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
-import { getRemoteThumbnailUrl } from '../utils/remoteSource';
+import { getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -21,6 +21,8 @@ interface FoldersOverviewProps {
   onThumbnailSizeChange?: (size: number) => void;
   t: (key: string) => string;
   isLoadingImages?: boolean;
+  /** 加载中提示文案（如"正在重新连接「平板」…"），缺省用 t('empty.loading')。 */
+  loadingLabel?: string;
   layoutMode?: LayoutMode;
   onLayoutModeChange?: (mode: LayoutMode) => void;
   isVisible?: boolean;
@@ -108,18 +110,18 @@ const FolderCard = React.memo(({
     if (!(isInView || wasInView)) return;
     if (!effectiveCoverPath) return;
 
+    // 远程封面（桌面端服务/安卓设备）：直接生成 URL，不走 Tauri getThumbnail。
+    // 注意：URL 内嵌访问 token，**不写入** thumbnailCache——断线时解析为空串、
+    // 重连后 token 也会更换，缓存下来会让封面在重连后依然是裂图。
+    if (effectiveCoverPath.startsWith('lan://') || effectiveCoverPath.startsWith('android://')) {
+      setCoverSrc(getRemoteThumbnailUrl(effectiveCoverPath));
+      return;
+    }
+
     const cache = getGlobalCache();
     const cached = cache.get(effectiveCoverPath);
     if (cached) {
       if (cached !== coverSrc) setCoverSrc(cached);
-      return;
-    }
-
-    // 远程封面（桌面端服务/安卓设备）：直接生成 URL，不走 Tauri getThumbnail
-    if (effectiveCoverPath.startsWith('lan://') || effectiveCoverPath.startsWith('android://')) {
-      const url = getRemoteThumbnailUrl(effectiveCoverPath);
-      cache.set(effectiveCoverPath, url);
-      setCoverSrc(url);
       return;
     }
 
@@ -148,6 +150,18 @@ const FolderCard = React.memo(({
     loadCover();
     return () => { cancelled = true; };
   }, [isInView, wasInView, effectiveCoverPath, effectiveCoverMediaStoreId, resourceRoot]);
+
+  // 远程封面：设备重连/token 刷新后重新生成 URL（断线时拿到的是空串）
+  useEffect(() => {
+    if (!effectiveCoverPath) return;
+    if (!effectiveCoverPath.startsWith('lan://') && !effectiveCoverPath.startsWith('android://')) return;
+    const refresh = () => {
+      const url = getRemoteThumbnailUrl(effectiveCoverPath);
+      setCoverSrc((prev) => (prev === url ? prev : url));
+    };
+    refresh();
+    return subscribeRemoteChange(refresh);
+  }, [effectiveCoverPath]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -389,6 +403,7 @@ const FoldersOverview = React.memo(({
   onThumbnailSizeChange,
   t,
   isLoadingImages,
+  loadingLabel,
   layoutMode = 'grid',
   onLayoutModeChange,
   isVisible = true,
@@ -1109,10 +1124,24 @@ const FoldersOverview = React.memo(({
         })}
       </div>
 
-      {sortedFolderIds.length === 0 && !isLoadingImages && (
-        <div className="flex flex-col items-center justify-center h-64 text-gray-400 dark:text-gray-500">
-          <Folder size={48} strokeWidth={1} />
-          <p className="mt-3 text-sm">{t('empty.noFolders') || '没有找到相册'}</p>
+      {/*
+        空状态 / 重连中：以绝对定位覆盖在滚动容器可视区中央，**不占文档高度**。
+        原先它是普通块级元素，排在 min-height:100% 的内容区之后，被挤到首屏
+        之外（必须滚动才能看到），并且凭空多出 256px 高度导致空列表也出滚动条。
+      */}
+      {sortedFolderIds.length === 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 pointer-events-none">
+          {isLoadingImages ? (
+            <>
+              <Loader2 size={40} strokeWidth={1.5} className="animate-spin text-blue-500 dark:text-blue-400" />
+              <p className="mt-3 text-sm">{loadingLabel || t('empty.loading')}</p>
+            </>
+          ) : (
+            <>
+              <Folder size={48} strokeWidth={1} />
+              <p className="mt-3 text-sm">{t('empty.noFolders')}</p>
+            </>
+          )}
         </div>
       )}
     </div>
