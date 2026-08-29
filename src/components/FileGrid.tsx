@@ -15,6 +15,7 @@ import { TagsList, TagIndexBar } from './TagsList';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { getThumbnailPrefetcher } from '../utils/thumbnailPrefetch';
+import { getFolderThumbnailPrefetcher } from '../utils/folderThumbnailPrefetch';
 import { throttle, debounce } from '../utils/debounce';
 import { useInView } from '../hooks/useInView';
 import { usePinchZoom } from '../hooks/usePinchZoom';
@@ -596,7 +597,7 @@ const FileCard = React.memo(({
             style={{ height: height ? (height - 40) : '100%' }}
         >
             {file.type === FileType.FOLDER ? (
-            <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} />
+            <FolderThumbnail file={file} getFileNode={getFileNode} mode={layoutMode} resourceRoot={effectiveResourceRoot} cachePath={effectiveCachePath} folderIconStyle={settings?.folderIconStyle} />
             ) : (
             <ImageThumbnail
                 src={''}
@@ -1096,6 +1097,14 @@ export const FileGrid = React.memo(({
   const animFreezeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+  // 文件夹封面预取：视口下方提前 1.2 屏预热缩略图，避免滚动到达时现场解码掉帧
+  const lastFolderPrefetchRef = useRef(0);
+  const prefetchLayoutRef = useRef<LayoutItem[]>([]);
+  const prefetchSortedByYRef = useRef<number[]>([]);
+  const getFileNodeRef = useRef(getFileNode);
+  getFileNodeRef.current = getFileNode;
+  const effectiveResourceRootRef = useRef(effectiveResourceRoot);
+  effectiveResourceRootRef.current = effectiveResourceRoot;
   const prevLayoutPositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const prevScrollTopForFlipRef = useRef(0);
   // Track previous sort option/direction to detect sort changes and bypass the
@@ -1359,6 +1368,20 @@ export const FileGrid = React.memo(({
                 }, 300);
             }
 
+            // 文件夹封面预取：视口下方提前 1.2 屏预热缩略图（每滚动 ~400px 触发一次）。
+            // 解码通过 ThumbnailBatcher 聚合、走 Rust 并发限制，滚动到达时缓存已就绪，
+            // 卡片挂载即显示三图拼贴，避免窗口边界批量现场生成造成的掉帧尖峰。
+            const viewBottom = currentScroll + (scroller.clientHeight || 0);
+            if (viewBottom - lastFolderPrefetchRef.current > 400) {
+                lastFolderPrefetchRef.current = viewBottom;
+                getFolderThumbnailPrefetcher().prefetchAhead(
+                    prefetchLayoutRef.current,
+                    prefetchSortedByYRef.current,
+                    getFileNodeRef.current,
+                    viewBottom
+                );
+            }
+
             // 按需虚拟化：滚动期间 React 状态保持不动（卡片绝对定位 + 原生滚动，
             // 由浏览器合成器处理）。仅当视口 [currentScroll, +height] 越过
             // 已挂载卡片的渲染窗口边界时，才触发一次重渲染挂载新卡片。
@@ -1449,6 +1472,17 @@ export const FileGrid = React.memo(({
       layoutItemsRef.current = layout;
     }
   }, [layout, layoutItemsRef]);
+  // 文件夹封面预取：同步布局引用，供滚动 handler 扫描视口前方的文件夹
+  prefetchLayoutRef.current = layout;
+  prefetchSortedByYRef.current = sortedByY;
+
+  // 文件夹封面预取器初始化：设置资源根目录；切换目录/标签/视图时重置已预取集合
+  useEffect(() => {
+    const prefetcher = getFolderThumbnailPrefetcher();
+    prefetcher.setRoot(effectiveResourceRootRef.current ?? null);
+    prefetcher.reset();
+    lastFolderPrefetchRef.current = 0;
+  }, [effectiveResourceRoot, activeTab.id, activeTab.folderId, activeTab.viewMode]);
 
   // FLIP animation: anchor at viewport top instead of page top.
   // Only applies to non-grouped views where the top-level layout is used for rendering.

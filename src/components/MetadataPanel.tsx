@@ -1601,7 +1601,13 @@ export const MetadataPanel: React.FC<MetadataProps> = ({ selectedFileIds, files,
                 {/* Folder Category Selector */}
                 {((file && file.type === FileType.FOLDER) || (isMulti && selectedFileIds.every(id => files[id]?.type === FileType.FOLDER))) && (
                     <CategorySelector
-                        current={file ? file.category : (selectedFileIds.every(id => files[id]?.category === 'book') ? 'book' : 'general')}
+                        current={file
+                            ? (file.category || 'general')
+                            : (selectedFileIds.every(id => files[id]?.category === 'book')
+                                ? 'book'
+                                : selectedFileIds.every(id => files[id]?.category === 'sequence')
+                                    ? 'sequence'
+                                    : 'general')}
                         onChange={handleCategoryChange}
                         t={t}
                     />

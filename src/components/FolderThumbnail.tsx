@@ -83,7 +83,7 @@ const count = folderItemCount(file) ?? 0;
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string }) => {
+export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: 'classic' | 'tiles' }) => {
   const isAndroid = resourceRoot === 'android_media_store';
   const [ref, isInView, wasInView] = useInView({ rootMargin: '600px' });
 
@@ -316,10 +316,11 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
-         <Folder3DIcon  
+         <Folder3DIcon
             previewSrcs={effectivePreviewSrcs}
             count={folderItemCount(file)}
             category={file.category}
+            variant={folderIconStyle}
          />
          {hasUpgrading && (
            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">

@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Book, Film, Folder, ImageIcon } from 'lucide-react';
+import { getFolderTilesPng, isDarkTheme } from '../utils/folderTilesRenderer';
 
 function isAndroid(): boolean {
   try {
@@ -27,9 +28,119 @@ const AndroidLightweight: React.FC<{ count?: number }> = ({ count }) => (
   </div>
 );
 
-export const Folder3DIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void }) => {
+// 预合成 PNG hook：三张缩略图齐备时，把瓷砖+渐变+角标合成单张 PNG。
+// 合成统一走 folderTilesRenderer 的全局串行队列（仅滚动空闲时执行、逐张让出主线程），
+// 本 hook 只负责发起请求与在组件卸载时取消；主题/图源/数量/分类变化时自动重新请求。
+const useTilesPng = (previewSrcs: string[] | undefined, count: number | undefined, category: string) => {
+  const srcs = useMemo(() => (previewSrcs || []).filter(s => !!s).slice(0, 3), [previewSrcs]);
+  const ready = srcs.length === 3; // 缺图时占位本身极廉价，无需合成
+  const dark = isDarkTheme();
+  const [pngUrl, setPngUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!ready) {
+      setPngUrl(null);
+      return;
+    }
+    const controller = new AbortController();
+    getFolderTilesPng(srcs, count, controller.signal, category).then(url => {
+      if (!controller.signal.aborted) setPngUrl(url);
+    });
+    return () => controller.abort();
+  }, [ready, srcs, count, dark, category]);
+
+  return pngUrl;
+};
+
+// 简洁瓷砖拼贴图标：无文件夹外形，仅三张图片瓷砖（左大右二小）+ 底部渐变遮罩。
+// 渲染策略：
+//   - 三图拼贴是文件夹识别的基本形态，滚动中照常渲染（不降级为单图、不做
+//     1图↔3图 的速度切换，避免闪烁）；
+//   - 掉帧的真正来源是缩略图在卡片进入视口那一刻才现场生成/解码，由
+//     FolderThumbnailPrefetcher 提前 1.2 屏预热解决（见 utils/folderThumbnailPrefetch.ts）；
+//   - 预合成 PNG 就绪后整卡替换为单张 <img>（圆角/渐变/角标已合成进图内），
+//     稳态下进一步降低光栅成本。
+const FolderTilesIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void }) => {
+  const images = (previewSrcs || []).filter(src => !!src).slice(0, 3);
+  const pngUrl = useTilesPng(previewSrcs, count, category);
+  const placeholderShades = [
+    'bg-gray-300 dark:bg-gray-600',
+    'bg-gray-400 dark:bg-gray-500',
+    'bg-gray-300/80 dark:bg-gray-600/80',
+  ];
+  // 分类渐变（参考经典 3D 文件夹颜色：常规=深色、图书=琥珀黄、视频=紫），
+  // 与 folderTilesRenderer 的 CATEGORY_GRADIENT 数值一致。
+  const gradientClasses: Record<string, string> = {
+    general: 'from-black/55 via-black/20 to-transparent',
+    book: 'from-amber-500/70 via-amber-400/30 to-transparent',
+    sequence: 'from-purple-600/70 via-purple-500/30 to-transparent',
+  };
+  const gradient = gradientClasses[category] || gradientClasses.general;
+
+  // 预合成 PNG 就绪：整卡只渲染一张 <img>（三图拼贴已合成进图内）
+  if (pngUrl) {
+    return (
+      <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
+        <img
+          src={pngUrl}
+          className="folder-tiles-img w-full aspect-square rounded-lg shadow-sm transition-transform duration-300 group-hover:scale-105"
+          loading="lazy"
+          decoding="async"
+          draggable="false"
+        />
+      </div>
+    );
+  }
+
+  const tileContent = (i: number) =>
+    images[i] ? (
+      <img
+        src={images[i]}
+        className="folder-tiles-img w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+        loading="lazy"
+        decoding="async"
+        draggable="false"
+        onError={() => onImageError?.(i)}
+      />
+    ) : (
+      <div className={`folder-tiles-img w-full h-full transition-transform duration-300 group-hover:scale-105 ${placeholderShades[i]}`} />
+    );
+
+  return (
+    <div className={`relative w-full h-full group select-none flex items-center justify-center ${className}`}>
+      <div className="relative w-full aspect-square rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 shadow-sm">
+        {/* 三张瓷砖拼贴：左侧大图 + 右侧上下两张 */}
+        <div className="absolute inset-0 flex gap-0.5">
+          <div className="w-[62%] h-full overflow-hidden">
+            {tileContent(0)}
+          </div>
+          <div className="flex-1 flex flex-col gap-0.5">
+            <div className="flex-1 overflow-hidden">{tileContent(1)}</div>
+            <div className="flex-1 overflow-hidden">{tileContent(2)}</div>
+          </div>
+        </div>
+
+        {/* 底部渐变（随分类变色） */}
+        <div className={`absolute inset-x-0 bottom-0 h-[45%] bg-gradient-to-t ${gradient} pointer-events-none`} />
+
+        {/* 数量角标 */}
+        {count !== undefined && count > 0 && (
+          <div className="absolute bottom-1.5 right-2 z-10 bg-black/40 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full ring-1 ring-white/20 backdrop-blur-sm">
+            {count}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export const Folder3DIcon = ({ previewSrcs, count, category = 'general', className = "", onImageError, variant = 'classic' }: { previewSrcs?: string[], count?: number, category?: string, className?: string, onImageError?: (index: number) => void, variant?: 'classic' | 'tiles' }) => {
   if (_isAndroid) {
     return <AndroidLightweight count={count} />;
+  }
+
+  if (variant === 'tiles') {
+    return <FolderTilesIcon previewSrcs={previewSrcs} count={count} category={category} className={className} onImageError={onImageError} />;
   }
 
   const styles: any = {

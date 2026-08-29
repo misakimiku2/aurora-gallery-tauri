@@ -224,6 +224,14 @@ body {
   mix-blend-mode: normal !important;
 }
 
+/* 滚动期间冻结瓷砖图标的 hover 缩放：卡片掠过静止的鼠标指针时
+   :hover 会不断切换，逐卡触发图层提升/缩放/销毁，造成光栅抖动。
+   anim-freeze 只把过渡冻结为 0ms（transform 仍瞬间生效），这里直接
+   禁用 transform，滚动中完全不做 hover 缩放，停止后自动恢复。 */
+#file-grid-container.anim-freeze .folder-tiles-img {
+  transform: none !important;
+}
+
 /* 滚动性能优化：滚动期间暂停文件夹树节点上的所有过渡/动画。
    TreeNode 行有 hover 背景过渡（transition-colors），滚动帧中鼠标移动
    会反复触发过渡计算；滚动时禁用可显著降低每帧样式/绘制开销。

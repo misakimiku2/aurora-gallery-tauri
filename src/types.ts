@@ -408,6 +408,8 @@ export interface ConnectedDevice {
 export interface AppSettings {
   theme: 'light' | 'dark' | 'system';
   language: 'zh' | 'en';
+  // 文件夹图标样式：classic = 经典 3D 文件夹；tiles = 简洁图片瓷砖拼贴
+  folderIconStyle?: 'classic' | 'tiles';
   autoStart: boolean;
   exitAction: 'ask' | 'minimize' | 'exit';
   animateOnHover: boolean;
