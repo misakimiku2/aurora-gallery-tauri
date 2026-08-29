@@ -97,7 +97,18 @@ pub fn scan_all() -> Result<(Vec<BrowseItem>, Vec<BrowseItem>), String> {
 
     for f in &result.folders {
         let cover = cover_meta.get(&f.id).copied();
-        let preview_images = f.cover_image_id.map(|cid| vec![cid.to_string()]);
+        // 桌面端文件夹图标会堆叠最多 3 张封面；无多张候选时退回单张封面
+        let preview_images = if !f.cover_image_ids.is_empty() {
+            Some(
+                f.cover_image_ids
+                    .iter()
+                    .take(3)
+                    .map(|id| id.to_string())
+                    .collect::<Vec<String>>(),
+            )
+        } else {
+            f.cover_image_id.map(|cid| vec![cid.to_string()])
+        };
         folders.push(BrowseItem {
             name: f.name.clone(),
             path: f.id.to_string(),

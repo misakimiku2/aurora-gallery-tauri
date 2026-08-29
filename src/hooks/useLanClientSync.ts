@@ -312,6 +312,7 @@ export const useLanClientSync = ({
         children: images.map(img => img.id),
         tags: [],
         coverImagePath: images[0]?.path,
+        coverImagePaths: images.slice(0, 3).map(img => img.path),
         imageCount: images.length,
       };
       rootIds.push(LAN_ROOT_IMAGES_ID);

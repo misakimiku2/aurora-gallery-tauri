@@ -8,6 +8,7 @@ import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
+import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 
 // 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
 // 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
@@ -60,8 +61,15 @@ const findImagesDeeply = (
     return result;
 };
 
+/**
+ * 文件夹角标数量：远程文件夹（安卓/LAN）的子节点通常尚未加载（children 为空数组），
+ * 必须优先用服务端下发的 imageCount，否则角标会显示 0。
+ */
+const folderItemCount = (file: FileNode): number | undefined =>
+  file.imageCount ?? (file.children?.length || undefined);
+
 const AndroidFolderPlaceholder: React.FC<{ file: FileNode }> = React.memo(({ file }) => {
-  const count = file.children?.length ?? file.imageCount ?? 0;
+const count = folderItemCount(file) ?? 0;
   return (
     <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-gray-50 to-gray-200 dark:from-gray-800 dark:to-gray-750">
       <Folder size={48} className="text-gray-400 dark:text-gray-500" strokeWidth={1.2} />
@@ -83,6 +91,32 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
       if (!file.children || file.children.length === 0) return [];
       return findImagesDeeply(file, getFileNode, 3);
   }, [file, getFileNode]);
+
+  // 远程文件夹（安卓设备 / LAN）：封面来自设备的远程缩略图接口，
+  // 本地 getThumbnail 无法生成，且子节点通常尚未展开（imageChildren 为空）。
+  // 与本地文件夹一致，最多取 3 张做堆叠封面。
+  const remoteCoverPaths = useMemo(() => {
+      const fromNode = (file.coverImagePaths || []).filter(isRemotePath).slice(0, 3);
+      if (fromNode.length > 0) return fromNode;
+      if (isRemotePath(file.coverImagePath)) return [file.coverImagePath as string];
+      const remoteChildren = imageChildren.filter((img) => isRemotePath(img.path)).slice(0, 3);
+      return remoteChildren.length > 0 ? remoteChildren.map((img) => img.path) : undefined;
+  }, [file.coverImagePath, file.coverImagePaths, imageChildren]);
+
+  const [remoteCoverSrcs, setRemoteCoverSrcs] = useState<string[]>(() =>
+      remoteCoverPaths ? remoteCoverPaths.map(getRemoteThumbnailUrl) : []
+  );
+
+  useEffect(() => {
+      if (!remoteCoverPaths) {
+        setRemoteCoverSrcs((prev) => (prev.length === 0 ? prev : []));
+        return;
+      }
+      const refresh = () => setRemoteCoverSrcs(remoteCoverPaths.map(getRemoteThumbnailUrl));
+      refresh();
+      // 设备重连 / token 刷新后 URL 会变，需要重新解析
+      return subscribeRemoteChange(refresh);
+  }, [remoteCoverPaths]);
 
   const [previewSrcs, setPreviewSrcs] = useState<string[]>(() => {
       const cache = getGlobalCache();
@@ -113,20 +147,28 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     });
   }, [imageChildren]);
 
+  // 本地可生成缩略图的子节点（远程路径交由远程缩略图接口处理）
+  const localImageChildren = useMemo(
+    () => imageChildren.filter((img) => !isRemotePath(img.path)),
+    [imageChildren]
+  );
+
   useEffect(() => {
-    if (loaded && previewSrcs.length === Math.min(3, imageChildren.length)) {
+    // 远程封面：直接走远程缩略图 URL，无需本地生成
+    if (remoteCoverPaths) return;
+    if (loaded && previewSrcs.length === Math.min(3, localImageChildren.length)) {
         return;
     }
 
     // 组件被虚拟化渲染即表示在视口附近，直接加载（不依赖 IntersectionObserver，
     // 否则快速滚动时 observer 回调延迟会导致缩略图永远不加载）
-    if (resourceRoot && imageChildren.length > 0) {
+    if (resourceRoot && localImageChildren.length > 0) {
       const controller = new AbortController();
       const loadPreviews = async () => {
         try {
           const { getThumbnail } = await import('../api/tauri-bridge');
           
-          const promises = imageChildren.map(async (img: FileNode) => {
+          const promises = localImageChildren.map(async (img: FileNode) => {
               const cache = getGlobalCache();
               const cached = cache.get(img.path);
               if (cached) {
@@ -172,7 +214,7 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
         controller.abort();
       };
     }
-  }, [isInView, wasInView, loaded, imageChildren, resourceRoot, previewSrcs.length]);
+  }, [isInView, wasInView, loaded, localImageChildren, resourceRoot, previewSrcs.length, remoteCoverPaths]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -261,8 +303,9 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   }, [upgradingPaths, imageChildren, resourceRoot]);
 
   const hasUpgrading = upgradingPaths.size > 0;
+  const effectivePreviewSrcs = remoteCoverPaths ? remoteCoverSrcs : previewSrcs;
 
-  if (isAndroid && imageChildren.length === 0) {
+  if (isAndroid && imageChildren.length === 0 && !remoteCoverPaths) {
     return (
       <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
         <AndroidFolderPlaceholder file={file} />
@@ -274,8 +317,8 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
          <Folder3DIcon  
-            previewSrcs={previewSrcs}
-            count={file.children?.length}
+            previewSrcs={effectivePreviewSrcs}
+            count={folderItemCount(file)}
             category={file.category}
          />
          {hasUpgrading && (

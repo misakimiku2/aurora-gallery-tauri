@@ -515,7 +515,8 @@ export const FileListItem = React.memo(({
         <div className="w-20 text-xs text-gray-500 text-right font-mono hidden sm:block pointer-events-none">
             {file.type === FileType.IMAGE 
                 ? formatSize(file.meta?.sizeKb || 0) 
-                : (file.type === FileType.FOLDER ? `${file.children?.length || 0} ${t('meta.items')}` : '-')}
+                // 远程文件夹（安卓/LAN）子节点通常未加载，优先用服务端下发的 imageCount
+                : (file.type === FileType.FOLDER ? `${file.imageCount ?? file.children?.length ?? 0} ${t('meta.items')}` : '-')}
         </div>
         {isAndroid && showContextMenuAnim && (
             <CircularProgressOverlay

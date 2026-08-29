@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import type { AppState, TabState } from '../types';
-import { DUMMY_TAB } from '../constants';
+import { DUMMY_TAB, ANDROID_DEVICE_ROOT_PREFIX, androidDeviceRootId } from '../constants';
 import { useNavigation } from './useNavigation';
 
 interface UsePersonTopicHandlersParams {
@@ -134,8 +134,6 @@ export const usePersonTopicHandlers = ({
       return;
     } else if (activeTab.viewMode === 'lan-folders-overview') {
       return;
-    } else if (activeTab.viewMode === 'android-folders-overview') {
-      return;
     } else if (activeTab.viewMode === 'people-overview' || activeTab.viewMode === 'tags-overview' || activeTab.viewMode === 'topics-overview') {
       const isAndroid = state.settings.paths.resourceRoot === 'android_media_store';
       if (isAndroid) {
@@ -151,11 +149,12 @@ export const usePersonTopicHandlers = ({
         // LAN 子文件夹无父级时回到网络总览视图
         pushHistory('__lan_folders_root__', null, 'lan-folders-overview', '', 'all', [], null, 0);
       } else if (current?.source === 'android') {
-        // 安卓设备文件夹无父级时回到该设备的总览视图
+        // 安卓设备文件夹无父级时回到该设备的根节点（常规文件界面）
+        if (current.id.startsWith(ANDROID_DEVICE_ROOT_PREFIX)) return;
         pushHistory(
-          `__android_folders_root__:${current.remoteDeviceKey || ''}`,
+          androidDeviceRootId(current.remoteDeviceKey || ''),
           null,
-          'android-folders-overview',
+          'browser',
           '',
           'all',
           [],

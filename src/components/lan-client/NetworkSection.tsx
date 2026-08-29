@@ -1,7 +1,9 @@
-import React, { useMemo } from 'react';
-import { Wifi, WifiOff, Loader2, ChevronDown, ChevronRight, Folder, Smartphone } from 'lucide-react';
+import React, { useCallback, useMemo } from 'react';
+import { Wifi, WifiOff, Loader2, ChevronDown, ChevronRight, Folder, Smartphone, SortAsc, SortDesc, Clock } from 'lucide-react';
 import { isAndroidPlatformCached } from '../../api/tauri-bridge';
+import { LAN_ROOT_IMAGES_ID, ANDROID_ROOT_IMAGES_ID } from '../../constants';
 import { FileNode, FileType } from '../../types';
+import MarqueeText from '../MarqueeText';
 import { AndroidDeviceInfo } from '../android-client/androidClientTypes';
 
 interface NetworkSectionProps {
@@ -26,7 +28,56 @@ interface NetworkSectionProps {
   onNavigateAndroidHome?: (key: string) => void;
   onNavigateAndroidFolder?: (folderId: string) => void;
   onOpenAndroidSettings?: () => void;
+  // 排序（与树状文件夹栏同一套状态：名称 / 修改时间 × 升 / 降）
+  sortMode?: 'name' | 'date';
+  sortOrder?: 'asc' | 'desc';
+  onToggleSort?: () => void;
 }
+
+/**
+ * 排序用的时间戳：本地文件夹在 meta.modified，远程（安卓 / LAN）文件夹
+ * 没有 meta，时间落在 createdAt / updatedAt 上。
+ */
+const nodeSortTime = (node: FileNode): number => {
+  const modified = Number((node.meta as any)?.modified);
+  if (modified) return modified;
+  const parsed = Date.parse(node.updatedAt || node.createdAt || '');
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+/**
+ * 扁平列表去重标注：网络栏展示的是"所有含图文件夹"的扁平列表（没有树状层级），
+ * 不同主文件夹下的同名子文件夹会撞名（如 A/1 与 B/1 都叫 "1"）。
+ * 对重名的项显示「主文件夹/末级文件夹」，层级更深时中间用省略号带过：
+ *   A/1、B/1、A/.../1。名称唯一的保持原样，列表依旧干净。
+ * 返回 id -> { dir: 前缀（可为空）, name: 末级名称, full: 完整相对路径 }。
+ */
+const buildDisambiguatedLabels = (
+  nodes: FileNode[]
+): Map<string, { dir: string; name: string; full: string }> => {
+  const counts = new Map<string, number>();
+  for (const n of nodes) {
+    const key = (n.name || '').toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  const labels = new Map<string, { dir: string; name: string; full: string }>();
+  for (const n of nodes) {
+    if ((counts.get((n.name || '').toLowerCase()) || 0) <= 1) continue;
+    // 虚拟"根目录图片"不是真实路径，不参与路径标注
+    if (n.id === LAN_ROOT_IMAGES_ID || n.id.startsWith(`${ANDROID_ROOT_IMAGES_ID}:`)) continue;
+    const rel = (n.remotePath || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+|\/+$/g, '')
+      // 兜底：旧版服务端可能下发 Windows 绝对路径，去掉盘符段（E:/...）
+      .replace(/^[a-zA-Z]:\//, '');
+    if (!rel) continue;
+    const segs = rel.split('/');
+    if (segs.length <= 1) continue; // 顶层文件夹名称本身不会重复
+    const dir = segs.length === 2 ? segs[0] : `${segs[0]}/...`;
+    labels.set(n.id, { dir, name: segs[segs.length - 1], full: rel });
+  }
+  return labels;
+};
 
 /**
  * 网络分区：
@@ -55,12 +106,59 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
     onNavigateAndroidHome,
     onNavigateAndroidFolder,
     onOpenAndroidSettings,
+    sortMode = 'name',
+    sortOrder = 'asc',
+    onToggleSort,
   }) => {
     const isAndroid = isAndroidPlatformCached();
     const iconSize = isAndroid ? 18 : 14;
+    const sortIconSize = isAndroid ? 18 : 14;
+    const sortPad = isAndroid ? 'p-1.5' : 'p-1';
     const textClass = isAndroid ? 'text-sm' : 'text-xs';
     const iconMr = isAndroid ? 'mr-2.5' : 'mr-2';
     const chevronMr = isAndroid ? 'mr-1.5' : 'mr-1';
+
+    /** 按当前排序设置比较两个文件夹节点（时间相同时回退到名称，保证顺序稳定）。 */
+    const compareNodes = useCallback((a: FileNode, b: FileNode): number => {
+      if (sortMode === 'date') {
+        const diff = nodeSortTime(a) - nodeSortTime(b);
+        if (diff !== 0) return sortOrder === 'asc' ? diff : -diff;
+      }
+      const res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+      return sortOrder === 'asc' ? res : -res;
+    }, [sortMode, sortOrder]);
+
+    /** 设备是否可正常浏览（已连接且已加载到顶层文件夹）。 */
+    const isDeviceBrowsable = (device: AndroidDeviceInfo): boolean =>
+      !!device.connected && (device.roots?.length ?? 0) > 0;
+
+    // 设备行排序：多设备时按名称（时间模式取该设备最新文件夹的时间）
+    const sortedAndroidDevices = useMemo(() => {
+      const list = [...androidDevices];
+      list.sort((a, b) => {
+        if (sortMode === 'date') {
+          const timeOf = (d: AndroidDeviceInfo) =>
+            (d.roots || []).reduce((max, id) => {
+              const node = files[id];
+              return node ? Math.max(max, nodeSortTime(node)) : max;
+            }, 0);
+          const diff = timeOf(a) - timeOf(b);
+          if (diff !== 0) return sortOrder === 'asc' ? diff : -diff;
+        }
+        const res = (a.name || '').toLowerCase().localeCompare((b.name || '').toLowerCase());
+        return sortOrder === 'asc' ? res : -res;
+      });
+      return list;
+    }, [androidDevices, files, sortMode, sortOrder]);
+
+    const getSortTitle = () =>
+      sortMode === 'name'
+        ? sortOrder === 'asc'
+          ? 'A-Z'
+          : 'Z-A'
+        : sortOrder === 'desc'
+          ? t('sort.newest')
+          : t('sort.oldest');
 
     const title = t('sidebar.network.title') || '网络';
     const disconnectedHint = t('sidebar.network.disconnected') || '未连接';
@@ -73,8 +171,12 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
     const rootNodes = useMemo(() => {
       return (lanRoots || [])
         .map((id) => files[id])
-        .filter((f): f is FileNode => !!f && f.type === FileType.FOLDER);
-    }, [lanRoots, files]);
+        .filter((f): f is FileNode => !!f && f.type === FileType.FOLDER)
+        .sort(compareNodes);
+    }, [lanRoots, files, compareNodes]);
+
+    // 同名文件夹的区分标注（详见 buildDisambiguatedLabels）
+    const rootLabels = useMemo(() => buildDisambiguatedLabels(rootNodes), [rootNodes]);
 
     const handleHeaderClick = (e: React.MouseEvent) => {
       if (loading) return;
@@ -123,12 +225,13 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                 </span>
               </div>
             ) : (
-              androidDevices.map((device) => {
+              sortedAndroidDevices.map((device) => {
                 const isActive = androidActiveKey === device.key;
                 const isDeviceExpanded = expandedAndroidKey === device.key;
                 const deviceRootNodes = (device.roots || [])
                   .map((id) => files[id])
-                  .filter((f): f is FileNode => !!f && f.type === FileType.FOLDER);
+                  .filter((f): f is FileNode => !!f && f.type === FileType.FOLDER)
+                  .sort(compareNodes);
                 // 设备行与展开的文件夹列表以 Fragment 平铺为分区根节点的直接
                 // flex 子项：列表容器 min-h-0 + overflow-y-auto，任何剩余空间
                 // 压缩都由列表自身吸收（内部滚动），不会溢出覆盖下方栏目。
@@ -198,6 +301,24 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                           </span>
                         )}
                       </div>
+                      {/* 排序按钮：仅在该设备已连接且能正常浏览时显示 */}
+                      {onToggleSort && isDeviceBrowsable(device) && (
+                        <div
+                          data-android-sort-toggle
+                          className={`${sortPad} flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isActive ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-blue-500'}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onToggleSort();
+                          }}
+                          title={getSortTitle()}
+                        >
+                          {sortMode === 'name' ? (
+                            sortOrder === 'asc' ? <SortAsc size={sortIconSize} /> : <SortDesc size={sortIconSize} />
+                          ) : (
+                            <Clock size={sortIconSize} className={sortOrder === 'asc' ? 'rotate-180' : ''} />
+                          )}
+                        </div>
+                      )}
                     </div>
                     {isDeviceExpanded && (
                       <div
@@ -228,9 +349,9 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                               >
                                 <Folder
                                   size={16}
-                                  className={`mr-2 ${isCurrent ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`}
+                                  className={`mr-2 shrink-0 ${isCurrent ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`}
                                 />
-                                <span className="truncate flex-1">{node.name}</span>
+                                <MarqueeText className="flex-1 pointer-events-none" active={isCurrent}>{node.name}</MarqueeText>
                               </div>
                             );
                           })
@@ -302,6 +423,24 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                 {disconnectedHint}
               </span>
             ) : null}
+            {/* 排序按钮：仅在已连接且能正常浏览桌面端文件夹时显示 */}
+            {onToggleSort && connected && !loading && rootNodes.length > 0 && (
+              <div
+                data-lan-sort-toggle
+                className={`${sortPad} flex items-center justify-center rounded transition-all hover:bg-black/10 dark:hover:bg-white/10 ${isSelected ? 'text-white/80 hover:text-white' : 'text-gray-400 hover:text-blue-500'}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleSort();
+                }}
+                title={getSortTitle()}
+              >
+                {sortMode === 'name' ? (
+                  sortOrder === 'asc' ? <SortAsc size={sortIconSize} /> : <SortDesc size={sortIconSize} />
+                ) : (
+                  <Clock size={sortIconSize} className={sortOrder === 'asc' ? 'rotate-180' : ''} />
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -322,6 +461,8 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                 ) : (
                   rootNodes.map((node) => {
                     const isCurrent = node.id === currentFolderId;
+                    // 同名文件夹显示父级路径前缀（如 A/1、B/1），唯一名保持简洁
+                    const label = rootLabels.get(node.id);
                     return (
                       <div
                         key={node.id}
@@ -332,13 +473,23 @@ const NetworkSection: React.FC<NetworkSectionProps> = React.memo(
                         }`}
                         style={{ paddingLeft: '20px', ...(isAndroid ? { height: '35px' } : {}), margin: '0 10px' }}
                         onClick={() => onNavigateFolder(node.id)}
+                        title={label ? label.full : node.name}
                       >
                         <div className="w-[14px] mr-1" />
                         <Folder
                           size={16}
-                          className={`mr-2 ${isCurrent ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`}
+                          className={`mr-2 shrink-0 ${isCurrent ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`}
                         />
-                        <span className="truncate flex-1">{node.name}</span>
+                        <MarqueeText className="flex-1 pointer-events-none" active={isCurrent}>
+                          {label ? (
+                            <>
+                              {label.dir && <span className="opacity-60">{label.dir}/</span>}
+                              {label.name}
+                            </>
+                          ) : (
+                            node.name
+                          )}
+                        </MarqueeText>
                       </div>
                     );
                   })

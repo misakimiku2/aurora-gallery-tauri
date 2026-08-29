@@ -271,10 +271,8 @@ export class AndroidDeviceClient {
 
   private folderItemToFileNode(item: BrowseItem): FileNode {
     const remotePath = item.path;
-    const coverRemote =
-      item.preview_images && item.preview_images.length > 0
-        ? item.preview_images[0]
-        : undefined;
+    // 服务端返回的多张预览图：保留前 3 张，供桌面端文件夹堆叠封面使用
+    const previewRemotes = (item.preview_images || []).slice(0, 3);
     return {
       id: generateId(`android://${this.key}/${remotePath}`),
       parentId: null,
@@ -286,7 +284,11 @@ export class AndroidDeviceClient {
       source: 'android',
       children: [],
       tags: [],
-      coverImagePath: coverRemote ? `android://${this.key}/${coverRemote}` : undefined,
+      coverImagePath: previewRemotes[0] ? `android://${this.key}/${previewRemotes[0]}` : undefined,
+      coverImagePaths:
+        previewRemotes.length > 0
+          ? previewRemotes.map((p) => `android://${this.key}/${p}`)
+          : undefined,
       coverImageWidth: item.width || undefined,
       coverImageHeight: item.height || undefined,
       imageCount: typeof item.size === 'number' ? item.size : 0,

@@ -20,6 +20,7 @@ import { subscribeToModelDownload, ModelDownloadInfo, getActiveDownloads } from 
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { isRemotePath, getRemoteThumbnailUrl } from '../utils/remoteSource';
 import NetworkSection from './lan-client/NetworkSection';
+import MarqueeText from './MarqueeText';
 import { PeopleCanvas } from './PeopleCanvas';
 import { useAutoScrollbar } from '../hooks/useAutoScrollbar';
 import { scrollProfiler } from '../utils/scrollProfiler';
@@ -182,8 +183,8 @@ const TreeNodeInner: React.FC<TreeProps> = ({ node, nodeId, currentFolderId, exp
             expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />
           ) : <div className="w-[14px]" />}
         </div>
-        <Icon size={16} className={`mr-2 ${iconColorClass}`} />
-        <span className="truncate pointer-events-none flex-1">{node.name}</span>
+        <Icon size={16} className={`mr-2 shrink-0 ${iconColorClass}`} />
+        <MarqueeText className="flex-1 pointer-events-none" active={isSelected}>{node.name}</MarqueeText>
       </div>
 
       {/* children are rendered by the virtualized list in Sidebar to avoid recursion */}
@@ -1093,7 +1094,8 @@ const FolderSection: React.FC<FolderSectionProps> = React.memo(({
     const win = window as any;
     win.__AURORA_RENDER_COUNTS__ = win.__AURORA_RENDER_COUNTS__ || {};
     try {
-      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el.querySelectorAll('span.truncate').length;
+      // 树节点标签现在用 MarqueeText 渲染（span.aurora-marquee）
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el.querySelectorAll('span.truncate, span.aurora-marquee').length;
     } catch {
       win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = 0;
     }
@@ -1451,6 +1453,41 @@ export const Sidebar: React.FC<{
     localStorage.setItem('aurora_sidebar_folder_sort_order', nextOrder);
   }, [folderSortMode, folderSortOrder]);
 
+  // 网络（移动设备 / 局域网）分区的排序状态：与本地文件夹树完全独立，
+  // 两套各自记忆，互不影响。
+  const [networkSortMode, setNetworkSortMode] = useState<'name' | 'date'>(() =>
+    (localStorage.getItem('aurora_sidebar_network_sort_mode') as 'name' | 'date') || 'name'
+  );
+  const [networkSortOrder, setNetworkSortOrder] = useState<'asc' | 'desc'>(() =>
+    (localStorage.getItem('aurora_sidebar_network_sort_order') as 'asc' | 'desc') || 'asc'
+  );
+
+  const handleToggleNetworkSort = useCallback(() => {
+    let nextMode: 'name' | 'date' = networkSortMode;
+    let nextOrder: 'asc' | 'desc' = networkSortOrder;
+
+    if (networkSortMode === 'name') {
+      if (networkSortOrder === 'asc') {
+        nextOrder = 'desc';
+      } else {
+        nextMode = 'date';
+        nextOrder = 'desc'; // 时间排序默认最新在前
+      }
+    } else {
+      if (networkSortOrder === 'desc') {
+        nextOrder = 'asc';
+      } else {
+        nextMode = 'name';
+        nextOrder = 'asc';
+      }
+    }
+
+    setNetworkSortMode(nextMode);
+    setNetworkSortOrder(nextOrder);
+    localStorage.setItem('aurora_sidebar_network_sort_mode', nextMode);
+    localStorage.setItem('aurora_sidebar_network_sort_order', nextOrder);
+  }, [networkSortMode, networkSortOrder]);
+
   // New state to track if mouse is hovering the sidebar
   const [isSidebarHovered, setIsSidebarHovered] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1639,8 +1676,8 @@ export const Sidebar: React.FC<{
     // DOM-mounted count (best-effort selector matching TreeNode structure)
     const el = sidebarHeightRef.current;
     try {
-      // Tree nodes render a `span.truncate` for the label — use that as a proxy
-      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el ? el.querySelectorAll('span.truncate').length : 0;
+      // Tree nodes render a `span.aurora-marquee` for the label — use that as a proxy
+      win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = el ? el.querySelectorAll('span.truncate, span.aurora-marquee').length : 0;
     } catch (e) {
       win.__AURORA_RENDER_COUNTS__.treeSidebarDOM = 0;
     }
@@ -1713,6 +1750,9 @@ export const Sidebar: React.FC<{
             onNavigateAndroidHome={(key) => { setActiveSection('lanNetwork'); onNavigateAndroidHome?.(key); }}
             onNavigateAndroidFolder={(id) => { setActiveSection('lanNetwork'); onNavigateAndroidFolder?.(id); }}
             onOpenAndroidSettings={() => onOpenAndroidSettings?.()}
+            sortMode={networkSortMode}
+            sortOrder={networkSortOrder}
+            onToggleSort={handleToggleNetworkSort}
           />
 
           <PeopleSection

@@ -4,7 +4,7 @@ import {
   androidDeviceKeyOf,
 } from '../components/android-client/androidClientApi';
 import { AndroidDeviceInfo } from '../components/android-client/androidClientTypes';
-import { ANDROID_ROOT_IMAGES_ID } from '../constants';
+import { ANDROID_ROOT_IMAGES_ID, ANDROID_DEVICE_ROOT_PREFIX, androidDeviceRootId } from '../constants';
 import { notifyRemoteChange } from '../utils/remoteSource';
 import { AppState, AndroidClientConnection, FileNode, FileType, TabState } from '../types';
 
@@ -169,6 +169,10 @@ export const useAndroidClient = ({
         androidClientRegistry.unregister(client.key);
       }
     }
+    // 每台设备都要有一个根节点，桌面端才能用文件界面进入它
+    for (const [key, c] of current) {
+      ensureDeviceRoot(key, c.serverName || undefined);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connKeys]);
 
@@ -191,19 +195,35 @@ export const useAndroidClient = ({
   );
 
   // 设备名同步：设置面板中重命名设备（更新 androidClients[].serverName）后，
-  // 侧边栏设备行与总览标题需要同步显示新名字（key 未变，单独监听名称变化）。
+  // 侧边栏设备行、文件界面标题与设备根节点都要同步显示新名字（key 未变，单独监听名称变化）。
   useEffect(() => {
-    setAndroidDevices((prev) => {
+    const renamed: Array<{ key: string; name: string }> = [];
+    for (const d of androidDevicesRef.current) {
+      const c = conns.find((cc) => cc.key === d.key);
+      if (c?.serverName && c.serverName !== d.name) {
+        renamed.push({ key: d.key, name: c.serverName });
+      }
+    }
+    if (renamed.length === 0) return;
+
+    setAndroidDevices((prev) =>
+      prev.map((d) => {
+        const hit = renamed.find((r) => r.key === d.key);
+        return hit ? { ...d, name: hit.name } : d;
+      })
+    );
+    setState((s) => {
+      const files = { ...s.files };
       let changed = false;
-      const next = prev.map((d) => {
-        const c = conns.find((cc) => cc.key === d.key);
-        if (c?.serverName && c.serverName !== d.name) {
+      for (const { key, name } of renamed) {
+        const rootId = androidDeviceRootId(key);
+        const node = files[rootId];
+        if (node && node.name !== name) {
+          files[rootId] = { ...node, name };
           changed = true;
-          return { ...d, name: c.serverName };
         }
-        return d;
-      });
-      return changed ? next : prev;
+      }
+      return changed ? { ...s, files } : s;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conns.map((c) => `${c.key}:${c.serverName || ''}`).join('|')]);
@@ -211,11 +231,21 @@ export const useAndroidClient = ({
   // 根目录加载（指数退避重试 + 定时自动重连）统一在 loadDeviceRoots 中实现，
   // 定义见下方（需依赖 applyDeviceRoots / removeConnectionFromSettings 等）。
 
-  const setDeviceLoading = useCallback((key: string, loading: boolean) => {
-    setAndroidDevices((prev) =>
-      prev.map((d) => (d.key === key ? { ...d, loading } : d))
-    );
-  }, []);
+  const setDeviceLoading = useCallback(
+    (key: string, loading: boolean) => {
+      setAndroidDevices((prev) =>
+        prev.map((d) => (d.key === key ? { ...d, loading } : d))
+      );
+      // 同步到设备根节点：桌面端用文件界面浏览设备根时，空态会据此显示刷新指示
+      const rootId = androidDeviceRootId(key);
+      setState((s) => {
+        const node = s.files[rootId];
+        if (!node || node.isRefreshing === loading) return s;
+        return { ...s, files: { ...s.files, [rootId]: { ...node, isRefreshing: loading } } };
+      });
+    },
+    [setState]
+  );
 
   const setDeviceConnected = useCallback((key: string, connected: boolean) => {
     setAndroidDevices((prev) =>
@@ -229,13 +259,47 @@ export const useAndroidClient = ({
     );
   }, []);
 
+  /**
+   * 确保某台设备的根节点存在（children 可能仍为空，等待根目录加载完成）。
+   * 桌面端以常规文件界面浏览该设备时，activeTab.folderId 就是这个节点。
+   */
+  const ensureDeviceRoot = useCallback(
+    (key: string, name?: string) => {
+      const deviceRootId = androidDeviceRootId(key);
+      setState((s) => {
+        if (s.files[deviceRootId]) return s;
+        return {
+          ...s,
+          files: {
+            ...s.files,
+            [deviceRootId]: {
+              id: deviceRootId,
+              parentId: null,
+              name: name || t('sidebar.network.androidDevice') || '安卓设备',
+              type: FileType.FOLDER,
+              path: `android://${key}/__device_root__`,
+              remotePath: '__device_root__',
+              remoteDeviceKey: key,
+              source: 'android',
+              children: [],
+              tags: [],
+            },
+          },
+        };
+      });
+    },
+    [setState, t]
+  );
+
   const applyDeviceRoots = useCallback(
-    (key: string, folders: FileNode[], images: FileNode[]) => {
+    (key: string, folders: FileNode[], images: FileNode[], deviceName?: string) => {
+      const deviceRootId = androidDeviceRootId(key);
       const newFiles: Record<string, FileNode> = {};
       const rootIds: string[] = [];
 
       for (const f of folders) {
-        newFiles[f.id] = f;
+        // 顶层文件夹挂在设备根节点下，便于文件界面"向上一级"回到设备根
+        newFiles[f.id] = { ...f, parentId: deviceRootId };
         rootIds.push(f.id);
       }
 
@@ -246,7 +310,7 @@ export const useAndroidClient = ({
         }
         newFiles[virtualRootId] = {
           id: virtualRootId,
-          parentId: null,
+          parentId: deviceRootId,
           name: '根目录图片',
           type: FileType.FOLDER,
           path: `android://${key}/__root_images__`,
@@ -256,17 +320,47 @@ export const useAndroidClient = ({
           children: images.map((img) => img.id),
           tags: [],
           coverImagePath: images[0]?.path,
+          coverImagePaths: images.slice(0, 3).map((img) => img.path),
           imageCount: images.length,
         };
         rootIds.push(virtualRootId);
       }
 
-      setState((s) => ({ ...s, files: { ...s.files, ...newFiles } }));
+      // 设备根节点：子节点 = 该设备的顶层文件夹，桌面端直接用 FileGrid 渲染
+      newFiles[deviceRootId] = {
+        id: deviceRootId,
+        parentId: null,
+        name: deviceName || t('sidebar.network.androidDevice') || '安卓设备',
+        type: FileType.FOLDER,
+        path: `android://${key}/__device_root__`,
+        remotePath: '__device_root__',
+        remoteDeviceKey: key,
+        source: 'android',
+        children: rootIds,
+        tags: [],
+      };
+
+      setState((s) => {
+        const prevRoot = s.files[deviceRootId];
+        return {
+          ...s,
+          files: {
+            ...s.files,
+            ...newFiles,
+            [deviceRootId]: {
+              ...newFiles[deviceRootId],
+              name: deviceName || prevRoot?.name || newFiles[deviceRootId].name,
+              // 重连期间保持根节点上的刷新态，文件区空态才会显示刷新指示
+              isRefreshing: prevRoot?.isRefreshing ?? false,
+            },
+          },
+        };
+      });
       setAndroidDevices((prev) =>
         prev.map((d) => (d.key === key ? { ...d, roots: rootIds } : d))
       );
     },
-    [setState]
+    [setState, t]
   );
 
   const removeConnectionFromSettings = useCallback(
@@ -310,9 +404,9 @@ export const useAndroidClient = ({
       const loadRoots = async (attempt: number): Promise<boolean> => {
         try {
           const { folders, rootImages } = await client.getAllImageFolders();
-          const wasConnected =
-            androidDevicesRef.current.find((d) => d.key === c.key)?.connected ?? false;
-          applyDeviceRoots(c.key, folders, rootImages);
+          const device = androidDevicesRef.current.find((d) => d.key === c.key);
+          const wasConnected = device?.connected ?? false;
+          applyDeviceRoots(c.key, folders, rootImages, device?.name);
           setDeviceConnected(c.key, true);
           setDeviceError(c.key, '');
           staleAttemptsRef.current.delete(c.key);
@@ -495,22 +589,31 @@ export const useAndroidClient = ({
 
   /** 浏览安卓端文件夹（按节点携带的设备 key 分发）。 */
   const handleNavigateAndroidFolder = useCallback(
-    async (folderId: string) => {
+    async (folderId: string, options?: { resetScroll?: boolean; scrollToItemId?: string }) => {
       const folder = state.files[folderId];
       if (!folder || folder.source !== 'android' || !folder.remotePath) return;
       const key = folder.remoteDeviceKey || '';
-      const client = androidClientRegistry.get(key);
-      if (!client) return;
+      const enter = (resetScroll: boolean) =>
+        enterFolder(folderId, { resetScroll, scrollToItemId: options?.scrollToItemId });
 
-      if (folder.id.startsWith(`${ANDROID_ROOT_IMAGES_ID}:`)) {
-        enterFolder(folderId, { resetScroll: true });
+      // 设备根节点 / 根目录图片虚拟文件夹：子节点已在本地，无需请求设备即可进入
+      // （设备掉线时仍可进入，避免点击没反应）
+      if (
+        folder.id.startsWith(ANDROID_DEVICE_ROOT_PREFIX) ||
+        folder.id.startsWith(`${ANDROID_ROOT_IMAGES_ID}:`)
+      ) {
+        enter(true);
         return;
       }
 
       if (folder.children && folder.children.length > 0) {
-        enterFolder(folderId, { resetScroll: true });
+        enter(options?.resetScroll ?? true);
         return;
       }
+
+      // 需要向设备请求目录内容
+      const client = androidClientRegistry.get(key);
+      if (!client) return;
 
       setState((s) => ({
         ...s,
@@ -519,7 +622,7 @@ export const useAndroidClient = ({
           [folderId]: { ...s.files[folderId], children: [], isRefreshing: true },
         },
       }));
-      enterFolder(folderId, { resetScroll: true });
+      enter(true);
       setDeviceLoading(key, true);
 
       try {
@@ -570,7 +673,8 @@ export const useAndroidClient = ({
       setDeviceLoading(key, true);
       try {
         const { folders, rootImages } = await client.getAllImageFolders();
-        applyDeviceRoots(key, folders, rootImages);
+        const device = androidDevicesRef.current.find((d) => d.key === key);
+        applyDeviceRoots(key, folders, rootImages, device?.name);
       } catch (err) {
         console.error('[AndroidClient] Refresh failed:', err);
       } finally {
@@ -585,6 +689,11 @@ export const useAndroidClient = ({
     const folder = state.files[activeTab.folderId];
     if (!folder || folder.source !== 'android' || !folder.remotePath) return;
     const key = folder.remoteDeviceKey || '';
+    // 设备根节点：重新拉取整台设备的顶层文件夹
+    if (folder.id.startsWith(ANDROID_DEVICE_ROOT_PREFIX)) {
+      await handleAndroidRefresh(key);
+      return;
+    }
     if (folder.id.startsWith(`${ANDROID_ROOT_IMAGES_ID}:`)) return;
     const client = androidClientRegistry.get(key);
     if (!client) return;
@@ -610,7 +719,7 @@ export const useAndroidClient = ({
     } finally {
       setDeviceLoading(key, false);
     }
-  }, [state.files, activeTab.folderId, setState, setDeviceLoading]);
+  }, [state.files, activeTab.folderId, setState, setDeviceLoading, handleAndroidRefresh]);
 
   /** 断开指定设备：注销客户端 + 移除连接配置（文件清理由同步 effect 完成）。 */
   const handleAndroidDisconnect = useCallback(

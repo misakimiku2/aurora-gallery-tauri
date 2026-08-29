@@ -645,16 +645,6 @@ export const TopBar: React.FC<TopBarProps> = ({
   const getFolderDisplayName = () => {
     if (activeTab.viewMode === 'folders-overview') return t('sidebar.folders');
     if (activeTab.viewMode === 'lan-folders-overview') return t('sidebar.network.title') || '网络';
-    if (activeTab.viewMode === 'android-folders-overview') {
-      // 多设备支持：显示当前浏览的设备名称
-      const prefix = '__android_folders_root__:';
-      if (activeTab.folderId.startsWith(prefix)) {
-        const key = activeTab.folderId.slice(prefix.length);
-        const conn = state.settings.lanShare.androidClients?.find((c) => c.key === key);
-        if (conn?.serverName) return conn.serverName;
-      }
-      return t('sidebar.network.androidDevice') || '安卓设备';
-    }
     if (activeTab.viewMode === 'tags-overview') return t('sidebar.allTags');
     if (activeTab.viewMode === 'topics-overview') {
       if (activeTab.activeTopicId) return (state.topics as any)?.[activeTab.activeTopicId]?.name || t('sidebar.topics');
@@ -909,7 +899,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                         {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                         <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                       </button>
-                      {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && activeTab.viewMode !== 'android-folders-overview' && (
+                      {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                       <>
                       <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                       <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
@@ -1301,7 +1291,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     <ArrowDownUp size={14} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                   </button>
                   
-                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && activeTab.viewMode !== 'android-folders-overview' && (
+                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                   <>
                   <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                   <div className="px-3 py-1 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>
@@ -1342,7 +1332,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* View Mode Menu (or topic mode buttons) */}
-        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && activeTab.viewMode !== 'android-folders-overview' && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
+        {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
           <>
           {isAndroid ? (
             <button
@@ -1453,7 +1443,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
 
         {/* Folders overview layout menu */}
-        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview' || activeTab.viewMode === 'android-folders-overview') && onFolderLayoutModeChange && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
+        {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && !isCompactMode && !isPhonePortrait && !isSearchExpanded && (
           <>
           {isAndroid ? (
             <button
@@ -1669,7 +1659,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </button>
                   )}
                   {/* 视图模式 - 普通视图 */}
-                  {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && activeTab.viewMode !== 'android-folders-overview' && (
+                  {activeTab.viewMode !== 'topics-overview' && activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                     <button
                       onClick={() => {
                         const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
@@ -1687,7 +1677,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     </button>
                   )}
                   {/* 视图模式 - folders overview */}
-                  {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview' || activeTab.viewMode === 'android-folders-overview') && onFolderLayoutModeChange && (
+                  {(activeTab.viewMode === 'folders-overview' || activeTab.viewMode === 'lan-folders-overview') && onFolderLayoutModeChange && (
                     <button
                       onClick={() => {
                         const cycle: LayoutMode[] = ['grid', 'adaptive', 'masonry'];
@@ -1781,7 +1771,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {state.sortDirection === 'asc' ? t('sort.asc') : t('sort.desc')}
                     <ArrowDownUp size={18} className={state.sortDirection === 'asc' ? 'transform rotate-180' : ''}/>
                   </button>
-                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && activeTab.viewMode !== 'android-folders-overview' && (
+                  {activeTab.viewMode !== 'folders-overview' && activeTab.viewMode !== 'lan-folders-overview' && (
                     <>
                       <div className="border-t border-black/5 dark:border-white/10 my-1"></div>
                       <div className="px-4 py-2 text-sm font-bold text-gray-400 uppercase tracking-wider">{t('groupBy.title')}</div>

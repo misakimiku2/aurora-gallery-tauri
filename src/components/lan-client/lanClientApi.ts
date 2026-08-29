@@ -257,9 +257,8 @@ class LanClientApi {
 
   private folderItemToFileNode(item: BrowseItem): FileNode {
     const remotePath = item.path;
-    const coverRemote = item.preview_images && item.preview_images.length > 0
-      ? item.preview_images[0]
-      : undefined;
+    // 服务端返回的多张预览图：保留前 3 张，供桌面端文件夹堆叠封面使用
+    const previewRemotes = (item.preview_images || []).slice(0, 3);
     return {
       id: generateId(remotePath),
       parentId: null,
@@ -270,7 +269,8 @@ class LanClientApi {
       source: 'lan',
       children: [],
       tags: [],
-      coverImagePath: coverRemote ? 'lan://' + coverRemote : undefined,
+      coverImagePath: previewRemotes[0] ? 'lan://' + previewRemotes[0] : undefined,
+      coverImagePaths: previewRemotes.length > 0 ? previewRemotes.map((p) => 'lan://' + p) : undefined,
       coverImageWidth: item.width || undefined,
       coverImageHeight: item.height || undefined,
       imageCount: typeof item.size === 'number' ? item.size : 0,

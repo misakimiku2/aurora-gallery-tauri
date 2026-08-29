@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tag, User, HardDrive, Search, Sparkles } from 'lucide-react';
 import { AppState, Person, TabState } from '../../types';
+import { isRemotePath } from '../../utils/remoteSource';
 
 interface OverviewBarProps {
   activeTab: TabState;
@@ -65,7 +66,12 @@ export const OverviewBar = ({
                 <>
                   <HardDrive size={12} />
                   <span>/</span>
-                  {state.files[activeTab.folderId]?.path || state.files[activeTab.folderId]?.name}
+                  {/* 远程路径（lan:// / android://）对用户无意义，显示文件夹名 */}
+                  {(() => {
+                    const current = state.files[activeTab.folderId];
+                    if (!current) return null;
+                    return isRemotePath(current.path) ? current.name : (current.path || current.name);
+                  })()}
                 </>
               ) : (
                 <>

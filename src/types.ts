@@ -71,6 +71,8 @@ export interface FileNode {
   coverImageMediaStoreId?: number;
   coverImageWidth?: number;
   coverImageHeight?: number;
+  /** 文件夹封面的多张候选图（远程设备/LAN 由服务端提供），用于堆叠显示最多 3 张封面 */
+  coverImagePaths?: string[];
 
   createdAt?: string;
   updatedAt?: string;
@@ -473,7 +475,7 @@ export interface FileGroup {
 export interface HistoryItem {
   folderId: string;
   viewingId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'android-folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
   searchQuery: string;
   searchScope: SearchScope;
   activeTags: string[];
@@ -490,7 +492,7 @@ export interface TabState {
   id: string;
   folderId: string;
   viewingFileId: string | null;
-  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview' | 'android-folders-overview';
+  viewMode: 'browser' | 'tags-overview' | 'people-overview' | 'topics-overview' | 'folders-overview' | 'lan-folders-overview';
   layoutMode: LayoutMode;
   searchQuery: string;
   searchScope: SearchScope;

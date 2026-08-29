@@ -36,11 +36,6 @@ interface MainContentAreaProps {
   handleNavigateNetworkFolder: (folderId: string) => void;
   lanLoading: boolean;
   handleLanRefresh: () => Promise<void>;
-  androidRoots: string[];
-  handleNavigateAndroidFolder: (folderId: string) => void;
-  androidLoading: boolean;
-  androidLoadingLabel?: string;
-  handleAndroidRefresh: () => Promise<void>;
   handleNavigateTopic: (topicId: string | null) => void;
   handleUpdateTopic: (topicId: string, updates: Partial<Topic>) => void;
   handleCreateTopic: (parentId: string | null, name?: string, type?: string) => void;
@@ -115,11 +110,6 @@ export const MainContentArea = ({
   handleNavigateNetworkFolder,
   lanLoading,
   handleLanRefresh,
-  androidRoots,
-  handleNavigateAndroidFolder,
-  androidLoading,
-  androidLoadingLabel,
-  handleAndroidRefresh,
   handleNavigateTopic,
   handleUpdateTopic,
   handleCreateTopic,
@@ -215,33 +205,6 @@ export const MainContentArea = ({
           sortBy={state.sortBy}
           sortDirection={state.sortDirection}
           onRefresh={handleLanRefresh}
-          panelWidthRem={panelWidthRem}
-        />
-      </div>
-      <div style={{ display: activeTab.viewMode === 'android-folders-overview' ? 'contents' : 'none' }}>
-        <FoldersOverview
-          roots={androidRoots}
-          getFileNode={getFileNode}
-          resourceRoot={state.settings.paths.resourceRoot}
-          cachePath={state.settings.paths.cacheRoot}
-          onFolderClick={handleNavigateAndroidFolder}
-          thumbnailSize={state.thumbnailSize}
-          onThumbnailSizeChange={(size) => setState(s => ({ ...s, thumbnailSize: size }))}
-          t={t}
-          isLoadingImages={androidLoading}
-          loadingLabel={androidLoadingLabel}
-          layoutMode={folderLayoutMode}
-          onLayoutModeChange={handleFolderLayoutModeChange}
-          isVisible={activeTab.viewMode === 'android-folders-overview'}
-          isAndroidSelectionMode={isAndroidSelectionMode}
-          selectedFileIds={activeTab.selectedFileIds}
-          onFileLongPress={handleFolderLongPress}
-          onShowContextMenuForFile={handleShowContextMenuForFile}
-          onAndroidRangeSelect={handleFolderAndroidRangeSelect}
-          onFolderSelect={handleFolderSelect}
-          sortBy={state.sortBy}
-          sortDirection={state.sortDirection}
-          onRefresh={handleAndroidRefresh}
           panelWidthRem={panelWidthRem}
         />
       </div>

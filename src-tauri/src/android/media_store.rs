@@ -31,6 +31,10 @@ pub struct AndroidFolderInfo {
     pub cover_image_height: Option<i32>,
     #[serde(default)]
     pub cover_thumbnail_path: Option<String>,
+    /// 文件夹封面的多张候选图（按 date_modified DESC 取最新几张），
+    /// 供桌面端文件夹图标堆叠显示最多 3 张封面。
+    #[serde(default)]
+    pub cover_image_ids: Vec<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -90,6 +94,11 @@ pub fn scan_device_all_via_kotlin<'a>(env: &mut JNIEnv<'a>, activity: &JObject<'
                 cover_image_width: folder.get("cover_image_width").and_then(|v| v.as_i64()).map(|v| v as i32),
                 cover_image_height: folder.get("cover_image_height").and_then(|v| v.as_i64()).map(|v| v as i32),
                 cover_thumbnail_path: folder.get("cover_thumbnail_path").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                cover_image_ids: folder
+                    .get("cover_image_ids")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.iter().filter_map(|v| v.as_i64()).take(3).collect())
+                    .unwrap_or_default(),
             });
         }
     }
@@ -149,6 +158,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
         cover_image_width: Option<i32>,
         cover_image_height: Option<i32>,
         max_date_modified: i64,
+        cover_image_ids: Vec<i64>,
     }
 
     let mut images = Vec::new();
@@ -254,8 +264,15 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
                 cover_image_width: None,
                 cover_image_height: None,
                 max_date_modified: -1,
+                cover_image_ids: Vec::with_capacity(3),
             });
             entry.count += 1;
+
+            // 游标按 date_modified DESC 排序，前 3 张即该文件夹最新图片，
+            // 用于桌面端文件夹图标的堆叠封面。
+            if entry.cover_image_ids.len() < 3 && !entry.cover_image_ids.contains(&id) {
+                entry.cover_image_ids.push(id);
+            }
 
             if date_modified > entry.max_date_modified {
                 entry.max_date_modified = date_modified;
@@ -290,6 +307,7 @@ fn parse_all_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<AndroidScanAllR
             cover_image_width: data.cover_image_width,
             cover_image_height: data.cover_image_height,
             cover_thumbnail_path: None,
+            cover_image_ids: data.cover_image_ids,
         })
         .collect();
 
@@ -644,6 +662,7 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
         cover_image_width: Option<i32>,
         cover_image_height: Option<i32>,
         max_date_modified: i64,
+        cover_image_ids: Vec<i64>,
     }
 
     let mut folder_map: HashMap<i64, FolderData> = HashMap::new();
@@ -764,8 +783,15 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             cover_image_width: None,
             cover_image_height: None,
             max_date_modified: -1,
+            cover_image_ids: Vec::with_capacity(3),
         });
         entry.count += 1;
+
+        if let Some(iid) = image_id {
+            if entry.cover_image_ids.len() < 3 && !entry.cover_image_ids.contains(&iid) {
+                entry.cover_image_ids.push(iid);
+            }
+        }
 
         if date_modified > entry.max_date_modified {
             entry.max_date_modified = date_modified;
@@ -799,6 +825,7 @@ fn parse_folder_cursor(env: &mut JNIEnv, cursor: JObject) -> Result<Vec<AndroidF
             cover_image_width: data.cover_image_width,
             cover_image_height: data.cover_image_height,
             cover_thumbnail_path: None,
+            cover_image_ids: data.cover_image_ids,
         })
         .collect();
     

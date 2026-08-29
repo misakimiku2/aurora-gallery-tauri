@@ -42,7 +42,7 @@ import { usePersonTopicHandlers } from './hooks/usePersonTopicHandlers';
 import { GlobalToasts } from './components/GlobalToasts';
 import { TaskProgressModal } from './components/TaskProgressModal';
 import { getPinyinGroup } from './utils/textUtils';
-import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS } from './constants';
+import { DUMMY_TAB, DEFAULT_LAYOUT_SETTINGS, ANDROID_DEVICE_ROOT_PREFIX, androidDeviceRootId } from './constants';
 import SplashScreen from './components/SplashScreen';
 import { SvgColorFilters } from './components/SvgColorFilters';
 import { LanDownloadOverlay } from './components/LanDownloadOverlay';
@@ -435,6 +435,10 @@ export const App: React.FC = () => {
   const activeTabRef = useRef(activeTab);
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
+  // 文件表 ref：供导航等回调读取最新文件节点（判断来源/父级），避免闭包过期
+  const filesRef = useRef(state.files);
+  filesRef.current = state.files;
+
   // 更新检查
   const {
     updateInfo,
@@ -774,7 +778,6 @@ export const App: React.FC = () => {
     androidDevices,
     androidConnectedCount,
     handleNavigateAndroidFolder,
-    handleAndroidRefresh,
     reloadCurrentAndroidFolder,
     handleAndroidDisconnect,
     handleOpenAndroidSettings,
@@ -782,35 +785,28 @@ export const App: React.FC = () => {
     markDeviceEstablished,
   } = useAndroidClient({ state, setState, activeTab, t, showToast, enterFolder });
 
-  // 安卓总览视图的活跃设备 key（历史标记 __android_folders_root__:<key>）
-  const ANDROID_OVERVIEW_PREFIX = '__android_folders_root__:';
-  const androidActiveKey =
-    activeTab.viewMode === 'android-folders-overview' &&
-    activeTab.folderId.startsWith(ANDROID_OVERVIEW_PREFIX)
-      ? activeTab.folderId.slice(ANDROID_OVERVIEW_PREFIX.length)
-      : '';
-  const activeAndroidDevice = androidDevices.find((d) => d.key === androidActiveKey);
-  const androidRoots = activeAndroidDevice?.roots || [];
-  const androidLoading = activeAndroidDevice?.loading || false;
-  // 重连期间文件区（否则纯白）显示的提示，与侧边栏设备行的转圈保持一致
-  const androidLoadingLabel = androidLoading
-    ? (t('settings.lanShare.androidClient.reconnecting') || '正在重新连接「{name}」…').replace(
-        '{name}',
-        activeAndroidDevice?.name || '安卓设备'
-      )
-    : undefined;
-
-  // 侧边栏"安卓设备"节点入口：已连接时进入该设备总览视图；
+  // 当前正在浏览的安卓设备 key：桌面端以常规文件界面浏览设备根
+  // （__android_device_root__:<key>）或设备内的任意子文件夹。
+  const androidActiveKey = useMemo(() => {
+    const folderId = activeTab.folderId;
+    if (folderId.startsWith(ANDROID_DEVICE_ROOT_PREFIX)) {
+      return folderId.slice(ANDROID_DEVICE_ROOT_PREFIX.length);
+    }
+    const current = state.files[folderId];
+    if (current?.source === 'android') return current.remoteDeviceKey || '';
+    return '';
+  }, [activeTab.folderId, state.files]);
+  // 侧边栏"安卓设备"节点入口：进入该设备的根节点（桌面端常规文件界面）；
   // 未连通时先立即重连一次（手机端可能刚开启共享/上次扫描超时），
-  // 重连成功则直接进总览，仍失败才打开设置面板并提示原因。
+  // 重连成功则直接进入，仍失败才打开设置面板并提示原因。
   const handleNavigateAndroidHome = useCallback(
     async (key: string) => {
       const device = androidDevices.find((d) => d.key === key);
       if (!device) return;
-      // 正在重连中：直接进入该设备文件区（那里显示重连动画），
+      // 正在重连中：直接进入该设备文件区（空态显示刷新指示），
       // 既不重复发起连接，也不该弹出"无法连接"——它还没失败。
       if (!device.connected && device.loading) {
-        pushHistory(`${ANDROID_OVERVIEW_PREFIX}${key}`, null, 'android-folders-overview', '', 'all', [], null, 0);
+        pushHistory(androidDeviceRootId(key), null, 'browser', '', 'all', [], null, 0);
         return;
       }
       if (!device.connected) {
@@ -831,17 +827,10 @@ export const App: React.FC = () => {
           return;
         }
       }
-      pushHistory(`${ANDROID_OVERVIEW_PREFIX}${key}`, null, 'android-folders-overview', '', 'all', [], null, 0);
+      pushHistory(androidDeviceRootId(key), null, 'browser', '', 'all', [], null, 0);
     },
     [androidDevices, handleOpenAndroidSettings, pushHistory, reconnectDevice, showToast, t]
   );
-
-  // 当前活跃设备的总览刷新
-  const handleAndroidRefreshActive = useCallback(async () => {
-    if (androidActiveKey) {
-      await handleAndroidRefresh(androidActiveKey);
-    }
-  }, [androidActiveKey, handleAndroidRefresh]);
 
   // 下载安卓设备图片到本地（右键菜单"下载到本地"，按文件携带的设备 key 分发）
   const handleDownloadAndroidFiles = useCallback(async (ids: string[]) => {
@@ -1661,10 +1650,18 @@ export const App: React.FC = () => {
     closeContextMenu();
     if (activeTabRef.current.isCompareMode) {
       handleOpenInNewTab(id);
-    } else {
-      enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll });
+      return;
     }
-  }, [closeContextMenu, enterFolder, handleOpenInNewTab]);
+    // 安卓设备节点：需要先向设备请求该目录内容，不能直接进空目录
+    if (filesRef.current[id]?.source === 'android') {
+      handleNavigateAndroidFolder(id, {
+        resetScroll: options?.resetScroll,
+        scrollToItemId: options?.targetId,
+      });
+      return;
+    }
+    enterFolder(id, { scrollToItemId: options?.targetId, resetScroll: options?.resetScroll });
+  }, [closeContextMenu, enterFolder, handleOpenInNewTab, handleNavigateAndroidFolder]);
 
   /* handleOpenCompareInNewTab: delegated to `useNavigation` */
 
@@ -1926,7 +1923,6 @@ export const App: React.FC = () => {
   pushHistoryRef.current = pushHistory;
   const activeTabRef2 = useRef(activeTab);
   activeTabRef2.current = activeTab;
-  const filesRef = useRef(state.files);
   filesRef.current = state.files;
   // getFileNode 引用永远不变（从 filesRef 读取），消费它的组件不会因 state.files
   // 引用变化而重渲染。组件只在 items/displayFileIds 等真正相关的 prop 变化时才重渲染，
@@ -2391,11 +2387,12 @@ export const App: React.FC = () => {
         if (current?.source === 'android') {
           if (current.parentId) {
             pushHistoryRef.current(current.parentId, null, 'browser', '', 'all', [], null, 0);
-          } else {
+          } else if (!current.id.startsWith(ANDROID_DEVICE_ROOT_PREFIX)) {
+            // 设备顶层文件夹：回到该设备的根节点（常规文件界面）
             pushHistoryRef.current(
-              `__android_folders_root__:${current.remoteDeviceKey || ''}`,
+              androidDeviceRootId(current.remoteDeviceKey || ''),
               null,
-              'android-folders-overview',
+              'browser',
               '',
               'all',
               [],
@@ -2702,11 +2699,6 @@ export const App: React.FC = () => {
                 handleNavigateNetworkFolder={handleNavigateNetworkFolder}
                 lanLoading={lanLoading}
                 handleLanRefresh={handleLanRefresh}
-                androidRoots={androidRoots}
-                handleNavigateAndroidFolder={handleNavigateAndroidFolder}
-                androidLoading={androidLoading}
-                androidLoadingLabel={androidLoadingLabel}
-                handleAndroidRefresh={handleAndroidRefreshActive}
                 handleNavigateTopic={handleNavigateTopic}
                 handleUpdateTopic={handleUpdateTopic}
                 handleCreateTopic={handleCreateTopic}

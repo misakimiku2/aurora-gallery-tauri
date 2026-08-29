@@ -1326,9 +1326,7 @@ pub async fn handle_all_image_folders(
                     // 收集根目录散落图片
                     for img in &all_images {
                         if img.parent_id.as_deref() == Some(&root_parent_id) {
-                            let relative_item_path = img.path.strip_prefix(&root_path_str)
-                                .unwrap_or(&img.path)
-                                .to_string();
+                            let relative_item_path = to_relative_path(&img.path, &root_path_str);
                             let thumbnail_url = format!("/api/thumbnail?path={}", urlencoding::encode(&relative_item_path));
                             root_images.push(BrowseItem {
                                 name: img.name.clone(),
@@ -1374,16 +1372,14 @@ pub async fn handle_all_image_folders(
                             }
                         };
 
-                        let relative_folder_path = folder_full_path.strip_prefix(&root_path_str)
-                            .unwrap_or(&folder_full_path)
-                            .to_string();
+                        let relative_folder_path = to_relative_path(&folder_full_path, &root_path_str);
 
                         // 按名称排序取前 3 张作为预览
                         let mut sorted_imgs: Vec<&&crate::db::file_index::FileIndexEntry> = imgs.iter().collect();
                         sorted_imgs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
                         let preview_paths: Vec<String> = sorted_imgs.iter().take(3)
-                            .map(|e| e.path.strip_prefix(&root_path_str).unwrap_or(&e.path).to_string())
+                            .map(|e| to_relative_path(&e.path, &root_path_str))
                             .collect();
 
                         let cover = sorted_imgs.first();
@@ -1444,9 +1440,7 @@ pub async fn handle_all_image_folders(
                                 }
                             }
                             if video_count > 0 {
-                                let relative_folder_path = entry.path.strip_prefix(&root_path_str)
-                                    .unwrap_or(&entry.path)
-                                    .to_string();
+                                let relative_folder_path = to_relative_path(&entry.path, &root_path_str);
                                 let folder_name = std::path::Path::new(&entry.path)
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
@@ -1502,6 +1496,27 @@ pub async fn handle_all_image_folders(
 }
 
 /// 文件系统递归扫描：返回所有直接含图片/视频的文件夹（扁平列表）+ 根目录散落图片
+/// 把绝对路径转为相对共享根目录的路径，分隔符统一为 '/'。
+/// 数据库中存储的路径分隔符/大小写可能与 root_path 的原生格式不一致，
+/// 直接 str::strip_prefix 会失败，导致带盘符的绝对路径泄漏给客户端
+/// （表现为安卓端网络栏出现 "E:/..." 这类目录名）。
+fn to_relative_path(path: &str, root_path_str: &str) -> String {
+    let norm = path.replace('\\', "/");
+    let root_trimmed = root_path_str.replace('\\', "/");
+    let root_trimmed = root_trimmed.trim_end_matches('/');
+    if root_trimmed.is_empty() {
+        return norm;
+    }
+    let with_slash = format!("{}/", root_trimmed);
+    if norm.starts_with(&with_slash) {
+        norm[with_slash.len()..].to_string()
+    } else if norm == root_trimmed {
+        String::new()
+    } else {
+        norm
+    }
+}
+
 fn all_image_folders_filesystem(
     root_path: &std::path::Path,
 ) -> (Vec<BrowseItem>, Vec<BrowseItem>) {

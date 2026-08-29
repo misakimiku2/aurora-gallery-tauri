@@ -595,3 +595,42 @@ input[type=range]::-webkit-slider-runnable-track {
   --tw-scale-x: 1;
   --tw-scale-y: 1;
 }
+
+/* ========== 侧边栏长文本滚动（文件夹名超出可显示宽度时来回滚动） ========== */
+/* 仅对实际溢出的行启用动画（由 <MarqueeText> 测量后添加类），未溢出行零开销。 */
+.aurora-marquee {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+}
+.aurora-marquee-inner {
+  display: inline-block;
+  white-space: nowrap;
+  vertical-align: bottom;
+  max-width: none;
+}
+/* 未选中行：退化为普通 truncate（省略号），不做动画 */
+.aurora-marquee-static {
+  text-overflow: ellipsis;
+}
+@keyframes aurora-marquee {
+  0%, 12% { transform: translateX(0); }
+  88%, 100% { transform: translateX(var(--marquee-shift, 0px)); }
+}
+.aurora-marquee-scrolling {
+  animation: aurora-marquee var(--marquee-duration, 8s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+/* 树节点滚动性能规则会暂停行内所有动画；marquee 是合成器 transform 动画、成本极低，
+   滚动期间保持运行，避免动画时长被改成 0ms 后跳变。 */
+.auto-hide-scrollbar.scrolling .tree-node-row .aurora-marquee-scrolling {
+  animation-duration: var(--marquee-duration, 8s) !important;
+  animation-delay: 0ms !important;
+  animation-play-state: running !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .aurora-marquee-scrolling {
+    animation: none !important;
+  }
+}
