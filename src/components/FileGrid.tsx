@@ -25,6 +25,7 @@ import { FolderThumbnail } from './FolderThumbnail';
 import { InlineRenameInput } from './InlineRenameInput';
 import { FileListItem } from './FileListItem';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
+import MarqueeText from './MarqueeText';
 import { lanNavStep, lanNavActive, lanNavId } from '../utils/lanNavTrace';
 import { scrollProfiler } from '../utils/scrollProfiler';
 import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
@@ -648,21 +649,24 @@ const FileCard = React.memo(({
             />
             ) : (
             <div
-                className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate w-full"
-                title={file.name}
+                className={`inline-block max-w-full self-center text-center px-2 py-0.5 rounded-md text-xs font-semibold leading-tight transition-colors duration-300 ${
+                    isSelected
+                    ? 'bg-[#2563EB] text-white'
+                    : 'text-gray-700 dark:text-gray-300'
+                }`}
                 onDoubleClick={(e) => {
                 e.stopPropagation();
                 onStartRename(file.id);
                 }}
             >
-                {file.name}
+                <MarqueeText active={isSelected} title={file.name}>{file.name}</MarqueeText>
+                {file.type === FileType.IMAGE && (
+                <div className={`text-[9px] font-normal truncate mt-0.5 ${isSelected ? 'text-white/90' : 'text-gray-400 dark:text-gray-500'}`}>
+                  {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
+                </div>
+                )}
             </div>
-            )}
-            {file.type === FileType.IMAGE && (
-            <div className="text-[9px] text-gray-400 truncate">
-              {file.meta ? `${file.meta.width || 0}x${file.meta.height || 0}` : ''}
-            </div>
-            )}
+        )}
         </div>
         {isAndroid && showContextMenuAnim && (
             <CircularProgressOverlay

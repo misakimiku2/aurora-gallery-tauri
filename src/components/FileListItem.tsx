@@ -289,7 +289,7 @@ export const FileListItem = React.memo(({
         data-id={file.id}
         className={`
             file-item flex items-center p-2 rounded text-sm cursor-pointer border transition-colors mb-1 relative
-            ${isSelected ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500 border-l-4 shadow-md' : 'bg-white dark:bg-gray-900 border-transparent hover:bg-gray-50 dark:hover:bg-gray-800/50'}
+            ${isSelected ? 'bg-[#2563EB] text-white shadow-md border-transparent' : 'bg-white dark:bg-[#262626] border-transparent hover:bg-gray-50 dark:hover:bg-[#3a3a3a]'}
             ${isExternalDragging ? 'opacity-50' : ''}
         `}
         onMouseDown={isAndroid ? undefined : async (e) => {
@@ -454,14 +454,14 @@ export const FileListItem = React.memo(({
         <div className="flex-1 flex items-center overflow-hidden min-w-0 pointer-events-none">
             {file.type === FileType.FOLDER ? (
                 file.category === 'book' ? (
-                    <Book className="text-amber-500 mr-3 shrink-0" size={18} />
+                    <Book className={`mr-3 shrink-0 ${isSelected ? 'text-white' : 'text-amber-500'}`} size={18} />
                 ) : file.category === 'sequence' ? (
-                    <Film className="text-purple-500 mr-3 shrink-0" size={18} />
+                    <Film className={`mr-3 shrink-0 ${isSelected ? 'text-white' : 'text-purple-500'}`} size={18} />
                 ) : (
-                    <Folder className="text-blue-500 dark:text-blue-400 mr-3 shrink-0" size={18} />
+                    <Folder className={`mr-3 shrink-0 ${isSelected ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} size={18} />
                 )
             ) : (
-            <div className="w-6 h-6 mr-3 bg-gray-200 dark:bg-gray-700 rounded overflow-hidden shrink-0 relative">
+            <div className={`w-6 h-6 mr-3 rounded overflow-hidden shrink-0 relative ${isSelected ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'}`}>
                 {file.type === FileType.IMAGE ? (
                     <div className="w-full h-full">
                         <ImageThumbnail
@@ -479,8 +479,8 @@ export const FileListItem = React.memo(({
                         />
                     </div>
                 ) : (
-                    <div className="w-full h-full bg-gray-300 dark:bg-gray-600 flex items-center justify-center">
-                        <ImageIcon className="text-gray-400 dark:text-gray-500" size={14} />
+                    <div className={`w-full h-full flex items-center justify-center ${isSelected ? 'bg-white/20' : 'bg-gray-300 dark:bg-gray-600'}`}>
+                        <ImageIcon className={`${isSelected ? 'text-white/80' : 'text-gray-400 dark:text-gray-500'}`} size={14} />
                     </div>
                 )}
             </div>
@@ -495,7 +495,7 @@ export const FileListItem = React.memo(({
             </div>
             ) : (
             <span
-                className="truncate text-gray-900 dark:text-gray-100 font-bold text-sm pointer-events-auto"
+                className={`truncate font-bold text-sm pointer-events-auto ${isSelected ? 'text-white' : 'text-gray-900 dark:text-gray-100'}`}
                 onDoubleClick={(e) => {
                 e.stopPropagation();
                 onStartRename(file.id);
@@ -503,16 +503,16 @@ export const FileListItem = React.memo(({
             >{file.name}</span>
             )}
         </div>
-        <div className="w-24 text-xs text-gray-500 hidden md:block pointer-events-none">
+        <div className={`w-24 text-xs hidden md:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
             {file.type === FileType.IMAGE && file.meta?.width ? `${file.meta.width}×${file.meta.height}` : '-'}
         </div>
-        <div className="w-32 text-xs text-gray-500 truncate hidden sm:block pointer-events-none">
+        <div className={`w-32 text-xs truncate hidden sm:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
             {file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : '-'}
         </div>
-        <div className="w-12 text-xs text-gray-500 uppercase hidden md:block pointer-events-none">
+        <div className={`w-12 text-xs uppercase hidden md:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
             {file.type === FileType.FOLDER ? t('meta.folderType') : file.meta?.format || '-'}
         </div>
-        <div className="w-20 text-xs text-gray-500 text-right font-mono hidden sm:block pointer-events-none">
+        <div className={`w-20 text-xs text-right font-mono hidden sm:block pointer-events-none ${isSelected ? 'text-white' : 'text-gray-500'}`}>
             {file.type === FileType.IMAGE 
                 ? formatSize(file.meta?.sizeKb || 0) 
                 // 远程文件夹（安卓/LAN）子节点通常未加载，优先用服务端下发的 imageCount

@@ -10,6 +10,7 @@ import { Folder, Check, Loader2 } from 'lucide-react';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
 import { getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
+import MarqueeText from './MarqueeText';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -324,7 +325,9 @@ const FolderCard = React.memo(({
     >
       <div
         className={`relative overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-800 transition-all duration-300 ${
-          isSelected ? 'border-2 border-blue-500 ring-4 ring-blue-300/60 dark:ring-blue-700/60 shadow-lg shadow-blue-200/50 dark:shadow-blue-900/30' : 'border-2 border-transparent'
+          isSelected
+            ? 'bg-blue-100 dark:bg-blue-500/10 shadow-[0_4px_6px_-1px_rgba(59,130,246,0.2)] dark:shadow-[0_4px_6px_-1px_rgba(59,130,246,0.3)] after:absolute after:inset-0 after:rounded-lg after:border-[3px] after:border-blue-400 dark:after:border-blue-500 after:pointer-events-none after:z-10'
+            : ''
         }`}
         style={isGridMode
           ? { width: thumbnailSize, height: thumbnailSize }
@@ -377,8 +380,14 @@ const FolderCard = React.memo(({
       </div>
 
       <div className="mt-1 w-full text-center px-1">
-        <div className="text-xs font-semibold text-gray-700 dark:text-gray-300 truncate leading-tight" title={folder.name}>
-          {folder.name}
+        <div
+          className={`inline-block max-w-full text-center px-2 py-0.5 rounded-md text-xs font-semibold leading-tight transition-colors duration-300 ${
+            isSelected
+              ? 'bg-[#2563EB] text-white'
+              : 'text-gray-700 dark:text-gray-300'
+          }`}
+        >
+          <MarqueeText active={isSelected} title={folder.name}>{folder.name}</MarqueeText>
         </div>
       </div>
 
