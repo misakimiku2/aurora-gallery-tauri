@@ -28,6 +28,8 @@ import { CircularProgressOverlay } from './CircularProgressOverlay';
 import MarqueeText from './MarqueeText';
 import { lanNavStep, lanNavActive, lanNavId } from '../utils/lanNavTrace';
 import { scrollProfiler } from '../utils/scrollProfiler';
+import { nearestAndroidLevelIndex, getAndroidThumbnailPresets } from '../utils/androidThumbnailSizes';
+import { onMultiTouch } from '../utils/touchGestureGuard';
 import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 
 const sortKeys = (keys: string[]) => keys.sort((a, b) => {
@@ -76,6 +78,35 @@ const FileCard = React.memo(({
   const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
   const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
+
+  const androidDevice = (resourceRoot || settings?.paths?.resourceRoot) === 'android_media_store';
+
+  const clearAllTimers = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (contextMenuTimerRef.current) {
+      clearTimeout(contextMenuTimerRef.current);
+      contextMenuTimerRef.current = null;
+    }
+    if (rangeSelectTimerRef.current) {
+      clearTimeout(rangeSelectTimerRef.current);
+      rangeSelectTimerRef.current = null;
+    }
+    if (animShowTimerRef.current) {
+      clearTimeout(animShowTimerRef.current);
+      animShowTimerRef.current = null;
+    }
+    setShowContextMenuAnim(false);
+  }, []);
+
+  // 多指守护：第二根手指落下（双指捏合）时立即取消本卡片的长按等定时器
+  useEffect(() => {
+    if (!androidDevice) return undefined;
+    return onMultiTouch(clearAllTimers);
+  }, [androidDevice, clearAllTimers]);
+
   if (!file) return null;
 
   // Extract layout positioning
@@ -494,6 +525,11 @@ const FileCard = React.memo(({
         })}
         onContextMenu={isAndroid ? undefined : ((e: React.MouseEvent) => onContextMenu(e, file.id))}
         onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+            // 多指（双指捏合）不进入长按/选择逻辑
+            if (e.touches.length > 1) {
+                clearAllTimers();
+                return;
+            }
             longPressTriggeredRef.current = false;
             contextMenuTriggeredRef.current = false;
             rangeSelectTriggeredRef.current = false;
@@ -1060,18 +1096,55 @@ export const FileGrid = React.memo(({
   });
 
   const pinchStartSizeRef = useRef(thumbnailSize);
+  // 安卓端手势级档位记录：一次捏合手势最多切换一档（小→中→大 逐级）
+  const gestureStartLevelRef = useRef(-1);
+  const gestureSteppedRef = useRef(false);
+  // 捏合期间钉住滚动：快速捏合时第一根手指可能已经触发原生滚动（preventDefault 被忽略），
+  // 该 ref 保证手势期间 scrollTop 稳定，避免 FLIP 与滚动赛跑导致动画错乱/硬切。
+  const pinchScrollPinRef = useRef<number | null>(null);
+  // 宽度 FLIP 的滚动基线钉（与 FoldersOverview 同源修复）：面板展开使内容高度骤降时，
+  // React 提交新布局的渲染会触发浏览器把 DOM scrollTop clamp 到新 maxScroll（实测
+  // 6723→3823）。FLIP 必须用 clamp 前的真实位置（此 pin）选锚点，否则页面被带到
+  // 错误位置（"展开/收起面板后页面跳到中间"）。宽度过渡分支记录，FLIP 消费后清空。
+  const widthFlipPinnedScrollRef = useRef<number | null>(null);
 
   usePinchZoom(containerRef, {
     onPinchStart: useCallback(() => {
       pinchStartSizeRef.current = thumbnailSize;
+      gestureStartLevelRef.current = nearestAndroidLevelIndex(thumbnailSize, containerWidthRef.current || 0);
+      gestureSteppedRef.current = false;
+      pinchScrollPinRef.current = containerRef?.current?.scrollTop ?? 0;
+      console.log(`[Pinch-FileGrid] >>> start: thumbSize=${thumbnailSize} startLevelIdx=${gestureStartLevelRef.current} width=${containerWidthRef.current?.toFixed(0)} scroll=${pinchScrollPinRef.current?.toFixed(0)}`);
     }, [thumbnailSize]),
     onPinchZoom: useCallback((totalScale: number) => {
       if (!onThumbnailSizeChange) return;
+      if (isAndroid) {
+        // 安卓端固定三档，且一次捏合手势只能前进/后退一档
+        if (gestureSteppedRef.current) return;
+        const startIdx = gestureStartLevelRef.current;
+        if (startIdx < 0) return;
+        const STEP_THRESHOLD = 1.08;
+        let targetIdx = startIdx;
+        if (totalScale > STEP_THRESHOLD) targetIdx = startIdx + 1;
+        else if (totalScale < 1 / STEP_THRESHOLD) targetIdx = startIdx - 1;
+        else return; // 缩放幅度过小，不切换
+        if (targetIdx < 0 || targetIdx > 2) return; // 已在最小/最大档
+        gestureSteppedRef.current = true;
+        const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
+        const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 100;
+        const presets = getAndroidThumbnailPresets(containerWidthRef.current || 0);
+        console.log(`[Pinch-FileGrid] >>> SWITCH scale=${totalScale.toFixed(2)} startIdx=${startIdx} → targetIdx=${targetIdx} thumbSize=${thumbnailSize}→${presets[targetIdx].toFixed(1)}`);
+        onThumbnailSizeChange(Math.max(minLimit, Math.min(maxLimit, presets[targetIdx])));
+        return;
+      }
       const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
       const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 100;
       const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
       onThumbnailSizeChange(newSize);
-    }, [onThumbnailSizeChange, activeTab.viewMode]),
+    }, [onThumbnailSizeChange, activeTab.viewMode, isAndroid]),
+    onPinchEnd: useCallback(() => {
+      pinchScrollPinRef.current = null; // 手势结束，放行滚动
+    }, []),
   });
 
   const [containerRect, setContainerRect] = useState({ width: 0, height: 0 });
@@ -1089,6 +1162,15 @@ export const FileGrid = React.memo(({
   // 用 ref 在回调内读取最新值，避免把 0 写入 containerWidth 触发不必要的布局重算。
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
+  // 视图级激活判定：MainContentArea 在 folders-overview / lan-folders-overview 视图下
+  // 仍渲染 FileGrid（排在视口下方、被 overflow-hidden 裁剪；isVisible 只看 viewingFileId
+  // 不含 viewMode，RO 宽度照常提交以保证切回 browser 时状态正确）。该 ref 供过渡态/
+  // FLIP 跳过对用户不可见的重排动画（上轮日志实测：1954 项布局每次面板开合跑 2 轮
+  // 完整 FLIP+WAAPI，纯浪费主线程）。
+  const isViewActiveRef = useRef(true);
+  isViewActiveRef.current = isVisible
+    && activeTab.viewMode !== 'folders-overview'
+    && activeTab.viewMode !== 'lan-folders-overview';
 
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 滚动节流 RAF：scroll 事件高频触发，将 scrollTop 状态更新合并到每帧一次，
@@ -1125,9 +1207,21 @@ export const FileGrid = React.memo(({
   const isLayoutTransitioningRef = useRef(false);
   const prevThumbnailSizeRef = useRef(thumbnailSize);
   const prevContainerWidthRef = useRef(containerRect.width);
+  // 最近一次提交给布局的宽度（RO 提交去抖基线）：面板预测宽度与 RO 实测存在 ~1px
+  // 亚像素/舍入偏差（取整后可能跨界），若据此二次提交会触发第二次布局重算，
+  // 即"面板展开完后布局抖一下"。容忍 <2px 偏差，真实变化（数百 px）不受影响。
+  const committedWidthRef = useRef(0);
   const transitionBufferRef = useRef(400);
   const transitionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flipDebugLogRef = useRef(0);
+  // FLIP 动画参数（按触发源区分）：
+  // - 宽度变化（面板开合）：与面板 width 300ms ease-out 对齐——WAAPI 时长 = 面板剩余
+  //   时间（300ms - 管线延迟），easing 与面板一致，两者同起同止、进度互相同步，
+  //   消除"卡片 WAAPI(240ms 前置曲线) 跑得比面板 ease-out 尾段快"的脱节。
+  // - thumbnailSize 变化（捏合）：保持 240ms 快节奏。
+  const flipAnimParamsRef = useRef<{ duration: number; easing: string; startedAt: number; syncToPanel: boolean }>(
+    { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', startedAt: 0, syncToPanel: false }
+  );
   // Two-phase FLIP: when scrollDelta is large, phase 0 expands buffer + updates scrollTop
   // (mounts cards at new viewport), phase 1 runs the WAAPI animation.
   const [flipPhase, setFlipPhase] = useState(0);
@@ -1265,6 +1359,7 @@ export const FileGrid = React.memo(({
     if (rect.width > 0) {
         setContainerRect({ width: rect.width, height: rect.height });
         containerWidthRef.current = rect.width;
+        committedWidthRef.current = rect.width;
     }
 
     let animationFrameId: number;
@@ -1297,7 +1392,13 @@ export const FileGrid = React.memo(({
                     widthDebounceRef.current = setTimeout(() => {
                         // 二次检查可见性：debounce 期间视图可能已切走
                         if (!isVisibleRef.current) return;
-                        setContainerRect(prev => ({ width: containerWidthRef.current, height: prev.height }));
+                        // 面板动画结束后 RO 实测与预测宽度的亚像素/舍入偏差（~1px，取整
+                        // 后可能跨整数边界）不应触发第二次布局重算——那是"面板展开完后
+                        // 布局抖一下"的根源。容忍 <2px 偏差不提交；真实宽度变化不受影响。
+                        const w = containerWidthRef.current;
+                        if (Math.abs(w - committedWidthRef.current) < 2) return;
+                        committedWidthRef.current = w;
+                        setContainerRect(prev => ({ width: w, height: prev.height }));
                     }, 60);
                 }
             }
@@ -1344,6 +1445,15 @@ export const FileGrid = React.memo(({
             }
 
             const currentScroll = containerRef.current.scrollTop;
+
+            // 捏合期间钉住滚动位置：快速捏合的原生滚动无法被 preventDefault 取消，
+            // 这里主动拉回，保证手势期间 scrollTop 稳定（FLIP 靠它计算锚点）。
+            const pin = pinchScrollPinRef.current;
+            if (pin !== null && !isRestoringScrollRef.current && Math.abs(currentScroll - pin) > 1) {
+                containerRef.current.scrollTop = pin;
+                return;
+            }
+
             const targetScroll = targetScrollRef.current;
 
             if (!hasRestoredRef.current && targetScroll > 0 && currentScroll < targetScroll - 100) {
@@ -1401,7 +1511,12 @@ export const FileGrid = React.memo(({
                     }
                 });
             }
-            debouncedOnScrollTopChange?.(currentScroll);
+            // 过渡期（面板开合/捏合的 FLIP 动画中）的 scroll 事件多为浏览器 clamp 或
+            // PHASE 1 设置新位置引发，跳过 debounced 写入避免污染 activeTab.scrollTop
+            // （FLIP PHASE 1 自己会直调正确的值）。
+            if (!isLayoutTransitioningRef.current) {
+                debouncedOnScrollTopChange?.(currentScroll);
+            }
             onScroll?.();
         }
     };
@@ -1442,17 +1557,22 @@ export const FileGrid = React.memo(({
   }, [containerRef, activeTab.viewMode]);
 
   // Predict container width immediately when panels toggle, so card transitions
-  // run simultaneously with the panel animation instead of waiting for ResizeObserver
+  // run simultaneously with the panel animation instead of waiting for ResizeObserver.
+  // 隐藏（display:none）时不预测：否则会触发 useLayout 重算 → FLIP/WAAPI 在不可见
+  // 组件上完整跑一遍（实测 1954 卡、每次面板开合 2 次 FLIP），纯浪费主线程。
+  // 切回可见时 RO 会汇报真实宽度，走正常重算路径。
   useEffect(() => {
     if (panelWidthRem === undefined) return;
     if (prevPanelWidthRemRef.current !== undefined && prevPanelWidthRemRef.current !== panelWidthRem) {
       const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
       const deltaRem = prevPanelWidthRemRef.current - panelWidthRem;
       const deltaPx = deltaRem * remPx;
-      if (containerWidthRef.current > 0) {
+      if (containerWidthRef.current > 0 && isVisibleRef.current) {
         const predictedWidth = containerWidthRef.current + deltaPx;
+        console.log(`[FLIP-FileGrid] PREDICT width: ${containerWidthRef.current.toFixed(1)}→${predictedWidth.toFixed(1)} (Δ${deltaPx.toFixed(1)}px) t=${performance.now().toFixed(0)}`);
         setContainerRect(prev => ({ width: predictedWidth, height: prev.height }));
         containerWidthRef.current = predictedWidth;
+        committedWidthRef.current = predictedWidth;
       }
     }
     prevPanelWidthRemRef.current = panelWidthRem;
@@ -1497,10 +1617,13 @@ export const FileGrid = React.memo(({
     isLayoutTransitioningRef.current = isLayoutTransitioning;
   }, [isLayoutTransitioning]);
 
-  // Watch layout input changes: set transition state + predict buffer size so the
-  // new viewport's cards are mounted BEFORE the new layout arrives from the worker.
-  // Only activates for thumbnail size changes — width changes (panel toggle) are
-  // handled by CSS transition + predicted width, no buffer increase needed.
+  // Watch layout input changes: set transition state (freezes card CSS transitions and
+  // forces the WAAPI path). The render buffer is NOT inflated: old viewport cards land
+  // near the anchor (= new scrollTop) after reflow, and the FLIP's PHASE 0 switches the
+  // render window to the new scrollTop before animating, so a normal buffer suffices.
+  // (Inflating to 1200~2600 mounted 150~260 cards; under the pinch touchmove flood the
+  // commit stretched to 120~350ms, so a rapid second pinch felt dead and only animated
+  // after the fingers lifted.)
   useEffect(() => {
     const prevThumb = prevThumbnailSizeRef.current;
     const prevWidth = prevContainerWidthRef.current;
@@ -1508,29 +1631,61 @@ export const FileGrid = React.memo(({
     const thumbChanged = prevThumb !== thumbnailSize;
     const widthChanged = prevWidth !== currWidth && prevWidth > 0 && currWidth > 0;
 
-    if (!thumbChanged && !widthChanged) return;
-    // Skip if container not visible or not in non-grouped view (FileGrid idle)
-    if (currWidth <= 0 || !isNonGroupedView) {
-      prevThumbnailSizeRef.current = thumbnailSize;
-      prevContainerWidthRef.current = currWidth;
+    if (!thumbChanged && !widthChanged) {
+      // 关键修复（2026-08-31，与 FoldersOverview 同源 bug）：早退路径也必须同步宽度
+      // ref。挂载序列（state 0 → 初测宽度）因 widthChanged 的 prevWidth>0 条件走此
+      // 分支，若不同步 prevContainerWidthRef 会永远卡在 0 → 之后所有纯宽度变化都被
+      // prevWidth>0 拦截 → 宽度过渡分支从未执行 → CSS+WAAPI 双动画 = 布局抖动。
+      if (currWidth > 0 && prevWidth !== currWidth) {
+        prevContainerWidthRef.current = currWidth;
+        console.log(`[FLIP-FileGrid] width ref synced at mount: ${prevWidth.toFixed(0)}→${currWidth.toFixed(0)}`);
+      }
       return;
     }
-    // Only increase buffer for thumbnail size changes (large scroll adjustments).
-    // For width-only changes (panel toggle), CSS transition + predicted width handles it.
+    // Skip if container not visible / not non-grouped / 当前视图是 folders-overview
+    // （FileGrid 渲染在视口下方被 overflow-hidden 裁剪，isVisible 不含 viewMode，
+    // RO 宽度提交照常进行以保证切回时状态正确，但过渡态/FLIP 对用户不可见、应跳过）
+    if (currWidth <= 0 || !isNonGroupedView || !isViewActiveRef.current) {
+      prevThumbnailSizeRef.current = thumbnailSize;
+      prevContainerWidthRef.current = currWidth;
+      if (currWidth > 0 && isNonGroupedView) {
+        console.log(`[FLIP-FileGrid] SKIP transition (view=${activeTab.viewMode}, grid below-fold/not visible)`);
+      }
+      return;
+    }
+    // 宽度变化（面板开合）同样进入过渡态：FLIP 锚点会瞬间跳变 scrollTop，若卡片 CSS
+    // transform 过渡仍在运行，WAAPI 先结束时卡片会被 CSS 过渡拉回中间态再滑到终点
+    // → 面板展开完后“弹一下”；且全量卡片 CSS 过渡 + WAAPI 双重动画是掉帧主因。
+    // 进入过渡态 = 禁用卡片 CSS 过渡（根容器 [&_*]:!transition-none）、统一走 WAAPI
+    // （与捏合切换同路径）。亚像素 RO 汇报（<1px，取整后不产生新布局）不触发。
     if (!thumbChanged) {
       prevThumbnailSizeRef.current = thumbnailSize;
       prevContainerWidthRef.current = currWidth;
+      if (Math.abs(currWidth - prevWidth) > 1) {
+        const scrollNow = containerRef?.current?.scrollTop || 0;
+        // 钉住宽度 FLIP 的滚动基线：内容变矮（展开面板）时新布局渲染会触发浏览器
+        // clamp DOM scrollTop，FLIP 必须用 clamp 前的真实位置选锚点。
+        widthFlipPinnedScrollRef.current = scrollNow;
+        // 与面板 width 300ms ease-out 对齐（记录面板动画起点，WAAPI 用剩余时长）
+        flipAnimParamsRef.current = { duration: 300, easing: 'ease-out', startedAt: performance.now(), syncToPanel: true };
+        transitionBufferRef.current = 400;
+        setIsLayoutTransitioning(true);
+        console.log(`[FLIP-FileGrid] TRANSITION START (width): ${prevWidth.toFixed(0)}→${currWidth.toFixed(0)}, scroll=${scrollNow.toFixed(0)} t=${performance.now().toFixed(0)}`);
+        if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+        transitionResetTimerRef.current = setTimeout(() => {
+          setIsLayoutTransitioning(false);
+          transitionBufferRef.current = 400;
+        }, 600);
+      }
       return;
     }
 
     const currentScroll = containerRef?.current?.scrollTop || 0;
-    const ratio = prevThumb > 0 ? thumbnailSize / prevThumb : 1;
-    const predictedDelta = Math.abs(currentScroll * (1 - ratio));
-    const buffer = Math.min(3000, Math.max(1500, predictedDelta + 800));
 
-    transitionBufferRef.current = buffer;
+    flipAnimParamsRef.current = { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', startedAt: 0, syncToPanel: false };
+    transitionBufferRef.current = 400;
     setIsLayoutTransitioning(true);
-    console.log(`[FLIP-FileGrid] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${currWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)}, predictedDelta=${predictedDelta.toFixed(0)}, buffer=${buffer.toFixed(0)}`);
+    console.log(`[FLIP-FileGrid] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${currWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)} t=${performance.now().toFixed(0)}`);
 
     if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
     transitionResetTimerRef.current = setTimeout(() => {
@@ -1546,6 +1701,28 @@ export const FileGrid = React.memo(({
   useLayoutEffect(() => {
     if (!isNonGroupedView) {
       prevLayoutPositionsRef.current = new Map();
+      return;
+    }
+    // 不可见 / 视图不活跃（folders-overview 等 overview 视图下 FileGrid 渲染在视口
+    // 下方被裁剪）时只记录最新位置作为后续 FLIP 基线，跳过锚点纠正与 WAAPI——
+    // 对用户不可见的布局变化无需动画（实测曾每次面板开合跑 2 轮完整 FLIP）。
+    if (!isViewActiveRef.current) {
+      const map = new Map<string, { x: number; y: number }>();
+      layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
+      prevLayoutPositionsRef.current = map;
+      prevScrollTopForFlipRef.current = containerRef?.current?.scrollTop || 0;
+      console.log(`[FLIP-FileGrid] SKIP FLIP (view=${activeTab.viewMode}): grid not user-visible`);
+      if (pendingFlipDataRef.current) {
+        pendingFlipDataRef.current = null;
+        setFlipPhase(0);
+      }
+      if (isLayoutTransitioningRef.current) {
+        if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+        transitionResetTimerRef.current = setTimeout(() => {
+          setIsLayoutTransitioning(false);
+          transitionBufferRef.current = 400;
+        }, 400);
+      }
       return;
     }
     const prevPositions = prevLayoutPositionsRef.current;
@@ -1616,11 +1793,24 @@ export const FileGrid = React.memo(({
     if (!container) return;
 
     // BUG FIX #1: Use LIVE scrollTop from the DOM, not the stale prevScrollTopForFlipRef.
-    const oldScrollTop = container.scrollTop;
+    // 宽度 clamp 修复（与 FoldersOverview 同源）：面板展开使内容高度骤降时，React
+    // 提交新布局渲染会触发浏览器把 DOM scrollTop clamp 到新 maxScroll（实测
+    // 6723→3823）。live 值已失真，锚点必须按 clamp 前用户真实位置（宽度过渡分支
+    // 记录的 pin）选取，否则页面被带到错误位置。
+    let oldScrollTop = container.scrollTop;
+    const clampedScrollTop = oldScrollTop;
+    const pinnedScrollTop = widthFlipPinnedScrollRef.current;
+    if (pinnedScrollTop !== null) {
+      widthFlipPinnedScrollRef.current = null;
+      if (Math.abs(pinnedScrollTop - oldScrollTop) > 1) {
+        console.log(`[FLIP-FileGrid] #${logId}   CLAMP detected: live ${oldScrollTop.toFixed(1)} was clamped, using pinned ${pinnedScrollTop.toFixed(1)}`);
+        oldScrollTop = pinnedScrollTop;
+      }
+    }
     const staleScrollTop = prevScrollTopForFlipRef.current;
 
-    console.log(`[FLIP-FileGrid] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount}`);
-    console.log(`[FLIP-FileGrid] #${logId}   scrollTop: live=${oldScrollTop.toFixed(1)}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(oldScrollTop - staleScrollTop).toFixed(1)}`);
+    console.log(`[FLIP-FileGrid] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount} t=${performance.now().toFixed(0)}`);
+    console.log(`[FLIP-FileGrid] #${logId}   scrollTop: live=${clampedScrollTop.toFixed(1)}${oldScrollTop !== clampedScrollTop ? ` (pinned=${oldScrollTop.toFixed(1)})` : ''}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(clampedScrollTop - staleScrollTop).toFixed(1)}`);
 
     // Sort-reset window: after a sort change, displayFileIds/layout recompute is
     // asynchronous and may trigger this effect a SECOND time (with sortChanged=false
@@ -1671,6 +1861,14 @@ export const FileGrid = React.memo(({
       }
     }
 
+    // 不封顶滚动纠正：锚点必须精确停在原屏幕位置。此前的 ±1 视口封顶会把深处滚动的锚点
+    // 顶出屏幕 700~1500px，全部卡片以 1500~3000px 的幅度整体"扫射"过视口（实测每次捏合
+    // scrollDelta 都恰好等于 ±clientHeight，即封顶值）。大位移的挂载由 PHASE 0/1 兜底：
+    // PHASE 0 先把渲染窗口切到新 scrollTop（挂上新视口卡片），PHASE 1 在同一帧内设置 DOM
+    // 滚动 + WAAPI；旧视口卡片按锚点换算后的新位置总落在新 scrollTop 附近，天然保持挂载。
+    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+    newScrollTop = Math.max(0, Math.min(maxScroll, newScrollTop));
+
     const anchorOldY = anchorId ? prevPositions.get(anchorId)?.y : undefined;
     const anchorNewY = anchorId ? layout.find(i => i.id === anchorId)?.y : undefined;
     const scrollDelta = newScrollTop - oldScrollTop;
@@ -1678,7 +1876,9 @@ export const FileGrid = React.memo(({
 
     // If scroll adjustment is negligible, CSS transition on transform handles the animation.
     // No need for WAAPI — this avoids perf cost on panel toggle (width-only changes).
-    if (Math.abs(scrollDelta) <= 1) {
+    // 注意：thumbnailSize 切换期间（isLayoutTransitioning）CSS 过渡被禁用（性能优化），
+    // 此时即使 scrollDelta 很小也必须走 WAAPI，否则会变成无动画的硬切。
+    if (Math.abs(scrollDelta) <= 1 && !isLayoutTransitioningRef.current) {
       console.log(`[FLIP-FileGrid] #${logId} SKIP WAAPI: |scrollDelta|≤1, CSS transition handles it`);
       const map = new Map<string, { x: number; y: number }>();
       layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
@@ -1692,8 +1892,9 @@ export const FileGrid = React.memo(({
     // (visibleItems was computed with old scrollTop). Phase 0 updates scrollTop state so
     // visibleItems includes new viewport cards. Phase 1 runs the WAAPI animation after
     // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
-    // already recorded in prevPositions, so they don't need to be in the DOM. Only new
-    // viewport cards need mounting, and the existing transition buffer handles that.
+    // already recorded in prevPositions, and after the anchor correction they land near
+    // the new scrollTop anyway; only the new viewport cards need mounting, which Phase
+    // 0's window switch handles.
     // Skip Phase 0 when the new viewport is already covered by the current buffer (e.g.,
     // width-only changes with small scrollDelta) — avoids an unnecessary re-render that
     // causes mid-animation stutter.
@@ -1724,14 +1925,30 @@ export const FileGrid = React.memo(({
 
     // Adjust scroll position instantly (before paint, so no visual jump)
     container.scrollTop = actualNewScrollTop;
+    // 捏合期间的滚动钉跟随 FLIP 的新位置，防止后续拉回旧值
+    if (pinchScrollPinRef.current !== null) {
+      pinchScrollPinRef.current = actualNewScrollTop;
+    }
 
     // Apply WAAPI FLIP animation only to cards near old OR new viewport.
     // visibleItems may include many cards (large buffer), but only animate relevant ones.
-    const viewportPadding = 400;
+    // padding=150：动画期间视口固定（240ms 内无滚动），±150 之外的卡全程不可见，
+    // 动画它们纯属浪费合成成本（小图标档位列多卡多，是帧率低的主因）。
+    const viewportPadding = 150;
     const oldVpMin = actualOldScrollTop - viewportPadding;
     const oldVpMax = actualOldScrollTop + containerHeight + viewportPadding;
     const newVpMin = actualNewScrollTop - viewportPadding;
     const newVpMax = actualNewScrollTop + containerHeight + viewportPadding;
+
+    // 动画参数：宽度触发时与面板 width 300ms ease-out 对齐（时长=面板剩余时间，
+    // 同 easing → 卡片与面板同起同止、进度同步，消除"两端式"脱节）；捏合保持 240ms。
+    const animParams = flipAnimParamsRef.current;
+    let animDuration = animParams.duration;
+    if (animParams.syncToPanel) {
+      const elapsed = performance.now() - animParams.startedAt;
+      animDuration = Math.max(120, Math.round(animParams.duration - elapsed));
+    }
+    const animEasing = animParams.easing;
 
     let animatedCount = 0;
     let notFoundCount = 0;
@@ -1769,15 +1986,15 @@ export const FileGrid = React.memo(({
           { transform: `translate(${item.x}px, ${item.y}px)` },
         ],
         {
-          duration: 300,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          duration: animDuration,
+          easing: animEasing,
           fill: 'none',
         }
       );
       animatedCount++;
     });
 
-    console.log(`[FLIP-FileGrid] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}`);
+    console.log(`[FLIP-FileGrid] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}, dur=${animDuration}ms t=${performance.now().toFixed(0)}`);
 
     // Update refs for next layout change
     const map = new Map<string, { x: number; y: number }>();
@@ -1996,7 +2213,7 @@ export const FileGrid = React.memo(({
               <div
                   ref={containerRef}
                   id="file-grid-container"
-                  className="flex-1 overflow-y-auto overflow-x-hidden px-6 pb-6 relative"
+                  className={`flex-1 overflow-y-auto overflow-x-hidden px-6 pb-6 relative ${isLayoutTransitioning ? '[&_*]:!transition-none' : ''}`}
                   onContextMenu={isAndroid ? undefined : onBackgroundContextMenu}
                   onMouseDown={handleMouseDownInternal}
                   onMouseMove={onMouseMove}
@@ -2117,7 +2334,7 @@ export const FileGrid = React.memo(({
       <div
           ref={containerRef}
           id={isAndroid ? 'file-grid-scroll' : 'file-grid-container'}
-          className={`relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''}`}
+          className={`relative w-full h-full min-w-0 overflow-y-auto overflow-x-hidden transition-all duration-200 ${isDraggingOver ? 'bg-gradient-to-b from-blue-50 to-transparent dark:from-blue-900/15 dark:to-transparent border-2 border-dashed border-blue-300 dark:border-blue-700/50' : ''} ${isLayoutTransitioning ? '[&_*]:!transition-none' : ''}`}
           style={isAndroid ? { scrollbarWidth: 'none', msOverflowStyle: 'none' } : undefined}
           onContextMenu={isAndroid ? undefined : onBackgroundContextMenu}
           onMouseDown={onMouseDown}

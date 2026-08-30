@@ -33,7 +33,6 @@ import { useExternalDragDrop } from './hooks/useExternalDragDrop';
 import { usePersistence } from './hooks/usePersistence';
 import { useFileSelection } from './hooks/useFileSelection';
 import { useFolderSettings } from './hooks/useFolderSettings';
-import { usePanelSwipeGesture } from './hooks/usePanelSwipeGesture';
 import { useLanClientSync } from './hooks/useLanClientSync';
 import { useAndroidClient } from './hooks/useAndroidClient';
 import { useTabHandlers } from './hooks/useTabHandlers';
@@ -1183,15 +1182,16 @@ export const App: React.FC = () => {
 
   const handleFolderAndroidRangeSelect = useCallback((id: string) => {
     if (!isAndroidDevice || !isAndroidSelectionMode) return;
-    const folderIds = state.roots
-      .map(rid => state.files[rid])
-      .filter((f): f is typeof state.files[string] => !!f && f.type === 'folder')
-      .sort((a, b) => {
-        const countA = a.imageCount ?? a.children?.length ?? 0;
-        const countB = b.imageCount ?? b.children?.length ?? 0;
-        return countB - countA;
-      })
-      .map(f => f.id);
+    // 使用 FoldersOverview 上报的当前展示顺序（与界面一致），
+    // 避免按图片数重排后 indexOf 得出错乱区间（如 A-C-E）。
+    const folderIds = folderDisplayOrderRef.current;
+    if (folderIds.length === 0) {
+      updateActiveTab({
+        selectedFileIds: [...activeTab.selectedFileIds, id],
+        lastSelectedId: id
+      });
+      return;
+    }
     if (activeTab.lastSelectedId && activeTab.selectedFileIds.length > 0) {
       const lastIndex = folderIds.indexOf(activeTab.lastSelectedId);
       const currentIndex = folderIds.indexOf(id);
@@ -1216,7 +1216,13 @@ export const App: React.FC = () => {
         lastSelectedId: id
       });
     }
-  }, [isAndroidDevice, isAndroidSelectionMode, state.roots, state.files, activeTab, updateActiveTab]);
+  }, [isAndroidDevice, isAndroidSelectionMode, activeTab, updateActiveTab]);
+
+  // FoldersOverview 上报当前实际展示顺序，供 handleFolderAndroidRangeSelect 计算区间
+  const folderDisplayOrderRef = useRef<string[]>([]);
+  const handleFolderOrderChange = useCallback((ids: string[]) => {
+    folderDisplayOrderRef.current = ids;
+  }, []);
 
   const handleShowContextMenuForFile = useCallback((id: string, x: number, y: number) => {
     const file = state.files[id];
@@ -1953,49 +1959,6 @@ export const App: React.FC = () => {
   const nativeViewerActiveRef = useRef(nativeViewerActive);
   nativeViewerActiveRef.current = nativeViewerActive;
 
-  // 面板滑动手势所需的 DOM ref（安卓端左右面板跟手展开/收起）
-  const panelRowRef = useRef<HTMLDivElement>(null);
-  const sidebarOuterRef = useRef<HTMLDivElement>(null);
-  const sidebarInnerRef = useRef<HTMLDivElement>(null);
-  const metadataOuterRef = useRef<HTMLDivElement>(null);
-  const metadataInnerRef = useRef<HTMLDivElement>(null);
-  const colorPickerOuterRef = useRef<HTMLDivElement>(null);
-  const colorPickerInnerRef = useRef<HTMLDivElement>(null);
-
-  // 安卓端面板滑动手势的显式开关回调（与 toggle 逻辑一致，但不依赖当前可见状态）
-  const openSidebarPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: true, isMetadataVisible: false, isColorPickerVisible: false } }));
-  const closeSidebarPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: false } }));
-  const openMetadataPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: true, isSidebarVisible: false, isColorPickerVisible: false } }));
-  const closeRightPanel = () => setState(s => ({ ...s, layout: { ...s.layout, isMetadataVisible: false, isColorPickerVisible: false } }));
-
-  // 手势仅在安卓端、无弹窗/选择/原生查看器/右键菜单遮挡时启用
-  // （原生查看器为覆盖在 WebView 之上的原生视图，触摸本就不会到达此处，nativeViewerActive 仅作额外保险）
-  const panelGestureEnabled = isAndroidSync()
-    && state.activeModal.type === null
-    && !state.isSettingsOpen
-    && !showCloseConfirmation
-    && !isAndroidSelectionMode
-    && !nativeViewerActive
-    && !contextMenu.visible;
-
-  usePanelSwipeGesture({
-    rowRef: panelRowRef,
-    sidebarOuterRef,
-    sidebarInnerRef,
-    metadataOuterRef,
-    metadataInnerRef,
-    colorPickerOuterRef,
-    colorPickerInnerRef,
-    enabled: panelGestureEnabled,
-    isSidebarVisible: state.layout.isSidebarVisible,
-    isMetadataVisible: state.layout.isMetadataVisible,
-    isColorPickerVisible: state.layout.isColorPickerVisible,
-    openSidebar: openSidebarPanel,
-    closeSidebar: closeSidebarPanel,
-    openMetadata: openMetadataPanel,
-    closeRightPanel,
-  });
-
   // 序列化图片列表供原生层使用
   const serializeImagesForNativeViewer = useCallback(() => {
     const imageFileIds = displayFileIds.filter(id => state.files[id]?.type === FileType.IMAGE);
@@ -2509,11 +2472,9 @@ export const App: React.FC = () => {
         setShowCloseConfirmation={setShowCloseConfirmation}
       />
       <div className={`flex-1 flex flex-col m-2 mt-0 overflow-hidden bg-content ${isAndroidPlatformCached() ? 'rounded-xl' : isLeftmostTab ? 'rounded-bl-xl rounded-br-xl rounded-tr-xl' : 'rounded-xl'}`}>
-        <div ref={panelRowRef} className="flex-1 flex overflow-hidden relative"
+        <div className="flex-1 flex overflow-hidden relative"
           style={{ transition: 'width 300ms ease-out, height 300ms ease-out' }}>
           <SidebarPane
-            sidebarOuterRef={sidebarOuterRef}
-            sidebarInnerRef={sidebarInnerRef}
             isSidebarVisible={state.layout.isSidebarVisible}
             roots={state.roots}
             files={state.files}
@@ -2692,6 +2653,7 @@ export const App: React.FC = () => {
                 handleFolderLongPress={handleFolderLongPress}
                 handleShowContextMenuForFile={handleShowContextMenuForFile}
                 handleFolderAndroidRangeSelect={handleFolderAndroidRangeSelect}
+                handleFolderOrderChange={handleFolderOrderChange}
                 handleFolderSelect={handleFolderSelect}
                 handleRefresh={handleRefreshAnySource}
                 panelWidthRem={panelWidthRem}
@@ -2744,10 +2706,6 @@ export const App: React.FC = () => {
           </div>
         </div>
         <RightPanel
-          metadataOuterRef={metadataOuterRef}
-          metadataInnerRef={metadataInnerRef}
-          colorPickerOuterRef={colorPickerOuterRef}
-          colorPickerInnerRef={colorPickerInnerRef}
           state={state}
           activeTab={activeTab}
           peopleWithDisplayCounts={peopleWithDisplayCounts}

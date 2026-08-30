@@ -5,10 +5,6 @@ import { isAndroidPlatformCached } from '../../api/tauri-bridge';
 import { AppState, FileNode, Person, TabState, Topic } from '../../types';
 
 interface RightPanelProps {
-  metadataOuterRef: React.RefObject<HTMLDivElement>;
-  metadataInnerRef: React.RefObject<HTMLDivElement>;
-  colorPickerOuterRef: React.RefObject<HTMLDivElement>;
-  colorPickerInnerRef: React.RefObject<HTMLDivElement>;
   state: AppState;
   activeTab: TabState;
   peopleWithDisplayCounts: Record<string, Person>;
@@ -29,10 +25,6 @@ interface RightPanelProps {
 
 // 右侧面板：元数据面板（桌面）+ 颜色选择器面板（安卓）
 export const RightPanel = ({
-  metadataOuterRef,
-  metadataInnerRef,
-  colorPickerOuterRef,
-  colorPickerInnerRef,
   state,
   activeTab,
   peopleWithDisplayCounts,
@@ -53,11 +45,9 @@ export const RightPanel = ({
   return (
     <>
       <div
-        ref={metadataOuterRef}
         className="metadata-panel-container shrink-0 z-40 overflow-hidden bg-panel"
         style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
         <div
-          ref={metadataInnerRef}
           className="h-full flex flex-col"
           style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
           <MetadataPanel
@@ -88,11 +78,9 @@ export const RightPanel = ({
       </div>
       {isAndroidPlatformCached() && (
         <div
-          ref={colorPickerOuterRef}
           className="color-picker-panel-container shrink-0 z-40 overflow-hidden bg-panel"
           style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
           <div
-            ref={colorPickerInnerRef}
             className="h-full flex flex-col"
             style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
             <MobileColorPickerSheet

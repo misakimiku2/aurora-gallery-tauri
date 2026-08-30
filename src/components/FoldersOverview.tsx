@@ -11,6 +11,9 @@ import { CircularProgressOverlay } from './CircularProgressOverlay';
 import { PullToRefreshIndicator } from './PullToRefreshIndicator';
 import { getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
 import MarqueeText from './MarqueeText';
+import { nearestAndroidLevelIndex, getAndroidThumbnailPresets } from '../utils/androidThumbnailSizes';
+import { onMultiTouch } from '../utils/touchGestureGuard';
+import { debounce } from '../utils/debounce';
 
 interface FoldersOverviewProps {
   roots: string[];
@@ -35,6 +38,8 @@ interface FoldersOverviewProps {
   onShowContextMenuForFile?: (id: string, x: number, y: number) => void;
   onAndroidRangeSelect?: (id: string) => void;
   onFolderSelect?: (id: string) => void;
+  /** 通知父组件当前实际展示的排序后文件夹 ID 列表（与界面顺序一致），用于安卓范围选择。 */
+  onDisplayedIdsChange?: (ids: string[]) => void;
   sortBy?: SortOption;
   sortDirection?: SortDirection;
   dateFilter?: DateFilter;
@@ -240,6 +245,12 @@ const FolderCard = React.memo(({
     setShowContextMenuAnim(false);
   }, []);
 
+  // 多指守护：第二根手指落下（双指捏合）时立即取消本卡片的长按等定时器
+  useEffect(() => {
+    if (!isAndroid) return undefined;
+    return onMultiTouch(clearAllTimers);
+  }, [isAndroid, clearAllTimers]);
+
   return (
     <div
       ref={ref}
@@ -266,6 +277,11 @@ const FolderCard = React.memo(({
       }}
       onContextMenu={isAndroid ? undefined : undefined}
       onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+        // 多指（双指捏合）不进入长按/选择逻辑
+        if (e.touches.length > 1) {
+          clearAllTimers();
+          return;
+        }
         longPressTriggeredRef.current = false;
         contextMenuTriggeredRef.current = false;
         rangeSelectTriggeredRef.current = false;
@@ -424,6 +440,7 @@ const FoldersOverview = React.memo(({
   onShowContextMenuForFile,
   onAndroidRangeSelect,
   onFolderSelect,
+  onDisplayedIdsChange,
   sortBy = 'name',
   sortDirection = 'asc',
   dateFilter,
@@ -451,6 +468,13 @@ const FoldersOverview = React.memo(({
   const scrollStateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastScrollTimeRef = useRef(0);
   const lastScrollTopRef = useRef(0);
+  // 滚动节流 RAF：scroll 事件高频触发（安卓触摸滚动可达 90~120Hz），合并到每帧一次
+  const scrollRafRef = useRef<number | null>(null);
+  // 按需虚拟化：记录「已挂载卡片的渲染窗口」[min, max]（含 buffer）。卡片绝对定位 +
+  // 原生滚动，滚动本身由浏览器合成器处理；仅当视口越过窗口边界时才 setScrollTop
+  // 重渲染挂载新卡片（对齐 FileGrid 的按需虚拟化，把滚动期间重渲染从每帧降到
+  // 每跨过一个窗口才一次——这是文件夹界面滚动抖动的根源修复）。
+  const renderWindowRef = useRef<{ min: number; max: number }>({ min: -Infinity, max: Infinity });
   const prevSortedIdsRef = useRef<string[]>([]);
   const prevAspectRatiosRef = useRef<Record<string, number>>({});
   const prevLayoutInputsRef = useRef({ containerWidth: 0, thumbnailSize: 0, layoutMode: '', sortBy: '', sortDirection: '', folderCount: 0 });
@@ -462,9 +486,22 @@ const FoldersOverview = React.memo(({
   const isLayoutTransitioningRef = useRef(false);
   const prevThumbnailSizeRef = useRef(thumbnailSize);
   const prevContainerWidthRef = useRef(containerWidth);
+  // 最近一次提交给布局的宽度（RO 提交去抖基线）：面板预测宽度与 RO 实测存在 ~1px
+  // 亚像素/舍入偏差（取整后可能跨界），若据此二次提交会触发第二次布局重算，
+  // 即"面板展开完后布局抖一下"。容忍 <2px 偏差，真实变化（数百 px）不受影响。
+  const committedWidthRef = useRef(0);
   const transitionBufferRef = useRef(400);
   const transitionResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const flipDebugLogRef = useRef(0);
+  // FLIP 动画参数（按触发源区分）：
+  // - 宽度变化（面板开合）：与面板 width 300ms ease-out 对齐——WAAPI 时长 = 面板剩余
+  //   时间（300ms - 管线延迟），easing 与面板一致，两者同起同止、进度互相同步，
+  //   消除"卡片 WAAPI(240ms 前置曲线) 跑得比面板 ease-out 尾段快"的脱节
+  //   （用户感知为"走到一半停一会再继续"的两端式动画）。
+  // - thumbnailSize 变化（捏合）：保持 240ms 快节奏。
+  const flipAnimParamsRef = useRef<{ duration: number; easing: string; startedAt: number; syncToPanel: boolean }>(
+    { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', startedAt: 0, syncToPanel: false }
+  );
   // Two-phase FLIP: when scrollDelta is large, phase 0 expands buffer + updates scrollTop
   // (mounts cards at new viewport), phase 1 runs the WAAPI animation.
   const [flipPhase, setFlipPhase] = useState(0);
@@ -482,18 +519,54 @@ const FoldersOverview = React.memo(({
   });
 
   const pinchStartSizeRef = useRef(thumbnailSize);
+  // 安卓端手势级档位记录：一次捏合手势最多切换一档（小→中→大 逐级）
+  const gestureStartLevelRef = useRef(-1);
+  const gestureSteppedRef = useRef(false);
+  // 捏合期间钉住滚动：快速捏合时第一根手指可能已经触发原生滚动（preventDefault 被忽略），
+  // 该 ref 保证手势期间 scrollTop 稳定，避免 FLIP 与滚动赛跑导致动画错乱/硬切。
+  const pinchScrollPinRef = useRef<number | null>(null);
+  // 宽度 FLIP 的滚动基线钉：面板开合时记录预测生效前的真实 scrollTop。新布局返回后
+  // 内容高度可能骤降（展开面板 7864→4559），React 提交渲染瞬间浏览器会把超出
+  // maxScroll 的 DOM scrollTop 强制 clamp（实测 6723→3823）——若 FLIP 用被 clamp
+  // 的 live 值选锚点，会选错卡片把页面带去错误位置（"收起/展开后页面跳到中间"）。
+  // FLIP effect 优先使用此 pin 作为 oldScrollTop 基线，用后清空。
+  const widthFlipPinnedScrollRef = useRef<number | null>(null);
 
   usePinchZoom(containerRef, {
     onPinchStart: useCallback(() => {
       pinchStartSizeRef.current = thumbnailSize;
+      gestureStartLevelRef.current = nearestAndroidLevelIndex(thumbnailSize, containerWidthRef.current || 0);
+      gestureSteppedRef.current = false;
+      pinchScrollPinRef.current = containerRef.current?.scrollTop ?? 0;
+      console.log(`[Pinch-Folders] >>> start: thumbSize=${thumbnailSize} startLevelIdx=${gestureStartLevelRef.current} width=${containerWidthRef.current?.toFixed(0)} scroll=${pinchScrollPinRef.current?.toFixed(0)}`);
     }, [thumbnailSize]),
     onPinchZoom: useCallback((totalScale: number) => {
       if (!onThumbnailSizeChange) return;
+      if (isAndroid) {
+        // 安卓端固定三档，且一次捏合手势只能前进/后退一档
+        if (gestureSteppedRef.current) return;
+        const startIdx = gestureStartLevelRef.current;
+        if (startIdx < 0) return;
+        const STEP_THRESHOLD = 1.08;
+        let targetIdx = startIdx;
+        if (totalScale > STEP_THRESHOLD) targetIdx = startIdx + 1;
+        else if (totalScale < 1 / STEP_THRESHOLD) targetIdx = startIdx - 1;
+        else return; // 缩放幅度过小，不切换
+        if (targetIdx < 0 || targetIdx > 2) return; // 已在最小/最大档
+        gestureSteppedRef.current = true;
+        const presets = getAndroidThumbnailPresets(containerWidthRef.current || 0);
+        console.log(`[Pinch-Folders] >>> SWITCH scale=${totalScale.toFixed(2)} startIdx=${startIdx} → targetIdx=${targetIdx} thumbSize=${thumbnailSize}→${presets[targetIdx].toFixed(1)}`);
+        onThumbnailSizeChange(presets[targetIdx]);
+        return;
+      }
       const maxLimit = 480;
       const minLimit = 100;
       const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
       onThumbnailSizeChange(newSize);
-    }, [onThumbnailSizeChange]),
+    }, [onThumbnailSizeChange, isAndroid]),
+    onPinchEnd: useCallback(() => {
+      pinchScrollPinRef.current = null; // 手势结束，放行滚动
+    }, []),
   });
 
   const folderNodes = useMemo(() => {
@@ -553,6 +626,19 @@ const FoldersOverview = React.memo(({
     }
     return sorted.map(f => f.id);
   }, [folderNodes, sortBy, sortDirection]);
+
+  // 把当前实际展示的排序顺序上报给父组件，安卓范围选择需按此顺序计算区间，
+  // 而不是按图片数重新排序（否则会选出 A-C-E 这类错乱区间）。
+  const onDisplayedIdsChangeRef = useRef(onDisplayedIdsChange);
+  onDisplayedIdsChangeRef.current = onDisplayedIdsChange;
+  const lastReportedIdsRef = useRef<string[] | null>(null);
+  if (isVisible && onDisplayedIdsChangeRef.current &&
+    (lastReportedIdsRef.current === null ||
+      lastReportedIdsRef.current.length !== sortedFolderIds.length ||
+      sortedFolderIds.some((id, i) => lastReportedIdsRef.current![i] !== id))) {
+    lastReportedIdsRef.current = sortedFolderIds;
+    onDisplayedIdsChangeRef.current(sortedFolderIds);
+  }
 
   if (isAndroid && isVisible) {
     const prev = prevSortedIdsRef.current;
@@ -676,39 +762,71 @@ const FoldersOverview = React.memo(({
     isLayoutTransitioningRef.current = isLayoutTransitioning;
   }, [isLayoutTransitioning]);
 
-  // Watch layout input changes: set transition state + predict buffer size so the
-  // new viewport's cards are mounted BEFORE the new layout arrives from the worker.
-  // Only activates for thumbnail size changes — width changes (panel toggle) are
-  // handled by CSS transition + predicted width, no buffer increase needed.
+  // Watch layout input changes: set transition state (freezes card CSS transitions and
+  // forces the WAAPI path). The render buffer is NOT inflated: old viewport cards land
+  // near the anchor (= new scrollTop) after reflow, and the FLIP's PHASE 0 switches the
+  // render window to the new scrollTop before animating, so a normal buffer suffices.
+  // (Inflating to 1200~2600 mounted 150~260 cards; under the pinch touchmove flood the
+  // commit stretched to 120~350ms, so a rapid second pinch felt dead and only animated
+  // after the fingers lifted.)
   useEffect(() => {
     const prevThumb = prevThumbnailSizeRef.current;
     const prevWidth = prevContainerWidthRef.current;
     const thumbChanged = prevThumb !== thumbnailSize;
     const widthChanged = prevWidth !== containerWidth && prevWidth > 0 && containerWidth > 0;
 
-    if (!thumbChanged && !widthChanged) return;
+    if (!thumbChanged && !widthChanged) {
+      // 关键修复（2026-08-31）：早退路径也必须同步宽度 ref。挂载序列（state 0 → RO
+      // 初测宽度）因 widthChanged 的 prevWidth>0 条件走此分支，若不同步，
+      // prevContainerWidthRef 会永远卡在 0 → 之后所有纯宽度变化都被 prevWidth>0
+      // 拦截 → 宽度过渡分支（禁用卡片 CSS 过渡、统一 WAAPI）从未执行 → CSS+WAAPI
+      // 双动画 = 面板开合布局抖动。日志特征：会话首次捏合前的面板开合没有
+      // TRANSITION START (width) 输出（本轮日志 line 1-89 实证）。
+      if (containerWidth > 0 && prevWidth !== containerWidth) {
+        prevContainerWidthRef.current = containerWidth;
+        console.log(`[FLIP-FoldersOverview] width ref synced at mount: ${prevWidth.toFixed(0)}→${containerWidth.toFixed(0)}`);
+      }
+      return;
+    }
     // Skip if container not visible (width=0)
     if (containerWidth <= 0) {
       prevThumbnailSizeRef.current = thumbnailSize;
       prevContainerWidthRef.current = containerWidth;
       return;
     }
-    // Only increase buffer for thumbnail size changes (large scroll adjustments).
-    // For width-only changes (panel toggle), CSS transition + predicted width handles it.
+    // 宽度变化（面板开合）同样进入过渡态：FLIP 锚点会瞬间跳变 scrollTop，若卡片 CSS
+    // transform 过渡（300ms）仍在运行，WAAPI（240ms）先结束时卡片会被 CSS 过渡拉回
+    // 中间态再滑到终点 → 面板展开完后“弹一下”；且全量卡片 CSS 过渡 + WAAPI 双重动画
+    // 是掉帧主因。进入过渡态 = 禁用卡片 CSS 过渡、统一走 WAAPI（与捏合切换同路径）。
+    // 亚像素 RO 汇报（<1px，取整后不产生新布局）不触发，避免无谓延长过渡冻结。
     if (!thumbChanged) {
       prevThumbnailSizeRef.current = thumbnailSize;
       prevContainerWidthRef.current = containerWidth;
+      if (Math.abs(containerWidth - prevWidth) > 1) {
+        const scrollNow = containerRef.current?.scrollTop || 0;
+        // 钉住宽度 FLIP 的滚动基线：内容变矮（展开面板）时新布局渲染会触发浏览器
+        // clamp DOM scrollTop，FLIP 必须用 clamp 前的真实位置选锚点。
+        widthFlipPinnedScrollRef.current = scrollNow;
+        // 与面板 width 300ms ease-out 对齐（记录面板动画起点，WAAPI 用剩余时长）
+        flipAnimParamsRef.current = { duration: 300, easing: 'ease-out', startedAt: performance.now(), syncToPanel: true };
+        transitionBufferRef.current = 400;
+        setIsLayoutTransitioning(true);
+        console.log(`[FLIP-FoldersOverview] TRANSITION START (width): ${prevWidth.toFixed(0)}→${containerWidth.toFixed(0)}, scroll=${scrollNow.toFixed(0)} t=${performance.now().toFixed(0)}`);
+        if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
+        transitionResetTimerRef.current = setTimeout(() => {
+          setIsLayoutTransitioning(false);
+          transitionBufferRef.current = 400;
+        }, 600);
+      }
       return;
     }
 
     const currentScroll = containerRef.current?.scrollTop || 0;
-    const ratio = prevThumb > 0 ? thumbnailSize / prevThumb : 1;
-    const predictedDelta = Math.abs(currentScroll * (1 - ratio));
-    const buffer = Math.min(3000, Math.max(1500, predictedDelta + 800));
 
-    transitionBufferRef.current = buffer;
+    flipAnimParamsRef.current = { duration: 240, easing: 'cubic-bezier(0.22, 1, 0.36, 1)', startedAt: 0, syncToPanel: false };
+    transitionBufferRef.current = 400;
     setIsLayoutTransitioning(true);
-    console.log(`[FLIP-FoldersOverview] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${containerWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)}, predictedDelta=${predictedDelta.toFixed(0)}, buffer=${buffer.toFixed(0)}`);
+    console.log(`[FLIP-FoldersOverview] TRANSITION START: thumb=${prevThumb}→${thumbnailSize}, width=${prevWidth.toFixed(0)}→${containerWidth.toFixed(0)}, scroll=${currentScroll.toFixed(0)} t=${performance.now().toFixed(0)}`);
 
     if (transitionResetTimerRef.current) clearTimeout(transitionResetTimerRef.current);
     transitionResetTimerRef.current = setTimeout(() => {
@@ -768,11 +886,24 @@ const FoldersOverview = React.memo(({
     // BUG FIX #1: Use LIVE scrollTop from the DOM, not the stale prevScrollTopForFlipRef.
     // prevScrollTopForFlipRef only updates when this effect runs, so if the user scrolled
     // without a layout change, it holds an old value → wrong anchor → newScrollTop=0 → jump to top.
-    const oldScrollTop = container.scrollTop;
+    // BUG FIX（宽度 clamp）: 面板展开使内容骤降时，React 提交新布局的渲染会触发浏览器
+    // 把 DOM scrollTop clamp 到新 maxScroll（实测 6723→3823）。此时 live 值已失真——
+    // 锚点必须按"clamp 前用户真实所在位置"（宽度过渡分支记录的 pin）选取，否则选错
+    // 卡片把页面带到错误位置（用户反馈"展开/收起面板后页面跳到中间"）。
+    let oldScrollTop = container.scrollTop;
+    const clampedScrollTop = oldScrollTop;
+    const pinnedScrollTop = widthFlipPinnedScrollRef.current;
+    if (pinnedScrollTop !== null) {
+      widthFlipPinnedScrollRef.current = null;
+      if (Math.abs(pinnedScrollTop - oldScrollTop) > 1) {
+        console.log(`[FLIP-FoldersOverview] #${logId}   CLAMP detected: live ${oldScrollTop.toFixed(1)} was clamped, using pinned ${pinnedScrollTop.toFixed(1)}`);
+        oldScrollTop = pinnedScrollTop;
+      }
+    }
     const staleScrollTop = prevScrollTopForFlipRef.current;
 
-    console.log(`[FLIP-FoldersOverview] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount}`);
-    console.log(`[FLIP-FoldersOverview] #${logId}   scrollTop: live=${oldScrollTop.toFixed(1)}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(oldScrollTop - staleScrollTop).toFixed(1)}`);
+    console.log(`[FLIP-FoldersOverview] #${logId} START: layout=${layout.length}, prevPos=${prevPositions.size}, common=${commonCount} t=${performance.now().toFixed(0)}`);
+    console.log(`[FLIP-FoldersOverview] #${logId}   scrollTop: live=${clampedScrollTop.toFixed(1)}${oldScrollTop !== clampedScrollTop ? ` (pinned=${oldScrollTop.toFixed(1)})` : ''}, staleRef=${staleScrollTop.toFixed(1)}, drift=${(clampedScrollTop - staleScrollTop).toFixed(1)}`);
 
     // Find anchor card: the card closest to viewport top (oldScreenY >= 0) in previous layout
     let anchorId: string | null = null;
@@ -796,6 +927,14 @@ const FoldersOverview = React.memo(({
       }
     }
 
+    // 不封顶滚动纠正：锚点必须精确停在原屏幕位置。此前的 ±1 视口封顶会把深处滚动的锚点
+    // 顶出屏幕 700~1500px，全部卡片以 1500~3000px 的幅度整体"扫射"过视口（实测每次捏合
+    // scrollDelta 都恰好等于 ±clientHeight，即封顶值）。大位移的挂载由 PHASE 0/1 兜底：
+    // PHASE 0 先把渲染窗口切到新 scrollTop（挂上新视口卡片），PHASE 1 在同一帧内设置 DOM
+    // 滚动 + WAAPI；旧视口卡片按锚点换算后的新位置总落在新 scrollTop 附近，天然保持挂载。
+    const maxScroll = Math.max(0, (container.scrollHeight || 0) - (container.clientHeight || 0));
+    newScrollTop = Math.max(0, Math.min(maxScroll, newScrollTop));
+
     const anchorOldY = anchorId ? prevPositions.get(anchorId)?.y : undefined;
     const anchorNewY = anchorId ? layout.find(i => i.id === anchorId)?.y : undefined;
     const scrollDelta = newScrollTop - oldScrollTop;
@@ -803,7 +942,9 @@ const FoldersOverview = React.memo(({
 
     // If scroll adjustment is negligible, CSS transition on transform handles the animation.
     // No need for WAAPI — this avoids perf cost on panel toggle (width-only changes).
-    if (Math.abs(scrollDelta) <= 1) {
+    // 注意：thumbnailSize 切换期间（isLayoutTransitioning）CSS 过渡被禁用（性能优化），
+    // 此时即使 scrollDelta 很小也必须走 WAAPI，否则会变成无动画的硬切。
+    if (Math.abs(scrollDelta) <= 1 && !isLayoutTransitioningRef.current) {
       console.log(`[FLIP-FoldersOverview] #${logId} SKIP WAAPI: |scrollDelta|≤1, CSS transition handles it`);
       const map = new Map<string, { x: number; y: number }>();
       layout.forEach(item => map.set(item.id, { x: item.x, y: item.y }));
@@ -817,8 +958,9 @@ const FoldersOverview = React.memo(({
     // (visibleItems was computed with old scrollTop). Phase 0 updates scrollTop state so
     // visibleItems includes new viewport cards. Phase 1 runs the WAAPI animation after
     // re-render. NOTE: buffer is NOT expanded here — old viewport cards' positions are
-    // already recorded in prevPositions, so they don't need to be in the DOM. Only new
-    // viewport cards need mounting, and the existing transition buffer handles that.
+    // already recorded in prevPositions, and after the anchor correction they land near
+    // the new scrollTop anyway; only the new viewport cards need mounting, which Phase
+    // 0's window switch handles.
     // Skip Phase 0 when the new viewport is already covered by the current buffer (e.g.,
     // width-only changes with small scrollDelta) — avoids an unnecessary re-render that
     // causes mid-animation stutter.
@@ -849,14 +991,31 @@ const FoldersOverview = React.memo(({
 
     // Adjust scroll position instantly (before paint, so no visual jump)
     container.scrollTop = actualNewScrollTop;
+    // 捏合期间的滚动钉跟随 FLIP 的新位置，防止后续拉回旧值
+    if (pinchScrollPinRef.current !== null) {
+      pinchScrollPinRef.current = actualNewScrollTop;
+    }
 
     // Apply WAAPI FLIP animation only to cards near old OR new viewport.
     // visibleItems may include many cards (large buffer), but only animate relevant ones.
-    const viewportPadding = 400;
+    // padding=150：动画期间视口固定（240ms 内无滚动），±150 之外的卡全程不可见，
+    // 动画它们纯属浪费合成成本——实测小图标档位（10 列）±300 时 animated 高达
+    // 62~81 张（帧率低的主因），±150 后屏幕外动画卡被砍掉，视觉无差异。
+    const viewportPadding = 150;
     const oldVpMin = actualOldScrollTop - viewportPadding;
     const oldVpMax = actualOldScrollTop + containerHeight + viewportPadding;
     const newVpMin = actualNewScrollTop - viewportPadding;
     const newVpMax = actualNewScrollTop + containerHeight + viewportPadding;
+
+    // 动画参数：宽度触发时与面板 width 300ms ease-out 对齐（时长=面板剩余时间，
+    // 同 easing → 卡片与面板同起同止、进度同步，消除"两端式"脱节）；捏合保持 240ms。
+    const animParams = flipAnimParamsRef.current;
+    let animDuration = animParams.duration;
+    if (animParams.syncToPanel) {
+      const elapsed = performance.now() - animParams.startedAt;
+      animDuration = Math.max(120, Math.round(animParams.duration - elapsed));
+    }
+    const animEasing = animParams.easing;
 
     let animatedCount = 0;
     let notFoundCount = 0;
@@ -894,15 +1053,15 @@ const FoldersOverview = React.memo(({
           { transform: `translate(${item.x}px, ${item.y}px)` },
         ],
         {
-          duration: 300,
-          easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+          duration: animDuration,
+          easing: animEasing,
           fill: 'none',
         }
       );
       animatedCount++;
     });
 
-    console.log(`[FLIP-FoldersOverview] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}`);
+    console.log(`[FLIP-FoldersOverview] #${logId}   WAAPI: animated=${animatedCount}, notFound=${notFoundCount}, skipped=${skippedCount}, visibleTotal=${visibleItems.length}, dur=${animDuration}ms t=${performance.now().toFixed(0)}`);
 
     // Update refs for next layout change
     const map = new Map<string, { x: number; y: number }>();
@@ -953,6 +1112,18 @@ const FoldersOverview = React.memo(({
     }
   }, [isVisible, targetScrollTop, layout]);
 
+  // 滚动位置保存（debounce 300ms）：滚动停止后才写 App 状态（updateActiveTab 会触发
+  // 整棵应用树重渲染）。原实现每个 scroll 事件直接调用，安卓触摸滚动 90~120Hz 下
+  // App 级 setState 每帧一次 → 全树重渲染与滚动合成器抢主线程 = 滚动抖动主因之一。
+  // （对齐 FileGrid 的 debouncedOnScrollTopChange。）
+  const debouncedOnScrollTopChange = useMemo(() =>
+    onScrollTopChange ? debounce(onScrollTopChange, 300) : undefined
+  , [onScrollTopChange]);
+  // ref 包装：scroll handler 所在 effect 不再依赖 onScrollTopChange（避免回调身份
+  // 变化导致监听器反复解绑/重绑），回调内通过 ref 读取最新 debounced 函数。
+  const debouncedOnScrollTopChangeRef = useRef(debouncedOnScrollTopChange);
+  debouncedOnScrollTopChangeRef.current = debouncedOnScrollTopChange;
+
   useEffect(() => {
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
@@ -975,7 +1146,17 @@ const FoldersOverview = React.memo(({
         widthDebounceRef.current = setTimeout(() => {
           // 二次检查可见性：debounce 期间视图可能已切走
           if (!isVisibleRef.current) return;
-          setContainerWidth(containerWidthRef.current);
+          // 面板动画结束后 RO 实测与预测宽度的亚像素/舍入偏差（~1px，取整后可能
+          // 跨整数边界）不应触发第二次布局重算——那是"面板展开完后布局抖一下"的
+          // 根源。容忍 <2px 偏差不提交；真实宽度变化（面板开合数百 px）不受影响。
+          const w = containerWidthRef.current;
+          if (Math.abs(w - committedWidthRef.current) < 2) {
+            console.log(`[FoldersOverview] RO width SKIP (sub-pixel): measured=${w.toFixed(2)}, committed=${committedWidthRef.current.toFixed(2)}`);
+            return;
+          }
+          console.log(`[FoldersOverview] RO width COMMIT: ${committedWidthRef.current.toFixed(1)}→${w.toFixed(1)}`);
+          committedWidthRef.current = w;
+          setContainerWidth(w);
         }, 60);
       }
     });
@@ -985,16 +1166,52 @@ const FoldersOverview = React.memo(({
       setContainerWidth(containerRef.current.clientWidth);
       setContainerHeight(containerRef.current.clientHeight);
       containerWidthRef.current = containerRef.current.clientWidth;
+      committedWidthRef.current = containerRef.current.clientWidth;
     }
 
     const handleScroll = () => {
       if (containerRef.current) {
         const currentScroll = containerRef.current.scrollTop;
 
+        // 捏合期间钉住滚动位置：快速捏合的原生滚动无法被 preventDefault 取消，
+        // 这里主动拉回，保证手势期间 scrollTop 稳定（FLIP 靠它计算锚点）。
+        const pin = pinchScrollPinRef.current;
+        if (pin !== null && !isRestoringScrollRef.current) {
+          if (Math.abs(currentScroll - pin) > 1) {
+            containerRef.current.scrollTop = pin;
+            return; // 已被拉回，跳过状态更新
+          }
+        }
+
         if (isRestoringScrollRef.current) return;
 
-        setScrollTop(currentScroll);
-        onScrollTopChange?.(currentScroll);
+        // 过渡期（面板开合/捏合的 FLIP 动画中）的 scroll 事件多为浏览器 clamp 或
+        // PHASE 1 设置新位置引发，不是用户滚动——跳过 debounced 写入，避免被 clamp
+        // 的瞬时值污染 activeTab.scrollTop（FLIP PHASE 1 自己会直调正确的值）。
+        if (!isLayoutTransitioningRef.current) {
+          debouncedOnScrollTopChangeRef.current?.(currentScroll);
+        }
+
+        // 按需虚拟化（对齐 FileGrid）：卡片绝对定位 + 原生滚动，滚动本身由浏览器
+        // 合成器处理、不依赖 React 状态。仅当视口越出已挂载渲染窗口时才 setScrollTop
+        // 重渲染挂载新卡片；RAF 合并同帧多次 scroll 事件。原实现每事件 setState
+        // → 每帧重渲染全部可见卡片 = 滚动抖动主因。
+        const win = renderWindowRef.current;
+        const containerH = containerRef.current.clientHeight || 0;
+        const needsUpdate = currentScroll < win.min || currentScroll + containerH > win.max;
+        if (needsUpdate && scrollRafRef.current === null) {
+          scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            const sc = containerRef.current;
+            if (!sc) return;
+            const st = sc.scrollTop;
+            const w = renderWindowRef.current;
+            const h = sc.clientHeight || 0;
+            if (st < w.min || st + h > w.max) {
+              setScrollTop(st);
+            }
+          });
+        }
 
         if (isAndroid) {
           const now = Date.now();
@@ -1028,8 +1245,11 @@ const FoldersOverview = React.memo(({
       containerRef.current?.removeEventListener('scroll', handleScroll);
       if (scrollStateTimerRef.current) clearTimeout(scrollStateTimerRef.current);
       if (widthDebounceRef.current) clearTimeout(widthDebounceRef.current);
+      if (scrollRafRef.current !== null) cancelAnimationFrame(scrollRafRef.current);
+      // 取消待执行的滚动位置保存（debounce），避免组件卸载后仍更新 App 状态
+      debouncedOnScrollTopChangeRef.current?.cancel?.();
     };
-  }, [isAndroid, onScrollTopChange]);
+  }, [isAndroid]);
 
   // Re-measure container dimensions when the view becomes visible
   // (switching from display:none to display:contents leaves stale width/height=0)
@@ -1041,22 +1261,28 @@ const FoldersOverview = React.memo(({
         setContainerWidth(w);
         setContainerHeight(h);
         containerWidthRef.current = w;
+        committedWidthRef.current = w;
       }
     }
   }, [isVisible]);
 
   // Predict container width immediately when panels toggle, so card transitions
-  // run simultaneously with the panel animation instead of waiting for ResizeObserver
+  // run simultaneously with the panel animation instead of waiting for ResizeObserver.
+  // 隐藏（非本视图激活，display:none）时不预测：避免触发隐藏组件的状态更新/过渡态
+  // （日志实测浏览器视图下每次面板开合 FoldersOverview 仍执行 PREDICT + TRANSITION，
+  // 浪费渲染）。切回可见时 isVisible re-measure effect 会用真实宽度校准。
   useEffect(() => {
     if (panelWidthRem === undefined) return;
     if (prevPanelWidthRemRef.current !== undefined && prevPanelWidthRemRef.current !== panelWidthRem) {
       const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
       const deltaRem = prevPanelWidthRemRef.current - panelWidthRem;
       const deltaPx = deltaRem * remPx;
-      if (containerWidthRef.current > 0) {
+      if (containerWidthRef.current > 0 && isVisibleRef.current) {
         const predictedWidth = containerWidthRef.current + deltaPx;
+        console.log(`[FoldersOverview] PREDICT width: ${containerWidthRef.current.toFixed(1)}→${predictedWidth.toFixed(1)} (Δ${deltaPx.toFixed(1)}px) t=${performance.now().toFixed(0)}`);
         setContainerWidth(predictedWidth);
         containerWidthRef.current = predictedWidth;
+        committedWidthRef.current = predictedWidth;
       }
     }
     prevPanelWidthRemRef.current = panelWidthRem;
@@ -1066,6 +1292,8 @@ const FoldersOverview = React.memo(({
       const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerHeight + buffer;
+      // 记录本次挂载的渲染窗口，供滚动 handler 判断是否需要按需重渲染挂载新卡片
+      renderWindowRef.current = { min: minY, max: maxY };
       return layout.filter(item => item.y < maxY && item.y + item.height > minY);
   }, [layout, scrollTop, containerHeight, isLayoutTransitioning]);
 
@@ -1103,8 +1331,13 @@ const FoldersOverview = React.memo(({
                 transform: `translate(${pos.x}px, ${pos.y}px)`,
                 width: pos.width,
                 height: pos.height,
-                willChange: 'transform',
-                transition: 'transform 300ms ease-out',
+                // willChange 仅在过渡期启用：常驻 ~90 张卡各占一个合成层，滚动/面板
+                // reflow 期间浏览器每帧更新所有层（帧率杀手）；过渡态在 WAAPI 启动前
+                // 的同一次提交中生效（先于 FLIP effect），提升仍及时完成。
+                willChange: isLayoutTransitioning ? 'transform' : 'auto',
+                // FLIP 动画期间禁用所有卡片 CSS 过渡（否则成百上千张缓冲卡同时触发 transform 过渡导致掉帧），
+                // 运动只由视口范围内的 WAAPI 动画驱动；结束后恢复过渡。
+                transition: isLayoutTransitioning ? 'none' : 'transform 300ms ease-out',
                 ...(!isAndroid && {
                   contentVisibility: 'auto' as const,
                   containIntrinsicSize: `${pos.width}px ${pos.height}px`

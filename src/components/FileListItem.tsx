@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { Folder, Image as ImageIcon, Book, Film } from 'lucide-react';
 import { FileNode, FileType } from '../types';
 import { formatSize } from '../utils/mockFileSystem';
@@ -9,6 +9,7 @@ import { getGlobalCache, getThumbnailPathCache } from '../utils/thumbnailCache';
 import { ImageThumbnail } from './ImageThumbnail';
 import { InlineRenameInput } from './InlineRenameInput';
 import { CircularProgressOverlay } from './CircularProgressOverlay';
+import { onMultiTouch } from '../utils/touchGestureGuard';
 
 export const FileListItem = React.memo(({
   file,
@@ -48,6 +49,32 @@ export const FileListItem = React.memo(({
   const animShowTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showContextMenuAnim, setShowContextMenuAnim] = useState(false);
   const [contextMenuAnimPos, setContextMenuAnimPos] = useState({ x: 0, y: 0 });
+
+  const clearAllTimers = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (contextMenuTimerRef.current) {
+      clearTimeout(contextMenuTimerRef.current);
+      contextMenuTimerRef.current = null;
+    }
+    if (rangeSelectTimerRef.current) {
+      clearTimeout(rangeSelectTimerRef.current);
+      rangeSelectTimerRef.current = null;
+    }
+    if (animShowTimerRef.current) {
+      clearTimeout(animShowTimerRef.current);
+      animShowTimerRef.current = null;
+    }
+    setShowContextMenuAnim(false);
+  }, []);
+
+  // 多指守护：第二根手指落下（双指捏合）时立即取消本条目长按等定时器
+  useEffect(() => {
+    if (!isAndroid) return undefined;
+    return onMultiTouch(clearAllTimers);
+  }, [isAndroid, clearAllTimers]);
 
   // Drag handler for list view
   const handleDragStart = (e: React.DragEvent) => {
@@ -364,6 +391,11 @@ export const FileListItem = React.memo(({
         })}
         onContextMenu={isAndroid ? undefined : ((e: React.MouseEvent) => onContextMenu(e, file.id))}
         onTouchStart={isAndroid ? ((e: React.TouchEvent) => {
+            // 多指（双指捏合）不进入长按/选择逻辑
+            if (e.touches.length > 1) {
+                clearAllTimers();
+                return;
+            }
             longPressTriggeredRef.current = false;
             contextMenuTriggeredRef.current = false;
             rangeSelectTriggeredRef.current = false;

@@ -82,6 +82,8 @@ export function usePullToRefresh({
     });
 
     const handleTouchStart = (e: TouchEvent) => {
+      // 仅单指下拉生效：双指捏合时绝不能让 PTR 拖动内容
+      if (e.touches.length !== 1) return;
       if (isRefreshingRef.current || isCompleteRef.current) {
         return;
       }
@@ -93,6 +95,16 @@ export function usePullToRefresh({
     };
 
     const handleTouchMove = (e: TouchEvent) => {
+      // 仅单指拉动：双指（捏合）期间不参与 PTR
+      if (e.touches.length !== 1) {
+        if (currentPullRef.current > 0) {
+          currentPullRef.current = 0;
+          activePullRef.current = 0;
+          applyContentTransform(contentRef?.current ?? null, 0);
+          setState({ isPulling: false, isRefreshing: false, canRefresh: false, isComplete: false });
+        }
+        return;
+      }
       if (isRefreshingRef.current || isCompleteRef.current) return;
       if (container.scrollTop > 2) {
         if (currentPullRef.current > 0) {

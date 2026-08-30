@@ -3,8 +3,6 @@ import { Sidebar } from '../TreeSidebar';
 import { FileNode, Person, TaskProgress } from '../../types';
 
 interface SidebarPaneProps {
-  sidebarOuterRef: React.RefObject<HTMLDivElement>;
-  sidebarInnerRef: React.RefObject<HTMLDivElement>;
   isSidebarVisible: boolean;
   roots: string[];
   files: Record<string, FileNode>;
@@ -51,10 +49,8 @@ interface SidebarPaneProps {
   onOpenAndroidSettings: () => void;
 }
 
-// 左侧边栏外层布局 + Sidebar 组装（宽度/位移动画由 App 的滑动手势 ref 控制）
+// 左侧边栏外层布局 + Sidebar 组装（宽度/位移动画由 React 状态驱动）
 export const SidebarPane = ({
-  sidebarOuterRef,
-  sidebarInnerRef,
   isSidebarVisible,
   roots,
   files,
@@ -102,11 +98,9 @@ export const SidebarPane = ({
 }: SidebarPaneProps) => {
   return (
     <div
-      ref={sidebarOuterRef}
       className="shrink-0 z-40 overflow-hidden bg-panel"
       style={{ width: isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
       <div
-        ref={sidebarInnerRef}
         className="h-full flex flex-col"
         style={{ width: '16rem', transform: isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
         <Sidebar

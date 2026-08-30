@@ -29,6 +29,7 @@ interface MainContentAreaProps {
   handleFolderLongPress: (id: string) => void;
   handleShowContextMenuForFile: (id: string, x: number, y: number) => void;
   handleFolderAndroidRangeSelect: (id: string) => void;
+  handleFolderOrderChange: (ids: string[]) => void;
   handleFolderSelect: (id: string) => void;
   handleRefresh: (folderId?: string) => Promise<void>;
   panelWidthRem: number;
@@ -103,6 +104,7 @@ export const MainContentArea = ({
   handleFolderLongPress,
   handleShowContextMenuForFile,
   handleFolderAndroidRangeSelect,
+  handleFolderOrderChange,
   handleFolderSelect,
   handleRefresh,
   panelWidthRem,
@@ -175,6 +177,7 @@ export const MainContentArea = ({
           onShowContextMenuForFile={handleShowContextMenuForFile}
           onAndroidRangeSelect={handleFolderAndroidRangeSelect}
           onFolderSelect={handleFolderSelect}
+          onDisplayedIdsChange={handleFolderOrderChange}
           sortBy={state.sortBy}
           sortDirection={state.sortDirection}
           dateFilter={activeTab.dateFilter}
@@ -202,6 +205,7 @@ export const MainContentArea = ({
           onShowContextMenuForFile={handleShowContextMenuForFile}
           onAndroidRangeSelect={handleFolderAndroidRangeSelect}
           onFolderSelect={handleFolderSelect}
+          onDisplayedIdsChange={handleFolderOrderChange}
           sortBy={state.sortBy}
           sortDirection={state.sortDirection}
           onRefresh={handleLanRefresh}
