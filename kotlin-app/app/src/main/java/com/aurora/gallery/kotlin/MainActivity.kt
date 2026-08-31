@@ -29,10 +29,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -51,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private val currentFolder = mutableStateOf<Folder?>(null)
     private val images = mutableStateOf<List<Image>>(emptyList())
     private val scanning = mutableStateOf(false)
+    private lateinit var thumbnailLoader: ThumbnailLoader
 
     private val requestPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -64,6 +63,7 @@ class MainActivity : ComponentActivity() {
         // 初始化 Rust 数据库（filesDir 下）
         val dbFile = File(filesDir, "aurora.db")
         initDb(dbFile.absolutePath)
+        thumbnailLoader = ThumbnailLoader(this)
 
         setContent {
             MaterialTheme {
@@ -72,6 +72,7 @@ class MainActivity : ComponentActivity() {
                     currentFolder = currentFolder.value,
                     images = images.value,
                     scanning = scanning.value,
+                    thumbnailLoader = thumbnailLoader,
                     onFolderClick = { openFolder(it) },
                     onBack = { currentFolder.value = null },
                 )
@@ -186,6 +187,7 @@ fun App(
     currentFolder: Folder?,
     images: List<Image>,
     scanning: Boolean,
+    thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -227,10 +229,10 @@ fun App(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(images) { img ->
-                    AsyncImage(
-                        model = img.contentUri,
+                    MediaThumbnail(
+                        contentUri = img.contentUri,
                         contentDescription = img.name,
-                        contentScale = ContentScale.Crop,
+                        loader = thumbnailLoader,
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(1f),

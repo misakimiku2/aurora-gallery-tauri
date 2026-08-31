@@ -24,6 +24,8 @@
     "tauri:android:dev": "node scripts/android-dev.mjs",
     "tauri:android:dev:reuse": "node scripts/android-dev-reuse.mjs",
     "android:deploy-extra": "node scripts/android-deploy-extra.mjs",
+    "kotlin:dev": "powershell -ExecutionPolicy Bypass -File scripts/kotlin-dev.ps1",
+    "kotlin:dev:so": "powershell -ExecutionPolicy Bypass -File scripts/kotlin-dev.ps1 -So",
     "tauri:build": "tauri build",
     "test": "vitest"
   },

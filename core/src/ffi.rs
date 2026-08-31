@@ -21,6 +21,8 @@ fn pool() -> &'static AppDbPool {
 pub enum AuroraError {
     #[error("数据库错误: {0}")]
     Database(String),
+    #[error("缩略图生成错误: {0}")]
+    Thumbnail(String),
 }
 
 /// 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
@@ -175,4 +177,23 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
         .expect("query list_images");
 
     rows.filter_map(|r| r.ok()).collect()
+}
+
+/// 缩略图目标尺寸（最长边，像素）。
+const THUMBNAIL_SIZE: u32 = 256;
+
+/// 用 Rust 解码原图字节生成 JPEG 缩略图（最长边 256px，保持宽高比）。
+///
+/// 用于「MINI_KIND 系统缩略图尺寸不足」时的兜底升级：Kotlin 端读取
+/// `content://` 原图字节后传入，返回 JPEG 字节供缓存与显示。
+#[uniffi::export]
+pub fn generate_thumbnail(data: Vec<u8>) -> Result<Vec<u8>, AuroraError> {
+    let img = image::load_from_memory(&data)
+        .map_err(|e| AuroraError::Thumbnail(format!("解码失败: {e}")))?;
+    let thumb = img.thumbnail(THUMBNAIL_SIZE, THUMBNAIL_SIZE);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    thumb
+        .write_to(&mut cursor, image::ImageFormat::Jpeg)
+        .map_err(|e| AuroraError::Thumbnail(format!("编码失败: {e}")))?;
+    Ok(cursor.into_inner())
 }

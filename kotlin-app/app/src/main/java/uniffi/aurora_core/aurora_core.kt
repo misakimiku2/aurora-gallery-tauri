@@ -672,6 +672,8 @@ internal object IntegrityCheckingUniffiLib {
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
+    external fun uniffi_aurora_core_checksum_func_generate_thumbnail(
+    ): Int
     external fun uniffi_aurora_core_checksum_func_init_db(
     ): Int
     external fun uniffi_aurora_core_checksum_func_list_folders(
@@ -693,6 +695,8 @@ internal object UniffiLib {
         Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
         
     }
+    external fun uniffi_aurora_core_fn_func_generate_thumbnail(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_aurora_core_fn_func_init_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_aurora_core_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
@@ -820,6 +824,9 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
+    if (lib.uniffi_aurora_core_checksum_func_generate_thumbnail() != 12901) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1051,6 +1058,25 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     }
 }
 
+/**
+ * @suppress
+ */
+public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
+    override fun read(buf: ByteBuffer): ByteArray {
+        val len = buf.getInt()
+        val byteArr = ByteArray(len)
+        buf.get(byteArr)
+        return byteArr
+    }
+    override fun allocationSize(value: ByteArray): ULong {
+        return 4UL + value.size.toULong()
+    }
+    override fun write(value: ByteArray, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        buf.put(value)
+    }
+}
+
 
 
 /**
@@ -1256,6 +1282,14 @@ sealed class AuroraException: kotlin.Exception() {
             get() = "v1=${ v1 }"
     }
     
+    class Thumbnail(
+        
+        val v1: kotlin.String
+        ) : AuroraException() {
+        override val message
+            get() = "v1=${ v1 }"
+    }
+    
 
     
 
@@ -1278,6 +1312,9 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
             1 -> AuroraException.Database(
                 FfiConverterString.read(buf),
                 )
+            2 -> AuroraException.Thumbnail(
+                FfiConverterString.read(buf),
+                )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
     }
@@ -1289,6 +1326,11 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
                 4UL
                 + FfiConverterString.allocationSize(value.v1)
             )
+            is AuroraException.Thumbnail -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
         }
     }
 
@@ -1296,6 +1338,11 @@ public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraExcepti
         when(value) {
             is AuroraException.Database -> {
                 buf.putInt(1)
+                FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+            is AuroraException.Thumbnail -> {
+                buf.putInt(2)
                 FfiConverterString.write(value.v1, buf)
                 Unit
             }
@@ -1451,6 +1498,24 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
         }
     }
 }
+        /**
+         * 用 Rust 解码原图字节生成 JPEG 缩略图（最长边 256px，保持宽高比）。
+         *
+         * 用于「MINI_KIND 系统缩略图尺寸不足」时的兜底升级：Kotlin 端读取
+         * `content://` 原图字节后传入，返回 JPEG 字节供缓存与显示。
+         */
+    @Throws(AuroraException::class) fun `generateThumbnail`(`data`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_generate_thumbnail(
+    
+        
+        FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+
         /**
          * 初始化数据库（Kotlin 端启动时调用，指向 filesDir 下的 db 文件）。
          */
