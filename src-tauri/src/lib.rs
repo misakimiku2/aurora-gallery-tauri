@@ -1,10 +1,8 @@
-pub mod color_extractor;
-pub mod color_db;
 pub mod color_worker;
-pub mod db;
+pub use aurora_core::{color_extractor, color_db, db};
 pub mod color_search;
 pub mod thumbnail;
-pub mod file_types;
+pub use aurora_core::file_types;
 pub mod image_utils;
 pub mod scanner;
 pub mod file_operations;
@@ -36,9 +34,9 @@ pub mod android;
 
 pub use thumbnail::{get_thumbnail, get_thumbnails_batch, save_remote_thumbnail, generate_drag_preview};
 pub use color_search::{search_by_palette, search_by_color};
-pub use file_types::SavedWindowState;
+pub use aurora_core::file_types::SavedWindowState;
 pub use window_commands::{get_window_state_path, get_initial_db_paths, save_window_state};
-pub use db::AppDbPool;
+pub use aurora_core::db::AppDbPool;
 
 #[cfg(not(target_os = "android"))]
 pub use lan_share_commands::LanShareState;
