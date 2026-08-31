@@ -57,7 +57,12 @@ export function usePinchZoom(
 
     const handleTouchMove = (e: TouchEvent) => {
       if (!isPinchingRef.current || e.touches.length !== 2) return;
-      e.preventDefault();
+      // 必须判 cancelable：一旦浏览器已进入原生滚动，后续 touchmove 不可取消，
+      // 无条件 preventDefault 会让 Chrome 每次都抛
+      // "[Intervention] Ignored attempt to cancel a touchmove event with cancelable=false"。
+      // 实测一次捏合刷出 109 条——WebView 挂着调试日志时，光是这百来条控制台
+      // 输出就足以拖慢手势期间的每一帧。
+      if (e.cancelable) e.preventDefault();
 
       const currentDistance = getTouchDistance(e.touches[0], e.touches[1]);
       if (currentDistance < minDistance) return;

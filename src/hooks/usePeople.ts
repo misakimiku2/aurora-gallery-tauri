@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { AppState, Person, AiFace, FileType, TabState, PersonSortOption, SortDirection } from '../types';
 import { dbUpsertPerson, dbDeletePerson, dbUpsertFileMetadata } from '../api/tauri-bridge';
@@ -146,14 +147,17 @@ export const usePeople = ({
     });
   };
 
-  const handleCreatePerson = () => {
+  // 这些回调会一路传给左侧文件夹树的 <Sidebar>（React.memo）。若每次渲染都是新
+  // 引用，memo 全部失效 → App 每次重渲染（面板开合、FLIP 提交…）都会把整棵树
+  // 重渲一遍。安卓端实测「展开左面板比右面板卡」，这是其中一个来源。
+  const handleCreatePerson = useCallback(() => {
     setState(prev => ({
       ...prev,
       activeModal: { type: 'create-person', data: {} }
     }));
 
     enterPeopleOverview();
-  };
+  }, [setState, enterPeopleOverview]);
 
   const handleConfirmCreatePerson = (name: string) => {
     const newId = Math.random().toString(36).substr(2, 9);
@@ -480,7 +484,10 @@ export const usePeople = ({
     });
   };
 
-  const onStartRenamePerson = (personId: string) => { setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId } } })); };
+  // 同 handleCreatePerson：保持稳定引用，避免 <Sidebar> 的 memo 失效
+  const onStartRenamePerson = useCallback((personId: string) => {
+    setState(s => ({ ...s, activeModal: { type: 'rename-person', data: { personId } } }));
+  }, [setState]);
 
   const handleSetAvatar = (personId: string) => {
     const person = state.people[personId];

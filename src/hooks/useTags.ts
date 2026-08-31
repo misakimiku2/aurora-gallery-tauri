@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { AppState, TabState } from '../types';
 import { dbUpsertFileMetadata } from '../api/tauri-bridge';
 import { info as logInfo } from '../utils/logger';
@@ -26,6 +26,11 @@ export const useTags = ({
 }: UseTagsProps) => {
 
   const [isCreatingTag, setIsCreatingTag] = useState(false);
+
+  // 传给左侧 <Sidebar>（React.memo）的回调：state 每次渲染都换引用，用 ref 固定身份，
+  // 否则 App 每次重渲染都会把整棵文件夹树重渲一遍。
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
   const requestDeleteTags = (tags: string[]) => {
     setState(s => ({ ...s, activeModal: { type: 'confirm-delete-tag', data: { tags } } }));
@@ -92,27 +97,27 @@ export const useTags = ({
     showToast("Tags pasted");
   };
 
-  const handleCreateNewTag = () => {
+  const handleCreateNewTag = useCallback(() => {
     setIsCreatingTag(true);
-    if (!state.layout.isSidebarVisible) {
+    if (!stateRef.current.layout.isSidebarVisible) {
       logInfo('[App] ensureSidebarOpen', { action: 'ensureSidebarOpen' });
       setState(s => ({ ...s, layout: { ...s.layout, isSidebarVisible: true } }));
     }
-  };
+  }, [setState]);
 
-  const handleSaveNewTag = (name: string) => {
+  const handleSaveNewTag = useCallback((name: string) => {
     if (name && name.trim()) {
       const tag = name.trim();
-      if (!state.customTags.includes(tag)) {
+      if (!stateRef.current.customTags.includes(tag)) {
         setState(s => ({ ...s, customTags: [...s.customTags, tag] }));
       }
     }
     setIsCreatingTag(false);
-  };
+  }, [setState]);
 
-  const handleCancelCreateTag = () => {
+  const handleCancelCreateTag = useCallback(() => {
     setIsCreatingTag(false);
-  };
+  }, []);
 
   const handleOverviewTagClick = (tag: string, e: React.MouseEvent) => {
     e.stopPropagation();

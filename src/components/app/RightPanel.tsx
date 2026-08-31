@@ -49,7 +49,7 @@ export const RightPanel = ({
         style={{ width: state.layout.isMetadataVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
         <div
           className="h-full flex flex-col"
-          style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
+          style={{ width: '20rem', transform: state.layout.isMetadataVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
           <MetadataPanel
             files={state.files}
             selectedFileIds={activeTab.selectedFileIds}
@@ -82,7 +82,7 @@ export const RightPanel = ({
           style={{ width: state.layout.isColorPickerVisible ? '20rem' : '0rem', transition: 'width 300ms ease-out' }}>
           <div
             className="h-full flex flex-col"
-            style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out' }}>
+            style={{ width: '20rem', transform: state.layout.isColorPickerVisible ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 300ms ease-out', willChange: 'transform' }}>
             <MobileColorPickerSheet
               onSearch={(color) => handlePerformSearch(`color:${color}`)}
               onClose={toggleColorPicker}

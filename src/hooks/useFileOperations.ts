@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   copyFile, moveFile, scanFile, scanDirectory, writeFileFromBytes,
@@ -665,16 +665,21 @@ export const useFileOperations = ({
     }
   };
 
-  const handleDropOnFolder = async (targetFolderId: string, sourceIds: string[]) => {
-    const validIds = sourceIds.filter(id => id !== targetFolderId && state.files[id]);
+  // 传给左侧 <Sidebar>（React.memo）的 onDropOnFolder。state / handleMoveFiles 都会
+  // 随 App 状态频繁换引用，直接用 useCallback([state]) 还是会破 memo；用 ref 固定身份。
+  const handleMoveFilesRef = useRef(handleMoveFiles);
+  handleMoveFilesRef.current = handleMoveFiles;
+  const handleDropOnFolder = useCallback(async (targetFolderId: string, sourceIds: string[]) => {
+    const currentState = stateRef.current;
+    const validIds = sourceIds.filter(id => id !== targetFolderId && currentState.files[id]);
     if (validIds.length === 0) return;
-    const targetFolder = state.files[targetFolderId];
+    const targetFolder = currentState.files[targetFolderId];
     if (!targetFolder || targetFolder.type !== FileType.FOLDER) return;
 
-    const filesToMove = validIds.filter(id => state.files[id]?.parentId !== targetFolderId);
+    const filesToMove = validIds.filter(id => currentState.files[id]?.parentId !== targetFolderId);
     if (filesToMove.length === 0) return;
-    await handleMoveFiles(filesToMove, targetFolderId);
-  };
+    await handleMoveFilesRef.current(filesToMove, targetFolderId);
+  }, []);
 
   const handleBatchRename = async (pattern: string, startNum: number) => {
     const selectedIds = activeTab.selectedFileIds;

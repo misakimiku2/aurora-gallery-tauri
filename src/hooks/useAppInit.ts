@@ -6,6 +6,7 @@ import { isAndroidPlatform, ensureAndroidPermissionAndScan, ensureAndroidPermiss
 import { initializeFileSystem } from '../utils/mockFileSystem';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { setScrollProfilerEnabled } from '../utils/scrollProfiler';
+import { setDebugLogEnabled } from '../utils/debugLog';
 import { memoryPressureMonitor } from '../utils/memoryPressureMonitor';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { aiService } from '../services/aiService';
@@ -209,6 +210,8 @@ export const useAppInit = ({
               });
               // 恢复滚动性能记录开关（设置-性能界面控制，默认关闭）
               setScrollProfilerEnabled(!!finalSettings.performance?.scrollProfiling);
+              // 恢复调试日志开关（设置-通用界面控制，默认开启；未存过即为开启）
+              setDebugLogEnabled(finalSettings.performance?.debugLogs !== false);
               savedDataLoadedRef.current = true;
               setSavedDataLoaded(true);
 

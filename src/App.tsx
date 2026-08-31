@@ -1764,12 +1764,18 @@ export const App: React.FC = () => {
   });
 
   const minimizeTask = (id: string) => updateTask(id, { minimized: true });
-  const onRestoreTask = (id: string) => updateTask(id, { minimized: false });
+  // 下面两个回调会传给左侧 <Sidebar>（React.memo）。之前每次渲染都是新函数引用，
+  // memo 完全失效：App 每次重渲染（面板开合、FLIP 提交等）都把整棵文件夹树重渲一遍，
+  // 这是「展开左面板比右面板卡」的来源之一。用 useCallback 固定引用；tasks 通过 ref
+  // 读取（任务进度每帧更新会改变 tasks 身份，不能进 deps）。
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const onRestoreTask = useCallback((id: string) => updateTask(id, { minimized: false }), [updateTask]);
 
-  const onPauseResume = async (id: string, taskType: string) => {
+  const onPauseResume = useCallback(async (id: string, taskType: string) => {
     if (taskType !== 'color') return;
 
-    const task = tasks.find(t => t.id === id);
+    const task = tasksRef.current.find(t => t.id === id);
     if (!task) return;
 
     if (task.status === 'paused') {
@@ -1792,7 +1798,7 @@ export const App: React.FC = () => {
         androidUpdateTaskNotification(task.current || 0, task.total || 0, true);
       }
     }
-  };
+  }, [updateTask]);
 
 
   const handleGenerateThumbnails = async (folderIds: string[]) => {

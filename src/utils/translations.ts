@@ -466,6 +466,8 @@ export const translations = {
         clearLogsSuccess: '日志已清空',
         clearLogsEmpty: '日志目录为空或不存在'
       },
+      debugLogs: '调试日志（console.log）',
+      debugLogsDesc: '临时开关：真机上每条日志都要经调试通道送到 chrome://inspect，高频手势期间会占主线程。量真实帧率时关掉，抓日志时再打开。',
       theme: '颜色主题',
       themeLight: '浅色',
       themeDark: '深色',
@@ -1479,6 +1481,8 @@ export const translations = {
         clearLogsSuccess: 'Logs cleared',
         clearLogsEmpty: 'Log directory is empty or does not exist'
       },
+      debugLogs: 'Debug Logs (console.log)',
+      debugLogsDesc: 'Temporary switch: on-device logs travel to chrome://inspect over the debug channel and eat main-thread time during high-frequency gestures. Turn off when measuring real frame rate, back on to capture logs.',
       theme: 'Color Theme',
       themeLight: 'Light',
       themeDark: 'Dark',

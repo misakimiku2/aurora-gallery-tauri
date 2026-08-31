@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { TabState, FileType, AppState } from '../types';
 
 interface UseContextMenuProps {
@@ -24,16 +24,24 @@ export const useContextMenu = ({
 
   const closeContextMenu = useCallback(() => setContextMenu(prev => ({ ...prev, visible: false })), []);
 
-  const handleContextMenu = (e: React.MouseEvent, type: 'file' | 'tag' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person', id: string) => {
+  // 传给左侧 <Sidebar>（React.memo）的 onContextMenu：state / activeTab 每次渲染都换
+  // 引用，直接 useCallback([state]) 还是会破 memo，用 ref 固定函数身份。
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const handleContextMenu = useCallback((e: React.MouseEvent, type: 'file' | 'tag' | 'tag-background' | 'root-folder' | 'background' | 'tab' | 'person', id: string) => {
     e.preventDefault(); e.stopPropagation();
+    const currentState = stateRef.current;
+    const currentTab = activeTabRef.current;
     let menuType: any = null;
     if (type === 'file') {
-      if (!activeTab.selectedFileIds.includes(id)) {
+      if (!currentTab.selectedFileIds.includes(id)) {
         updateActiveTab({ selectedFileIds: [id], lastSelectedId: id });
-        menuType = state.files[id]?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
+        menuType = currentState.files[id]?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
       } else {
-        if (activeTab.selectedFileIds.length > 1) {
-          const selectedItems = activeTab.selectedFileIds.map(fileId => state.files[fileId]);
+        if (currentTab.selectedFileIds.length > 1) {
+          const selectedItems = currentTab.selectedFileIds.map(fileId => currentState.files[fileId]);
           const allAreFolders = selectedItems.every(item => item && item.type === FileType.FOLDER);
           const allAreFiles = selectedItems.every(item => item && item.type !== FileType.FOLDER);
 
@@ -45,18 +53,18 @@ export const useContextMenu = ({
             menuType = 'file-multi';
           }
         } else {
-          menuType = state.files[id]?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
+          menuType = currentState.files[id]?.type === FileType.FOLDER ? 'folder-single' : 'file-single';
         }
       }
     }
-    else if (type === 'tag') { if (!activeTab.selectedTagIds.includes(id)) { updateActiveTab({ selectedTagIds: [id] }); menuType = 'tag-single'; } else { menuType = activeTab.selectedTagIds.length > 1 ? 'tag-multi' : 'tag-single'; } }
+    else if (type === 'tag') { if (!currentTab.selectedTagIds.includes(id)) { updateActiveTab({ selectedTagIds: [id] }); menuType = 'tag-single'; } else { menuType = currentTab.selectedTagIds.length > 1 ? 'tag-multi' : 'tag-single'; } }
     else if (type === 'tag-background') { menuType = 'tag-background'; }
     else if (type === 'root-folder') { menuType = 'root-folder'; }
     else if (type === 'tab') { menuType = 'tab'; }
     else if (type === 'person') { menuType = 'person'; }
-    else { if (activeTab.viewMode === 'tags-overview') { menuType = 'tag-background'; } else { menuType = 'background'; } }
+    else { if (currentTab.viewMode === 'tags-overview') { menuType = 'tag-background'; } else { menuType = 'background'; } }
     setContextMenu({ visible: true, x: e.clientX, y: e.clientY, type: menuType, targetId: id });
-  };
+  }, [updateActiveTab]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {

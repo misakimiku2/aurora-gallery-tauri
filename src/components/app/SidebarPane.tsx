@@ -102,7 +102,15 @@ export const SidebarPane = ({
       style={{ width: isSidebarVisible ? '16rem' : '0rem', transition: 'width 300ms ease-out' }}>
       <div
         className="h-full flex flex-col"
-        style={{ width: '16rem', transform: isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 300ms ease-out' }}>
+        style={{
+          width: '16rem',
+          transform: isSidebarVisible ? 'translateX(0)' : 'translateX(-100%)',
+          transition: 'transform 300ms ease-out',
+          // 常驻合成层：文件夹树（含每行 Folder3DIcon 三图拼贴）在首次可见时一次栅格化，
+          // 之后开合就只是平移合成层，不再逐帧重绘新露出的部分。安卓端实测左面板动画
+          // 比右面板（内容为空）卡，主要就是这棵树的逐帧光栅化。
+          willChange: 'transform',
+        }}>
         <Sidebar
           roots={roots}
           files={files}

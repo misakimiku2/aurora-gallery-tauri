@@ -424,6 +424,7 @@ export interface AppSettings {
   performance: {
     refreshInterval: number; // 毫秒
     scrollProfiling?: boolean; // 滚动性能记录（默认关闭）
+    debugLogs?: boolean; // 调试日志 console.log 开关（默认开启；真机量帧率时关掉）
   };
   lanShare: LanShareSettings;
   people?: Record<string, Person>; // 临时存储人物数据库，用于AI分析
