@@ -10,8 +10,12 @@ import android.provider.MediaStore
 import android.util.Log
 import android.util.LruCache
 import android.util.Size
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import java.io.File
 import uniffi.aurora_core.generateThumbnail
 
@@ -35,10 +39,22 @@ class ThumbnailLoader(context: Context) {
     // 限制高清生成并发，避免滚动时同时解码多张大图抢 IO/CPU 造成掉帧。
     private val hdSemaphore = Semaphore(HD_MAX_CONCURRENCY)
 
+    // 限制快速缩略图并发，避免滚动时大量 MediaStore 查询同时涌入挤爆 IO 线程池。
+    private val fastSemaphore = Semaphore(FAST_MAX_CONCURRENCY)
+
     // 内存缓存：imageId -> Bitmap（maxSize 单位为 KB）。
     private val memoryCache = object : LruCache<Long, Bitmap>(MEMORY_CACHE_SIZE_KB) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
     }
+
+    // 诊断统计：loadFast 命中类型与耗时（每 N 次打印汇总，定位掉帧来源）
+    private var fastCount = 0
+    private var fastMemory = 0
+    private var fastDisk = 0
+    private var fastMedia = 0
+    private var fastMemoryMs = 0L
+    private var fastDiskMs = 0L
+    private var fastMediaMs = 0L
 
     /** 从 `content://media/external/images/media/{id}` 提取 MediaStore image id。 */
     fun extractImageId(contentUri: String): Long = runCatching {
@@ -47,28 +63,92 @@ class ThumbnailLoader(context: Context) {
         contentUri.substringAfterLast('/').toLong()
     }
 
+    /** 同步读内存缓存（仅内存，不查磁盘/MediaStore），供组合阶段取初始值，避免 item 回收重进时占位符闪烁。 */
+    fun peekMemory(imageId: Long): Bitmap? = memoryCache.get(imageId)
+
     /**
      * 快速取图，用于立即上屏（可能在 IO 线程阻塞，调用方自行切线程）。
      * 命中内存/高清磁盘缓存则返回高清；否则返回 MINI_KIND（可能偏小，由调用方判断是否升级）。
      */
     fun loadFast(imageId: Long): Bitmap? {
-        memoryCache.get(imageId)?.let { return it }
+        val start = System.currentTimeMillis()
+        memoryCache.get(imageId)?.let {
+            recordFast("memory", start)
+            return it
+        }
 
         val diskFile = hdFile(imageId)
         if (diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
                 memoryCache.put(imageId, it)
+                recordFast("disk", start)
                 return it
             }
         }
 
+        // MediaStore 缩略图：优先 ContentResolver.loadThumbnail（API 29+，走现代解码路径、
+        // 有 MediaProvider 层缓存），回退废弃的 getThumbnail；结果缓存进内存，避免回滚重复查询。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, imageId)
+            val bmp = runCatching {
+                appContext.contentResolver.loadThumbnail(uri, Size(THUMB_SIZE, THUMB_SIZE), null)
+            }.getOrNull()
+            if (bmp != null) {
+                memoryCache.put(imageId, bmp)
+                recordFast("media", start)
+                return bmp
+            }
+        }
+
         @Suppress("DEPRECATION")
-        return MediaStore.Images.Thumbnails.getThumbnail(
+        val legacy = MediaStore.Images.Thumbnails.getThumbnail(
             appContext.contentResolver,
             imageId,
             MediaStore.Images.Thumbnails.MINI_KIND,
             null,
         )
+        if (legacy != null) memoryCache.put(imageId, legacy)
+        recordFast("media", start)
+        return legacy
+    }
+
+    /** 累计 loadFast 命中类型与耗时，每 [FAST_STATS_INTERVAL] 次打印汇总。 */
+    private fun recordFast(kind: String, startMs: Long) {
+        val elapsed = System.currentTimeMillis() - startMs
+        when (kind) {
+            "memory" -> { fastMemory++; fastMemoryMs += elapsed }
+            "disk" -> { fastDisk++; fastDiskMs += elapsed }
+            "media" -> { fastMedia++; fastMediaMs += elapsed }
+        }
+        fastCount++
+        if (fastCount % FAST_STATS_INTERVAL == 0) {
+            Log.d(
+                TAG,
+                "loadFast汇总[$fastCount] memory=${fastMemory}(${avg(fastMemoryMs, fastMemory)}ms) " +
+                    "disk=${fastDisk}(${avg(fastDiskMs, fastDisk)}ms) " +
+                    "media=${fastMedia}(${avg(fastMediaMs, fastMedia)}ms)",
+            )
+        }
+    }
+
+    private fun avg(totalMs: Long, count: Int): Long = if (count == 0) 0L else totalMs / count
+
+    /** 限并发的快速取图（挂起），滚动时避免 MediaStore 查询挤爆 IO 线程池。 */
+    suspend fun loadFastLimited(imageId: Long): Bitmap? =
+        fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFast(imageId) } }
+
+    /**
+     * 后台预生成缩略图到磁盘缓存（进入文件夹时调用）。
+     *
+     * 渐进式：已存在的磁盘缓存跳过；其余并行生成，并发受 [hdSemaphore] 限制，
+     * 让滚动中的 `loadFast` 逐步命中磁盘缓存（3ms），而非回退到较慢的 loadThumbnail。
+     */
+    suspend fun pregenerate(contentUris: List<String>) = coroutineScope {
+        contentUris.forEach { uri ->
+            val imageId = extractImageId(uri)
+            if (hdFile(imageId).exists()) return@forEach
+            launch(Dispatchers.IO) { generateHd(imageId, uri) }
+        }
     }
 
     /** 当前位图是否偏小、值得升级为高清。 */
@@ -135,6 +215,8 @@ class ThumbnailLoader(context: Context) {
     companion object {
         private const val TAG = "AuroraKotlin"
         private const val MEMORY_CACHE_SIZE_KB = 128 * 1024 // 128 MB
+        private const val FAST_STATS_INTERVAL = 100 // loadFast 每 100 次打印一次统计
+        private const val FAST_MAX_CONCURRENCY = 4 // 快速缩略图并发上限
         private const val THUMB_SIZE = 512
         private const val MIN_DIM_THRESHOLD = 200 // 最小边低于此值视为太糊，触发高清升级
         private const val HD_MAX_CONCURRENCY = 2 // 高清生成并发上限

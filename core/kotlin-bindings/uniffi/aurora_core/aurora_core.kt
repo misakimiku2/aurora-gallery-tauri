@@ -1086,6 +1086,16 @@ data class Folder (
     var `id`: kotlin.String
     , 
     var `name`: kotlin.String
+    , 
+    /**
+     * 该文件夹下图片数量（用于卡片角标）。
+     */
+    var `imageCount`: kotlin.Long
+    , 
+    /**
+     * 封面图 content_uri（取该文件夹下最新一张图），无图时为 None。
+     */
+    var `coverUri`: kotlin.String?
     
 ){
     
@@ -1104,17 +1114,23 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
         return Folder(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: Folder) = (
             FfiConverterString.allocationSize(value.`id`) +
-            FfiConverterString.allocationSize(value.`name`)
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterLong.allocationSize(value.`imageCount`) +
+            FfiConverterOptionalString.allocationSize(value.`coverUri`)
     )
 
     override fun write(value: Folder, buf: ByteBuffer) {
             FfiConverterString.write(value.`id`, buf)
             FfiConverterString.write(value.`name`, buf)
+            FfiConverterLong.write(value.`imageCount`, buf)
+            FfiConverterOptionalString.write(value.`coverUri`, buf)
     }
 }
 
@@ -1411,6 +1427,38 @@ public object FfiConverterOptionalInt: FfiConverterRustBuffer<kotlin.Int?> {
         } else {
             buf.put(1)
             FfiConverterInt.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
+    override fun read(buf: ByteBuffer): kotlin.String? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterString.read(buf)
+    }
+
+    override fun allocationSize(value: kotlin.String?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterString.allocationSize(value)
+        }
+    }
+
+    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterString.write(value, buf)
         }
     }
 }

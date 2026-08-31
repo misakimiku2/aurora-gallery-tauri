@@ -49,6 +49,8 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+    // RecyclerView + GridLayoutManager（网格滑动用原生 View 体系，对齐系统相册性能基线）
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     // UniFFI 生成的 Kotlin 绑定运行时依赖（JNA 加载 .so）
     implementation("net.java.dev.jna:jna:5.14.0@aar")
     // 缩略图加载（支持 content:// MediaStore URI）

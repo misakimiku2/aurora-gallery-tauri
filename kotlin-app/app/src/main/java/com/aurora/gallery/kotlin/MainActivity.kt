@@ -10,21 +10,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.FoldersOverview
+import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -32,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.Folder
@@ -48,7 +44,9 @@ class MainActivity : ComponentActivity() {
     private val folders = mutableStateOf<List<Folder>>(emptyList())
     private val currentFolder = mutableStateOf<Folder?>(null)
     private val images = mutableStateOf<List<Image>>(emptyList())
+    private val selectedImageIds = mutableStateOf<Set<String>>(emptySet())
     private val scanning = mutableStateOf(false)
+    private var pregenJob: Job? = null
     private lateinit var thumbnailLoader: ThumbnailLoader
 
     private val requestPermission = registerForActivityResult(
@@ -66,15 +64,20 @@ class MainActivity : ComponentActivity() {
         thumbnailLoader = ThumbnailLoader(this)
 
         setContent {
-            MaterialTheme {
+            AuroraTheme {
                 App(
                     folders = folders.value,
                     currentFolder = currentFolder.value,
                     images = images.value,
+                    selectedImageIds = selectedImageIds.value,
                     scanning = scanning.value,
                     thumbnailLoader = thumbnailLoader,
                     onFolderClick = { openFolder(it) },
-                    onBack = { currentFolder.value = null },
+                    onBack = {
+                        currentFolder.value = null
+                        selectedImageIds.value = emptySet()
+                    },
+                    onImageClick = { toggleSelect(it) },
                 )
             }
         }
@@ -115,10 +118,23 @@ class MainActivity : ComponentActivity() {
 
     private fun openFolder(folder: Folder) {
         currentFolder.value = folder
+        selectedImageIds.value = emptySet()
+        pregenJob?.cancel()
         lifecycleScope.launch {
             val imgs = withContext(Dispatchers.IO) { listImages(folder.id) }
             images.value = imgs
+            // 后台预生成缩略图到磁盘缓存，让滚动中逐步命中磁盘（对齐 React 版策略）
+            pregenJob = launch {
+                thumbnailLoader.pregenerate(imgs.map { it.contentUri })
+            }
         }
+    }
+
+    /** 切换图片选中态（M1 2.1 基础选中，编辑/多选见 4.1）。 */
+    private fun toggleSelect(image: Image) {
+        val current = selectedImageIds.value
+        selectedImageIds.value =
+            if (image.id in current) current - image.id else current + image.id
     }
 
     private fun scanMediaStore(): List<MediaImage> {
@@ -186,10 +202,12 @@ fun App(
     folders: List<Folder>,
     currentFolder: Folder?,
     images: List<Image>,
+    selectedImageIds: Set<String>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
     onBack: () -> Unit,
+    onImageClick: (Image) -> Unit,
 ) {
     if (scanning) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -199,18 +217,12 @@ fun App(
     }
 
     if (currentFolder == null) {
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(folders) { folder ->
-                Text(
-                    text = folder.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onFolderClick(folder) }
-                        .padding(horizontal = 16.dp, vertical = 16.dp),
-                )
-            }
-        }
+        FoldersOverview(
+            folders = folders,
+            thumbnailLoader = thumbnailLoader,
+            onFolderClick = onFolderClick,
+            modifier = Modifier.fillMaxSize(),
+        )
     } else {
         Column(Modifier.fillMaxSize()) {
             Text(
@@ -221,24 +233,13 @@ fun App(
                     .clickable { onBack() }
                     .padding(16.dp),
             )
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 120.dp),
+            FileGrid(
+                images = images,
+                selectedIds = selectedImageIds,
+                thumbnailLoader = thumbnailLoader,
+                onItemClick = onImageClick,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(images) { img ->
-                    MediaThumbnail(
-                        contentUri = img.contentUri,
-                        contentDescription = img.name,
-                        loader = thumbnailLoader,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(1f),
-                    )
-                }
-            }
+            )
         }
     }
 }

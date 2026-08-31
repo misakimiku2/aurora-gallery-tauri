@@ -47,6 +47,10 @@ pub struct MediaImage {
 pub struct Folder {
     pub id: String,
     pub name: String,
+    /// 该文件夹下图片数量（用于卡片角标）。
+    pub image_count: i64,
+    /// 封面图 content_uri（取该文件夹下最新一张图），无图时为 None。
+    pub cover_uri: Option<String>,
 }
 
 /// 图片。
@@ -137,13 +141,20 @@ pub fn list_folders() -> Vec<Folder> {
     let conn = &*guard;
 
     let mut stmt = conn
-        .prepare("SELECT file_id, name FROM file_index WHERE file_type = 'Folder' ORDER BY name")
+        .prepare(
+            "SELECT f.file_id, f.name,
+                    (SELECT COUNT(*) FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image'),
+                    (SELECT i.path FROM file_index i WHERE i.parent_id = f.file_id AND i.file_type = 'Image' ORDER BY i.modified_at DESC LIMIT 1)
+             FROM file_index f WHERE f.file_type = 'Folder' ORDER BY f.name",
+        )
         .expect("prepare list_folders");
     let rows = stmt
         .query_map([], |row| {
             Ok(Folder {
                 id: row.get(0)?,
                 name: row.get(1)?,
+                image_count: row.get(2)?,
+                cover_uri: row.get(3)?,
             })
         })
         .expect("query list_folders");
