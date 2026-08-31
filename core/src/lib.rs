@@ -8,3 +8,6 @@ pub mod color_extractor;
 pub mod color_db;
 pub mod db;
 pub mod file_types;
+pub mod ffi;
+
+uniffi::setup_scaffolding!();

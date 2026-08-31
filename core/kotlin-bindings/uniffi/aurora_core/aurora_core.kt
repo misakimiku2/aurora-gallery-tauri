@@ -3,7 +3,7 @@
 
 @file:Suppress("NAME_SHADOWING")
 
-package uniffi.ffi_poc
+package uniffi.aurora_core
 
 // Common helper code.
 //
@@ -58,7 +58,7 @@ open class RustBuffer : Structure() {
     companion object {
         internal fun alloc(size: ULong = 0UL) = uniffiRustCall() { status ->
             // Note: need to convert the size to a `Long` value to make this work with JVM.
-            UniffiLib.ffi_ffi_poc_rustbuffer_alloc(size.toLong(), status)
+            UniffiLib.ffi_aurora_core_rustbuffer_alloc(size.toLong(), status)
         }.also {
             if(it.data == null) {
                throw RuntimeException("RustBuffer.alloc() returned null data pointer (size=${size})")
@@ -74,7 +74,7 @@ open class RustBuffer : Structure() {
         }
 
         internal fun free(buf: RustBuffer.ByValue) = uniffiRustCall() { status ->
-            UniffiLib.ffi_ffi_poc_rustbuffer_free(buf, status)
+            UniffiLib.ffi_aurora_core_rustbuffer_free(buf, status)
         }
     }
 
@@ -391,7 +391,7 @@ private fun findLibraryName(componentName: String): String {
     if (libOverride != null) {
         return libOverride
     }
-    return "ffi_poc"
+    return "aurora_core"
 }
 
 // Define FFI callback types
@@ -668,17 +668,19 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 // We now use JNA's "direct mapping" - unclear if same considerations apply exactly.
 internal object IntegrityCheckingUniffiLib {
     init {
-        Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "ffi_poc"))
+        Native.register(IntegrityCheckingUniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
         uniffiCheckContractApiVersion(this)
         uniffiCheckApiChecksums(this)
     }
-    external fun uniffi_ffi_poc_checksum_func_init(
+    external fun uniffi_aurora_core_checksum_func_init_db(
     ): Int
-    external fun uniffi_ffi_poc_checksum_func_list_folders(
+    external fun uniffi_aurora_core_checksum_func_list_folders(
     ): Int
-    external fun uniffi_ffi_poc_checksum_func_list_images(
+    external fun uniffi_aurora_core_checksum_func_list_images(
     ): Int
-    external fun ffi_ffi_poc_uniffi_contract_version(
+    external fun uniffi_aurora_core_checksum_func_upsert_media_images(
+    ): Int
+    external fun ffi_aurora_core_uniffi_contract_version(
     ): Int
 
         
@@ -688,118 +690,120 @@ internal object UniffiLib {
     
 
     init {
-        Native.register(UniffiLib::class.java, findLibraryName(componentName = "ffi_poc"))
+        Native.register(UniffiLib::class.java, findLibraryName(componentName = "aurora_core"))
         
     }
-    external fun uniffi_ffi_poc_fn_func_init(`dbPath`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_aurora_core_fn_func_init_db(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun uniffi_ffi_poc_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_aurora_core_fn_func_list_folders(uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_ffi_poc_fn_func_list_images(`folderId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_aurora_core_fn_func_list_images(`folderId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_ffi_poc_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_ffi_poc_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun ffi_ffi_poc_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    external fun uniffi_aurora_core_fn_func_upsert_media_images(`images`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun ffi_ffi_poc_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_ffi_poc_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun ffi_aurora_core_rustbuffer_free(`buf`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_u8(`handle`: Long,
+    external fun ffi_aurora_core_rustbuffer_reserve(`buf`: RustBuffer.ByValue,`additional`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun ffi_aurora_core_rust_future_poll_u8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_u8(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_u8(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_free_u8(`handle`: Long,
+    ): Unit
+    external fun ffi_aurora_core_rust_future_complete_u8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_ffi_poc_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_i8(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_i8(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_i8(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_i8(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_i8(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_i8(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
-    external fun ffi_ffi_poc_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_u16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_u16(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_u16(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_u16(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_u16(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_u16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_ffi_poc_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_i16(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_i16(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_i16(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_i16(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_i16(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_i16(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Short
-    external fun ffi_ffi_poc_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_u32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_u32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_u32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_u32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_u32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_u32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_ffi_poc_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_i32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_i32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_i32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_i32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_i32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_i32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun ffi_ffi_poc_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_u64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_u64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_u64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_u64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_u64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_u64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun ffi_ffi_poc_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_i64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_i64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_i64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_i64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_i64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_i64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
-    external fun ffi_ffi_poc_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_f32(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_f32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_f32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_f32(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_f32(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_f32(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Float
-    external fun ffi_ffi_poc_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_f64(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_f64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_f64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_f64(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_f64(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_f64(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Double
-    external fun ffi_ffi_poc_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_rust_buffer(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_rust_buffer(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_rust_buffer(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_rust_buffer(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_rust_buffer(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_rust_buffer(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun ffi_ffi_poc_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
+    external fun ffi_aurora_core_rust_future_poll_void(`handle`: Long,`callback`: UniffiRustFutureContinuationCallback,`callbackData`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_cancel_void(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_cancel_void(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_free_void(`handle`: Long,
+    external fun ffi_aurora_core_rust_future_free_void(`handle`: Long,
     ): Unit
-    external fun ffi_ffi_poc_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    external fun ffi_aurora_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
 
         
@@ -809,20 +813,23 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
     // Get the bindings contract version from our ComponentInterface
     val bindings_contract_version = 30
     // Get the scaffolding contract version by calling the into the dylib
-    val scaffolding_contract_version = lib.ffi_ffi_poc_uniffi_contract_version()
+    val scaffolding_contract_version = lib.ffi_aurora_core_uniffi_contract_version()
     if (bindings_contract_version != scaffolding_contract_version) {
         throw RuntimeException("UniFFI contract version mismatch: try cleaning and rebuilding your project")
     }
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_ffi_poc_checksum_func_init() != 44331) {
+    if (lib.uniffi_aurora_core_checksum_func_init_db() != 54110) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_ffi_poc_checksum_func_list_folders() != 11018) {
+    if (lib.uniffi_aurora_core_checksum_func_list_folders() != 23727) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_ffi_poc_checksum_func_list_images() != 17656) {
+    if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 23580) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -944,6 +951,52 @@ public object FfiConverterUInt: FfiConverter<UInt, Int> {
 /**
  * @suppress
  */
+public object FfiConverterInt: FfiConverter<Int, Int> {
+    override fun lift(value: Int): Int {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Int {
+        return buf.getInt()
+    }
+
+    override fun lower(value: Int): Int {
+        return value
+    }
+
+    override fun allocationSize(value: Int) = 4UL
+
+    override fun write(value: Int, buf: ByteBuffer) {
+        buf.putInt(value)
+    }
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterLong: FfiConverter<Long, Long> {
+    override fun lift(value: Long): Long {
+        return value
+    }
+
+    override fun read(buf: ByteBuffer): Long {
+        return buf.getLong()
+    }
+
+    override fun lower(value: Long): Long {
+        return value
+    }
+
+    override fun allocationSize(value: Long) = 8UL
+
+    override fun write(value: Long, buf: ByteBuffer) {
+        buf.putLong(value)
+    }
+}
+
+/**
+ * @suppress
+ */
 public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
     // Note: we don't inherit from FfiConverterRustBuffer, because we use a
     // special encoding when lowering/lifting.  We can use `RustBuffer.len` to
@@ -1001,14 +1054,12 @@ public object FfiConverterString: FfiConverter<String, RustBuffer.ByValue> {
 
 
 /**
- * 一个文件夹。
+ * 文件夹（MediaStore bucket）。
  */
 data class Folder (
     var `id`: kotlin.String
     , 
     var `name`: kotlin.String
-    , 
-    var `path`: kotlin.String
     
 ){
     
@@ -1027,40 +1078,35 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
         return Folder(
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
-            FfiConverterString.read(buf),
         )
     }
 
     override fun allocationSize(value: Folder) = (
             FfiConverterString.allocationSize(value.`id`) +
-            FfiConverterString.allocationSize(value.`name`) +
-            FfiConverterString.allocationSize(value.`path`)
+            FfiConverterString.allocationSize(value.`name`)
     )
 
     override fun write(value: Folder, buf: ByteBuffer) {
             FfiConverterString.write(value.`id`, buf)
             FfiConverterString.write(value.`name`, buf)
-            FfiConverterString.write(value.`path`, buf)
     }
 }
 
 
 
 /**
- * 一张图片的元数据。
+ * 图片。
  */
 data class Image (
     var `id`: kotlin.String
     , 
     var `name`: kotlin.String
     , 
-    var `path`: kotlin.String
+    var `contentUri`: kotlin.String
     , 
     var `width`: kotlin.UInt?
     , 
     var `height`: kotlin.UInt?
-    , 
-    var `format`: kotlin.String?
     
 ){
     
@@ -1082,27 +1128,180 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterString.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
-            FfiConverterOptionalString.read(buf),
         )
     }
 
     override fun allocationSize(value: Image) = (
             FfiConverterString.allocationSize(value.`id`) +
             FfiConverterString.allocationSize(value.`name`) +
-            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`contentUri`) +
             FfiConverterOptionalUInt.allocationSize(value.`width`) +
-            FfiConverterOptionalUInt.allocationSize(value.`height`) +
-            FfiConverterOptionalString.allocationSize(value.`format`)
+            FfiConverterOptionalUInt.allocationSize(value.`height`)
     )
 
     override fun write(value: Image, buf: ByteBuffer) {
             FfiConverterString.write(value.`id`, buf)
             FfiConverterString.write(value.`name`, buf)
-            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`contentUri`, buf)
             FfiConverterOptionalUInt.write(value.`width`, buf)
             FfiConverterOptionalUInt.write(value.`height`, buf)
-            FfiConverterOptionalString.write(value.`format`, buf)
     }
+}
+
+
+
+/**
+ * 一张 MediaStore 图片的原始信息（Kotlin 扫描后传入）。
+ */
+data class MediaImage (
+    var `id`: kotlin.Long
+    , 
+    var `contentUri`: kotlin.String
+    , 
+    var `path`: kotlin.String
+    , 
+    var `name`: kotlin.String
+    , 
+    var `size`: kotlin.Long
+    , 
+    var `dateAdded`: kotlin.Long
+    , 
+    var `dateModified`: kotlin.Long
+    , 
+    var `width`: kotlin.Int?
+    , 
+    var `height`: kotlin.Int?
+    , 
+    var `mimeType`: kotlin.String
+    , 
+    var `bucketId`: kotlin.String
+    , 
+    var `bucketName`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMediaImage: FfiConverterRustBuffer<MediaImage> {
+    override fun read(buf: ByteBuffer): MediaImage {
+        return MediaImage(
+            FfiConverterLong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalInt.read(buf),
+            FfiConverterOptionalInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MediaImage) = (
+            FfiConverterLong.allocationSize(value.`id`) +
+            FfiConverterString.allocationSize(value.`contentUri`) +
+            FfiConverterString.allocationSize(value.`path`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterLong.allocationSize(value.`size`) +
+            FfiConverterLong.allocationSize(value.`dateAdded`) +
+            FfiConverterLong.allocationSize(value.`dateModified`) +
+            FfiConverterOptionalInt.allocationSize(value.`width`) +
+            FfiConverterOptionalInt.allocationSize(value.`height`) +
+            FfiConverterString.allocationSize(value.`mimeType`) +
+            FfiConverterString.allocationSize(value.`bucketId`) +
+            FfiConverterString.allocationSize(value.`bucketName`)
+    )
+
+    override fun write(value: MediaImage, buf: ByteBuffer) {
+            FfiConverterLong.write(value.`id`, buf)
+            FfiConverterString.write(value.`contentUri`, buf)
+            FfiConverterString.write(value.`path`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterLong.write(value.`size`, buf)
+            FfiConverterLong.write(value.`dateAdded`, buf)
+            FfiConverterLong.write(value.`dateModified`, buf)
+            FfiConverterOptionalInt.write(value.`width`, buf)
+            FfiConverterOptionalInt.write(value.`height`, buf)
+            FfiConverterString.write(value.`mimeType`, buf)
+            FfiConverterString.write(value.`bucketId`, buf)
+            FfiConverterString.write(value.`bucketName`, buf)
+    }
+}
+
+
+
+
+
+/**
+ * 媒体库接口错误。
+ */
+sealed class AuroraException: kotlin.Exception() {
+    
+    class Database(
+        
+        val v1: kotlin.String
+        ) : AuroraException() {
+        override val message
+            get() = "v1=${ v1 }"
+    }
+    
+
+    
+
+
+    companion object ErrorHandler : UniffiRustCallStatusErrorHandler<AuroraException> {
+        override fun lift(error_buf: RustBuffer.ByValue): AuroraException = FfiConverterTypeAuroraError.lift(error_buf)
+    }
+
+    
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeAuroraError : FfiConverterRustBuffer<AuroraException> {
+    override fun read(buf: ByteBuffer): AuroraException {
+        
+
+        return when(buf.getInt()) {
+            1 -> AuroraException.Database(
+                FfiConverterString.read(buf),
+                )
+            else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
+        }
+    }
+
+    override fun allocationSize(value: AuroraException): ULong {
+        return when(value) {
+            is AuroraException.Database -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.v1)
+            )
+        }
+    }
+
+    override fun write(value: AuroraException, buf: ByteBuffer) {
+        when(value) {
+            is AuroraException.Database -> {
+                buf.putInt(1)
+                FfiConverterString.write(value.v1, buf)
+                Unit
+            }
+        }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
+    }
+
 }
 
 
@@ -1143,28 +1342,28 @@ public object FfiConverterOptionalUInt: FfiConverterRustBuffer<kotlin.UInt?> {
 /**
  * @suppress
  */
-public object FfiConverterOptionalString: FfiConverterRustBuffer<kotlin.String?> {
-    override fun read(buf: ByteBuffer): kotlin.String? {
+public object FfiConverterOptionalInt: FfiConverterRustBuffer<kotlin.Int?> {
+    override fun read(buf: ByteBuffer): kotlin.Int? {
         if (buf.get().toInt() == 0) {
             return null
         }
-        return FfiConverterString.read(buf)
+        return FfiConverterInt.read(buf)
     }
 
-    override fun allocationSize(value: kotlin.String?): ULong {
+    override fun allocationSize(value: kotlin.Int?): ULong {
         if (value == null) {
             return 1UL
         } else {
-            return 1UL + FfiConverterString.allocationSize(value)
+            return 1UL + FfiConverterInt.allocationSize(value)
         }
     }
 
-    override fun write(value: kotlin.String?, buf: ByteBuffer) {
+    override fun write(value: kotlin.Int?, buf: ByteBuffer) {
         if (value == null) {
             buf.put(0)
         } else {
             buf.put(1)
-            FfiConverterString.write(value, buf)
+            FfiConverterInt.write(value, buf)
         }
     }
 }
@@ -1224,25 +1423,54 @@ public object FfiConverterSequenceTypeImage: FfiConverterRustBuffer<List<Image>>
         }
     }
 }
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<MediaImage>> {
+    override fun read(buf: ByteBuffer): List<MediaImage> {
+        val len = buf.getInt()
+        return List<MediaImage>(len) {
+            FfiConverterTypeMediaImage.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MediaImage>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMediaImage.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<MediaImage>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMediaImage.write(it, buf)
+        }
+    }
+}
         /**
-         * 设置数据库路径（S5 在安卓端启动时调用，指向 filesDir 下拷贝出的 poc-data.db）。
-         */ fun `init`(`dbPath`: kotlin.String)
+         * 初始化数据库（Kotlin 端启动时调用，指向 filesDir 下的 db 文件）。
+         */
+    @Throws(AuroraException::class) fun `initDb`(`path`: kotlin.String)
         = 
-    uniffiRustCall() { _status ->
-    UniffiLib.uniffi_ffi_poc_fn_func_init(
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_init_db(
     
         
-        FfiConverterString.lower(`dbPath`),_status)
+        FfiConverterString.lower(`path`),_status)
 }
     
     
 
         /**
-         * 列出所有文件夹（file_type = 'Folder'）。
+         * 列出所有文件夹（bucket）。
          */ fun `listFolders`(): List<Folder> {
             return FfiConverterSequenceTypeFolder.lift(
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_ffi_poc_fn_func_list_folders(
+    UniffiLib.uniffi_aurora_core_fn_func_list_folders(
     
         _status)
 }
@@ -1251,17 +1479,31 @@ public object FfiConverterSequenceTypeImage: FfiConverterRustBuffer<List<Image>>
     
 
         /**
-         * 列出指定文件夹（folder_id）下的图片（file_type = 'Image'）。
+         * 列出指定文件夹下的图片。
          */ fun `listImages`(`folderId`: kotlin.String): List<Image> {
             return FfiConverterSequenceTypeImage.lift(
     uniffiRustCall() { _status ->
-    UniffiLib.uniffi_ffi_poc_fn_func_list_images(
+    UniffiLib.uniffi_aurora_core_fn_func_list_images(
     
         
         FfiConverterString.lower(`folderId`),_status)
 }
     )
     }
+    
+
+        /**
+         * 把 Kotlin 扫描的 MediaStore 图片写入索引（按 bucket 聚合出文件夹）。
+         */
+    @Throws(AuroraException::class) fun `upsertMediaImages`(`images`: List<MediaImage>)
+        = 
+    uniffiRustCallWithError(AuroraException) { _status ->
+    UniffiLib.uniffi_aurora_core_fn_func_upsert_media_images(
+    
+        
+        FfiConverterSequenceTypeMediaImage.lower(`images`),_status)
+}
+    
     
 
 

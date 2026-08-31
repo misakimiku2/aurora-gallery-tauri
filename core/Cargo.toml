@@ -9,6 +9,11 @@ name = "aurora_core"
 # rlib 供 src-tauri path 依赖；cdylib 供 UniFFI library 模式生成 Kotlin 绑定（M1 阶段 1 用）
 crate-type = ["cdylib", "rlib"]
 
+# UniFFI 绑定生成器 CLI（library 模式生成 Kotlin 绑定）
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi_bindgen.rs"
+
 [dependencies]
 rusqlite = { version = "0.30", features = ["bundled", "serde_json"] }
 serde = { version = "1", features = ["derive"] }
@@ -18,3 +23,5 @@ chrono = { version = "0.4", features = ["serde"] }
 color-thief = "0.2.2"
 image = { version = "0.24", features = ["jpeg", "png", "gif", "webp"] }
 palette = { version = "0.7", features = ["std"] }
+uniffi = { version = "0.32", features = ["cli"] }
+thiserror = "1"

@@ -51,4 +51,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     // UniFFI 生成的 Kotlin 绑定运行时依赖（JNA 加载 .so）
     implementation("net.java.dev.jna:jna:5.14.0@aar")
+    // 缩略图加载（支持 content:// MediaStore URI）
+    implementation("io.coil-kt:coil-compose:2.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
