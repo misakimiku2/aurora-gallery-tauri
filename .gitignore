@@ -47,3 +47,10 @@ src-tauri/static/lan-share/
 /temp_api.ts
 
 /clockit_backup_*.csv
+
+# M0 Kotlin 版 PoC（新增工程，编译产物不提交）
+ffi-poc/target/
+kotlin-app/.gradle/
+kotlin-app/build/
+kotlin-app/app/build/
+kotlin-app/local.properties

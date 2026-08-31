@@ -1,0 +1,22 @@
+[package]
+name = "ffi-poc"
+version = "0.1.0"
+edition = "2021"
+description = "M0 PoC: 验证 Kotlin -> UniFFI -> Rust 通信管道（独立 crate，不加入现有 workspace）"
+
+[lib]
+name = "ffi_poc"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ffi-poc-dump"
+path = "src/main.rs"
+
+# UniFFI 绑定生成器 CLI（library 模式生成 Kotlin 绑定用）
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/uniffi_bindgen.rs"
+
+[dependencies]
+rusqlite = { version = "0.30", features = ["bundled"] }
+uniffi = { version = "0.32", features = ["cli"] }

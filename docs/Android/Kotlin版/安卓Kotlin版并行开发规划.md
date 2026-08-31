@@ -142,7 +142,7 @@ Kotlin 版的 UI 样式在最大程度上保留与桌面端一致的设计，对
 - NativeGalleryView 已验证 A 路线的可行性，是垫脚石；
 - FileGrid 是 A 路线最后一块硬骨头——当 WebView 内只剩低频界面时，切 B 的迁移量已经很小；
 - 切换触发条件（两条同时满足则 B 立项，任一不满足则继续 A 并重估）：
-  1. M0 的 UniFFI PoC 通过（证明 Rust 核心可被 Kotlin 直调）；
+  1. ✅ M0 的 UniFFI PoC 通过（证明 Rust 核心可被 Kotlin 直调）—— 2026-08-31 走通（证据见 [启动指南 §8](./启动指南.md#8-步骤状态记录)，S1–S5 全绿，S5 截图与 S2 桌面打印输出对照一致）；
   2. M1 FileGrid 原生化完成后的帧率数据（证明收益真实且必要）。
 
 ---
@@ -213,10 +213,10 @@ LAN 浏览桌面文件时，桌面 API 顺带返回该图的标签/人物/专题
 
 | 事项 | 状态 | 说明 |
 |---|---|---|
-| Compose vs View 体系 | 开放 | 既有 Kotlin 代码（NativeGalleryView 等）为 View 体系。倾向： 新 UI 以 Compose 为主（列表/表单开发效率高），高性能手势组件用 AndroidView 包裹既有 View 复用；M1 定型 |
+| Compose vs View 体系 | 倾向 Compose | 既有 Kotlin 代码（NativeGalleryView 等）为 View 体系。**M0 用 Kotlin 1.9.25 + Compose BOM 2024.09.03 搭壳**（AGP 8.11.0 工程一次过），倾向：新 UI 以 Compose 为主（列表/表单开发效率高），高性能手势组件用 AndroidView 包裹既有 View 复用；M1 定型 |
 | 双端 UI 维护成本 | 规则已定 | 新功能先过功能矩阵登记再动手；桌面先行、安卓跟随，约束「跟随不落后半个版本」 |
-| Rust command 解耦 | 待评估 | `lib.rs` 两处 `generate_handler!`（桌面/安卓构建）需拆出纯函数核心；M0 PoC 后基于经验评估工作量，拆分在 M1 开头执行 |
-| 工程组织 | 开放 | UniFFI 要求 Rust 核心独立 crate（workspace 拆分）；Kotlin 工程放本仓库还是独立仓库，M0 决定 |
+| Rust command 解耦 | 待 M1 执行 | `lib.rs` 两处 `generate_handler!`（桌面/安卓构建）需拆出纯函数核心。**M0 PoC 评估**：UniFFI 0.32 + proc-macro 用法成熟（`setup_scaffolding!` + `#[uniffi::export]` + `#[derive(uniffi::Record)]`），独立 crate 一次过；PoC 用 3 个函数（init / list_folders / list_images）覆盖"读 db + 返回结构"最小切片。**预估工作量**：参照 `db_commands.rs` / `db/file_index.rs` / `db/file_metadata.rs` 中不依赖 `AppHandle` 的纯函数（约 60–70% 的 command），可抽出独立 core crate；带 `AppHandle` 的（窗口/系统命令）需包一层；JNI 直接调用的安卓特定代码（`android/`）暂不动。**粗估 3–5 天**，M1 开头执行 |
+| 工程组织 | 已定：本仓库 | **M0 决议**：Rust 核心与 Kotlin 工程放本仓库（已建 `kotlin-app/`，复用现有 Gradle wrapper、AGP 版本与 mipmap 图标资源，工具链与桌面 React 安卓版对齐以减少分歧）；UniFFI workspace 拆分（独立 `core` crate）在 M1 lib.rs 解耦时一起做；`ffi-poc/` 作为 PoC 残留保留（旁路、零侵入） |
 | 手机版启动时机 | 已定 | M7 之后（M8+），避免在平板组件未沉淀时做第三布局 |
 
 ---
