@@ -6,6 +6,8 @@ import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
+import { Folder3DIconCanvas } from './Folder3DIconCanvas';
+import { isSpriteSupportedSafe } from '../utils/spriteCache';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
@@ -83,7 +85,7 @@ const count = folderItemCount(file) ?? 0;
   );
 });
 
-export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: 'classic' | 'tiles' }) => {
+export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRoot, cachePath, folderIconStyle }: { file: FileNode; getFileNode: GetFileNode, mode: LayoutMode, resourceRoot?: string, cachePath?: string, folderIconStyle?: 'classic' | 'tiles' | 'canvas' }) => {
   const isAndroid = resourceRoot === 'android_media_store';
   const [ref, isInView, wasInView] = useInView({ rootMargin: '600px' });
 
@@ -316,12 +318,21 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   return (
     <div ref={ref} className="w-full h-full relative flex flex-col items-center justify-center bg-transparent">
       <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
-         <Folder3DIcon
-            previewSrcs={effectivePreviewSrcs}
-            count={folderItemCount(file)}
-            category={file.category}
-            variant={folderIconStyle}
-         />
+         {folderIconStyle === 'canvas' && isSpriteSupportedSafe() ? (
+            <Folder3DIconCanvas
+               previewSrcs={effectivePreviewSrcs}
+               count={folderItemCount(file)}
+               category={file.category}
+               folderId={file.id}
+            />
+         ) : (
+            <Folder3DIcon
+               previewSrcs={effectivePreviewSrcs}
+               count={folderItemCount(file)}
+               category={file.category}
+               variant={folderIconStyle === 'canvas' ? undefined : folderIconStyle}
+            />
+         )}
          {hasUpgrading && (
            <div className="absolute inset-0 bg-black/30 flex items-center justify-center z-10 rounded-lg">
              <svg className="animate-spin h-5 w-5 text-white/70" viewBox="0 0 24 24" fill="none">

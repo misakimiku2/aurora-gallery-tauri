@@ -2,6 +2,7 @@ import React from 'react';
 import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, LayoutTemplate, Type, Calendar, HardDrive, ArrowUp, ArrowDown, Layers } from 'lucide-react';
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { Folder3DIcon } from '../Folder3DIcon';
+import { Folder3DIconCanvas } from '../Folder3DIconCanvas';
 import { isDebugLogEnabled, setDebugLogEnabled } from '../../utils/debugLog';
 
 // 通用设置 + 外观设置面板组件
@@ -173,10 +174,11 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
             （含经典版 hover 摊牌动画、简洁版三图瓷砖）完全一致，放大预览 */}
         <div className="mt-6">
           <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-4">{t('settings.folderIconStyle') || '文件夹图标'}</label>
-          <div className="grid grid-cols-2 gap-4 max-w-lg">
+          <div className="grid grid-cols-3 gap-4 max-w-lg">
             {([
               { id: 'classic', label: t('settings.folderIconStyleClassic') || '经典' },
               { id: 'tiles', label: t('settings.folderIconStyleTiles') || '简洁' },
+              { id: 'canvas', label: t('settings.folderIconStyleCanvas') || 'Canvas' },
             ] as const).map(opt => {
               const current = settings.folderIconStyle || 'classic';
               const isSelected = current === opt.id;
@@ -188,7 +190,11 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                 >
                   <div className="h-40 rounded flex items-center justify-center mb-2 bg-surface border border-subtle">
                     <div className="w-32 h-32">
-                      <Folder3DIcon variant={opt.id} />
+                      {opt.id === 'canvas' ? (
+                        <Folder3DIconCanvas />
+                      ) : (
+                        <Folder3DIcon variant={opt.id} />
+                      )}
                     </div>
                   </div>
                   <div className="text-center text-xs font-medium text-gray-600 dark:text-gray-400 py-1">

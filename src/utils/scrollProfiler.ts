@@ -39,6 +39,7 @@
 import { isTauriEnvironment } from './environment';
 import { writeFileFromBytes, getGlobalCacheRoot } from '../api/tauri-bridge';
 import { performanceMonitor } from './performanceMonitor';
+import { spriteStats, spriteQueueLen, spriteCacheSize, spriteRenderInfo } from './spriteCache';
 
 export interface ScrollPerfReport {
   id: number;
@@ -73,6 +74,7 @@ export interface ScrollPerfReport {
   treeDOMEnd: number;
   treeLogical: number;
   treeTotal: number;
+  spriteStart: { composed: number; hit: number; null: number; cancel: number };
 }
 
 interface ScrollSession {
@@ -97,6 +99,7 @@ interface ScrollSession {
   treeDOMStart: number;
   treeLogicalStart: number;
   treeTotalStart: number;
+  spriteStart: { composed: number; hit: number; null: number; cancel: number };
 }
 
 /** 单个滚动目标的运行时状态（一个目标 = 一个可独立记录会话的滚动容器） */
@@ -313,6 +316,12 @@ class ScrollProfiler {
       treeDOMStart: counters.treeSidebarDOM || 0,
       treeLogicalStart: counters.treeSidebarLogical || 0,
       treeTotalStart: counters.treeSidebarTotal || 0,
+      spriteStart: {
+        composed: spriteStats.composed,
+        hit: spriteStats.hit,
+        null: spriteStats.null,
+        cancel: spriteStats.cancel,
+      },
     };
     target.prevFrameTs = performance.now();
     // 双通道帧采样：
@@ -407,6 +416,7 @@ class ScrollProfiler {
       treeDOMEnd: counters.treeSidebarDOM || 0,
       treeLogical: counters.treeSidebarLogical || s.treeLogicalStart,
       treeTotal: counters.treeSidebarTotal || s.treeTotalStart,
+      spriteStart: s.spriteStart,
     };
     target.lastReport = report;
     this.emit(target, report);
@@ -459,6 +469,11 @@ class ScrollProfiler {
     } else {
       lines.push(`  FileGrid 重渲染: ${r.fileGridRenders} 次 | DOM 卡片: ${r.fileGridDOMStart} → ${r.fileGridDOMEnd}`);
       lines.push(`  缩略图: 命中 ${r.thumbHitDelta} | 未命中 ${r.thumbMissDelta}`);
+      // folderIconStyle='canvas' 时的文件夹图标 Sprite 合成统计（本次会话增量）
+      const sStart = r.spriteStart;
+      lines.push(
+        `  Sprite 文件夹图标: 合成 ${spriteStats.composed - sStart.composed} | 缓存命中 ${spriteStats.hit - sStart.hit} | 失败 ${spriteStats.null - sStart.null} | 取消 ${spriteStats.cancel - sStart.cancel} | 队列剩余 ${spriteQueueLen()} | 缓存 ${spriteCacheSize()} | ${spriteRenderInfo()}`
+      );
     }
     return lines.join('\n');
   }
