@@ -177,14 +177,16 @@ declare global {
 
 export const getGlobalCache = () => {
   if (!window.__AURORA_THUMBNAIL_CACHE__) {
-    window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(1000);
+    // 大图库（数万张）滚动时 LRU 太小会导致"刚滚过又滚回"时重复回源，
+    // 1000→5000 仅存 URL 字符串，内存开销可忽略，但显著减少滚动往返的重复请求
+    window.__AURORA_THUMBNAIL_CACHE__ = new LRUCache<string>(5000);
   }
   return window.__AURORA_THUMBNAIL_CACHE__;
 };
 
 export const getThumbnailPathCache = () => {
   if (!window.__AURORA_THUMBNAIL_PATH_CACHE__) {
-    window.__AURORA_THUMBNAIL_PATH_CACHE__ = new LRUCache<string>(1000);
+    window.__AURORA_THUMBNAIL_PATH_CACHE__ = new LRUCache<string>(5000);
   }
   return window.__AURORA_THUMBNAIL_PATH_CACHE__;
 };

@@ -157,6 +157,7 @@ class ScrollProfiler {
   private longTaskObserver: PerformanceObserver | null = null;
   private layoutShiftObserver: PerformanceObserver | null = null;
   private sessionSeq = 0;
+  private benchInFlight = false; // 基准并发保护：同一时刻只运行一个
 
   /**
    * 挂载一个滚动目标并开始记录。
@@ -180,6 +181,101 @@ class ScrollProfiler {
     // 未启用时只记录目标元素、不监听滚动（设置界面开启后再 refresh 挂载）
     if (!isGloballyEnabled()) return;
     this.startListening(target);
+  }
+
+  /**
+   * 确定性滚动基准（排除手势变量）：以 rAF 逐帧推进 scrollTop，统计真实渲染帧间隔。
+   * 传统报告里的「帧」值是滚动事件间隔，会被滚轮/触控板节流与手势停顿污染；
+   * 本基准手动驱动滚动 + rAF 采样，得到的平均/p50/p95 帧耗时可以公平对比
+   * Canvas 文件夹图标 vs DOM 版 / 纯图片网格。
+   * 调用：window.__scrollBench(3000, 'file-grid', 'canvas') —— 默认 3000ms；
+   *       第 4 参数 advancePercent 控制每帧推进的视口高度百分比（默认 8 = 近乎极速压力，
+   *       复现真实滚轮手感建议用 2~3），输出到控制台与日志文件。
+   */
+  runBench(durationMs = 3000, targetName?: string, tag = '', advancePercent = 8) {
+    if (this.benchInFlight) {
+      console.warn('[ScrollBench] 已有基准在运行（请等待上一次结束，避免并发互相抢占 scrollTop）');
+      return;
+    }
+    // 未指定目标时：若当前只有一个已挂载目标则直接用，否则默认 file-grid
+    let name = targetName;
+    if (!name) name = this.targets.length === 1 ? this.targets[0].name : 'file-grid';
+    let target = this.targets.find(t => t.name === name);
+    if (!target?.el && this.targets.length === 1) target = this.targets[0]; // 便捷回退
+    if (!target?.el) {
+      const mountedNames = this.targets.map(t => t.name);
+      console.warn(
+        `[ScrollBench] 未找到滚动容器: ${name}\n` +
+        `  当前已挂载的滚动目标: ${mountedNames.length ? mountedNames.join(', ') : '（无）'}\n` +
+        `  提示: 需先进入"文件夹网格/图片网格"视图才会挂载 file-grid；若目标是 folder 概览请调用 __scrollBench(5000, '${mountedNames[0] || 'tree-sidebar'}')`
+      );
+      return;
+    }
+    const scroller = target.el as HTMLElement;
+    if (typeof scroller.scrollTop !== 'number') {
+      console.warn('[ScrollBench] 容器不支持 scrollTop，跳过');
+      return;
+    }
+    const startTop = scroller.scrollTop;
+    const startTs = performance.now();
+    const sStart = { composed: spriteStats.composed, hit: spriteStats.hit, null: spriteStats.null, cancel: spriteStats.cancel };
+    const frameDts: number[] = [];
+    let prev = startTs;
+    let running = true;
+    let baseline = true; // 首帧只建立基线，从第二帧起记录
+
+    const finish = () => {
+      if (!running) return;
+      running = false;
+      this.benchInFlight = false;
+      scroller.scrollTop = startTop; // 恢复滚动位置
+      const sorted = [...frameDts].sort((a, b) => a - b);
+      const n = sorted.length;
+      const avg = n ? frameDts.reduce((a, b) => a + b, 0) / n : 0;
+      const p50 = n ? sorted[Math.floor(n * 0.5)] : 0;
+      const p95 = n ? sorted[Math.min(n - 1, Math.floor(n * 0.95))] : 0;
+      const max = n ? sorted[n - 1] : 0;
+      const dropRate = n ? Math.round((sorted.filter(t => t > 16.7).length / n) * 100) : 0;
+      const over33 = n ? sorted.filter(t => t > 33.4).length : 0;
+      const over50 = n ? sorted.filter(t => t > 50).length : 0;
+      const lines = [
+        `[ScrollBench][${name}] ${tag ? tag + ' ' : ''}时长 ${Math.round(performance.now() - startTs)}ms`,
+        `  rAF 帧: ${n} | 平均 ${avg.toFixed(1)}ms | p50 ${p50.toFixed(1)}ms | p95 ${p95.toFixed(1)}ms | 最大 ${max.toFixed(1)}ms`,
+        `  掉帧(>16.7ms): ${sorted.filter(t => t > 16.7).length} 次 (${dropRate}%) | >33ms: ${over33} | >50ms: ${over50}`,
+        `  Sprite 文件夹图标: 合成 ${spriteStats.composed - sStart.composed} | 缓存命中 ${spriteStats.hit - sStart.hit} | 失败 ${spriteStats.null - sStart.null} | 取消 ${spriteStats.cancel - sStart.cancel} | 队列剩余 ${spriteQueueLen()} | ${spriteRenderInfo()}`,
+        `  提示: 基准会移动滚动位置并可能写入滚动状态，结束已恢复 scrollTop；如需还原应用内位置可刷新界面。`,
+      ];
+      const text = lines.join('\n');
+      console.log(text);
+      if (isTauriEnvironment()) {
+        const cacheRoot = getGlobalCacheRoot();
+        if (cacheRoot) {
+          const norm = cacheRoot.replace(/[\\/]+$/, '');
+          const sep = norm.includes('\\') ? '\\' : '/';
+          const parent = norm.lastIndexOf(sep) > 0 ? norm.slice(0, norm.lastIndexOf(sep)) : norm;
+          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+          writeFileFromBytes(`${parent}${sep}scroll-perf${sep}scroll-bench-${name}-${ts}.txt`, new TextEncoder().encode(text)).catch(() => {});
+        }
+      }
+    };
+
+    const step = () => {
+      if (!running) return;
+      const now = performance.now();
+      const dt = now - prev;
+      prev = now;
+      if (baseline) {
+        baseline = false;
+      } else {
+        frameDts.push(dt); // 记录每个渲染帧间隔（rAF 时基，与手势无关）
+      }
+      // 每帧推进视口高度的 advancePercent % → 速度可控、可复现（8≈极速压力，2~3≈真实滚轮）
+      scroller.scrollTop += Math.max(8, Math.round((scroller.clientHeight || 600) * (advancePercent / 100)));
+      if (now - startTs >= durationMs) finish();
+      else requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+    console.log(`[ScrollBench] 开始 ${durationMs}ms 确定性滚动 (${name})...`);
   }
 
   /**
@@ -501,6 +597,9 @@ class ScrollProfiler {
       console.log(`[ScrollPerf] 记录${enabled ? '已开启' : '已关闭'}`);
       // 同步监听状态（与设置界面开关一致）
       this.refresh();
+    };
+    win.__scrollBench = (durationMs?: number, targetName?: string, tag?: string, advancePercent?: number) => {
+      this.runBench(durationMs, targetName, tag, advancePercent);
     };
   }
 }

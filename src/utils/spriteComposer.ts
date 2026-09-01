@@ -335,6 +335,41 @@ export interface CardParams {
   alpha: number;
 }
 
+// 预烘焙「白色圆角卡 + shadow-md 两层阴影」位图：把每张卡绘制时的 ctx.filter 双 drop-shadow
+// 成本变成每 (卡宽,卡高) 只付一次（进缓存）。滚动排空期与悬停逐帧都只做一次 drawImage。
+// 阴影在 DOM 中属于 transform 后的合成层、随卡片一起旋转 —— 预烘整卡后 drawImage 跟随
+// drawCard 的 rotate/translate，视觉与 DOM 一致。
+// pad 需容纳阴影外溢（0 4px 6px + 0 2px 4px → 最远约 10px）。
+const CARD_SHADOW_PAD = 10;
+const _cardBmpCache = new Map<string, ImageBitmap>();
+const getCardBaseBmp = (cardW: number, cardH: number, res: number): ImageBitmap | null => {
+  if (!isSpriteSupported()) return null;
+  const key = `${Math.round(cardW)}|${Math.round(cardH)}|${res}`;
+  let bmp = _cardBmpCache.get(key);
+  if (bmp) return bmp;
+  const W = Math.ceil(cardW + CARD_SHADOW_PAD * 2);
+  const H = Math.ceil(cardH + CARD_SHADOW_PAD * 2);
+  const off = new OffscreenCanvas(W * res, H * res);
+  const ctx = off.getContext('2d');
+  if (!ctx) return null;
+  applySmoothing(ctx);
+  ctx.scale(res, res);
+  ctx.save();
+  ctx.filter = 'drop-shadow(0 4px 6px rgba(0,0,0,0.1)) drop-shadow(0 2px 4px rgba(0,0,0,0.1))';
+  ctx.fillStyle = '#ffffff';
+  roundRectPath(ctx, CARD_SHADOW_PAD, CARD_SHADOW_PAD, cardW, cardH, 2);
+  ctx.fill();
+  ctx.restore();
+  bmp = off.transferToImageBitmap();
+  _cardBmpCache.set(key, bmp);
+  // 尺寸桶缓存有界（正常视图只有个位数档位，48 足够）
+  if (_cardBmpCache.size > 48) {
+    const oldest = _cardBmpCache.keys().next().value;
+    if (oldest !== undefined) _cardBmpCache.delete(oldest);
+  }
+  return bmp;
+};
+
 // rect 为预览组容器（x,y,w,h）；px 为卡片相对容器的变换参数。占位色用于 imgs 为 null 时。
 export const drawCard = (
   ctx: Ctx2D,
@@ -353,12 +388,22 @@ export const drawCard = (
   ctx.rotate(deg2rad(p.rotate));
   ctx.scale(p.scale, p.scale);
   ctx.translate(-cx, -cy);
-  // shadow-md（两层）
-  ctx.filter = 'drop-shadow(0 4px 6px rgba(0,0,0,0.1)) drop-shadow(0 2px 4px rgba(0,0,0,0.1))';
-  // 白色外框 + rounded-sm(2px) + bg-white
-  roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 2);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
+  // 预烘焙「白卡+阴影」位图（替代原 ctx.filter 双 drop-shadow；阴影随卡旋转，与 DOM 一致）
+  const cardBmp = getCardBaseBmp(rect.w, rect.h, 2);
+  if (cardBmp) {
+    ctx.drawImage(
+      cardBmp,
+      rect.x - CARD_SHADOW_PAD,
+      rect.y - CARD_SHADOW_PAD,
+      rect.w + CARD_SHADOW_PAD * 2,
+      rect.h + CARD_SHADOW_PAD * 2
+    );
+  } else {
+    // 兜底：无 OffscreenCanvas 时退化为纯白卡（无阴影）
+    roundRectPath(ctx, rect.x, rect.y, rect.w, rect.h, 2);
+    ctx.fillStyle = '#ffffff';
+    ctx.fill();
+  }
   // 内侧 2px 裁图（对应 border-[2px] white）
   ctx.save();
   roundRectPath(ctx, rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4, 2);
@@ -370,7 +415,6 @@ export const drawCard = (
     ctx.fillRect(rect.x + 2, rect.y + 2, rect.w - 4, rect.h - 4);
   }
   ctx.restore();
-  ctx.filter = 'none';
   ctx.restore();
 };
 
@@ -464,9 +508,49 @@ export const composeStaticBody = (
 // 若不兜底会卡死整条串行合成队列（drainRunning 永远 true → 后续所有 full 永不执行）
 const IMAGE_TIMEOUT_MS = 5000;
 
-export const loadImage = (src: string): Promise<HTMLImageElement | null> =>
-  new Promise(resolve => {
-    if (!src) { resolve(null); return; }
+// 预览图解码缓存（按解码像素字节有界 LRU）：避免同一 src 反复 new Image() 重新解码。
+// 场景：长滚动遍历大文件夹，fullCache(LRU 96) 频繁逐出导致同一封面反复重合成；
+// asset:// 图在 WebView2 主线程解码成本可观，缓存解码结果可显著降低排空期主线程占用。
+const _imgUsed = new Map<string, HTMLImageElement>();
+let _imgUsedBytes = 0;
+const IMG_CACHE_BUDGET = 64 * 1024 * 1024; // 约 64MB 解码像素
+const _imgLoading = new Map<string, Promise<HTMLImageElement | null>>();
+
+const cacheUsedImg = (src: string, img: HTMLImageElement) => {
+  if (_imgUsed.has(src)) return;
+  _imgUsed.set(src, img);
+  _imgUsedBytes += (img.naturalWidth || 0) * (img.naturalHeight || 0) * 4;
+  while (_imgUsedBytes > IMG_CACHE_BUDGET && _imgUsed.size > 1) {
+    const oldestKey = _imgUsed.keys().next().value;
+    if (oldestKey === undefined) break;
+    const oldest = _imgUsed.get(oldestKey)!;
+    _imgUsedBytes -= (oldest.naturalWidth || 0) * (oldest.naturalHeight || 0) * 4;
+    _imgUsed.delete(oldestKey);
+  }
+};
+
+// 失败源冷却：断连/未就绪的缩略图（尤其重启后缓存未生成）会在每次合成重试，
+// 若不加冷却，带 5s 超时的 loadImage 会反复拖住排空队列。冷却期内直接判 null 快速跳过。
+const _srcCooldown = new Map<string, number>();
+const SRC_COOLDOWN_MS = 8000;
+const markSrcCooldown = (src: string) => _srcCooldown.set(src, performance.now() + SRC_COOLDOWN_MS);
+const isSrcCooling = (src: string): boolean => {
+  const until = _srcCooldown.get(src);
+  if (until === undefined) return false;
+  if (performance.now() < until) return true;
+  _srcCooldown.delete(src);
+  return false;
+};
+
+export const loadImage = (src: string): Promise<HTMLImageElement | null> => {
+  if (!src) return Promise.resolve(null);
+  if (isSrcCooling(src)) return Promise.resolve(null);
+  const used = _imgUsed.get(src);
+  if (used && used.complete && used.naturalWidth > 0) return Promise.resolve(used);
+  // 同一 src 并发请求合并为一次解码
+  const inflight = _imgLoading.get(src);
+  if (inflight) return inflight;
+  const p = new Promise<HTMLImageElement | null>(resolve => {
     const img = new Image();
     img.decoding = 'async';
     let settled = false;
@@ -474,6 +558,7 @@ export const loadImage = (src: string): Promise<HTMLImageElement | null> =>
       if (settled) return;
       settled = true;
       console.warn(`[sprite] preview image load timeout:`, src);
+      markSrcCooldown(src);
       resolve(null);
     }, IMAGE_TIMEOUT_MS);
     const finish = (v: HTMLImageElement | null, reason?: string) => {
@@ -481,12 +566,22 @@ export const loadImage = (src: string): Promise<HTMLImageElement | null> =>
       settled = true;
       clearTimeout(timer);
       if (reason) console.warn(`[sprite] preview image ${reason}:`, src);
+      if (v) {
+        _srcCooldown.delete(src);
+        cacheUsedImg(src, v);
+      } else {
+        markSrcCooldown(src);
+      }
       resolve(v);
     };
     img.onload = () => finish(img);
     img.onerror = () => finish(null, 'load failed');
     img.src = src;
   });
+  _imgLoading.set(src, p);
+  p.finally(() => _imgLoading.delete(src));
+  return p;
+};
 
 export const loadImages = (srcs: string[]): Promise<(HTMLImageElement | null)[]> =>
   Promise.all(srcs.map(loadImage));
@@ -497,20 +592,32 @@ export const composeFull = async (
   category: IconCategory,
   theme: IconTheme,
   size: number,
-  dpr = 1
+  dpr = 1,
+  layers?: { back: ImageBitmap; front: ImageBitmap },
+  shouldCancel?: () => boolean,
+  decode?: (srcs: string[]) => Promise<(HTMLImageElement | ImageBitmap | null)[]>
 ): Promise<ImageBitmap | null> => {
   try {
+    if (shouldCancel?.()) return null;
     const off = new OffscreenCanvas(size * dpr, size * dpr);
     const ctx = off.getContext('2d')!;
     applySmoothing(ctx);
     ctx.scale(dpr, dpr); // 之后所有坐标以 CSS 逻辑像素为单位
 
     // 顺序与 DOM 一致：后板 → 预览卡（被前板遮挡下半部分）→ 前板+图标 → 角标
-    const back = composeBack(category, theme, size, dpr);
+    // 优先复用 layerCache 的 back/front（spriteCache 传入），避免每次新合成+滤镜
+    const back = layers?.back ?? composeBack(category, theme, size, dpr);
     ctx.drawImage(back, 0, 0, size, size);
 
     const srcs = (previewSrcs || []).filter(s => !!s).slice(0, 3);
-    const imgs = await loadImages(srcs);
+    // decode 可注入（Web Worker 用 createImageBitmap 解码，主线程默认 new Image()）
+    const imgs = await (decode || loadImages)(srcs);
+    // 图片解码等待期间滚动已开始：放弃本次合成，避免与滚动抢主线程
+    if (shouldCancel?.()) return null;
+    // 预览图解码失败（重启后缩略图未就绪/断连/冷却中）：返回 null 不落 fullCache，
+    // 卡片保持 staticBody 灰卡占位，后续组件重试可获得真图。否则占位结果会被永久缓存，
+    // 一旦命中就再也等不到真缩略图（表现为重启后一部分文件夹缩略图空白）。
+    if (srcs.length > 0 && imgs.some(i => !i)) return null;
     const g = { x: 0.15 * size, y: 0.2 * size, w: 0.7 * size, h: 0.6 * size };
     const placeholders = theme === 'dark' ? PLACEHOLDER_COLORS_DARK : PLACEHOLDER_COLORS;
 
@@ -525,7 +632,7 @@ export const composeFull = async (
       }
     }
 
-    const front = composeFront(category, theme, size, dpr);
+    const front = layers?.front ?? composeFront(category, theme, size, dpr);
     ctx.drawImage(front, 0, 0, size, size);
 
     if (count !== undefined) drawBadge(ctx, size, count);

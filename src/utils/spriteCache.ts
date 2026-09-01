@@ -8,6 +8,7 @@
 //    队列被打断（滚动状态未复位）时用 RETRY 兜底重排，保证最终排空。
 
 import { composeStaticBody, composeBack, composeFront, composeFull, isSpriteSupported, type IconCategory, type IconTheme } from './spriteComposer';
+import { spriteWorkerClient } from './spriteWorkerClient';
 import { getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge/state';
 
 export const isSpriteSupportedSafe = isSpriteSupported;
@@ -133,8 +134,11 @@ const cacheFull = (key: string, bmp: ImageBitmap) => {
 //    链意外断裂时从心跳续泵——队列最终必然清空，绝不冻结。
 interface PendingTask extends FullParams {
   key: string;
-  resolve: (bmp: ImageBitmap | null) => void;
+  // 同 key 去重：多个请求（同文件夹多次挂载/多组件）合并到同一任务，各自收到结果
+  resolvers: ((bmp: ImageBitmap | null) => void)[];
 }
+
+const MAX_PENDING = 192; // 队列上限：超出丢最旧（组件会在容纳后重试，不会永久卡在占位态）
 
 const pendingQueue: PendingTask[] = [];
 let current: { task: PendingTask; startedAt: number } | null = null;
@@ -154,8 +158,45 @@ export const spriteCacheSize = () => fullCache.size;
 
 const isScrollActive = (): boolean => getGlobalScrollState() !== 'idle';
 
-const tryResolve = (task: PendingTask, bmp: ImageBitmap | null) => {
-  try { task.resolve(bmp); } catch { /* 组件已卸载 */ }
+// ---------- Worker 合成接入 ----------
+// full 合成优先交给 Web Worker（预览图解码 + OffscreenCanvas 绘制全部离主线程），
+// 主线程只保留排队/门控与结果落缓存。worker 不可用（不支持/资源无法解码）时回退主线程。
+let workerReady: boolean | null = null;
+let workerProbeDone = false;
+
+const ensureWorkerReady = async (): Promise<boolean> => {
+  if (workerReady === null) {
+    workerReady = await spriteWorkerClient.init();
+    if (workerReady) console.log('[sprite] Web Worker 合成已启用（full 合成离主线程）');
+  }
+  return workerReady;
+};
+
+// 主线程内联合成（回退路径）：复用 layerCache + 滚动中断检查
+const composeInline = (
+  task: PendingTask,
+  res: number
+): Promise<ImageBitmap | null> => {
+  const back = getBack(task.category, task.theme, task.size, res);
+  const front = getFront(task.category, task.theme, task.size, res);
+  return composeFull(
+    task.previewSrcs,
+    task.count,
+    task.category,
+    task.theme,
+    task.size,
+    res,
+    back && front ? { back, front } : undefined,
+    () => isScrollActive()
+  );
+};
+
+const tryResolve = (resolve: (bmp: ImageBitmap | null) => void, bmp: ImageBitmap | null) => {
+  try { resolve(bmp); } catch { /* 组件已卸载 */ }
+};
+
+const resolveTask = (task: PendingTask, bmp: ImageBitmap | null) => {
+  for (const r of task.resolvers) tryResolve(r, bmp);
 };
 
 const runTask = async (task: PendingTask): Promise<void> => {
@@ -163,28 +204,57 @@ const runTask = async (task: PendingTask): Promise<void> => {
   const done = fullCache.get(task.key);
   if (done) {
     spriteStats.hit++;
-    tryResolve(task, done);
+    resolveTask(task, done);
     return;
   }
   if (task.signal?.aborted) {
-    tryResolve(task, null);
+    resolveTask(task, null);
     return;
   }
   let bmp: ImageBitmap | null = null;
   try {
-    bmp = await composeFull(
-      task.previewSrcs,
-      task.count,
-      task.category,
-      task.theme,
-      task.size,
-      renderRes() // 合成分辨率固定 2x+，保证显示锐利
-    );
+    const res = renderRes();
+    const useWorker = await ensureWorkerReady();
+    const srcs = (task.previewSrcs || []).filter(s => !!s).slice(0, 3);
+    if (useWorker && !workerProbeDone && srcs.length > 0) {
+      // 能力探针（仅一次）：worker 与主线程并行各合成一次，取成功者。
+      // 若 worker 合成失败而主线程成功 → 该资源协议（如 asset://）worker 不支持 → 永久回退主线程。
+      workerProbeDone = true;
+      const [w, i] = await Promise.all([
+        spriteWorkerClient.requestFull({
+          previewSrcs: srcs,
+          count: task.count,
+          category: task.category,
+          theme: task.theme,
+          size: task.size,
+          dpr: res,
+        }).catch(() => null),
+        composeInline(task, res).catch(() => null),
+      ]);
+      bmp = w ?? i;
+      if (!w && i) {
+        // worker 解码不了该资源协议（如 asset:// 不支持 fetch）→ 永久回退主线程
+        console.warn('[sprite] Worker 无法解码当前资源协议，已回退主线程合成');
+        spriteWorkerClient.disable();
+        workerReady = false;
+      }
+    } else if (useWorker) {
+      bmp = await spriteWorkerClient.requestFull({
+        previewSrcs: srcs,
+        count: task.count,
+        category: task.category,
+        theme: task.theme,
+        size: task.size,
+        dpr: res,
+      }).catch(() => null);
+    } else {
+      bmp = await composeInline(task, res);
+    }
   } catch (e) {
     console.error('[sprite] composeFull threw:', e);
   }
   if (task.signal?.aborted) {
-    tryResolve(task, null);
+    resolveTask(task, null);
     return;
   }
   if (bmp) {
@@ -193,7 +263,7 @@ const runTask = async (task: PendingTask): Promise<void> => {
   } else {
     spriteStats.null++;
   }
-  tryResolve(task, bmp);
+  resolveTask(task, bmp);
 };
 
 const pump = () => {
@@ -208,14 +278,25 @@ const pump = () => {
       const t = current.task;
       current = null;
       spriteStats.null++;
-      tryResolve(t, null);
+      resolveTask(t, null);
     } else {
       return;
     }
   }
   // 滚动中绝不启动新合成（排队等待静止）
   if (isScrollActive() || pendingQueue.length === 0) return;
-  const task = pendingQueue.shift()!;
+  // 剔除已取消（组件卸载）的任务，避免空转
+  let task: PendingTask | null = null;
+  while (pendingQueue.length > 0) {
+    const t = pendingQueue.shift()!;
+    if (t.signal?.aborted) {
+      resolveTask(t, null);
+      continue;
+    }
+    task = t;
+    break;
+  }
+  if (!task) return;
   current = { task, startedAt: performance.now() };
   runTask(task).finally(() => {
     if (current?.task !== task) return;
@@ -239,11 +320,25 @@ setInterval(() => {
 }, HEARTBEAT_MS);
 
 subscribeScrollState(state => {
-  if (state === 'idle' && pendingQueue.length > 0 && !current && pumpTimer === null) pump();
+  if (state !== 'idle') {
+    // 滚动开始：清掉排队中已失效（组件已卸载）的任务，减轻滚动停止后的排空压力
+    if (pendingQueue.length > 0) {
+      const remain: PendingTask[] = [];
+      for (const t of pendingQueue) {
+        if (t.signal?.aborted) resolveTask(t, null);
+        else remain.push(t);
+      }
+      pendingQueue.length = 0;
+      pendingQueue.push(...remain);
+    }
+    return;
+  }
+  if (pendingQueue.length > 0 && !current && pumpTimer === null) pump();
 });
 
 /**
  * 获取完整态位图。命中缓存直接返回；未命中入队，由心跳泵在滚动停止后串行合成。
+ * 同 key 已有排队任务时合并 resolver（只合成一次）；队列超上限丢最旧。
  * 失败（如不可合成/图片缺失）返回 null，调用方保留 staticBody 占位态。
  */
 export const getFull = (p: FullParams): Promise<ImageBitmap | null> => {
@@ -256,8 +351,35 @@ export const getFull = (p: FullParams): Promise<ImageBitmap | null> => {
     return Promise.resolve(cached);
   }
   if (p.signal?.aborted) return Promise.resolve(null);
+  // 同 key 已在队列中：合并 resolver，避免重复合成；
+  // 但若旧任务已被取消（组件早于回队前卸载、Abort 未触发清理），合并会吞掉新请求
+  // → 移除旧任务、以新请求重新入队
+  const existingIdx = pendingQueue.findIndex(t => t.key === key);
+  if (existingIdx !== -1) {
+    const existing = pendingQueue[existingIdx];
+    if (existing.signal?.aborted) {
+      pendingQueue.splice(existingIdx, 1);
+      for (const r of existing.resolvers) tryResolve(r, null);
+      while (pendingQueue.length >= MAX_PENDING) {
+        const dropped = pendingQueue.shift()!;
+        resolveTask(dropped, null);
+      }
+      const fresh: PendingTask = { ...p, key, resolvers: [] };
+      pendingQueue.push(fresh);
+      return new Promise(resolve => {
+        fresh.resolvers.push(resolve);
+        if (!isScrollActive() && !current && pumpTimer === null) pump();
+      });
+    }
+    return new Promise(resolve => existing.resolvers.push(resolve));
+  }
+  // 队列上限：驱逐最旧的未开始任务（保持 pending 有界，防洪峰；被丢的卡片由组件重试）
+  while (pendingQueue.length >= MAX_PENDING) {
+    const dropped = pendingQueue.shift()!;
+    resolveTask(dropped, null);
+  }
   return new Promise(resolve => {
-    pendingQueue.push({ ...p, key, resolve });
+    pendingQueue.push({ ...p, key, resolvers: [resolve] });
     if (!isScrollActive() && !current && pumpTimer === null) pump();
   });
 };
