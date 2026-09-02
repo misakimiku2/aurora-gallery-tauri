@@ -9,22 +9,36 @@ import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
+import com.aurora.gallery.kotlin.ui.components.GroupBy
+import com.aurora.gallery.kotlin.ui.components.LayoutMode
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -209,6 +223,10 @@ fun App(
     onBack: () -> Unit,
     onImageClick: (Image) -> Unit,
 ) {
+    // 视图/分组设置。M1 3.2 TopBar 完成后由 TopBar 承载，这里只是临时切换入口。
+    var layoutMode by remember { mutableStateOf(LayoutMode.GRID) }
+    var groupBy by remember { mutableStateOf(GroupBy.NONE) }
+
     if (scanning) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text("扫描中…")
@@ -233,13 +251,89 @@ fun App(
                     .clickable { onBack() }
                     .padding(16.dp),
             )
+            ViewModeBar(
+                layoutMode = layoutMode,
+                groupBy = groupBy,
+                onLayoutModeChange = { layoutMode = it },
+                onGroupByChange = { groupBy = it },
+            )
             FileGrid(
                 images = images,
                 selectedIds = selectedImageIds,
                 thumbnailLoader = thumbnailLoader,
                 onItemClick = onImageClick,
+                layoutMode = layoutMode,
+                groupBy = groupBy,
                 modifier = Modifier.fillMaxSize(),
             )
         }
     }
+}
+
+/**
+ * 布局模式 / 分组方式切换条。
+ *
+ * 脚手架：M1 3.2 TopBar 完成后由 TopBar 承载（安卓端对齐 React 版 `TopBar.tsx` 的
+ * `isAndroid` 分支——只在 grid / adaptive / masonry 间循环，不提供 list）。
+ * 这里仅供 2.5 / 2.3 开发期验收使用。
+ */
+@Composable
+private fun ViewModeBar(
+    layoutMode: LayoutMode,
+    groupBy: GroupBy,
+    onLayoutModeChange: (LayoutMode) -> Unit,
+    onGroupByChange: (GroupBy) -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(text = "视图", fontSize = 11.sp, color = colors.textSecondary)
+        for (mode in LayoutMode.values()) {
+            ModeChip(
+                text = when (mode) {
+                    LayoutMode.GRID -> "网格"
+                    LayoutMode.ADAPTIVE -> "自适应"
+                    LayoutMode.MASONRY -> "瀑布流"
+                },
+                selected = mode == layoutMode,
+                onClick = { onLayoutModeChange(mode) },
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(text = "分组", fontSize = 11.sp, color = colors.textSecondary)
+        for (option in GroupBy.values()) {
+            ModeChip(
+                text = when (option) {
+                    GroupBy.NONE -> "无"
+                    GroupBy.TYPE -> "类型"
+                    GroupBy.DATE -> "日期"
+                },
+                selected = option == groupBy,
+                onClick = { onGroupByChange(option) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModeChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    val colors = AuroraTheme.colors
+    Text(
+        text = text,
+        fontSize = 12.sp,
+        color = if (selected) Color.White else colors.textSecondary,
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .background(
+                color = if (selected) colors.primary else Color.Transparent,
+                shape = RoundedCornerShape(50),
+            )
+            .border(1.dp, colors.subtle, RoundedCornerShape(50))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    )
 }

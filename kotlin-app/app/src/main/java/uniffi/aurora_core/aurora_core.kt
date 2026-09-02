@@ -1138,6 +1138,10 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
 
 /**
  * 图片。
+ *
+ * `size` / `created_at` / `format` 供 2.3 分组标题使用（分组规则对齐 React 版
+ * `useFileSearch.ts`：`type` 取 `format.toUpperCase()`，`date` 取 `created_at` 的
+ * `YYYY-MM`）；`modified_at` 是列表排序基准（`list_images` 的 ORDER BY 字段）。
  */
 data class Image (
     var `id`: kotlin.String
@@ -1149,6 +1153,26 @@ data class Image (
     var `width`: kotlin.UInt?
     , 
     var `height`: kotlin.UInt?
+    , 
+    /**
+     * 文件大小（字节），列表模式展示用。
+     */
+    var `size`: kotlin.Long
+    , 
+    /**
+     * 添加时间（Unix 秒），date 分组用。
+     */
+    var `createdAt`: kotlin.Long
+    , 
+    /**
+     * 修改时间（Unix 秒），列表排序基准。
+     */
+    var `modifiedAt`: kotlin.Long
+    , 
+    /**
+     * MIME 子类型（jpeg / png / webp…），type 分组用。
+     */
+    var `format`: kotlin.String?
     
 ){
     
@@ -1170,6 +1194,10 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterString.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalUInt.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterOptionalString.read(buf),
         )
     }
 
@@ -1178,7 +1206,11 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterString.allocationSize(value.`contentUri`) +
             FfiConverterOptionalUInt.allocationSize(value.`width`) +
-            FfiConverterOptionalUInt.allocationSize(value.`height`)
+            FfiConverterOptionalUInt.allocationSize(value.`height`) +
+            FfiConverterLong.allocationSize(value.`size`) +
+            FfiConverterLong.allocationSize(value.`createdAt`) +
+            FfiConverterLong.allocationSize(value.`modifiedAt`) +
+            FfiConverterOptionalString.allocationSize(value.`format`)
     )
 
     override fun write(value: Image, buf: ByteBuffer) {
@@ -1187,6 +1219,10 @@ public object FfiConverterTypeImage: FfiConverterRustBuffer<Image> {
             FfiConverterString.write(value.`contentUri`, buf)
             FfiConverterOptionalUInt.write(value.`width`, buf)
             FfiConverterOptionalUInt.write(value.`height`, buf)
+            FfiConverterLong.write(value.`size`, buf)
+            FfiConverterLong.write(value.`createdAt`, buf)
+            FfiConverterLong.write(value.`modifiedAt`, buf)
+            FfiConverterOptionalString.write(value.`format`, buf)
     }
 }
 

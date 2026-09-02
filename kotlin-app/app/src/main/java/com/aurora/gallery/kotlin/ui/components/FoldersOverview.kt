@@ -24,6 +24,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -89,14 +90,21 @@ fun FoldersOverview(
     val colors = AuroraTheme.colors
     val context = LocalContext.current
 
-    val gridAdapter = remember {
+    // 进度驱动 FLIP（与 FileGrid 同一套手感：捏合 = FLIP 动画的进度条）。
+    // 必须定义在 gridAdapter 之前——gridAdapter 与下面的 AndroidView 都要用。
+    val rvHolder = remember { RvHolder() }
+    val pinchFlip = remember { PinchFlipController() }
+    // 收尾动画时长：捏合换档时按剩余进度缩短，用后即复位
+    var flipDurationMs by remember { mutableLongStateOf(FLIP_DURATION_MS) }
+
+    val gridAdapter = remember(pinchFlip) {
         FolderAdapter(
             loader = thumbnailLoader,
             surfaceColor = colors.surface.toArgb(),
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
             onClick = onFolderClick,
-        )
+        ).also { it.pinchFlip = pinchFlip }
     }
 
     LaunchedEffect(folders) {
@@ -134,6 +142,8 @@ fun FoldersOverview(
     // 三档捏合：0=小、1=中、2=大（默认中档）
     var level by remember { mutableIntStateOf(1) }
     val currentLevel = rememberUpdatedState(level)
+    // factory 闭包只创建一次，gapPx 直接捕获会在旋转（平板/手机间距变化）后读到旧值。
+    val currentGapPx = rememberUpdatedState(gapPx)
     val decoration = remember { GridSpacingDecoration(6, gapPx) }
 
     AndroidView(
@@ -141,28 +151,67 @@ fun FoldersOverview(
             val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
             decoration.spanCount = initialCols
             RecyclerView(ctx).apply {
-                layoutManager = GridLayoutManager(ctx, initialCols)
+                layoutManager = AuroraGridLayoutManager(ctx, initialCols)
                 adapter = gridAdapter
                 addItemDecoration(decoration)
                 setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
                 clipToPadding = false
                 itemAnimator = null
                 isVerticalScrollBarEnabled = false
-                setOnTouchListener(
-                    PinchGridSpanListener(
-                        context = ctx,
-                        currentLevel = { currentLevel.value },
-                        onLevelChange = { newLevel -> if (newLevel in 0..2) level = newLevel },
-                    ),
+                rvHolder.rv = this
+                // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
+                val pinch = PinchGridSpanListener(
+                    context = ctx,
+                    onPinchStart = { _, _ -> rvHolder.rv?.let { pinchFlip.begin(it, currentGapPx.value) } },
+                    onPinchProgress = { scale, _, _ ->
+                        val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                        if (!pinchFlip.isActive) return@PinchGridSpanListener
+                        val dir = if (scale >= 1f) 1 else -1
+                        val targetLevel = (currentLevel.value + dir).coerceIn(0, 2)
+                        val progress = if (targetLevel == currentLevel.value) {
+                            0f
+                        } else {
+                            PinchFlipController.progressFor(scale)
+                        }
+                        // 目标列数用 rv 实际宽度算，与 update 提交口径一致，避免首帧屏宽兜底值
+                        // 与 pxToDp(rv.width) 的舍入差异导致预览列数与提交列数不一致。
+                        val widthDp = rv.context.pxToDp(rv.width)
+                        pinchFlip.update(
+                            rv,
+                            targetLevel,
+                            targetCols(widthDp, targetLevel),
+                            progress,
+                        )
+                    },
+                    onPinchEnd = {
+                        val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                        if (pinchFlip.isActive) {
+                            val target = pinchFlip.currentTargetLevel
+                            if (pinchFlip.shouldCommit() && target != currentLevel.value) {
+                                // 收尾只跑剩下的那一段，别让手感发黏
+                                val remaining = 1f - pinchFlip.currentProgress
+                                flipDurationMs =
+                                    (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
+                                pinchFlip.release()
+                                level = target
+                            } else {
+                                pinchFlip.settle(rv)
+                            }
+                        }
+                    },
                 )
+                setOnTouchListener(pinch)
+                addOnItemTouchListener(pinch)
             }
         },
         update = { rv ->
             val lm = rv.layoutManager as? GridLayoutManager ?: return@AndroidView
             if (rv.width <= 0) return@AndroidView
-            val target = targetCols(rv.context.pxToDp(rv.width), level)
+            val widthDp = rv.context.pxToDp(rv.width)
+            val target = targetCols(widthDp, level)
             if (target != lm.spanCount) {
-                animateSpanChange(rv, lm, decoration, target)
+                animateSpanChange(rv, lm, decoration, target, flipDurationMs)
+                flipDurationMs = FLIP_DURATION_MS
             }
         },
         modifier = modifier,
@@ -179,6 +228,9 @@ private class FolderAdapter(
 
     private val folders = mutableListOf<Folder>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    /** 进度驱动 FLIP 控制器；捏合中新绑定的 item 需要补上当前进度的 transform。 */
+    var pinchFlip: PinchFlipController? = null
 
     fun submit(list: List<Folder>) {
         folders.clear()
@@ -281,6 +333,11 @@ private class FolderAdapter(
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
+        // 同 FileGrid：清掉 FLIP 动画残留的 transform
+        resetFlipTransform(holder.itemView)
+        // 捏合进行中新绑定的 item 要补上当前进度的 transform，否则会以未变换的样子闪现
+        pinchFlip?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
+
         val folder = folders[position]
         holder.name.text = folder.name
         holder.count.text = folder.imageCount.toString()

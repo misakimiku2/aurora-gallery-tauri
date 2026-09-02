@@ -54,6 +54,10 @@ pub struct Folder {
 }
 
 /// 图片。
+///
+/// `size` / `created_at` / `format` 供 2.3 分组标题使用（分组规则对齐 React 版
+/// `useFileSearch.ts`：`type` 取 `format.toUpperCase()`，`date` 取 `created_at` 的
+/// `YYYY-MM`）；`modified_at` 是列表排序基准（`list_images` 的 ORDER BY 字段）。
 #[derive(uniffi::Record)]
 pub struct Image {
     pub id: String,
@@ -61,6 +65,14 @@ pub struct Image {
     pub content_uri: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    /// 文件大小（字节），列表模式展示用。
+    pub size: i64,
+    /// 添加时间（Unix 秒），date 分组用。
+    pub created_at: i64,
+    /// 修改时间（Unix 秒），列表排序基准。
+    pub modified_at: i64,
+    /// MIME 子类型（jpeg / png / webp…），type 分组用。
+    pub format: Option<String>,
 }
 
 /// 初始化数据库（Kotlin 端启动时调用，指向 filesDir 下的 db 文件）。
@@ -171,7 +183,8 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
 
     let mut stmt = conn
         .prepare(
-            "SELECT file_id, name, path, width, height FROM file_index \
+            "SELECT file_id, name, path, width, height, size, created_at, modified_at, format \
+             FROM file_index \
              WHERE parent_id = ?1 AND file_type = 'Image' ORDER BY modified_at DESC",
         )
         .expect("prepare list_images");
@@ -183,6 +196,10 @@ pub fn list_images(folder_id: String) -> Vec<Image> {
                 content_uri: row.get(2)?,
                 width: row.get(3)?,
                 height: row.get(4)?,
+                size: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                created_at: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                modified_at: row.get::<_, Option<i64>>(7)?.unwrap_or(0),
+                format: row.get(8)?,
             })
         })
         .expect("query list_images");
