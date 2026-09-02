@@ -22,7 +22,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isDarkTheme } from '../utils/folderTilesRenderer';
 import { drawHoverFrame, drawBadge, loadImages, type IconCategory, type IconTheme } from '../utils/spriteComposer';
 import { getFull, getStaticBody, getBack, getFront } from '../utils/spriteCache';
-import { getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge/state';
+import { subscribeScrollState } from '../api/tauri-bridge/state';
 
 interface Folder3DIconCanvasProps {
   previewSrcs?: string[];
@@ -50,11 +50,12 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
     const countRef = useRef(count);
     const folderIdRef = useRef(folderId);
     const catRef = useRef<IconCategory>(category === 'book' ? 'book' : category === 'sequence' ? 'sequence' : 'general');
-    const scrollActiveRef = useRef(getGlobalScrollState() !== 'idle');
     const controllerRef = useRef<AbortController | null>(null);
     const retryCountRef = useRef(0);
     const retryTimerRef = useRef<number | null>(null);
     const unmountedRef = useRef(false);
+    // 最近一帧完整位图：尺寸变化时用作等比缩放过渡，避免缩略图闪白（占位卡为白色）
+    const lastFullRef = useRef<ImageBitmap | null>(null);
     // 预览图解码结果（首次悬停才触发）
     const imgsRef = useRef<(HTMLImageElement | null)[]>([]);
     const imgsReadyRef = useRef(false);
@@ -74,6 +75,9 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
     const drawFull = useCallback((bmp: ImageBitmap, S: number) => {
       const c = canvasRef.current;
       if (!c) return;
+      // 画布已被重分配（尺寸变化）：丢弃旧尺寸位图，避免画布上只出现左上角内容
+      if (sizeRef.current !== S) return;
+      lastFullRef.current = bmp; // 记录最近一帧完整位图，供尺寸变化时过渡缩放
       const ctx = c.getContext('2d');
       if (!ctx) return;
       ctx.drawImage(bmp, 0, 0, S, S);
@@ -92,11 +96,11 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       }
     }, [dpr]);
 
-    // 请求完整位图（真缩略图）。滚动中不入队；未就绪时延迟重试最多 2 次。
+    // 请求完整位图（真缩略图）。滚动中也请求（缩略图滚动时就开始加载）；未就绪时退避重试。
     const requestFull = useCallback(() => {
       const S = sizeRef.current;
       if (S <= 0) return;
-      if (scrollActiveRef.current) return; // 滚动中不请求；滚动停止后由订阅回调补发
+      // 无论滚动与否都先作废在途请求：避免旧尺寸位图被绘到重分配后的画布上（只显示左上角）
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
@@ -112,13 +116,17 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       }).then(full => {
         if (controllerRef.current !== controller || unmountedRef.current) return;
         if (!full) {
-          // 缩略图解码未完成/队列驱逐/单任务超时：延迟重试，就绪后自动补上
-          if (retryCountRef.current < 2) {
+          // 缩略图未就绪（重启后缓存冷/缩略图生成中/解码失败）：指数退避持续重试，
+          // 直到就绪或组件卸载。DOM 版 <img> 会自动重试加载，这里等效复刻，
+          // 避免短暂失败后永久停留在占位灰卡（否则重启后个别文件夹缩略图空白）。
+          const RETRY_DELAYS = [400, 1200, 3000, 6000, 10000, 15000, 20000];
+          if (retryCountRef.current < RETRY_DELAYS.length) {
+            const delay = RETRY_DELAYS[retryCountRef.current];
             retryCountRef.current++;
             retryTimerRef.current = window.setTimeout(() => {
               retryTimerRef.current = null;
               if (!unmountedRef.current) requestFull();
-            }, 400);
+            }, delay);
           }
           return;
         }
@@ -132,6 +140,12 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       if (S <= 0) return;
       const c = canvasRef.current;
       if (!c) return;
+      // 尺寸变化：终止基于旧尺寸的悬停动画帧（继续绘制会污染新画布），进度复位
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      progressRef.current = 0;
       sizeRef.current = S;
       const res = Math.max(2, dpr);
       const Sd = Math.max(1, Math.round(S * CANVAS_SCALE));
@@ -145,8 +159,15 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
         try { ctx.imageSmoothingQuality = 'high'; } catch { /* 旧实现 */ }
         const pad = (Sd - S) / 2;
         ctx.setTransform(res, 0, 0, res, pad * res, pad * res);
+        // 过渡显示：优先把最近一帧完整位图（含缩略图）等比缩放到新尺寸，避免尺寸变化时
+        // 缩略图闪白（占位卡为白色）；无历史位图（首次加载）才回退 staticBody 占位。
+        // 新尺寸的完整位图由 requestFull 异步补上（cache 命中即微任务内返回）。
+        if (lastFullRef.current) {
+          ctx.drawImage(lastFullRef.current, 0, 0, S, S);
+        } else {
+          drawStatic(S);
+        }
       }
-      drawStatic(S);
       retryCountRef.current = 0;
       requestFull();
     }, [dpr, drawStatic, requestFull]);
@@ -171,11 +192,9 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
         if (sizeRef.current > 0) redrawAtSize(sizeRef.current);
       });
       mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-      // 滚动状态：滚动中不入队；恢复 idle 时立即补全当前卡
+      // 滚动状态：恢复 idle 时补发一次（滚动中已即时请求，此处兜底刷新）
       const unsub = subscribeScrollState(s => {
-        const active = s !== 'idle';
-        scrollActiveRef.current = active;
-        if (!active && sizeRef.current > 0) requestFull();
+        if (s === 'idle' && sizeRef.current > 0) requestFull();
       });
       return () => {
         ro.disconnect();
@@ -191,6 +210,7 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
     // previewSrcs 变化（缩略图升级/就绪）或 folderId/count 变化：重新请求 full
     const previewKey = (previewSrcs || []).filter(s => !!s).slice(0, 3).join('|');
     useEffect(() => {
+      retryCountRef.current = 0; // 图源变化：重置退避重试预算
       if (sizeRef.current > 0) requestFull();
     }, [folderId, count, previewKey, requestFull]);
 

@@ -3,13 +3,13 @@
 //  - 图层缓存：back（后板）/ front（前板+图标）按 (category, theme, size, dpr) 全局缓存，
 //    同步合成，滚动瞬间兜底用；shell 由 back+front 组合同步合成（单层贴图最省）。
 //  - full 缓存：每文件夹一张完整位图（后板+堆叠预览卡+前板+角标），有界 LRU。
-//  - 合成调度：复用 folderTilesRenderer 的串行 idle 队列模式——滚动中只排队不执行，
-//    滚动停止延迟 IDLE_DELAY 排空、每张让出主线程、同 key 只合成一次、可 Abort 取消；
-//    队列被打断（滚动状态未复位）时用 RETRY 兜底重排，保证最终排空。
+//  - 合成调度：串行队列 + macrotask 让出——滚动中也持续合成（缩略图滚动时即开始加载），
+//    每张让出主线程、同 key 只合成一次、可 Abort 取消；单任务超时强制跳过 + 心跳兜底，
+//    保证队列任何情况下最终排空。
 
 import { composeStaticBody, composeBack, composeFront, composeFull, isSpriteSupported, type IconCategory, type IconTheme } from './spriteComposer';
 import { spriteWorkerClient } from './spriteWorkerClient';
-import { getGlobalScrollState, subscribeScrollState } from '../api/tauri-bridge/state';
+import { subscribeScrollState } from '../api/tauri-bridge/state';
 
 export const isSpriteSupportedSafe = isSpriteSupported;
 
@@ -156,8 +156,6 @@ export const spriteStats = {
 export const spriteQueueLen = () => pendingQueue.length;
 export const spriteCacheSize = () => fullCache.size;
 
-const isScrollActive = (): boolean => getGlobalScrollState() !== 'idle';
-
 // ---------- Worker 合成接入 ----------
 // full 合成优先交给 Web Worker（预览图解码 + OffscreenCanvas 绘制全部离主线程），
 // 主线程只保留排队/门控与结果落缓存。worker 不可用（不支持/资源无法解码）时回退主线程。
@@ -187,7 +185,7 @@ const composeInline = (
     task.size,
     res,
     back && front ? { back, front } : undefined,
-    () => isScrollActive()
+    undefined // 滚动中不取消：允许滚动同时继续加载缩略图（队列串行 + macrotask 让出，避免抢占滚动帧）
   );
 };
 
@@ -247,6 +245,18 @@ const runTask = async (task: PendingTask): Promise<void> => {
         size: task.size,
         dpr: res,
       }).catch(() => null);
+      // Worker 解码失败（如 asset:// 自定义协议不被 worker fetch 支持）但主线程能成：
+      // 回退主线程内联合成，并永久禁用 worker（避免后续每次都走失败路径）。
+      // 若主线程也失败（缩略图尚未就绪/冷却中）则保持 worker，等待组件退避重试。
+      if (!bmp && srcs.length > 0) {
+        const inline = await composeInline(task, res).catch(() => null);
+        if (inline) {
+          console.warn('[sprite] Worker 无法解码当前资源协议，已回退主线程合成');
+          spriteWorkerClient.disable();
+          workerReady = false;
+          bmp = inline;
+        }
+      }
     } else {
       bmp = await composeInline(task, res);
     }
@@ -283,8 +293,9 @@ const pump = () => {
       return;
     }
   }
-  // 滚动中绝不启动新合成（排队等待静止）
-  if (isScrollActive() || pendingQueue.length === 0) return;
+  // 队列非空即启动（滚动中也继续合成，缩略图滚动时就开始加载；
+  // 串行 + 每张让出一个 macrotask，保证不连续占用主线程、不抢占滚动帧）
+  if (pendingQueue.length === 0) return;
   // 剔除已取消（组件卸载）的任务，避免空转
   let task: PendingTask | null = null;
   while (pendingQueue.length > 0) {
@@ -301,14 +312,14 @@ const pump = () => {
   runTask(task).finally(() => {
     if (current?.task !== task) return;
     current = null;
-    // 静止且队列非空：下一 macrotask 续泵，让浏览器有机会插帧渲染
-    if (!isScrollActive() && pendingQueue.length > 0) {
+    // 队列非空：下一 macrotask 续泵，让浏览器有机会插帧渲染
+    if (pendingQueue.length > 0) {
       pumpTimer = window.setTimeout(pump, 0);
     }
   });
 };
 
-// 心跳：超时强制跳 + 链断裂兜底（不主动抢滚动帧，仅当无合成进行时尝试）
+// 心跳：超时强制跳 + 链断裂兜底（仅当无合成进行时尝试；滚动中也继续泵，支持滚动时加载）
 setInterval(() => {
   if (pendingQueue.length === 0) return;
   if (current) {
@@ -316,7 +327,7 @@ setInterval(() => {
     return;
   }
   if (pumpTimer !== null) return;
-  if (!isScrollActive()) pump();
+  pump();
 }, HEARTBEAT_MS);
 
 subscribeScrollState(state => {
@@ -368,7 +379,7 @@ export const getFull = (p: FullParams): Promise<ImageBitmap | null> => {
       pendingQueue.push(fresh);
       return new Promise(resolve => {
         fresh.resolvers.push(resolve);
-        if (!isScrollActive() && !current && pumpTimer === null) pump();
+        if (!current && pumpTimer === null) pump();
       });
     }
     return new Promise(resolve => existing.resolvers.push(resolve));
@@ -380,7 +391,7 @@ export const getFull = (p: FullParams): Promise<ImageBitmap | null> => {
   }
   return new Promise(resolve => {
     pendingQueue.push({ ...p, key, resolvers: [resolve] });
-    if (!isScrollActive() && !current && pumpTimer === null) pump();
+    if (!current && pumpTimer === null) pump();
   });
 };
 

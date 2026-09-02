@@ -1,9 +1,13 @@
-// 经典 3D 文件夹图标的 Canvas 预合成引擎（对应 Folder3DIcon variant='classic' 的 DOM 渲染）。
+// 经典 3D 文件夹图标的 Canvas 预合成引擎。
 //
-// 目标：把「后板 + 3D 透视前板 + 图标 + 角标 + 三张堆叠预览卡」预先绘制成单张位图，
+// 目标：把「后板 + 前板 + 图标 + 角标 + 三张堆叠预览卡」预先绘制成单张位图，
 //       运行时只贴一张图 → 每个文件夹卡片 1 个合成层，滚动成本与图片卡同级。
 // 悬停：用 drawHoverFrame 逐帧复刻 DOM 的 CSS transition（300ms ease + 扇形摊开 + 容器位移放大），
 //       与静止位图共用同一 drawCard / drawBadge 实现，保证静止↔动画结构上无缝衔接。
+//
+// 背板/前板形状与 icon.svg 完全一致（含圆弧圆角与透视梯形；尺寸/3D 透视已烘焙进路径，
+// 绘制时不再做二次投影或矩阵变换）。背板纯色、前板垂直渐变（0→front，1→back），
+// 与 icon.svg 的 linearGradient 一致；两板均无投影/描边。
 //
 // 关键约束（与 folderTilesRenderer 不同）：
 //   - 导出一律走 OffscreenCanvas.transferToImageBitmap（不检查 origin-clean）。
@@ -27,16 +31,45 @@ const COLORS: Record<IconCategory, { backLight: string; backDark: string; front:
   sequence: { backLight: '#9333ea', backDark: '#a855f7', front: '#c084fc' },
 };
 
+// 背板 / 前板路径直接取自 icon.svg 的 id="back" / id="front" 的 d 属性。
+// 新版 icon.svg 已将尺寸/3D 透视烘焙进路径：无 transform，坐标即 viewBox 0 0 67.733332 67.733333 空间。
 const BACK_PATH =
-  'M5,20 L35,20 L45,30 L95,30 C97,30 99,32 99,35 L99,85 C99,88 97,90 95,90 L5,90 C3,90 1,88 1,85 L1,25 C1,22 3,20 5,20 Z';
+  'm 2.1518046,14.812232 v 2.645833 l 0,40.849487 0,5.820833 a 1.5875,1.5875 45 0 0 1.5875,1.5875 H 63.994029 a 1.5875,1.5875 135 0 0 1.5875,-1.5875 l 0,-43.49532 a 1.5875,1.5875 45 0 0 -1.5875,-1.5875 H 18.780985 a 3.1031383,3.1031383 27.093326 0 1 -2.51642,-1.287348 l -2.342339,-3.246138 a 3.1031383,3.1031383 27.093326 0 0 -2.51642,-1.287347 l -7.6665014,0 a 1.5875,1.5875 135 0 0 -1.5875,1.5875 z';
 const FRONT_PATH =
-  'M0,15 Q0,12 3,12 L97,12 Q100,12 100,15 L100,60 Q100,65 95,65 L5,65 Q0,65 0,60 Z';
+  'm 1.7507975,32.240139 c -0.85398955,5e-6 -1.52498916,0.730941 -1.45210772,1.581815 L 2.0164144,64.13407 c 0.076516,0.894612 0.8250135,1.58182 1.7228922,1.581815 H 63.994027 c 0.897879,5e-6 1.646376,-0.687203 1.722892,-1.581815 l 1.717725,-30.312116 c 0.07288,-0.850874 -0.598118,-1.58181 -1.452108,-1.581815 z';
 
-// 3D 透视（CSS perspective(800px) rotateX(-10deg)，transform-origin: bottom）
-const PERSPECTIVE = 800;
-const ROTATE_X = -10; // 度
-const COS = Math.cos((ROTATE_X * Math.PI) / 180); // 0.98481
-const SIN = Math.sin((ROTATE_X * Math.PI) / 180); // -0.17365
+// icon.svg 几何常量（viewBox 尺寸 / 前板梯形与渐变坐标，均已烘焙进路径）
+const SVG_SIZE = 67.733333;
+// 前板梯形：顶部 y≈32.24(0.476S)、底部 y≈65.72(0.970S)；右边缘顶部 x≈0.974S → 底部 x≈0.945S
+const FRONT_TOP_F = 0.476;
+const FRONT_BOTTOM_F = 0.9703;
+const FRONT_RIGHT_TOP_F = 0.9741;
+const FRONT_RIGHT_BOTTOM_F = 0.9448;
+// 图标中心 = 前板质心 ≈ (0.5S, 0.726S)，取 0.723S（略上移为底部角标留位）
+const FRONT_CENTER_Y_F = 0.723;
+// 前板垂直渐变（icon.svg linearGradient13：userSpaceOnUse，2 段 #60a5fa→#2563eb，y 37.65 → 77.36）
+const GRAD_Y1 = 37.648235;
+const GRAD_Y2 = 77.358284;
+
+// ---------- 数量角标位置规则 ----------
+// 默认尺寸（含）以上：沿用固定 12px 右间距 / 8px 下间距（不偏移）。
+// 低于默认尺寸：角标向右线性偏移，最小尺寸最多右移 BADGE_MAX_SHIFT px，
+// 补偿固定像素边距在小图标上把角标推向中间的问题。
+const BADGE_DEFAULT_SIZE = 160; // 图标默认尺寸（S ≥ 此值不偏移）
+const BADGE_MIN_SIZE = 80;      // 图标最小尺寸（S ≤ 此值偏移达到上限）
+const BADGE_MAX_SHIFT = 15;     // 最小尺寸时的最大右移量（px）
+
+// ---------- 图标整体变换 ----------
+// 新版 icon.svg 已将尺寸烘焙进路径，故两系数为 1.0（不缩放），canvas 渲染 = SVG 原生大小。
+// 如需再次整体等比放大/竖直拉高，调整以下系数即可（作用于背板/前板/预览卡/图标/角标全部元素）。
+const ICON_SCALE = 1; // 等比放大倍数
+const ICON_STRETCH_Y = 1; // 竖直拉长系数（在等比基础上再纵向拉伸）
+
+const applyIconTransform = (ctx: Ctx2D, S: number) => {
+  ctx.translate(S / 2, S / 2);
+  ctx.scale(ICON_SCALE, ICON_SCALE * ICON_STRETCH_Y);
+  ctx.translate(-S / 2, -S / 2);
+};
 
 // 堆叠态（静止）与悬停扇形态（cardBase / cardHover）。tx/ty 为固定像素（px）；
 // CARD_FAN 的 tx/ty 为相对卡片尺寸（w=0.70S × h=0.60S）的系数。
@@ -125,55 +158,143 @@ const _ease = (() => {
 
 export const easeCss = (t: number) => _ease(Math.min(1, Math.max(0, t)));
 
-// 把 SVG path 命令字符串解析采样为点集（处理 M/L/Q/C/Z，Q/C 按步长细分）
-const pathToPoints = (d: string, curveSamples = 10): number[][] => {
-  const nums = d.match(/[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?/g)?.map(Number) ?? [];
-  const cmds = d.match(/[MmLlQqCcZz]/g) ?? [];
+// SVG 圆弧（endpoint → center 参数化）采样为点集，支持 rx/ry/旋转/large-arc/sweep。
+const arcToPoints = (
+  x1: number, y1: number,
+  rx: number, ry: number,
+  phiDeg: number, largeArc: number, sweep: number,
+  x2: number, y2: number,
+  samples: number
+): number[][] => {
+  if (Math.abs(x1 - x2) < 1e-9 && Math.abs(y1 - y2) < 1e-9) return [];
+  rx = Math.abs(rx); ry = Math.abs(ry);
+  const phi = (phiDeg * Math.PI) / 180;
+  const cosPhi = Math.cos(phi), sinPhi = Math.sin(phi);
+  // 平移旋转到与轴对齐的坐标系
+  const dx = (x1 - x2) / 2, dy = (y1 - y2) / 2;
+  const x1p = cosPhi * dx + sinPhi * dy;
+  const y1p = -sinPhi * dx + cosPhi * dy;
+  // 半径过小时按比例放大
+  const lam = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry);
+  if (lam > 1) {
+    const s = Math.sqrt(lam);
+    rx *= s; ry *= s;
+  }
+  // 计算圆心
+  const num = rx * rx * ry * ry - rx * rx * y1p * y1p - ry * ry * x1p * x1p;
+  const den = rx * rx * y1p * y1p + ry * ry * x1p * x1p;
+  let radicand = den === 0 ? 0 : num / den;
+  if (radicand < 0) radicand = 0;
+  const coef = (largeArc === sweep ? -1 : 1) * Math.sqrt(radicand);
+  const cxp = (coef * rx * y1p) / ry;
+  const cyp = (coef * -ry * x1p) / rx;
+  // 起始角与扫过角（angle(u,v) = atan2(u×v, u·v)）
+  const ux = (x1p - cxp) / rx, uy = (y1p - cyp) / ry;
+  const vx = (-x1p - cxp) / rx, vy = (-y1p - cyp) / ry;
+  const startAngle = Math.atan2(uy, ux);
+  let deltaAngle = Math.atan2(ux * vy - uy * vx, ux * vx + uy * vy);
+  if (!sweep && deltaAngle > 0) deltaAngle -= 2 * Math.PI;
+  else if (sweep && deltaAngle < 0) deltaAngle += 2 * Math.PI;
+  // 采样点：先画旋转坐标系内的圆，再旋转回原始坐标系并平移到中点半程
   const pts: number[][] = [];
-  let ci = 0; // 命令索引
-  let ni = 0; // 数字索引
-  let cur: [number, number] = [0, 0];
+  const n = Math.max(2, Math.ceil((samples * Math.abs(deltaAngle)) / (Math.PI / 2)));
+  for (let i = 1; i <= n; i++) {
+    const t = startAngle + (deltaAngle * i) / n;
+    const ex = cxp + rx * Math.cos(t);
+    const ey = cyp + ry * Math.sin(t);
+    pts.push([
+      cosPhi * ex - sinPhi * ey + (x1 + x2) / 2,
+      sinPhi * ex + cosPhi * ey + (y1 + y2) / 2,
+    ]);
+  }
+  return pts;
+};
 
-  const readPair = (): [number, number] => {
-    const x = nums[ni++], y = nums[ni++];
-    return [x, y];
+// 把 SVG path 命令字符串解析采样为点集。
+// 支持绝对/相对命令 M/m L/l H/h V/v Q/q C/c A/a Z/z（Q/C 按步长细分、A 走 arcToPoints），
+// 并处理命令后的隐式参数重复（如 "m x,y x2,y2" 的隐式 lineto）。
+const pathToPoints = (d: string, curveSamples = 10): number[][] => {
+  const tokens: (string | number)[] = [];
+  const re = /[MmLlHhVvQqCcAaZz]|[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(d))) {
+    const t = m[0];
+    tokens.push(/^[MmLlHhVvQqCcAaZz]$/.test(t) ? t : Number(t));
+  }
+  const pts: number[][] = [];
+  let i = 0;
+  let cur: [number, number] = [0, 0];
+  let start: [number, number] = [0, 0];
+
+  const nextIsNumber = () => typeof tokens[i] === 'number';
+  const readNum = () => (typeof tokens[i] === 'number' ? (tokens[i++] as number) : 0);
+  const readPair = (rel: boolean): [number, number] => {
+    const x = readNum(), y = readNum();
+    return rel ? [cur[0] + x, cur[1] + y] : [x, y];
   };
 
-  while (ci < cmds.length) {
-    const c = cmds[ci++];
-    if (c === 'M') {
-      cur = readPair();
+  while (i < tokens.length) {
+    const c = tokens[i++] as string;
+    const rel = c === c.toLowerCase();
+    const up = c.toUpperCase();
+    if (up === 'Z') {
+      cur = [start[0], start[1]];
+    } else if (up === 'M') {
+      cur = readPair(rel);
       pts.push([...cur]);
-    } else if (c === 'L') {
-      cur = readPair();
-      pts.push([...cur]);
-    } else if (c === 'Q') {
-      const [cx, cy] = readPair();
-      const [ex, ey] = readPair();
-      for (let i = 1; i <= curveSamples; i++) {
-        const t = i / curveSamples;
-        const mt = 1 - t;
-        pts.push([
-          mt * mt * cur[0] + 2 * mt * t * cx + t * t * ex,
-          mt * mt * cur[1] + 2 * mt * t * cy + t * t * ey,
-        ]);
+      start = [cur[0], cur[1]];
+      while (nextIsNumber()) { cur = readPair(rel); pts.push([...cur]); }
+    } else if (up === 'L') {
+      while (nextIsNumber()) { cur = readPair(rel); pts.push([...cur]); }
+    } else if (up === 'H') {
+      while (nextIsNumber()) {
+        const x = readNum();
+        cur = rel ? [cur[0] + x, cur[1]] : [x, cur[1]];
+        pts.push([...cur]);
       }
-      cur = [ex, ey];
-    } else if (c === 'C') {
-      const [c1x, c1y] = readPair();
-      const [c2x, c2y] = readPair();
-      const [ex, ey] = readPair();
-      for (let i = 1; i <= curveSamples; i++) {
-        const t = i / curveSamples;
-        const mt = 1 - t;
-        pts.push([
-          mt * mt * mt * cur[0] + 3 * mt * mt * t * c1x + 3 * mt * t * t * c2x + t * t * t * ex,
-          mt * mt * mt * cur[1] + 3 * mt * mt * t * c1y + 3 * mt * t * t * c2y + t * t * t * ey,
-        ]);
+    } else if (up === 'V') {
+      while (nextIsNumber()) {
+        const y = readNum();
+        cur = rel ? [cur[0], cur[1] + y] : [cur[0], y];
+        pts.push([...cur]);
       }
-      cur = [ex, ey];
+    } else if (up === 'Q') {
+      while (nextIsNumber()) {
+        const [c1x, c1y] = readPair(rel);
+        const [ex, ey] = readPair(rel);
+        for (let k = 1; k <= curveSamples; k++) {
+          const t = k / curveSamples;
+          const mt = 1 - t;
+          pts.push([
+            mt * mt * cur[0] + 2 * mt * t * c1x + t * t * ex,
+            mt * mt * cur[1] + 2 * mt * t * c1y + t * t * ey,
+          ]);
+        }
+        cur = [ex, ey];
+      }
+    } else if (up === 'C') {
+      while (nextIsNumber()) {
+        const [c1x, c1y] = readPair(rel);
+        const [c2x, c2y] = readPair(rel);
+        const [ex, ey] = readPair(rel);
+        for (let k = 1; k <= curveSamples; k++) {
+          const t = k / curveSamples;
+          const mt = 1 - t;
+          pts.push([
+            mt * mt * mt * cur[0] + 3 * mt * mt * t * c1x + 3 * mt * t * t * c2x + t * t * t * ex,
+            mt * mt * mt * cur[1] + 3 * mt * mt * t * c1y + 3 * mt * t * t * c2y + t * t * t * ey,
+          ]);
+        }
+        cur = [ex, ey];
+      }
+    } else if (up === 'A') {
+      while (nextIsNumber()) {
+        const rx = readNum(), ry = readNum(), rot = readNum(), laf = readNum(), sf = readNum();
+        const [ex, ey] = readPair(rel);
+        pts.push(...arcToPoints(cur[0], cur[1], rx, ry, rot, laf, sf, ex, ey, curveSamples));
+        cur = [ex, ey];
+      }
     }
-    // Z 忽略（闭合回到起点，fill 自动闭合）
   }
   return pts;
 };
@@ -211,74 +332,54 @@ const drawCover = (
   ctx.drawImage(img, (iw - sw) / 2, (ih - sh) / 2, sw, sh, dx, dy, dw, dh);
 };
 
-// ---------- 3D 透视投影 ----------
-// 前板局部坐标 y∈[0, 0.60S]，底边中点 O=(S/2, 0.60S)。返回图标坐标（已加 0.40S 平移）。
-const projectPoint = (x: number, y: number, S: number): [number, number] => {
-  const xr = x - S / 2;
-  const yr = y - 0.6 * S;
-  const y1 = yr * COS;
-  const z = yr * SIN;
-  const f = PERSPECTIVE / (PERSPECTIVE - z);
-  return [S / 2 + xr * f, 0.6 * S + y1 * f + 0.4 * S];
+// ---------- 后板 / 前板（形状取自 icon.svg，已烘焙，直接缩放平铺绘制） ----------
+// 把 icon.svg 路径点（viewBox 空间，无 transform）缩放到 size 画布
+const svgPathToCanvas = (d: string, S: number, samples: number): number[][] => {
+  const k = S / SVG_SIZE;
+  return pathToPoints(d, samples).map(([x, y]) => [x * k, y * k]);
 };
 
-// 元素中心 yc（前板局部）处的仿射近似：scaleX = f0, scaleY = COS·f0，原点在 O
-const affineAt = (yc: number, S: number): { f0: number; sy: number } => {
-  const yr = yc - 0.6 * S;
-  const z = yr * SIN;
-  const f0 = PERSPECTIVE / (PERSPECTIVE - z);
-  return { f0, sy: COS * f0 };
-};
-
-// ---------- 后板 / 前板 ----------
-const drawBackPlate = (ctx: Ctx2D, S: number, color: string, theme: IconTheme) => {
-  const pts = pathToPoints(BACK_PATH, 10).map(([x, y]) => [x * S / 100, y * S / 100]);
+// 背板：纯色实心（无投影/描边，与 icon.svg 一致）
+const drawBackPlate = (ctx: Ctx2D, S: number, color: string) => {
+  const pts = svgPathToCanvas(BACK_PATH, S, 6);
   ctx.save();
+  applyIconTransform(ctx, S);
   ctx.beginPath();
   pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.closePath();
-  // drop-shadow-sm（仅 light；dark:drop-shadow-none）
-  if (theme === 'light') {
-    ctx.filter = 'drop-shadow(0 1px 1px rgba(0,0,0,0.05))';
-  }
   ctx.fillStyle = color;
   ctx.fill();
   ctx.restore();
 };
 
-const drawFrontPlate = (ctx: Ctx2D, S: number, color: string, theme: IconTheme) => {
-  // 前板路径在 viewBox 0..100 × 0..65，缩放 + 平移到前板局部（0..S × 0..0.60S），再逐点投影
-  const pts = pathToPoints(FRONT_PATH, 8).map(([x, y]) => projectPoint((x / 100) * S, (y / 65) * 0.6 * S, S));
+// 前板：垂直渐变（0→front，1→back），对应 icon.svg linearGradient13（2 段）
+const drawFrontPlate = (ctx: Ctx2D, S: number, front: string, back: string) => {
+  const pts = svgPathToCanvas(FRONT_PATH, S, 6);
   ctx.save();
+  applyIconTransform(ctx, S);
   ctx.beginPath();
   pts.forEach(([x, y], i) => (i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y)));
   ctx.closePath();
-  if (theme === 'light') {
-    // drop-shadow-lg = Tailwind 两层
-    ctx.filter = 'drop-shadow(0 10px 8px rgba(0,0,0,0.04)) drop-shadow(0 4px 3px rgba(0,0,0,0.1))';
-  }
-  ctx.fillStyle = color;
+  const k = S / SVG_SIZE;
+  const grad = ctx.createLinearGradient(0, GRAD_Y1 * k, 0, GRAD_Y2 * k);
+  grad.addColorStop(0, front);
+  grad.addColorStop(1, back);
+  ctx.fillStyle = grad;
   ctx.fill();
   ctx.restore();
 };
 
-// ---------- lucide 图标（Path2D 同步绘制，在透视仿射内） ----------
+// ---------- lucide 图标（Path2D 同步绘制，平铺于前板质心） ----------
 const drawIcon = (
   ctx: Ctx2D,
   S: number,
   icon: 'Folder' | 'Book' | 'Film',
   theme: IconTheme
 ) => {
-  const { f0, sy } = affineAt(0.3 * S, S); // 图标中心在前板局部 y=0.30S
   ctx.save();
-  // 前板局部 → 图标坐标，再以 O 为原点应用仿射（scaleX=f0, scaleY=sy）
-  ctx.translate(0, 0.4 * S);
-  ctx.translate(S / 2, 0.6 * S);
-  ctx.scale(f0, sy);
-  ctx.translate(-S / 2, -0.6 * S);
-  // 图标以 (S/2, 0.30S) 为中心、32px 渲染
+  applyIconTransform(ctx, S);
   const iconSize = 32;
-  ctx.translate(S / 2 - iconSize / 2, 0.3 * S - iconSize / 2);
+  ctx.translate(S / 2 - iconSize / 2, FRONT_CENTER_Y_F * S - iconSize / 2);
   ctx.globalAlpha = theme === 'light' ? 0.28 : 0.32; // opacity-40 × 颜色 alpha
   ctx.strokeStyle = theme === 'light' ? '#1e3a8a' : '#ffffff';
   ctx.lineWidth = 1.5;
@@ -292,25 +393,28 @@ const drawIcon = (
   ctx.restore();
 };
 
-// ---------- 数量角标（前板内 bottom-2 right-3，含透视仿射） ----------
+// ---------- 数量角标（前板内 bottom-2 right-3，平铺绘制） ----------
 // 导出供组件在 staticBody 上即时补画（不依赖异步 full 队列）
 export const drawBadge = (ctx: Ctx2D, S: number, count: number) => {
   const fs = 9;
   ctx.save();
+  applyIconTransform(ctx, S);
   ctx.font = `700 ${fs}px system-ui, -apple-system, 'Segoe UI', sans-serif`;
   const tw = ctx.measureText(String(count)).width;
   const padX = 6, padY = 2;
   const bh = fs * 1.6;
   const bw = tw + padX * 2;
-  const bx = S - 12 - bw; // right-3 = 12px
-  const by = 0.6 * S - 8 - bh; // bottom-2 = 8px（前板局部）
-  // 前板内元素受透视影响，角标中心 yc 处仿射
-  const yc = by + bh / 2;
-  const { f0, sy } = affineAt(yc, S);
-  ctx.translate(0, 0.4 * S);
-  ctx.translate(S / 2, 0.6 * S);
-  ctx.scale(f0, sy);
-  ctx.translate(-S / 2, -0.6 * S);
+  // 前板底部 8px、右侧 12px（默认规则），右边缘随前板梯形内收
+  const by = FRONT_BOTTOM_F * S - 8 - bh;
+  const fy = (by + bh / 2) / S;
+  const xRight =
+    (FRONT_RIGHT_TOP_F + (FRONT_RIGHT_BOTTOM_F - FRONT_RIGHT_TOP_F) * (fy - FRONT_TOP_F) / (FRONT_BOTTOM_F - FRONT_TOP_F)) * S;
+  let bx = xRight - 12 - bw;
+  // 低于默认尺寸：角标向右偏移，最小尺寸最多右移 BADGE_MAX_SHIFT px（见 BADGE_* 常量）
+  if (S < BADGE_DEFAULT_SIZE) {
+    const t = Math.min(1, Math.max(0, (BADGE_DEFAULT_SIZE - S) / (BADGE_DEFAULT_SIZE - BADGE_MIN_SIZE)));
+    bx += BADGE_MAX_SHIFT * t;
+  }
   ctx.globalAlpha = 1;
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   roundRectPath(ctx, bx, by, bw, bh, bh / 2);
@@ -371,8 +475,10 @@ const getCardBaseBmp = (cardW: number, cardH: number, res: number): ImageBitmap 
 };
 
 // rect 为预览组容器（x,y,w,h）；px 为卡片相对容器的变换参数。占位色用于 imgs 为 null 时。
+// S 为图标尺寸（用于整体放大/上移变换，保持卡片与背板/前板同步缩放）。
 export const drawCard = (
   ctx: Ctx2D,
+  S: number,
   img: HTMLImageElement | ImageBitmap | null,
   rect: { x: number; y: number; w: number; h: number },
   p: CardParams,
@@ -381,6 +487,7 @@ export const drawCard = (
   const cx = rect.x + rect.w / 2;
   const cy = rect.y + rect.h / 2;
   ctx.save();
+  applyIconTransform(ctx, S);
   ctx.globalAlpha = p.alpha;
   // Tailwind transform 语义（translate → rotate → scale，矩阵最左最后应用）绕卡片中心
   ctx.translate(cx, cy);
@@ -433,7 +540,7 @@ export const composeBack = (
   const ctx = off.getContext('2d')!;
   applySmoothing(ctx);
   ctx.scale(dpr, dpr);
-  drawBackPlate(ctx, size, back, theme);
+  drawBackPlate(ctx, size, back);
   return off.transferToImageBitmap();
 };
 
@@ -444,11 +551,12 @@ export const composeFront = (
   dpr = 1
 ): ImageBitmap => {
   const c = COLORS[category] || COLORS.general;
+  const back = theme === 'dark' ? c.backDark : c.backLight;
   const off = new OffscreenCanvas(size * dpr, size * dpr);
   const ctx = off.getContext('2d')!;
   applySmoothing(ctx);
   ctx.scale(dpr, dpr);
-  drawFrontPlate(ctx, size, c.front, theme);
+  drawFrontPlate(ctx, size, c.front, back);
   const icon = category === 'book' ? 'Book' : category === 'sequence' ? 'Film' : 'Folder';
   drawIcon(ctx, size, icon, theme);
   return off.transferToImageBitmap();
@@ -491,9 +599,9 @@ export const composeStaticBody = (
     ctx.drawImage(back, 0, 0, size, size);
     const g = { x: 0.15 * size, y: 0.2 * size, w: 0.7 * size, h: 0.6 * size };
     const placeholders = theme === 'dark' ? PLACEHOLDER_COLORS_DARK : PLACEHOLDER_COLORS;
-    drawCard(ctx, null, g, CARD_BASE[2], placeholders[2]);
-    drawCard(ctx, null, g, CARD_BASE[1], placeholders[1]);
-    drawCard(ctx, null, g, CARD_BASE[0], placeholders[0]);
+    drawCard(ctx, size, null, g, CARD_BASE[2], placeholders[2]);
+    drawCard(ctx, size, null, g, CARD_BASE[1], placeholders[1]);
+    drawCard(ctx, size, null, g, CARD_BASE[0], placeholders[0]);
     const front = composeFront(category, theme, size, dpr);
     ctx.drawImage(front, 0, 0, size, size);
     return off.transferToImageBitmap();
@@ -623,12 +731,12 @@ export const composeFull = async (
 
     if (srcs.length === 0) {
       // 与 DOM 一致：无图时画三张灰阶占位卡（后→中→前）
-      drawCard(ctx, null, g, CARD_BASE[2], placeholders[2]);
-      drawCard(ctx, null, g, CARD_BASE[1], placeholders[1]);
-      drawCard(ctx, null, g, CARD_BASE[0], placeholders[0]);
+      drawCard(ctx, size, null, g, CARD_BASE[2], placeholders[2]);
+      drawCard(ctx, size, null, g, CARD_BASE[1], placeholders[1]);
+      drawCard(ctx, size, null, g, CARD_BASE[0], placeholders[0]);
     } else {
       for (let i = srcs.length - 1; i >= 0; i--) {
-        drawCard(ctx, imgs[i], g, CARD_BASE[i], placeholders[i]);
+        drawCard(ctx, size, imgs[i], g, CARD_BASE[i], placeholders[i]);
       }
     }
 
@@ -696,7 +804,7 @@ export const drawHoverFrame = (
     // from 为固定像素；to 为相对卡片尺寸的系数（fan 时换算成像素）
     const toTx = fan ? to.tx * cardW : from.tx;
     const toTy = fan ? to.ty * cardH : from.ty;
-    drawCard(ctx, imgs[i] ?? null, g, {
+    drawCard(ctx, S, imgs[i] ?? null, g, {
       rotate: from.rotate + (to.rotate - from.rotate) * p,
       tx: from.tx + (toTx - from.tx) * p,
       ty: from.ty + (toTy - from.ty) * p,
