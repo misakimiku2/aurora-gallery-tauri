@@ -11,6 +11,7 @@ import { isSpriteSupportedSafe } from '../utils/spriteCache';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
+import { spriteDiag } from '../utils/spriteDiag';
 
 // 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
 // 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
@@ -137,7 +138,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   });
 
   const previewCountedRef = useRef<Set<string>>(new Set());
-  const [loaded, setLoaded] = useState(previewSrcs.length > 0);
 
   useEffect(() => {
     const cache = getGlobalCache();
@@ -158,65 +158,86 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
   useEffect(() => {
     // 远程封面：直接走远程缩略图 URL，无需本地生成
     if (remoteCoverPaths) return;
-    if (loaded && previewSrcs.length === Math.min(3, localImageChildren.length)) {
-        return;
-    }
-
     // 组件被虚拟化渲染即表示在视口附近，直接加载（不依赖 IntersectionObserver，
     // 否则快速滚动时 observer 回调延迟会导致缩略图永远不加载）
-    if (resourceRoot && localImageChildren.length > 0) {
-      const controller = new AbortController();
-      const loadPreviews = async () => {
-        try {
-          const { getThumbnail } = await import('../api/tauri-bridge');
-          
-          const promises = localImageChildren.map(async (img: FileNode) => {
-              const cache = getGlobalCache();
-              const cached = cache.get(img.path);
-              if (cached) {
-                  return cached;
-              }
+    if (!resourceRoot || localImageChildren.length === 0) return;
+    const expected = Math.min(3, localImageChildren.length);
+    // 已填满 → 无需再请求（previewSrcs 变化会重跑本 effect，未满则继续补）
+    if (previewSrcs.length === expected) return;
 
-              const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, controller.signal, undefined, undefined, img.mediaStoreId);
-              if (url) {
-                  cache.set(img.path, url);
-                  const isUpgrading = isThumbnailUpgrading(img.path);
-                  if (isUpgrading) {
-                    setUpgradingPaths(prev => new Set(prev).add(img.path));
-                  }
-              }
-              return url;
-          });
+    // 修复「重启/硬刷新后图源一直为空 → 灰卡」：
+    //  1) 不再把 AbortSignal 传给 getThumbnail —— effect cleanup / 虚拟化卸载不会中断
+    //     底层缩略图生成。ThumbnailBatcher 生成成功会无条件写入 getGlobalCache，
+    //     卡片滚动回来重新挂载时即可直接命中，无需再次滚动触发。
+    //  2) 只保护本组件的 setState/重试链（alive 标志），卸载后不再 setState。
+    //  3) 启动期后端忙于批量颜色/扫描时可能一次拿不到 → 有界退避补试。
+    let alive = true;
+    let attempt = 0;
+    const RETRY_DELAYS = [1500, 4000, 9000];
 
-          const thumbnails = await Promise.all(promises);
-          
-          if (!controller.signal.aborted) {
-            const validThumbnails = thumbnails.filter((t): t is string => !!t);
-            setPreviewSrcs(prev => {
-                if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
-                    return prev;
+    const loadPreviews = async () => {
+      if (!alive) return;
+      spriteDiag.previewLoad(file.id, 'start', localImageChildren.length, `attempt=${attempt + 1}`);
+      try {
+        const { getThumbnail } = await import('../api/tauri-bridge');
+
+        const promises = localImageChildren.map(async (img: FileNode) => {
+            const cache = getGlobalCache();
+            const cached = cache.get(img.path);
+            if (cached) {
+                return cached;
+            }
+
+            const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, undefined, undefined, undefined, img.mediaStoreId);
+            if (!url) spriteDiag.previewLoad(file.id, 'null', 0, img.path);
+            if (url) {
+                cache.set(img.path, url);
+                const isUpgrading = isThumbnailUpgrading(img.path);
+                if (isUpgrading) {
+                  setUpgradingPaths(prev => new Set(prev).add(img.path));
                 }
-                return validThumbnails;
-            });
-          }
-        } catch (error) {
-          if (!controller.signal.aborted) {
-            console.error('Failed to load folder previews:', error);
-          }
-        } finally {
-          if (!controller.signal.aborted) {
-            setLoaded(true);
-          }
+            }
+            return url;
+        });
+
+        const thumbnails = await Promise.all(promises);
+        if (!alive) return; // 已卸载/被新一轮 effect 取代：只留缓存，不碰 setState
+
+        const validThumbnails = thumbnails.filter((t): t is string => !!t);
+        spriteDiag.previewLoad(file.id, `set 图源 ${validThumbnails.length}/${thumbnails.length}`, validThumbnails.length);
+        setPreviewSrcs(prev => {
+            if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
+                return prev;
+            }
+            return validThumbnails;
+        });
+
+        // 未填满且还在线 → 稍后补试（坏文件返回 null 会被过滤，补试次数有界）
+        if (validThumbnails.length < expected && attempt < RETRY_DELAYS.length) {
+          const delay = RETRY_DELAYS[attempt];
+          attempt++;
+          setTimeout(() => { if (alive) void loadPreviews(); }, delay);
         }
-      };
+      } catch (error) {
+        if (!alive) return;
+        console.error('Failed to load folder previews:', error);
+        spriteDiag.previewLoad(file.id, 'throw', 0, error instanceof Error ? error.message : String(error));
+        if (attempt < RETRY_DELAYS.length) {
+          const delay = RETRY_DELAYS[attempt];
+          attempt++;
+          setTimeout(() => { if (alive) void loadPreviews(); }, delay);
+        }
+      }
+    };
 
-      loadPreviews();
+    void loadPreviews();
 
-      return () => {
-        controller.abort();
-      };
-    }
-  }, [isInView, wasInView, loaded, localImageChildren, resourceRoot, previewSrcs.length, remoteCoverPaths]);
+    return () => {
+      alive = false;
+      // 不再 controller.abort()：底层生成继续，完成后写入 getGlobalCache 供下次挂载命中
+      spriteDiag.previewLoad(file.id, 'abort', 0, 'effect cleanup（不再中断底层生成，结果仍会写缓存）');
+    };
+  }, [isInView, wasInView, localImageChildren, resourceRoot, previewSrcs.length, remoteCoverPaths, file.id]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -306,6 +327,16 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
 
   const hasUpgrading = upgradingPaths.size > 0;
   const effectivePreviewSrcs = remoteCoverPaths ? remoteCoverSrcs : previewSrcs;
+
+  // 诊断：记录上游预览图源数量的变化。用于区分「上游没产出 URL」与「给了 URL 但 canvas 解码失败」，
+  // 两者最终都表现为灰卡占位。只在数量变化时记录，避免高频滚动刷屏。
+  const prevSrcCountRef = useRef<number>(-1);
+  useEffect(() => {
+    const n = effectivePreviewSrcs.length;
+    if (n === prevSrcCountRef.current) return;
+    prevSrcCountRef.current = n;
+    spriteDiag.upstreamSrcs(file.id, n, localImageChildren.length);
+  }, [effectivePreviewSrcs.length, file.id, localImageChildren.length]);
 
   if (isAndroid && imageChildren.length === 0 && !remoteCoverPaths) {
     return (

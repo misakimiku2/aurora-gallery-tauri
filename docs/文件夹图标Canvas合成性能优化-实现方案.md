@@ -1,8 +1,10 @@
-# 文件夹图标 Canvas 合成性能优化 — 实现方案（v3 · 已落地）
+# 文件夹图标 Canvas 合成性能优化 — 实现方案（v4 · 已落地）
 
 > 目标：让 PC 端（Tauri / WebView2）的「经典 3D 文件夹」图标（`Folder3DIcon` `variant='classic'`）渲染成本与「单张图片」相同，彻底解决 2000+ 文件量级下的滚动卡顿；同时保证**图标视觉与悬停动画与当前 DOM 版 100% 一致**（含 3D 透视前板、扇形摊开悬停动画）。
 >
-> 状态：**已实现**。v3 版本文档 = 已落地的实现说明（架构/缓存/调度按真实代码）+ 视觉参数基准 + 本次会话 Bug 修复清单与实测数据，供后续会话继续调优时参考。
+> 状态：**已实现**。v4 = v3 实现说明 + 缩放/悬停/重启灰卡等 Bug 修复（§5 行 8~12）+ 诊断工具（§5.1），供后续会话继续调优时参考。
+>
+> 适用范围：Web 前端。`Folder3DIcon variant='classic'` 的 Canvas 替代实现，在「设置 → 文件夹图标样式」中作为**新增选项** **`canvas`** 提供，默认仍为 `classic`（DOM 版，不动），可随时切换对比与回退。安卓端 Kotlin 原生版与本方案无关。
 >
 > 适用范围：Web 前端。`Folder3DIcon variant='classic'` 的 Canvas 替代实现，在「设置 → 文件夹图标样式」中作为**新增选项** **`canvas`** 提供，默认仍为 `classic`（DOM 版，不动），可随时切换对比与回退。安卓端 Kotlin 原生版与本方案无关。
 
@@ -258,9 +260,11 @@ sx = S/2 + xr·f；sy = 0.60S + y'·f   （再 +0.40S 平移到图标坐标）
 
 - 静止：立即画 `staticBody` + `drawBadge`（同步、不依赖队列）→ 滚动/换档后新卡即时显示完整图标；`getFull` 异步升级真图覆盖。
 
-- 首次 `mouseenter` 才 `loadImages` 解码预览图（**滚动中卡片进出视口不解码**，避免抢占主线程）；解码完成前先以灰阶卡起动画，完成后若仍在悬停则用真图**重播**动画（`hoveringRef` 标志）。
+- 首次 `mouseenter` 才 `loadImages` 解码预览图（**滚动中卡片进出视口不解码**，避免抢占主线程）。**v4 起修正**：有图源但未解码时**不再先用空 imgs 起动画**（否则"先闪白卡再换真图"）——保持当前静止位图，解码完成若仍在悬停（`hoveringRef`）再从静止态用真图起动画；仅当确实无图源（0 张）时才用灰卡占位起动画（与 DOM 版一致）。
 
 - `animate(dir)` 驱动 rAF：`t` 按帧累计（±dt），`progressRef` 记录进度供离开时反向续播；结束后取消 rAF。依赖项不含 `imgs`，动画从 `imgsRef` 读最新结果。
+
+- **离开动画结束必须恢复静止位图**（`paintStaticState`：贴 `lastFullRef` + 叠当前尺寸 front 覆盖 + 重画固定 px 角标，或回退 staticBody）——若动画期间用的始终是占位卡 imgs，最后一帧会停在白卡上且无人再画回去。imgs 未就绪时 `mouseleave` 不播反向动画（进入侧本就没起动画）。
 
 ***
 
@@ -292,6 +296,21 @@ sx = S/2 + xr·f；sy = 0.60S + y'·f   （再 +0.40S 平移到图标坐标）
 | 5 | 合成队列冻结（full 永不执行）                                                           | 图片 promise 不 settle → `current` 永不为空 → 后续任务卡死            | `loadImage` 5s 超时兜底 + 心跳 300ms 检测 `TASK_TIMEOUT_MS=6000` 强制跳过 + 链断裂自动续泵（§3.5）                         |
 | 6 | 悬停卡片插值单位混乱                                                                  | cardFan 的 tx/ty 是相对系数、cardBase 是固定 px                    | `drawHoverFrame` 插值时统一换算：`toTx = fan ? to.tx*cardW : from.tx`（§2.4 备注）                                |
 | 7 | TS 类型：`CanvasRenderingContext2D` vs `OffscreenCanvasRenderingContext2D` 不兼容 | 统一绘制函数签名冲突                                               | 定义 `Ctx2D` 联合类型贯穿 composer 全部绘制函数                                                                     |
+| 8 | 缩放图标时徽章/计数大小不统一（有的卡片大、有的小） | 尺寸变化过渡帧把旧尺寸 `lastFullRef` 等比缩放，角标是固定 px、被一并缩放；而新尺寸即时合成的角标是固定 px → 两批卡片并存 | `redrawAtSize` 过渡帧画完 scaled lastFullRef 后，再叠一层**当前尺寸的 front**（不透明、恰好覆盖旧前板区）并按当前尺寸重画固定 px 角标 → 过渡帧与最终帧角标严格等大（§3.7 抽取的 `paintStaticState` 同一实现） |
+| 9 | 缩放图标后缩略图叠加出多层 | `canvas.width = Sd*res` 前后两次赋**相同值**时，部分 WebView2/Chromium 不会重置 backing → 连续 `redrawAtSize` 的不同中间尺寸 scaled 位图互相叠加 | `redrawAtSize` / `drawFull` 在 `setTransform` 后显式 `clearRect(0,0,S,S)` 清整块再绘制（不依赖 width 赋值触发重置） |
+| 10 | 悬停先闪白卡、再出缩略图 | `ensureImgsAndAnimate` 在 imgs 未解码时先用**空 imgs** `animate(1)`（画白卡），解码完成后再重播真图 | 有图源但未解码时不再先播白卡动画：保持静止位图，解码完成且仍在悬停才从静止态用真图起动画；仅 0 图源时保留灰卡动画（与 DOM 一致） |
+| 11 | 悬停结束停在白色卡片、缩略图不出现 | 离开动画最后一帧若用占位卡 imgs 就停在白卡，动画结束后无人把静止位图画回去 | 抽出 `paintStaticState`；`animate` 离开方向（dir<0）播完即在 completion 恢复静止位图；imgs 未就绪时 `mouseleave` 不播反向动画 |
+| 12 | 重启/硬刷新后部分文件夹缩略图长期不显示（灰卡），DOM 版正常；悬停无效、滚动一段时间才恢复 | ① 上游 `FolderThumbnail` 预览加载 effect 的 cleanup `abort()` 把在途 `getThumbnail` 丢弃（发出前即被 batcher 过滤）→ `previewSrcs` 恒空；② canvas 对 0 图源 `composeFull` 走占位分支**返回"成功"灰卡位图并缓存**，组件据此停止重试 | ① `FolderThumbnail` 不再传 signal：effect cleanup/虚拟化卸载不中断底层生成，`ThumbnailBatcher` 成功仍写 `getGlobalCache`，卡片重挂载直接命中；另加有界退避补试（1.5/4/9s）覆盖启动期后端忙碌。② 诊断区分 `grayOk`（0 图源灰卡"成功"）并修正 `stuck()` 判定，使此类灰卡可被 `__SPRITE_DIAG__` 识别 |
+
+***
+
+## 5.1 诊断工具（spriteDiag.ts，v4 新增）
+
+- 纯模块（不引入 Tauri/window，避免打进 worker bundle），环形缓冲 + 每文件夹聚合状态；`composeFull`/`loadImage`/worker 解码/组件重试链路埋点。
+- worker 与主线程模块状态不共享 → worker 每次合成后 `drainAll()` 排空回传，主线程 `replayAll()` 合并（事件 + 聚合 + src 图例）；src 短 id 主线程 `S*` / worker `W*` 前缀防撞号。
+- warn/err 事件自动镜像 `console.warn('[SPRITE_DIAG] …')` → 直接落进 webview 控制台日志文件，复现无需卡点执行命令。
+- 控制台入口：`__SPRITE_DIAG__.print()/stuck()/save()/verbose()/mirror()/reset()/health()`（挂载于 spriteCache 侧，save 落盘 `{cacheRoot 上级}/sprite-diag/`）。
+- 已知行为（未改）：`Ctrl+Shift+R` 被 `useKeyboardShortcuts`（`ctrlKey && key==='r'`，未排除 shift）`preventDefault` 拦截为应用内目录刷新，**无法触发页面硬刷新**；调试请用 DevTools 控制台 `location.reload()`。
 
 ***
 

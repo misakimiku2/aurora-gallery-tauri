@@ -8,6 +8,7 @@
 //   - 主线程 fullCache/队列/滚动门控逻辑保持不变，worker 只负责"干活"。
 
 import { isSpriteSupported } from './spriteComposer';
+import { spriteDiag, type DiagSnapshot } from './spriteDiag';
 
 export interface SpriteComposeParams {
   previewSrcs: string[];
@@ -16,6 +17,7 @@ export interface SpriteComposeParams {
   theme: string;
   size: number;
   dpr: number;
+  folderId?: string; // 仅用于诊断关联
 }
 
 class SpriteWorkerClient {
@@ -45,7 +47,14 @@ class SpriteWorkerClient {
         } else {
           this.worker = new Worker(new URL('../workers/sprite-worker.ts', import.meta.url), { type: 'module' });
           this.worker.onmessage = (e: MessageEvent) => {
-            const { reqId, bmp } = (e.data || {}) as { reqId: number; bmp: ImageBitmap | null };
+            const { reqId, bmp, diag } = (e.data || {}) as {
+              reqId: number;
+              bmp: ImageBitmap | null;
+              diag?: DiagSnapshot;
+            };
+            // 重放 worker 侧记录：worker 与主线程模块状态相互独立，不重放的话
+            // worker 内的解码失败原因、no-srcs / all-or-nothing 判定永远进不了 dump()。
+            spriteDiag.replayAll(diag);
             const cb = this.pending.get(reqId);
             if (cb) {
               this.pending.delete(reqId);

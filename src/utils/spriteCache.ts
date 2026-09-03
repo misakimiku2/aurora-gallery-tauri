@@ -9,7 +9,9 @@
 
 import { composeStaticBody, composeBack, composeFront, composeFull, isSpriteSupported, type IconCategory, type IconTheme } from './spriteComposer';
 import { spriteWorkerClient } from './spriteWorkerClient';
+import { spriteDiag } from './spriteDiag';
 import { subscribeScrollState } from '../api/tauri-bridge/state';
+import { writeFileFromBytes, getGlobalCacheRoot } from '../api/tauri-bridge';
 
 export const isSpriteSupportedSafe = isSpriteSupported;
 
@@ -185,7 +187,9 @@ const composeInline = (
     task.size,
     res,
     back && front ? { back, front } : undefined,
-    undefined // 滚动中不取消：允许滚动同时继续加载缩略图（队列串行 + macrotask 让出，避免抢占滚动帧）
+    undefined, // 滚动中不取消：允许滚动同时继续加载缩略图（队列串行 + macrotask 让出，避免抢占滚动帧）
+    undefined,
+    task.folderId
   );
 };
 
@@ -226,13 +230,16 @@ const runTask = async (task: PendingTask): Promise<void> => {
           theme: task.theme,
           size: task.size,
           dpr: res,
+          folderId: task.folderId,
         }).catch(() => null),
         composeInline(task, res).catch(() => null),
       ]);
       bmp = w ?? i;
+      spriteDiag.route(task.folderId, `探测 worker=${w ? 'ok' : 'null'} 主线程=${i ? 'ok' : 'null'}`, !!bmp);
       if (!w && i) {
         // worker 解码不了该资源协议（如 asset:// 不支持 fetch）→ 永久回退主线程
         console.warn('[sprite] Worker 无法解码当前资源协议，已回退主线程合成');
+        spriteDiag.workerDisabled('探测阶段 worker 返回 null 而主线程成功（如 asset:// 不支持 fetch）');
         spriteWorkerClient.disable();
         workerReady = false;
       }
@@ -244,7 +251,9 @@ const runTask = async (task: PendingTask): Promise<void> => {
         theme: task.theme,
         size: task.size,
         dpr: res,
+        folderId: task.folderId,
       }).catch(() => null);
+      spriteDiag.route(task.folderId, 'worker', !!bmp);
       // Worker 解码失败（如 asset:// 自定义协议不被 worker fetch 支持）但主线程能成：
       // 回退主线程内联合成，并永久禁用 worker（避免后续每次都走失败路径）。
       // 若主线程也失败（缩略图尚未就绪/冷却中）则保持 worker，等待组件退避重试。
@@ -252,13 +261,17 @@ const runTask = async (task: PendingTask): Promise<void> => {
         const inline = await composeInline(task, res).catch(() => null);
         if (inline) {
           console.warn('[sprite] Worker 无法解码当前资源协议，已回退主线程合成');
+          spriteDiag.workerDisabled('worker 返回 null 而主线程内联合成成功');
           spriteWorkerClient.disable();
           workerReady = false;
           bmp = inline;
+        } else {
+          spriteDiag.route(task.folderId, 'worker 失败且主线程回退也失败', false);
         }
       }
     } else {
       bmp = await composeInline(task, res);
+      spriteDiag.route(task.folderId, '主线程内联', !!bmp);
     }
   } catch (e) {
     console.error('[sprite] composeFull threw:', e);
@@ -407,5 +420,97 @@ if (typeof window !== 'undefined') {
     pending: spriteQueueLen,
     cache: spriteCacheSize,
     stats: spriteStats,
+  };
+
+  // Canvas 文件夹图标「缩略图不显示 / 停在灰卡」问题诊断入口。
+  // 用法（DevTools 控制台）：
+  //   __SPRITE_DIAG__.print()        打印完整诊断（含卡住的文件夹 + 失败时间线 + src 图例）
+  //   __SPRITE_DIAG__.stuck()        只列当前疑似卡在灰卡的文件夹
+  //   __SPRITE_DIAG__.save()         落盘到 {cacheRoot 上级}/sprite-diag/sprite-diag-<时间>.txt
+  //   __SPRITE_DIAG__.verbose(true)  打开成功路径日志（默认关，避免高频滚动刷屏）
+  //   __SPRITE_DIAG__.reset()        清空记录（建议复现前先执行一次）
+  (window as any).__SPRITE_DIAG__ = {
+    dump: () => spriteDiag.dump(),
+    print: () => {
+      const text = spriteDiag.dump();
+      console.log(text);
+      return text;
+    },
+    stuck: () => {
+      const list = spriteDiag.stuck();
+      const text = list.length
+        ? list
+            .map(
+              s =>
+                `${s.folderId}: srcs=[${s.srcs}] ok=${s.oks} null=${s.nulls} noSrcs=${s.noSrcs} ` +
+                `retry=${s.retries}${s.gaveUp ? ' GAVE_UP' : ''} lastNull=${s.lastNullReason || '-'}`
+            )
+            .join('\n')
+        : '(无)';
+      console.log(`[SPRITE_DIAG] 疑似卡在灰卡的文件夹 (${list.length}):\n${text}`);
+      return list;
+    },
+    verbose: (on: boolean) => spriteDiag.verbose(on),
+    mirror: (on: boolean) => spriteDiag.mirror(on),
+    reset: () => spriteDiag.reset(),
+    status: () => spriteDiag.status(),
+
+    /** 自检：确认埋点是否真的在工作（图标样式是否为 canvas、有没有请求发生） */
+    health: () => {
+      const st = spriteDiag.status();
+      const supported = isSpriteSupportedSafe();
+      const cacheRoot = getGlobalCacheRoot();
+      const lines = [
+        '[SPRITE_DIAG] 自检',
+        `  诊断记录       : ${st.enabled ? '开启' : '关闭'}`,
+        `  verbose        : ${st.verbose ? '开启' : '关闭'}（关闭时只记录失败，成功路径不记录）`,
+        `  Sprite 合成支持: ${supported ? '是' : '否'}`,
+        `  Worker 可用    : ${spriteWorkerClient.usable ? '是' : '否（走主线程内联合成）'}`,
+        `  Canvas 图标挂载: ${st.canvasMounts}`,
+        `  合成请求       : ${st.reqs} | 成功 ${st.oks} | 返回 null ${st.nulls} | 已放弃重试 ${st.giveUps}`,
+        `  已记录事件     : ${st.events} / 3000`,
+        `  跟踪文件夹     : ${st.folders}`,
+        `  cacheRoot      : ${cacheRoot || '(未就绪，save() 会退回打印)'}`,
+      ];
+      let verdict: string;
+      if (!supported) {
+        verdict =
+          '❌ 当前环境不满足 OffscreenCanvas/transferToImageBitmap，已回退 DOM 版，埋点不会产生任何记录。';
+      } else if (st.canvasMounts === 0) {
+        verdict =
+          '❌ 当前没有任何 Canvas 版图标在渲染 → 实际走的是 DOM 版 Folder3DIcon，埋点不会有记录。\n' +
+          '   请到「设置 → 文件夹图标」选中 Canvas，并确认重启后该设置仍然生效。';
+      } else if (st.reqs === 0) {
+        verdict = '⚠️ Canvas 组件已挂载但尚未发起合成请求，请滚动一下列表后再执行 health() 复查。';
+      } else if (st.events === 0) {
+        verdict =
+          `✅ 埋点正在工作（${st.canvasMounts} 个 canvas 图标 / ${st.reqs} 次请求），但目前没有任何失败记录。\n` +
+          '   若此时画面上仍能看到灰卡，请执行 verbose(true) 后再复现一次，以便记录成功路径。';
+      } else {
+        verdict = `✅ 埋点正在工作，已记录 ${st.events} 条事件。执行 __SPRITE_DIAG__.print() 查看。`;
+      }
+      const text = `${lines.join('\n')}\n  ---- 结论 ----\n  ${verdict}`;
+      console.log(text);
+      return { ...st, supported, cacheRoot, verdict };
+    },
+    save: async () => {
+      const text = spriteDiag.dump();
+      const cacheRoot = getGlobalCacheRoot();
+      if (!cacheRoot) {
+        console.warn('[SPRITE_DIAG] cacheRoot 未就绪，改为直接打印：\n' + text);
+        return;
+      }
+      const norm = cacheRoot.replace(/[\\/]+$/, '');
+      const sep = norm.includes('\\') ? '\\' : '/';
+      const parent = norm.lastIndexOf(sep) > 0 ? norm.slice(0, norm.lastIndexOf(sep)) : norm;
+      const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const filePath = `${parent}${sep}sprite-diag${sep}sprite-diag-${ts}.txt`;
+      try {
+        await writeFileFromBytes(filePath, new TextEncoder().encode(text));
+        console.log(`[SPRITE_DIAG] 诊断已写入: ${filePath}`);
+      } catch (err) {
+        console.warn('[SPRITE_DIAG] 写入失败:', err, '\n' + text);
+      }
+    },
   };
 }

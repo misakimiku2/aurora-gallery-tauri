@@ -22,6 +22,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isDarkTheme } from '../utils/folderTilesRenderer';
 import { drawHoverFrame, drawBadge, loadImages, type IconCategory, type IconTheme } from '../utils/spriteComposer';
 import { getFull, getStaticBody, getBack, getFront } from '../utils/spriteCache';
+import { spriteDiag } from '../utils/spriteDiag';
 import { subscribeScrollState } from '../api/tauri-bridge/state';
 
 interface Folder3DIconCanvasProps {
@@ -80,6 +81,9 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       lastFullRef.current = bmp; // 记录最近一帧完整位图，供尺寸变化时过渡缩放
       const ctx = c.getContext('2d');
       if (!ctx) return;
+      // 显式清整块：drawFull 不经 redrawAtSize（如 previewKey 变化触发 getFull 时），
+      // 直接 drawImage 会把新位图叠加在旧内容上。先 clearRect 保证底干净。
+      ctx.clearRect(0, 0, S, S);
       ctx.drawImage(bmp, 0, 0, S, S);
     }, []);
 
@@ -96,6 +100,26 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       }
     }, [dpr]);
 
+    // 恢复/绘制静止态：优先贴最近一帧完整位图（含真缩略图），无则回退 staticBody 灰卡占位。
+    // 旧位图可能是按旧尺寸合成的（角标/图标是固定 px，等比缩放会不一致），故叠一层当前尺寸
+    // 的 front（不透明，恰好覆盖旧前板区）再按当前尺寸重画角标 → 与最终合成帧严格一致。
+    // 调用方需先保证画布已清、transform 已就位（与 redrawAtSize 的约定一致）。
+    const paintStaticState = useCallback((S: number) => {
+      const c = canvasRef.current;
+      if (!c || S <= 0) return;
+      const ctx = c.getContext('2d');
+      if (!ctx) return;
+      if (lastFullRef.current) {
+        ctx.drawImage(lastFullRef.current, 0, 0, S, S);
+        const theme = isDarkTheme() ? 'dark' : 'light';
+        const front = getFront(catRef.current, theme, S, dpr);
+        if (front) ctx.drawImage(front, 0, 0, S, S);
+        if (countRef.current !== undefined) drawBadge(ctx, S, countRef.current as number);
+      } else {
+        drawStatic(S);
+      }
+    }, [dpr, drawStatic]);
+
     // 请求完整位图（真缩略图）。滚动中也请求（缩略图滚动时就开始加载）；未就绪时退避重试。
     const requestFull = useCallback(() => {
       const S = sizeRef.current;
@@ -104,6 +128,7 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
+      spriteDiag.req(folderIdRef.current, S, srcsRef.current);
       getFull({
         folderId: folderIdRef.current,
         previewSrcs: srcsRef.current,
@@ -119,14 +144,23 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
           // 缩略图未就绪（重启后缓存冷/缩略图生成中/解码失败）：指数退避持续重试，
           // 直到就绪或组件卸载。DOM 版 <img> 会自动重试加载，这里等效复刻，
           // 避免短暂失败后永久停留在占位灰卡（否则重启后个别文件夹缩略图空白）。
+          //
+          // 注意：RETRY_DELAYS 前几档(400/1200/3000/6000ms)很可能落在 spriteComposer
+          // 的 8s src 冷却窗口内 → 直接返回 null、根本没发起请求，属于"无效重试"。
+          // 因此 7 档预算里真正有效的尝试只有最后几档，总窗口约 56s；
+          // 若缩略图在这之后才就绪，本组件就再也不会重试了（诊断 case c）。
           const RETRY_DELAYS = [400, 1200, 3000, 6000, 10000, 15000, 20000];
           if (retryCountRef.current < RETRY_DELAYS.length) {
             const delay = RETRY_DELAYS[retryCountRef.current];
             retryCountRef.current++;
+            spriteDiag.retry(folderIdRef.current, retryCountRef.current, delay);
             retryTimerRef.current = window.setTimeout(() => {
               retryTimerRef.current = null;
               if (!unmountedRef.current) requestFull();
             }, delay);
+          } else {
+            // 预算耗尽 → 永久停止重试。此刻若仍无真图，该文件夹将一直显示灰卡占位。
+            spriteDiag.giveUp(folderIdRef.current);
           }
           return;
         }
@@ -159,18 +193,18 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
         try { ctx.imageSmoothingQuality = 'high'; } catch { /* 旧实现 */ }
         const pad = (Sd - S) / 2;
         ctx.setTransform(res, 0, 0, res, pad * res, pad * res);
+        // 显式清整块画布：c.width = Sd*res 赋值相同时，部分浏览器（WebView2/Chromium）不会重置
+        // backing，导致上一次 redrawAtSize 的 scaled lastFullRef 残留 → 多次快速 resize 时，
+        // 不同中间尺寸的位图叠加，表现为"缩略图多了一层又一层"。
+        ctx.clearRect(0, 0, S, S);
         // 过渡显示：优先把最近一帧完整位图（含缩略图）等比缩放到新尺寸，避免尺寸变化时
         // 缩略图闪白（占位卡为白色）；无历史位图（首次加载）才回退 staticBody 占位。
         // 新尺寸的完整位图由 requestFull 异步补上（cache 命中即微任务内返回）。
-        if (lastFullRef.current) {
-          ctx.drawImage(lastFullRef.current, 0, 0, S, S);
-        } else {
-          drawStatic(S);
-        }
+        paintStaticState(S);
       }
       retryCountRef.current = 0;
       requestFull();
-    }, [dpr, drawStatic, requestFull]);
+    }, [dpr, paintStaticState, requestFull]);
 
     // 挂载：ResizeObserver（尺寸）+ MutationObserver（主题）+ 滚动状态订阅
     useEffect(() => {
@@ -179,6 +213,8 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       // StrictMode 会「挂载→清理→再挂载」，第二次挂载必须重置卸载标记，
       // 否则 getFull 的结果会被 unmountedRef=true 永久丢弃（缩略图空白）
       unmountedRef.current = false;
+      // 自检信号：确认当前确实在渲染 Canvas 版（图标样式 = canvas），埋点才会产生记录
+      spriteDiag.canvasMounted();
       const ro = new ResizeObserver(entries => {
         const w = entries[0]?.contentRect.width;
         if (w && w > 0) {
@@ -249,32 +285,46 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
           progressRef.current = t;
           drawHoverFrame(ctx, input, t);
           const done = dir > 0 ? t >= 300 : t <= 0;
-          if (!done) rafRef.current = requestAnimationFrame(step);
-          else rafRef.current = null;
+          if (!done) {
+            rafRef.current = requestAnimationFrame(step);
+            return;
+          }
+          rafRef.current = null;
+          progressRef.current = dir > 0 ? 300 : 0;
+          // 离开动画结束：动画帧可能一直用的是占位卡 imgs（解码未完成/失败/无图源），
+          // 最后一帧会停在白卡上且没人再画回去 → 显式恢复静止位图（真图/灰卡）。
+          if (dir < 0) {
+            ctx.clearRect(0, 0, S, S);
+            paintStaticState(S);
+          }
         };
         rafRef.current = requestAnimationFrame(step);
       },
-      [dpr]
+      [dpr, paintStaticState]
     );
 
-    // 首次悬停时才解码预览图（滚动中不加载）；就绪后若仍在悬停则以真图重播
+    // 首次悬停时才解码预览图（滚动中不加载）。
+    // 修复：有图源但未解码时【不再先用空 imgs 起动画】——那会导致"先闪白卡再换真图"。
+    // 改为保持当前静止位图（通常已含真缩略图），解码完成后若仍在悬停，再从静止态用真图起动画。
     const ensureImgsAndAnimate = useCallback(() => {
       hoveringRef.current = true;
+      const srcs = srcsRef.current;
       if (imgsReadyRef.current) {
         animate(1);
         return;
       }
-      // 先以灰阶占位卡立即起动画，解码完成后再换真图
-      animate(1);
-      const srcs = srcsRef.current;
       if (srcs.length === 0) {
+        // 悬停也救不了：图源本身就是空的，画出来仍是灰卡占位（旁证上游 previewSrcs 未产出）。
+        // 与 DOM 版一致：无图时用灰卡占位做扇形动画。
+        spriteDiag.hoverNoSrcs(folderIdRef.current);
         imgsReadyRef.current = true;
+        animate(1);
         return;
       }
       loadImages(srcs).then(list => {
         imgsRef.current = list;
         imgsReadyRef.current = true;
-        if (hoveringRef.current) animate(1, list); // 仍在悬停 → 用真图重播
+        if (hoveringRef.current) animate(1, list); // 仍在悬停 → 用真图起动画（无白卡闪现）
       });
     }, [animate]);
 
@@ -286,7 +336,9 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
         onMouseEnter={() => ensureImgsAndAnimate()}
         onMouseLeave={() => {
           hoveringRef.current = false;
-          animate(-1);
+          // imgs 未就绪时进入侧还没起动画（见 ensureImgsAndAnimate），画布仍是静止位图；
+          // 直接 animate(-1) 会用空 imgs 播一遍"白卡扇出再收回"。故仅在 imgs 就绪时才反向。
+          if (imgsReadyRef.current) animate(-1);
         }}
       >
         <canvas
