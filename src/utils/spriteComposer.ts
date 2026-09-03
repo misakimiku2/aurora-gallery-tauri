@@ -16,8 +16,6 @@
 //   - 合成坐标空间 = 实际显示尺寸 size（CSS 逻辑像素），固定像素值（8px/12px 等）直接使用，
 //     不按比例缩放，保证与 DOM 在不同尺寸下观感一致。
 
-import { spriteDiag } from './spriteDiag';
-
 // ---------- 能力检测 ----------
 export const isSpriteSupported = (): boolean =>
   typeof OffscreenCanvas !== 'undefined' &&
@@ -654,29 +652,19 @@ const isSrcCooling = (src: string): boolean => {
 
 export const loadImage = (src: string): Promise<HTMLImageElement | null> => {
   if (!src) return Promise.resolve(null);
-  if (isSrcCooling(src)) {
-    // 冷却期内直接返回 null：此时根本不会发起真实请求。
-    // 与组件的退避重试叠加后，前几次重试可能全部落在冷却窗口内（详见 spriteDiag 说明 case c）。
-    spriteDiag.srcResult(src, false, '冷却中·跳过请求');
-    return Promise.resolve(null);
-  }
+  if (isSrcCooling(src)) return Promise.resolve(null);
   const used = _imgUsed.get(src);
-  if (used && used.complete && used.naturalWidth > 0) {
-    spriteDiag.srcResult(src, true, '命中解码缓存');
-    return Promise.resolve(used);
-  }
+  if (used && used.complete && used.naturalWidth > 0) return Promise.resolve(used);
   // 同一 src 并发请求合并为一次解码
   const inflight = _imgLoading.get(src);
   if (inflight) return inflight;
   const p = new Promise<HTMLImageElement | null>(resolve => {
     const img = new Image();
     img.decoding = 'async';
-    const startedAt = performance.now();
     let settled = false;
     const timer = window.setTimeout(() => {
       if (settled) return;
       settled = true;
-      spriteDiag.srcResult(src, false, `解码超时(>${IMAGE_TIMEOUT_MS}ms)`, performance.now() - startedAt);
       console.warn(`[sprite] preview image load timeout:`, src);
       markSrcCooldown(src);
       resolve(null);
@@ -685,7 +673,6 @@ export const loadImage = (src: string): Promise<HTMLImageElement | null> => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      spriteDiag.srcResult(src, !!v, reason || 'ok', performance.now() - startedAt);
       if (reason) console.warn(`[sprite] preview image ${reason}:`, src);
       if (v) {
         _srcCooldown.delete(src);
@@ -696,7 +683,7 @@ export const loadImage = (src: string): Promise<HTMLImageElement | null> => {
       resolve(v);
     };
     img.onload = () => finish(img);
-    img.onerror = () => finish(null, 'onerror');
+    img.onerror = () => finish(null, 'load failed');
     img.src = src;
   });
   _imgLoading.set(src, p);
@@ -716,14 +703,10 @@ export const composeFull = async (
   dpr = 1,
   layers?: { back: ImageBitmap; front: ImageBitmap },
   shouldCancel?: () => boolean,
-  decode?: (srcs: string[]) => Promise<(HTMLImageElement | ImageBitmap | null)[]>,
-  folderId?: string // 仅用于诊断关联（合成引擎本身不依赖它）
+  decode?: (srcs: string[]) => Promise<(HTMLImageElement | ImageBitmap | null)[]>
 ): Promise<ImageBitmap | null> => {
   try {
-    if (shouldCancel?.()) {
-      spriteDiag.fail(folderId, 'cancel·合成前');
-      return null;
-    }
+    if (shouldCancel?.()) return null;
     const off = new OffscreenCanvas(size * dpr, size * dpr);
     const ctx = off.getContext('2d')!;
     applySmoothing(ctx);
@@ -735,28 +718,14 @@ export const composeFull = async (
     ctx.drawImage(back, 0, 0, size, size);
 
     const srcs = (previewSrcs || []).filter(s => !!s).slice(0, 3);
-    // 诊断 case (a)：文件夹明明有图，上游却一个预览 URL 都没给。
-    // 此时下面会走占位分支并返回【成功位图】，组件据此停止重试 → 长期停在灰卡且无任何失败日志。
-    if (srcs.length === 0 && (count ?? 0) > 0) spriteDiag.noSrcs(folderId, count as number);
     // decode 可注入（Web Worker 用 createImageBitmap 解码，主线程默认 new Image()）
     const imgs = await (decode || loadImages)(srcs);
     // 图片解码等待期间滚动已开始：放弃本次合成，避免与滚动抢主线程
-    if (shouldCancel?.()) {
-      spriteDiag.fail(folderId, 'cancel·解码完成前');
-      return null;
-    }
-    // 记录整批解码结果（含部分失败）；下方 all-or-nothing 判定前先留痕
-    spriteDiag.decodeBatch(folderId, srcs, imgs);
+    if (shouldCancel?.()) return null;
     // 预览图解码失败（重启后缩略图未就绪/断连/冷却中）：返回 null 不落 fullCache，
     // 卡片保持 staticBody 灰卡占位，后续组件重试可获得真图。否则占位结果会被永久缓存，
     // 一旦命中就再也等不到真缩略图（表现为重启后一部分文件夹缩略图空白）。
-    // 注意：这里是 all-or-nothing —— 只要有 1 张没解出来，整张图标就退回灰卡，
-    // 而 DOM 版会照常显示其余几张（诊断 case b）。
-    if (srcs.length > 0 && imgs.some(i => !i)) {
-      const failedCount = imgs.filter(i => !i).length;
-      spriteDiag.fail(folderId, `decode-fail ${failedCount}/${srcs.length}`);
-      return null;
-    }
+    if (srcs.length > 0 && imgs.some(i => !i)) return null;
     const g = { x: 0.15 * size, y: 0.2 * size, w: 0.7 * size, h: 0.6 * size };
     const placeholders = theme === 'dark' ? PLACEHOLDER_COLORS_DARK : PLACEHOLDER_COLORS;
 
@@ -775,12 +744,9 @@ export const composeFull = async (
     ctx.drawImage(front, 0, 0, size, size);
 
     if (count !== undefined) drawBadge(ctx, size, count);
-    if (srcs.length === 0) spriteDiag.grayOk(folderId, count);
-    else spriteDiag.ok(folderId, `${srcs.length} 张真图`);
     return off.transferToImageBitmap();
   } catch (e) {
     console.error('[sprite] composeFull failed:', e);
-    spriteDiag.fail(folderId, `throw: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 };

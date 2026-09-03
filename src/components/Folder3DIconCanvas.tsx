@@ -22,7 +22,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { isDarkTheme } from '../utils/folderTilesRenderer';
 import { drawHoverFrame, drawBadge, loadImages, type IconCategory, type IconTheme } from '../utils/spriteComposer';
 import { getFull, getStaticBody, getBack, getFront } from '../utils/spriteCache';
-import { spriteDiag } from '../utils/spriteDiag';
 import { subscribeScrollState } from '../api/tauri-bridge/state';
 
 interface Folder3DIconCanvasProps {
@@ -128,7 +127,6 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
-      spriteDiag.req(folderIdRef.current, S, srcsRef.current);
       getFull({
         folderId: folderIdRef.current,
         previewSrcs: srcsRef.current,
@@ -146,21 +144,16 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
           // 避免短暂失败后永久停留在占位灰卡（否则重启后个别文件夹缩略图空白）。
           //
           // 注意：RETRY_DELAYS 前几档(400/1200/3000/6000ms)很可能落在 spriteComposer
-          // 的 8s src 冷却窗口内 → 直接返回 null、根本没发起请求，属于"无效重试"。
-          // 因此 7 档预算里真正有效的尝试只有最后几档，总窗口约 56s；
-          // 若缩略图在这之后才就绪，本组件就再也不会重试了（诊断 case c）。
+          // 的 8s src 冷却窗口内 → 直接返回 null、根本没发起请求，属于"无效重试"；
+          // 预算耗尽后不再重试，依赖 previewSrcs 变化 / 重挂载 / 悬停解码来恢复。
           const RETRY_DELAYS = [400, 1200, 3000, 6000, 10000, 15000, 20000];
           if (retryCountRef.current < RETRY_DELAYS.length) {
             const delay = RETRY_DELAYS[retryCountRef.current];
             retryCountRef.current++;
-            spriteDiag.retry(folderIdRef.current, retryCountRef.current, delay);
             retryTimerRef.current = window.setTimeout(() => {
               retryTimerRef.current = null;
               if (!unmountedRef.current) requestFull();
             }, delay);
-          } else {
-            // 预算耗尽 → 永久停止重试。此刻若仍无真图，该文件夹将一直显示灰卡占位。
-            spriteDiag.giveUp(folderIdRef.current);
           }
           return;
         }
@@ -213,8 +206,6 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       // StrictMode 会「挂载→清理→再挂载」，第二次挂载必须重置卸载标记，
       // 否则 getFull 的结果会被 unmountedRef=true 永久丢弃（缩略图空白）
       unmountedRef.current = false;
-      // 自检信号：确认当前确实在渲染 Canvas 版（图标样式 = canvas），埋点才会产生记录
-      spriteDiag.canvasMounted();
       const ro = new ResizeObserver(entries => {
         const w = entries[0]?.contentRect.width;
         if (w && w > 0) {
@@ -314,9 +305,7 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
         return;
       }
       if (srcs.length === 0) {
-        // 悬停也救不了：图源本身就是空的，画出来仍是灰卡占位（旁证上游 previewSrcs 未产出）。
-        // 与 DOM 版一致：无图时用灰卡占位做扇形动画。
-        spriteDiag.hoverNoSrcs(folderIdRef.current);
+        // 与 DOM 版一致：无图源时用灰卡占位做扇形动画。
         imgsReadyRef.current = true;
         animate(1);
         return;

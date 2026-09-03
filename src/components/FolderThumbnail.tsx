@@ -11,7 +11,6 @@ import { isSpriteSupportedSafe } from '../utils/spriteCache';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
-import { spriteDiag } from '../utils/spriteDiag';
 
 // 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
 // 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
@@ -177,7 +176,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
 
     const loadPreviews = async () => {
       if (!alive) return;
-      spriteDiag.previewLoad(file.id, 'start', localImageChildren.length, `attempt=${attempt + 1}`);
       try {
         const { getThumbnail } = await import('../api/tauri-bridge');
 
@@ -189,7 +187,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
             }
 
             const url = await getThumbnail(img.path, img.updatedAt, resourceRoot, undefined, undefined, undefined, img.mediaStoreId);
-            if (!url) spriteDiag.previewLoad(file.id, 'null', 0, img.path);
             if (url) {
                 cache.set(img.path, url);
                 const isUpgrading = isThumbnailUpgrading(img.path);
@@ -204,7 +201,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
         if (!alive) return; // 已卸载/被新一轮 effect 取代：只留缓存，不碰 setState
 
         const validThumbnails = thumbnails.filter((t): t is string => !!t);
-        spriteDiag.previewLoad(file.id, `set 图源 ${validThumbnails.length}/${thumbnails.length}`, validThumbnails.length);
         setPreviewSrcs(prev => {
             if (prev.length === validThumbnails.length && prev.every((val, index) => val === validThumbnails[index])) {
                 return prev;
@@ -221,7 +217,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
       } catch (error) {
         if (!alive) return;
         console.error('Failed to load folder previews:', error);
-        spriteDiag.previewLoad(file.id, 'throw', 0, error instanceof Error ? error.message : String(error));
         if (attempt < RETRY_DELAYS.length) {
           const delay = RETRY_DELAYS[attempt];
           attempt++;
@@ -235,7 +230,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
     return () => {
       alive = false;
       // 不再 controller.abort()：底层生成继续，完成后写入 getGlobalCache 供下次挂载命中
-      spriteDiag.previewLoad(file.id, 'abort', 0, 'effect cleanup（不再中断底层生成，结果仍会写缓存）');
     };
   }, [isInView, wasInView, localImageChildren, resourceRoot, previewSrcs.length, remoteCoverPaths, file.id]);
 
@@ -327,16 +321,6 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
 
   const hasUpgrading = upgradingPaths.size > 0;
   const effectivePreviewSrcs = remoteCoverPaths ? remoteCoverSrcs : previewSrcs;
-
-  // 诊断：记录上游预览图源数量的变化。用于区分「上游没产出 URL」与「给了 URL 但 canvas 解码失败」，
-  // 两者最终都表现为灰卡占位。只在数量变化时记录，避免高频滚动刷屏。
-  const prevSrcCountRef = useRef<number>(-1);
-  useEffect(() => {
-    const n = effectivePreviewSrcs.length;
-    if (n === prevSrcCountRef.current) return;
-    prevSrcCountRef.current = n;
-    spriteDiag.upstreamSrcs(file.id, n, localImageChildren.length);
-  }, [effectivePreviewSrcs.length, file.id, localImageChildren.length]);
 
   if (isAndroid && imageChildren.length === 0 && !remoteCoverPaths) {
     return (

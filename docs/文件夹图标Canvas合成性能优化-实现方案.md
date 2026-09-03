@@ -2,7 +2,7 @@
 
 > 目标：让 PC 端（Tauri / WebView2）的「经典 3D 文件夹」图标（`Folder3DIcon` `variant='classic'`）渲染成本与「单张图片」相同，彻底解决 2000+ 文件量级下的滚动卡顿；同时保证**图标视觉与悬停动画与当前 DOM 版 100% 一致**（含 3D 透视前板、扇形摊开悬停动画）。
 >
-> 状态：**已实现**。v4 = v3 实现说明 + 缩放/悬停/重启灰卡等 Bug 修复（§5 行 8~12）+ 诊断工具（§5.1），供后续会话继续调优时参考。
+> 状态：**已实现**。v4 = v3 实现说明 + 缩放/悬停/重启灰卡等 Bug 修复（§5 行 8~12）。排查期使用的临时诊断工具说明见 §5.1（已完成使命并移除）。
 >
 > 适用范围：Web 前端。`Folder3DIcon variant='classic'` 的 Canvas 替代实现，在「设置 → 文件夹图标样式」中作为**新增选项** **`canvas`** 提供，默认仍为 `classic`（DOM 版，不动），可随时切换对比与回退。安卓端 Kotlin 原生版与本方案无关。
 >
@@ -300,16 +300,13 @@ sx = S/2 + xr·f；sy = 0.60S + y'·f   （再 +0.40S 平移到图标坐标）
 | 9 | 缩放图标后缩略图叠加出多层 | `canvas.width = Sd*res` 前后两次赋**相同值**时，部分 WebView2/Chromium 不会重置 backing → 连续 `redrawAtSize` 的不同中间尺寸 scaled 位图互相叠加 | `redrawAtSize` / `drawFull` 在 `setTransform` 后显式 `clearRect(0,0,S,S)` 清整块再绘制（不依赖 width 赋值触发重置） |
 | 10 | 悬停先闪白卡、再出缩略图 | `ensureImgsAndAnimate` 在 imgs 未解码时先用**空 imgs** `animate(1)`（画白卡），解码完成后再重播真图 | 有图源但未解码时不再先播白卡动画：保持静止位图，解码完成且仍在悬停才从静止态用真图起动画；仅 0 图源时保留灰卡动画（与 DOM 一致） |
 | 11 | 悬停结束停在白色卡片、缩略图不出现 | 离开动画最后一帧若用占位卡 imgs 就停在白卡，动画结束后无人把静止位图画回去 | 抽出 `paintStaticState`；`animate` 离开方向（dir<0）播完即在 completion 恢复静止位图；imgs 未就绪时 `mouseleave` 不播反向动画 |
-| 12 | 重启/硬刷新后部分文件夹缩略图长期不显示（灰卡），DOM 版正常；悬停无效、滚动一段时间才恢复 | ① 上游 `FolderThumbnail` 预览加载 effect 的 cleanup `abort()` 把在途 `getThumbnail` 丢弃（发出前即被 batcher 过滤）→ `previewSrcs` 恒空；② canvas 对 0 图源 `composeFull` 走占位分支**返回"成功"灰卡位图并缓存**，组件据此停止重试 | ① `FolderThumbnail` 不再传 signal：effect cleanup/虚拟化卸载不中断底层生成，`ThumbnailBatcher` 成功仍写 `getGlobalCache`，卡片重挂载直接命中；另加有界退避补试（1.5/4/9s）覆盖启动期后端忙碌。② 诊断区分 `grayOk`（0 图源灰卡"成功"）并修正 `stuck()` 判定，使此类灰卡可被 `__SPRITE_DIAG__` 识别 |
+| 12 | 重启/硬刷新后部分文件夹缩略图长期不显示（灰卡），DOM 版正常；悬停无效、滚动一段时间才恢复 | ① 上游 `FolderThumbnail` 预览加载 effect 的 cleanup `abort()` 把在途 `getThumbnail` 丢弃（发出前即被 batcher 过滤）→ `previewSrcs` 恒空；② canvas 对 0 图源 `composeFull` 走占位分支**返回"成功"灰卡位图并缓存**，组件据此停止重试 | `FolderThumbnail` 不再传 signal：effect cleanup/虚拟化卸载不中断底层生成，`ThumbnailBatcher` 成功仍写 `getGlobalCache`，卡片重挂载直接命中；另加有界退避补试（1.5/4/9s）覆盖启动期后端忙碌。canvas 侧 `previewSrcs` 变化（previewKey effect）即重新请求合成，图源补齐后自动覆盖灰卡 |
 
 ***
 
-## 5.1 诊断工具（spriteDiag.ts，v4 新增）
+## 5.1 临时诊断工具（已移除）
 
-- 纯模块（不引入 Tauri/window，避免打进 worker bundle），环形缓冲 + 每文件夹聚合状态；`composeFull`/`loadImage`/worker 解码/组件重试链路埋点。
-- worker 与主线程模块状态不共享 → worker 每次合成后 `drainAll()` 排空回传，主线程 `replayAll()` 合并（事件 + 聚合 + src 图例）；src 短 id 主线程 `S*` / worker `W*` 前缀防撞号。
-- warn/err 事件自动镜像 `console.warn('[SPRITE_DIAG] …')` → 直接落进 webview 控制台日志文件，复现无需卡点执行命令。
-- 控制台入口：`__SPRITE_DIAG__.print()/stuck()/save()/verbose()/mirror()/reset()/health()`（挂载于 spriteCache 侧，save 落盘 `{cacheRoot 上级}/sprite-diag/`）。
+- v4 排查「重启灰卡/悬停闪白」期间曾新增 `spriteDiag.ts`（事件环形缓冲 + 每文件夹聚合 + worker 诊断回传 + `console` 镜像 + `__SPRITE_DIAG__` 控制台入口），用于定位上游 `previewSrcs` 恒空与合成失败路径；**确认根因后已在清理提交中整体移除**，当前代码不含诊断埋点。
 - 已知行为（未改）：`Ctrl+Shift+R` 被 `useKeyboardShortcuts`（`ctrlKey && key==='r'`，未排除 shift）`preventDefault` 拦截为应用内目录刷新，**无法触发页面硬刷新**；调试请用 DevTools 控制台 `location.reload()`。
 
 ***
