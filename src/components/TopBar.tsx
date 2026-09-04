@@ -1393,7 +1393,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                          type="range" 
                          id="thumbnail-size-slider"
                          name="thumbnail-size-slider"
-                         min={activeTab.viewMode === 'people-overview' ? 140 : 100}
+                         min={activeTab.viewMode === 'people-overview' ? 140 : 125}
                          max={activeTab.viewMode === 'people-overview' ? 450 : 480}
                          step="20"
                          value={state.thumbnailSize}
@@ -1502,7 +1502,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                          type="range"
                          id="thumbnail-size-slider"
                          name="thumbnail-size-slider"
-                         min={100}
+                         min={125}
                          max={480}
                          step="20"
                          value={state.thumbnailSize}

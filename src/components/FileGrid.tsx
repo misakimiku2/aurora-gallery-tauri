@@ -40,12 +40,6 @@ import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 // 因此 150 足够，换卡量比 400 少约 27%。过渡结束后自动恢复 400。
 const FLIP_BUFFER = 150;
 
-// 虚拟化单窗口挂载卡数上限：图标越小行高越矮、列数越多，固定像素 buffer（400px）内的
-// 卡数会随尺寸² 成倍增长，一屏可能挂载数百上千张卡（实测最小档 Canvas 卡 p50 24ms、
-// 掉帧 97%，且整应用变卡）。限制单窗口总数，超出时收缩窗口底部由滚动补卡；大图标档
-// 窗口内卡数本就远低于该值，不受影响。
-const MAX_MOUNT_CARDS = 240;
-
 // 布局位置快照（含行高）：FLIP 选锚点时需要旧布局的行高来判断"哪一行包含视口顶边"。
 function snapshotLayoutPositions(layout: LayoutItem[]) {
   const map = new Map<string, { x: number; y: number; h: number }>();
@@ -797,11 +791,10 @@ const GroupContent = React.memo(({
       const buffer = 400;
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
-      // 与主网格一致的单窗口挂载上限，避免小图标档卡数爆炸
+      // 窗口 = 视口 ± buffer，完整包含窗口内所有卡片（无卡数上限截断）
       const out: LayoutItem[] = [];
       for (const item of layout) {
           if (item.y < maxY && item.y + item.height > minY) {
-              if (out.length >= MAX_MOUNT_CARDS) break;
               out.push(item);
           }
       }
@@ -1169,7 +1162,8 @@ export const FileGrid = React.memo(({
         return;
       }
       const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
-      const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 100;
+      // 桌面端最小档位下限：100px 同屏卡数过多拖垮合成帧率，提升到 125px（安卓走固定三档不受影响）
+      const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 125;
       const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
       onThumbnailSizeChange(newSize);
     }, [onThumbnailSizeChange, activeTab.viewMode, isAndroid]),
@@ -1209,6 +1203,10 @@ export const FileGrid = React.memo(({
   const scrollRafRef = useRef<number | null>(null);
   // 滚动条显隐定时器：滚动结束后延迟隐藏滚动条（保留布局空间，仅隐藏 thumb 颜色）
   const scrollHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 主网格自身滚动期间临时关闭「整块单合成层」（见 index.css .no-grid-layer）：
+  // 单层在静止/树滚动时省 drawcall，但自身滚动换批会让大层 tile 频繁重栅格，
+  // 故滚动时退回逐卡层（与合并层之前的形态一致），停止 800ms 后恢复单层。
+  const gridNoLayerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // 过渡冻结定时器：滚动停止后立即移除 anim-freeze（恢复卡片过渡），
   // 与滚动条淡出的 800ms 解耦，避免滚动停止后 hover 过渡被冻结为 0ms。
   const animFreezeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1387,7 +1385,7 @@ export const FileGrid = React.memo(({
         if (e.ctrlKey && onThumbnailSizeChange) {
             e.preventDefault();
             const maxLimit = activeTab.viewMode === 'people-overview' ? 450 : 480;
-            const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 100;
+            const minLimit = activeTab.viewMode === 'people-overview' ? 140 : 125;
             const step = 20;
             const delta = e.deltaY > 0 ? -step : step;
             const newSize = Math.max(minLimit, Math.min(maxLimit, thumbnailSize + delta));
@@ -1477,6 +1475,14 @@ export const FileGrid = React.memo(({
             if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
             scrollHideTimerRef.current = setTimeout(() => {
                 scroller.classList.remove('scrolling');
+            }, 800);
+
+            // 主网格自身滚动：临时关闭整块单合成层（换批时避免大层 tile 频繁重栅格），
+            // 停止滚动后 800ms 恢复（树滚动等外部滚动不受影响——不触发本 handler）。
+            document.body.classList.add('no-grid-layer');
+            if (gridNoLayerTimerRef.current) clearTimeout(gridNoLayerTimerRef.current);
+            gridNoLayerTimerRef.current = setTimeout(() => {
+                document.body.classList.remove('no-grid-layer');
             }, 800);
 
             // 过渡冻结：滚动事件持续期间暂停卡片过渡（性能优化）；
@@ -1613,6 +1619,8 @@ export const FileGrid = React.memo(({
         if (scrollHideTimerRef.current) clearTimeout(scrollHideTimerRef.current);
         if (animFreezeTimerRef.current) clearTimeout(animFreezeTimerRef.current);
         containerRef?.current?.classList.remove('anim-freeze');
+        if (gridNoLayerTimerRef.current) clearTimeout(gridNoLayerTimerRef.current);
+        document.body.classList.remove('no-grid-layer');
         // 取消待执行的滚动位置保存（debounce），避免组件卸载后仍更新 App 状态
         debouncedOnScrollTopChange?.cancel?.();
     };
@@ -2250,20 +2258,13 @@ export const FileGrid = React.memo(({
           else hi = mid;
       }
       // Linear scan from lo; since sorted by y, stop as soon as y >= maxY.
+      // 窗口 = 视口 ± buffer，完整包含所有卡片，不做卡数上限截断（已解除 240 上限，
+      // 让渲染窗口始终与滚动换批边界一致，避免被截断导致的提前换批/底部补卡抖动）。
       const out: LayoutItem[] = [];
-      // 收集预算上限：单窗口最多挂载 MAX_MOUNT_CARDS 张卡（视口内卡必被包含——常规屏
-      // 视口卡数 < 240；仅极端 4K+ 最小图标可能触及）。超出后收缩窗口底部，滚动越界即重建。
       for (let i = lo; i < sortedByY.length; i++) {
           const item = layout[sortedByY[i]];
           if (item.y >= maxY) break;
-          if (out.length >= MAX_MOUNT_CARDS) break;
           if (item.y + item.height > minY && displayFileIdsSet.has(item.id)) out.push(item);
-      }
-      // 若因预算截断：把渲染窗口 max 收缩到实际最后一张卡底部，滚动越过即触发换卡，
-      // 避免"窗口仍声明覆盖到 scrollTop+H+400 但实际缺卡"导致长时间空白。
-      if (out.length >= MAX_MOUNT_CARDS && out.length > 0) {
-          const last = out[out.length - 1];
-          renderWindowRef.current.max = Math.max(scrollTop + containerRect.height, last.y + last.height);
       }
       return out;
   }, [layout, sortedByY, scrollTop, containerRect.height, isLayoutTransitioning, displayFileIdsSet]);

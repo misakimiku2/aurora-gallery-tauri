@@ -604,6 +604,18 @@ input[type=range]::-webkit-slider-runnable-track {
   --tw-scale-y: 1;
 }
 
+/* 把主网格/文件夹总览的整块虚拟内容合并为一个合成层（静止/树滚动时受益）：
+   卡数量大（小图标档数百张）时，若每张卡都是独立小层，GPU 每帧要逐个 blend，
+   同窗口的树滚动会被拖慢（100px 档树滚动曾 100% 掉帧）。transform: translateZ(0)
+   将整块内容提升为一层，静止时只贴该层，树滚动不再受每卡 drawcall 拖累
+   （实测树滚动掉帧率 17~36% → 5~9%）。Chromium 对超高层按 tile 惰性栅格化。
+   注意：主网格自身滚动换批时，大层 tile 每次都要重栅格，代价高于逐卡层，
+   因此 FileGrid 滚动期间会临时给 body 加 .no-grid-layer 关闭本规则，停止后恢复。 */
+body:not(.no-grid-layer) #file-grid-container > .file-grid-content,
+body:not(.no-grid-layer) #folders-scroll > .folders-content {
+  transform: translateZ(0);
+}
+
 /* ── 低负载模式（全屏设置弹窗打开时）：主内容网格隐藏子树渲染 ──
    背景：FileCard 每卡 absolute+transform + contentVisibility:auto，图标档位越小
    同屏挂载卡数越多（数百张），静止时也占用大量 GPU 合成层/纹理预算。

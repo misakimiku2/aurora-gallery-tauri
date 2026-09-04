@@ -587,7 +587,8 @@ const FoldersOverview = React.memo(({
         return;
       }
       const maxLimit = 480;
-      const minLimit = 100;
+      // 桌面端最小图标档位下限：100px 时同屏卡数过多会拖垮合成帧率，提升到 125px
+      const minLimit = 125;
       const newSize = Math.max(minLimit, Math.min(maxLimit, Math.round(pinchStartSizeRef.current * totalScale)));
       onThumbnailSizeChange(newSize);
     }, [onThumbnailSizeChange, isAndroid]),
@@ -1418,7 +1419,7 @@ const FoldersOverview = React.memo(({
       )}
       <div
         ref={contentRef}
-        className="relative w-full"
+        className="relative w-full folders-content"
         style={{
           height: totalHeight > 0 ? totalHeight : 'auto',
           minHeight: '100%',
