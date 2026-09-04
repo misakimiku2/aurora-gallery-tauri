@@ -40,6 +40,7 @@ import { isTauriEnvironment } from './environment';
 import { writeFileFromBytes, getGlobalCacheRoot } from '../api/tauri-bridge';
 import { performanceMonitor } from './performanceMonitor';
 import { spriteStats, spriteQueueLen, spriteCacheSize, spriteRenderInfo } from './spriteCache';
+import { tilesStats, tilesQueueLen, tilesCacheSize } from './tilesCache';
 
 export interface ScrollPerfReport {
   id: number;
@@ -75,6 +76,7 @@ export interface ScrollPerfReport {
   treeLogical: number;
   treeTotal: number;
   spriteStart: { composed: number; hit: number; null: number; cancel: number };
+  tilesStart: { composed: number; hit: number; null: number; cancel: number };
 }
 
 interface ScrollSession {
@@ -100,6 +102,7 @@ interface ScrollSession {
   treeLogicalStart: number;
   treeTotalStart: number;
   spriteStart: { composed: number; hit: number; null: number; cancel: number };
+  tilesStart: { composed: number; hit: number; null: number; cancel: number };
 }
 
 /** 单个滚动目标的运行时状态（一个目标 = 一个可独立记录会话的滚动容器） */
@@ -219,6 +222,7 @@ class ScrollProfiler {
     const startTop = scroller.scrollTop;
     const startTs = performance.now();
     const sStart = { composed: spriteStats.composed, hit: spriteStats.hit, null: spriteStats.null, cancel: spriteStats.cancel };
+    const tStart = { composed: tilesStats.composed, hit: tilesStats.hit, null: tilesStats.null, cancel: tilesStats.cancel };
     const frameDts: number[] = [];
     let prev = startTs;
     let running = true;
@@ -243,6 +247,7 @@ class ScrollProfiler {
         `  rAF 帧: ${n} | 平均 ${avg.toFixed(1)}ms | p50 ${p50.toFixed(1)}ms | p95 ${p95.toFixed(1)}ms | 最大 ${max.toFixed(1)}ms`,
         `  掉帧(>16.7ms): ${sorted.filter(t => t > 16.7).length} 次 (${dropRate}%) | >33ms: ${over33} | >50ms: ${over50}`,
         `  Sprite 文件夹图标: 合成 ${spriteStats.composed - sStart.composed} | 缓存命中 ${spriteStats.hit - sStart.hit} | 失败 ${spriteStats.null - sStart.null} | 取消 ${spriteStats.cancel - sStart.cancel} | 队列剩余 ${spriteQueueLen()} | ${spriteRenderInfo()}`,
+        `  Sprite 简洁图标: 合成 ${tilesStats.composed - tStart.composed} | 缓存命中 ${tilesStats.hit - tStart.hit} | 失败 ${tilesStats.null - tStart.null} | 取消 ${tilesStats.cancel - tStart.cancel} | 队列剩余 ${tilesQueueLen()} | 缓存 ${tilesCacheSize()}`,
         `  提示: 基准会移动滚动位置并可能写入滚动状态，结束已恢复 scrollTop；如需还原应用内位置可刷新界面。`,
       ];
       const text = lines.join('\n');
@@ -418,6 +423,12 @@ class ScrollProfiler {
         null: spriteStats.null,
         cancel: spriteStats.cancel,
       },
+      tilesStart: {
+        composed: tilesStats.composed,
+        hit: tilesStats.hit,
+        null: tilesStats.null,
+        cancel: tilesStats.cancel,
+      },
     };
     target.prevFrameTs = performance.now();
     // 双通道帧采样：
@@ -513,6 +524,7 @@ class ScrollProfiler {
       treeLogical: counters.treeSidebarLogical || s.treeLogicalStart,
       treeTotal: counters.treeSidebarTotal || s.treeTotalStart,
       spriteStart: s.spriteStart,
+      tilesStart: s.tilesStart,
     };
     target.lastReport = report;
     this.emit(target, report);
@@ -570,6 +582,11 @@ class ScrollProfiler {
       lines.push(
         `  Sprite 文件夹图标: 合成 ${spriteStats.composed - sStart.composed} | 缓存命中 ${spriteStats.hit - sStart.hit} | 失败 ${spriteStats.null - sStart.null} | 取消 ${spriteStats.cancel - sStart.cancel} | 队列剩余 ${spriteQueueLen()} | 缓存 ${spriteCacheSize()} | ${spriteRenderInfo()}`
       );
+      // folderIconStyle='tiles'（Canvas 化简洁版）的合成统计
+      const tStart = r.tilesStart;
+      lines.push(
+        `  Sprite 简洁图标: 合成 ${tilesStats.composed - tStart.composed} | 缓存命中 ${tilesStats.hit - tStart.hit} | 失败 ${tilesStats.null - tStart.null} | 取消 ${tilesStats.cancel - tStart.cancel} | 队列剩余 ${tilesQueueLen()} | 缓存 ${tilesCacheSize()}`
+      );
     }
     return lines.join('\n');
   }
@@ -601,6 +618,35 @@ class ScrollProfiler {
     win.__scrollBench = (durationMs?: number, targetName?: string, tag?: string, advancePercent?: number) => {
       this.runBench(durationMs, targetName, tag, advancePercent);
     };
+    // 一键连续跑 N 轮确定性滚动基准（省去控制台反复粘贴）；默认 file-grid / 3s / 每帧推进 3%
+    win.__tilesBench = (runs = 3, durationMs = 3000, advancePercent = 3) => {
+      const runOne = (i: number) => {
+        if (i >= runs) return;
+        this.runBench(durationMs, 'file-grid', 'tiles-canvas-idle', advancePercent);
+        window.setTimeout(() => runOne(i + 1), durationMs + 1200);
+      };
+      runOne(0);
+    };
+    // URL 形参自动跑 bench：方便 Tauri WebView2 简化 DevTools 无 REPL 输入框的场景
+    // 用法：地址栏改成 ?bench=3 回车（应用重载后自动跑 3 轮，写入 scroll-perf 文件）
+    try {
+      const usp = new URLSearchParams(location.search);
+      const bench = usp.get('bench');
+      if (bench !== null) {
+        const runs = Math.max(1, Number(bench) || 3);
+        const dur = Math.max(500, Number(usp.get('dur') || 3000));
+        const pct = Math.max(0.5, Number(usp.get('pct') || 3));
+        const tag = usp.get('tag') || 'url-bench';
+        window.setTimeout(() => {
+          const runOne = (i: number) => {
+            if (i >= runs) return;
+            this.runBench(dur, 'file-grid', `${tag}-${i}`, pct);
+            window.setTimeout(() => runOne(i + 1), dur + 1200);
+          };
+          runOne(0);
+        }, 6000); // 等应用初始化 + 视口稳定
+      }
+    } catch { /* URL 解析失败静默 */ }
   }
 }
 

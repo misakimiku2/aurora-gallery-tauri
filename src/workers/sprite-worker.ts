@@ -13,6 +13,7 @@
 
 /// <reference lib="webworker" />
 import { composeFull, type IconCategory, type IconTheme } from '../utils/spriteComposer';
+import { composeTilesFull } from '../utils/tilesComposer';
 
 // 避免 lib.dom 与 lib.webworker 类型冲突，worker 侧使用最小 self 类型
 const sw = self as unknown as {
@@ -23,6 +24,8 @@ const sw = self as unknown as {
 interface ComposePayload {
   type: 'compose';
   reqId: number;
+  /** classic = composeFull（经典 3D）；tiles = composeTilesFull（简洁瓷砖，忽略 count） */
+  kind: 'classic' | 'tiles';
   previewSrcs: string[];
   count: number | undefined;
   category: IconCategory;
@@ -74,18 +77,23 @@ const decodeAll = (srcs: string[]): Promise<(ImageBitmap | null)[]> =>
 sw.onmessage = (e: MessageEvent) => {
   const data = (e.data || {}) as ComposePayload;
   if (data.type !== 'compose') return;
-  const { reqId, previewSrcs, count, category, theme, size, dpr } = data;
-  composeFull(
-    previewSrcs || [],
-    count,
-    category,
-    theme,
-    size,
-    dpr,
-    undefined, // back/front 由 worker 自己合成（离主线程）
-    undefined, // 无需滚动打断：worker 不占主线程
-    decodeAll
-  )
+  const { reqId, kind, previewSrcs, count, category, theme, size, dpr } = data;
+  // decodeAll：worker 无 HTMLImageElement，统一 fetch→blob→createImageBitmap；
+  // 主线程的组件路径（悬停）仍用 HTMLImageElement，互不影响
+  const run = kind === 'tiles'
+    ? composeTilesFull(previewSrcs || [], category, theme, size, dpr, undefined, decodeAll)
+    : composeFull(
+        previewSrcs || [],
+        count,
+        category,
+        theme,
+        size,
+        dpr,
+        undefined, // back/front 由 worker 自己合成（离主线程）
+        undefined, // 无需滚动打断：worker 不占主线程
+        decodeAll
+      );
+  run
     .then(bmp => {
       if (bmp) sw.postMessage({ type: 'result', reqId, bmp }, [bmp]);
       else sw.postMessage({ type: 'result', reqId, bmp: null });

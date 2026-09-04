@@ -40,6 +40,12 @@ import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 // 因此 150 足够，换卡量比 400 少约 27%。过渡结束后自动恢复 400。
 const FLIP_BUFFER = 150;
 
+// 虚拟化单窗口挂载卡数上限：图标越小行高越矮、列数越多，固定像素 buffer（400px）内的
+// 卡数会随尺寸² 成倍增长，一屏可能挂载数百上千张卡（实测最小档 Canvas 卡 p50 24ms、
+// 掉帧 97%，且整应用变卡）。限制单窗口总数，超出时收缩窗口底部由滚动补卡；大图标档
+// 窗口内卡数本就远低于该值，不受影响。
+const MAX_MOUNT_CARDS = 240;
+
 // 布局位置快照（含行高）：FLIP 选锚点时需要旧布局的行高来判断"哪一行包含视口顶边"。
 function snapshotLayoutPositions(layout: LayoutItem[]) {
   const map = new Map<string, { x: number; y: number; h: number }>();
@@ -680,7 +686,10 @@ const FileCard = React.memo(({
                     <Check size={14} className="text-white" strokeWidth={3} />
                     </div>
                 ) : (
-                    <div className="w-5 h-5 bg-black/30 hover:bg-black/50 rounded-full border border-white/50 backdrop-blur-sm"></div>
+                    /* 不用 backdrop-blur：backdrop-filter 会强制每张卡创建一个独立合成层，
+                       小图标档下同屏数百张卡即数百层，拖累同窗口（如左侧树）滚动。无模糊的
+                       半透明圆视觉差异极小，但可让卡片回归普通绘制层。 */
+                    <div className="w-5 h-5 bg-black/30 hover:bg-black/50 rounded-full border border-white/50"></div>
                 )}
             </div>
 
@@ -788,8 +797,15 @@ const GroupContent = React.memo(({
       const buffer = 400;
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
-      
-      return layout.filter(item => item.y < maxY && item.y + item.height > minY);
+      // 与主网格一致的单窗口挂载上限，避免小图标档卡数爆炸
+      const out: LayoutItem[] = [];
+      for (const item of layout) {
+          if (item.y < maxY && item.y + item.height > minY) {
+              if (out.length >= MAX_MOUNT_CARDS) break;
+              out.push(item);
+          }
+      }
+      return out;
   }, [layout, scrollTop, offsetTop, containerRect.height]);
 
   return (
@@ -2235,10 +2251,19 @@ export const FileGrid = React.memo(({
       }
       // Linear scan from lo; since sorted by y, stop as soon as y >= maxY.
       const out: LayoutItem[] = [];
+      // 收集预算上限：单窗口最多挂载 MAX_MOUNT_CARDS 张卡（视口内卡必被包含——常规屏
+      // 视口卡数 < 240；仅极端 4K+ 最小图标可能触及）。超出后收缩窗口底部，滚动越界即重建。
       for (let i = lo; i < sortedByY.length; i++) {
           const item = layout[sortedByY[i]];
           if (item.y >= maxY) break;
+          if (out.length >= MAX_MOUNT_CARDS) break;
           if (item.y + item.height > minY && displayFileIdsSet.has(item.id)) out.push(item);
+      }
+      // 若因预算截断：把渲染窗口 max 收缩到实际最后一张卡底部，滚动越过即触发换卡，
+      // 避免"窗口仍声明覆盖到 scrollTop+H+400 但实际缺卡"导致长时间空白。
+      if (out.length >= MAX_MOUNT_CARDS && out.length > 0) {
+          const last = out[out.length - 1];
+          renderWindowRef.current.max = Math.max(scrollTop + containerRect.height, last.y + last.height);
       }
       return out;
   }, [layout, sortedByY, scrollTop, containerRect.height, isLayoutTransitioning, displayFileIdsSet]);

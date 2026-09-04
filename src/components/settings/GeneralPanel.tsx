@@ -3,6 +3,8 @@ import { Globe, Palette, Sun, Moon, Monitor, Check, LayoutGrid, Grid, List, Layo
 import { AppSettings, LayoutMode, SortOption, SortDirection, GroupByOption } from '../../types';
 import { Folder3DIcon } from '../Folder3DIcon';
 import { Folder3DIconCanvas } from '../Folder3DIconCanvas';
+import { FolderTilesIconCanvas } from '../FolderTilesIconCanvas';
+import { isSpriteSupportedSafe } from '../../utils/spriteCache';
 import { isDebugLogEnabled, setDebugLogEnabled } from '../../utils/debugLog';
 
 // 通用设置 + 外观设置面板组件
@@ -15,6 +17,21 @@ interface GeneralPanelProps {
 
 // 默认布局设置的默认值，用于缺省时展开
 const DEFAULT_LAYOUT = { layoutMode: 'grid' as LayoutMode, sortBy: 'name' as SortOption, sortDirection: 'asc' as SortDirection, groupBy: 'none' as GroupByOption };
+
+// 调试/对比开关：与 FolderThumbnail 同款，URL 形参 ?tilesForceDom=1/0 优先于 localStorage
+const isTilesForcedDom = (() => {
+  if (typeof window === 'undefined') return false;
+  const v = new URLSearchParams(location.search).get('tilesForceDom');
+  if (v !== null) {
+    const on = v === '1' || v === 'true';
+    try {
+      if (on) localStorage.setItem('tilesForceDom', '1');
+      else localStorage.removeItem('tilesForceDom');
+    } catch { /* */ }
+    return on;
+  }
+  return window.localStorage?.getItem('tilesForceDom') === '1';
+})();
 
 const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onUpdateSettingsData }) => {
   return (
@@ -192,6 +209,8 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
                     <div className="w-32 h-32">
                       {opt.id === 'canvas' ? (
                         <Folder3DIconCanvas />
+                      ) : opt.id === 'tiles' && isSpriteSupportedSafe() && !isTilesForcedDom ? (
+                        <FolderTilesIconCanvas />
                       ) : (
                         <Folder3DIcon variant={opt.id} />
                       )}
@@ -211,6 +230,59 @@ const GeneralPanel: React.FC<GeneralPanelProps> = ({ t, settings, isAndroid, onU
           </div>
         </div>
       </section>
+
+      {import.meta.env.DEV && (
+        <section className="mt-6">
+          <h3 className="text-lg font-bold text-amber-600 dark:text-amber-400 mb-4 flex items-center"><Layers size={20} className="mr-2" /> 开发者调试（仅开发构建）</h3>
+          <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800 rounded-lg p-4 space-y-3 text-sm text-gray-700 dark:text-gray-300">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={typeof window !== 'undefined' && window.localStorage?.getItem('tilesForceDom') === '1'}
+                onChange={(e) => {
+                  try {
+                    if (e.target.checked) window.localStorage.setItem('tilesForceDom', '1');
+                    else window.localStorage.removeItem('tilesForceDom');
+                  } catch { /* localStorage 不可用时静默 */ }
+                  // 简洁版模式常量在模块加载时决定，需刷新一次生效（按钮触发一次，安全）
+                  window.location.reload();
+                }}
+              />
+              「简洁」文件夹图标强制走 DOM 版（与 Canvas 版对比）
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={typeof window !== 'undefined' && window.localStorage?.getItem('auroraLpDisabled') !== '1'}
+                onChange={(e) => {
+                  try {
+                    if (!e.target.checked) window.localStorage.setItem('auroraLpDisabled', '1');
+                    else window.localStorage.removeItem('auroraLpDisabled');
+                  } catch { /* localStorage 不可用时静默 */ }
+                  // App.tsx 监听该事件实时切换，无需刷新
+                  window.dispatchEvent(new Event('aurora-lp-config-changed'));
+                }}
+              />
+              设置弹窗打开时主网格低负载（隐藏底层卡片合成，缓解设置滚动卡）
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="px-3 py-1.5 rounded-md border border-amber-400 text-amber-700 dark:text-amber-300 bg-white dark:bg-transparent hover:bg-amber-100 dark:hover:bg-amber-900/20 font-medium"
+                onClick={() => {
+                  (window as any).__scrollPerfEnable?.(true);
+                  window.setTimeout(() => (window as any).__tilesBench?.(3), 1500);
+                }}
+              >
+                跑 3 轮滚动基准
+              </button>
+              <span className="text-xs text-amber-600/80 dark:text-amber-400/70">
+                结果写入 Aurora\scroll-perf\scroll-perf-file-grid-*.txt
+              </span>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="mt-10 pt-2">
         <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center"><LayoutGrid size={20} className="mr-2 text-blue-500" /> {t('settings.defaultLayout') || '默认布局设置'}</h3>

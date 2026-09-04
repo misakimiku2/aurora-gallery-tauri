@@ -604,6 +604,24 @@ input[type=range]::-webkit-slider-runnable-track {
   --tw-scale-y: 1;
 }
 
+/* ── 低负载模式（全屏设置弹窗打开时）：主内容网格隐藏子树渲染 ──
+   背景：FileCard 每卡 absolute+transform + contentVisibility:auto，图标档位越小
+   同屏挂载卡数越多（数百张），静止时也占用大量 GPU 合成层/纹理预算。
+   设置弹窗（z-300 全屏遮罩）在顶层滚动时，底层这些层仍参与合成，导致弹窗内
+   滚动掉帧甚至整应用变卡。将整个 main-content-area 内容跳过绘制/合成
+   （content-visibility:hidden 保留元素占位与滚动位置，关闭弹窗后自动恢复渲染）。
+   注意：该 class 由 App.tsx 在 state.isSettingsOpen 时挂到根容器，可扩展为其他
+   全屏弹窗（把 lowPowerBehindModal 条件放宽即可）。 */
+.aurora-low-power #main-content-area {
+  content-visibility: hidden;
+}
+
+/* 恢复瞬间避免整批卡片同时重绘造成一帧尖峰：恢复可见时先强制回 layout，
+   并让单卡在 100ms 内淡入（无 GPU 合成负担的纯 opacity 过渡）。 */
+.aurora-low-power #main-content-area * {
+  transition: none !important;
+}
+
 /* ========== 侧边栏长文本滚动（文件夹名超出可显示宽度时来回滚动） ========== */
 /* 仅对实际溢出的行启用动画（由 <MarqueeText> 测量后添加类），未溢出行零开销。 */
 .aurora-marquee {

@@ -102,6 +102,8 @@ interface AppModalsProps {
   handleSmartAddToPerson?: (personId: string, newFileIds: string[]) => void;
   handleSmartCreateTopic?: (topics: Topic[], people: Person[]) => Promise<void>;
   handleConfirmCreatePerson?: (name: string) => void;
+  // 打开设置弹窗（走 App 的统一入口：先截图静态背景再低负载隐藏主网格）
+  onOpenSettings?: (category?: string) => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({
@@ -161,6 +163,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
   handleSmartAddToPerson,
   handleSmartCreateTopic,
   handleConfirmCreatePerson,
+  onOpenSettings,
 }) => {
   const closeModals = () => setState(s => ({ ...s, activeModal: { type: null } }));
 
@@ -255,7 +258,7 @@ export const AppModals: React.FC<AppModalsProps> = ({
               }}
               onClose={closeModals}
               onBack={() => setState(s => ({ ...s, activeModal: { type: 'batch-rename' } }))}
-              onOpenSettings={() => setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'ai' }))}
+              onOpenSettings={() => onOpenSettings?.('ai')}
               t={t}
             />
           )}

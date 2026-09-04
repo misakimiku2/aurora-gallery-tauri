@@ -77,6 +77,9 @@ export const Folder3DIconCanvas: React.FC<Folder3DIconCanvasProps> = React.memo(
       if (!c) return;
       // 画布已被重分配（尺寸变化）：丢弃旧尺寸位图，避免画布上只出现左上角内容
       if (sizeRef.current !== S) return;
+      // 缓存命中且内容未变：跳过冗余重绘（滚动每次 idle 兜底全体可见卡命中缓存时，
+      // 避免一轮一轮重画 canvas 触发纹理解析/上传）
+      if (lastFullRef.current === bmp) return;
       lastFullRef.current = bmp; // 记录最近一帧完整位图，供尺寸变化时过渡缩放
       const ctx = c.getContext('2d');
       if (!ctx) return;

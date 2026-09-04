@@ -7,10 +7,30 @@ import { performanceMonitor } from '../utils/performanceMonitor';
 import { Folder, ImageIcon } from 'lucide-react';
 import { Folder3DIcon } from './Folder3DIcon';
 import { Folder3DIconCanvas } from './Folder3DIconCanvas';
+import { FolderTilesIconCanvas } from './FolderTilesIconCanvas';
 import { isSpriteSupportedSafe } from '../utils/spriteCache';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
+
+// 调试/对比开关：
+//   - URL 形参 ?tilesForceDom=1 / 0 启动时覆盖 localStorage 并持久化，最适合 Tauri WebView2
+//     简化 DevTools 没有 Console REPL 输入框的场景（直接改地址栏 URL 回车触发）。
+//   - 兜底读 localStorage.tilesForceDom==='1'（保留旧的命令式切换能力）。
+//   用法：地址栏改成 http://localhost:14422/?tilesForceDom=1 回车；切回 /? 回车。
+const isTilesForcedDom = (() => {
+  if (typeof window === 'undefined') return false;
+  const v = new URLSearchParams(location.search).get('tilesForceDom');
+  if (v !== null) {
+    const on = v === '1' || v === 'true';
+    try {
+      if (on) localStorage.setItem('tilesForceDom', '1');
+      else localStorage.removeItem('tilesForceDom');
+    } catch { /* localStorage 不可用时静默 */ }
+    return on;
+  }
+  return window.localStorage?.getItem('tilesForceDom') === '1';
+})();
 
 // 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
 // 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
@@ -335,6 +355,13 @@ export const FolderThumbnail = React.memo(({ file, getFileNode, mode, resourceRo
       <div className="relative w-full aspect-square p-2" style={{ maxHeight: '100%' }}>
          {folderIconStyle === 'canvas' && isSpriteSupportedSafe() ? (
             <Folder3DIconCanvas
+               previewSrcs={effectivePreviewSrcs}
+               count={folderItemCount(file)}
+               category={file.category}
+               folderId={file.id}
+            />
+         ) : folderIconStyle === 'tiles' && isSpriteSupportedSafe() && !isTilesForcedDom ? (
+            <FolderTilesIconCanvas
                previewSrcs={effectivePreviewSrcs}
                count={folderItemCount(file)}
                category={file.category}

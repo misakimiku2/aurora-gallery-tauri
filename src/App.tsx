@@ -7,7 +7,7 @@ import * as remoteSourceUtil from './utils/remoteSource';
 import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
-import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached } from './api/tauri-bridge';
+import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
 import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
@@ -167,10 +167,12 @@ export const App: React.FC = () => {
   // P1: 监听"前往 AI视觉"事件，打开设置弹窗并切换到 aiVision 分类
   useEffect(() => {
     const handleNavigateAiVision = () => {
-      setState(s => ({ ...s, isSettingsOpen: true, settingsCategory: 'aiVision' }));
+      // openSettings 为 useCallback([]) 稳定引用（晚于本 effect 声明但在事件触发时可用）
+      openSettings('aiVision');
     };
     window.addEventListener('navigate-to-ai-vision', handleNavigateAiVision);
     return () => window.removeEventListener('navigate-to-ai-vision', handleNavigateAiVision);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ... (keep all state variables and hooks identical)
@@ -1702,7 +1704,84 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  const toggleSettings = useCallback(() => setState(s => ({ ...s, isSettingsOpen: !s.isSettingsOpen })), []);
+  // ── 设置弹窗低负载背景（后台预热缓存 + 打开零等待）────────────────────────────
+  // 主网格静止卡片占 GPU 合成预算；设置打开期间由 .aurora-low-power 对 main-content-area
+  // 做 content-visibility:hidden，并用「主界面静态截图」垫底维持毛玻璃观感（见 index.css）。
+  // PrintWindow 抓屏在 dev/debug 构建较慢，因此不放在点击路径上：仅在主界面滚动结束 /
+  // 关闭设置后，延迟几百毫秒后台预生成缓存。
+  const settingsOpenRef = useRef(false);
+  const lastPrefetchTimeRef = useRef(0);
+  const snapshotInFlightRef = useRef(false);
+  const prefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [settingsSnapshot, setSettingsSnapshot] = useState<string | null>(null);
+  useEffect(() => { settingsOpenRef.current = state.isSettingsOpen; }, [state.isSettingsOpen]);
+
+  // 统一抓屏入口：任何时刻最多一次在途抓屏
+  const doCaptureSnapshot = useCallback(async (): Promise<string | null> => {
+    if (snapshotInFlightRef.current) return null;
+    snapshotInFlightRef.current = true;
+    try {
+      return await captureWindowSnapshot();
+    } catch {
+      return null; // 非 Tauri / 非 Windows / 截图失败：回退实时网格模式
+    } finally {
+      snapshotInFlightRef.current = false;
+    }
+  }, []);
+
+  // 后台预热：弹窗未打开、距上次预生成足够久时才执行（避免把弹窗截进画面）
+  const prefetchSettingsSnapshot = useCallback(async () => {
+    if (settingsOpenRef.current) return;
+    const now = Date.now();
+    if (now - lastPrefetchTimeRef.current < 3000) return;
+    lastPrefetchTimeRef.current = now;
+    const url = await doCaptureSnapshot();
+    if (url && !settingsOpenRef.current) setSettingsSnapshot(url);
+  }, [doCaptureSnapshot]);
+
+  // 主网格滚动结束（全局 scrollState → idle）后延迟预热
+  useEffect(() => {
+    const unsub = subscribeScrollState((s) => {
+      if (s === 'idle') {
+        if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
+        prefetchTimerRef.current = setTimeout(() => { void prefetchSettingsSnapshot(); }, 800);
+      }
+    });
+    return () => {
+      unsub();
+      if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
+    };
+  }, [prefetchSettingsSnapshot]);
+
+  // 初始进入主界面 / 关闭设置后：延迟刷新缓存
+  useEffect(() => {
+    if (state.isSettingsOpen) return;
+    if (prefetchTimerRef.current) clearTimeout(prefetchTimerRef.current);
+    prefetchTimerRef.current = setTimeout(() => { void prefetchSettingsSnapshot(); }, 1200);
+  }, [state.isSettingsOpen, isLoading, displayFileIds.length, prefetchSettingsSnapshot]);
+
+  // 打开设置：点击路径上没有任何等待。有缓存（后台 idle 预生成）→ 立即开，主网格即时
+  // 进入低负载并用缓存垫底；无缓存（冷启动极早期）→ 也立即开，本帧保留实时主网格为背景
+  // （打开瞬间通常尚未滚动设置，短暂实时可接受），缓存由后台预取在关闭设置后补上，
+  // 下次打开即为零等待。缓存画面与实际主网格可能有轻微滚动位移——底层是模糊低分辨率
+  // 图 + 50% 黑遮罩，位移几乎不可察觉，因此不因「刚滚动」而回退等待。
+  const openSettings = useCallback((category?: string) => {
+    setState(s =>
+      s.isSettingsOpen
+        ? s
+        : { ...s, isSettingsOpen: true, settingsCategory: category ?? s.settingsCategory }
+    );
+  }, []);
+
+  const closeSettings = useCallback(() => {
+    setState(s => ({ ...s, isSettingsOpen: false }));
+    // 缓存保留：关闭后由上方 effect 延迟 1.2s 后台刷新（此刻主界面已恢复实时、无弹窗）
+  }, []);
+
+  const toggleSettings = useCallback(() => {
+    if (state.isSettingsOpen) closeSettings();
+    else openSettings();
+  }, [state.isSettingsOpen, openSettings, closeSettings]);
 
   /* goBack / goForward / setNavigationTimestamp: delegated to `useNavigation` (see src/hooks/useNavigation.ts) */
 
@@ -2433,15 +2512,41 @@ export const App: React.FC = () => {
   // toggle moment and run card transitions simultaneously with panel animation.
   const panelWidthRem = (state.layout.isSidebarVisible ? 16 : 0) + (state.layout.isMetadataVisible ? 20 : 0) + (state.layout.isColorPickerVisible ? 20 : 0);
 
+  // 低负载模式：全屏设置弹窗打开时，主内容网格（FileGrid/FoldersOverview 等）静止不可交互，
+  // 但可能仍挂载数百张合成层卡片拖累弹窗内滚动。通过 .aurora-low-power 让 main-content-area
+  // 进入 content-visibility:hidden（保留占位与滚动位置，跳过子树绘制/合成），释放合成器预算。
+  // settingsSnapshot 就绪后才挂 class（避免截图前误隐藏）——静态背景图（z-295）盖在被隐藏的
+  // 网格之上，配合 SettingsModal 的半透明毛玻璃遮罩还原原视觉。
+  // 可通过 GeneralPanel 开发者调试开关（localStorage auroraLpDisabled）关闭做 A/B 对比。
+  const [lowPowerDisabled, setLowPowerDisabled] = useState(() => {
+    try { return window.localStorage?.getItem('auroraLpDisabled') === '1'; } catch { return false; }
+  });
+  useEffect(() => {
+    const sync = () => {
+      try { setLowPowerDisabled(window.localStorage?.getItem('auroraLpDisabled') === '1'); } catch { setLowPowerDisabled(false); }
+    };
+    window.addEventListener('aurora-lp-config-changed', sync);
+    return () => window.removeEventListener('aurora-lp-config-changed', sync);
+  }, []);
+  const lowPowerActive = state.isSettingsOpen && !lowPowerDisabled && !!settingsSnapshot;
+
   return (
     <div
-      className="w-full h-full flex flex-col bg-main text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300"
+      className={`w-full h-full flex flex-col bg-main text-gray-900 dark:text-gray-100 overflow-hidden font-sans transition-colors duration-300 ${lowPowerActive ? 'aurora-low-power' : ''}`}
       onClick={closeContextMenu}
       onDragEnter={handleExternalDragEnter}
       onDragOver={handleExternalDragOver}
       onDrop={handleExternalDrop}
       onDragLeave={handleExternalDragLeave}
     >
+      {/* 设置弹窗低负载背景：打开瞬间的主界面静态截图（盖住被 content-visibility:hidden 的网格）。
+          z-10 仅高于普通文档流，避免盖住 z 更高的全局浮层（Toast/任务进度等）。 */}
+      {lowPowerActive && settingsSnapshot && (
+        <div
+          className="fixed inset-0 z-10 pointer-events-none"
+          style={{ backgroundImage: `url(${settingsSnapshot})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
+        />
+      )}
       {/* 启动画面 */}
       <SplashScreen isVisible={showSplash} loadingInfo={loadingInfo} />
 
@@ -2825,6 +2930,7 @@ export const App: React.FC = () => {
         handleSmartAddToPerson={handleSmartAddToPerson}
         handleSmartCreateTopic={handleSmartCreateTopic}
         handleConfirmCreatePerson={handleConfirmCreatePerson}
+        onOpenSettings={openSettings}
       />
 
       <ContextMenu

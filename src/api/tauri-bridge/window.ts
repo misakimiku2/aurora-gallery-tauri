@@ -54,6 +54,15 @@ export const isWindowMaximized = async (): Promise<boolean> => {
 };
 
 /**
+ * 捕获主窗口当前画面（仅 Windows；WebView2 经 GPU 合成后的完整内容）。
+ * 用于设置弹窗打开时的低负载静态背景（原内容被 content-visibility:hidden 隐藏后垫底）。
+ * @returns dataURL 图片（data:image/jpeg;base64,...）
+ */
+export const captureWindowSnapshot = async (): Promise<string> => {
+  return invoke<string>('capture_window_snapshot');
+};
+
+/**
  * 退出应用程序
  */
 export const exitApp = async (): Promise<void> => {

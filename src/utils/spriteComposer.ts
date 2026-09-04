@@ -131,7 +131,7 @@ const deg2rad = (deg: number) => (deg * Math.PI) / 180;
 
 // 高质量缩放：canvas 默认 imageSmoothingQuality='low'（bilinear），放大缩略图明显发糊；
 // 与浏览器 <img>（高质量重采样）对齐后可获得同等的清晰度
-const applySmoothing = (ctx: Ctx2D) => {
+export const applySmoothing = (ctx: Ctx2D) => {
   ctx.imageSmoothingEnabled = true;
   try {
     ctx.imageSmoothingQuality = 'high';
@@ -299,7 +299,7 @@ const pathToPoints = (d: string, curveSamples = 10): number[][] => {
   return pts;
 };
 
-const roundRectPath = (
+export const roundRectPath = (
   ctx: Ctx2D,
   x: number, y: number, w: number, h: number, r: number
 ) => {
@@ -318,7 +318,7 @@ const roundRectPath = (
 };
 
 // 等价 CSS object-cover：填满目标矩形并居中裁剪
-const drawCover = (
+export const drawCover = (
   ctx: Ctx2D,
   img: HTMLImageElement | ImageBitmap,
   dx: number, dy: number, dw: number, dh: number

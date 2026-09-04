@@ -49,6 +49,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ state, onClose, on
 
 
     return (
+    /* 半透明 + 毛玻璃遮罩。底层在 App 打开设置时会显示「打开瞬间的主界面静态截图」
+       （z-295，原实时网格已 content-visibility:hidden），因此这里 blur 到的是静态画面，
+       观感与原始实时毛玻璃一致，且无实时合成开销。截图不可用（非 Windows/失败）时
+       App 会回退为实时网格，本遮罩同样适用。 */
     <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-8 backdrop-blur-sm">
       <div className="bg-content rounded-xl w-[900px] h-[calc(100vh-200px)] min-h-[400px] shadow-2xl flex overflow-hidden animate-zoom-in" onClick={e => e.stopPropagation()}>
 

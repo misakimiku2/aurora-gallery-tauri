@@ -69,13 +69,14 @@ class SpriteWorkerClient {
     });
   }
 
-  /** 请求合成一张完整位图；worker 不可用/异常时返回 null（调用方回退主线程合成） */
-  requestFull(p: SpriteComposeParams): Promise<ImageBitmap | null> {
+  /** 请求合成一张完整位图；worker 不可用/异常时返回 null（调用方回退主线程合成）。
+   *  kind='classic' → composeFull（经典 3D 文件夹）；kind='tiles' → composeTilesFull（简洁瓷砖） */
+  requestFull(p: SpriteComposeParams, kind: 'classic' | 'tiles' = 'classic'): Promise<ImageBitmap | null> {
     if (!this.ready || !this.worker) return Promise.resolve(null);
     const reqId = ++this.seq;
     return new Promise(resolve => {
       this.pending.set(reqId, resolve);
-      this.worker!.postMessage({ type: 'compose', reqId, ...p });
+      this.worker!.postMessage({ type: 'compose', kind, reqId, ...p });
     });
   }
 
