@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { FileNode, FileType, LayoutMode } from '../types';
+import { FileNode, LayoutMode } from '../types';
 import { useInView } from '../hooks/useInView';
 import { getGlobalCache } from '../utils/thumbnailCache';
 import { performanceMonitor } from '../utils/performanceMonitor';
@@ -12,6 +12,7 @@ import { isSpriteSupportedSafe } from '../utils/spriteCache';
 import { isThumbnailUpgrading } from '../api/tauri-bridge';
 import { GetFileNode } from './useLayoutHook';
 import { isRemotePath, getRemoteThumbnailUrl, subscribeRemoteChange } from '../utils/remoteSource';
+import { findImagesDeeply } from '../utils/folderCoverImages';
 
 // 调试/对比开关：
 //   - URL 形参 ?tilesForceDom=1 / 0 启动时覆盖 localStorage 并持久化，最适合 Tauri WebView2
@@ -32,56 +33,6 @@ const isTilesForcedDom = (() => {
   return window.localStorage?.getItem('tilesForceDom') === '1';
 })();
 
-// 模块级 DFS 结果缓存：快速滚动时虚拟化会反复卸载/重挂载同一个文件夹卡片，
-// 每次挂载都执行 findImagesDeeply 深搜整棵子树 + localeCompare 排序会占用渲染期主线程。
-// 用 children 指纹（数量 + 头尾 id + 文件夹自身 updatedAt）判断内容是否变化，变化才重算。
-const _deepImageCache = new Map<string, { fingerprint: string; images: FileNode[] }>();
-
-const childrenFingerprint = (rootFolder: FileNode): string => {
-    const kids = rootFolder.children || [];
-    const first = kids[0] || '';
-    const last = kids[kids.length - 1] || '';
-    return `${kids.length}|${first}|${last}|${rootFolder.updatedAt || rootFolder.createdAt || ''}`;
-};
-
-const findImagesDeeply = (
-    rootFolder: FileNode,
-    getFileNode: GetFileNode,
-    limit: number = 3
-): FileNode[] => {
-    const fp = childrenFingerprint(rootFolder);
-    const cached = _deepImageCache.get(rootFolder.id);
-    if (cached && cached.fingerprint === fp) return cached.images;
-
-    const images: FileNode[] = [];
-    const stack: string[] = [...(rootFolder.children || [])];
-    const visited = new Set<string>();
-
-    let traversalCount = 0;
-    const MAX_TRAVERSAL = 500;
-
-    while (stack.length > 0 && traversalCount < MAX_TRAVERSAL) {
-        const id = stack.pop()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        traversalCount++;
-
-        const node = getFileNode(id);
-        if (!node) continue;
-
-        if (node.type === FileType.IMAGE) {
-            images.push(node);
-        } else if (node.type === FileType.FOLDER && node.children) {
-            stack.push(...node.children);
-        }
-    }
-
-    const result = images
-        .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))
-        .slice(0, limit);
-    _deepImageCache.set(rootFolder.id, { fingerprint: fp, images: result });
-    return result;
-};
 
 /**
  * 文件夹角标数量：远程文件夹（安卓/LAN）的子节点通常尚未加载（children 为空数组），

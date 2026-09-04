@@ -42,6 +42,16 @@ import { performanceMonitor } from './performanceMonitor';
 import { spriteStats, spriteQueueLen, spriteCacheSize, spriteRenderInfo } from './spriteCache';
 import { tilesStats, tilesQueueLen, tilesCacheSize } from './tilesCache';
 
+/**
+ * 当前生效的 FileGrid 虚拟化窗口 buffer（由 URL 形参 ?gridBuffer=N 或默认值决定）。
+ * FileGrid 把值挂在 window 上：简化 DevTools 没有 REPL、读不到全局变量，
+ * 只有写进报告才能区分不同 buffer 配置下的多组 A/B 数据。
+ */
+const gridBufferInfo = (): string => {
+  const v = typeof window !== 'undefined' ? (window as any).__AURORA_GRID_BUFFER__ : undefined;
+  return typeof v === 'number' ? ` | 窗口 buffer ${v}px` : '';
+};
+
 export interface ScrollPerfReport {
   id: number;
   durationMs: number;
@@ -245,7 +255,7 @@ class ScrollProfiler {
       const lines = [
         `[ScrollBench][${name}] ${tag ? tag + ' ' : ''}时长 ${Math.round(performance.now() - startTs)}ms`,
         `  rAF 帧: ${n} | 平均 ${avg.toFixed(1)}ms | p50 ${p50.toFixed(1)}ms | p95 ${p95.toFixed(1)}ms | 最大 ${max.toFixed(1)}ms`,
-        `  掉帧(>16.7ms): ${sorted.filter(t => t > 16.7).length} 次 (${dropRate}%) | >33ms: ${over33} | >50ms: ${over50}`,
+        `  掉帧(>16.7ms): ${sorted.filter(t => t > 16.7).length} 次 (${dropRate}%) | >33ms: ${over33} | >50ms: ${over50}${gridBufferInfo()}`,
         `  Sprite 文件夹图标: 合成 ${spriteStats.composed - sStart.composed} | 缓存命中 ${spriteStats.hit - sStart.hit} | 失败 ${spriteStats.null - sStart.null} | 取消 ${spriteStats.cancel - sStart.cancel} | 队列剩余 ${spriteQueueLen()} | ${spriteRenderInfo()}`,
         `  Sprite 简洁图标: 合成 ${tilesStats.composed - tStart.composed} | 缓存命中 ${tilesStats.hit - tStart.hit} | 失败 ${tilesStats.null - tStart.null} | 取消 ${tilesStats.cancel - tStart.cancel} | 队列剩余 ${tilesQueueLen()} | 缓存 ${tilesCacheSize()}`,
         `  提示: 基准会移动滚动位置并可能写入滚动状态，结束已恢复 scrollTop；如需还原应用内位置可刷新界面。`,
@@ -575,7 +585,7 @@ class ScrollProfiler {
       lines.push(`  文件夹树重渲染: ${r.treeRenders} 次 | 树节点 DOM: ${r.treeDOMStart} → ${r.treeDOMEnd}`);
       lines.push(`  可见节点: ${r.treeLogical} | 文件夹总数: ${r.treeTotal}`);
     } else {
-      lines.push(`  FileGrid 重渲染: ${r.fileGridRenders} 次 | DOM 卡片: ${r.fileGridDOMStart} → ${r.fileGridDOMEnd}`);
+      lines.push(`  FileGrid 重渲染: ${r.fileGridRenders} 次 | DOM 卡片: ${r.fileGridDOMStart} → ${r.fileGridDOMEnd}${gridBufferInfo()}`);
       lines.push(`  缩略图: 命中 ${r.thumbHitDelta} | 未命中 ${r.thumbMissDelta}`);
       // folderIconStyle='canvas' 时的文件夹图标 Sprite 合成统计（本次会话增量）
       const sStart = r.spriteStart;

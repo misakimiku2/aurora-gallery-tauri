@@ -24,6 +24,27 @@ class ThumbnailBatcher {
   // 防止"视口上方已滚过的请求"占满后端并发，当前视口迟迟轮不到。
   private readonly MAX_BATCH_SIZE = 8;
   private readonly MAX_INFLIGHT = 2;
+  // 待发送路径总数上限。文件夹封面预取的配额改为按布局密度动态推算后，
+  // 单次扫描最多可提交数百个路径；长距离快速滚动会让 batch 无限膨胀，
+  // 而 processBatch 每轮都要 O(n) 复制整个 Map 再 reverse。
+  private readonly MAX_PENDING_PATHS = 4000;
+
+  /**
+   * 超过上限时丢弃最旧的路径 —— Map 保持插入顺序，而批次按「最新优先」
+   * 发送，队首恰好是最旧、最可能早已滚出视口的请求（滚动预取的请求正是
+   * 最早入队的那一批），丢弃它们代价最小。
+   */
+  private enforceLimit(): void {
+    while (this.batch.size > this.MAX_PENDING_PATHS) {
+      const oldest = this.batch.keys().next().value;
+      if (oldest === undefined) break;
+      const list = this.batch.get(oldest);
+      this.batch.delete(oldest);
+      if (list) {
+        for (const r of list) r.resolve(null);
+      }
+    }
+  }
 
   add(filePath: string, cacheRoot: string, onColors?: (colors: DominantColor[] | null) => void, signal?: AbortSignal): Promise<string | null> {
     return new Promise((resolve, reject) => {
@@ -63,6 +84,7 @@ class ThumbnailBatcher {
         this.batch.get(filePath)!.push(request);
       } else {
         this.batch.set(filePath, [request]);
+        this.enforceLimit();
       }
 
       if (!this.timeoutId) {

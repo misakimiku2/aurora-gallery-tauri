@@ -40,6 +40,41 @@ import EmptyFolderPlaceholder from './EmptyFolderPlaceholder';
 // 因此 150 足够，换卡量比 400 少约 27%。过渡结束后自动恢复 400。
 const FLIP_BUFFER = 150;
 
+// 滚动时的渲染窗口 buffer：视口上下各扩展多少像素内的卡片会被挂载。
+// 它直接决定换批频率 —— 滚动 handler 用 renderWindowRef 判断是否越界，
+// 即每滚动 buffer px 触发一次 FileGrid 重渲染。
+//
+// 实测（scroll-perf 报告，最小档 thumbSize=125、一屏约 110 张卡）：
+//   buffer=400 → 3796ms 内重渲染 46 次、掉帧 73 次（30%）、p95 约 50ms；
+//   每次换批约吃掉 40ms 的帧，46 × 40ms ≈ 掉帧总时长的全部来源。
+//
+// 【实测否决：不要调大】buffer=800 确实把换批次数减半（46 → 约 23 次），
+// 但稳态挂载卡片数 +47%，结果左侧文件夹树（TreeSidebar）滚动明显变卡。
+// 主网格的稳态卡片数与侧栏滚动性能存在资源竞争（WebView2 合成器预算 /
+// 主线程预算）：真正的稀缺资源是「稳态挂载卡数」，不是「换批次数」。
+// 这与「文件夹图标调得越小、侧栏越卡」是同一机制的正反两面 ——
+// 稳态挂载卡数 ∝ buffer × 1/thumbSize²，两边在挤同一份预算。
+// 因此保持 400（即改动前的值）；?gridBuffer=N 仅用于临时实验。
+const DEFAULT_GRID_BUFFER = 400;
+const GRID_BUFFER_MIN = 100;
+const GRID_BUFFER_MAX = 4000;
+
+const gridBufferPx = ((): number => {
+    const fallback = DEFAULT_GRID_BUFFER;
+    if (typeof window === 'undefined') return fallback;
+    const raw = new URLSearchParams(location.search).get('gridBuffer');
+    if (raw === null) return fallback;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(GRID_BUFFER_MAX, Math.max(GRID_BUFFER_MIN, n));
+})();
+
+// 暴露给 scrollProfiler：Tauri 简化 DevTools 没有 REPL，读不到全局变量，
+// 只能把当前生效的 buffer 写进滚动报告 —— 否则多组 A/B 数据无法区分配置。
+if (typeof window !== 'undefined') {
+    (window as any).__AURORA_GRID_BUFFER__ = gridBufferPx;
+}
+
 // 布局位置快照（含行高）：FLIP 选锚点时需要旧布局的行高来判断"哪一行包含视口顶边"。
 function snapshotLayoutPositions(layout: LayoutItem[]) {
   const map = new Map<string, { x: number; y: number; h: number }>();
@@ -788,7 +823,7 @@ const GroupContent = React.memo(({
 
   // 根据全局滚动位置，动态计算当前分组内容中可见的项目
   const visibleItems = useMemo(() => {
-      const buffer = 400;
+      const buffer = gridBufferPx;
       const minY = (scrollTop || 0) - offsetTop - buffer;
       const maxY = (scrollTop || 0) - offsetTop + (containerRect.height || 0) + buffer;
       // 窗口 = 视口 ± buffer，完整包含窗口内所有卡片（无卡数上限截断）
@@ -2240,7 +2275,7 @@ export const FileGrid = React.memo(({
   const displayFileIdsSet = useMemo(() => new Set(displayFileIds), [displayFileIds]);
 
   const visibleItems = useMemo(() => {
-      const buffer = isLayoutTransitioning ? transitionBufferRef.current : 400;
+      const buffer = isLayoutTransitioning ? transitionBufferRef.current : gridBufferPx;
       const minY = scrollTop - buffer;
       const maxY = scrollTop + containerRect.height + buffer;
       // 记录本次挂载的渲染窗口，供滚动事件判断是否需要按需重渲染
