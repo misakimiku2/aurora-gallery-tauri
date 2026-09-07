@@ -1,14 +1,20 @@
 package com.aurora.gallery.kotlin
 
 import android.Manifest
+import android.content.BroadcastReceiver
 import android.content.ContentUris
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,6 +34,7 @@ import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.ui.components.LayoutMode
+import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -78,7 +85,9 @@ class MainActivity : ComponentActivity() {
         thumbnailLoader = ThumbnailLoader(this)
 
         setContent {
-            AuroraTheme {
+            // 必须与窗口 XML 主题（Theme.AuroraKotlin = Material.Light，固定浅色）一致：
+            // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
+            AuroraTheme(darkTheme = false) {
                 App(
                     folders = folders.value,
                     currentFolder = currentFolder.value,
@@ -97,7 +106,39 @@ class MainActivity : ComponentActivity() {
         }
 
         requestMediaPermissionIfNeeded()
+
+        // 仅模拟器：注册捏合注入广播（验证 FLIP 用，真机构造上不注册、行为零影响）
+        if (isEmulator()) {
+            ContextCompat.registerReceiver(
+                this,
+                pinchDebugReceiver,
+                IntentFilter("aurora.debug.PINCH"),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+        }
     }
+
+    /**
+     * 模拟器验证钩子：`adb shell am broadcast -a aurora.debug.PINCH --es scale 0.75`
+     * 触发一次完整的捏合手势（走生产回调链），scale<1 收拢 / >1 张开。
+     */
+    private val pinchDebugReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val scale = intent.getStringExtra("scale")?.toFloatOrNull() ?: 0.75f
+            val steps = intent.getStringExtra("steps")?.toIntOrNull() ?: 12
+            Log.i("AuroraKotlin", "[DebugPinch] inject scale=$scale steps=$steps")
+            PinchGridSpanListener.lastInstance?.get()?.debugInjectPinch(scale, steps)
+        }
+    }
+
+    private fun isEmulator(): Boolean =
+        Build.FINGERPRINT.startsWith("generic") ||
+            Build.FINGERPRINT.startsWith("unknown") ||
+            Build.MODEL.contains("Emulator") ||
+            Build.MODEL.contains("Android SDK built for") ||
+            Build.HARDWARE.contains("goldfish") ||
+            Build.HARDWARE.contains("ranchu") ||
+            Build.PRODUCT.contains("sdk")
 
     private fun requestMediaPermissionIfNeeded() {
         val permission = if (Build.VERSION.SDK_INT >= 33) {
@@ -264,7 +305,9 @@ fun App(
                 onItemClick = onImageClick,
                 layoutMode = layoutMode,
                 groupBy = groupBy,
-                modifier = Modifier.fillMaxSize(),
+                // weight(1f)：网格只占标题/模式条之下的剩余空间。fillMaxSize 会把 RecyclerView
+                // 量成全屏高、内容画进标题/模式条区域（截图里图片盖住标题栏的直接来源）。
+                modifier = Modifier.fillMaxWidth().weight(1f),
             )
         }
     }

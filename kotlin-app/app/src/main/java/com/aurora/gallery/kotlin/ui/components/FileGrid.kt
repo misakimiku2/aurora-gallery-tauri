@@ -1,8 +1,11 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import android.graphics.Outline
+import android.graphics.Rect
 import android.util.Log
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.widget.ImageView
 import android.widget.LinearLayout
 import androidx.compose.runtime.Composable
@@ -16,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.core.view.doOnLayout
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalConfiguration
@@ -38,6 +42,11 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val TAG = "AuroraKotlin"
+
+/** 普通可变引用（捏合锚点透传）：变化不需要触发重组，update 里同步读取即可。 */
+private class AnchorOverrideHolder {
+    var value: PinchAnchor? = null
+}
 
 /**
  * 图片网格（原生 RecyclerView，对齐系统相册滚动性能）。
@@ -132,6 +141,11 @@ fun FileGrid(
             isHeaderAt = { adapter.isHeaderAt(it) },
         )
     }
+    adapter.masonryPinch = masonryPinch
+
+    // 瀑布流捏合换档的锚点透传：onPinchEnd 记录 → update 消费（一次）。
+    // 松手换档必须保持同一锚点停在同一屏幕位置，预览与收尾 FLIP 才无缝衔接。
+    val staggeredAnchor = remember { AnchorOverrideHolder() }
 
     // 注意：cellWidthPx（单元格宽度）**不在 key 里**。换档必然伴随列宽变化，若列宽变化触发
     // submit，全量刷新会重新 bind 所有 item，把 FLIP 的初始位移抹掉（表现为硬切）。
@@ -153,11 +167,20 @@ fun FileGrid(
             val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
             decoration.spanCount = initialCols
             RecyclerView(ctx).apply {
-                layoutManager = createLayoutManager(layoutMode, ctx, initialCols)
+                layoutManager = createLayoutManager(layoutMode, ctx, initialCols, gapPx)
                 this.adapter = adapter
                 addItemDecoration(decoration)
                 setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
                 clipToPadding = false
+                // 裁剪双保险：滚出 RV 顶边的内容不得画进标题/chip 行（Compose interop 链路
+                // 默认不裁剪）。clipToOutline 的 outline 必须显式给 rect——RV 无背景时
+                // BACKGROUND provider 拿到的是 null outline，clipToOutline 不生效。
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRect(0, 0, view.width, view.height)
+                    }
+                }
                 itemAnimator = null
                 isVerticalScrollBarEnabled = false
                 rvHolder.rv = this
@@ -222,6 +245,15 @@ fun FileGrid(
                             )
                             flipDurationMs =
                                 (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
+                            // 换档要用同一个锚点（同一屏幕位置）冷启动新布局，先记下再 release。
+                            // top 用 commitAnchorTop：列表末端钉在视口边缘时的钳制值，
+                            // 与捏合预览的目标几何一致（原样用捏合 top 会被 Staggered 拒绝滚动）。
+                            if (masonryPinch.isActive) {
+                                staggeredAnchor.value = PinchAnchor(
+                                    masonryPinch.pinchAnchorPos,
+                                    masonryPinch.commitAnchorTop,
+                                )
+                            }
                             pinchFlip.release()
                             masonryPinch.release()
                             level = target
@@ -279,7 +311,7 @@ fun FileGrid(
                 // 切到 ADAPTIVE 时同步记录档位，避免同一帧又被下方 ADAPTIVE 换档分支误触发第二次 FLIP
                 if (mode == LayoutMode.ADAPTIVE) appliedAdaptiveSpan = span
                 // 同步换 LM + submit：appliedMode 立即更新，同一帧后续 update 不会重复触发
-                rv.layoutManager = createLayoutManager(mode, rv.context, span) {
+                rv.layoutManager = createLayoutManager(mode, rv.context, span, gapPx) {
                     adapter.isHeaderAt(it)
                 }
                 adapter.submit(items, selectedIds, mode, gapPx, collapsedIds)
@@ -289,7 +321,7 @@ fun FileGrid(
                     applyModeSwitchFlip(rv, adapter, snapshot)
                 }
             } else if (!matchesMode(rv.layoutManager, layoutMode)) {
-                rv.layoutManager = createLayoutManager(layoutMode, rv.context, span) {
+                rv.layoutManager = createLayoutManager(layoutMode, rv.context, span, gapPx) {
                     adapter.isHeaderAt(it)
                 }
                 if (layoutMode == LayoutMode.MASONRY) {
@@ -312,10 +344,21 @@ fun FileGrid(
 
                 is StaggeredGridLayoutManager -> {
                     if (span != lm.spanCount) {
-                        animateStaggeredSpanChange(rv, lm, decoration, span, flipDurationMs)
+                        val anchor = staggeredAnchor.value
+                        staggeredAnchor.value = null
+                        // 冷启动换档（换全新 LM）：真实布局与捏合预览的模拟逐位一致，
+                        // FLIP 收尾就是最终布局，不再有「松手后再跳一下」。
+                        animateStaggeredSpanChange(
+                            rv,
+                            lm,
+                            decoration,
+                            span,
+                            flipDurationMs,
+                            isFullSpanAt = { adapter.isHeaderAt(it) },
+                            gapPx = currentGapPx.value,
+                            pinchAnchor = anchor,
+                        )
                         flipDurationMs = FLIP_DURATION_MS
-                        // 换档布局完成后续填视口下方 1.5 屏——捏合预览压缩内容时底部不露白
-                        (lm as? AuroraStaggeredLayoutManager)?.pendingExtraPrefill = true
                     }
                 }
 
@@ -389,7 +432,7 @@ fun FileGrid(
                 stickyDecoration = null
             }
         },
-        modifier = modifier,
+        modifier = modifier.clipToBounds(),
     )
 }
 
@@ -422,11 +465,12 @@ private fun createLayoutManager(
     mode: LayoutMode,
     context: android.content.Context,
     spanCount: Int,
+    gapPx: Int,
     isFullSpanAt: (Int) -> Boolean = { false },
 ): RecyclerView.LayoutManager = when (mode) {
     // adaptive 把「一行」作为 item，行内排布在 item 内部完成，因此用最简单的纵向布局即可
     LayoutMode.ADAPTIVE -> LinearLayoutManager(context)
-    LayoutMode.MASONRY -> AuroraStaggeredLayoutManager(spanCount, isFullSpanAt)
+    LayoutMode.MASONRY -> AuroraStaggeredLayoutManager(spanCount, isFullSpanAt, gapPx)
     else -> AuroraGridLayoutManager(context, spanCount)
 }
 
@@ -434,18 +478,22 @@ private fun createLayoutManager(
  * 视口下方**多布局一些 item** 的 StaggeredGridLayoutManager（与 [AuroraGridLayoutManager] 对称）。
  *
  * 为什么需要：瀑布流捏合缩小（列数变多）时内容压缩约一倍，捏合预览是把可见内容往新档位
- * 位置插值——若布局没有预填，下方/上方会露出大片空白。GRID 版靠
+ * 位置插值——若布局没有预填，下方会露出大片空白。GRID 版靠
  * `LinearLayoutManager.calculateExtraLayoutSpace`（底部 1.5 屏）解决；但 StaggeredGridLayoutManager
- * **没有这个 hook**（它不继承 LinearLayoutManager），只能布局完成后手动补：
- * [pendingExtraPrefill] 置位后，下一次 onLayoutChildren 按与 Staggered 一致的
- * 「按 position 顺序放入最短列」规则把下方 1.5 屏补建出来。预填的 view 走 addView 正常
- * attach，随后的滚动/换档布局都由 Staggered 标准流程接管（span 记录失效时会重新推算，
- * 与这里的分配规则一致，不会错位）。
+ * **没有这个 hook**（1.3.2 不含该方法），只能在布局完成后手动补：[pendingExtraPrefill] 置位后，
+ * 下一次 onLayoutChildren 按与 Staggered 一致的「按 position 顺序放入最短列」规则把下方
+ * 1.5 屏补建出来。
+ *
+ * **手工预填的 view 不进 Staggered 的 span 记账**（LazySpanLookup 是私有的），所以它们带
+ * [PREFILL_TAG] 标记，任何增量路径（滚动 fill / 重新布局）开始前先回收（[stripPrefilled]）：
+ * 增量 fill 按 span 列线再铺同一批 position 会叠出重影——这正是「瀑布流下半屏重叠」的来源。
  */
 internal class AuroraStaggeredLayoutManager(
     spanCount: Int,
     /** pos 是否为满宽 header（分组标题）。预填时它必须占满整行。 */
     private val isFullSpanAt: (Int) -> Boolean,
+    /** 单元格间距（px）。预填的测量与链式记账要与 GridSpacingDecoration 完全一致。 */
+    private val gapPx: Int,
 ) : StaggeredGridLayoutManager(spanCount, StaggeredGridLayoutManager.VERTICAL) {
 
     /** 换档后置位：下一次布局完成（新档位、span 缓存已失效）后向视口下方预填。 */
@@ -455,6 +503,7 @@ internal class AuroraStaggeredLayoutManager(
         recycler: RecyclerView.Recycler,
         state: RecyclerView.State,
     ) {
+        stripPrefilled(recycler)
         super.onLayoutChildren(recycler, state)
         if (pendingExtraPrefill) {
             pendingExtraPrefill = false
@@ -462,76 +511,106 @@ internal class AuroraStaggeredLayoutManager(
         }
     }
 
+    override fun scrollVerticallyBy(
+        dy: Int,
+        recycler: RecyclerView.Recycler,
+        state: RecyclerView.State,
+    ): Int {
+        stripPrefilled(recycler)
+        return super.scrollVerticallyBy(dy, recycler, state)
+    }
+
+    private fun stripPrefilled(recycler: RecyclerView.Recycler) {
+        for (i in childCount - 1 downTo 0) {
+            val c = getChildAt(i) ?: continue
+            if (c.tag === PREFILL_TAG) {
+                c.tag = null
+                removeAndRecycleView(c, recycler)
+            }
+        }
+    }
+
     /** 按最短列优先把视口下方 1.5 屏的 item 补建出来（与 Staggered 分配规则一致）。 */
     private fun prefillBelow(recycler: RecyclerView.Recycler, itemCount: Int) {
-        if (childCount == 0 || width <= 0 || itemCount <= 0) return
+        if (childCount == 0 || itemCount <= 0) return
+        val span = spanCount
+        val inner = width - paddingLeft - paddingRight
+        if (inner <= 0) return
+        // 与 updateMeasureSpecs 的 mSizePerSpan 一致（整数除法）
+        val sizePerSpan = inner / span
 
-        // 列以 decorated left 识别（等间距修复后列宽一致，left 唯一对应一列）。
-        // 底边用 decoratedBottom：decoration 的 outRect.bottom / margin 恒为 0，
-        // 所以它等于 child.bottom，可作为下一 item 的 decorated top。
-        val colLefts = sortedSetOf<Int>()
-        val colBottoms = HashMap<Int, Int>()
+        // 各列 decorated 底边（放置线）。满宽 header 之后各列底边一致。
+        val colEnd = IntArray(span) { Int.MIN_VALUE }
         var maxPos = -1
-        var headerBottom = Int.MIN_VALUE
         for (i in 0 until childCount) {
             val c = getChildAt(i) ?: continue
             val pos = getPosition(c)
             if (pos == RecyclerView.NO_POSITION) continue
-            if (isFullSpanAt(pos)) {
-                // 满宽 header 不属于任何一列；它之后各列的底边 = header 底边
-                headerBottom = maxOf(headerBottom, getDecoratedBottom(c))
-            } else {
-                val dl = getDecoratedLeft(c)
-                colLefts.add(dl)
-                colBottoms[dl] = maxOf(colBottoms[dl] ?: Int.MIN_VALUE, getDecoratedBottom(c))
-            }
             if (pos > maxPos) maxPos = pos
+            val lp = c.layoutParams as? LayoutParams
+            if (lp?.isFullSpan == true || isFullSpanAt(pos)) {
+                for (s in 0 until span) colEnd[s] = maxOf(colEnd[s], getDecoratedBottom(c))
+            } else {
+                // 列号必须用 spanIndex（与 GridSpacingDecoration 一致），decorated left 不唯一
+                val col = lp?.spanIndex ?: -1
+                if (col in 0 until span) colEnd[col] = maxOf(colEnd[col], getDecoratedBottom(c))
+            }
         }
-        if (headerBottom > Int.MIN_VALUE) {
-            for (k in colBottoms.keys) colBottoms[k] = maxOf(colBottoms[k] ?: 0, headerBottom)
-        }
-        val cols = colLefts.toList()
-        if (cols.isEmpty() || maxPos < 0) return
+        if (maxPos < 0) return
+        // 个别列当前没有可见 child 时以最小列底边兜底，保证该列继续向下铺而不是空着
+        var minEnd = Int.MAX_VALUE
+        for (s in 0 until span) minEnd = minOf(minEnd, colEnd[s])
+        if (minEnd == Int.MAX_VALUE || minEnd == Int.MIN_VALUE) return
+        for (s in 0 until span) if (colEnd[s] == Int.MIN_VALUE) colEnd[s] = minEnd
 
-        val limit = colBottoms.values.max() + height * 3 / 2
+        val limit = colEnd.max() + height * 3 / 2
         var pos = maxPos + 1
         while (pos < itemCount) {
-            // 最短列（bottom 最小；并列取靠左的，与 Staggered 的列扫描顺序一致）
-            var best = cols.first()
-            var bestBottom = colBottoms[best] ?: break
-            for (c in cols) {
-                val b = colBottoms[c] ?: continue
-                if (b < bestBottom) {
-                    bestBottom = b
-                    best = c
-                }
-            }
-
+            var best = 0
+            for (s in 1 until span) if (colEnd[s] < colEnd[best]) best = s
+            if (colEnd[best] > limit) break
             val v = try {
                 recycler.getViewForPosition(pos)
             } catch (e: Exception) {
                 return
             }
-            addView(v)
-            measureChildWithMargins(v, 0, 0)
+            // decoration inset 必须先算（layoutDecoratedWithMargins 会按它定位）
+            calculateItemDecorationsForChild(v, Rect())
             if (isFullSpanAt(pos)) {
-                // 满宽 header：decorated 区间 = 内容区全宽，底部取各列最大值
-                val top = colBottoms.values.max()
+                addView(v)
+                // header 无 inset：内容宽 = inner
+                measureChildWithMargins(v, 0, 0)
+                v.tag = PREFILL_TAG
+                val line = colEnd.max()
                 layoutDecoratedWithMargins(
-                    v, paddingLeft, top,
-                    paddingLeft + v.measuredWidth, top + v.measuredHeight,
+                    v, paddingLeft, line,
+                    paddingLeft + inner, line + v.measuredHeight,
                 )
-                for (c in cols) colBottoms[c] = top + v.measuredHeight
+                for (s in 0 until span) colEnd[s] = line + v.measuredHeight
             } else {
+                val leftInset = gapPx * best / span
+                val rightInset = gapPx * (span - 1 - best) / span
+                val topInset = if (pos >= span) gapPx else 0
+                addView(v)
+                // 与 Staggered 的 measureChildWithDecorationsAndMargin 对齐：
+                // 内容宽 = sizePerSpan - 左右 inset（widthUsed 把差额从总宽里扣掉）。
+                // 直接用默认 spec 会量成全宽，预填卡片互相压边（「下半屏重叠」的来源之一）。
+                measureChildWithMargins(v, inner - (sizePerSpan - leftInset - rightInset), 0)
+                v.tag = PREFILL_TAG
+                val line = colEnd[best]
                 layoutDecoratedWithMargins(
-                    v, best, bestBottom,
-                    best + v.measuredWidth, bestBottom + v.measuredHeight,
+                    v, paddingLeft + best * sizePerSpan, line,
+                    paddingLeft + (best + 1) * sizePerSpan, line + topInset + v.measuredHeight,
                 )
-                colBottoms[best] = bestBottom + v.measuredHeight
+                colEnd[best] = line + topInset + v.measuredHeight
             }
-            if (colBottoms.values.min() > limit) break
             pos++
         }
+    }
+
+    companion object {
+        /** 手工预填 view 的标记；增量布局前回收（见 [stripPrefilled]）。 */
+        private val PREFILL_TAG = Any()
     }
 }
 
@@ -666,6 +745,9 @@ private class FileGridAdapter(
     /** 进度驱动 FLIP 控制器；捏合中新绑定的 item 需要补上当前进度的 transform。 */
     var pinchFlip: PinchFlipController? = null
 
+    /** 瀑布流的进度驱动 FLIP 控制器（与 [pinchFlip] 对称）。 */
+    var masonryPinch: MasonryPinchController? = null
+
     /** 所有分组标题的位置（升序），供 sticky 标题二分查找。 */
     var headerPositions: List<Int> = emptyList()
         private set
@@ -716,8 +798,7 @@ private class FileGridAdapter(
      * 初始位移抹掉——表现就是「换档完全没有动画，直接硬切」。
      * 新 fill 进来的 item 在 bind 时自然会用到新值，无需刷新已有 item。
      */
-    fun applyCellWidth(rv: RecyclerView, cellPx: Int) {
-        // adaptive 模式用不到列宽（行内宽度由行化结果给出）。这里必须**保留上一次的值**
+    fun applyCellWidth(rv: RecyclerView, cellPx: Int) {        // adaptive 模式用不到列宽（行内宽度由行化结果给出）。这里必须**保留上一次的值**
         // 而不是置 0——否则切回 GRID/MASONRY 时会被误判成「首次量出宽度」而走全量刷新，
         // 把视图切换的 FLIP 打断。
         if (cellPx <= 0) return
@@ -906,6 +987,7 @@ private class FileGridAdapter(
 
         // 捏合进行中新绑定的 item 要补上当前进度的 transform，否则会以未变换的样子闪现
         pinchFlip?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
+        masonryPinch?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
 
         when (holder) {
             is HeaderVH -> bindHeader(holder, position)

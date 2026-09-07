@@ -14,6 +14,7 @@ import androidx.core.view.doOnLayout
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
+import java.lang.ref.WeakReference
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -156,6 +157,9 @@ class PinchGridSpanListener(
     private var lastEventTime = -1L
     private var lastAction = -1
 
+    /** 事件到达的 RecyclerView（调试注入用）。 */
+    private var rvRef: WeakReference<RecyclerView>? = null
+
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             initialSpan = detector.currentSpan
@@ -206,6 +210,7 @@ class PinchGridSpanListener(
         if (event.eventTime == lastEventTime && event.actionMasked == lastAction) return
         lastEventTime = event.eventTime
         lastAction = event.actionMasked
+        rvRef = WeakReference(rv)
 
         scaleDetector.onTouchEvent(event)
 
@@ -245,6 +250,43 @@ class PinchGridSpanListener(
 
     companion object {
         private const val STEP_THRESHOLD = 1.08f
+
+        /** 最近挂载的捏合监听器（仅模拟器调试注入用，见 MainActivity 的 PINCH 广播）。 */
+        @JvmStatic
+        internal var lastInstance: WeakReference<PinchGridSpanListener>? = null
+            private set
+    }
+
+    init {
+        lastInstance = WeakReference(this)
+    }
+
+    /**
+     * **调试注入**（仅模拟器验证用）：不走真实触摸，按 [stepDelayMs] 间隔驱动生产捏合回调，
+     * 从 1.0 线性缩放到 [targetScale] 后松手。scale < 1 收拢（列数变多），> 1 张开（列数变少）。
+     */
+    fun debugInjectPinch(targetScale: Float, steps: Int = 12, stepDelayMs: Long = 16) {
+        val rv = rvRef?.get() ?: return
+        // 真实双指手势会在第二指落下时 stopScroll；注入路径也要刹停，否则惯性滚动
+        // 会让 begin() 记录的锚点位置在预览期间失效。
+        rv.stopScroll()
+        initialSpan = 1000f
+        onPinchStart(0f, 0f)
+        var i = 1
+        val step = object : Runnable {
+            override fun run() {
+                if (i > steps) {
+                    onPinchEnd(targetScale)
+                    initialSpan = 0f
+                    return
+                }
+                val s = 1f + (targetScale - 1f) * i / steps
+                onPinchProgress(s, 0f, 0f)
+                i++
+                rv.postDelayed(this, stepDelayMs)
+            }
+        }
+        rv.postDelayed(step, stepDelayMs)
     }
 }
 
@@ -255,6 +297,12 @@ private class FlipSnapshot(
     val anchorWidth: Int,
     val oldLefts: Map<Int, Float>,
     val oldTops: Map<Int, Float>,
+    /**
+     * 捕获时的**视觉宽度**（layout 宽 × scaleX）。收尾 FLIP 的起始 scale = 视觉宽 / 新布局宽，
+     * 保证松手瞬间卡片视觉宽度连续。旧实现直接沿用捕获时的 scaleX：scale 是相对旧布局宽的，
+     * 叠到新布局宽上会先跳一下再动画（视觉宽从预览值突变为 新宽×预览scale）。
+     */
+    val oldVisualWidths: Map<Int, Float>,
 )
 
 /** 布局未刷新时的最大重试次数（约 3 帧，超过就放弃动画，避免死循环）。 */
@@ -271,12 +319,14 @@ private fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipS
     val anchorWidth = rv.layoutManager?.findViewByPosition(anchorPos)?.width ?: 0
     val oldLefts = HashMap<Int, Float>()
     val oldTops = HashMap<Int, Float>()
+    val oldVisualWidths = HashMap<Int, Float>()
     for (i in 0 until rv.childCount) {
         val child = rv.getChildAt(i)
         val pos = rv.getChildAdapterPosition(child)
         if (pos == RecyclerView.NO_POSITION) continue
         oldLefts[pos] = child.left + child.translationX
         oldTops[pos] = child.top + child.translationY
+        oldVisualWidths[pos] = child.width * child.scaleX
     }
     for (i in 0 until rv.childCount) {
         val child = rv.getChildAt(i)
@@ -288,7 +338,7 @@ private fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipS
         child.scaleX = 1f
         child.scaleY = 1f
     }
-    return FlipSnapshot(anchorPos, anchorTop, anchorWidth, oldLefts, oldTops)
+    return FlipSnapshot(anchorPos, anchorTop, anchorWidth, oldLefts, oldTops, oldVisualWidths)
 }
 
 /**
@@ -302,27 +352,33 @@ private fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipS
  *
  * 判据用锚点 item 的宽度：列数变了列宽必然变，宽度没变说明布局还没跟上。
  * 连续快速捏合时后一次换档可能把 spanCount 改回原值，此时宽度永远不变，重试耗尽后放弃动画。
+ * [layoutApplied] 允许调用方替换判据——瀑布流冷启动路径必须替换（预览的真实 measure/layout
+ * 会把捕获到的宽度改写成目标值，宽度判据永远不成立，见 animateStaggeredSpanChange）。
  */
 private fun runFlipWhenLayoutApplied(
     rv: RecyclerView,
     snap: FlipSnapshot,
     tag: String,
     attempt: Int,
+    /** 布局已按新档位刷新的判据；缺省用「锚点宽度变化」。 */
+    layoutApplied: ((RecyclerView) -> Boolean)? = null,
     doFlip: () -> Unit,
 ) {
     // doOnLayout = 每次 draw 前的回调，天然跨帧（上一次实现用 rv.post 做重试，
     // 三次 retry 会挤在同一帧、全在布局刷新之前用完，这里改成递归注册下一次）。
     rv.doOnLayout {
-        val currentWidth = rv.layoutManager?.findViewByPosition(snap.anchorPos)?.width ?: 0
-        val applied = snap.anchorWidth <= 0 || currentWidth != snap.anchorWidth
+        val applied = layoutApplied?.invoke(rv) ?: run {
+            val currentWidth = rv.layoutManager?.findViewByPosition(snap.anchorPos)?.width ?: 0
+            snap.anchorWidth <= 0 || currentWidth != snap.anchorWidth
+        }
         if (applied) {
             doFlip()
         } else if (attempt < MAX_LAYOUT_RETRY) {
-            Log.d(TAG, "[$tag] layout not applied yet (w=$currentWidth), retry #${attempt + 1}")
+            Log.d(TAG, "[$tag] layout not applied yet, retry #${attempt + 1}")
             // 同步换档那次 requestLayout 可能被吞（update 恰落在 layout 阶段），
             // 而 doOnLayout 在 draw 前、不在 layout 阶段，这里补一次一定生效。
             rv.requestLayout()
-            runFlipWhenLayoutApplied(rv, snap, tag, attempt + 1, doFlip)
+            runFlipWhenLayoutApplied(rv, snap, tag, attempt + 1, layoutApplied, doFlip)
         } else {
             Log.d(TAG, "[$tag] give up: layout never applied")
         }
@@ -346,9 +402,14 @@ private fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duration
             missing++
             continue
         }
+        // 收尾动画的起始 scale = 捕获时视觉宽 / 新布局宽，松手瞬间视觉宽度连续；
+        // 跟手缩放（GRID 预览）与手动布局预览（瀑布流预览，scale=1）统一由该式覆盖。
+        // 动画把 scale 归位 1——卡片最终尺寸由布局决定，动画只是补齐中间那段时间。
+        val oldVisualW = snap.oldVisualWidths[pos] ?: child.width.toFloat()
+        val startScale = if (child.width > 0) (oldVisualW / child.width).coerceIn(0.05f, 20f) else 1f
         val deltaX = oldLeft - child.left
         val deltaY = oldTop - child.top
-        if (abs(deltaX) < 1f && abs(deltaY) < 1f) {
+        if (abs(deltaX) < 1f && abs(deltaY) < 1f && abs(startScale - 1f) < 0.01f) {
             skipped++
             continue
         }
@@ -357,11 +418,17 @@ private fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duration
             maxDelta = d
             maxDeltaPos = pos
         }
+        child.pivotX = 0f
+        child.pivotY = 0f
         child.translationX = deltaX
         child.translationY = deltaY
+        child.scaleX = startScale
+        child.scaleY = startScale
         child.animate()
             .translationX(0f)
             .translationY(0f)
+            .scaleX(1f)
+            .scaleY(1f)
             .setDuration(durationMs)
             .setInterpolator(FLIP_INTERPOLATOR)
             .start()
@@ -476,59 +543,98 @@ fun animateSpanChange(
     }
 }
 
+/** 瀑布流捏合预览的锚点快照（position + 捏合中的屏幕 top），供松手换档无缝衔接。 */
+internal class PinchAnchor(val pos: Int, val top: Int)
+
 /**
  * 瀑布流（[StaggeredGridLayoutManager]）换档 + FLIP，动画参数与 [animateSpanChange] 完全一致。
  *
- * 唯一结构差异：StaggeredGridLayoutManager **没有** `scrollToPositionWithOffset`，
- * 只能先 `scrollToPosition` 粗定位（把锚点滚到视口顶部），等一次 layout 后再 `scrollBy`
- * 精确修正，因此比网格版多一层 `doOnLayout`（锚点恢复慢一帧，动画参数不变）。
+ * **换档即换 LayoutManager（冷启动布局）**。1.3.2 的 Staggered 保留旧 children 重布局时，
+ * `scrollToPositionWithOffset` 的 offset 语义经过旧 decoratedStart 折算、旧 span 列线又混进
+ * 新列数的布局，真实布局和捏合预览的目标位置对不上——表现为松手后整个网格再跳一下。
+ * 换上全新 LM 后首个布局没有任何旧状态：从锚点起铺、逐个放入最短列（`getNextSpan` 的
+ * LAYOUT_END 分支），与 `MasonryPinchController` 的离线模拟逐位一致，FLIP 收尾就是最终布局。
+ *
+ * [pinchAnchor]：捏合预览的锚点。松手换档必须保持**同一个锚点**停在**同一屏幕位置**，
+ * 预览与收尾才无缝；非捏合路径传 null，退回「top 最小的可见图」扫描（跳过满宽 header）。
  */
-fun animateStaggeredSpanChange(
+internal fun animateStaggeredSpanChange(
     rv: RecyclerView,
-    lm: StaggeredGridLayoutManager,
+    oldLm: StaggeredGridLayoutManager,
     decoration: GridSpacingDecoration,
     newSpan: Int,
     durationMs: Long = FLIP_DURATION_MS,
+    isFullSpanAt: (Int) -> Boolean = { false },
+    gapPx: Int = 0,
+    pinchAnchor: PinchAnchor? = null,
 ) {
-    if (newSpan == lm.spanCount) return
-    val oldSpan = lm.spanCount
+    if (newSpan == oldLm.spanCount) return
+    val oldSpan = oldLm.spanCount
 
-    // 锚点 = top 最小的可见 item（视觉最顶部），与网格版 findFirstVisibleItemPosition 语义一致。
-    // 不能取 `findFirstVisibleItemPositions().first()`：那只是「列 0 的第一个可见」，不等高时
-    // 列 0 的第一个可见可能远在视口下方，真正的顶部 item 在别的列——用错锚点会导致松手跳位。
     var anchorPos = RecyclerView.NO_POSITION
     var anchorTop = 0
-    for (i in 0 until rv.childCount) {
-        val child = rv.getChildAt(i)
-        val pos = rv.getChildAdapterPosition(child)
-        if (pos == RecyclerView.NO_POSITION) continue
-        if (anchorPos == RecyclerView.NO_POSITION || child.top < anchorTop) {
-            anchorPos = pos
-            anchorTop = child.top
+    if (pinchAnchor != null && pinchAnchor.pos != RecyclerView.NO_POSITION &&
+        pinchAnchor.pos < (rv.adapter?.itemCount ?: 0)
+    ) {
+        anchorPos = pinchAnchor.pos
+        anchorTop = pinchAnchor.top
+    } else {
+        for (i in 0 until rv.childCount) {
+            val child = rv.getChildAt(i)
+            val pos = rv.getChildAdapterPosition(child)
+            if (pos == RecyclerView.NO_POSITION || isFullSpanAt(pos)) continue
+            if (anchorPos == RecyclerView.NO_POSITION || child.top < anchorTop) {
+                anchorPos = pos
+                anchorTop = child.top
+            }
         }
     }
     val snap = captureFlip(rv, anchorPos, anchorTop)
-
     if (snap == null) return
 
-    // 同步换档 + 粗定位，与网格版完全一致：scrollToPositionWithOffset 只是登记 pending，
-    // 与本次换档 layout 一起生效。（此前用 scrollToPosition + afterStableLayout 二段式：
-    // scrollToPosition 对不等高的 Staggered 定位极不可靠，afterStableLayout 排队后没有过期
-    // 保护——连续捏合时旧动画被推迟数秒、对着全新布局执行，drift 上千 px、卡片甩飞。）
-    lm.spanCount = newSpan
+    // 冷启动：换全新 LM（旧 children 全部回收、span 记账从零开始），锚点经 pending scroll
+    // 定位——首个布局从锚点位置起铺满视口，与捏合模拟同构；随后 fixAnchor 精确对齐，
+    // 其中的 scrollBy 还会顺带把锚点上方未铺的区域按同一规则补齐。
+    // 预填不在这轮布局里做：fixAnchor 的 scrollBy 属于增量 fill 路径，会先回收手工预填的
+    // view，白填一场；改为在 fixAnchor 之后再排队补预填（见下方 doFlip）。
+    val newLm = AuroraStaggeredLayoutManager(newSpan, isFullSpanAt, gapPx)
+    rv.layoutManager = newLm
     decoration.spanCount = newSpan
     rv.invalidateItemDecorations()
-    lm.scrollToPositionWithOffset(anchorPos, anchorTop - rv.paddingTop)
+    newLm.scrollToPositionWithOffset(anchorPos, anchorTop - rv.paddingTop)
 
-    Log.d(TAG, "[FLIP] staggered span $oldSpan -> $newSpan anchorPos=$anchorPos anchorTop=$anchorTop")
-    runFlipWhenLayoutApplied(rv, snap, "FLIP", 0) {
-        // 连续快速换档：执行时档位已被更新的换档覆盖，snapshot 全过期，放弃本次动画
-        if (lm.spanCount != newSpan) {
-            Log.d(TAG, "[FLIP] superseded (span now ${lm.spanCount}, wanted $newSpan), skip")
+    Log.d(
+        TAG,
+        "[FLIP] staggered cold-start span $oldSpan -> $newSpan anchorPos=$anchorPos " +
+            "anchorTop=$anchorTop pinchAnchor=${pinchAnchor != null}",
+    )
+    runFlipWhenLayoutApplied(
+        rv,
+        snap,
+        "FLIP",
+        0,
+        // 冷启动换档不能默认用「锚点宽度变化」判据：捏合预览（真实 measure/layout）把卡片
+        // 宽度改写成了目标档位值，captureFlip 记录的就是它——新布局一刷新宽度必然相等，
+        // 默认判据会误判「未刷新」并把 fixAnchor/playFlip 一路重试到放弃。换全新 LM 后
+        // 子 View 全部回收，「LM 已是新的且有子 View」就是首个冷启动布局完成的确凿信号。
+        layoutApplied = { it.layoutManager === newLm && it.childCount > 0 },
+    ) {
+        // 连续快速换档：执行时档位/LM 已被更新的换档覆盖，snapshot 全过期，放弃本次动画
+        val current = rv.layoutManager as? StaggeredGridLayoutManager
+        if (current !== newLm || current.spanCount != newSpan) {
+            Log.d(TAG, "[FLIP] superseded (lm now $current), skip")
             return@runFlipWhenLayoutApplied
         }
         fixAnchor(rv, anchorPos, anchorTop)
         playFlip(rv, snap, "FLIP", durationMs)
+        // fixAnchor 的 scrollBy 会回收手工预填的 view（增量 fill 不能带着无记账的 view 跑），
+        // 这里再排一轮预填：下一次捏合预览压缩内容时，下半屏依然有真实布局的 item 可用。
+        // 必须先失效锚点：冷启动给 AnchorInfo 留下了 mOffset=锚点top + mInvalidateOffsets=true
+        // 的陈旧状态，直接重布局会把所有列线 seed 到锚点 top、内容整体下跳一个 inset。
+        // invalidateSpanAssignments 让下次布局走「从当前子 View 重算锚点」的标准路径，位置不变。
+        newLm.invalidateSpanAssignments()
+        newLm.pendingExtraPrefill = true
+        rv.requestLayout()
     }
 }
 
