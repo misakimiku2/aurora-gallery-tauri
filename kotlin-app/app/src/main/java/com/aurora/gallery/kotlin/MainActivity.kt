@@ -48,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.Folder
@@ -67,7 +66,6 @@ class MainActivity : ComponentActivity() {
     private val images = mutableStateOf<List<Image>>(emptyList())
     private val selectedImageIds = mutableStateOf<Set<String>>(emptySet())
     private val scanning = mutableStateOf(false)
-    private var pregenJob: Job? = null
     private lateinit var thumbnailLoader: ThumbnailLoader
 
     private val requestPermission = registerForActivityResult(
@@ -107,8 +105,8 @@ class MainActivity : ComponentActivity() {
 
         requestMediaPermissionIfNeeded()
 
-        // 仅模拟器：注册捏合注入广播（验证 FLIP 用，真机构造上不注册、行为零影响）
-        if (isEmulator()) {
+        // 模拟器/Debug 构建：注册捏合注入广播（验证 FLIP 用，走生产回调链；Release 不注册）
+        if (isEmulator() || applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
             ContextCompat.registerReceiver(
                 this,
                 pinchDebugReceiver,
@@ -121,13 +119,18 @@ class MainActivity : ComponentActivity() {
     /**
      * 模拟器验证钩子：`adb shell am broadcast -a aurora.debug.PINCH --es scale 0.75`
      * 触发一次完整的捏合手势（走生产回调链），scale<1 收拢 / >1 张开。
+     * `--es mode touch` 走合成双指 MotionEvent 的真实事件分发路径（含中途抬指/抖动）。
      */
     private val pinchDebugReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             val scale = intent.getStringExtra("scale")?.toFloatOrNull() ?: 0.75f
             val steps = intent.getStringExtra("steps")?.toIntOrNull() ?: 12
-            Log.i("AuroraKotlin", "[DebugPinch] inject scale=$scale steps=$steps")
-            PinchGridSpanListener.lastInstance?.get()?.debugInjectPinch(scale, steps)
+            val mode = intent.getStringExtra("mode") ?: "callback"
+            val seed = intent.getStringExtra("seed")?.toLongOrNull() ?: 42L
+            Log.i("AuroraKotlin", "[DebugPinch] inject mode=$mode scale=$scale steps=$steps seed=$seed")
+            val listener = PinchGridSpanListener.lastInstance?.get() ?: return
+            if (mode == "touch") listener.debugInjectTouchPinch(scale, steps, seed)
+            else listener.debugInjectPinch(scale, steps)
         }
     }
 
@@ -174,13 +177,14 @@ class MainActivity : ComponentActivity() {
     private fun openFolder(folder: Folder) {
         currentFolder.value = folder
         selectedImageIds.value = emptySet()
-        pregenJob?.cancel()
+        // 同步清空旧文件夹内容：listImages 在 IO 线程返回前，组合仍拿着旧 images 渲染，
+        // 表现为「点进 B 先闪现 A 的网格再换内容」。清空后中间帧是空白而非错误内容。
+        images.value = emptyList()
         lifecycleScope.launch {
             val imgs = withContext(Dispatchers.IO) { listImages(folder.id) }
-            images.value = imgs
-            // 后台预生成缩略图到磁盘缓存，让滚动中逐步命中磁盘（对齐 React 版策略）
-            pregenJob = launch {
-                thumbnailLoader.pregenerate(imgs.map { it.contentUri })
+            // 查询期间可能已切到别的文件夹/返回总览，过期结果直接丢弃
+            if (currentFolder.value?.id == folder.id) {
+                images.value = imgs
             }
         }
     }

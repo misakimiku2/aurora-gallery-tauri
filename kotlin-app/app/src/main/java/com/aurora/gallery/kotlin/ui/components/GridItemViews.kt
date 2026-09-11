@@ -22,6 +22,21 @@ import kotlin.math.roundToInt
 /** 分组标题行高度（dp）。 */
 const val HEADER_HEIGHT_DP = 48
 
+/**
+ * 写封面高度的唯一入口：改 lp 高度后**必须**把封面和它的直接父容器（frame）都置上强制
+ * 测量标志。`View.forceLayout()` 不向子树传播，而 `View.measure` 的缓存按 spec key 复用——
+ * 只 force 封面时，若夹在中间的 FrameLayout 本轮 spec 与上次相同（瀑布流各列等宽，回收
+ * 复用跨 item/跨列时 spec 几乎总是相同），FrameLayout 会整体跳过 onMeasure，`cover.measure`
+ * 根本不被调用，新写入的高度没被消费、渲染沿用**上一条生命周期的过期实测高度**
+ *（竖图顶位图被 CENTER_CROP 成横条、文件名紧贴其下），直到下一次 spec 变化的测量才
+ * “自己变回去”。这正是捏合预览/滚动中「裁剪闪烁」的根源。
+ */
+internal fun ImageView.applyCoverHeight(height: Int) {
+    layoutParams.height = height
+    forceLayout()
+    (parent as? View)?.forceLayout()
+}
+
 /** 网格卡片 / adaptive 行内单元格：封面 + 文件名 + 选中态（边框 + 角标）。 */
 internal class PhotoRefs(
     val root: View,

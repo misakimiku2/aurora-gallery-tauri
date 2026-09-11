@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.util.AttributeSet
 import android.util.Log
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
@@ -48,6 +49,23 @@ class SquareImageView @JvmOverloads constructor(
             super.onMeasure(widthMeasureSpec, widthMeasureSpec)
         } else {
             super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        }
+    }
+
+    /**
+     * 内容级 requestLayout 降级为重绘。`setImageBitmap`（占位→位图）改变 intrinsic 尺寸
+     * 时 ImageView 会 requestLayout 并沿视图树上抛：一次**异步**缩略图落地 = 整个
+     * RecyclerView 全量重布局。瀑布流下重布局会 strip 掉全部预填再重建（回收池装不下、
+     * 大量重新 inflate），重建又触发新的图片加载/占位切换——自持的重布局风暴，是
+     * 快速滚动掉帧的直接来源。封面尺寸始终由 layoutParams 显式控制（bind 时赋值、
+     * fill 紧接着按新值测量），内容变化不需要重新布局，重绘即可；首测前（尚未有尺寸）
+     * 仍正常上抛。
+     */
+    override fun requestLayout() {
+        if (measuredWidth <= 0 || measuredHeight <= 0) {
+            super.requestLayout()
+        } else {
+            invalidate()
         }
     }
 }
@@ -157,8 +175,19 @@ class PinchGridSpanListener(
     private var lastEventTime = -1L
     private var lastAction = -1
 
+    /** 当前未走完的注入链条（防重叠，见 [debugInjectPinch]）。 */
+    private var pendingInjection: Runnable? = null
+
     /** 事件到达的 RecyclerView（调试注入用）。 */
     private var rvRef: WeakReference<RecyclerView>? = null
+
+    /** 手势无关的 RV 引用（调试注入用）：[rvRef] 只在真实触摸事件经过 [handle] 时才赋值。 */
+    private var debugRvRef: WeakReference<RecyclerView>? = null
+
+    /** Debug 注入钩子：挂载时记录宿主 RV，使 [debugInjectPinch] 不依赖先发生过真实触摸。 */
+    internal fun debugAttachRv(rv: RecyclerView) {
+        debugRvRef = WeakReference(rv)
+    }
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
@@ -262,14 +291,122 @@ class PinchGridSpanListener(
     }
 
     /**
+     * **调试注入（合成双指触摸，走真实事件分发路径）**：构造两指 MotionEvent 逐帧
+     * `dispatchTouchEvent` 给 RV——与 [debugInjectPinch] 直接调生产回调不同，这条路径
+     * 经过 OnItemTouchListener / ScaleGestureDetector / 多指接管 / stopScroll 的完整
+     * 真实逻辑，并带随机抖动与「中途抬指→再落指」（真实手指常见，直接回调注入
+     * 覆盖不到），用于复现真实手势才出现的预览闪烁。
+     *
+     * @param targetScale 末跨度 / 起始跨度，<1 收拢（列数变多）、>1 张开
+     */
+    fun debugInjectTouchPinch(targetScale: Float, frames: Int = 55, seed: Long = 42) {
+        val rv = rvRef?.get() ?: debugRvRef?.get() ?: return
+        val w = rv.width.toFloat()
+        val h = rv.height.toFloat()
+        val d0 = minOf(w, h) * 0.5f
+        val d1 = d0 * targetScale
+        val rnd = java.util.Random(seed)
+
+        /** 第 frame 帧时两指坐标（focus 缓慢漂移 + 每帧随机抖动 → scale 非单调）。 */
+        fun pts(frame: Int, twoFingers: Boolean): List<Pair<Float, Float>> {
+            val frac = frame.toFloat() / frames
+            val d = d0 + (d1 - d0) * frac
+            val cx = w / 2f + 40f * frac
+            val cy = h / 2f + 24f * (1f - frac)
+            val jx = (rnd.nextFloat() - 0.5f) * 14f
+            val jy = (rnd.nextFloat() - 0.5f) * 14f
+            val p1 = Pair(cx - d / 2 + jx, cy + jy)
+            return if (twoFingers) {
+                val p2 = Pair(cx + d / 2 - jx, cy - jy * 0.6f)
+                listOf(p1, p2)
+            } else listOf(p1)
+        }
+
+        fun mev(
+            action: Int,
+            pts: List<Pair<Float, Float>>,
+            ids: IntArray,
+            downTime: Long,
+        ): MotionEvent {
+            val props = arrayOfNulls<MotionEvent.PointerProperties>(pts.size)
+            val coords = arrayOfNulls<MotionEvent.PointerCoords>(pts.size)
+            for (i in pts.indices) {
+                props[i] = MotionEvent.PointerProperties().apply {
+                    id = ids[i]
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }
+                coords[i] = MotionEvent.PointerCoords().apply {
+                    x = pts[i].first
+                    y = pts[i].second
+                    pressure = 1f
+                    size = 1f
+                }
+            }
+            return MotionEvent.obtain(
+                downTime, android.os.SystemClock.uptimeMillis(), action, pts.size, props, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0,
+            )
+        }
+
+        val downTime = android.os.SystemClock.uptimeMillis()
+        val liftFrame = (frames * 0.55f).toInt() // 中途抬指再落指的帧
+        fun at(frame: Int, block: () -> Unit) {
+            rv.postDelayed({ block() }, frame * 16L)
+        }
+
+        at(0) { rv.dispatchTouchEvent(mev(MotionEvent.ACTION_DOWN, pts(0, false), intArrayOf(0), downTime)) }
+        at(1) {
+            val p = pts(1, true)
+            rv.dispatchTouchEvent(
+                mev((1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_DOWN, p, intArrayOf(0, 1), downTime),
+            )
+        }
+        for (f in 2..frames) {
+            at(f) {
+                val two = f % liftFrame != 0 // liftFrame 那帧只留单指（模拟中途抬指）
+                val alive = if (two) intArrayOf(0, 1) else intArrayOf(0)
+                var action = MotionEvent.ACTION_MOVE
+                var ids = alive
+                var list = pts(f, two)
+                if (f == liftFrame - 1 && liftFrame in 3 until frames) {
+                    // 抬起第二指：POINTER_UP（actionIndex=1）
+                    list = pts(f, true)
+                    ids = intArrayOf(0, 1)
+                    action = (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_UP
+                } else if (f == liftFrame + 1 && liftFrame in 3 until frames - 2) {
+                    // 第二指重新落下
+                    list = pts(f, true)
+                    ids = intArrayOf(0, 1)
+                    action = (1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_DOWN
+                }
+                rv.dispatchTouchEvent(mev(action, list, ids, downTime))
+            }
+        }
+        at(frames + 1) {
+            val p = pts(frames + 1, true)
+            rv.dispatchTouchEvent(
+                mev((1 shl MotionEvent.ACTION_POINTER_INDEX_SHIFT) or MotionEvent.ACTION_POINTER_UP, p, intArrayOf(0, 1), downTime),
+            )
+        }
+        at(frames + 2) {
+            rv.dispatchTouchEvent(mev(MotionEvent.ACTION_UP, pts(frames + 2, false), intArrayOf(0), downTime))
+        }
+    }
+
+    /**
      * **调试注入**（仅模拟器验证用）：不走真实触摸，按 [stepDelayMs] 间隔驱动生产捏合回调，
      * 从 1.0 线性缩放到 [targetScale] 后松手。scale < 1 收拢（列数变多），> 1 张开（列数变少）。
+     *
+     * 每步的实际耗时可能超过 [stepDelayMs]（预览插值要 measure/layout 全部可见 child），
+     * 用 [pendingInjection] 摘掉上一条未走完的链条，防止两次注入的 start/end 交叠——
+     * 滞后的 onPinchEnd 会把新手势中途 settle 掉（真实手指不可能产生这种重叠）。
      */
     fun debugInjectPinch(targetScale: Float, steps: Int = 12, stepDelayMs: Long = 16) {
-        val rv = rvRef?.get() ?: return
+        val rv = rvRef?.get() ?: debugRvRef?.get() ?: return
         // 真实双指手势会在第二指落下时 stopScroll；注入路径也要刹停，否则惯性滚动
         // 会让 begin() 记录的锚点位置在预览期间失效。
         rv.stopScroll()
+        rv.removeCallbacks(pendingInjection)
         initialSpan = 1000f
         onPinchStart(0f, 0f)
         var i = 1
@@ -286,6 +423,7 @@ class PinchGridSpanListener(
                 rv.postDelayed(this, stepDelayMs)
             }
         }
+        pendingInjection = step
         rv.postDelayed(step, stepDelayMs)
     }
 }
@@ -477,33 +615,37 @@ private fun fixAnchor(rv: RecyclerView, anchorPos: Int, anchorTop: Int) {
  * 的 WAAPI 分支：记录锚点与旧屏幕位置 → 换档 → 把锚点恢复到原屏幕位置 →
  * 对每个 item 做**二维**反向位移 → 归位动画。
  *
+ * 捏合路径（[pinchAnchor] 非空）的预览是 PinchFlipController 的真实 measure/layout：
+ * progress=1 与新 span 的真实布局逐位一致，收尾 FLIP 位移为零、零跳变（与瀑布流冷启动一致）。
+ *
  * 与 React 版的对齐点（此前缺前三项，是「动画看起来不一样」的直接原因）：
  *  1. **二维位移**：列数变化同时改变 item 的 x 与 y，只动 Y 会丢掉横向归位，
  *     网格看起来是「整排上下滑」而不是「每张卡滑向新格位」；
  *  2. **240ms**（React 捏合分支）而非 300ms（300ms 是面板开合分支）；
  *  3. **cubic-bezier(0.22, 1, 0.36, 1)**（React 捏合分支）而非 Material standard；
- *  4. 锚点恢复：`scrollToPositionWithOffset` 的 offset 语义是
- *     `paddingTop + offset = 目标 decorated top`，与 `child.top` 差一个 padding 与行间距，
- *     这里先按 offset 粗定位、布局后再用 `scrollBy` 精确修正；
+ *  4. 锚点恢复：`scrollToPositionWithOffset` 的 offset 语义是「decorated start 到 RV 起始边的
+ *     距离」，与 view.top 差一个行 inset 与 padding，这里先按 offset 粗定位、布局后再用
+ *     `scrollBy` 精确修正；
  *  5. 只给 |delta| ≥ 1px 的 item 起动画，动画结束 transform 归零（等价 React 的 `fill: 'none'`）。
  */
-fun animateSpanChange(
+internal fun animateSpanChange(
     rv: RecyclerView,
     lm: GridLayoutManager,
     decoration: GridSpacingDecoration,
     newSpan: Int,
-    /**
-     * 动画时长。捏合换档时会按**剩余进度**缩短——捏到 80% 才松手，
-     * 剩下的 20% 不该再走满 240ms，否则手感发黏。
-     */
     durationMs: Long = FLIP_DURATION_MS,
-) {
-    if (newSpan == lm.spanCount) return
+    /** 捏合预览的锚点（position + 钳制后的目标 top）；非捏合路径传 null。 */
+    pinchAnchor: PinchAnchor? = null,
+) {    if (newSpan == lm.spanCount) return
     val oldSpan = lm.spanCount
 
-    val anchorPos = lm.findFirstVisibleItemPosition()
-    val anchorTop = if (anchorPos == RecyclerView.NO_POSITION) 0
-        else (lm.findViewByPosition(anchorPos)?.top ?: 0)
+    val anchorPos = pinchAnchor?.pos?.takeIf { it != RecyclerView.NO_POSITION }
+        ?: lm.findFirstVisibleItemPosition()
+    val anchorTop = when {
+        anchorPos == RecyclerView.NO_POSITION -> 0
+        pinchAnchor != null -> pinchAnchor.top
+        else -> (lm.findViewByPosition(anchorPos)?.top ?: 0)
+    }
     val snap = captureFlip(rv, anchorPos, anchorTop)
 
     if (snap == null) return
@@ -517,15 +659,38 @@ fun animateSpanChange(
     lm.spanCount = newSpan
     decoration.spanCount = newSpan
     rv.invalidateItemDecorations()
-    lm.scrollToPositionWithOffset(anchorPos, anchorTop - rv.paddingTop)
+    // offset 语义 = 锚点 decorated start 到 RV 起始边的距离；view.top 是内容坐标
+    //（行 inset 在其外侧），先扣掉首行 inset 让粗定位尽量准，残余由 fixAnchor 精确修正。
+    val anchorRowInset = if (anchorPos / newSpan > 0) decoration.gapPx else 0
+    lm.scrollToPositionWithOffset(anchorPos, anchorTop - anchorRowInset - rv.paddingTop)
 
     Log.d(
         TAG,
         "[FLIP] span $oldSpan -> $newSpan anchorPos=$anchorPos anchorTop=$anchorTop " +
-            "paddingTop=${rv.paddingTop} offset=${anchorTop - rv.paddingTop} " +
-            "firstVisible=${lm.findFirstVisibleItemPosition()}",
+            "paddingTop=${rv.paddingTop} offset=${anchorTop - anchorRowInset - rv.paddingTop} " +
+            "firstVisible=${lm.findFirstVisibleItemPosition()} pinchAnchor=${pinchAnchor != null}",
     )
-    runFlipWhenLayoutApplied(rv, snap, "FLIP", 0) {
+    // 布局已刷新判据：捏合预览（真实 measure/layout）会把锚点宽度改写成目标档位的期望值，
+    // 默认的「宽度发生变化」判据会失效；改用「锚点所在列的新档位期望宽度」——旧 span 的
+    // 真实布局与预览态都不可能恰好等于它，只有新 span 的真实布局能命中。
+    val expectedCol = anchorPos % newSpan
+    val borders = PinchFlipController.gridSpanBorders(
+        rv.width - rv.paddingLeft - rv.paddingRight,
+        newSpan,
+    )
+    val li = decoration.gapPx * expectedCol / newSpan
+    val ri = decoration.gapPx * (newSpan - 1 - expectedCol) / newSpan
+    val expectedAnchorWidth = borders[expectedCol + 1] - borders[expectedCol] - li - ri
+
+    runFlipWhenLayoutApplied(
+        rv,
+        snap,
+        "FLIP",
+        0,
+        layoutApplied = { rv2 ->
+            rv2.layoutManager?.findViewByPosition(anchorPos)?.width == expectedAnchorWidth
+        },
+    ) {
         // 连续快速换档时 snap 可能已被更新的换档覆盖，拿它对着现在的布局算 delta 会把
         // 卡片甩到错误位置（「上半屏正常，下半屏全乱」）。直接放弃这次 FLIP。
         if (lm.spanCount != newSpan) {
@@ -567,6 +732,8 @@ internal fun animateStaggeredSpanChange(
     isFullSpanAt: (Int) -> Boolean = { false },
     gapPx: Int = 0,
     pinchAnchor: PinchAnchor? = null,
+    /** 每轮布局（含预填）末尾重放捏合预览几何，与 createLayoutManager 的接线一致。 */
+    previewRestorer: (() -> Unit)? = null,
 ) {
     if (newSpan == oldLm.spanCount) return
     val oldSpan = oldLm.spanCount
@@ -595,9 +762,8 @@ internal fun animateStaggeredSpanChange(
     // 冷启动：换全新 LM（旧 children 全部回收、span 记账从零开始），锚点经 pending scroll
     // 定位——首个布局从锚点位置起铺满视口，与捏合模拟同构；随后 fixAnchor 精确对齐，
     // 其中的 scrollBy 还会顺带把锚点上方未铺的区域按同一规则补齐。
-    // 预填不在这轮布局里做：fixAnchor 的 scrollBy 属于增量 fill 路径，会先回收手工预填的
-    // view，白填一场；改为在 fixAnchor 之后再排队补预填（见下方 doFlip）。
     val newLm = AuroraStaggeredLayoutManager(newSpan, isFullSpanAt, gapPx)
+    newLm.previewRestorer = previewRestorer
     rv.layoutManager = newLm
     decoration.spanCount = newSpan
     rv.invalidateItemDecorations()
@@ -626,14 +792,17 @@ internal fun animateStaggeredSpanChange(
             return@runFlipWhenLayoutApplied
         }
         fixAnchor(rv, anchorPos, anchorTop)
+        // playFlip 必须与 fixAnchor 同帧：fixAnchor 的 scrollBy（锚点被滚动边界钳制时可达
+        // 半屏）立即生效，playFlip 设置的反向 translation 是它的视觉补偿——两者分处两帧，
+        // 中间帧会裸露出未被补偿的位移（表现为「松手跳一下」）。
         playFlip(rv, snap, "FLIP", durationMs)
-        // fixAnchor 的 scrollBy 会回收手工预填的 view（增量 fill 不能带着无记账的 view 跑），
-        // 这里再排一轮预填：下一次捏合预览压缩内容时，下半屏依然有真实布局的 item 可用。
+        // fixAnchor 的 scrollBy 若有位移会走增量 fill 路径、回收手工预填的 view；
+        // 视口下方的预填由 AuroraStaggeredLayoutManager 在每轮 onLayoutChildren 末尾自动补，
+        // 本次 requestLayout 的那轮布局就会补上，无需再单独置位。
         // 必须先失效锚点：冷启动给 AnchorInfo 留下了 mOffset=锚点top + mInvalidateOffsets=true
         // 的陈旧状态，直接重布局会把所有列线 seed 到锚点 top、内容整体下跳一个 inset。
         // invalidateSpanAssignments 让下次布局走「从当前子 View 重算锚点」的标准路径，位置不变。
         newLm.invalidateSpanAssignments()
-        newLm.pendingExtraPrefill = true
         rv.requestLayout()
     }
 }

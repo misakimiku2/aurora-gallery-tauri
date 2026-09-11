@@ -252,3 +252,105 @@ adb -s emulator-5554 logcat -d -s AuroraKotlin
 - [ ] 松手低于阈值：按产品语义回退（反向 liveSpanChange）或保持（二选一，先实现「保持」）
 - [ ] GRID 模式回归正常
 - [ ] 滚动/顶部两场景、uiautomator 卡片唯一性、无 FATAL
+
+---
+
+# 第三轮：捏合中「竖图裁成横图」闪烁修复（2026-09-12）
+
+> 用户录屏 `log/demo.mp4`（Sep 11 22:36）+ 真机平板（SM-X808U）A/B 复现验证。
+> 上一轮遗留的「真实 measure/layout 预览」在**真实手指**捏合时频繁闪帧：竖图瞬间被
+> CENTER_CROP 成横条、文件名紧贴其下，1~2 帧后自行复原。注入式验证（直接调回调）
+> 完全无法复现，只有真实事件流特征（滚动后捏合、回收池混入不同比例的图）才能触发。
+
+## 根因 1（主凶）：`forceLayout()` 不传播 + FrameLayout 测量缓存跳过
+
+- 写封面高度的模式是 `cover.layoutParams.height = X; cover.forceLayout()`，随后手动
+  `measure` 根容器。**`View.forceLayout()` 只给自身置 `PFLAG_FORCE_LAYOUT`，不向子树
+  传播**；而 `View.measure` 按 (宽 spec, 高 spec) key 缓存——夹在 root 与 cover 之间的
+  `frame`（FrameLayout）若本轮 spec 与上次相同（瀑布流各列**等宽**，回收复用跨 item/
+  跨列时 spec 几乎总相同），会**整体跳过 onMeasure**，`cover.measure` 根本不被调用，
+  新写入的高度未被消费，渲染沿用**上一条生命周期的过期实测高度**（如横图的 263px），
+  竖图位图被 CENTER_CROP 成横条、文件名紧贴其下；下一次 spec 变化的测量又“自己变回
+  去”——即闪烁的全过程。旧代码只 force 了 root 和 cover，恰好漏了中间的 frame。
+- 连带毒化：`MasonryPinchController.applyChildReal` 的插值起点 `origCoverH` 用
+  `cover.height`（**实测值**）捕获，把上述过期高度缓存成整轮手势的插值基线
+  （A/B 日志实锤：`pos=11 lp=672 measured=421`，竖图按方形插值整轮）。
+
+**修复**：新增 `GridItemViews.applyCoverHeight(height)` 作为写封面高度的唯一入口
+（lp 写入 + cover.forceLayout + **frame.forceLayout**）；替换全部 6 处写点：
+bindPhoto、PAYLOAD_CELL 局部刷新、onViewAttachedToWindow 归一、bindAdaptiveRow、
+两个捏合控制器的 applyChildReal；`forceMeasureOnRebind` 同步补 force frame。
+插值起点改为**优先取 lp 高度**（bind/attach/上轮预览写入的意图值，永远正确），
+实测值只作兜底，并留 `[OrigCoverPoison-M]` 探测日志。
+
+## 根因 2（帮凶）：模式切换的收尾 FLIP 无限延迟后在捏合中爆发
+
+`appliedMode != layoutMode` 分支的收尾动画经 `afterStableLayout`（onPreDraw 驱动）
+延迟执行——界面完全静止时 onPreDraw 不发生，回调挂起数十秒，直到**下一次捏合手势
+的第一帧**才有绘制活动，于是对着过期快照 `scrollToPosition` + 全子视图平移动画，
+表现为捏合中突然跳位/闪帧。**修复**：两处（模式切换、adaptive 换档）
+`afterStableLayout` 回调里加守卫——任一捏合控制器 active 或 progress>0 时放弃过期
+快照（日志 `[FLIP-ModeSwitch] stale during pinch, skip`）。
+
+## 验证手段（本轮新增的调试基建，全部 log-only，保留）
+
+- `PinchGridSpanListener.debugInjectTouchPinch`：合成**双指 MotionEvent** 流直接
+  dispatch 给 RV，走完整真实事件分发（OnItemTouchListener → ScaleGestureDetector →
+  多指接管 → stopScroll），带随机抖动与「中途抬指→再落指」；比 `debugInjectPinch`
+  （直接调生产回调）更接近真实手指。广播参数 `--es mode touch --es seed N`。
+- PINCH 注入广播的注册条件从 `isEmulator()` 放宽为 `isEmulator() || FLAG_DEBUGGABLE`
+  （真机 Debug 构建也能注入，Release 不注册）。
+- FrameProbe 升级：每手势重启（begin 清 updateCount），每帧记录前 6 个可见卡片的
+  `top,height/lp/m/f/name`（lp=意图值 m=实测 f=frame 实测），lp≠m 即测量链路吞写。
+- 新增 `[PrevHijackLp-M]`（lp 层劫持）与 `[OrigCoverPoison-M]`（插值基线污染）探测。
+- `debugAttachRv`：注入器不再依赖先发生过真实触摸才能拿到 RV。
+
+## A/B 实测（平板，同一场景：Screenshots 131 张，滚动混池 → 合成双指捏合 ×3）
+
+- 修复前：`[OrigCoverPoison-M]` ×6（竖图基线被毒化为 421 方形），`[PrevHijack]` ×116。
+- 修复后：poison ×0，hijack ×0；落档提交（6→9 冷启动 FLIP）正常，落档后整屏比例正确。
+
+## 遗留
+
+- [ ] 用户真手指最终验收（注入复现不了的部分：真实 InputReader 节奏）。
+- [ ] 全部 TODO(debug) 探针与注入器在确认稳定后可整体摘除（git grep TODO(debug)）。
+
+---
+
+# 第四轮：松手落档后「图片刷新一下」修复（2026-09-12）
+
+> 用户真机验收第三轮修复后反馈：捏合松手后部分图片会闪一下（清空→重载）。
+> 日志实锤：`loadFast汇总 memory=0` —— 600 次加载**内存缓存零命中**，每次落档
+> 全夹 87~131 张全部从 MediaStore 重载（~12ms/张、并发 4）。
+
+## 根因
+
+1. **`loadThumbnail(uri, Size(512,512))` 在 SM-X808U 上返回 933×584 的 ARGB_8888
+  （2128KB/张），不理会请求尺寸**。131 张 ≈ 262MB，而内存缓存 128MB → 装入即逐出、
+  常驻水位 129.9/131MB，缓存形同虚设（ ThumbProbe 实测）。
+2. **落档换全新 LM（冷启动）时旧 child 全部回收**，默认 `mCachedViews` 容量只有 2，
+   几乎全部掉进回收池 → 新 LM 同位置重绑 → `loadInto` 走 `peekMemory` 必 miss →
+   `setImageBitmap(null)` 清空 → 异步重载 → 可见的「图片刷新」。
+3. 滚动重绑同理（只是新进入视口的 item 清空在观感上像正常占位，不被注意）。
+
+## 修复
+
+- **`loadInto` 同图重绑保留旧图**：cover 用 `tag` 记录当前应显示的 imageId，
+  `tag == imageId && drawable != null`（视图上已是对的那张图）时直接沿用，不清空、
+  不重载。跨 item 复用（tag 不同）仍走清空+加载，行为不变。
+- **`setItemViewCacheSize(48)`**（默认 2）：落档换 LM 时可见 child 进 mCachedViews
+  （按 position 命中），新 LM 同位置复用**完全不重走 bind**；不走 bind 的复用路径
+  由 `onViewAttachedToWindow` 归一 + 第三轮的 `applyCoverHeight`（force frame）
+  保证封面高度正确。
+
+## 验证（真机注入，等初始加载完全结束后单独触发一次落档）
+
+- 修复前：每次落档 `loadFast汇总` media 计数 +87~131（全夹重载）。
+- 修复后：落档后 `ThumbProbe`/`loadFast` **零新增**，落档后 9 列布局渲染完好。
+
+## 遗留选项（未做）
+
+- 内存缓存对大文件夹仍然逐出（滚动重绑时新 item 仍走 MediaStore）——可考虑把
+  loadThumbnail 结果按需降采样（如最长边 ≤768px，1.4MB/张，~91 条全夹可容纳），
+  代价是最大档（4 列 649px 单元格）下竖图略有放大变软；本轮不做。
+- TODO(debug) 的 ThumbProbe 探针保留至用户验收后随其他探针一起摘除。

@@ -11,8 +11,6 @@ import android.util.Log
 import android.util.LruCache
 import android.util.Size
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -23,13 +21,19 @@ import uniffi.aurora_core.generateThumbnail
  * 缩略图加载器（M1 阶段 1.3）。
  *
  * 两段式「先糊后清」：
- *  - `loadFast`：内存缓存 → 高清磁盘缓存 → MINI_KIND 系统缩略图（可能偏小），立即上屏；
- *  - `generateHd`：当 fast 结果偏小/缺失时，后台读 `content://` 原图字节，交给 Rust
- *    `image` crate 解码缩放到 256px，生成 JPEG 写入磁盘缓存并替换。
+ *  - `loadFast`：内存缓存 → 高清磁盘缓存 → 512px 系统缩略图，立即上屏；
+ *  - `generateHd`：**按需**——仅当绑定 item 拿到的 fast 结果偏小（<200px）时，
+ *    后台读 `content://` 原图字节，交给 Rust `image` crate 解码缩放到 256px，
+ *    生成 JPEG 写入磁盘缓存并替换。
+ *
+ * 不做「进入文件夹时整夹预热」：每张预热要整幅解码原图（~2MB 读入 + 数十 MB 像素缓冲），
+ * 大文件夹意味着数分钟的持续解码，内存带宽/GC 压力与滚动、捏合争抢；且 Rust 产物是
+ * 256px，并不优于系统 loadThumbnail(512)。只为真正显示且偏小的图生成（对齐 React 版
+ * 的按需队列 + 升级事件策略）。
  *
  * 背景：Coil 直接解码 `content://` 原图在三星 Tab S8+ 上会触发系统级
- * `MediaRecoveryDatabase_Impl` 缺失错误。改用 `MediaStore.Images.Thumbnails.getThumbnail(MINI_KIND)`
- * 取系统缩略图表做快速上屏，绕开对原图的解码路径；高清兜底由 Rust 完成。
+ * `MediaRecoveryDatabase_Impl` 缺失错误。改用系统缩略图做快速上屏，绕开原图解码路径；
+ * 高清兜底由 Rust 完成。
  */
 class ThumbnailLoader(context: Context) {
 
@@ -81,6 +85,7 @@ class ThumbnailLoader(context: Context) {
         if (diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
                 memoryCache.put(imageId, it)
+                probeThumb("disk", imageId, it)
                 recordFast("disk", start)
                 return it
             }
@@ -95,6 +100,7 @@ class ThumbnailLoader(context: Context) {
             }.getOrNull()
             if (bmp != null) {
                 memoryCache.put(imageId, bmp)
+                probeThumb("media", imageId, bmp)
                 recordFast("media", start)
                 return bmp
             }
@@ -108,8 +114,18 @@ class ThumbnailLoader(context: Context) {
             null,
         )
         if (legacy != null) memoryCache.put(imageId, legacy)
+        legacy?.let { probeThumb("legacy", imageId, it) }
         recordFast("media", start)
         return legacy
+    }
+
+    /** TODO(debug) 内存缓存零命中排查：记录位图实际尺寸/占用与缓存水位。 */
+    private fun probeThumb(src: String, imageId: Long, bmp: Bitmap) {
+        Log.d(
+            TAG,
+            "[ThumbProbe] src=$src id=$imageId ${bmp.width}x${bmp.height} ${bmp.config} " +
+                "${bmp.byteCount / 1024}KB cacheKB=${memoryCache.size()}/${memoryCache.maxSize()}",
+        )
     }
 
     /** 累计 loadFast 命中类型与耗时，每 [FAST_STATS_INTERVAL] 次打印汇总。 */
@@ -136,20 +152,6 @@ class ThumbnailLoader(context: Context) {
     /** 限并发的快速取图（挂起），滚动时避免 MediaStore 查询挤爆 IO 线程池。 */
     suspend fun loadFastLimited(imageId: Long): Bitmap? =
         fastSemaphore.withPermit { withContext(Dispatchers.IO) { loadFast(imageId) } }
-
-    /**
-     * 后台预生成缩略图到磁盘缓存（进入文件夹时调用）。
-     *
-     * 渐进式：已存在的磁盘缓存跳过；其余并行生成，并发受 [hdSemaphore] 限制，
-     * 让滚动中的 `loadFast` 逐步命中磁盘缓存（3ms），而非回退到较慢的 loadThumbnail。
-     */
-    suspend fun pregenerate(contentUris: List<String>) = coroutineScope {
-        contentUris.forEach { uri ->
-            val imageId = extractImageId(uri)
-            if (hdFile(imageId).exists()) return@forEach
-            launch(Dispatchers.IO) { generateHd(imageId, uri) }
-        }
-    }
 
     /** 当前位图是否偏小、值得升级为高清。 */
     fun needsUpgrade(bitmap: Bitmap): Boolean =

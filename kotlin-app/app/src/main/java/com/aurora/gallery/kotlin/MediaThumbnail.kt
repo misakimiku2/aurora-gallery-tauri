@@ -26,8 +26,8 @@ import kotlinx.coroutines.withContext
  * 性能要点：
  *  - 内存缓存命中时同步取初始值，item 回收重进不闪烁、不重复解码；
  *  - `asImageBitmap` 用 `remember` 缓存，避免每次重组重建包装对象；
- *  - 缩略图由「进入文件夹后台预生成」逐步写入磁盘缓存，滚动中命中磁盘缓存（快），
- *    未命中才回退 loadThumbnail，故无需滚动中暂停加载。
+ *  - 高清只在 fast 结果偏小（<200px）时按需生成（见 [ThumbnailLoader] 类注释，
+ *    不做整夹预热），生成一次后落盘，滚动回来命中磁盘缓存。
  */
 @Composable
 fun MediaThumbnail(

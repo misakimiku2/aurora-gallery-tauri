@@ -29,6 +29,7 @@ import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
+import androidx.recyclerview.widget.StaggeredSpanAccess
 import com.aurora.gallery.kotlin.ThumbnailLoader
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import kotlinx.coroutines.CoroutineScope
@@ -143,9 +144,9 @@ fun FileGrid(
     }
     adapter.masonryPinch = masonryPinch
 
-    // 瀑布流捏合换档的锚点透传：onPinchEnd 记录 → update 消费（一次）。
+    // 捏合换档的锚点透传（GRID / MASONRY 共用）：onPinchEnd 记录 → update 消费（一次）。
     // 松手换档必须保持同一锚点停在同一屏幕位置，预览与收尾 FLIP 才无缝衔接。
-    val staggeredAnchor = remember { AnchorOverrideHolder() }
+    val pendingPinchAnchor = remember { AnchorOverrideHolder() }
 
     // 注意：cellWidthPx（单元格宽度）**不在 key 里**。换档必然伴随列宽变化，若列宽变化触发
     // submit，全量刷新会重新 bind 所有 item，把 FLIP 的初始位移抹掉（表现为硬切）。
@@ -167,8 +168,32 @@ fun FileGrid(
             val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
             decoration.spanCount = initialCols
             RecyclerView(ctx).apply {
-                layoutManager = createLayoutManager(layoutMode, ctx, initialCols, gapPx)
+                layoutManager = createLayoutManager(
+                    layoutMode,
+                    ctx,
+                    initialCols,
+                    gapPx,
+                    previewRestorer = {
+                        rvHolder.rv?.let {
+                            // GRID / MASONRY 各自的控制器在非捏合期都是空操作
+                            pinchFlip.reapplyPreview(it)
+                            masonryPinch.reapplyPreview(it)
+                        }
+                    },
+                )
                 this.adapter = adapter
+                // 见 adapter.PHOTO_POOL_SIZE 的说明：扩容 photo 回收池，吸收预填 strip/重建
+                recycledViewPool.setMaxRecycledViews(
+                    FileGridAdapter.TYPE_PHOTO,
+                    FileGridAdapter.PHOTO_POOL_SIZE,
+                )
+                // 捏合落档要换全新 LayoutManager（冷启动），旧 LM 的全部 child 会在此刻回收。
+                // 默认 mCachedViews 容量只有 2，落档时几乎全部掉进回收池 → 新 LM 逐个重绑 →
+                // loadInto 在内存缓存逐出时清空重载，表现为「松手后一些图片刷新一下」。
+                // 提到 48（≥ 最大档位一屏的可见数）后，同位置视图经 mCachedViews 复用、
+                // 完全不重走 bind；高度正确性由 onViewAttachedToWindow 归一兜底（不走 bind
+                // 的复用路径）。
+                setItemViewCacheSize(48)
                 addItemDecoration(decoration)
                 setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
                 clipToPadding = false
@@ -198,7 +223,16 @@ fun FileGrid(
                                 rvHolder.rv?.let { pinchFlip.begin(it, currentGapPx.value) }
 
                             currentLayoutMode.value == LayoutMode.MASONRY ->
-                                rvHolder.rv?.let { masonryPinch.begin(it, currentGapPx.value) }
+                                rvHolder.rv?.let {
+                                    masonryPinch.begin(it, currentGapPx.value)
+                                    // 进捏合补一轮预填布局：滚动等增量路径会回收视口下方的预填
+                                    // view（无 span 记账的 view 不能参与增量 fill），首次进入
+                                    // 瀑布流也还没有预填。不补的话，收拢（列数变多）时可见内容
+                                    // 压缩上移、下方没有 item 可插值，底部露出一大段空白直到
+                                    // 松手换档。本轮布局会把预览几何洗掉，由 previewRestorer
+                                    // 在同一次布局末尾重放，不会闪回原布局。
+                                    it.requestLayout()
+                                }
                         }
                     },
                     onPinchProgress = { scale, _, _ ->
@@ -245,11 +279,16 @@ fun FileGrid(
                             )
                             flipDurationMs =
                                 (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
-                            // 换档要用同一个锚点（同一屏幕位置）冷启动新布局，先记下再 release。
+                            // 换档要用同一个锚点（同一屏幕位置）换新布局，先记下再 release。
                             // top 用 commitAnchorTop：列表末端钉在视口边缘时的钳制值，
-                            // 与捏合预览的目标几何一致（原样用捏合 top 会被 Staggered 拒绝滚动）。
-                            if (masonryPinch.isActive) {
-                                staggeredAnchor.value = PinchAnchor(
+                            // 与捏合预览的目标几何一致（原样用捏合 top 会被布局拒绝滚动）。
+                            when {
+                                pinchFlip.isActive -> pendingPinchAnchor.value = PinchAnchor(
+                                    pinchFlip.pinchAnchorPos,
+                                    pinchFlip.commitAnchorTop,
+                                )
+
+                                masonryPinch.isActive -> pendingPinchAnchor.value = PinchAnchor(
                                     masonryPinch.pinchAnchorPos,
                                     masonryPinch.commitAnchorTop,
                                 )
@@ -293,6 +332,7 @@ fun FileGrid(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
+                pinch.debugAttachRv(this)
             }
         },
         update = { rv ->
@@ -311,22 +351,45 @@ fun FileGrid(
                 // 切到 ADAPTIVE 时同步记录档位，避免同一帧又被下方 ADAPTIVE 换档分支误触发第二次 FLIP
                 if (mode == LayoutMode.ADAPTIVE) appliedAdaptiveSpan = span
                 // 同步换 LM + submit：appliedMode 立即更新，同一帧后续 update 不会重复触发
-                rv.layoutManager = createLayoutManager(mode, rv.context, span, gapPx) {
-                    adapter.isHeaderAt(it)
-                }
+                rv.layoutManager = createLayoutManager(
+                    mode,
+                    rv.context,
+                    span,
+                    gapPx,
+                    isFullSpanAt = { adapter.isHeaderAt(it) },
+                    previewRestorer = {
+                        pinchFlip.reapplyPreview(rv)
+                        masonryPinch.reapplyPreview(rv)
+                    },
+                )
                 adapter.submit(items, selectedIds, mode, gapPx, collapsedIds)
                 afterStableLayout(rv) {
                     // 布局期间可能又被切走，snapshot 已失效，放弃
                     if (appliedMode != mode) return@afterStableLayout
+                    // 收尾 FLIP 依赖 onPreDraw 驱动；界面静止时它会一直挂起，直到下一次有
+                    // 绘制活动的时刻——那往往是下一次捏合手势的第一帧。此时对着一分钟前的
+                    // 过期快照 scrollToPosition + 全子视图平移动画，表现为捏合中突然跳位/
+                    // 闪帧。捏合进行中（或尚未复位）时放弃这次过期的收尾动画。
+                    if (pinchFlip.isActive || masonryPinch.isActive ||
+                        pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f
+                    ) {
+                        Log.d(TAG, "[FLIP-ModeSwitch] stale during pinch, skip")
+                        return@afterStableLayout
+                    }
                     applyModeSwitchFlip(rv, adapter, snapshot)
                 }
             } else if (!matchesMode(rv.layoutManager, layoutMode)) {
-                rv.layoutManager = createLayoutManager(layoutMode, rv.context, span, gapPx) {
-                    adapter.isHeaderAt(it)
-                }
-                if (layoutMode == LayoutMode.MASONRY) {
-                    (rv.layoutManager as? AuroraStaggeredLayoutManager)?.pendingExtraPrefill = true
-                }
+                rv.layoutManager = createLayoutManager(
+                    layoutMode,
+                    rv.context,
+                    span,
+                    gapPx,
+                    isFullSpanAt = { adapter.isHeaderAt(it) },
+                    previewRestorer = {
+                        pinchFlip.reapplyPreview(rv)
+                        masonryPinch.reapplyPreview(rv)
+                    },
+                )
             }
 
             when (val lm = rv.layoutManager) {
@@ -337,15 +400,17 @@ fun FileGrid(
                             if (adapter.isHeaderAt(position)) lm.spanCount else 1
                     }
                     if (span != lm.spanCount) {
-                        animateSpanChange(rv, lm, decoration, span, flipDurationMs)
+                        val anchor = pendingPinchAnchor.value
+                        pendingPinchAnchor.value = null
+                        animateSpanChange(rv, lm, decoration, span, flipDurationMs, pinchAnchor = anchor)
                         flipDurationMs = FLIP_DURATION_MS
                     }
                 }
 
                 is StaggeredGridLayoutManager -> {
                     if (span != lm.spanCount) {
-                        val anchor = staggeredAnchor.value
-                        staggeredAnchor.value = null
+                        val anchor = pendingPinchAnchor.value
+                        pendingPinchAnchor.value = null
                         // 冷启动换档（换全新 LM）：真实布局与捏合预览的模拟逐位一致，
                         // FLIP 收尾就是最终布局，不再有「松手后再跳一下」。
                         animateStaggeredSpanChange(
@@ -357,6 +422,7 @@ fun FileGrid(
                             isFullSpanAt = { adapter.isHeaderAt(it) },
                             gapPx = currentGapPx.value,
                             pinchAnchor = anchor,
+                            previewRestorer = { masonryPinch.reapplyPreview(rv) },
                         )
                         flipDurationMs = FLIP_DURATION_MS
                     }
@@ -376,6 +442,10 @@ fun FileGrid(
                             // 期间可能又切模式或再换档，snapshot 失效，放弃
                             if (layoutMode != LayoutMode.ADAPTIVE ||
                                 appliedAdaptiveSpan != span
+                            ) return@afterStableLayout
+                            // 同模式切换分支：手势期间不播过期快照的收尾动画（见上文说明）
+                            if (pinchFlip.isActive || masonryPinch.isActive ||
+                                pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f
                             ) return@afterStableLayout
                             applyModeSwitchFlip(rv, adapter, snapshot)
                         }
@@ -452,12 +522,25 @@ internal class AuroraGridLayoutManager(
     context: android.content.Context,
     spanCount: Int,
 ) : GridLayoutManager(context, spanCount) {
+
+    /** 每轮布局完成后的回调：GRID 捏合预览（真实 measure/layout）被布局洗掉时重放，
+     *  与 AuroraStaggeredLayoutManager 的 previewRestorer 对称。非捏合期为空操作。 */
+    var previewRestorer: (() -> Unit)? = null
+
     override fun calculateExtraLayoutSpace(
         state: RecyclerView.State,
         extraLayoutSpace: IntArray,
     ) {
         extraLayoutSpace[0] = height / 3
         extraLayoutSpace[1] = height * 3 / 2
+    }
+
+    override fun onLayoutChildren(
+        recycler: RecyclerView.Recycler,
+        state: RecyclerView.State,
+    ) {
+        super.onLayoutChildren(recycler, state)
+        previewRestorer?.invoke()
     }
 }
 
@@ -467,26 +550,48 @@ private fun createLayoutManager(
     spanCount: Int,
     gapPx: Int,
     isFullSpanAt: (Int) -> Boolean = { false },
+    previewRestorer: (() -> Unit)? = null,
 ): RecyclerView.LayoutManager = when (mode) {
     // adaptive 把「一行」作为 item，行内排布在 item 内部完成，因此用最简单的纵向布局即可
     LayoutMode.ADAPTIVE -> LinearLayoutManager(context)
-    LayoutMode.MASONRY -> AuroraStaggeredLayoutManager(spanCount, isFullSpanAt, gapPx)
-    else -> AuroraGridLayoutManager(context, spanCount)
+    LayoutMode.MASONRY -> AuroraStaggeredLayoutManager(spanCount, isFullSpanAt, gapPx).apply {
+        this.previewRestorer = previewRestorer
+    }
+    else -> AuroraGridLayoutManager(context, spanCount).apply {
+        this.previewRestorer = previewRestorer
+    }
 }
 
 /**
- * 视口下方**多布局一些 item** 的 StaggeredGridLayoutManager（与 [AuroraGridLayoutManager] 对称）。
+ * 视口下方**常驻多布局一些 item** 的 StaggeredGridLayoutManager（与 [AuroraGridLayoutManager] 对称）。
  *
  * 为什么需要：瀑布流捏合缩小（列数变多）时内容压缩约一倍，捏合预览是把可见内容往新档位
  * 位置插值——若布局没有预填，下方会露出大片空白。GRID 版靠
  * `LinearLayoutManager.calculateExtraLayoutSpace`（底部 1.5 屏）解决；但 StaggeredGridLayoutManager
- * **没有这个 hook**（1.3.2 不含该方法），只能在布局完成后手动补：[pendingExtraPrefill] 置位后，
- * 下一次 onLayoutChildren 按与 Staggered 一致的「按 position 顺序放入最短列」规则把下方
- * 1.5 屏补建出来。
+ * **没有这个 hook**（1.3.2 不含该方法），只能在布局完成后手动补：每轮 `onLayoutChildren` 末尾
+ * 按与 Staggered 一致的「按 position 顺序放入最短列」规则把下方 1.5 屏补建出来。
  *
- * **手工预填的 view 不进 Staggered 的 span 记账**（LazySpanLookup 是私有的），所以它们带
- * [PREFILL_TAG] 标记，任何增量路径（滚动 fill / 重新布局）开始前先回收（[stripPrefilled]）：
- * 增量 fill 按 span 列线再铺同一批 position 会叠出重影——这正是「瀑布流下半屏重叠」的来源。
+ * **预填 view 的识别与回收必须用「`LayoutParams.mSpan == null`」这个结构不变量，不能用 view
+ * tag**：预填 view 经 `addView` 挂上、从不参与 span 记账，`mSpan` 恒为 null；而 Staggered 的
+ * `fill()` 会在 `addView` 前给每个自己铺的 child 赋 `mSpan`（1.3.2 fill 第 1600 行），所以已挂载
+ * child 中 `mSpan == null` ⟺ 预填 view。早期版本用 view tag 识别，但 tag 会经由「换 LM 冷启动」
+ * 等非本类回收路径残留在 view 上——新 LM 的正常 fill 从 mCachedViews 复用它时**不重走 bind**、
+ * 没人清 tag，它就成了「带预填标记的真实记账 child」；strip 时被误删且绕过 `Span.popStart()`，
+ * span 的 mViews 留下幽灵条目，滚动 fill/recycle 记账错位后在 `recycleFromStart` 处 NPE
+ *（`lp.mSpan.mViews` 空指针）。每轮布局都预填后该窗口必现，故弃用 tag。
+ *
+ * 任何增量路径（滚动 fill / 重新布局）开始前先回收预填 view（[stripPrefilled]）：增量 fill 按
+ * span 列线再铺同一批 position 会叠出重影——这正是「瀑布流下半屏重叠」的来源。回收前经
+ * [StaggeredSpanAccess.clearSpan]（[prefillBelow] 复用时也会）把上一条生命周期残留的 span
+ * 引用清空，保证复用态干净。
+ *
+ * 例外是 `onScrollStateChanged(IDLE)`：stock 会在这里走 `checkForGaps → hasGapsToFix`，
+ * 逐 child 解引用 `mSpan`，但该回调拿不到 Recycler、无法先 strip——见下方重写，有预填
+ * child 挂载时直接跳过这次检查（1.3.2 中这是布局外进入 gap 检查的唯一入口）。
+
+ *
+ * [previewRestorer] 在预填之后回调：捏合预览是手动 measure/layout 改写 child 几何，本轮布局
+ * （含补预填触发的那轮）会把它洗掉，回调里按当前进度重放，预览才不会闪回原布局一帧。
  */
 internal class AuroraStaggeredLayoutManager(
     spanCount: Int,
@@ -494,10 +599,9 @@ internal class AuroraStaggeredLayoutManager(
     private val isFullSpanAt: (Int) -> Boolean,
     /** 单元格间距（px）。预填的测量与链式记账要与 GridSpacingDecoration 完全一致。 */
     private val gapPx: Int,
+    /** 每轮布局（含预填）完成后的回调；非捏合期为空操作，见 [MasonryPinchController.reapplyPreview]。 */
+    var previewRestorer: (() -> Unit)? = null,
 ) : StaggeredGridLayoutManager(spanCount, StaggeredGridLayoutManager.VERTICAL) {
-
-    /** 换档后置位：下一次布局完成（新档位、span 缓存已失效）后向视口下方预填。 */
-    var pendingExtraPrefill: Boolean = false
 
     override fun onLayoutChildren(
         recycler: RecyclerView.Recycler,
@@ -505,10 +609,8 @@ internal class AuroraStaggeredLayoutManager(
     ) {
         stripPrefilled(recycler)
         super.onLayoutChildren(recycler, state)
-        if (pendingExtraPrefill) {
-            pendingExtraPrefill = false
-            prefillBelow(recycler, state.itemCount)
-        }
+        prefillBelow(recycler, state.itemCount)
+        previewRestorer?.invoke()
     }
 
     override fun scrollVerticallyBy(
@@ -520,11 +622,41 @@ internal class AuroraStaggeredLayoutManager(
         return super.scrollVerticallyBy(dy, recycler, state)
     }
 
+    /**
+     * stock 在滚动状态变 IDLE 时走 `checkForGaps → hasGapsToFix`，逐个 child 读
+     * `lp.mSpan.mIndex`（1.3.2 无判空）。预填 view（`mSpan == null`）在两轮布局/滚动之间
+     * 常驻挂载，拖拽松手、停 fling、cancelTouch 等任何一次 IDLE 转换都会踩空 NPE 崩溃。
+     * 有预填 child 挂载时跳过本次检查（此回调拿不到 Recycler，无法就地回收）：
+     *  - 布局期 gap 检查在 `super.onLayoutChildren` 尾部、`prefillBelow` 之前运行，
+     *    当时所有 child 都有 span 记账，gap 修复能力不受影响；
+     *  - 滚动期 `scrollVerticallyBy` 已先 strip，无预填时 super 照常检查。
+     */
+    override fun onScrollStateChanged(state: Int) {
+        if (state == RecyclerView.SCROLL_STATE_IDLE && hasPrefilledChild()) return
+        super.onScrollStateChanged(state)
+    }
+
+    private fun hasPrefilledChild(): Boolean {
+        for (i in 0 until childCount) {
+            val c = getChildAt(i) ?: continue
+            if (isPrefilled(c)) return true
+        }
+        return false
+    }
+
+    /**
+     * 是否为预填 view：Staggered LayoutParams 且未参与 span 记账。见类 KDoc 的不变量说明。
+     * 非 Staggered LayoutParams（如模式切换后池里的 GRID view）不在此列。
+     */
+    private fun isPrefilled(child: View): Boolean {
+        val lp = child.layoutParams as? StaggeredGridLayoutManager.LayoutParams ?: return false
+        return StaggeredSpanAccess.isSpanUnassigned(lp)
+    }
+
     private fun stripPrefilled(recycler: RecyclerView.Recycler) {
         for (i in childCount - 1 downTo 0) {
             val c = getChildAt(i) ?: continue
-            if (c.tag === PREFILL_TAG) {
-                c.tag = null
+            if (isPrefilled(c)) {
                 removeAndRecycleView(c, recycler)
             }
         }
@@ -574,13 +706,18 @@ internal class AuroraStaggeredLayoutManager(
             } catch (e: Exception) {
                 return
             }
+            // 复用的 view 可能带着上一条生命周期的 span 引用（换 LM 冷启动的整批回收不走
+            // popStart），不清掉的话它同时「看起来已记账」（mSpan 非 null、不被 strip 识别）
+            // 又「实际不在任何 span 的 mViews 里」——增量 fill 再铺同一 position 会叠出重影。
+            // 清空后它满足「mSpan == null ⟺ 预填 view」的不变量，后续 strip 才能正确回收。
+            val lp = v.layoutParams as? StaggeredGridLayoutManager.LayoutParams
+            if (lp != null) StaggeredSpanAccess.clearSpan(lp)
             // decoration inset 必须先算（layoutDecoratedWithMargins 会按它定位）
             calculateItemDecorationsForChild(v, Rect())
             if (isFullSpanAt(pos)) {
                 addView(v)
                 // header 无 inset：内容宽 = inner
                 measureChildWithMargins(v, 0, 0)
-                v.tag = PREFILL_TAG
                 val line = colEnd.max()
                 layoutDecoratedWithMargins(
                     v, paddingLeft, line,
@@ -596,7 +733,6 @@ internal class AuroraStaggeredLayoutManager(
                 // 内容宽 = sizePerSpan - 左右 inset（widthUsed 把差额从总宽里扣掉）。
                 // 直接用默认 spec 会量成全宽，预填卡片互相压边（「下半屏重叠」的来源之一）。
                 measureChildWithMargins(v, inner - (sizePerSpan - leftInset - rightInset), 0)
-                v.tag = PREFILL_TAG
                 val line = colEnd[best]
                 layoutDecoratedWithMargins(
                     v, paddingLeft + best * sizePerSpan, line,
@@ -606,11 +742,6 @@ internal class AuroraStaggeredLayoutManager(
             }
             pos++
         }
-    }
-
-    companion object {
-        /** 手工预填 view 的标记；增量布局前回收（见 [stripPrefilled]）。 */
-        private val PREFILL_TAG = Any()
     }
 }
 
@@ -753,9 +884,14 @@ private class FileGridAdapter(
         private set
 
     companion object {
-        private const val TYPE_HEADER = 0
-        private const val TYPE_PHOTO = 1
-        private const val TYPE_ADAPTIVE_ROW = 2
+        internal const val TYPE_HEADER = 0
+        internal const val TYPE_PHOTO = 1
+        internal const val TYPE_ADAPTIVE_ROW = 2
+
+        /** photo 回收池容量：瀑布流预填约 1.5 屏（最小档 9 列时 ~80 个），strip/重建
+         *  一次性回收量远超默认池（每类型 5），不够时重建全靠 onCreateViewHolder
+         *  重新 inflate——重布局风暴里最贵的一环。 */
+        internal const val PHOTO_POOL_SIZE = 160
 
         /** 局部刷新 payload：只更新封面高度，不重新 bind（不重载图片、不动 FLIP transform）。 */
         private const val PAYLOAD_CELL = "cell"
@@ -777,6 +913,8 @@ private class FileGridAdapter(
     ): Boolean {
         val unchanged = items == list && selectedIds == selection && layoutMode == mode &&
             gapPx == gap && collapsedIds == collapsed
+        // TODO(debug) 提交轨迹：谁在会话中换了数据
+        Log.d(TAG, "[SubmitDiag] unchanged=$unchanged size=${list.size} oldSize=${items.size} mode=$mode")
         if (unchanged) return false
 
         items.clear()
@@ -966,8 +1104,8 @@ private class FileGridAdapter(
             // 导致缩小后封面还带着上一档的高度（横屏/竖屏长条）。
             if (holder is PhotoVH) {
                 val image = (items.getOrNull(position) as? GridItem.Photo)?.image ?: return
-                holder.refs.cover.layoutParams.height = coverHeightFor(image)
-                holder.refs.cover.requestLayout()
+                holder.refs.cover.applyCoverHeight(coverHeightFor(image))
+                forceMeasureOnRebind(holder)
             }
             return
         }
@@ -993,6 +1131,27 @@ private class FileGridAdapter(
             is HeaderVH -> bindHeader(holder, position)
             is PhotoVH -> bindPhoto(holder, position)
             is AdaptiveRowVH -> bindAdaptiveRow(holder, position)
+        }
+        forceMeasureOnRebind(holder)
+    }
+
+    /**
+     * 重绑后强制重测。封面高度在 bind 时只写字段（[bindPhoto]）——[SquareImageView] 把
+     * 内容级 requestLayout 降级为重绘后，重绑不再有「位图落地 → requestLayout」顺带设置的
+     * 强制测量标志；RV fill 复用 view 时若尺寸 spec 与上次相同（同列宽），`View.measure`
+     * 会跳过 onMeasure，视图保留**上一个档位/上一轮预览**的过期高度，bind 写入的正确
+     * 高度没被消费——捏合起点布局（strip+重绑预填）恰好把过期高度捕获为预览插值起点，
+     * 表现为捏合全程裁剪/错位、松手换档大幅跳动（maxDelta ~1800px）。forceLayout 只置
+     * 强制标志、不上抛（见 [SquareImageView.requestLayout] 的说明），不会重新引发
+     * 整网格重布局风暴。
+     */
+    private fun forceMeasureOnRebind(holder: RecyclerView.ViewHolder) {
+        holder.itemView.forceLayout()
+        if (holder is PhotoVH) {
+            // frame 也要置强制标志：只 force 封面时，中间的 FrameLayout spec 未变会跳过
+            // onMeasure，封面的新高度依旧不被消费（见 applyCoverHeight 的说明）。
+            holder.refs.cover.forceLayout()
+            (holder.refs.cover.parent as? View)?.forceLayout()
         }
     }
 
@@ -1029,7 +1188,7 @@ private class FileGridAdapter(
                     "ratio=${aspectRatioOf(image)} mode=$layoutMode",
             )
         }
-        holder.refs.cover.layoutParams.height = coverH
+        holder.refs.cover.applyCoverHeight(coverH)
 
         // 诊断「长条」：布局后打印封面实际宽高 + 图片宽高比。采样覆盖整个列表（每 20 个打一次），
         // 便于捕捉「滚动后才出现的错乱」。
@@ -1066,7 +1225,7 @@ private class FileGridAdapter(
             lp.width = (row.widthsDp[index] * density).toInt()
             lp.leftMargin = if (index > 0) gapPx else 0
             cell.root.layoutParams = lp
-            cell.cover.layoutParams.height = imageHeightPx
+            cell.cover.applyCoverHeight(imageHeightPx)
             cell.name.text = image.name
 
             val selected = image.id in selectedIds
@@ -1091,20 +1250,39 @@ private class FileGridAdapter(
         val cached = loader.peekMemory(imageId)
         if (cached != null) {
             cover.setImageBitmap(cached)
+            cover.tag = imageId
+            return Job().apply { complete() }
+        }
+        // 视图正在展示同一张图（捏合落档换 LM 的同位置重绑必走这里）时不清空、不重载：
+        // 内存缓存对大文件夹必然逐出（131 张 × 2MB > 128MB），清空 → 异步重载（media
+        // ~12ms/张、并发 4）就是「松手后一片图片刷新」的直接来源。tag 记录该视图当前
+        // 应显示的 imageId，drawable 非空即已上屏，直接沿用。
+        if (cover.tag == imageId && cover.drawable != null) {
             return Job().apply { complete() }
         }
         cover.setImageBitmap(null)
+        cover.tag = imageId
         return scope.launch {
             val bmp = loader.loadFastLimited(imageId)
             if (stillValid()) cover.setImageBitmap(bmp)
+            // 按需高清升级：仅当系统缩略图偏小/缺失（<200px）才为这张图生成 HD（Rust 解码
+            // 原图 ~145ms/张），512px 系统缩略图不触发——正常滚动零后台解码，不再整夹预热。
+            if (bmp != null && loader.needsUpgrade(bmp)) {
+                val hd = loader.generateHd(imageId, image.contentUri)
+                if (stillValid() && hd != null) cover.setImageBitmap(hd)
+            }
         }
     }
 
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+        // 回收时置强制测量标志：经 mCachedViews 复用（不重走 bind）的 view 也必须重测，
+        // 否则同样可能带着过期高度混进新一轮布局（见 forceMeasureOnRebind 的说明）。
+        holder.itemView.forceLayout()
         when (holder) {
             is PhotoVH -> {
                 holder.job?.cancel()
                 holder.refs.cover.setImageBitmap(null)
+                holder.refs.cover.forceLayout()
             }
             is AdaptiveRowVH -> {
                 holder.jobs.values.forEach { it.cancel() }
@@ -1113,6 +1291,22 @@ private class FileGridAdapter(
                     cell.cover.setImageBitmap(null)
                     cell.root.visibility = View.GONE
                 }
+            }
+        }
+    }
+
+    override fun onViewAttachedToWindow(holder: RecyclerView.ViewHolder) {
+        // 经 mCachedViews 复用的 view（换档冷启动、预填回收再挂载）**不走 onBindViewHolder**，
+        // 封面 lp 高度还带着上一个档位的值（瀑布流下差一整档，如 6 列的 421 混进 4 列布局，
+        // 正确应为 559）。fill 会按旧值测量上屏；下一次捏合若选中它当锚点，textHeight 会被
+        // 推算成毒值（实测 0/151/202），整张模拟表高度全错——预览把封面插向错误尺寸，
+        // 表现为「捏合全程裁剪、松手复原」。attach 发生在 fill 测量该 child 之前，这里按
+        // 当前数据归一，兜住所有不经 bind 的复用路径。
+        if (holder is PhotoVH) {
+            val image = (items.getOrNull(holder.bindingAdapterPosition) as? GridItem.Photo)?.image
+            if (image != null) {
+                holder.refs.cover.applyCoverHeight(coverHeightFor(image))
+                holder.itemView.forceLayout()
             }
         }
     }
