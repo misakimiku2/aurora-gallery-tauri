@@ -14,7 +14,7 @@ import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import kotlin.math.roundToInt
 
 /** 松手时进度达到该值就落到新档位，否则退回原档位。 */
-private const val COMMIT_THRESHOLD = 0.5f
+internal const val COMMIT_THRESHOLD = 0.5f
 
 /**
  * **进度驱动的 FLIP**（GRID 版，与 [MasonryPinchController] 的瀑布流版对称）。
@@ -484,7 +484,7 @@ internal class PinchFlipController {
 
 /** buildPhotoView 的固定结构：root(LinearLayout) → frame(FrameLayout) → cover(ImageView)。
  *  GRID 与 MASONRY 两个捏合控制器都要在手动布局预览里插值封面高度。 */
-private fun photoCoverOf(child: View): ImageView? {
+internal fun photoCoverOf(child: View): ImageView? {
     if (child !is ViewGroup || child.childCount == 0) return null
     val frame = child.getChildAt(0) as? ViewGroup ?: return null
     return if (frame.childCount > 0) frame.getChildAt(0) as? ImageView else null

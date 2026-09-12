@@ -354,3 +354,61 @@ bindPhoto、PAYLOAD_CELL 局部刷新、onViewAttachedToWindow 归一、bindAdap
   loadThumbnail 结果按需降采样（如最长边 ≤768px，1.4MB/张，~91 条全夹可容纳），
   代价是最大档（4 列 649px 单元格）下竖图略有放大变软；本轮不做。
 - TODO(debug) 的 ThumbProbe 探针保留至用户验收后随其他探针一起摘除。
+
+---
+
+# 第五轮：自适应视图捏合重构（2026-09-12）
+
+> 前两轮修复用户验收通过（闪烁、松手刷新均消失）后，用户要求把瀑布流的进度驱动
+> 跟手预览架构移植到 ADAPTIVE 视图（原先只做「松手过阈值瞬切」，无预览无 FLIP）。
+> **用户已提交此前全部改动**（commit e23d17a）。
+
+## 架构重构：adaptive 从「一行一项」改为「一图一项」
+
+历史实现把「一行」作为 adapter item、行划分在 `buildGridItems` 提交期完成——换档时
+item 序列整体重建，position 与图的对应关系断裂，跟手预览无从做起。现统一为：
+
+- **`GridModels.kt`**：删除 `AdaptiveRowLayout` / `GridItem.AdaptiveRow` /
+  `buildAdaptiveRows`，`buildGridItems(images, groupBy, collapsedIds)` 三模式同构；
+  保留 `adaptiveTargetHeightDp`（档位 → 目标行高）。
+- **`AdaptiveGrid.kt`（新文件）**：
+  - `packAdaptiveRowAt`：行装箱数学的唯一实现（贪心累加 → 溢出成行 → 整行拉伸 →
+    组内末行 < 半宽不拉伸），**LM 布局与捏合模拟共用**，progress=1 预览与冷启动
+    布局逐位一致；
+  - `AuroraAdaptiveLayoutManager`：自定义纵向 LM，行划分预计算成 O(n) 表
+    （childTopOf/xOf/widthOf/coverHOf/rowStartOf），二分定位首可见项，视口上探 1/3
+    屏、下探 1.5 屏，`previewRestorer` 每轮布局末尾重放预览；
+  - `AdaptivePinchController`：与 MasonryPinchController 对称的离线模拟 + 逐 item
+    真实 measure/layout 插值（x/y/宽/封面高同时插值）；
+  - `animateAdaptiveRowChange`：落档 = 换全新 LM 冷启动 + 锚点归位 + FLIP（与
+    animateStaggeredSpanChange 同构）。
+- **`FileGrid.kt`**：删除 AdaptiveRowVH / bindAdaptiveRow / appliedAdaptiveSpan 等
+  行 item 机制；adapter 新增 `rowHeightPx` + `applyRowHeight`（payload 刷新）；
+  `coverHeightFor` ADAPTIVE 分支 = 行高；捏合回调接线 begin/update/commit/settle。
+
+## 过程中发现并修复的两个 LM bug
+
+1. **模拟表缓存键不完整**：`tablesFor` 最初只按 count 缓存——捏合初期手指抖动使
+   scale 在 1.0 附近摆动、targetLevel 在相邻两档间翻转，第一份（错误档位的）表被
+   整个手势复用，预览朝错误几何插值（不跟手）。改为按 (目标行高, count) **双槽缓存**
+   （与 MasonryPinchController 按 span 双槽对称）。
+2. **增量滚动的位置不变量被破坏后无法自愈**：落档+滚动后视口空白（挂载子视图的
+   位置冻结在旧滚动坐标）。捏合预览的手动 layout、playFlip 动画、回收时序差都可能
+   破坏「挂载子视图恒等于表位置」这一不变量。修复：每轮滚动末尾
+   `relayoutAttached` 把所有挂载子视图强制按表重放 layout（layout 不触发测量，
+   ~40 个子视图成本可忽略），任何漂移一帧内自愈。
+
+## 真机验证（SM-X808U，Screenshots 131 张，合成双指触摸注入）
+
+- 收拢/张开捏合：预览逐帧跟手（中间帧截图确认卡片向目标几何生长/迁移），
+  落档 commit 正常（1→0→1），settle 回退正常，全程零崩溃。
+- 落档后滚动两屏 + 回滚：内容完整（修复前此场景必现视口空白）。
+- 分组（按日期）+ adaptive：满宽标题行 + 组内行装箱正确。
+- GRID / MASONRY 回归正常（item 序列重构不影响二者）。
+
+## 遗留
+
+- [ ] 用户真手指验收 adaptive 跟手预览与落档手感。
+- [ ] TODO(debug) 探针与注入器（AdaptiveLM BLANK/fill 日志、PrevHijack、FrameProbe、
+      ThumbProbe、debugInjectTouchPinch）确认稳定后统一摘除。
+- [ ] 内存缓存降采样优化（见第四轮遗留）。

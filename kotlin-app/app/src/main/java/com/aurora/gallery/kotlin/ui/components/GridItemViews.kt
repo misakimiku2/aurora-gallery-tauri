@@ -37,19 +37,13 @@ internal fun ImageView.applyCoverHeight(height: Int) {
     (parent as? View)?.forceLayout()
 }
 
-/** 网格卡片 / adaptive 行内单元格：封面 + 文件名 + 选中态（边框 + 角标）。 */
+/** 图片卡片（三种布局模式一图一项，共用同一结构）：封面 + 文件名 + 选中态（边框 + 角标）。 */
 internal class PhotoRefs(
     val root: View,
     val cover: ImageView,
     val border: View,
     val check: TextView,
     val name: TextView,
-)
-
-/** adaptive 的一行容器（横向）；行内单元格复用 [PhotoRefs]。 */
-internal class AdaptiveRowRefs(
-    val root: LinearLayout,
-    val cells: MutableList<PhotoRefs>,
 )
 
 /** 分组标题行：折叠箭头 + 标题 + 数量。 */
@@ -162,39 +156,6 @@ internal fun buildPhotoView(
     }
 
     return PhotoRefs(root, cover, border, check, name)
-}
-
-/** 构建 adaptive 的行容器（横向 LinearLayout，单元格按需动态补齐）。 */
-internal fun buildAdaptiveRowView(context: Context): AdaptiveRowRefs =
-    AdaptiveRowRefs(
-        LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL },
-        mutableListOf(),
-    )
-
-/**
- * 保证行容器里至少有 [count] 个单元格，多余的隐藏。
- *
- * 单元格**只创建不销毁**：一行最多几张取决于宽高比（竖图多时可达十余张），
- * 每次 bind 都 removeAllViews 重建会有明显开销。
- */
-internal fun AdaptiveRowRefs.ensureCells(
-    count: Int,
-    context: Context,
-    surfaceColor: Int,
-    textPrimaryColor: Int,
-    primaryColor: Int,
-) {
-    while (cells.size < count) {
-        val cell = buildPhotoView(context, surfaceColor, textPrimaryColor, primaryColor)
-        cells.add(cell)
-        root.addView(
-            cell.root,
-            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-    }
-    for (i in cells.indices) {
-        cells[i].root.visibility = if (i < count) View.VISIBLE else View.GONE
-    }
 }
 
 /** 构建分组标题行（可点击折叠，箭头指示折叠状态）。 */

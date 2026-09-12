@@ -2,12 +2,15 @@ package com.aurora.gallery.kotlin.ui.components
 
 import android.graphics.Outline
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.util.Log
+import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -26,7 +29,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import androidx.recyclerview.widget.StaggeredSpanAccess
@@ -49,11 +51,17 @@ private class AnchorOverrideHolder {
     var value: PinchAnchor? = null
 }
 
+/** 普通可变代纪计数：模式切换收尾 FLIP 的时效守卫（避免触发重组）。 */
+private class EpochHolder {
+    var value: Int = 0
+}
+
 /**
  * 图片网格（原生 RecyclerView，对齐系统相册滚动性能）。
  *
  * 支持 [LayoutMode] 三种排布（安卓端不含 list，见 LayoutMode 的 KDoc）与 [GroupBy] 分组标题。
- * 三档捏合在 GRID / MASONRY 下走 FLIP 动画；ADAPTIVE 换档是整行重排，不做 FLIP。
+ * 三种模式的三档捏合都是**进度驱动（跟手）预览**：GRID 行号公式、MASONRY 列分配模拟、
+ * ADAPTIVE 行装箱模拟（见 AdaptiveGrid.kt），松手按剩余进度收尾 FLIP 落档。
  */
 @Composable
 fun FileGrid(
@@ -104,20 +112,31 @@ fun FileGrid(
     // 已应用到 RecyclerView 的布局模式。与 layoutMode 不一致时触发切换 + FLIP。
     var appliedMode by remember { mutableStateOf(layoutMode) }
 
-    // ADAPTIVE 换档检测：上一次应用到 adaptive 的档位 span（-1 = 尚未初始化，首帧不触发 FLIP）。
-    // ADAPTIVE 换档是整行重排，item 粒度（行）变了，只能用「按图片 id 锚定」的 FLIP（复用模式切换路径）。
-    var appliedAdaptiveSpan by remember { mutableIntStateOf(-1) }
-
     val cols = if (containerWidthDp > 0) targetCols(containerWidthDp, level) else 0
-    // adaptive 的行高基准 = 该档位的 thumbnailSize（对齐 React 版 `targetHeight = thumbnailSize`）
-    val targetHeightDp = if (containerWidthDp > 0 && layoutMode == LayoutMode.ADAPTIVE) {
-        adaptiveTargetHeightDp(containerWidthDp, kotlin.math.max(1, cols), gapDp, paddingDp)
+    // adaptive 当前档位的目标行高（dp → px）。行划分不再进 adapter item（一图一项），
+    // 只作为 AuroraAdaptiveLayoutManager 的布局参数与捏合模拟的目标几何。
+    val density = context.resources.displayMetrics.density
+    val adaptiveRowHeightPx = if (containerWidthDp > 0 && layoutMode == LayoutMode.ADAPTIVE) {
+        (adaptiveTargetHeightDp(containerWidthDp, kotlin.math.max(1, cols), gapDp, paddingDp) * density)
+            .roundToInt()
     } else {
-        0f
+        0
     }
+    // adaptive 目标档位的行高 px（捏合预览用；gapDp/paddingDp 经 rememberUpdatedState 防闭包过期）
+    val currentGapDp = rememberUpdatedState(gapDp)
+    val currentPaddingDp = rememberUpdatedState(paddingDp)
+    fun adaptiveTargetRowHeightPx(widthDp: Int, targetLevel: Int): Int =
+        (adaptiveTargetHeightDp(
+            widthDp,
+            kotlin.math.max(1, targetCols(widthDp, targetLevel)),
+            currentGapDp.value,
+            currentPaddingDp.value,
+        ) * density).roundToInt()
 
-    val items = remember(images, groupBy, collapsedIds, layoutMode, containerWidthDp, targetHeightDp) {
-        buildGridItems(images, groupBy, collapsedIds, layoutMode, containerWidthDp, targetHeightDp, gapDp)
+    // 三种模式的 item 序列相同（一图一项 + 分组标题），与布局模式/宽度/档位无关——
+    // 换档、切换模式不再重建 item 序列，position 与图的对应关系跨档稳定（跟手预览的前提）。
+    val items = remember(images, groupBy, collapsedIds) {
+        buildGridItems(images, groupBy, collapsedIds)
     }
 
     val adapter = remember {
@@ -144,15 +163,52 @@ fun FileGrid(
     }
     adapter.masonryPinch = masonryPinch
 
+    // 自适应视图的进度驱动 FLIP：行装箱是确定性算法（贪心累加成行 + 整行拉伸），与
+    // AuroraAdaptiveLayoutManager 共用 packAdaptiveRowAt 一份数学，离线模拟目标档位
+    // 行划分做逐 item 跟手（架构与 masonry 对称，见 AdaptiveGrid.kt）。
+    val adaptivePinch = remember {
+        AdaptivePinchController(
+            ratioAt = { adapter.aspectRatioAt(it) },
+            isHeaderAt = { adapter.isHeaderAt(it) },
+        )
+    }
+    adapter.adaptivePinch = adaptivePinch
+
+    // adaptive 卡片的文件名文字区高度：与 buildPhotoView 的 name 视图完全同参数离线测量
+    //（布局管理器的行推进依赖它，必须与真实渲染逐位一致）。
+    val adaptiveTextHeightPx = remember {
+        TextView(context).apply {
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 1
+            setPadding(context.dp(4), context.dp(6), context.dp(4), 0)
+        }.let { probe ->
+            probe.measure(
+                View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            )
+            probe.measuredHeight
+        }
+    }
+
     // 捏合换档的锚点透传（GRID / MASONRY 共用）：onPinchEnd 记录 → update 消费（一次）。
     // 松手换档必须保持同一锚点停在同一屏幕位置，预览与收尾 FLIP 才无缝衔接。
     val pendingPinchAnchor = remember { AnchorOverrideHolder() }
+
+    // 模式切换收尾 FLIP 的代纪：captureModeSwitch 的快照只在「此后布局没有任何变化」时
+    // 有效。收尾回调挂在 doOnLayout/OnLayoutChangeListener 上——滚动只重绘不重布局，
+    // 回调可能挂起几分钟，直到下一次真正的布局（往往是下一次捏合的落档）才触发；
+    // 那时快照早已过期，对着当前布局放 240ms 反向位移会把整屏卡片甩一下。任何捏合
+    // （开始/落档）、档位切换、数据变化都递增代纪，回调执行时发现代纪不符即放弃。
+    val modeFlipEpoch = remember { EpochHolder() }
 
     // 注意：cellWidthPx（单元格宽度）**不在 key 里**。换档必然伴随列宽变化，若列宽变化触发
     // submit，全量刷新会重新 bind 所有 item，把 FLIP 的初始位移抹掉（表现为硬切）。
     // 列宽改用 adapter.applyCellWidth 同步到可见 item，不 notify。
     LaunchedEffect(items, layoutMode, gapPx) {
-        adapter.submit(items, selectedIds, layoutMode, gapPx, collapsedIds)
+        if (adapter.submit(items, selectedIds, layoutMode, gapPx, collapsedIds)) {
+            modeFlipEpoch.value++
+        }
     }
 
     LaunchedEffect(selectedIds) {
@@ -167,20 +223,46 @@ fun FileGrid(
         factory = { ctx ->
             val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
             decoration.spanCount = initialCols
+            val initialRowHeightPx = if (adaptiveRowHeightPx > 0) adaptiveRowHeightPx else {
+                val wDp = ctx.pxToDp(ctx.resources.displayMetrics.widthPixels)
+                (adaptiveTargetHeightDp(
+                    wDp,
+                    kotlin.math.max(1, targetCols(wDp, 1)),
+                    gapDp,
+                    paddingDp,
+                ) * density).roundToInt()
+            }
             RecyclerView(ctx).apply {
-                layoutManager = createLayoutManager(
-                    layoutMode,
-                    ctx,
-                    initialCols,
-                    gapPx,
-                    previewRestorer = {
-                        rvHolder.rv?.let {
-                            // GRID / MASONRY 各自的控制器在非捏合期都是空操作
-                            pinchFlip.reapplyPreview(it)
-                            masonryPinch.reapplyPreview(it)
+                layoutManager = if (layoutMode == LayoutMode.ADAPTIVE) {
+                    createAdaptiveLayoutManager(
+                        ctx,
+                        initialRowHeightPx,
+                        adaptiveTextHeightPx,
+                        gapPx,
+                        { adapter.isHeaderAt(it) },
+                        { adapter.aspectRatioAt(it) },
+                    ) {
+                        rvHolder.rv?.let { rv ->
+                            pinchFlip.reapplyPreview(rv)
+                            masonryPinch.reapplyPreview(rv)
+                            adaptivePinch.reapplyPreview(rv)
                         }
-                    },
-                )
+                    }
+                } else {
+                    createLayoutManager(
+                        layoutMode,
+                        ctx,
+                        initialCols,
+                        gapPx,
+                        previewRestorer = {
+                            rvHolder.rv?.let {
+                                // GRID / MASONRY 各自的控制器在非捏合期都是空操作
+                                pinchFlip.reapplyPreview(it)
+                                masonryPinch.reapplyPreview(it)
+                            }
+                        },
+                    )
+                }
                 this.adapter = adapter
                 // 见 adapter.PHOTO_POOL_SIZE 的说明：扩容 photo 回收池，吸收预填 strip/重建
                 recycledViewPool.setMaxRecycledViews(
@@ -213,10 +295,14 @@ fun FileGrid(
                 val pinch = PinchGridSpanListener(
                     context = ctx,
                     onPinchStart = { _, _ ->
+                        // 任何捏合手势都使未决的模式切换收尾 FLIP 过期（见 modeFlipEpoch 的说明）
+                        modeFlipEpoch.value++
                         // 进度驱动（跟手）覆盖面：
                         //  - GRID + 无分组：行号公式直接算目标位置；
                         //  - MASONRY：列分配是确定性算法（逐 item 放入最短列），离线模拟目标位置；
-                        //  - ADAPTIVE / 分组 GRID：行内图数会变、标题占整行，算不准 → 只做松手换档。
+                        //  - ADAPTIVE：行装箱是确定性算法（贪心累加成行 + 整行拉伸），离线模拟
+                        //    目标档位行划分（含分组标题行）；
+                        //  - 分组 GRID：标题占整行走行号公式会错位 → 只做松手换档。
                         when {
                             currentLayoutMode.value == LayoutMode.GRID &&
                                 currentGroupBy.value == GroupBy.NONE ->
@@ -233,6 +319,9 @@ fun FileGrid(
                                     // 在同一次布局末尾重放，不会闪回原布局。
                                     it.requestLayout()
                                 }
+
+                            currentLayoutMode.value == LayoutMode.ADAPTIVE ->
+                                rvHolder.rv?.let { adaptivePinch.begin(it, currentGapPx.value) }
                         }
                     },
                     onPinchProgress = { scale, _, _ ->
@@ -265,6 +354,13 @@ fun FileGrid(
                                 targetCols(widthDp, targetLevel),
                                 progress,
                             )
+
+                            adaptivePinch.isActive -> adaptivePinch.update(
+                                rv,
+                                targetLevel,
+                                adaptiveTargetRowHeightPx(widthDp, targetLevel),
+                                progress,
+                            )
                         }
                     },
                     onPinchEnd = { scale ->
@@ -292,9 +388,17 @@ fun FileGrid(
                                     masonryPinch.pinchAnchorPos,
                                     masonryPinch.commitAnchorTop,
                                 )
+
+                                adaptivePinch.isActive -> pendingPinchAnchor.value = PinchAnchor(
+                                    adaptivePinch.pinchAnchorPos,
+                                    adaptivePinch.commitAnchorTop,
+                                )
                             }
                             pinchFlip.release()
                             masonryPinch.release()
+                            adaptivePinch.release()
+                            // 落档换布局，未决的模式切换收尾 FLIP 一并作废
+                            modeFlipEpoch.value++
                             level = target
                         }
                         when {
@@ -317,15 +421,27 @@ fun FileGrid(
                                 }
                             }
 
+                            adaptivePinch.isActive -> {
+                                val target = adaptivePinch.currentTargetLevel
+                                if (adaptivePinch.shouldCommit() && target != currentLevel.value) {
+                                    commitFlip(target, adaptivePinch.currentProgress)
+                                } else {
+                                    adaptivePinch.settle(rv)
+                                }
+                            }
+
                             else -> {
-                                // ADAPTIVE / 分组 GRID：捏合过阈值直接换一档
+                                // 分组 GRID：捏合过阈值直接换一档
                                 val delta = when {
                                     scale > PinchFlipController.STEP_THRESHOLD -> 1
                                     scale < 1f / PinchFlipController.STEP_THRESHOLD -> -1
                                     else -> 0
                                 }
                                 val target = currentLevel.value + delta
-                                if (delta != 0 && target in 0..2) level = target
+                                if (delta != 0 && target in 0..2) {
+                                    modeFlipEpoch.value++
+                                    level = target
+                                }
                             }
                         }
                     },
@@ -343,53 +459,98 @@ fun FileGrid(
 
             // 布局模式切换：捕获 FLIP 快照 → 同步换 LayoutManager + 提交新数据 → 布局后动画。
             // 必须同步提交：只换 LM 而数据还是旧 item 的话，会出现「新 LM + 旧数据」的中间帧
-            // （例如 adaptive 用 LinearLayoutManager 渲染一堆单图 item，整屏变成一列）。
+            // （例如 adaptive 的行划分没跟上，整屏排布错乱）。
             if (appliedMode != layoutMode) {
                 val snapshot = captureModeSwitch(rv, adapter)
                 val mode = layoutMode
                 appliedMode = mode
-                // 切到 ADAPTIVE 时同步记录档位，避免同一帧又被下方 ADAPTIVE 换档分支误触发第二次 FLIP
-                if (mode == LayoutMode.ADAPTIVE) appliedAdaptiveSpan = span
+                // 本轮快照的有效代纪：此后任何捏合/落档/数据变化都会使其过期
+                val myEpoch = ++modeFlipEpoch.value
                 // 同步换 LM + submit：appliedMode 立即更新，同一帧后续 update 不会重复触发
-                rv.layoutManager = createLayoutManager(
-                    mode,
-                    rv.context,
-                    span,
-                    gapPx,
-                    isFullSpanAt = { adapter.isHeaderAt(it) },
-                    previewRestorer = {
+                rv.layoutManager = if (mode == LayoutMode.ADAPTIVE) {
+                    val rowH = if (adaptiveRowHeightPx > 0) adaptiveRowHeightPx else {
+                        (adaptiveTargetHeightDp(
+                            widthDp,
+                            kotlin.math.max(1, span),
+                            gapDp,
+                            paddingDp,
+                        ) * density).roundToInt()
+                    }
+                    createAdaptiveLayoutManager(
+                        rv.context,
+                        rowH,
+                        adaptiveTextHeightPx,
+                        gapPx,
+                        { adapter.isHeaderAt(it) },
+                        { adapter.aspectRatioAt(it) },
+                    ) {
                         pinchFlip.reapplyPreview(rv)
                         masonryPinch.reapplyPreview(rv)
-                    },
-                )
+                        adaptivePinch.reapplyPreview(rv)
+                    }
+                } else {
+                    createLayoutManager(
+                        mode,
+                        rv.context,
+                        span,
+                        gapPx,
+                        isFullSpanAt = { adapter.isHeaderAt(it) },
+                        previewRestorer = {
+                            pinchFlip.reapplyPreview(rv)
+                            masonryPinch.reapplyPreview(rv)
+                        },
+                    )
+                }
                 adapter.submit(items, selectedIds, mode, gapPx, collapsedIds)
                 afterStableLayout(rv) {
                     // 布局期间可能又被切走，snapshot 已失效，放弃
                     if (appliedMode != mode) return@afterStableLayout
+                    // 快照过期（此后发生过捏合/落档/数据变化）也放弃——收尾回调可能在
+                    // 几分钟后的下一次布局才触发，对着当前布局放旧位移会甩屏
+                    if (modeFlipEpoch.value != myEpoch) {
+                        Log.d(TAG, "[FLIP-ModeSwitch] stale epoch, skip")
+                        return@afterStableLayout
+                    }
                     // 收尾 FLIP 依赖 onPreDraw 驱动；界面静止时它会一直挂起，直到下一次有
                     // 绘制活动的时刻——那往往是下一次捏合手势的第一帧。此时对着一分钟前的
                     // 过期快照 scrollToPosition + 全子视图平移动画，表现为捏合中突然跳位/
                     // 闪帧。捏合进行中（或尚未复位）时放弃这次过期的收尾动画。
-                    if (pinchFlip.isActive || masonryPinch.isActive ||
-                        pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f
+                    if (pinchFlip.isActive || masonryPinch.isActive || adaptivePinch.isActive ||
+                        pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f ||
+                        adaptivePinch.currentProgress > 0f
                     ) {
                         Log.d(TAG, "[FLIP-ModeSwitch] stale during pinch, skip")
                         return@afterStableLayout
                     }
-                    applyModeSwitchFlip(rv, adapter, snapshot)
+                    applyModeSwitchFlip(rv, adapter, snapshot, stale = { modeFlipEpoch.value != myEpoch })
                 }
             } else if (!matchesMode(rv.layoutManager, layoutMode)) {
-                rv.layoutManager = createLayoutManager(
-                    layoutMode,
-                    rv.context,
-                    span,
-                    gapPx,
-                    isFullSpanAt = { adapter.isHeaderAt(it) },
-                    previewRestorer = {
+                rv.layoutManager = if (layoutMode == LayoutMode.ADAPTIVE) {
+                    createAdaptiveLayoutManager(
+                        rv.context,
+                        adaptiveRowHeightPx,
+                        adaptiveTextHeightPx,
+                        gapPx,
+                        { adapter.isHeaderAt(it) },
+                        { adapter.aspectRatioAt(it) },
+                    ) {
                         pinchFlip.reapplyPreview(rv)
                         masonryPinch.reapplyPreview(rv)
-                    },
-                )
+                        adaptivePinch.reapplyPreview(rv)
+                    }
+                } else {
+                    createLayoutManager(
+                        layoutMode,
+                        rv.context,
+                        span,
+                        gapPx,
+                        isFullSpanAt = { adapter.isHeaderAt(it) },
+                        previewRestorer = {
+                            pinchFlip.reapplyPreview(rv)
+                            masonryPinch.reapplyPreview(rv)
+                        },
+                    )
+                }
             }
 
             when (val lm = rv.layoutManager) {
@@ -428,33 +589,39 @@ fun FileGrid(
                     }
                 }
 
-                else -> {
-                    // ADAPTIVE：换档是整行重排（items 重算、行内图数变化），item 粒度变了，
-                    // 只能用「按图片 id 锚定」的 FLIP（复用模式切换路径 applyModeSwitchFlip）。
-                    // 必须同步 submit 新行化结果并锚点归位——交给 LaunchedEffect 异步提交的话
-                    // 滚动位置会丢（notifyDataSetChanged 后同一 position 对应不同行，视觉跳位）。
-                    if (layoutMode == LayoutMode.ADAPTIVE &&
-                        appliedAdaptiveSpan >= 0 && appliedAdaptiveSpan != span
-                    ) {
-                        val snapshot = captureModeSwitch(rv, adapter)
-                        adapter.submit(items, selectedIds, layoutMode, gapPx, collapsedIds)
-                        afterStableLayout(rv) {
-                            // 期间可能又切模式或再换档，snapshot 失效，放弃
-                            if (layoutMode != LayoutMode.ADAPTIVE ||
-                                appliedAdaptiveSpan != span
-                            ) return@afterStableLayout
-                            // 同模式切换分支：手势期间不播过期快照的收尾动画（见上文说明）
-                            if (pinchFlip.isActive || masonryPinch.isActive ||
-                                pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f
-                            ) return@afterStableLayout
-                            applyModeSwitchFlip(rv, adapter, snapshot)
-                        }
+                is AuroraAdaptiveLayoutManager -> {
+                    // adaptive 落档：行高变化即换全新 LM 冷启动（与瀑布流同构），真实布局与
+                    // 捏合预览共用 packAdaptiveRowAt 一份数学，FLIP 收尾零跳变。
+                    val wantRowHeight = (adaptiveTargetHeightDp(
+                        widthDp,
+                        kotlin.math.max(1, span),
+                        gapDp,
+                        paddingDp,
+                    ) * density).roundToInt()
+                    if (wantRowHeight > 0 && lm.rowHeightPx != wantRowHeight) {
+                        val anchor = pendingPinchAnchor.value
+                        pendingPinchAnchor.value = null
+                        animateAdaptiveRowChange(
+                            rv,
+                            lm,
+                            wantRowHeight,
+                            adaptiveTextHeightPx,
+                            gapPx,
+                            { adapter.aspectRatioAt(it) },
+                            { adapter.isHeaderAt(it) },
+                            flipDurationMs,
+                            pinchAnchor = anchor,
+                            previewRestorer = { adaptivePinch.reapplyPreview(rv) },
+                        )
+                        flipDurationMs = FLIP_DURATION_MS
                     }
-                    appliedAdaptiveSpan = span
                 }
+
+                else -> Unit
             }
 
-            // 网格/瀑布流按列铺，adaptive 每行一个 item。
+            // 网格/瀑布流按列铺（span=列数），adaptive 行装箱按整宽（span=1，行间距由
+            // decoration 的顶 inset 提供）。
             // 赋值 spanCount 不会自动生效，必须配 invalidateItemDecorations——
             // 否则模式切换后间距仍按旧列数算（换档时 animateXxx 内部已经做了，这里补模式切换的情况）。
             val wantSpan = if (layoutMode == LayoutMode.ADAPTIVE) 1 else span
@@ -463,12 +630,15 @@ fun FileGrid(
                 rv.invalidateItemDecorations()
             }
 
-            // 网格（正方形）与瀑布流（按宽高比）用单元格宽度推导封面高度。
+            // 网格（正方形）/瀑布流（按宽高比）用单元格宽度推导封面高度；adaptive 用行高。
             // 走 applyCellWidth（不 notify）而非 submit——见 LaunchedEffect 处的说明。
             val inner = rv.width - rv.paddingLeft - rv.paddingRight
             val cell = if (layoutMode == LayoutMode.ADAPTIVE) 0
                 else ((inner - (span - 1) * gapPx) / span).coerceAtLeast(1)
             adapter.applyCellWidth(rv, cell)
+            if (layoutMode == LayoutMode.ADAPTIVE && adaptiveRowHeightPx > 0) {
+                adapter.applyRowHeight(adaptiveRowHeightPx)
+            }
 
             // sticky 分组标题
             val needSticky = groupBy != GroupBy.NONE
@@ -552,8 +722,6 @@ private fun createLayoutManager(
     isFullSpanAt: (Int) -> Boolean = { false },
     previewRestorer: (() -> Unit)? = null,
 ): RecyclerView.LayoutManager = when (mode) {
-    // adaptive 把「一行」作为 item，行内排布在 item 内部完成，因此用最简单的纵向布局即可
-    LayoutMode.ADAPTIVE -> LinearLayoutManager(context)
     LayoutMode.MASONRY -> AuroraStaggeredLayoutManager(spanCount, isFullSpanAt, gapPx).apply {
         this.previewRestorer = previewRestorer
     }
@@ -561,6 +729,29 @@ private fun createLayoutManager(
         this.previewRestorer = previewRestorer
     }
 }
+
+/**
+ * 自适应视图的布局管理器。textHeightPx 是与 buildPhotoView 的 name 视图同参数离线
+ * 测出的文字区高度（见 FileGrid 的 adaptiveTextHeightPx），行推进依赖它，必须与真实
+ * 渲染逐位一致。
+ */
+private fun createAdaptiveLayoutManager(
+    context: android.content.Context,
+    rowHeightPx: Int,
+    textHeightPx: Int,
+    gapPx: Int,
+    isFullSpanAt: (Int) -> Boolean,
+    ratioAt: (Int) -> Float,
+    previewRestorer: (() -> Unit)? = null,
+): AuroraAdaptiveLayoutManager = AuroraAdaptiveLayoutManager(
+    rowHeightPx = rowHeightPx.coerceAtLeast(1),
+    textHeightPx = textHeightPx,
+    headerHeightPx = context.dp(HEADER_HEIGHT_DP),
+    ratioAt = ratioAt,
+    isHeaderAt = isFullSpanAt,
+    gapPx = gapPx,
+    previewRestorer = previewRestorer,
+)
 
 /**
  * 视口下方**常驻多布局一些 item** 的 StaggeredGridLayoutManager（与 [AuroraGridLayoutManager] 对称）。
@@ -747,8 +938,7 @@ internal class AuroraStaggeredLayoutManager(
 
 private fun matchesMode(lm: RecyclerView.LayoutManager?, mode: LayoutMode): Boolean = when (mode) {
     LayoutMode.MASONRY -> lm is StaggeredGridLayoutManager
-    // GridLayoutManager 继承自 LinearLayoutManager，需要排除
-    LayoutMode.ADAPTIVE -> lm is LinearLayoutManager && lm !is GridLayoutManager
+    LayoutMode.ADAPTIVE -> lm is AuroraAdaptiveLayoutManager
     else -> lm is GridLayoutManager
 }
 
@@ -791,6 +981,8 @@ private fun applyModeSwitchFlip(
     rv: RecyclerView,
     adapter: FileGridAdapter,
     snap: ModeSwitchSnapshot,
+    /** 快照时效检查（捕获后的布局/手势变化会使快照过期）；过期则放弃动画。 */
+    stale: () -> Boolean = { false },
 ) {
     // 0. 粗定位：换 LayoutManager 会丢掉滚动位置（日志上表现为 old/new 两屏图片完全无交集、
     //    missing 全中、FLIP 一个都匹配不上）。先把锚点图所在的 item 滚进视口。
@@ -801,6 +993,11 @@ private fun applyModeSwitchFlip(
     }
 
     afterStableLayout(rv) {
+        // 等待布局期间快照过期（发生了捏合/落档/再次切换），放弃
+        if (stale()) {
+            Log.d(TAG, "[FLIP-ModeSwitch] stale before play, skip")
+            return@afterStableLayout
+        }
         // 1. 收集新位置（scrollBy 之前）
         val views = HashMap<String, View>()
         val newPos = HashMap<String, Pair<Float, Float>>()
@@ -869,6 +1066,9 @@ private class FileGridAdapter(
     private var selectedIds: Set<String> = emptySet()
     private var layoutMode: LayoutMode = LayoutMode.GRID
     private var cellWidthPx: Int = 0
+
+    /** adaptive 档位的目标行高 px（不含文件名文字区）；bind 写封面 lp 高度用。 */
+    private var rowHeightPx: Int = 0
     private var gapPx: Int = 0
     private var collapsedIds: Set<String> = emptySet()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -879,6 +1079,9 @@ private class FileGridAdapter(
     /** 瀑布流的进度驱动 FLIP 控制器（与 [pinchFlip] 对称）。 */
     var masonryPinch: MasonryPinchController? = null
 
+    /** 自适应视图的进度驱动 FLIP 控制器（与 [masonryPinch] 对称）。 */
+    var adaptivePinch: AdaptivePinchController? = null
+
     /** 所有分组标题的位置（升序），供 sticky 标题二分查找。 */
     var headerPositions: List<Int> = emptyList()
         private set
@@ -886,7 +1089,6 @@ private class FileGridAdapter(
     companion object {
         internal const val TYPE_HEADER = 0
         internal const val TYPE_PHOTO = 1
-        internal const val TYPE_ADAPTIVE_ROW = 2
 
         /** photo 回收池容量：瀑布流预填约 1.5 屏（最小档 9 列时 ~80 个），strip/重建
          *  一次性回收量远超默认池（每类型 5），不够时重建全靠 onCreateViewHolder
@@ -959,15 +1161,26 @@ private class FileGridAdapter(
         notifyItemRangeChanged(0, items.size, PAYLOAD_CELL)
     }
 
-    /** 封面高度：瀑布流按宽高比，网格用正方形。 */
-    private fun coverHeightFor(image: Image): Int =
-        if (layoutMode == LayoutMode.MASONRY) (cellWidthPx / aspectRatioOf(image)).toInt() else cellWidthPx
+    /**
+     * adaptive 行高同步（不 notify 结构、只 payload 刷封面高度）。
+     * 行划分由 [AuroraAdaptiveLayoutManager] 负责，这个值只供 bind 写封面 lp 高度；
+     * 走 payload 而非 requestLayout 的理由与 [applyCellWidth] 相同。
+     */
+    fun applyRowHeight(rowHeight: Int) {
+        if (rowHeight <= 0 || rowHeightPx == rowHeight) return
+        rowHeightPx = rowHeight
+        notifyItemRangeChanged(0, items.size, PAYLOAD_CELL)
+    }
+
+    /** 封面高度：瀑布流按宽高比，网格用正方形，adaptive 用行高。 */
+    private fun coverHeightFor(image: Image): Int = when (layoutMode) {
+        LayoutMode.MASONRY -> (cellWidthPx / aspectRatioOf(image)).toInt()
+        LayoutMode.ADAPTIVE -> rowHeightPx
+        else -> cellWidthPx
+    }
 
     /**
-     * 遍历当前可见的每一张图。
-     *
-     * 三种模式的 item 粒度不同（GRID / MASONRY 一个 item 是一张图，ADAPTIVE 一个 item 是
-     * **一行**），所以视图切换的 FLIP 只能以**图片 id** 为锚，无法按 position 对应。
+     * 遍历当前可见的每一张图（三种模式一图一项）。
      *
      * @param block 参数依次为：图片 id、承载该图的 view（FLIP 的作用对象）、RV 坐标系下的 left / top
      */
@@ -982,25 +1195,11 @@ private class FileGridAdapter(
             if (pos == RecyclerView.NO_POSITION) continue
             val tx = if (withTranslation) child.translationX else 0f
             val ty = if (withTranslation) child.translationY else 0f
-            when (val holder = rv.getChildViewHolder(child)) {
-                is PhotoVH -> {
-                    val image = (items.getOrNull(pos) as? GridItem.Photo)?.image ?: continue
-                    block(image.id, child, child.left + tx, child.top + ty)
-                }
-
-                is AdaptiveRowVH -> {
-                    val row = (items.getOrNull(pos) as? GridItem.AdaptiveRow)?.row ?: continue
-                    holder.refs.cells.forEachIndexed { index, cell ->
-                        if (index >= row.images.size || cell.root.visibility != View.VISIBLE) return@forEachIndexed
-                        // cell 的坐标相对行容器，要加上行容器的位置才是 RV 坐标系
-                        block(
-                            row.images[index].id,
-                            cell.root,
-                            child.left + cell.root.left + tx,
-                            child.top + cell.root.top + ty,
-                        )
-                    }
-                }
+            // 三种模式一图一项，可见图 = PhotoVH
+            val holder = rv.getChildViewHolder(child)
+            if (holder is PhotoVH) {
+                val image = (items.getOrNull(pos) as? GridItem.Photo)?.image ?: continue
+                block(image.id, child, child.left + tx, child.top + ty)
             }
         }
     }
@@ -1035,30 +1234,19 @@ private class FileGridAdapter(
      */
     fun indexOfImage(id: String): Int {
         for (i in items.indices) {
-            when (val it = items[i]) {
-                is GridItem.Photo -> if (it.image.id == id) return i
-                is GridItem.AdaptiveRow -> if (it.row.images.any { img -> img.id == id }) return i
-                is GridItem.Header -> Unit
-            }
+            val it = items[i]
+            if (it is GridItem.Photo && it.image.id == id) return i
         }
         return RecyclerView.NO_POSITION
     }
 
     override fun getItemCount(): Int = items.size
 
-    override fun getItemViewType(position: Int): Int = when {
-        items[position] is GridItem.Header -> TYPE_HEADER
-        items[position] is GridItem.AdaptiveRow -> TYPE_ADAPTIVE_ROW
-        else -> TYPE_PHOTO
-    }
+    override fun getItemViewType(position: Int): Int =
+        if (items[position] is GridItem.Header) TYPE_HEADER else TYPE_PHOTO
 
     private class PhotoVH(val refs: PhotoRefs) : RecyclerView.ViewHolder(refs.root) {
         var job: Job? = null
-    }
-
-    private class AdaptiveRowVH(val refs: AdaptiveRowRefs) : RecyclerView.ViewHolder(refs.root) {
-        /** 行内每个单元格一个加载任务（下标 → Job）。 */
-        val jobs = HashMap<Int, Job>()
     }
 
     private class HeaderVH(val refs: HeaderRefs) : RecyclerView.ViewHolder(refs.root)
@@ -1077,8 +1265,6 @@ private class FileGridAdapter(
                 }
                 vh
             }
-
-            TYPE_ADAPTIVE_ROW -> AdaptiveRowVH(buildAdaptiveRowView(ctx))
 
             else -> {
                 val refs = buildPhotoView(ctx, surfaceColor, textPrimaryColor, primaryColor)
@@ -1123,14 +1309,14 @@ private class FileGridAdapter(
                 ?.isFullSpan = items.getOrNull(position) is GridItem.Header
         }
 
-        // 捏合进行中新绑定的 item 要补上当前进度的 transform，否则会以未变换的样子闪现
+        // 捏合进行中新绑定的 item 要补上当前进度的手动布局，否则会以未变换的样子闪现
         pinchFlip?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
         masonryPinch?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
+        adaptivePinch?.takeIf { it.isActive }?.applyToNewChild(holder.itemView, position)
 
         when (holder) {
             is HeaderVH -> bindHeader(holder, position)
             is PhotoVH -> bindPhoto(holder, position)
-            is AdaptiveRowVH -> bindAdaptiveRow(holder, position)
         }
         forceMeasureOnRebind(holder)
     }
@@ -1171,13 +1357,15 @@ private class FileGridAdapter(
         holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
         holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
 
-        // 瀑布流按宽高比推导封面高度；网格用正方形（React 版 itemHeight = colWidth + 40）。
-        // cellWidthPx 尚未量出时回退到 WRAP_CONTENT，交给 SquareImageView 强制正方形，
+        // 瀑布流按宽高比推导封面高度；网格用正方形（React 版 itemHeight = colWidth + 40）；
+        // adaptive 用行高（宽度由行装箱给出，LM 测量时约束）。
+        // 高度值尚未量出时回退到 WRAP_CONTENT，交给 SquareImageView 强制正方形，
         // 避免复用的 cover 带着上一次的显式高度（尤其从瀑布流复用过来）变成非正方形长条。
-        val coverH = if (cellWidthPx > 0) {
-            coverHeightFor(image)
-        } else {
-            ViewGroup.LayoutParams.WRAP_CONTENT
+        val coverH = when {
+            layoutMode == LayoutMode.ADAPTIVE && rowHeightPx > 0 -> rowHeightPx
+            layoutMode == LayoutMode.ADAPTIVE -> ViewGroup.LayoutParams.WRAP_CONTENT
+            cellWidthPx > 0 -> coverHeightFor(image)
+            else -> ViewGroup.LayoutParams.WRAP_CONTENT
         }
         // 网格模式下 coverH 应恒等于 cellWidthPx（正方形）。一旦不等（WRAP_CONTENT=-2 或瀑布流公式），
         // 就是「滚动后出现非正方形长条」的来源——打印所有异常 case 定位。
@@ -1208,37 +1396,6 @@ private class FileGridAdapter(
         holder.job = loadInto(holder.refs.cover, image) { holder.bindingAdapterPosition == position }
     }
 
-    private fun bindAdaptiveRow(holder: AdaptiveRowVH, position: Int) {
-        val row = (items[position] as? GridItem.AdaptiveRow)?.row ?: return
-        val ctx = holder.itemView.context
-        val density = ctx.resources.displayMetrics.density
-
-        holder.refs.ensureCells(row.images.size, ctx, surfaceColor, textPrimaryColor, primaryColor)
-        holder.jobs.values.forEach { it.cancel() }
-        holder.jobs.clear()
-
-        val imageHeightPx = (row.imageHeightDp * density).toInt()
-
-        row.images.forEachIndexed { index, image ->
-            val cell = holder.refs.cells[index]
-            val lp = cell.root.layoutParams as LinearLayout.LayoutParams
-            lp.width = (row.widthsDp[index] * density).toInt()
-            lp.leftMargin = if (index > 0) gapPx else 0
-            cell.root.layoutParams = lp
-            cell.cover.applyCoverHeight(imageHeightPx)
-            cell.name.text = image.name
-
-            val selected = image.id in selectedIds
-            cell.border.visibility = if (selected) View.VISIBLE else View.GONE
-            cell.check.visibility = if (selected) View.VISIBLE else View.GONE
-
-            val pos = position
-            cell.root.setOnClickListener { onClick(image) }
-            holder.jobs[index] = loadInto(cell.cover, image) {
-                holder.bindingAdapterPosition == pos && holder.refs.cells.getOrNull(index) === cell
-            }
-        }
-    }
 
     /** 异步加载缩略图；[stillValid] 在回调时判定这次加载是否还对应同一张图（防复用错位）。 */
     private fun loadInto(
@@ -1278,20 +1435,10 @@ private class FileGridAdapter(
         // 回收时置强制测量标志：经 mCachedViews 复用（不重走 bind）的 view 也必须重测，
         // 否则同样可能带着过期高度混进新一轮布局（见 forceMeasureOnRebind 的说明）。
         holder.itemView.forceLayout()
-        when (holder) {
-            is PhotoVH -> {
-                holder.job?.cancel()
-                holder.refs.cover.setImageBitmap(null)
-                holder.refs.cover.forceLayout()
-            }
-            is AdaptiveRowVH -> {
-                holder.jobs.values.forEach { it.cancel() }
-                holder.jobs.clear()
-                for (cell in holder.refs.cells) {
-                    cell.cover.setImageBitmap(null)
-                    cell.root.visibility = View.GONE
-                }
-            }
+        if (holder is PhotoVH) {
+            holder.job?.cancel()
+            holder.refs.cover.setImageBitmap(null)
+            holder.refs.cover.forceLayout()
         }
     }
 

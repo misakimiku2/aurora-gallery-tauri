@@ -428,7 +428,7 @@ class PinchGridSpanListener(
     }
 }
 
-private class FlipSnapshot(
+internal class FlipSnapshot(
     val anchorPos: Int,
     val anchorTop: Int,
     /** 锚点 item 换档**前**的宽度。列数变了列宽必然变，用它判断布局是否已刷新。 */
@@ -452,7 +452,7 @@ private const val MAX_LAYOUT_RETRY = 3
  * 旧位置要**叠加当前 translation**——连续换档时上一轮动画可能还没跑完，
  * 记录视觉位置才不会跳。
  */
-private fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipSnapshot? {
+internal fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipSnapshot? {
     if (anchorPos == RecyclerView.NO_POSITION) return null
     val anchorWidth = rv.layoutManager?.findViewByPosition(anchorPos)?.width ?: 0
     val oldLefts = HashMap<Int, Float>()
@@ -493,7 +493,7 @@ private fun captureFlip(rv: RecyclerView, anchorPos: Int, anchorTop: Int): FlipS
  * [layoutApplied] 允许调用方替换判据——瀑布流冷启动路径必须替换（预览的真实 measure/layout
  * 会把捕获到的宽度改写成目标值，宽度判据永远不成立，见 animateStaggeredSpanChange）。
  */
-private fun runFlipWhenLayoutApplied(
+internal fun runFlipWhenLayoutApplied(
     rv: RecyclerView,
     snap: FlipSnapshot,
     tag: String,
@@ -524,7 +524,7 @@ private fun runFlipWhenLayoutApplied(
 }
 
 /** FLIP 最后一步：二维反向位移 → 240ms / `cubic-bezier(0.22,1,0.36,1)` 动画归位。 */
-private fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, durationMs: Long) {
+internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, durationMs: Long) {
     var animated = 0
     var missing = 0
     var skipped = 0
@@ -599,7 +599,7 @@ internal fun afterStableLayout(rv: RecyclerView, action: () -> Unit) {
 }
 
 /** 锚点精确归位：布局后用 `scrollBy` 修正（同步生效，不必再等一帧）。 */
-private fun fixAnchor(rv: RecyclerView, anchorPos: Int, anchorTop: Int) {
+internal fun fixAnchor(rv: RecyclerView, anchorPos: Int, anchorTop: Int) {
     if (anchorPos == RecyclerView.NO_POSITION) return
     val view = rv.layoutManager?.findViewByPosition(anchorPos) ?: return
     val drift = view.top - anchorTop
