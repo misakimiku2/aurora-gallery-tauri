@@ -174,6 +174,16 @@ class AppState(
     /** 三档捏合档位：0=小、1=中、2=大（默认中档）。应用级共享：总览与文件夹网格同一个档位。 */
     var gridLevel by mutableIntStateOf(1)
 
+    /**
+     * 主界面（FoldersOverview）滚动位置记忆。
+     *
+     * FoldersOverview 因导航离开组合再回来时 RecyclerView 是全新的（内容会回到顶部），
+     * 靠它归位。**刻意不用 Compose state**：滚动期间每帧写入，没有任何 UI 需要因此
+     * 重组；只在重建时读取一次。当前是单标签页假设——3.3 TabBar 落地后若要每个
+     * 标签页独立记忆，改成按 tabId 的 map（仍保持非 state）。
+     */
+    var overviewScrollTop: Int = 0
+
     /** 面板可见性（3.5 在此之上做互斥开合）。 */
     var layout by mutableStateOf(initialLayout)
 

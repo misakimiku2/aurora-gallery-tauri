@@ -282,6 +282,9 @@ fun App(
             onFolderClick = onFolderClick,
             level = state.gridLevel,
             onLevelChange = { state.gridLevel = it },
+            // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
+            initialScrollTop = state.overviewScrollTop,
+            onScrollChanged = { state.overviewScrollTop = it },
             modifier = Modifier.fillMaxSize(),
         )
     } else {

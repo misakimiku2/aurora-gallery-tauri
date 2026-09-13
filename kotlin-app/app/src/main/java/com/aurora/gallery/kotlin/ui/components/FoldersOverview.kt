@@ -23,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -39,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.doOnLayout
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.aurora.gallery.kotlin.ThumbnailLoader
@@ -92,6 +94,14 @@ fun FoldersOverview(
      */
     level: Int = 1,
     onLevelChange: (Int) -> Unit = {},
+    /**
+     * 返回总览时恢复的滚动位置（对齐 React 版 `HistoryItem.scrollTop` 的恢复行为）。
+     * 本组件因导航离开组合再回来时 RV 是全新的，由宿主把离开前记录的位置传回；
+     * 只在本次组合实例消费一次，之后的重扫/重组不再重复归位。
+     */
+    initialScrollTop: Int = 0,
+    /** 滚动位置上报（每滚动帧调用；宿主用普通字段记录，见 [AppState.overviewScrollTop]）。 */
+    onScrollChanged: (Int) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -115,6 +125,23 @@ fun FoldersOverview(
 
     LaunchedEffect(folders) {
         gridAdapter.submit(folders)
+        // notifyDataSetChanged 会把 RV 打回顶部（重扫/数据替换场景），记忆同步归零；
+        // 返回总览的恢复（pendingRestore>0）在其后的布局回调里执行，会覆盖这里的值
+        onScrollChanged(0)
+    }
+
+    // 滚动位置恢复：本次组合实例消费一次。submit 之后注册 doOnLayout——首个带数据的
+    // 布局完成后 scrollBy 归位（LinearLayoutManager 按需填充，一步可滚到位），避免
+    // 对着空内容滚；消费完置 0，重扫/重组不会重复归位。
+    var pendingRestore by remember { mutableIntStateOf(initialScrollTop) }
+    LaunchedEffect(Unit) {
+        if (pendingRestore > 0) {
+            val target = pendingRestore
+            rvHolder.rv?.doOnLayout { rv ->
+                pendingRestore = 0
+                rv.scrollBy(0, target)
+            }
+        }
     }
 
     DisposableEffect(gridAdapter) {
@@ -207,6 +234,13 @@ fun FoldersOverview(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
+                // 滚动位置上报：宿主用普通字段记录（非 Compose state，不触发重组），
+                // 返回总览时作为 initialScrollTop 传回归位
+                addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                    override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                        onScrollChanged(rv.computeVerticalScrollOffset())
+                    }
+                })
             }
         },
         update = { rv ->
