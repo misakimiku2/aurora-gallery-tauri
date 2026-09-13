@@ -4,7 +4,6 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Rect
-import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -81,21 +80,8 @@ internal class PinchFlipController {
     private val origins = HashMap<Int, Rect>()
     private val origCoverH = HashMap<Int, Int>()
 
-    /** TODO(debug) 劫持探测：上次预览写入的封面高度；下次进来不一致 = 被外部改写。 */
-    private val lastWrittenH = HashMap<Int, Int>()
-
     /** 退回动画：进度插值回 0 的手动布局重放（结束即恢复原布局，无需 RV 参与）。 */
     private var settleAnim: ValueAnimator? = null
-
-    /** 诊断用：update 调用计数，用于节流采样日志。 */
-    private var updateCount = 0
-
-    /** TODO(debug) 手势期间是否有布局/重绑发生过（previewRestorer / applyToNewChild 置位）。 */
-    internal var diagLayoutDuringGesture = false
-        private set
-
-    /** TODO(debug) */
-    internal fun diagMarkLayout() { diagLayoutDuringGesture = true }
 
     val isActive: Boolean get() = active
 
@@ -129,7 +115,6 @@ internal class PinchFlipController {
         }
         origins.clear()
         origCoverH.clear()
-        lastWrittenH.clear() // TODO(debug) 手势边界清空劫持探测，剩余记录即手势内外部改写
         progress = 0f
         targetSpan = 0
         targetLevel = -1
@@ -172,12 +157,6 @@ internal class PinchFlipController {
         // 网格下封面是正方形（= item 宽），剩下的就是文字区
         textHeight = (anchorView.height - anchorView.width).coerceAtLeast(0)
         active = true
-        Log.d(
-            "AuroraKotlin",
-            "[Pinch] begin anchorPos=$anchorPos anchorTop=$anchorTop anchorW=${anchorView.width} " +
-                "anchorH=${anchorView.height} textHeight=$textHeight availWidth=$availWidth " +
-                "gap=$gap childCount=${rv.childCount}",
-        )
     }
 
     /**
@@ -191,28 +170,6 @@ internal class PinchFlipController {
         targetSpan = newTargetSpan
         progress = newProgress.coerceIn(0f, 1f)
         applyProgress(rv, progress)
-        // 诊断「重叠」：每 8 次 update 打印一次可见项的视觉 top。
-        updateCount++
-        if (updateCount % 8 == 0) logVisualTops(rv)
-    }
-
-    private fun logVisualTops(rv: RecyclerView) {
-        val sb = StringBuilder("[Pinch] visual")
-        var prevTop = Int.MIN_VALUE
-        var overlap = false
-        var sampled = 0
-        for (i in 0 until rv.childCount) {
-            val child = rv.getChildAt(i)
-            val pos = rv.getChildAdapterPosition(child)
-            if (pos == RecyclerView.NO_POSITION) continue
-            val vt = child.top + child.translationY.toInt()
-            if (vt < prevTop) overlap = true
-            prevTop = vt
-            if (sampled % 20 == 0) sb.append(" $pos@$vt")
-            sampled++
-        }
-        sb.append(if (overlap) " OVERLAP" else " ok")
-        Log.d("AuroraKotlin", sb.toString())
     }
 
     /** 松手后是否应该落到新档位。 */
@@ -230,7 +187,6 @@ internal class PinchFlipController {
             anim.cancel()
         }
         val from = progress
-        Log.d("AuroraKotlin", "[PrevDiag] settle from=${"%.2f".format(from)}") // TODO(debug)
         if (from <= 0f) {
             origins.clear()
             origCoverH.clear()
@@ -294,7 +250,6 @@ internal class PinchFlipController {
      */
     fun reapplyPreview(rv: RecyclerView) {
         if ((active || settleAnim?.isRunning == true) && targetSpan > 0) {
-            Log.d("AuroraKotlin", "[PrevDiag] reapply during gesture p=$progress children=${rv.childCount}") // TODO(debug)
             applyProgress(rv, progress)
         }
     }
@@ -340,14 +295,6 @@ internal class PinchFlipController {
                     ?: oW
             }
             val wantH = (oCover + (t.coverHOf[pos] - oCover) * p).roundToInt()
-            // TODO(debug) 劫持探测：上次写入与当前实际不一致 = 期间被外部改写
-            val prevH = lastWrittenH.put(pos, wantH)
-            if (prevH != null && cover.height != prevH) {
-                Log.d(
-                    "AuroraKotlin",
-                    "[PrevHijack-G] pos=$pos p=${"%.2f".format(p)} coverH=${cover.height} wrote=$prevH",
-                )
-            }
             cover.applyCoverHeight(wantH)
         }
         child.forceLayout()
@@ -413,11 +360,6 @@ internal class PinchFlipController {
         if (delta != 0) {
             for (p in topOf.indices) topOf[p] += delta
         }
-        Log.d(
-            "AuroraKotlin",
-            "[Pinch] sim span=$span content=[$contentTop,$contentBottom] " +
-                "deltaBounds=[$deltaLower,$deltaUpper] delta=$delta",
-        )
         return SimTables(span, topOf, leftOf, widthOf, coverHOf, delta)
     }
 
@@ -569,17 +511,8 @@ internal class MasonryPinchController(
     private val origins = HashMap<Int, Rect>()
     private val origCoverH = HashMap<Int, Int>()
 
-    /** TODO(debug) 劫持探测（Masonry 版）。 */
-    private val lastWrittenH = HashMap<Int, Int>()
-
-    /** TODO(debug) lp 层劫持探测（Masonry 版）。 */
-    private val lastWrittenLp = HashMap<Int, Int>()
-
     /** 退回动画：进度插值回 0 的手动布局重放（结束即恢复原布局，无需 RV 参与）。 */
     private var settleAnim: ValueAnimator? = null
-
-    /** 诊断用：update 调用计数，用于节流采样日志。 */
-    private var updateCount = 0
 
     val isActive: Boolean get() = active
     val currentProgress: Float get() = progress
@@ -610,12 +543,9 @@ internal class MasonryPinchController(
         }
         origins.clear()
         origCoverH.clear()
-        lastWrittenH.clear() // TODO(debug) 手势边界清空劫持探测，剩余记录即手势内外部改写
-        lastWrittenLp.clear() // TODO(debug)
         progress = 0f
         targetSpan = 0
         targetLevel = -1
-        updateCount = 0 // TODO(debug) 让 FrameProbe 每次手势都重启
         // 模拟表以锚点位置为种子，跨手势必失效——哪怕 span 相同也必须重建，
         // 否则新锚点的目标全错（日志上表现为 sim 行不再打印、预览目标停在旧位置）。
         cacheA = null
@@ -666,14 +596,6 @@ internal class MasonryPinchController(
         // 瀑布流封面高 = item 宽 / 宽高比（bind 时按旧 cellWidth 设置，实测值即旧封面高），
         // 两者相减正好是文字区（单行文件名）的真实高度，新档位沿用。
         val ratio = ratioAt(bestPos).coerceAtLeast(0.05f)
-        // TODO(debug) 锚点数据/视图对照：两个比例不一致 = items 与实际显示错位（裁剪手势的源头）
-        val aCover = coverOf(view)
-        Log.d(
-            "AuroraKotlin",
-            "[PrevDiag-M] begin pos=$bestPos dataRatio=$ratio viewW=${view.width} " +
-                "coverH=${aCover?.height} impliedRatio=" +
-                (aCover?.let { view.width.toFloat() / it.height.coerceAtLeast(1) } ?: -1f),
-        )
         // 文字区高度直接量 name view（item root 的第二个子 view）——不要用
         // 「view.height - 宽/ratio」反推：缓存复用的 view 可能带着上一个档位的封面高度
         //（不走 bind、无人归一时），反推出的 textHeight 会被毒化（实测出现过 0/151/202），
@@ -684,12 +606,6 @@ internal class MasonryPinchController(
             else -> (view.height - (view.width / ratio).toInt()).coerceAtLeast(0)
         }
         active = true
-        Log.d(
-            "AuroraKotlin",
-            "[MasonryPinch] begin anchorPos=$anchorPos anchorTop=$anchorTop " +
-                "anchorW=${view.width} anchorH=${view.height} textHeight=$textHeight " +
-                "availWidth=$availWidth gap=$gap childCount=${rv.childCount}",
-        )
     }
 
     /**
@@ -703,71 +619,6 @@ internal class MasonryPinchController(
         targetSpan = newTargetSpan
         progress = newProgress.coerceIn(0f, 1f)
         applyProgress(rv, progress)
-        // 诊断「重叠」：每 8 次 update 打印一次可见项的视觉 top。item 按布局顺序排列，
-        // 视觉 top 应单调不减；出现更小的 top 即重叠。
-        updateCount++
-        if (updateCount % 8 == 0) logVisualTops(rv)
-        if (updateCount == 1) startFrameProbe(rv) // TODO(debug) 每帧几何快照
-    }
-
-    /**
-     * TODO(debug) 手势期间每帧快照前几个可见卡片的完整几何（item top/height、cover lp/实测、
-     * frame 实测、name top），捕捉两次 update 之间的渲染帧跳变。update 回调层的
-     * 数据已验证平滑（visual 单调、劫持仅 ±1px），若仍见闪动则跳变发生在帧层。
-     * lp 高度与实测高度不一致 = measure 链路（FrameLayout 缓存）吞掉了写入；
-     * lp 高度本身突变 = 有其他代码在捏合中途改写 lp。
-     */
-    private fun startFrameProbe(rv: RecyclerView) {
-        var lastSig = ""
-        var frames = 0
-        val cb = object : android.view.Choreographer.FrameCallback {
-            override fun doFrame(time: Long) {
-                if (!active || frames > 600) return
-                frames++
-                var idx = 0
-                val sb = StringBuilder("[FrameProbe]")
-                for (i in 0 until rv.childCount) {
-                    val c = rv.getChildAt(i) ?: continue
-                    val p = rv.getChildAdapterPosition(c)
-                    if (p == RecyclerView.NO_POSITION) continue
-                    val vg = c as? ViewGroup ?: continue
-                    val frame = vg.getChildAt(0) as? ViewGroup ?: continue
-                    val cover = frame.getChildAt(0)
-                    val name = vg.getChildAt(1)
-                    sb.append(
-                        " $p:${c.top},${c.height}" +
-                            "/lp${cover.layoutParams.height}" +
-                            "/m${cover.height}" +
-                            "/f${frame.height}" +
-                            "/n${name.top}",
-                    )
-                    if (++idx == 6) break
-                }
-                val sig = sb.toString()
-                if (sig != lastSig) {
-                    Log.d("AuroraKotlin", sig)
-                    lastSig = sig
-                }
-                android.view.Choreographer.getInstance().postFrameCallback(this)
-            }
-        }
-        android.view.Choreographer.getInstance().postFrameCallback(cb)
-    }
-
-    private fun logVisualTops(rv: RecyclerView) {
-        val sb = StringBuilder("[MasonryPinch] visual")
-        var sampled = 0
-        for (i in 0 until rv.childCount) {
-            val child = rv.getChildAt(i)
-            val pos = rv.getChildAdapterPosition(child)
-            if (pos == RecyclerView.NO_POSITION) continue
-            val top = child.top + child.translationY.toInt()
-            if (sampled % 20 == 0) sb.append(" $pos@$top")
-            sampled++
-        }
-        // 注：跨列迁移的卡在预览中途会与邻列短暂交叠，这是列数变化 FLIP 的固有观感；
-        // 落位由真实布局决定，不在此检查（布局自身不会产生重叠）。
-        Log.d("AuroraKotlin", sb.toString())
     }
 
     /** 松手后是否应该落到新档位。 */
@@ -785,7 +636,6 @@ internal class MasonryPinchController(
             anim.cancel()
         }
         val from = progress
-        Log.d("AuroraKotlin", "[PrevDiag] settle from=${"%.2f".format(from)}") // TODO(debug)
         if (from <= 0f) {
             origins.clear()
             origCoverH.clear()
@@ -852,7 +702,6 @@ internal class MasonryPinchController(
      */
     fun reapplyPreview(rv: RecyclerView) {
         if ((active || settleAnim?.isRunning == true) && targetSpan > 0) {
-            Log.d("AuroraKotlin", "[PrevDiag] reapply during gesture p=$progress children=${rv.childCount}") // TODO(debug)
             applyProgress(rv, progress)
         }
     }
@@ -898,40 +747,15 @@ internal class MasonryPinchController(
             val cover = coverOf(child)
             if (cover != null) {
                 val oCover = origCoverH.getOrPut(pos) {
-                    // TODO(debug) 插值起点污染探测：实测高度 ≠ lp 高度 = 捕获到了过期测量
-                    val lpH = cover.layoutParams.height
-                    val mH = cover.height
-                    if (lpH > 0 && mH > 0 && kotlin.math.abs(lpH - mH) > 2) {
-                        Log.d(
-                            "AuroraKotlin",
-                            "[OrigCoverPoison-M] pos=$pos lp=$lpH measured=$mH",
-                        )
-                    }
                     // 插值起点必须取 lp（bind/attach/上轮预览写入的**意图值**），不能取实测
                     // 高度——实测值可能带着 FrameLayout 测量缓存跳过留下的上一条生命周期
                     // 的过期高度，把整轮手势的插值基线毒化（「捏合全程裁剪」的来源之一）。
+                    val lpH = cover.layoutParams.height
                     lpH.takeIf { it > 0 }
-                        ?: mH.takeIf { it > 0 }
+                        ?: cover.height.takeIf { it > 0 }
                         ?: (oW / ratioAt(pos).coerceAtLeast(0.05f)).toInt()
                 }
                 val wantH = (oCover + (t.coverHOf[pos] - oCover) * p).roundToInt()
-                // TODO(debug) 劫持探测（lp 层）：上次预览写入后 lp 被谁改了（bind/attach/payload 都写 lp）
-                val lp = cover.layoutParams.height
-                val prevLp = lastWrittenLp.put(pos, wantH)
-                if (prevLp != null && lp != prevLp) {
-                    Log.d(
-                        "AuroraKotlin",
-                        "[PrevHijackLp-M] pos=$pos p=${"%.2f".format(p)} lpNow=$lp wrote=$prevLp",
-                    )
-                }
-                // TODO(debug) 劫持探测（实测层）：上次写入与当前实测不一致 = 测量链路吞掉写入
-                val prevH = lastWrittenH.put(pos, wantH)
-                if (prevH != null && cover.height != prevH) {
-                    Log.d(
-                        "AuroraKotlin",
-                        "[PrevHijack-M] pos=$pos p=${"%.2f".format(p)} coverH=${cover.height} wrote=$prevH",
-                    )
-                }
                 cover.applyCoverHeight(wantH)
             }
         }
@@ -1062,11 +886,6 @@ internal class MasonryPinchController(
         if (delta != 0) {
             for (p in topOf.indices) topOf[p] += delta
         }
-        Log.d(
-            "AuroraKotlin",
-            "[MasonryPinch] sim span=$span content=[$contentTop,$contentBottom] " +
-                "deltaBounds=[$deltaLower,$deltaUpper] delta=$delta",
-        )
         return SimTables(span, colOf, topOf, leftOf, widthOf, coverHOf, delta)
     }
 }

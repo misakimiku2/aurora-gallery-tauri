@@ -257,7 +257,6 @@ class PinchGridSpanListener(
                     // 否则整个捏合过程中页面会一直带着惯性滑动。
                     rv.stopScroll()
                     rv.parent?.requestDisallowInterceptTouchEvent(true)
-                    Log.d(TAG, "[Pinch] multi-touch start: pointers=${event.pointerCount}")
                 }
             }
 
@@ -512,24 +511,18 @@ internal fun runFlipWhenLayoutApplied(
         if (applied) {
             doFlip()
         } else if (attempt < MAX_LAYOUT_RETRY) {
-            Log.d(TAG, "[$tag] layout not applied yet, retry #${attempt + 1}")
             // 同步换档那次 requestLayout 可能被吞（update 恰落在 layout 阶段），
             // 而 doOnLayout 在 draw 前、不在 layout 阶段，这里补一次一定生效。
             rv.requestLayout()
             runFlipWhenLayoutApplied(rv, snap, tag, attempt + 1, layoutApplied, doFlip)
         } else {
-            Log.d(TAG, "[$tag] give up: layout never applied")
+            Log.w(TAG, "[$tag] give up: layout never applied")
         }
     }
 }
 
 /** FLIP 最后一步：二维反向位移 → 240ms / `cubic-bezier(0.22,1,0.36,1)` 动画归位。 */
 internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, durationMs: Long) {
-    var animated = 0
-    var missing = 0
-    var skipped = 0
-    var maxDelta = 0f
-    var maxDeltaPos = -1
     for (i in 0 until rv.childCount) {
         val child = rv.getChildAt(i)
         val pos = rv.getChildAdapterPosition(child)
@@ -537,7 +530,6 @@ internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duratio
         val oldLeft = snap.oldLefts[pos]
         if (oldTop == null || oldLeft == null) {
             // 换档后新进视口的 item 没有旧位置，正常，不参与动画
-            missing++
             continue
         }
         // 收尾动画的起始 scale = 捕获时视觉宽 / 新布局宽，松手瞬间视觉宽度连续；
@@ -547,15 +539,7 @@ internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duratio
         val startScale = if (child.width > 0) (oldVisualW / child.width).coerceIn(0.05f, 20f) else 1f
         val deltaX = oldLeft - child.left
         val deltaY = oldTop - child.top
-        if (abs(deltaX) < 1f && abs(deltaY) < 1f && abs(startScale - 1f) < 0.01f) {
-            skipped++
-            continue
-        }
-        val d = max(abs(deltaX), abs(deltaY))
-        if (d > maxDelta) {
-            maxDelta = d
-            maxDeltaPos = pos
-        }
+        if (abs(deltaX) < 1f && abs(deltaY) < 1f && abs(startScale - 1f) < 0.01f) continue
         child.pivotX = 0f
         child.pivotY = 0f
         child.translationX = deltaX
@@ -570,14 +554,7 @@ internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duratio
             .setDuration(durationMs)
             .setInterpolator(FLIP_INTERPOLATOR)
             .start()
-        animated++
     }
-    Log.d(
-        TAG,
-        "[$tag] anchor=${snap.anchorPos}@${snap.anchorTop} children=${rv.childCount} " +
-            "oldCount=${snap.oldTops.size} animated=$animated missing=$missing skipped=$skipped " +
-            "maxDelta=$maxDelta@$maxDeltaPos",
-    )
 }
 
 /**
@@ -603,10 +580,6 @@ internal fun fixAnchor(rv: RecyclerView, anchorPos: Int, anchorTop: Int) {
     if (anchorPos == RecyclerView.NO_POSITION) return
     val view = rv.layoutManager?.findViewByPosition(anchorPos) ?: return
     val drift = view.top - anchorTop
-    Log.d(
-        TAG,
-        "[FLIP] fixAnchor anchorPos=$anchorPos anchorTop=$anchorTop viewTop=${view.top} drift=$drift",
-    )
     if (drift != 0) rv.scrollBy(0, drift)
 }
 
@@ -637,7 +610,6 @@ internal fun animateSpanChange(
     /** 捏合预览的锚点（position + 钳制后的目标 top）；非捏合路径传 null。 */
     pinchAnchor: PinchAnchor? = null,
 ) {    if (newSpan == lm.spanCount) return
-    val oldSpan = lm.spanCount
 
     val anchorPos = pinchAnchor?.pos?.takeIf { it != RecyclerView.NO_POSITION }
         ?: lm.findFirstVisibleItemPosition()
@@ -664,12 +636,6 @@ internal fun animateSpanChange(
     val anchorRowInset = if (anchorPos / newSpan > 0) decoration.gapPx else 0
     lm.scrollToPositionWithOffset(anchorPos, anchorTop - anchorRowInset - rv.paddingTop)
 
-    Log.d(
-        TAG,
-        "[FLIP] span $oldSpan -> $newSpan anchorPos=$anchorPos anchorTop=$anchorTop " +
-            "paddingTop=${rv.paddingTop} offset=${anchorTop - anchorRowInset - rv.paddingTop} " +
-            "firstVisible=${lm.findFirstVisibleItemPosition()} pinchAnchor=${pinchAnchor != null}",
-    )
     // 布局已刷新判据：捏合预览（真实 measure/layout）会把锚点宽度改写成目标档位的期望值，
     // 默认的「宽度发生变化」判据会失效；改用「锚点所在列的新档位期望宽度」——旧 span 的
     // 真实布局与预览态都不可能恰好等于它，只有新 span 的真实布局能命中。
@@ -694,15 +660,8 @@ internal fun animateSpanChange(
         // 连续快速换档时 snap 可能已被更新的换档覆盖，拿它对着现在的布局算 delta 会把
         // 卡片甩到错误位置（「上半屏正常，下半屏全乱」）。直接放弃这次 FLIP。
         if (lm.spanCount != newSpan) {
-            Log.d(TAG, "[FLIP] superseded (span now ${lm.spanCount}, wanted $newSpan), skip")
             return@runFlipWhenLayoutApplied
         }
-        Log.d(
-            TAG,
-            "[FLIP] layout-applied anchorPos=$anchorPos anchorTop=$anchorTop " +
-                "nowTop=${lm.findViewByPosition(anchorPos)?.top} " +
-                "firstVisible=${lm.findFirstVisibleItemPosition()}",
-        )
         fixAnchor(rv, anchorPos, anchorTop)
         playFlip(rv, snap, "FLIP", durationMs)
     }
@@ -736,7 +695,6 @@ internal fun animateStaggeredSpanChange(
     previewRestorer: (() -> Unit)? = null,
 ) {
     if (newSpan == oldLm.spanCount) return
-    val oldSpan = oldLm.spanCount
 
     var anchorPos = RecyclerView.NO_POSITION
     var anchorTop = 0
@@ -769,11 +727,6 @@ internal fun animateStaggeredSpanChange(
     rv.invalidateItemDecorations()
     newLm.scrollToPositionWithOffset(anchorPos, anchorTop - rv.paddingTop)
 
-    Log.d(
-        TAG,
-        "[FLIP] staggered cold-start span $oldSpan -> $newSpan anchorPos=$anchorPos " +
-            "anchorTop=$anchorTop pinchAnchor=${pinchAnchor != null}",
-    )
     runFlipWhenLayoutApplied(
         rv,
         snap,
@@ -788,7 +741,6 @@ internal fun animateStaggeredSpanChange(
         // 连续快速换档：执行时档位/LM 已被更新的换档覆盖，snapshot 全过期，放弃本次动画
         val current = rv.layoutManager as? StaggeredGridLayoutManager
         if (current !== newLm || current.spanCount != newSpan) {
-            Log.d(TAG, "[FLIP] superseded (lm now $current), skip")
             return@runFlipWhenLayoutApplied
         }
         fixAnchor(rv, anchorPos, anchorTop)

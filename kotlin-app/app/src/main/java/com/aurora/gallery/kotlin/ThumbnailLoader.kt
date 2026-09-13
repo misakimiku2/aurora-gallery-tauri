@@ -7,7 +7,6 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
-import android.util.Log
 import android.util.LruCache
 import android.util.Size
 import kotlinx.coroutines.Dispatchers
@@ -51,17 +50,7 @@ class ThumbnailLoader(context: Context) {
         override fun sizeOf(key: Long, value: Bitmap): Int = value.byteCount / 1024
     }
 
-    // 诊断统计：loadFast 命中类型与耗时（每 N 次打印汇总，定位掉帧来源）
-    private var fastCount = 0
-    private var fastMemory = 0
-    private var fastDisk = 0
-    private var fastMedia = 0
-    private var fastMemoryMs = 0L
-    private var fastDiskMs = 0L
-    private var fastMediaMs = 0L
-
-    /** 从 `content://media/external/images/media/{id}` 提取 MediaStore image id。 */
-    fun extractImageId(contentUri: String): Long = runCatching {
+    /** 从 `content://media/external/images/media/{id}` 提取 MediaStore image id。 */    fun extractImageId(contentUri: String): Long = runCatching {
         ContentUris.parseId(Uri.parse(contentUri))
     }.getOrElse {
         contentUri.substringAfterLast('/').toLong()
@@ -75,9 +64,7 @@ class ThumbnailLoader(context: Context) {
      * 命中内存/高清磁盘缓存则返回高清；否则返回 MINI_KIND（可能偏小，由调用方判断是否升级）。
      */
     fun loadFast(imageId: Long): Bitmap? {
-        val start = System.currentTimeMillis()
         memoryCache.get(imageId)?.let {
-            recordFast("memory", start)
             return it
         }
 
@@ -85,8 +72,6 @@ class ThumbnailLoader(context: Context) {
         if (diskFile.exists()) {
             BitmapFactory.decodeFile(diskFile.absolutePath)?.let {
                 memoryCache.put(imageId, it)
-                probeThumb("disk", imageId, it)
-                recordFast("disk", start)
                 return it
             }
         }
@@ -100,8 +85,6 @@ class ThumbnailLoader(context: Context) {
             }.getOrNull()
             if (bmp != null) {
                 memoryCache.put(imageId, bmp)
-                probeThumb("media", imageId, bmp)
-                recordFast("media", start)
                 return bmp
             }
         }
@@ -114,40 +97,8 @@ class ThumbnailLoader(context: Context) {
             null,
         )
         if (legacy != null) memoryCache.put(imageId, legacy)
-        legacy?.let { probeThumb("legacy", imageId, it) }
-        recordFast("media", start)
         return legacy
     }
-
-    /** TODO(debug) 内存缓存零命中排查：记录位图实际尺寸/占用与缓存水位。 */
-    private fun probeThumb(src: String, imageId: Long, bmp: Bitmap) {
-        Log.d(
-            TAG,
-            "[ThumbProbe] src=$src id=$imageId ${bmp.width}x${bmp.height} ${bmp.config} " +
-                "${bmp.byteCount / 1024}KB cacheKB=${memoryCache.size()}/${memoryCache.maxSize()}",
-        )
-    }
-
-    /** 累计 loadFast 命中类型与耗时，每 [FAST_STATS_INTERVAL] 次打印汇总。 */
-    private fun recordFast(kind: String, startMs: Long) {
-        val elapsed = System.currentTimeMillis() - startMs
-        when (kind) {
-            "memory" -> { fastMemory++; fastMemoryMs += elapsed }
-            "disk" -> { fastDisk++; fastDiskMs += elapsed }
-            "media" -> { fastMedia++; fastMediaMs += elapsed }
-        }
-        fastCount++
-        if (fastCount % FAST_STATS_INTERVAL == 0) {
-            Log.d(
-                TAG,
-                "loadFast汇总[$fastCount] memory=${fastMemory}(${avg(fastMemoryMs, fastMemory)}ms) " +
-                    "disk=${fastDisk}(${avg(fastDiskMs, fastDisk)}ms) " +
-                    "media=${fastMedia}(${avg(fastMediaMs, fastMedia)}ms)",
-            )
-        }
-    }
-
-    private fun avg(totalMs: Long, count: Int): Long = if (count == 0) 0L else totalMs / count
 
     /** 限并发的快速取图（挂起），滚动时避免 MediaStore 查询挤爆 IO 线程池。 */
     suspend fun loadFastLimited(imageId: Long): Bitmap? =
@@ -174,7 +125,6 @@ class ThumbnailLoader(context: Context) {
             }
         }
 
-        val start = System.currentTimeMillis()
         val data = runCatching {
             appContext.contentResolver.openInputStream(Uri.parse(contentUri))?.use { it.readBytes() }
         }.getOrNull()
@@ -185,11 +135,6 @@ class ThumbnailLoader(context: Context) {
                 runCatching { diskFile.outputStream().use { it.write(jpeg) } }
                 BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)?.let {
                     memoryCache.put(imageId, it)
-                    Log.d(
-                        TAG,
-                        "HD generated id=$imageId src=${data.size}B out=${jpeg.size}B " +
-                            "${System.currentTimeMillis() - start}ms",
-                    )
                     return it
                 }
             }
@@ -215,9 +160,7 @@ class ThumbnailLoader(context: Context) {
     private fun hdFile(imageId: Long) = File(thumbDir, "$imageId.jpg")
 
     companion object {
-        private const val TAG = "AuroraKotlin"
         private const val MEMORY_CACHE_SIZE_KB = 128 * 1024 // 128 MB
-        private const val FAST_STATS_INTERVAL = 100 // loadFast 每 100 次打印一次统计
         private const val FAST_MAX_CONCURRENCY = 4 // 快速缩略图并发上限
         private const val THUMB_SIZE = 512
         private const val MIN_DIM_THRESHOLD = 200 // 最小边低于此值视为太糊，触发高清升级

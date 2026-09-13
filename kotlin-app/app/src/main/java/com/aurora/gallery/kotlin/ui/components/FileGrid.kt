@@ -3,7 +3,6 @@ package com.aurora.gallery.kotlin.ui.components
 import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.Typeface
-import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
@@ -43,8 +42,6 @@ import kotlinx.coroutines.launch
 import uniffi.aurora_core.Image
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-private const val TAG = "AuroraKotlin"
 
 /** 普通可变引用（捏合锚点透传）：变化不需要触发重组，update 里同步读取即可。 */
 private class AnchorOverrideHolder {
@@ -368,11 +365,6 @@ fun FileGrid(
                         // 落档：收尾只跑剩余那段进度，清捏合状态（保留 transform 供换档 FLIP 从当前位置收尾）
                         fun commitFlip(target: Int, progress: Float) {
                             val remaining = 1f - progress
-                            Log.d(
-                                TAG,
-                                "[Pinch] commit target=$target current=${currentLevel.value} " +
-                                    "progress=$progress remaining=$remaining",
-                            )
                             flipDurationMs =
                                 (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
                             // 换档要用同一个锚点（同一屏幕位置）换新布局，先记下再 release。
@@ -457,17 +449,17 @@ fun FileGrid(
             if (measuredWidthDp != widthDp) measuredWidthDp = widthDp
             val span = targetCols(widthDp, level)
 
-            // 布局模式切换：捕获 FLIP 快照 → 同步换 LayoutManager + 提交新数据 → 布局后动画。
-            // 必须同步提交：只换 LM 而数据还是旧 item 的话，会出现「新 LM + 旧数据」的中间帧
-            // （例如 adaptive 的行划分没跟上，整屏排布错乱）。
-            if (appliedMode != layoutMode) {
-                val snapshot = captureModeSwitch(rv, adapter)
-                val mode = layoutMode
-                appliedMode = mode
-                // 本轮快照的有效代纪：此后任何捏合/落档/数据变化都会使其过期
-                val myEpoch = ++modeFlipEpoch.value
-                // 同步换 LM + submit：appliedMode 立即更新，同一帧后续 update 不会重复触发
-                rv.layoutManager = if (mode == LayoutMode.ADAPTIVE) {
+            // 模式切换共用的 LM 构建 + 锚点寄存：scrollToPositionWithOffset 在该 LM 的
+            // 首次布局生效，因此换完 LM 的那一刻滚动位置就已锁定，不依赖任何延迟回调
+            //（旧实现把锚点定位放进 afterStableLayout 的 doOnLayout 链，回调可能挂起到
+            // 很久以后才触发——期间视图停在粗定位甚至原点，表现为「切视图滚回顶部」）。
+            fun buildModeLm(target: LayoutMode, anchorIdx: Int, anchorTop: Int): RecyclerView.LayoutManager {
+                val restorer = {
+                    pinchFlip.reapplyPreview(rv)
+                    masonryPinch.reapplyPreview(rv)
+                    adaptivePinch.reapplyPreview(rv)
+                }
+                return if (target == LayoutMode.ADAPTIVE) {
                     val rowH = if (adaptiveRowHeightPx > 0) adaptiveRowHeightPx else {
                         (adaptiveTargetHeightDp(
                             widthDp,
@@ -483,74 +475,79 @@ fun FileGrid(
                         gapPx,
                         { adapter.isHeaderAt(it) },
                         { adapter.aspectRatioAt(it) },
-                    ) {
-                        pinchFlip.reapplyPreview(rv)
-                        masonryPinch.reapplyPreview(rv)
-                        adaptivePinch.reapplyPreview(rv)
+                        previewRestorer = restorer,
+                    ).also { lm ->
+                        // offset 语义（AuroraAdaptiveLayoutManager）：锚点视图 top 的视口坐标
+                        if (anchorIdx != RecyclerView.NO_POSITION) {
+                            lm.scrollToPositionWithOffset(anchorIdx, anchorTop)
+                        }
                     }
                 } else {
                     createLayoutManager(
-                        mode,
+                        target,
                         rv.context,
                         span,
                         gapPx,
                         isFullSpanAt = { adapter.isHeaderAt(it) },
-                        previewRestorer = {
-                            pinchFlip.reapplyPreview(rv)
-                            masonryPinch.reapplyPreview(rv)
-                        },
-                    )
+                        previewRestorer = restorer,
+                    ).also { lm ->
+                        // Grid/Staggered：offset = 锚点 decorated top − 顶 inset − paddingTop
+                        //（与 animateSpanChange/animateStaggeredSpanChange 的粗定位同式，
+                        // 滚动钳制的残差由收尾 FLIP 的 scrollBy 修正）。
+                        if (anchorIdx != RecyclerView.NO_POSITION) when (lm) {
+                            is GridLayoutManager -> lm.scrollToPositionWithOffset(
+                                anchorIdx,
+                                anchorTop - (if (anchorIdx / span > 0) gapPx else 0) - rv.paddingTop,
+                            )
+
+                            is StaggeredGridLayoutManager -> lm.scrollToPositionWithOffset(
+                                anchorIdx,
+                                anchorTop - (if (anchorIdx >= span) gapPx else 0) - rv.paddingTop,
+                            )
+                        }
+                    }
                 }
+            }
+
+            // 布局模式切换：捕获 FLIP 快照 → 同步换 LayoutManager（含锚点寄存）+ 提交新数据
+            // → 确定性收尾动画。必须同步提交：只换 LM 而数据还是旧 item 的话，会出现
+            // 「新 LM + 旧数据」的中间帧（例如 adaptive 的行划分没跟上，整屏排布错乱）。
+            if (appliedMode != layoutMode) {
+                val snapshot = captureModeSwitch(rv, adapter)
+                val mode = layoutMode
+                appliedMode = mode
+                // 本轮快照的有效代纪：此后任何捏合/落档/数据变化都会使其过期
+                val myEpoch = ++modeFlipEpoch.value
+                val anchorIdx = snapshot.anchorId?.let { adapter.indexOfImage(it) }
+                    ?: RecyclerView.NO_POSITION
+                val newLm = buildModeLm(mode, anchorIdx, snapshot.anchorTop.roundToInt())
+                rv.layoutManager = newLm
                 adapter.submit(items, selectedIds, mode, gapPx, collapsedIds)
-                afterStableLayout(rv) {
+
+                // 收尾 FLIP：等新模式的首次布局刷出来，把每张可见图从旧屏幕位置滑到新位置
+                //（与 React 版一致：只动 translation，240ms / cubic-bezier(0.22,1,0.36,1)）。
+                // runFlipWhenLayoutApplied 是 OnPreDraw 驱动 + 有限重试，不会像 doOnLayout
+                // 链那样无限期挂起；即便因快照过期被跳过，位置也已由锚点寄存保住，只损失动画。
+                runFlipWhenLayoutApplied(
+                    rv,
+                    FlipSnapshot(anchorIdx, snapshot.anchorTop.roundToInt(), 0, emptyMap(), emptyMap(), emptyMap()),
+                    "FLIP-ModeSwitch",
+                    0,
+                    layoutApplied = { it.layoutManager === newLm && it.childCount > 0 },
+                ) {
                     // 布局期间可能又被切走，snapshot 已失效，放弃
-                    if (appliedMode != mode) return@afterStableLayout
-                    // 快照过期（此后发生过捏合/落档/数据变化）也放弃——收尾回调可能在
-                    // 几分钟后的下一次布局才触发，对着当前布局放旧位移会甩屏
-                    if (modeFlipEpoch.value != myEpoch) {
-                        Log.d(TAG, "[FLIP-ModeSwitch] stale epoch, skip")
-                        return@afterStableLayout
-                    }
-                    // 收尾 FLIP 依赖 onPreDraw 驱动；界面静止时它会一直挂起，直到下一次有
-                    // 绘制活动的时刻——那往往是下一次捏合手势的第一帧。此时对着一分钟前的
-                    // 过期快照 scrollToPosition + 全子视图平移动画，表现为捏合中突然跳位/
-                    // 闪帧。捏合进行中（或尚未复位）时放弃这次过期的收尾动画。
-                    if (pinchFlip.isActive || masonryPinch.isActive || adaptivePinch.isActive ||
-                        pinchFlip.currentProgress > 0f || masonryPinch.currentProgress > 0f ||
-                        adaptivePinch.currentProgress > 0f
-                    ) {
-                        Log.d(TAG, "[FLIP-ModeSwitch] stale during pinch, skip")
-                        return@afterStableLayout
-                    }
-                    applyModeSwitchFlip(rv, adapter, snapshot, stale = { modeFlipEpoch.value != myEpoch })
+                    if (appliedMode != mode) return@runFlipWhenLayoutApplied
+                    // 快照过期（此后发生过捏合/落档/数据变化）也放弃；位置已由锚点寄存保住
+                    if (modeFlipEpoch.value != myEpoch) return@runFlipWhenLayoutApplied
+                    applyModeSwitchFlip(rv, adapter, snapshot)
                 }
             } else if (!matchesMode(rv.layoutManager, layoutMode)) {
-                rv.layoutManager = if (layoutMode == LayoutMode.ADAPTIVE) {
-                    createAdaptiveLayoutManager(
-                        rv.context,
-                        adaptiveRowHeightPx,
-                        adaptiveTextHeightPx,
-                        gapPx,
-                        { adapter.isHeaderAt(it) },
-                        { adapter.aspectRatioAt(it) },
-                    ) {
-                        pinchFlip.reapplyPreview(rv)
-                        masonryPinch.reapplyPreview(rv)
-                        adaptivePinch.reapplyPreview(rv)
-                    }
-                } else {
-                    createLayoutManager(
-                        layoutMode,
-                        rv.context,
-                        span,
-                        gapPx,
-                        isFullSpanAt = { adapter.isHeaderAt(it) },
-                        previewRestorer = {
-                            pinchFlip.reapplyPreview(rv)
-                            masonryPinch.reapplyPreview(rv)
-                        },
-                    )
-                }
+                // 一致性兜底：appliedMode 已一致但 LM 类型不符。同样要寄存锚点，否则换 LM
+                // 会丢滚动位置（「切视图回到顶部」的另一个来源）。
+                val anchor = captureModeSwitch(rv, adapter)
+                val anchorIdx = anchor.anchorId?.let { adapter.indexOfImage(it) }
+                    ?: RecyclerView.NO_POSITION
+                rv.layoutManager = buildModeLm(layoutMode, anchorIdx, anchor.anchorTop.roundToInt())
             }
 
             when (val lm = rv.layoutManager) {
@@ -950,105 +947,94 @@ private class ModeSwitchSnapshot(
 )
 
 /**
- * 捕获切换前每张可见图的屏幕位置与锚点（锚点 = 最靠上的那张可见图，含部分露出的）。
+ * 捕获切换前每张可见图的屏幕位置与锚点。锚点语义对齐 React 版 `FileGrid.tsx` 的 FLIP：
+ *  A. 视口顶边落在哪张图里（top ≤ 0 < bottom，取 top 最大者）——优先，切换后它停在原
+ *     屏幕位置（哪怕半露出）；
+ *  B. 顶边落在 padding/间隙里 → 取顶边下方第一张图（top ≥ 0 中最小者）。
+ * 旧实现取「top 最小的可见图」：在列表深处它往往是一条几乎完全滚出视口顶的行，把它
+ * 钉回原屏幕位置需要锚点定位的钳制补偿，切视图的观感就是「内容被大幅拖走」。
  * 位置带当前 translation，连续快速切换时不会跳。
  */
 private fun captureModeSwitch(
     rv: RecyclerView,
     adapter: FileGridAdapter,
 ): ModeSwitchSnapshot {
-    var anchorId: String? = null
-    var anchorTop = Float.MAX_VALUE
+    var straddleId: String? = null
+    var straddleTop = Int.MIN_VALUE
+    var belowId: String? = null
+    var belowTop = Int.MAX_VALUE
     val positions = HashMap<String, Pair<Float, Float>>()
-    adapter.forEachVisibleImage(rv, withTranslation = true) { id, _, left, top ->
+    adapter.forEachVisibleImage(rv, withTranslation = true) { id, view, left, top ->
         positions[id] = left to top
-        if (top < anchorTop) {
-            anchorTop = top
-            anchorId = id
+        val t = top.roundToInt()
+        if (t <= 0 && view.bottom > 0 && t > straddleTop) {
+            straddleTop = t
+            straddleId = id
+        }
+        if (t > 0 && t < belowTop) {
+            belowTop = t
+            belowId = id
         }
     }
-    return ModeSwitchSnapshot(anchorId, if (anchorTop == Float.MAX_VALUE) 0f else anchorTop, positions)
+    return when {
+        straddleId != null -> ModeSwitchSnapshot(straddleId, straddleTop.toFloat(), positions)
+        belowId != null -> ModeSwitchSnapshot(belowId, belowTop.toFloat(), positions)
+        else -> ModeSwitchSnapshot(null, 0f, positions)
+    }
 }
 
 /**
- * 视图切换后的锚点归位 + 二维 FLIP。动画参数与捏合换档完全一致（240ms /
- * `PathInterpolator(0.22,1,0.36,1)`），保证两种触发来源的换档观感统一。
- *
- * 顺序要点：**先 scrollBy 纠正锚点，再换算 FLIP 位移**。scrollBy 会同步把所有 child 的
- * top 平移 `-drift`，所以最终位置是 `newTop - drift`，直接用收集到的 newTop 会算错。
+ * 视图切换的收尾 FLIP。调用时机 = 新模式的首次布局已刷出（update 的模式切换分支经
+ * `runFlipWhenLayoutApplied` 驱动，确定性触发）；锚点已在换 LM 的同帧经
+ * scrollToPositionWithOffset 寄存、首次布局即落在原屏幕位置。这里只做两件事：
+ *  1. 锚点残差修正：只有滚动钳制（列表端放不下目标位置）会留残差，scrollBy 尽力贴回
+ *    （被滚动边界拒绝时保持钳制位置，位移不作补偿——那是物理上到不了的位置）；
+ *  2. 二维 FLIP：每张可见图从「切换前的屏幕位置（含进行中的动画位移）」滑到新布局位置。
+ * 与 React 版一致：只动 translation（卡片以新尺寸出现、滑入位），240ms /
+ * `PathInterpolator(0.22,1,0.36,1)`。
  */
 private fun applyModeSwitchFlip(
     rv: RecyclerView,
     adapter: FileGridAdapter,
     snap: ModeSwitchSnapshot,
-    /** 快照时效检查（捕获后的布局/手势变化会使快照过期）；过期则放弃动画。 */
-    stale: () -> Boolean = { false },
 ) {
-    // 0. 粗定位：换 LayoutManager 会丢掉滚动位置（日志上表现为 old/new 两屏图片完全无交集、
-    //    missing 全中、FLIP 一个都匹配不上）。先把锚点图所在的 item 滚进视口。
-    val anchorId = snap.anchorId
-    if (anchorId != null) {
-        val idx = adapter.indexOfImage(anchorId)
-        if (idx != RecyclerView.NO_POSITION) rv.scrollToPosition(idx)
+    val views = HashMap<String, View>()
+    adapter.forEachVisibleImage(rv, withTranslation = false) { id, view, _, _ ->
+        views[id] = view
     }
 
-    afterStableLayout(rv) {
-        // 等待布局期间快照过期（发生了捏合/落档/再次切换），放弃
-        if (stale()) {
-            Log.d(TAG, "[FLIP-ModeSwitch] stale before play, skip")
-            return@afterStableLayout
-        }
-        // 1. 收集新位置（scrollBy 之前）
-        val views = HashMap<String, View>()
-        val newPos = HashMap<String, Pair<Float, Float>>()
-        adapter.forEachVisibleImage(rv, withTranslation = false) { id, view, left, top ->
-            views[id] = view
-            newPos[id] = left to top
-        }
+    // 1. 锚点残差修正。scrollBy 会同步把所有 child 的 top 平移，之后的 FLIP 位移
+    //    必须按平移后的位置重新收集，不能拿平移前的位置做换算。
+    val anchorView = snap.anchorId?.let { views[it] }
+    if (anchorView != null) {
+        val drift = anchorView.top - snap.anchorTop.roundToInt()
+        if (drift != 0) rv.scrollBy(0, drift)
+    }
 
-        // 2. 锚点归位：让切换前后的锚点图停在同一屏幕位置
-        var drift = 0
-        if (anchorId != null) {
-            val newTop = newPos[anchorId]?.second
-            if (newTop != null) {
-                drift = (newTop - snap.anchorTop).roundToInt()
-                if (drift != 0) rv.scrollBy(0, drift)
-            }
-        }
+    // 2. 收集新位置（scrollBy 之后）
+    val newPos = HashMap<String, Pair<Float, Float>>()
+    adapter.forEachVisibleImage(rv, withTranslation = false) { id, view, left, top ->
+        views[id] = view
+        newPos[id] = left to top
+    }
 
-        // 3. Invert + Play
-        var animated = 0
-        var missing = 0
-        var skipped = 0
-        for ((id, old) in snap.positions) {
-            val view = views[id]
-            val new = newPos[id]
-            if (view == null || new == null) {
-                missing++
-                continue
-            }
-            val dx = old.first - new.first
-            val dy = old.second - (new.second - drift)
-            if (abs(dx) < 1f && abs(dy) < 1f) {
-                skipped++
-                continue
-            }
-            view.animate().cancel()
-            view.translationX = dx
-            view.translationY = dy
-            view.animate()
-                .translationX(0f)
-                .translationY(0f)
-                .setDuration(FLIP_DURATION_MS)
-                .setInterpolator(FLIP_INTERPOLATOR)
-                .start()
-            animated++
-        }
-        Log.d(
-            TAG,
-            "[FLIP-ModeSwitch] anchor=${anchorId?.take(8)} drift=$drift oldCount=${snap.positions.size} " +
-                "newCount=${newPos.size} animated=$animated missing=$missing skipped=$skipped",
-        )
+    // 3. Invert + Play
+    for ((id, old) in snap.positions) {
+        val view = views[id]
+        val new = newPos[id]
+        if (view == null || new == null) continue
+        val dx = old.first - new.first
+        val dy = old.second - new.second
+        if (abs(dx) < 1f && abs(dy) < 1f) continue
+        view.animate().cancel()
+        view.translationX = dx
+        view.translationY = dy
+        view.animate()
+            .translationX(0f)
+            .translationY(0f)
+            .setDuration(FLIP_DURATION_MS)
+            .setInterpolator(FLIP_INTERPOLATOR)
+            .start()
     }
 }
 
@@ -1115,8 +1101,6 @@ private class FileGridAdapter(
     ): Boolean {
         val unchanged = items == list && selectedIds == selection && layoutMode == mode &&
             gapPx == gap && collapsedIds == collapsed
-        // TODO(debug) 提交轨迹：谁在会话中换了数据
-        Log.d(TAG, "[SubmitDiag] unchanged=$unchanged size=${list.size} oldSize=${items.size} mode=$mode")
         if (unchanged) return false
 
         items.clear()
@@ -1145,11 +1129,6 @@ private class FileGridAdapter(
         if (cellWidthPx == cellPx) return
         val wasZero = cellWidthPx <= 0
         cellWidthPx = cellPx
-        Log.d(
-            TAG,
-            "[Cell] applyCellWidth cellPx=$cellPx wasZero=$wasZero childCount=${rv.childCount} " +
-                "mode=$layoutMode itemCount=${items.size}",
-        )
         if (wasZero) {
             // 从「未量出宽度」变为有宽度：已有 item 的封面高度还是默认的，必须全量刷新一次
             notifyDataSetChanged()
@@ -1367,30 +1346,7 @@ private class FileGridAdapter(
             cellWidthPx > 0 -> coverHeightFor(image)
             else -> ViewGroup.LayoutParams.WRAP_CONTENT
         }
-        // 网格模式下 coverH 应恒等于 cellWidthPx（正方形）。一旦不等（WRAP_CONTENT=-2 或瀑布流公式），
-        // 就是「滚动后出现非正方形长条」的来源——打印所有异常 case 定位。
-        if (layoutMode == LayoutMode.GRID && coverH != cellWidthPx) {
-            Log.d(
-                TAG,
-                "[Cell] NON-SQUARE pos=$position coverH=$coverH cellPx=$cellWidthPx " +
-                    "ratio=${aspectRatioOf(image)} mode=$layoutMode",
-            )
-        }
         holder.refs.cover.applyCoverHeight(coverH)
-
-        // 诊断「长条」：布局后打印封面实际宽高 + 图片宽高比。采样覆盖整个列表（每 20 个打一次），
-        // 便于捕捉「滚动后才出现的错乱」。
-        if (position % 20 == 0) {
-            val imgW = image.width
-            val imgH = image.height
-            holder.refs.cover.post {
-                Log.d(
-                    TAG,
-                    "[Cell] pos=$position coverW=${holder.refs.cover.width} coverH=${holder.refs.cover.height} " +
-                        "cellPx=$cellWidthPx imgW=$imgW imgH=$imgH mode=$layoutMode",
-                )
-            }
-        }
 
         holder.job?.cancel()
         holder.job = loadInto(holder.refs.cover, image) { holder.bindingAdapterPosition == position }

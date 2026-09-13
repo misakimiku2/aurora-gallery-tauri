@@ -304,11 +304,9 @@ internal class AuroraAdaptiveLayoutManager(
 
         var pos = firstVisiblePosition(t, count)
         val first = pos
-        var placed = 0
         while (pos < count && t.childTopOf[pos] < bottomContent) {
             if (t.childTopOf[pos] + t.itemHeightOf(pos) >= topContent && pos !in present) {
                 placeChild(recycler, t, pos)
-                placed++
             }
             pos++
         }
@@ -318,25 +316,8 @@ internal class AuroraAdaptiveLayoutManager(
         while (up >= 0 && t.childTopOf[up] + t.itemHeightOf(up) >= topContent) {
             if (up !in present) {
                 placeChild(recycler, t, up)
-                placed++
             }
             up--
-        }
-        // TODO(debug) 视口内可见子视图数为 0 时 dump 全部子视图几何
-        var onScreen = 0
-        val dump = StringBuilder()
-        for (i in 0 until childCount) {
-            val c = getChildAt(i) ?: continue
-            if (c.top < height && c.bottom > 0) onScreen++
-            if (onScreen == 0) dump.append(" c${getPosition(c)}:${c.top}-${c.bottom}")
-        }
-        if (onScreen == 0) {
-            val tbl = StringBuilder()
-            for (i in intArrayOf(0, 8, 16, 26, 43, 64, count - 1)) {
-                if (i in 0 until count) tbl.append(" t$i=${t.childTopOf[i]}")
-            }
-            Log.d("AuroraKotlin", "[AdaptiveLM] BLANK scrollY=$scrollY first=$pos placed=$placed " +
-                "range=[$topContent,$bottomContent]$dump tbl=$tbl rowH=$rowHeightPx") // TODO(debug)
         }
     }
 
@@ -362,7 +343,7 @@ internal class AuroraAdaptiveLayoutManager(
         val v = try {
             recycler.getViewForPosition(pos)
         } catch (e: Exception) {
-            Log.e("AuroraKotlin", "[AdaptiveLM] getViewForPosition($pos) failed", e) // TODO(debug)
+            Log.e("AuroraKotlin", "[AdaptiveLM] getViewForPosition($pos) failed", e)
             return
         }
         addView(v)
@@ -492,11 +473,6 @@ internal fun animateAdaptiveRowChange(
     rv.layoutManager = newLm
     newLm.scrollToPositionWithOffset(anchorPos, anchorTop)
 
-    Log.d(
-        "AuroraKotlin",
-        "[FLIP] adaptive row-height change -> $newRowHeightPx anchorPos=$anchorPos " +
-            "anchorTop=$anchorTop pinchAnchor=${pinchAnchor != null}",
-    )
     runFlipWhenLayoutApplied(
         rv,
         snap,
@@ -508,7 +484,6 @@ internal fun animateAdaptiveRowChange(
     ) {
         val current = rv.layoutManager as? AuroraAdaptiveLayoutManager
         if (current !== newLm) {
-            Log.d("AuroraKotlin", "[FLIP] superseded (lm now $current), skip")
             return@runFlipWhenLayoutApplied
         }
         fixAnchor(rv, anchorPos, anchorTop)
@@ -575,8 +550,6 @@ internal class AdaptivePinchController(
     private val origins = HashMap<Int, Rect>()
     private val origCoverH = HashMap<Int, Int>()
 
-    private val lastWrittenH = HashMap<Int, Int>()
-
     private var settleAnim: ValueAnimator? = null
 
     val isActive: Boolean get() = active
@@ -601,7 +574,6 @@ internal class AdaptivePinchController(
         }
         origins.clear()
         origCoverH.clear()
-        lastWrittenH.clear()
         progress = 0f
         targetLevel = -1
         targetRowHeight = 0
@@ -668,12 +640,6 @@ internal class AdaptivePinchController(
             else -> (view.height - (view.width / ratioAt(bestPos).coerceAtLeast(0.05f)).toInt()).coerceAtLeast(0)
         }
         active = true
-        Log.d(
-            "AuroraKotlin",
-            "[AdaptivePinch] begin anchorPos=$anchorPos anchorTop=$anchorTop " +
-                "anchorW=${view.width} anchorH=${view.height} textHeight=$textHeight " +
-                "availWidth=$availWidth gap=$gapPx childCount=${rv.childCount}",
-        )
     }
 
     fun update(rv: RecyclerView, newTargetLevel: Int, newTargetRowHeight: Int, newProgress: Float) {
@@ -694,7 +660,6 @@ internal class AdaptivePinchController(
             anim.cancel()
         }
         val from = progress
-        Log.d("AuroraKotlin", "[AdaptivePinch] settle from=$from")
         if (from <= 0f) {
             origins.clear()
             origCoverH.clear()
@@ -789,14 +754,6 @@ internal class AdaptivePinchController(
                     ?: oW
             }
             val wantH = (oCover + (t.coverHOf[pos] - oCover) * p).roundToInt()
-            // TODO(debug) 劫持探测：上次写入与当前实测不一致 = 期间被外部改写
-            val prevH = lastWrittenH.put(pos, wantH)
-            if (prevH != null && cover.height != prevH) {
-                Log.d(
-                    "AuroraKotlin",
-                    "[PrevHijack-A] pos=$pos p=${"%.2f".format(p)} coverH=${cover.height} wrote=$prevH",
-                )
-            }
             cover.applyCoverHeight(wantH)
         }
         child.forceLayout()
@@ -874,11 +831,6 @@ internal class AdaptivePinchController(
         if (delta != 0) {
             for (i in 0 until count) contentChildTop[i] += delta
         }
-        Log.d(
-            "AuroraKotlin",
-            "[AdaptivePinch] sim targetH=$targetRowHeight content=[$contentTop,$contentBottom] " +
-                "deltaBounds=[$deltaLower,$deltaUpper] delta=$delta",
-        )
         return SimTables(count, targetRowHeight, contentChildTop, xOf, widthOf, coverHOf, delta)
     }
 }
