@@ -23,7 +23,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -86,6 +85,13 @@ fun FoldersOverview(
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * 三档捏合档位：0=小、1=中、2=大（默认中档）。
+     * 由应用级状态传入（3.1 `AppState.gridLevel`，L2 修复）：与 FileGrid 共享同一档位，
+     * 进文件夹/返回总览不再重置，写回经 [onLevelChange]，本组件不持有档位。
+     */
+    level: Int = 1,
+    onLevelChange: (Int) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -139,8 +145,7 @@ fun FoldersOverview(
     val gapPx = context.dp(if (isTablet) 16 else 10)
     val paddingPx = context.dp(if (isTablet) 24 else 8)
 
-    // 三档捏合：0=小、1=中、2=大（默认中档）
-    var level by remember { mutableIntStateOf(1) }
+    // 三档捏合：档位是应用级状态（AppState.gridLevel），这里只读参数 + 写回回调
     val currentLevel = rememberUpdatedState(level)
     // factory 闭包只创建一次，gapPx 直接捕获会在旋转（平板/手机间距变化）后读到旧值。
     val currentGapPx = rememberUpdatedState(gapPx)
@@ -148,7 +153,7 @@ fun FoldersOverview(
 
     AndroidView(
         factory = { ctx ->
-            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
+            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), level)
             decoration.spanCount = initialCols
             RecyclerView(ctx).apply {
                 layoutManager = AuroraGridLayoutManager(ctx, initialCols)
@@ -193,7 +198,7 @@ fun FoldersOverview(
                                 flipDurationMs =
                                     (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
                                 pinchFlip.release()
-                                level = target
+                                onLevelChange(target)
                             } else {
                                 pinchFlip.settle(rv)
                             }

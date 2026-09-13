@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -36,11 +37,11 @@ import com.aurora.gallery.kotlin.ui.components.GroupBy
 import com.aurora.gallery.kotlin.ui.components.LayoutMode
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
+import com.aurora.gallery.kotlin.state.AppState
+import com.aurora.gallery.kotlin.state.LayoutVisibility
+import com.aurora.gallery.kotlin.state.ViewMode
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -62,10 +63,11 @@ import java.io.File
 class MainActivity : ComponentActivity() {
 
     private val folders = mutableStateOf<List<Folder>>(emptyList())
-    private val currentFolder = mutableStateOf<Folder?>(null)
     private val images = mutableStateOf<List<Image>>(emptyList())
-    private val selectedImageIds = mutableStateOf<Set<String>>(emptySet())
     private val scanning = mutableStateOf(false)
+
+    /** 应用级 UI 状态（3.1）：标签页 / 导航历史 / 选中 / 档位 / 面板可见性。 */
+    private lateinit var appState: AppState
     private lateinit var thumbnailLoader: ThumbnailLoader
 
     private val requestPermission = registerForActivityResult(
@@ -81,24 +83,26 @@ class MainActivity : ComponentActivity() {
         val dbFile = File(filesDir, "aurora.db")
         initDb(dbFile.absolutePath)
         thumbnailLoader = ThumbnailLoader(this)
+        // 面板初始可见性对齐 React getInitialLayout 的安卓分支：横屏开侧栏、元数据面板收起
+        appState = AppState(
+            initialLayout = LayoutVisibility(
+                isSidebarVisible =
+                    resources.configuration.orientation != Configuration.ORIENTATION_PORTRAIT,
+            ),
+        )
 
         setContent {
             // 必须与窗口 XML 主题（Theme.AuroraKotlin = Material.Light，固定浅色）一致：
             // 跟随系统深色会拿到深色调色板（textPrimary=#E5E5E5），把浅灰文件名画在白底上看不清。
             AuroraTheme(darkTheme = false) {
                 App(
+                    state = appState,
                     folders = folders.value,
-                    currentFolder = currentFolder.value,
                     images = images.value,
-                    selectedImageIds = selectedImageIds.value,
                     scanning = scanning.value,
                     thumbnailLoader = thumbnailLoader,
                     onFolderClick = { openFolder(it) },
-                    onBack = {
-                        currentFolder.value = null
-                        selectedImageIds.value = emptySet()
-                    },
-                    onImageClick = { toggleSelect(it) },
+                    onImageClick = { appState.toggleSelected(it.id) },
                 )
             }
         }
@@ -175,25 +179,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openFolder(folder: Folder) {
-        currentFolder.value = folder
-        selectedImageIds.value = emptySet()
+        // 导航走 TabState.history（推历史栈 + 切 BROWSER + 清选中），见 AppState.openFolder
+        appState.openFolder(folder.id)
         // 同步清空旧文件夹内容：listImages 在 IO 线程返回前，组合仍拿着旧 images 渲染，
         // 表现为「点进 B 先闪现 A 的网格再换内容」。清空后中间帧是空白而非错误内容。
         images.value = emptyList()
         lifecycleScope.launch {
             val imgs = withContext(Dispatchers.IO) { listImages(folder.id) }
-            // 查询期间可能已切到别的文件夹/返回总览，过期结果直接丢弃
-            if (currentFolder.value?.id == folder.id) {
+            // 查询期间可能已返回总览/进入其他文件夹，过期结果直接丢弃
+            val tab = appState.activeTab
+            if (tab.viewMode == ViewMode.BROWSER && tab.folderId == folder.id) {
                 images.value = imgs
             }
         }
-    }
-
-    /** 切换图片选中态（M1 2.1 基础选中，编辑/多选见 4.1）。 */
-    private fun toggleSelect(image: Image) {
-        val current = selectedImageIds.value
-        selectedImageIds.value =
-            if (image.id in current) current - image.id else current + image.id
     }
 
     private fun scanMediaStore(): List<MediaImage> {
@@ -258,19 +256,17 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun App(
+    state: AppState,
     folders: List<Folder>,
-    currentFolder: Folder?,
     images: List<Image>,
-    selectedImageIds: Set<String>,
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
-    onBack: () -> Unit,
     onImageClick: (Image) -> Unit,
 ) {
-    // 视图/分组设置。M1 3.2 TopBar 完成后由 TopBar 承载，这里只是临时切换入口。
-    var layoutMode by remember { mutableStateOf(LayoutMode.GRID) }
-    var groupBy by remember { mutableStateOf(GroupBy.NONE) }
+    // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
+    val tab = state.activeTab
+    val currentFolder = tab.folderId?.let { id -> folders.firstOrNull { it.id == id } }
 
     if (scanning) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -279,11 +275,13 @@ fun App(
         return
     }
 
-    if (currentFolder == null) {
+    if (tab.viewMode != ViewMode.BROWSER || currentFolder == null) {
         FoldersOverview(
             folders = folders,
             thumbnailLoader = thumbnailLoader,
             onFolderClick = onFolderClick,
+            level = state.gridLevel,
+            onLevelChange = { state.gridLevel = it },
             modifier = Modifier.fillMaxSize(),
         )
     } else {
@@ -293,22 +291,25 @@ fun App(
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onBack() }
+                    // 返回走页内历史（goBack），可再 goForward；返回链的完整五级在 4.3
+                    .clickable { state.goBack() }
                     .padding(16.dp),
             )
             ViewModeBar(
-                layoutMode = layoutMode,
-                groupBy = groupBy,
-                onLayoutModeChange = { layoutMode = it },
-                onGroupByChange = { groupBy = it },
+                layoutMode = tab.layoutMode,
+                groupBy = state.groupBy,
+                onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+                onGroupByChange = { state.groupBy = it },
             )
             FileGrid(
                 images = images,
-                selectedIds = selectedImageIds,
+                selectedIds = tab.selectedFileIds,
                 thumbnailLoader = thumbnailLoader,
                 onItemClick = onImageClick,
-                layoutMode = layoutMode,
-                groupBy = groupBy,
+                layoutMode = tab.layoutMode,
+                groupBy = state.groupBy,
+                level = state.gridLevel,
+                onLevelChange = { state.gridLevel = it },
                 // weight(1f)：网格只占标题/模式条之下的剩余空间。fillMaxSize 会把 RecyclerView
                 // 量成全屏高、内容画进标题/模式条区域（截图里图片盖住标题栏的直接来源）。
                 modifier = Modifier.fillMaxWidth().weight(1f),

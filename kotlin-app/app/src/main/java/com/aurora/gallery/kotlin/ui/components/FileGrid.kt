@@ -69,6 +69,13 @@ fun FileGrid(
     modifier: Modifier = Modifier,
     layoutMode: LayoutMode = LayoutMode.GRID,
     groupBy: GroupBy = GroupBy.NONE,
+    /**
+     * 三档捏合档位：0=小、1=中、2=大（默认中档）。
+     * 由应用级状态传入（3.1 `AppState.gridLevel`，L2 修复）：进文件夹/返回总览不再重置，
+     * 写回经 [onLevelChange]，本组件不持有档位。
+     */
+    level: Int = 1,
+    onLevelChange: (Int) -> Unit = {},
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -83,8 +90,7 @@ fun FileGrid(
     val gapPx = context.dp(gapDp)
     val paddingPx = context.dp(paddingDp)
 
-    // 三档捏合：0=小、1=中、2=大（默认中档）
-    var level by remember { mutableIntStateOf(1) }
+    // 三档捏合：档位是应用级状态（AppState.gridLevel），这里只读参数 + 写回回调
     val currentLevel = rememberUpdatedState(level)
     // factory 闭包只创建一次，直接捕获 layoutMode/groupBy/gapPx 会在切换模式/分组后读到旧值，
     // 导致捏合判定与目标列数算错（布局错乱）。用 rememberUpdatedState 让闭包始终读到最新值。
@@ -218,13 +224,13 @@ fun FileGrid(
 
     AndroidView(
         factory = { ctx ->
-            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), 1)
+            val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), level)
             decoration.spanCount = initialCols
             val initialRowHeightPx = if (adaptiveRowHeightPx > 0) adaptiveRowHeightPx else {
                 val wDp = ctx.pxToDp(ctx.resources.displayMetrics.widthPixels)
                 (adaptiveTargetHeightDp(
                     wDp,
-                    kotlin.math.max(1, targetCols(wDp, 1)),
+                    kotlin.math.max(1, targetCols(wDp, level)),
                     gapDp,
                     paddingDp,
                 ) * density).roundToInt()
@@ -391,7 +397,7 @@ fun FileGrid(
                             adaptivePinch.release()
                             // 落档换布局，未决的模式切换收尾 FLIP 一并作废
                             modeFlipEpoch.value++
-                            level = target
+                            onLevelChange(target)
                         }
                         when {
                             pinchFlip.isActive -> {
@@ -432,7 +438,7 @@ fun FileGrid(
                                 val target = currentLevel.value + delta
                                 if (delta != 0 && target in 0..2) {
                                     modeFlipEpoch.value++
-                                    level = target
+                                    onLevelChange(target)
                                 }
                             }
                         }
