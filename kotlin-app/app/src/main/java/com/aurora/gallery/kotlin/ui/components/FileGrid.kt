@@ -294,6 +294,15 @@ fun FileGrid(
                 itemAnimator = null
                 isVerticalScrollBarEnabled = false
                 rvHolder.rv = this
+                // 修复（2026-09-16，进文件夹封面全白只剩文件名）：update 在 RV 完成首次
+                // 布局前运行时 width=0 会提前返回，而 cellWidthPx 只能在 update 里量出；
+                // 3.2 起网格改为「数据就绪才组合」，组合后没有别的重组触发点，update
+                // 就永远不会再跑。这里在首次布局完成时补写量宽 state，强制 update 重跑。
+                doOnLayout { view ->
+                    if (measuredWidthDp == 0 && view.width > 0) {
+                        measuredWidthDp = view.context.pxToDp(view.width)
+                    }
+                }
                 // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
                 val pinch = PinchGridSpanListener(
                     context = ctx,
