@@ -143,12 +143,12 @@ data class LayoutVisibility(
  * 持有：单标签页（**D5：移动版不做多标签**，TabState 是导航/选中/搜索等会话字段的
  * 挂载点）、面板可见性、排序/分组、网格捏合档位。档位从
  * FileGrid / FoldersOverview 各自的 remember 提升到这里（L2），进文件夹 / 返回总览
- * 不再重置为中档。数据（folders / images / scanning）仍由 MainActivity 持有——那是
- * 数据层缓存，不属于 UI 状态模型。
+ * 不再重置为中档。
  *
- * 全部写入都发生在主线程（Compose 回调 / lifecycleScope 主协程），用 Compose state
- * 而非 StateFlow：UI 直接读取，重组粒度交给 Compose 快照系统。不引入 ViewModel：
- * 与现有「Activity 字段持有状态」的 M1 纪律一致，进程重建即重扫，持久化待后续里程碑评估。
+ * 实例由 GalleryViewModel 持有（数据 folders / images / scanning 同在那里）：旋转等
+ * 配置变更不再丢导航/选中/档位，重扫由 scanStarted 守卫挡住。全部写入都发生在
+ * 主线程（Compose 回调 / viewModelScope 主协程），用 Compose state 而非 StateFlow：
+ * UI 直接读取，重组粒度交给 Compose 快照系统。进程死亡仍会重置，持久化待后续里程碑评估。
  */
 class AppState(
     initialLayout: LayoutVisibility = LayoutVisibility(isSidebarVisible = true),

@@ -84,6 +84,10 @@ pub fn init_db(path: String) -> Result<(), AuroraError> {
 }
 
 /// 把 Kotlin 扫描的 MediaStore 图片写入索引（按 bucket 聚合出文件夹）。
+///
+/// 传入的是设备当前的全量快照，写入走 `reconcile_mediastore_snapshot`：
+/// 快照外的 Folder/Image 行（被删除/改名的相册、已消失的图片）在同一事务里清除，
+/// 索引不再只增不减。
 #[uniffi::export]
 pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
     let p = pool();
@@ -138,11 +142,8 @@ pub fn upsert_media_images(images: Vec<MediaImage>) -> Result<(), AuroraError> {
         })
         .collect();
 
-    file_index::batch_upsert(conn, &folder_entries)
-        .map_err(|e| AuroraError::Database(e.to_string()))?;
-    file_index::batch_upsert(conn, &image_entries)
-        .map_err(|e| AuroraError::Database(e.to_string()))?;
-    Ok(())
+    file_index::reconcile_mediastore_snapshot(conn, &folder_entries, &image_entries)
+        .map_err(|e| AuroraError::Database(e.to_string()))
 }
 
 /// 列出所有文件夹（bucket）。

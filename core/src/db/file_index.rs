@@ -263,6 +263,76 @@ pub fn get_image_dimensions_batch(conn: &Connection, paths: &[String]) -> Result
 
 
 #[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn entry(id: &str, parent: Option<&str>, path: &str, name: &str, ftype: &str) -> FileIndexEntry {
+        FileIndexEntry {
+            file_id: id.into(),
+            parent_id: parent.map(|p| p.into()),
+            path: path.into(),
+            name: name.into(),
+            file_type: ftype.into(),
+            size: 1,
+            created_at: 0,
+            modified_at: 0,
+            width: None,
+            height: None,
+            format: None,
+        }
+    }
+
+    #[test]
+    fn reconcile_keeps_snapshot_and_prunes_stale() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+
+        // 旧索引：folder A（图 a1）、folder B（图 b1）+ 一张父已不存在的孤儿图
+        let stale = vec![
+            entry("A", None, "/storage/A", "A", "Folder"),
+            entry("B", None, "/storage/B", "B", "Folder"),
+            entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
+            entry("b1", Some("B"), "uri://b1", "b1.jpg", "Image"),
+            entry("ghost", Some("B"), "uri://ghost", "ghost.jpg", "Image"),
+        ];
+        batch_upsert(&mut conn, &stale).expect("seed stale rows");
+
+        // 新快照：A 仍在（a1 更新 + 新增 a2）；B 从 MediaStore 消失（删除/改名）
+        let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
+        let images = vec![
+            entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image"),
+            entry("a2", Some("A"), "uri://a2", "a2.jpg", "Image"),
+        ];
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("reconcile");
+
+        let mut ids: Vec<String> = get_all_entries(&conn)
+            .expect("read back")
+            .into_iter()
+            .map(|e| e.file_id)
+            .collect();
+        ids.sort();
+        // B/b1/ghost（快照外）被清理；A/a1/a2（快照内）保留
+        assert_eq!(ids, vec!["A".to_string(), "a1".to_string(), "a2".to_string()]);
+    }
+
+    #[test]
+    fn reconcile_repeat_run_is_idempotent() {
+        let mut conn = Connection::open_in_memory().expect("open in-memory db");
+        create_table(&conn).expect("create table");
+
+        let folders = vec![entry("A", None, "/storage/A", "A", "Folder")];
+        let images = vec![entry("a1", Some("A"), "uri://a1", "a1.jpg", "Image")];
+
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("first run");
+        reconcile_mediastore_snapshot(&mut conn, &folders, &images).expect("second run");
+
+        let count = get_all_entries(&conn).expect("read back").len();
+        assert_eq!(count, 2, "重复对账不产生累积或丢失");
+    }
+}
+
+#[cfg(test)]
 mod bench_tests {
     use super::*;
     use rusqlite::Connection;
@@ -321,6 +391,83 @@ mod bench_tests {
         // 清理
         let _ = fs::remove_dir_all(&tmpdir);
     }
+}
+
+/// MediaStore 全量对账写入：单事务内完成「upsert 当前快照 + 清理快照外的陈旧行」。
+///
+/// Kotlin 扫描的 MediaStore 是设备当前的全量快照，`upsert_media_images` 传入后：
+/// 1. upsert 快照里的全部 bucket 文件夹与图片行；
+/// 2. 把快照的合法 file_id 存入连接级临时表（2 万行的 NOT IN 参数列表会撞变量上限，
+///    临时表走子查询不走绑定参数）；
+/// 3. 删除不在快照中的 Folder / Image 行——被删除/改名的相册（bucket_id 随路径派生，
+///    改名即新 id、旧行成幽灵）、已消失的图片。不做对账索引只增不减，总览会留下
+///    点进去为空的幽灵文件夹。
+///
+/// 单事务保证原子性：任一步失败整体回滚，索引保持上一次一致状态。
+/// 临时表挂在连接上；池只有一个连接，IF NOT EXISTS + 先清空即可重入。
+/// 只触碰 'Folder' / 'Image' 两种类型，其他 file_type 的行不属于 MediaStore 管辖。
+pub fn reconcile_mediastore_snapshot(
+    conn: &mut Connection,
+    folder_entries: &[FileIndexEntry],
+    image_entries: &[FileIndexEntry],
+) -> Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut upsert = tx.prepare(
+            "INSERT INTO file_index (
+                file_id, parent_id, path, name, file_type, size,
+                created_at, modified_at, width, height, format
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            ON CONFLICT(file_id) DO UPDATE SET
+                parent_id = excluded.parent_id,
+                path = excluded.path,
+                name = excluded.name,
+                file_type = excluded.file_type,
+                size = excluded.size,
+                created_at = excluded.created_at,
+                modified_at = excluded.modified_at,
+                width = excluded.width,
+                height = excluded.height,
+                format = excluded.format"
+        )?;
+        for entry in folder_entries.iter().chain(image_entries) {
+            upsert.execute(params![
+                entry.file_id,
+                entry.parent_id,
+                entry.path,
+                entry.name,
+                entry.file_type,
+                entry.size,
+                entry.created_at,
+                entry.modified_at,
+                entry.width,
+                entry.height,
+                entry.format
+            ])?;
+        }
+
+        tx.execute(
+            "CREATE TEMP TABLE IF NOT EXISTS current_snapshot_ids(id TEXT PRIMARY KEY)",
+            [],
+        )?;
+        tx.execute("DELETE FROM current_snapshot_ids", [])?;
+        let mut insert_id =
+            tx.prepare("INSERT OR IGNORE INTO current_snapshot_ids(id) VALUES (?1)")?;
+        for entry in folder_entries.iter().chain(image_entries) {
+            insert_id.execute(params![entry.file_id])?;
+        }
+
+        tx.execute(
+            "DELETE FROM file_index WHERE file_type = 'Folder' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
+            [],
+        )?;
+        tx.execute(
+            "DELETE FROM file_index WHERE file_type = 'Image' AND file_id NOT IN (SELECT id FROM current_snapshot_ids)",
+            [],
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 pub fn delete_entries_by_ids(conn: &mut Connection, ids: &[String]) -> Result<()> {
