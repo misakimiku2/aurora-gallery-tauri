@@ -1,5 +1,9 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import com.aurora.gallery.kotlin.state.DateFilter
+import com.aurora.gallery.kotlin.state.DateFilterMode
+import com.aurora.gallery.kotlin.state.SortDirection
+import com.aurora.gallery.kotlin.state.SortOption
 import uniffi.aurora_core.Image
 import java.util.Calendar
 import java.util.Locale
@@ -31,6 +35,50 @@ internal fun aspectRatioOf(image: Image): Float {
     val w = image.width?.toFloat()
     val h = image.height?.toFloat()
     return if (w != null && h != null && h > 0f) w / h else 1f
+}
+
+/**
+ * 按搜索词与日期筛选图片（3.2 TopBar 的数据管道第一步）。
+ *
+ * 语义对齐 React `useFileSearch.ts`：
+ *  - 搜索：文件名 contains、大小写不敏感（该文件 129-135 行的 `file` scope 分支）。
+ *    `all/tag/folder` scope 依赖标签与文件夹名数据，M2 侧栏落地后再补；
+ *  - 日期：**start 与 end 同时存在才生效**（该文件 152 行的条件），[DateFilter.mode]
+ *    决定比较 createdAt 还是 modifiedAt（epoch 秒，含端点）。
+ */
+fun filterImages(images: List<Image>, query: String, dateFilter: DateFilter): List<Image> {
+    val q = query.trim().lowercase(Locale.US)
+    val dateActive = dateFilter.start != null && dateFilter.end != null
+    if (q.isEmpty() && !dateActive) return images
+    return images.filter { img ->
+        (q.isEmpty() || img.name.lowercase(Locale.US).contains(q)) &&
+            (!dateActive || run {
+                val d = if (dateFilter.mode == DateFilterMode.CREATED) img.createdAt else img.modifiedAt
+                d >= dateFilter.start!! && d <= dateFilter.end!!
+            })
+    }
+}
+
+/**
+ * 排序（3.2 TopBar 的数据管道第二步）。
+ *
+ * 对齐 React `useFileSearch.ts` 169-172 行：name = 文件名小写比较、date = createdAt、
+ * size = 字节数；asc/desc 翻转。React 用 `localeCompare`（locale 感知），Kotlin 用
+ * 码位比较——对 ASCII 与中文文件名的差异可忽略，避免 Collator 在 1~2 万条上的开销。
+ * 排序稳定，同键保持 `list_images` 的 modified DESC 原序。
+ */
+fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection): List<Image> {
+    if (images.size < 2) return images
+    val comparator = when (sortBy) {
+        SortOption.NAME -> compareBy<Image> { it.name.lowercase(Locale.US) }
+        SortOption.DATE -> compareBy { it.createdAt }
+        SortOption.SIZE -> compareBy { it.size }
+    }
+    return if (direction == SortDirection.ASC) {
+        images.sortedWith(comparator)
+    } else {
+        images.sortedWith(comparator.reversed())
+    }
 }
 
 /** 网格项：分组标题 / 一张图片。三种布局模式的 item 粒度一致（一图一项）。 */

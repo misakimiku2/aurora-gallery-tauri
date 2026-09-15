@@ -17,36 +17,30 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.TopBar
+import com.aurora.gallery.kotlin.ui.components.filterImages
+import com.aurora.gallery.kotlin.ui.components.sortImages
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
-import com.aurora.gallery.kotlin.ui.components.GroupBy
-import com.aurora.gallery.kotlin.ui.components.LayoutMode
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
+import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.ViewMode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -275,116 +269,75 @@ fun App(
         return
     }
 
-    if (tab.viewMode != ViewMode.BROWSER || currentFolder == null) {
-        FoldersOverview(
-            folders = folders,
-            thumbnailLoader = thumbnailLoader,
-            onFolderClick = onFolderClick,
-            level = state.gridLevel,
-            onLevelChange = { state.gridLevel = it },
-            // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
-            initialScrollTop = state.overviewScrollTop,
-            onScrollChanged = { state.overviewScrollTop = it },
-            modifier = Modifier.fillMaxSize(),
+    // 工具按钮（搜索/排序/视图/日期）只在文件夹内部视图提供（3.2 对齐矩阵 M1 范围；
+    // 总览的文件夹排序/视图切换在 React 里是 folderLayoutMode，Kotlin 总览暂只支持网格）
+    val inBrowser = tab.viewMode == ViewMode.BROWSER && currentFolder != null
+
+    Column(Modifier.fillMaxSize()) {
+        TopBar(
+            title = if (inBrowser) currentFolder?.name ?: "文件夹" else "文件夹",
+            canBack = tab.history.canBack,
+            onBack = { state.goBack() },
+            searchQuery = tab.searchQuery,
+            onSearchQueryChange = { state.setSearchQuery(it) },
+            dateFilter = tab.dateFilter,
+            onDateFilterChange = { state.setDateFilter(it) },
+            sortBy = state.sortBy,
+            onSortChange = { state.sortBy = it },
+            sortDirection = state.sortDirection,
+            onSortDirectionToggle = {
+                state.sortDirection =
+                    if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+            },
+            groupBy = state.groupBy,
+            onGroupByChange = { state.groupBy = it },
+            layoutMode = tab.layoutMode,
+            onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+            showBrowserTools = inBrowser,
+            modifier = Modifier.fillMaxWidth(),
         )
-    } else {
-        Column(Modifier.fillMaxSize()) {
-            Text(
-                text = "← ${currentFolder.name}（${images.size} 张）",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    // 返回走页内历史（goBack），可再 goForward；返回链的完整五级在 4.3
-                    .clickable { state.goBack() }
-                    .padding(16.dp),
-            )
-            ViewModeBar(
-                layoutMode = tab.layoutMode,
-                groupBy = state.groupBy,
-                onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
-                onGroupByChange = { state.groupBy = it },
-            )
-            FileGrid(
-                images = images,
-                selectedIds = tab.selectedFileIds,
+        if (!inBrowser) {
+            FoldersOverview(
+                folders = folders,
                 thumbnailLoader = thumbnailLoader,
-                onItemClick = onImageClick,
-                layoutMode = tab.layoutMode,
-                groupBy = state.groupBy,
+                onFolderClick = onFolderClick,
                 level = state.gridLevel,
                 onLevelChange = { state.gridLevel = it },
-                // weight(1f)：网格只占标题/模式条之下的剩余空间。fillMaxSize 会把 RecyclerView
-                // 量成全屏高、内容画进标题/模式条区域（截图里图片盖住标题栏的直接来源）。
+                // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
+                initialScrollTop = state.overviewScrollTop,
+                onScrollChanged = { state.overviewScrollTop = it },
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
+        } else {
+            // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。
+            // remember 键齐备：任一条件变化才重算，1~2 万条下键入也不卡。
+            val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+                sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
+            }
+            if (displayImages.isEmpty()) {
+                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                    Text(
+                        if (hasCondition) "无匹配图片" else "文件夹为空",
+                        color = AuroraTheme.colors.textSecondary,
+                    )
+                }
+            } else {
+                FileGrid(
+                    images = displayImages,
+                    selectedIds = tab.selectedFileIds,
+                    thumbnailLoader = thumbnailLoader,
+                    onItemClick = onImageClick,
+                    layoutMode = tab.layoutMode,
+                    groupBy = state.groupBy,
+                    level = state.gridLevel,
+                    onLevelChange = { state.gridLevel = it },
+                    // weight(1f)：网格只占顶栏之下的剩余空间。fillMaxSize 会把 RecyclerView
+                    // 量成全屏高、内容画进顶栏区域。
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+            }
         }
     }
 }
 
-/**
- * 布局模式 / 分组方式切换条。
- *
- * 脚手架：M1 3.2 TopBar 完成后由 TopBar 承载（安卓端对齐 React 版 `TopBar.tsx` 的
- * `isAndroid` 分支——只在 grid / adaptive / masonry 间循环，不提供 list）。
- * 这里仅供 2.5 / 2.3 开发期验收使用。
- */
-@Composable
-private fun ViewModeBar(
-    layoutMode: LayoutMode,
-    groupBy: GroupBy,
-    onLayoutModeChange: (LayoutMode) -> Unit,
-    onGroupByChange: (GroupBy) -> Unit,
-) {
-    val colors = AuroraTheme.colors
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(text = "视图", fontSize = 11.sp, color = colors.textSecondary)
-        for (mode in LayoutMode.values()) {
-            ModeChip(
-                text = when (mode) {
-                    LayoutMode.GRID -> "网格"
-                    LayoutMode.ADAPTIVE -> "自适应"
-                    LayoutMode.MASONRY -> "瀑布流"
-                },
-                selected = mode == layoutMode,
-                onClick = { onLayoutModeChange(mode) },
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(text = "分组", fontSize = 11.sp, color = colors.textSecondary)
-        for (option in GroupBy.values()) {
-            ModeChip(
-                text = when (option) {
-                    GroupBy.NONE -> "无"
-                    GroupBy.TYPE -> "类型"
-                    GroupBy.DATE -> "日期"
-                },
-                selected = option == groupBy,
-                onClick = { onGroupByChange(option) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ModeChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = AuroraTheme.colors
-    Text(
-        text = text,
-        fontSize = 12.sp,
-        color = if (selected) Color.White else colors.textSecondary,
-        modifier = Modifier
-            .clickable(onClick = onClick)
-            .background(
-                color = if (selected) colors.primary else Color.Transparent,
-                shape = RoundedCornerShape(50),
-            )
-            .border(1.dp, colors.subtle, RoundedCornerShape(50))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-    )
-}

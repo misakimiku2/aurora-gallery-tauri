@@ -297,4 +297,14 @@ class AppState(
     fun clearSelection() {
         updateActiveTab { it.copy(selectedFileIds = emptySet(), lastSelectedId = null) }
     }
+
+    // —— 搜索与日期筛选（3.2 TopBar 消费）——
+
+    fun setSearchQuery(query: String) {
+        updateActiveTab { it.copy(searchQuery = query) }
+    }
+
+    fun setDateFilter(filter: DateFilter) {
+        updateActiveTab { it.copy(dateFilter = filter) }
+    }
 }
