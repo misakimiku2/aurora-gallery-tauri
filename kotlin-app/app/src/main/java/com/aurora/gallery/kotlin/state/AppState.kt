@@ -90,7 +90,7 @@ data class HistoryStack(
  *  - isCompareMode / sessionName / currentPage：桌面画布与分页特性；
  *  - scrollToItemId：React 版跨页定位用，Kotlin 端 RV 锚点另有机制。
  *
- * layoutMode 沿 React 语义放**每标签页**（切标签恢复各自的视图模式）；groupBy /
+ * layoutMode 沿 React 语义放在标签页上（单标签下即全局生效）；groupBy /
  * sortBy / sortDirection 在 React 版就是应用级状态（`App.tsx:267` 的 useState 与
  * `AppState` 顶层字段），同样放在 [AppState]。
  */
@@ -140,7 +140,8 @@ data class LayoutVisibility(
 /**
  * 应用级状态容器（Kotlin 化 React `AppState` 的 UI 状态部分 + `App.tsx` 的散装 useState）。
  *
- * 持有：标签页列表与活动标签、面板可见性、排序/分组、网格捏合档位。档位从
+ * 持有：单标签页（**D5：移动版不做多标签**，TabState 是导航/选中/搜索等会话字段的
+ * 挂载点）、面板可见性、排序/分组、网格捏合档位。档位从
  * FileGrid / FoldersOverview 各自的 remember 提升到这里（L2），进文件夹 / 返回总览
  * 不再重置为中档。数据（folders / images / scanning）仍由 MainActivity 持有——那是
  * 数据层缓存，不属于 UI 状态模型。
@@ -179,58 +180,19 @@ class AppState(
      *
      * FoldersOverview 因导航离开组合再回来时 RecyclerView 是全新的（内容会回到顶部），
      * 靠它归位。**刻意不用 Compose state**：滚动期间每帧写入，没有任何 UI 需要因此
-     * 重组；只在重建时读取一次。当前是单标签页假设——3.3 TabBar 落地后若要每个
-     * 标签页独立记忆，改成按 tabId 的 map（仍保持非 state）。
+     * 重组；只在重建时读取一次。单标签页（D5），无需按标签页区分。
      */
     var overviewScrollTop: Int = 0
 
     /** 面板可见性（3.5 在此之上做互斥开合）。 */
     var layout by mutableStateOf(initialLayout)
 
-    // —— 标签页操作（3.3 TabBar 接 UI）——
+    // —— 单标签页（D5：移动版不做多标签）——
+    // tabs/activeTabId 保留为**单元素**实现：3.x 的状态字段（导航历史/选中/搜索等）
+    // 全部挂在 TabState 上，这是它们的挂载点；多标签操作 API 已随 D5 移除。
 
     fun updateActiveTab(transform: (TabState) -> TabState) {
         tabs = tabs.map { if (it.id == activeTabId) transform(it) else it }
-    }
-
-    fun activateTab(id: String) {
-        if (tabs.any { it.id == id }) activeTabId = id
-    }
-
-    /** 新建根标签页并激活。 */
-    fun newTab() {
-        val tab = TabState.newRootTab()
-        tabs = tabs + tab
-        activeTabId = tab.id
-    }
-
-    /**
-     * 关闭标签，关闭的是活动标签时激活其邻位（对齐 `useNavigation.ts` handleCloseTab 的
-     * `newTabs[max(0, index-1)]`）。最后一个标签不可关（React 版同样拒绝空标签列表）。
-     */
-    fun closeTab(id: String) {
-        if (tabs.size <= 1) return
-        val index = tabs.indexOfFirst { it.id == id }
-        if (index < 0) return
-        val remaining = tabs.filter { it.id != id }
-        tabs = remaining
-        if (id == activeTabId) {
-            activeTabId = remaining[(index - 1).coerceAtLeast(0)].id
-        }
-    }
-
-    /** 关闭其他标签（3.3 验收项「关闭其他」）。 */
-    fun closeOtherTabs(id: String) {
-        val keep = tabs.firstOrNull { it.id == id } ?: return
-        tabs = listOf(keep)
-        activeTabId = id
-    }
-
-    /** 关闭全部并重置为一个全新根标签（标签列表不允许为空，3.3 验收项「关闭所有」）。 */
-    fun closeAllTabs() {
-        val fresh = TabState.newRootTab()
-        tabs = listOf(fresh)
-        activeTabId = fresh.id
     }
 
     // —— 页内导航（3.2 TopBar 返回/上级、4.3 返回手势链消费）——
