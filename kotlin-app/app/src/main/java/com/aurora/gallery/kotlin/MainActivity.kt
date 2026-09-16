@@ -93,6 +93,22 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
+     * MediaStore 监听跟随前台生存期：后台不收通知（省电，也不做无谓重扫）。
+     * 回前台时兜底对账一次——后台期间（监听已注销）MediaStore 的增删在这里补上；
+     * 无实质变化时各 adapter 的幂等守卫不会 notifyDataSetChanged，界面纹丝不动。
+     */
+    override fun onStart() {
+        super.onStart()
+        viewModel.startMediaStoreObservation()
+        viewModel.refreshFromForeground()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.stopMediaStoreObservation()
+    }
+
+    /**
      * 模拟器验证钩子：`adb shell am broadcast -a aurora.debug.PINCH --es scale 0.75`
      * 触发一次完整的捏合手势（走生产回调链），scale<1 收拢 / >1 张开。
      * `--es mode touch` 走合成双指 MotionEvent 的真实事件分发路径（含中途抬指/抖动）。

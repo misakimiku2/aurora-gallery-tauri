@@ -272,6 +272,9 @@ private class FolderAdapter(
     var pinchFlip: PinchFlipController? = null
 
     fun submit(list: List<Folder>) {
+        // 幂等守卫（对齐 FileGrid.submit）：热刷新/回前台兜底会带着相同数据重走一遍
+        // LaunchedEffect(folders)，无变化时不必 notifyDataSetChanged 把列表打回顶部
+        if (folders == list) return
         folders.clear()
         folders.addAll(list)
         notifyDataSetChanged()

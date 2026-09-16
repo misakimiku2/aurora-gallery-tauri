@@ -2,11 +2,13 @@ package com.aurora.gallery.kotlin
 
 import android.app.Application
 import android.content.ContentUris
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.runtime.mutableStateOf
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -14,7 +16,11 @@ import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
@@ -33,6 +39,9 @@ import java.io.File
  * 状态全丢 + 全量重扫 + 缩略图内存缓存清空。上移到 ViewModel 后三者都跨重建保留，
  * [startScanIfNeeded] 的 scanStarted 守卫让重建后的 onCreate 不再重跑扫描。
  * 进程死亡仍会重置，持久化待后续里程碑评估。
+ *
+ * 热更新：通过 [mediaStoreObserver] 监听 MediaStore 变更（注册跟随 MainActivity 的
+ * onStart/onStop），外部增删图片防抖后自动重跑扫描管道，应用开着无需重启即可看到新图。
  */
 class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : ViewModel() {
 
@@ -50,6 +59,35 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     /** 本次 ViewModel 生存期内是否已启动过扫描；旋转重建复用同一实例，直接跳过重扫。 */
     private var scanStarted = false
 
+    /**
+     * 初始扫描协程。热刷新在它结束前触发时 join 等待：既不重复跑管道，也不丢扫描
+     * 期间落地的变更（扫完后再对账一次）。isCompleted==true 即回前台兜底可安全运行。
+     */
+    private var initialScanJob: Job? = null
+
+    /** 串行化「扫描 → 对账 → 刷新」管道：初始扫描与热刷新不并发写库。 */
+    private val scanMutex = Mutex()
+
+    /** MediaStore 变更通知的防抖协程：通知风暴只留最后一次，平静 [MEDIA_CHANGE_DEBOUNCE_MS] 后对账一次。 */
+    private var mediaChangeJob: Job? = null
+
+    /**
+     * MediaStore 变更监听（注册/注销跟随 onStart/onStop，见 MainActivity）：应用开着时
+     * 外部新增/删除/修改图片（相机、截图、MTP 拷入）也能热更新，不再需要重启应用刷新。
+     */
+    private val mediaStoreObserver = object : ContentObserver(null) {
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            // 拷入一批文件会连发一串通知：取消重建防抖任务，等通知流平静后合并成一次重扫
+            mediaChangeJob?.cancel()
+            mediaChangeJob = viewModelScope.launch {
+                delay(MEDIA_CHANGE_DEBOUNCE_MS)
+                // 初始扫描若还在跑，等它结束再补一次对账（变更可能落在扫描查询之后，不能丢）
+                initialScanJob?.join()
+                hotRefresh()
+            }
+        }
+    }
+
     init {
         // 初始化 Rust 数据库（filesDir 下）；DB_POOL 已初始化时 Rust 侧 set 幂等忽略
         initDb(File(appContext.filesDir, "aurora.db").absolutePath)
@@ -63,24 +101,98 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     fun startScanIfNeeded() {
         if (scanStarted) return
         scanStarted = true
-        viewModelScope.launch {
+        initialScanJob = viewModelScope.launch {
             val cached = withContext(Dispatchers.IO) { listFolders() }
             folders.value = cached
             if (cached.isEmpty()) scanning.value = true
             try {
-                val t0 = android.os.SystemClock.elapsedRealtime()
-                val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
-                Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
-                withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
-                Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
-                folders.value = withContext(Dispatchers.IO) { listFolders() }
-                Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
+                scanAndReconcile()
             } catch (e: Exception) {
                 // 扫描/入库失败时保留缓存列表（M1 阶段 1 简单容错）
                 Log.w(TAG, "[Scan] failed", e)
             } finally {
                 scanning.value = false
             }
+        }
+    }
+
+    /** 注册 MediaStore 监听；notifyForDescendants=true 以捕获具体图片条目 URI 的通知。 */
+    fun startMediaStoreObservation() {
+        appContext.contentResolver.registerContentObserver(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            true,
+            mediaStoreObserver,
+        )
+    }
+
+    /** 注销 MediaStore 监听并丢弃未触发的防抖任务（后台期间不做无谓重扫）。 */
+    fun stopMediaStoreObservation() {
+        appContext.contentResolver.unregisterContentObserver(mediaStoreObserver)
+        mediaChangeJob?.cancel()
+        mediaChangeJob = null
+    }
+
+    /**
+     * 回前台兜底（MainActivity.onStart）：后台期间（监听已注销）MediaStore 的增删在
+     * 这里补上。初始扫描尚未完成的冷启动是纯重复（初始扫描读的就是当下的库），跳过；
+     * 无实质变化时 adapter 的幂等守卫不会 notifyDataSetChanged，界面纹丝不动。
+     */
+    fun refreshFromForeground() {
+        if (initialScanJob?.isCompleted != true) return
+        hotRefresh()
+    }
+
+    /** 热刷新主体：重跑全量管道 + 刷新当前文件夹列表；失败只记日志，不影响已上屏数据。 */
+    private fun hotRefresh() {
+        if (!hasMediaPermission()) return
+        viewModelScope.launch {
+            try {
+                val t0 = android.os.SystemClock.elapsedRealtime()
+                scanAndReconcile()
+                Log.i(TAG, "[Scan] hot refresh cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
+                reloadActiveFolderImages()
+            } catch (e: Exception) {
+                Log.w(TAG, "[Scan] hot refresh failed", e)
+            }
+        }
+    }
+
+    /**
+     * 媒体读权限检查。ViewModel 里兜这道闸是因为热刷新的入口（ContentObserver）在本类里：
+     * 无权限时 MediaStore 查询只返回本应用自有的条目，拿这种残缺快照去对账会把整个索引清空。
+     * 权限字符串须与 MainActivity.requestMediaPermissionIfNeeded 保持一致。
+     */
+    private fun hasMediaPermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= 33) {
+            "android.permission.READ_MEDIA_IMAGES"
+        } else {
+            android.Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return ContextCompat.checkSelfPermission(appContext, permission) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    /** 全量管道：MediaStore 快照 → Rust 幂等对账入库 → 刷新总览文件夹列表。 */
+    private suspend fun scanAndReconcile() = scanMutex.withLock {
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        val imgs = withContext(Dispatchers.IO) { scanMediaStore() }
+        Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+        withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
+        Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
+        folders.value = withContext(Dispatchers.IO) { listFolders() }
+        Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
+    }
+
+    /** 停在文件夹内时重查该文件夹（对账后库里内容可能已增删）；在总览则是 no-op。 */
+    private suspend fun reloadActiveFolderImages() {
+        val tab = appState.activeTab
+        val folderId = tab.folderId ?: return
+        if (tab.viewMode != ViewMode.BROWSER) return
+        val imgs = withContext(Dispatchers.IO) { listImages(folderId) }
+        // 查询期间用户可能已导航走，过期结果直接丢弃（同 openFolder 的竞态守卫）
+        val t = appState.activeTab
+        if (t.viewMode == ViewMode.BROWSER && t.folderId == folderId) {
+            images.value = imgs
         }
     }
 
@@ -161,6 +273,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     companion object {
         private const val TAG = "AuroraKotlin"
+
+        /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
+        private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
 
         /**
          * factory 只在 ViewModel 首次创建时求值：旋转重建复用已有实例，不会重跑，
