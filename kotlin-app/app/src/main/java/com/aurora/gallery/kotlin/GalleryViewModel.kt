@@ -263,7 +263,10 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                         height = if (c.isNull(heightCol)) null else c.getInt(heightCol),
                         mimeType = c.getString(mimeCol) ?: "",
                         bucketId = c.getLong(bucketIdCol).toString(),
-                        bucketName = c.getString(bucketNameCol) ?: "",
+                        // 存储根目录散落文件的 bucket_display_name 为 NULL，兜底成虚拟文件夹名
+                        //（对齐 React 版 __android_root_images__ 的「根目录图片」）
+                        bucketName = c.getString(bucketNameCol)?.takeUnless { it.isBlank() }
+                            ?: ROOT_BUCKET_DISPLAY_NAME,
                     )
                 )
             }
@@ -276,6 +279,9 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
         /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
+
+        /** 根目录散落文件的虚拟文件夹名（MediaStore 的 bucket_display_name 为 NULL，对齐 React 版命名）。 */
+        private const val ROOT_BUCKET_DISPLAY_NAME = "根目录图片"
 
         /**
          * factory 只在 ViewModel 首次创建时求值：旋转重建复用已有实例，不会重跑，
