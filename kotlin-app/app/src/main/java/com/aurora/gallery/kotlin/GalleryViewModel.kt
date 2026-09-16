@@ -102,7 +102,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         if (scanStarted) return
         scanStarted = true
         initialScanJob = viewModelScope.launch {
-            val cached = withContext(Dispatchers.IO) { listFolders() }
+            val cached = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
             folders.value = cached
             if (cached.isEmpty()) scanning.value = true
             try {
@@ -179,9 +179,18 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
         Log.i(TAG, "[Scan] MediaStore rows=${imgs.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms")
         withContext(Dispatchers.IO) { upsertMediaImages(imgs) }
         Log.i(TAG, "[Scan] reconcile upsert cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
-        folders.value = withContext(Dispatchers.IO) { listFolders() }
+        folders.value = withContext(Dispatchers.IO) { orderFoldersForOverview(listFolders()) }
         Log.i(TAG, "[Scan] folders=${folders.value.size} cost=${android.os.SystemClock.elapsedRealtime() - t0}ms total")
     }
+
+    /**
+     * 总览排序：「根目录图片」虚拟文件夹恒置顶，其余保持 listFolders 的字典序不变
+     * （sortedBy 稳定排序）。以后总览若接入排序菜单，置顶规则也应压在用户排序之上。
+     */
+    private fun orderFoldersForOverview(list: List<Folder>): List<Folder> =
+        if (list.any { it.name == ROOT_BUCKET_DISPLAY_NAME })
+            list.sortedBy { it.name != ROOT_BUCKET_DISPLAY_NAME }
+        else list
 
     /** 停在文件夹内时重查该文件夹（对账后库里内容可能已增删）；在总览则是 no-op。 */
     private suspend fun reloadActiveFolderImages() {
