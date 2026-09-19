@@ -159,6 +159,74 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
     }
 
     /**
+     * 手动刷新（4.4 下拉刷新的入口）：同 [hotRefresh] 的管道，但完成时可回调——
+     * 指示器等它落勾。[onDone] 在主线程回调，失败也回调（界面照常复位）。
+     */
+    fun refreshManual(onDone: () -> Unit = {}) {
+        if (!hasMediaPermission()) {
+            onDone()
+            return
+        }
+        viewModelScope.launch {
+            try {
+                scanAndReconcile()
+                reloadActiveFolderImages()
+                Log.i(TAG, "[Scan] manual refresh done")
+            } catch (e: Exception) {
+                Log.w(TAG, "[Scan] manual refresh failed", e)
+            }
+            onDone()
+        }
+    }
+
+    /**
+     * 把选中集合解析成可分享/删除的 content:// URI 列表（4.2）。选中项可能是图片
+     * （文件夹内网格）也可能是文件夹（总览）——文件夹展开为其下全部图片（读库，
+     * 与网格同源）。[onReady] 在主线程回调；空列表时也回调（调用方自行忽略）。
+     */
+    fun resolveSelectionUris(ids: Set<String>, onReady: (List<android.net.Uri>) -> Unit) {
+        viewModelScope.launch {
+            val uris = withContext(Dispatchers.IO) {
+                val imgById = images.value.associateBy { it.id }
+                val folderById = folders.value.associateBy { it.id }
+                val out = ArrayList<android.net.Uri>(ids.size)
+                for (id in ids) {
+                    imgById[id]?.let { out += android.net.Uri.parse(it.contentUri) }
+                        ?: folderById[id]?.let { folder ->
+                            listImages(folder.id).forEach { out += android.net.Uri.parse(it.contentUri) }
+                        }
+                }
+                out
+            }
+            onReady(uris)
+        }
+    }
+
+    /**
+     * API < 30 的删除兜底（[MainActivity] 走 MediaStore.createDeleteRequest 的前置系统
+     * 弹窗需要 API 30）：直接逐条 contentResolver.delete。本应用自建的媒体可删成功；
+     * 三方媒体的共享存储删除在无 WRITE 权限时抛 SecurityException/Reject——逐条
+     * try/catch，成功多少算多少，失败只记日志。
+     */
+    fun deleteDirect(uris: List<android.net.Uri>, onDone: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val deleted = withContext(Dispatchers.IO) {
+                var n = 0
+                for (uri in uris) {
+                    try {
+                        if (appContext.contentResolver.delete(uri, null, null) > 0) n++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "[Delete] direct delete failed: $uri", e)
+                    }
+                }
+                n
+            }
+            Log.i(TAG, "[Delete] direct deleted=$deleted/${uris.size}")
+            onDone(deleted)
+        }
+    }
+
+    /**
      * 媒体读权限检查。ViewModel 里兜这道闸是因为热刷新的入口（ContentObserver）在本类里：
      * 无权限时 MediaStore 查询只返回本应用自有的条目，拿这种残缺快照去对账会把整个索引清空。
      * 权限字符串须与 MainActivity.requestMediaPermissionIfNeeded 保持一致。

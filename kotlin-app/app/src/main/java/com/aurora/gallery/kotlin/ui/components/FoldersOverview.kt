@@ -92,6 +92,8 @@ fun FoldersOverview(
     folders: List<Folder>,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
+    /** 长按回调（4.1）：总览进选择模式 / 范围选择，语义同 FileGrid（宿主侧决定）。 */
+    onFolderLongClick: (Folder) -> Unit = {},
     modifier: Modifier = Modifier,
     /**
      * 三档捏合档位：0=小、1=中、2=大（默认中档）。
@@ -112,6 +114,10 @@ fun FoldersOverview(
     emptyText: String = "暂无文件夹",
     /** 3.5 侧栏目标状态：用于开合动画期间的列数预测（同 FileGrid）。 */
     sidebarVisible: Boolean = false,
+    /** 4.4 下拉刷新状态（宿主创建并渲染指示器）；null = 不启用。 */
+    pullToRefreshState: PullToRefreshState? = null,
+    /** 4.4 刷新动作：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
+    onPullToRefresh: ((onComplete: () -> Unit) -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -127,6 +133,11 @@ fun FoldersOverview(
     // 收尾动画时长：捏合换档时按剩余进度缩短，用后即复位
     var flipDurationMs by remember { mutableLongStateOf(FLIP_DURATION_MS) }
 
+    // 长按回调转发最新引用（同 FileGrid：adapter 的 remember 只捕获首帧 lambda）
+    val currentOnFolderLongClick = rememberUpdatedState(onFolderLongClick)
+    // 4.4 下拉刷新动作同理（factory 闭包只创建一次）
+    val currentOnPullToRefresh = rememberUpdatedState(onPullToRefresh)
+
     val gridAdapter = remember(pinchFlip) {
         FolderAdapter(
             loader = thumbnailLoader,
@@ -134,6 +145,7 @@ fun FoldersOverview(
             textPrimaryColor = colors.textPrimary.toArgb(),
             textSecondaryColor = colors.textSecondary.toArgb(),
             onClick = onFolderClick,
+            onLongClick = { currentOnFolderLongClick.value(it) },
         ).also { it.pinchFlip = pinchFlip }
     }
 
@@ -204,6 +216,12 @@ fun FoldersOverview(
     // 3.2fix——update 在 RV 布局完成前 width=0 提前返回后，必须有下一次重跑的触发源，
     // 否则 applyCellWidth 永远量不出单元格宽度）。
     var measuredWidthDp by remember { mutableIntStateOf(0) }
+    // 组合期建立订阅（2026-09-20 修复）：update 是 AndroidView 的非观察 lambda，其中的
+    // state 读取不订阅快照；不在这里读一次，doOnLayout 的首次量宽写入不会触发重组，
+    // update 就再也没有重跑时机——冷启动列数停在 factory 的屏宽兜底值（实测 6 列/299px
+    // 卡片，正确为 5 列/365px），直到任意一次无关的状态变化才「顺带」收敛。FileGrid 在
+    // 组合期读 containerWidthDp 所以无此问题。
+    @Suppress("UNUSED_VARIABLE") val measuredWidthDpSubscribed = measuredWidthDp
 
     AndroidView(
         factory = { ctx ->
@@ -367,6 +385,19 @@ fun FoldersOverview(
                         onScrollChanged(rv.computeVerticalScrollOffset())
                     }
                 })
+            }.also { rv ->
+                // 4.4 下拉刷新：注册在捏合监听器之后（同 FileGrid 的注释）
+                pullToRefreshState?.let { st ->
+                    val currentPull = currentOnPullToRefresh
+                    rv.addOnItemTouchListener(
+                        PullToRefreshListener(
+                            state = st,
+                            thresholdPx = ctx.dp(80),
+                            maxPullPx = ctx.dp(160),
+                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st) } },
+                        )
+                    )
+                }
             }
         },
         update = { rv ->
@@ -404,6 +435,7 @@ private class FolderAdapter(
     private val textPrimaryColor: Int,
     private val textSecondaryColor: Int,
     private val onClick: (Folder) -> Unit,
+    private val onLongClick: (Folder) -> Unit,
 ) : RecyclerView.Adapter<FolderAdapter.VH>() {
 
     private val folders = mutableListOf<Folder>()
@@ -540,6 +572,17 @@ private class FolderAdapter(
         root.setOnClickListener {
             val pos = vh.bindingAdapterPosition
             if (pos != RecyclerView.NO_POSITION) onClick(folders[pos])
+        }
+        // 4.1 长按（同 FileGridAdapter）：总览的编辑模式入口 / 范围选择触发器
+        root.setOnLongClickListener { v ->
+            val pos = vh.bindingAdapterPosition
+            if (pos != RecyclerView.NO_POSITION) {
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                onLongClick(folders[pos])
+                true
+            } else {
+                false
+            }
         }
         return vh
     }

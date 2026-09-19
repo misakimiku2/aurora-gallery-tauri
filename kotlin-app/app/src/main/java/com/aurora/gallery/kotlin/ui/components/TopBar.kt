@@ -138,6 +138,12 @@ fun TopBar(
     onBack: () -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    /**
+     * 搜索胶囊开合（4.3 提升到宿主）：返回手势链需要在「退选择 / 返回上级」之前先关搜索
+     * （对齐 React handleAndroidBackPress 的 searchInput 分支），因此不能留在本组件内部。
+     */
+    searchOpen: Boolean,
+    onSearchOpenChange: (Boolean) -> Unit,
     /** 搜索胶囊的占位文案（文件夹内部 = 搜索图片，总览 = 搜索文件夹）。 */
     searchPlaceholder: String = "搜索图片",
     dateFilter: DateFilter,
@@ -174,7 +180,6 @@ fun TopBar(
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
-    var searchOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
     var dateSheetOpen by remember { mutableStateOf(false) }
     var tagsSheetOpen by remember { mutableStateOf(false) }
@@ -210,7 +215,7 @@ fun TopBar(
             }
         }
         if (showSearch && !searchOpen) {
-            TopBarButton(onClick = { searchOpen = true }) {
+            TopBarButton(onClick = { onSearchOpenChange(true) }) {
                 Icon(
                     imageVector = IconSearch,
                     contentDescription = "搜索",
@@ -236,7 +241,7 @@ fun TopBar(
                     placeholder = searchPlaceholder,
                     onClose = {
                         onSearchQueryChange("")
-                        searchOpen = false
+                        onSearchOpenChange(false)
                     },
                 )
             }

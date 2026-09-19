@@ -7,11 +7,16 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
@@ -21,8 +26,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.SelectionBar
 import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
 import com.aurora.gallery.kotlin.ui.components.TreeSidebar
@@ -32,16 +52,14 @@ import com.aurora.gallery.kotlin.ui.components.sortFolders
 import com.aurora.gallery.kotlin.ui.components.sortImages
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
+import com.aurora.gallery.kotlin.ui.components.PullToRefreshIndicator
+import com.aurora.gallery.kotlin.ui.components.PullToRefreshState
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 
@@ -67,6 +85,19 @@ class MainActivity : ComponentActivity() {
         if (granted) viewModel.startScanIfNeeded()
     }
 
+    /**
+     * 4.2 删除：MediaStore.createDeleteRequest 的系统确认弹窗结果。用户允许后 MediaStore
+     * 变更经 ContentObserver 自动重扫对账（GalleryViewModel.mediaStoreObserver），这里只
+     * 负责退出编辑模式（对齐 React 确认后 handleExitAndroidSelectionMode 的时点）。
+     */
+    private val deleteLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            viewModel.appState.exitSelectionMode()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -81,7 +112,17 @@ class MainActivity : ComponentActivity() {
                     scanning = viewModel.scanning.value,
                     thumbnailLoader = viewModel.thumbnailLoader,
                     onFolderClick = { viewModel.openFolder(it) },
-                    onImageClick = { viewModel.appState.toggleSelected(it.id) },
+                    onShareSelection = { ids ->
+                        viewModel.resolveSelectionUris(ids) { uris ->
+                            if (uris.isNotEmpty()) shareUris(uris)
+                        }
+                    },
+                    onDeleteSelection = { ids ->
+                        viewModel.resolveSelectionUris(ids) { uris ->
+                            if (uris.isNotEmpty()) requestDelete(uris)
+                        }
+                    },
+                    onPullRefresh = { onComplete -> viewModel.refreshManual(onComplete) },
                 )
             }
         }
@@ -96,6 +137,37 @@ class MainActivity : ComponentActivity() {
                 IntentFilter("aurora.debug.PINCH"),
                 ContextCompat.RECEIVER_EXPORTED,
             )
+        }
+    }
+
+    /** 4.2 分享：系统分享面板（多图 ACTION_SEND_MULTIPLE，content:// URI + 读授权）。 */
+    private fun shareUris(uris: List<Uri>) {
+        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "image/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "分享图片"))
+    }
+
+    /**
+     * 4.2 删除：API ≥ 30 走 MediaStore.createDeleteRequest（系统弹窗逐批授权，无需
+     * 写权限）；< 30 无该 API，退化为直接逐条删（本应用自建媒体可成，三方媒体被拒
+     * 只记日志，见 GalleryViewModel.deleteDirect）。完成后的索引对账都由 MediaStore
+     * observer 自动完成。
+     */
+    private fun requestDelete(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                val pi = MediaStore.createDeleteRequest(contentResolver, uris)
+                deleteLauncher.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+            } catch (e: Exception) {
+                Log.w("AuroraKotlin", "[Delete] createDeleteRequest failed", e)
+                Toast.makeText(this, "删除请求失败", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            viewModel.deleteDirect(uris)
         }
     }
 
@@ -164,11 +236,27 @@ fun App(
     scanning: Boolean,
     thumbnailLoader: ThumbnailLoader,
     onFolderClick: (Folder) -> Unit,
-    onImageClick: (Image) -> Unit,
+    /** 4.2 分享：解析选中项为 URI 后由宿主拉起系统分享面板。 */
+    onShareSelection: (Set<String>) -> Unit,
+    /** 4.2 删除：解析选中项为 URI 后由宿主发起删除请求（含系统确认）。 */
+    onDeleteSelection: (Set<String>) -> Unit,
+    /** 4.4 下拉刷新：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
+    onPullRefresh: ((onComplete: () -> Unit) -> Unit),
 ) {
     // 活动标签驱动 UI：folderId × folders 得出当前文件夹；viewMode 决定总览或文件夹网格
     val tab = state.activeTab
     val currentFolder = tab.folderId?.let { id -> folders.firstOrNull { it.id == id } }
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    // 4.4 下拉刷新的触发阈值（80dp，React threshold 同值）
+    val ptrThresholdPx = with(density) { 80.dp.toPx() }
+
+    // 4.3 返回链需要读取/关闭搜索胶囊（React 里是 searchInput focused 的判断），提升到这里
+    var searchOpen by remember { mutableStateOf(false) }
+    // 4.2 删除确认弹窗
+    var showDeleteConfirm by remember { mutableStateOf(false) }
+    // 4.4 下拉刷新状态（overview 与 browser 共用一个实例：同一时刻只有一个网格在组合）
+    val ptrState = remember { PullToRefreshState() }
 
     if (scanning) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -194,6 +282,57 @@ fun App(
         )
     }
 
+    // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。提前到这里：
+    // 4.1/4.2 的选择处理与选择栏计数在两个分支外就要用（展示序列 = 范围选择/全选的
+    // 输入，选择栏 total = 当前展示数量）。
+    val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+        sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
+    }
+    // 范围选择/全选的输入（当前展示顺序）。rememberUpdatedState：长按回调经 adapter 的
+    // 首帧闭包转发，这里保证它读到的是最新展示序列
+    val currentImageIds = rememberUpdatedState(displayImages.map { it.id })
+    val currentFolderIds = rememberUpdatedState(displayFolders.map { it.id })
+
+    // —— 4.1 编辑模式的操作语义（对齐 React useFileSelection 的安卓分支 + App.tsx 的
+    //    handleFolder* 系列；框选按 2026-09-20 用户决定平板不做）——
+    val onImageClick: (Image) -> Unit = { img ->
+        if (state.selectionMode) state.toggleSelectedInMode(img.id)
+        // 非编辑模式：点图是打开查看器（M3 接入），当前无操作
+    }
+    val onImageLongPress: (Image) -> Unit = { img ->
+        when {
+            !state.selectionMode -> state.enterSelectionMode(img.id)
+            img.id !in tab.selectedFileIds -> state.rangeSelect(img.id, currentImageIds.value)
+            // 已选中项长按：React 是文件上下文菜单（M2 接入），当前无操作
+        }
+    }
+    val onFolderCardClick: (Folder) -> Unit = { folder ->
+        if (state.selectionMode) state.toggleSelectedInMode(folder.id) else onFolderClick(folder)
+    }
+    val onFolderCardLongPress: (Folder) -> Unit = { folder ->
+        when {
+            !state.selectionMode -> state.enterSelectionMode(folder.id)
+            folder.id !in tab.selectedFileIds -> state.rangeSelect(folder.id, currentFolderIds.value)
+        }
+    }
+
+    // —— 4.3 返回手势链（D5 后：关弹层→关搜索→退选择→返回上级→总览再退=系统默认）。
+    // 排序菜单/日期弹层/标签弹层是独立窗口（Dialog/BottomSheet），系统返回先被它们
+    // 自己消费，不进本链；全屏查看器（M3）接入后插在选择模式之前。
+    BackHandler(enabled = searchOpen || state.selectionMode || tab.history.canBack) {
+        when {
+            searchOpen -> {
+                // 对齐 React close-android-search：清词 + 关胶囊
+                state.setSearchQuery("")
+                searchOpen = false
+            }
+
+            state.selectionMode -> state.exitSelectionMode()
+
+            else -> state.goBack()
+        }
+    }
+
     // 3.5 面板开合：侧栏在左、内容（TopBar + 网格）在右，开关时侧栏宽度收缩把内容
     // 推挤过去（SidebarPane 内做 300ms ease-out 动画，对齐 React SidebarPane）。
     Row(Modifier.fillMaxSize()) {
@@ -213,59 +352,88 @@ fun App(
             )
         }
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            TopBar(
-                title = currentFolder?.name ?: "文件夹",
-                canBack = tab.history.canBack,
-                onBack = { state.goBack() },
-                // 主界面（总览）不显示返回键（2026-09-20 用户要求）；进文件夹后才有返回
-                showBack = inBrowser,
-                sidebarVisible = state.layout.isSidebarVisible,
-                onToggleSidebar = { state.toggleSidebar() },
-                searchQuery = tab.searchQuery,
-                onSearchQueryChange = { state.setSearchQuery(it) },
-                searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
-                dateFilter = tab.dateFilter,
-                onDateFilterChange = { state.setDateFilter(it) },
-                sortBy = state.sortBy,
-                onSortChange = { state.sortBy = it },
-                sortDirection = state.sortDirection,
-                onSortDirectionToggle = {
-                    state.sortDirection =
-                        if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
-                },
-                groupBy = state.groupBy,
-                onGroupByChange = { state.groupBy = it },
-                layoutMode = tab.layoutMode,
-                onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
-                showSearch = true,
-                showSortMenu = true,
-                showViewMode = inBrowser,
-                showDateFilter = true,
-                showGroupBy = inBrowser,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (!inBrowser) {
-                FoldersOverview(
-                    folders = displayFolders,
-                    thumbnailLoader = thumbnailLoader,
-                    onFolderClick = onFolderClick,
-                    level = state.gridLevel,
-                    onLevelChange = { state.gridLevel = it },
-                    // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
-                    sidebarVisible = state.layout.isSidebarVisible,
-                    // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
-                    initialScrollTop = state.overviewScrollTop,
-                    onScrollChanged = { state.overviewScrollTop = it },
-                    emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
-                    else "暂无文件夹",
-                    modifier = Modifier.fillMaxWidth().weight(1f),
+            // 4.2 编辑模式：选择栏替换 TopBar（对齐 React ToolbarPane 的二选一结构）
+            if (state.selectionMode) {
+                SelectionBar(
+                    selectedCount = tab.selectedFileIds.size,
+                    totalCount = if (inBrowser) displayImages.size else displayFolders.size,
+                    onToggleSelectAll = {
+                        val ids = if (inBrowser) currentImageIds.value else currentFolderIds.value
+                        if (tab.selectedFileIds.size >= ids.size) state.deselectAll()
+                        else state.selectAll(ids)
+                    },
+                    onExit = { state.exitSelectionMode() },
+                    onDelete = { showDeleteConfirm = true },
+                    onShare = { onShareSelection(tab.selectedFileIds) },
+                    onMore = {
+                        // React 打开文件操作上下文菜单（复制/移动/标签等）；M2 接入
+                        Toast.makeText(context, "更多操作将随 M2 提供", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             } else {
-                // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。
-                // remember 键齐备：任一条件变化才重算，1~2 万条下键入也不卡。
-                val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
-                    sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
+                TopBar(
+                    title = currentFolder?.name ?: "文件夹",
+                    canBack = tab.history.canBack,
+                    onBack = { state.goBack() },
+                    // 主界面（总览）不显示返回键（2026-09-20 用户要求）；进文件夹后才有返回
+                    showBack = inBrowser,
+                    sidebarVisible = state.layout.isSidebarVisible,
+                    onToggleSidebar = { state.toggleSidebar() },
+                    searchQuery = tab.searchQuery,
+                    onSearchQueryChange = { state.setSearchQuery(it) },
+                    searchOpen = searchOpen,
+                    onSearchOpenChange = { searchOpen = it },
+                    searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
+                    dateFilter = tab.dateFilter,
+                    onDateFilterChange = { state.setDateFilter(it) },
+                    sortBy = state.sortBy,
+                    onSortChange = { state.sortBy = it },
+                    sortDirection = state.sortDirection,
+                    onSortDirectionToggle = {
+                        state.sortDirection =
+                            if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+                    },
+                    groupBy = state.groupBy,
+                    onGroupByChange = { state.groupBy = it },
+                    layoutMode = tab.layoutMode,
+                    onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+                    showSearch = true,
+                    showSortMenu = true,
+                    showViewMode = inBrowser,
+                    showDateFilter = true,
+                    showGroupBy = inBrowser,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            if (!inBrowser) {
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    FoldersOverview(
+                        folders = displayFolders,
+                        thumbnailLoader = thumbnailLoader,
+                        onFolderClick = onFolderCardClick,
+                        onFolderLongClick = onFolderCardLongPress,
+                        level = state.gridLevel,
+                        onLevelChange = { state.gridLevel = it },
+                        // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
+                        sidebarVisible = state.layout.isSidebarVisible,
+                        // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
+                        initialScrollTop = state.overviewScrollTop,
+                        onScrollChanged = { state.overviewScrollTop = it },
+                        emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
+                        else "暂无文件夹",
+                        pullToRefreshState = ptrState,
+                        onPullToRefresh = onPullRefresh,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    // 4.4 指示器覆盖在网格上层（pointer-events 由 Canvas 天然不拦截触摸）
+                    PullToRefreshIndicator(
+                        state = ptrState,
+                        thresholdPx = ptrThresholdPx,
+                        modifier = Modifier.fillMaxSize(),
+                    )
                 }
+            } else {
                 if (displayImages.isEmpty()) {
                     Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                         val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
@@ -275,22 +443,58 @@ fun App(
                         )
                     }
                 } else {
-                    FileGrid(
-                        images = displayImages,
-                        selectedIds = tab.selectedFileIds,
-                        thumbnailLoader = thumbnailLoader,
-                        onItemClick = onImageClick,
-                        layoutMode = tab.layoutMode,
-                        groupBy = state.groupBy,
-                        level = state.gridLevel,
-                        onLevelChange = { state.gridLevel = it },
-                        sidebarVisible = state.layout.isSidebarVisible,
-                        // weight(1f)：网格只占顶栏之下的剩余空间。fillMaxSize 会把 RecyclerView
-                        // 量成全屏高、内容画进顶栏区域。
-                        modifier = Modifier.fillMaxWidth().weight(1f),
-                    )
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                        FileGrid(
+                            images = displayImages,
+                            selectedIds = tab.selectedFileIds,
+                            thumbnailLoader = thumbnailLoader,
+                            onItemClick = onImageClick,
+                            onItemLongClick = onImageLongPress,
+                            layoutMode = tab.layoutMode,
+                            groupBy = state.groupBy,
+                            level = state.gridLevel,
+                            onLevelChange = { state.gridLevel = it },
+                            sidebarVisible = state.layout.isSidebarVisible,
+                            pullToRefreshState = ptrState,
+                            onPullToRefresh = onPullRefresh,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        PullToRefreshIndicator(
+                            state = ptrState,
+                            thresholdPx = ptrThresholdPx,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    if (showDeleteConfirm) {
+        val n = tab.selectedFileIds.size
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirm = false },
+            title = { Text("删除所选") },
+            text = {
+                Text(
+                    if (inBrowser) "确定删除所选的 $n 张图片吗？删除后可尝试在系统相册的回收站中找回。"
+                    else "确定删除所选 $n 个文件夹内的全部图片吗？删除后可尝试在系统相册的回收站中找回。",
+                    color = AuroraTheme.colors.textPrimary,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showDeleteConfirm = false
+                    onDeleteSelection(tab.selectedFileIds)
+                }) {
+                    Text("删除", color = Color(0xFFEF4444))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirm = false }) {
+                    Text("取消", color = AuroraTheme.colors.textPrimary)
+                }
+            },
+        )
     }
 }

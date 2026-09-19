@@ -213,6 +213,7 @@ class AppState(
      * scope=ALL）并清空选中。
      */
     fun openFolder(folderId: String) {
+        selectionMode = false
         updateActiveTab { tab ->
             tab.copy(
                 folderId = folderId,
@@ -249,6 +250,9 @@ class AppState(
         val tab = activeTab
         val targetIndex = tab.history.currentIndex + delta
         val step = tab.history.stack.getOrNull(targetIndex) ?: return false
+        // 导航即退出编辑模式（React 无此路径——返回链在编辑模式先退选择；侧栏导航等
+        // 进入时同样复位，避免「选中残留到另一个视图」）
+        selectionMode = false
         updateActiveTab {
             it.copy(
                 folderId = step.folderId,
@@ -263,7 +267,15 @@ class AppState(
         return true
     }
 
-    // —— 选择（M1 2.1 基础选中；范围/框选在 4.1 扩展）——
+    // —— 选择（4.1 编辑模式/多选/范围选择；框选按 2026-09-20 用户决定平板不做）——
+
+    /**
+     * 编辑模式（选择模式）。对齐 React 的应用级 `isAndroidSelectionMode`（App.tsx:282，
+     * 单标签下应用级与标签级等价）：长按进入，选择栏 X / 返回手势退出。
+     * 退出总是连带清空选中（对齐 handleExitAndroidSelectionMode）。
+     */
+    var selectionMode by mutableStateOf(false)
+        private set
 
     /** 切换选中并把范围选择锚点挪到该图（对齐 React 点击即更新 lastSelectedId）。 */
     fun toggleSelected(imageId: String) {
@@ -277,6 +289,66 @@ class AppState(
 
     fun clearSelection() {
         updateActiveTab { it.copy(selectedFileIds = emptySet(), lastSelectedId = null) }
+    }
+
+    /**
+     * 长按进入编辑模式并选中该项（对齐 React handleEnterAndroidSelectionMode：无论
+     * 总览还是文件夹内，长按的项即首个选中项 + 锚点）。
+     */
+    fun enterSelectionMode(id: String) {
+        selectionMode = true
+        updateActiveTab { it.copy(selectedFileIds = setOf(id), lastSelectedId = id) }
+    }
+
+    /** 退出编辑模式并清空选中（对齐 handleExitAndroidSelectionMode）。 */
+    fun exitSelectionMode() {
+        selectionMode = false
+        clearSelection()
+    }
+
+    /** 编辑模式内点击：切换选中（[toggleSelected] 已同步更新锚点）。 */
+    fun toggleSelectedInMode(id: String) = toggleSelected(id)
+
+    /**
+     * 全选当前展示序列（4.2 选择栏）。入参是**界面上的展示顺序**（过滤+排序后的
+     * 列表），对齐 React onSelectAll 的 displayFileIds 分支；React 总览分支选的是
+     * 未过滤的 roots，这里统一用展示序列（选中不可见项只会让计数与界面脱节）。
+     */
+    fun selectAll(displayIds: List<String>) {
+        updateActiveTab { it.copy(selectedFileIds = displayIds.toSet()) }
+    }
+
+    /**
+     * 取消全选但**留在编辑模式**（对齐 React handleDeselectAllAndroid：只清
+     * selectedFileIds，锚点与模式都不动）。
+     */
+    fun deselectAll() {
+        updateActiveTab { it.copy(selectedFileIds = emptySet()) }
+    }
+
+    /**
+     * 范围选择（4.1）：编辑模式内长按未选中项，把 [displayIds]（当前展示顺序）中
+     * 锚点与该项之间的全部条目**并入**已选集合。语义逐条对齐 React
+     * `useFileSelection.handleAndroidRangeSelect`：有锚点且已有选中 → 区间合并
+     * （Set 去重，不是桌面 Shift+点击的整段替换）；否则退化为普通加选。锚点挪到
+     * 本次长按的项，支持连续扩展。
+     */
+    fun rangeSelect(id: String, displayIds: List<String>) {
+        updateActiveTab { tab ->
+            val anchor = tab.lastSelectedId
+            if (anchor != null && tab.selectedFileIds.isNotEmpty()) {
+                val a = displayIds.indexOf(anchor)
+                val b = displayIds.indexOf(id)
+                if (a != -1 && b != -1) {
+                    val range = displayIds.subList(minOf(a, b), maxOf(a, b) + 1).toSet()
+                    tab.copy(selectedFileIds = tab.selectedFileIds + range, lastSelectedId = id)
+                } else {
+                    tab.copy(selectedFileIds = tab.selectedFileIds + id, lastSelectedId = id)
+                }
+            } else {
+                tab.copy(selectedFileIds = tab.selectedFileIds + id, lastSelectedId = id)
+            }
+        }
     }
 
     // —— 搜索与日期筛选（3.2 TopBar 消费）——

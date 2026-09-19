@@ -70,6 +70,11 @@ fun FileGrid(
     selectedIds: Set<String>,
     thumbnailLoader: ThumbnailLoader,
     onItemClick: (Image) -> Unit,
+    /**
+     * 长按回调（4.1 编辑模式入口）。语义在宿主侧决定：非编辑模式 → 进选择模式；
+     * 编辑模式内长按未选中项 → 范围选择；已选中项 → 预留 M2 上下文菜单（当前无操作）。
+     */
+    onItemLongClick: (Image) -> Unit = {},
     modifier: Modifier = Modifier,
     layoutMode: LayoutMode = LayoutMode.GRID,
     groupBy: GroupBy = GroupBy.NONE,
@@ -82,6 +87,10 @@ fun FileGrid(
     onLevelChange: (Int) -> Unit = {},
     /** 3.5 侧栏目标状态：用于开合动画期间的列数预测（见 update 内的 predicting 注释）。 */
     sidebarVisible: Boolean = false,
+    /** 4.4 下拉刷新状态（宿主创建并渲染指示器）；null = 不启用。 */
+    pullToRefreshState: PullToRefreshState? = null,
+    /** 4.4 刷新动作：宿主触发扫描，完成时回调 [onComplete]（指示器落勾）。 */
+    onPullToRefresh: ((onComplete: () -> Unit) -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -156,6 +165,12 @@ fun FileGrid(
         buildGridItems(images, groupBy, collapsedIds)
     }
 
+    // 长按回调走 rememberUpdatedState：adapter 的 remember 只捕获首帧 lambda，宿主侧
+    // 处理函数依赖的选中状态/展示序列会变，必须由这里转发最新引用
+    val currentOnItemLongClick = rememberUpdatedState(onItemLongClick)
+    // 4.4 下拉刷新动作同理（factory 闭包只创建一次）
+    val currentOnPullToRefresh = rememberUpdatedState(onPullToRefresh)
+
     val adapter = remember {
         FileGridAdapter(
             loader = thumbnailLoader,
@@ -164,6 +179,7 @@ fun FileGrid(
             textSecondaryColor = colors.textSecondary.toArgb(),
             primaryColor = colors.primary.toArgb(),
             onClick = onItemClick,
+            onLongClick = { currentOnItemLongClick.value(it) },
             onToggleGroup = { id ->
                 collapsedIds = if (id in collapsedIds) collapsedIds - id else collapsedIds + id
             },
@@ -250,8 +266,7 @@ fun FileGrid(
                 ) * density).roundToInt()
             }
             RecyclerView(ctx).apply {
-                layoutManager = if (layoutMode == LayoutMode.ADAPTIVE) {
-                    createAdaptiveLayoutManager(
+                layoutManager = if (layoutMode == LayoutMode.ADAPTIVE) {                    createAdaptiveLayoutManager(
                         ctx,
                         initialRowHeightPx,
                         adaptiveTextHeightPx,
@@ -619,6 +634,20 @@ fun FileGrid(
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
                 pinch.debugAttachRv(this)
+            }.also { rv ->
+                // 4.4 下拉刷新：注册在捏合监听器之后——多指事件捏合先拦，轮不到下拉；
+                // 单指顶部下拉捏合监听器放行，由这里接管（见 PullToRefreshListener）
+                pullToRefreshState?.let { st ->
+                    val currentPull = currentOnPullToRefresh
+                    rv.addOnItemTouchListener(
+                        PullToRefreshListener(
+                            state = st,
+                            thresholdPx = ctx.dp(80),
+                            maxPullPx = ctx.dp(160),
+                            onRefresh = { currentPull.value?.invoke { finishPullToRefresh(rv, st) } },
+                        )
+                    )
+                }
             }
         },
         update = { rv ->
@@ -1456,6 +1485,7 @@ private class FileGridAdapter(
     private val textSecondaryColor: Int,
     private val primaryColor: Int,
     private val onClick: (Image) -> Unit,
+    private val onLongClick: (Image) -> Unit,
     private val onToggleGroup: (String) -> Unit,
 ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
@@ -1668,6 +1698,18 @@ private class FileGridAdapter(
                 refs.root.setOnClickListener {
                     val item = items.getOrNull(vh.bindingAdapterPosition) as? GridItem.Photo
                     if (item != null) onClick(item.image)
+                }
+                // 4.1 长按：进入编辑模式 / 范围选择的触发器。RV 手指落在 item 上时事件由
+                // 子 view 消费，pinch 监听器的 OnTouchListener 路径不参与，长按照常触发。
+                refs.root.setOnLongClickListener { v ->
+                    val item = items.getOrNull(vh.bindingAdapterPosition) as? GridItem.Photo
+                    if (item != null) {
+                        v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        onLongClick(item.image)
+                        true
+                    } else {
+                        false
+                    }
                 }
                 vh
             }
