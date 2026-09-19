@@ -836,7 +836,7 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_aurora_core_checksum_func_list_images() != 15722) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 23580) {
+    if (lib.uniffi_aurora_core_checksum_func_upsert_media_images() != 3627) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
@@ -1096,6 +1096,18 @@ data class Folder (
      * 封面图 content_uri（取该文件夹下最新一张图），无图时为 None。
      */
     var `coverUri`: kotlin.String?
+    , 
+    /**
+     * 最早一张子图的创建时间（epoch 秒；无图 = 0）。总览的日期排序与「创建时间」
+     * 日期筛选用（对齐 React 总览按 folder.createdAt 排序的语义）。
+     */
+    var `createdAt`: kotlin.Long
+    , 
+    /**
+     * 最新一张子图的修改时间（epoch 秒；无图 = 0）。总览「修改时间」日期筛选用
+     * （该时间落在区间内 ⟺ 文件夹最近一次更新在区间内）。
+     */
+    var `modifiedAt`: kotlin.Long
     
 ){
     
@@ -1116,6 +1128,8 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
             FfiConverterString.read(buf),
             FfiConverterLong.read(buf),
             FfiConverterOptionalString.read(buf),
+            FfiConverterLong.read(buf),
+            FfiConverterLong.read(buf),
         )
     }
 
@@ -1123,7 +1137,9 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
             FfiConverterString.allocationSize(value.`id`) +
             FfiConverterString.allocationSize(value.`name`) +
             FfiConverterLong.allocationSize(value.`imageCount`) +
-            FfiConverterOptionalString.allocationSize(value.`coverUri`)
+            FfiConverterOptionalString.allocationSize(value.`coverUri`) +
+            FfiConverterLong.allocationSize(value.`createdAt`) +
+            FfiConverterLong.allocationSize(value.`modifiedAt`)
     )
 
     override fun write(value: Folder, buf: ByteBuffer) {
@@ -1131,6 +1147,8 @@ public object FfiConverterTypeFolder: FfiConverterRustBuffer<Folder> {
             FfiConverterString.write(value.`name`, buf)
             FfiConverterLong.write(value.`imageCount`, buf)
             FfiConverterOptionalString.write(value.`coverUri`, buf)
+            FfiConverterLong.write(value.`createdAt`, buf)
+            FfiConverterLong.write(value.`modifiedAt`, buf)
     }
 }
 
@@ -1643,6 +1661,10 @@ public object FfiConverterSequenceTypeMediaImage: FfiConverterRustBuffer<List<Me
 
         /**
          * 把 Kotlin 扫描的 MediaStore 图片写入索引（按 bucket 聚合出文件夹）。
+         *
+         * 传入的是设备当前的全量快照，写入走 `reconcile_mediastore_snapshot`：
+         * 快照外的 Folder/Image 行（被删除/改名的相册、已消失的图片）在同一事务里清除，
+         * 索引不再只增不减。
          */
     @Throws(AuroraException::class) fun `upsertMediaImages`(`images`: List<MediaImage>)
         = 

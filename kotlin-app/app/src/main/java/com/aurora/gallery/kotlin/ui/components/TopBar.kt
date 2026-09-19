@@ -3,9 +3,12 @@ package com.aurora.gallery.kotlin.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,19 +16,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,21 +41,27 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.aurora.gallery.kotlin.state.DateFilter
 import com.aurora.gallery.kotlin.state.DateFilterMode
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -75,9 +85,12 @@ import java.util.Locale
  *    再点重新开始。
  *
  * 与 React 版的差异（均有意为之，见各处注释）：M1 无侧栏（3.4）故无侧栏开关；无色板
- * 搜索（M6）；标签过滤（M2）；文件夹总览的视图循环/排序（React 的 folderLayoutMode，
- * Kotlin 总览暂只支持网格）不提供——[showBrowserTools] 只在文件夹内部视图为 true。
- * 手机竖屏的「更多」菜单合并（isPhonePortrait）随手机适配再做。
+ * 搜索（M6）；标签过滤（M2）不提供；手机竖屏的「更多」菜单合并（isPhonePortrait）随手机
+ * 适配再做。工具按钮按视图提供（2026-09-17 起）：文件夹内部 = 搜索/排序/视图/日期全量；
+ * 总览 = 搜索（按文件夹名过滤，React 总览搜索是全局文件搜索、Kotlin M1 无此管道）+
+ * 排序 + 日期筛选（Folder 带 createdAt/modifiedAt 后接入）；总览的视图循环
+ * （folderLayoutMode）判定不做——文件夹卡片是等比正方形，adaptive/masonry 视觉与
+ * grid 等价，三档捏合已覆盖尺寸调整。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -87,6 +100,8 @@ fun TopBar(
     onBack: () -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    /** 搜索胶囊的占位文案（文件夹内部 = 搜索图片，总览 = 搜索文件夹）。 */
+    searchPlaceholder: String = "搜索图片",
     dateFilter: DateFilter,
     onDateFilterChange: (DateFilter) -> Unit,
     sortBy: SortOption,
@@ -97,8 +112,18 @@ fun TopBar(
     onGroupByChange: (GroupBy) -> Unit,
     layoutMode: LayoutMode,
     onLayoutModeChange: (LayoutMode) -> Unit,
-    /** 是否显示浏览器工具（搜索/排序/视图/日期）：仅在文件夹内部视图为 true。 */
-    showBrowserTools: Boolean,
+    /** 是否显示搜索开关（文件夹内部与总览都提供；总览按文件夹名过滤）。 */
+    showSearch: Boolean,
+    /** 是否显示排序菜单（总览也提供，字段经 [sortChoices] 收窄）。 */
+    showSortMenu: Boolean,
+    /** 是否显示视图循环按钮（仅文件夹内部视图；总览暂只支持网格）。 */
+    showViewMode: Boolean,
+    /** 是否显示日期筛选（2026-09-17 起总览也提供：按 Folder 的代表日期筛文件夹）。 */
+    showDateFilter: Boolean,
+    /** 排序菜单可选字段。 */
+    sortChoices: List<SortOption> = listOf(SortOption.NAME, SortOption.DATE, SortOption.SIZE),
+    /** 排序菜单是否含分组小节（总览是文件夹卡片，无分组概念，对齐 React 总览隐藏 groupBy）。 */
+    showGroupBy: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val colors = AuroraTheme.colors
@@ -122,7 +147,7 @@ fun TopBar(
                 modifier = Modifier.size(20.dp),
             )
         }
-        if (showBrowserTools && !searchOpen) {
+        if (showSearch && !searchOpen) {
             TopBarButton(onClick = { searchOpen = true }) {
                 Icon(
                     imageVector = IconSearch,
@@ -146,6 +171,7 @@ fun TopBar(
                 SearchPill(
                     query = searchQuery,
                     onQueryChange = onSearchQueryChange,
+                    placeholder = searchPlaceholder,
                     onClose = {
                         onSearchQueryChange("")
                         searchOpen = false
@@ -153,7 +179,7 @@ fun TopBar(
                 )
             }
         }
-        if (showBrowserTools) {
+        if (showSortMenu) {
             Box {
                 TopBarButton(
                     highlighted = sortMenuOpen,
@@ -166,68 +192,58 @@ fun TopBar(
                         modifier = Modifier.size(18.dp),
                     )
                 }
-                // 选项点击后不收起（对齐 React：可连续调字段/方向/分组，点外部才关）
-                DropdownMenu(expanded = sortMenuOpen, onDismissRequest = { sortMenuOpen = false }) {
-                    val sortLabels = mapOf(
-                        SortOption.NAME to "名称",
-                        SortOption.DATE to "日期",
-                        SortOption.SIZE to "大小",
-                    )
-                    sortLabels.forEach { (opt, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label, color = if (sortBy == opt) colors.primary else colors.textPrimary, fontSize = 14.sp) },
-                            trailingIcon = {
-                                if (sortBy == opt) {
-                                    Icon(CheckMark, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
-                                }
+                // 桌面同款弹出面板（对齐 React 桌面 sortMenu 的 w-48 + panel/90 + border +
+                // 大柔和投影 + 小节标题 + 蓝底悬停项；2026-09-17 用户要求弹窗风格与桌面一致）
+                AuroraDropdown(
+                    expanded = sortMenuOpen,
+                    onDismissRequest = { sortMenuOpen = false },
+                ) {
+                    AuroraMenuHeader("排序方式")
+                    sortChoices.forEach { opt ->
+                        AuroraMenuItem(
+                            text = when (opt) {
+                                SortOption.NAME -> "按名称"
+                                SortOption.DATE -> "按时间"
+                                SortOption.SIZE -> "按大小"
                             },
+                            checked = sortBy == opt,
                             onClick = { onSortChange(opt) },
                         )
                     }
-                    HorizontalDivider(color = colors.subtle)
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (sortDirection == SortDirection.ASC) "升序" else "降序",
-                                color = colors.textPrimary,
-                                fontSize = 14.sp,
-                            )
-                        },
-                        trailingIcon = {
+                    AuroraMenuDivider()
+                    AuroraMenuItem(
+                        text = if (sortDirection == SortDirection.ASC) "升序" else "降序",
+                        onClick = onSortDirectionToggle,
+                        // 升序 = 箭头朝上（React 同款 rotate）
+                        trailing = {
                             Icon(
                                 imageVector = IconArrowDownUp,
                                 contentDescription = null,
-                                tint = colors.textSecondary,
-                                // 升序 = 箭头朝上（React 同款 rotate）
+                                tint = AuroraTheme.colors.textSecondary,
                                 modifier = Modifier.size(14.dp).rotate(if (sortDirection == SortDirection.ASC) 180f else 0f),
                             )
                         },
-                        onClick = onSortDirectionToggle,
                     )
-                    HorizontalDivider(color = colors.subtle)
-                    DropdownMenuItem(
-                        text = { Text("分组", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.textSecondary) },
-                        enabled = false,
-                        onClick = {},
-                    )
-                    val groupLabels = mapOf(
-                        GroupBy.NONE to "无",
-                        GroupBy.TYPE to "类型",
-                        GroupBy.DATE to "日期",
-                    )
-                    groupLabels.forEach { (opt, label) ->
-                        DropdownMenuItem(
-                            text = { Text(label, color = if (groupBy == opt) colors.primary else colors.textPrimary, fontSize = 14.sp) },
-                            trailingIcon = {
-                                if (groupBy == opt) {
-                                    Icon(CheckMark, contentDescription = null, tint = colors.primary, modifier = Modifier.size(16.dp))
-                                }
-                            },
-                            onClick = { onGroupByChange(opt) },
+                    if (showGroupBy) {
+                        AuroraMenuDivider()
+                        AuroraMenuHeader("分组方式")
+                        val groupLabels = mapOf(
+                            GroupBy.NONE to "无",
+                            GroupBy.TYPE to "类型",
+                            GroupBy.DATE to "日期",
                         )
+                        groupLabels.forEach { (opt, label) ->
+                            AuroraMenuItem(
+                                text = label,
+                                checked = groupBy == opt,
+                                onClick = { onGroupByChange(opt) },
+                            )
+                        }
                     }
                 }
             }
+        }
+        if (showViewMode) {
             TopBarButton(
                 onClick = {
                     // 安卓端三档循环（React isAndroid 分支）：grid → adaptive → masonry → grid
@@ -246,6 +262,8 @@ fun TopBar(
                     modifier = Modifier.size(18.dp),
                 )
             }
+        }
+        if (showDateFilter) {
             TopBarButton(
                 highlighted = dateSheetOpen,
                 onClick = { dateSheetOpen = true },
@@ -265,6 +283,10 @@ fun TopBar(
         ModalBottomSheet(
             onDismissRequest = { dateSheetOpen = false },
             containerColor = AuroraTheme.colors.panel,
+            // 打开即全展（2026-09-17 用户报障：横屏上半开锚点 ≈ 半屏高，月历下方的
+            // 模式 chips 与按钮整段在屏幕外，看起来「被遮挡不完整」；内容本就放得下，
+            // React 版 bottom sheet 也是全高。verticalScroll 保留作字体放大后的安全阀）。
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             DateFilterSheet(
                 filter = dateFilter,
@@ -297,11 +319,110 @@ private fun TopBarButton(
     }
 }
 
+/**
+ * 桌面同款的弹出菜单容器（2026-09-17，替代 Material DropdownMenu 以对齐 React 桌面
+ * sortMenu 观感）：w-48(192dp) + panel 底 + 1dp subtle 描边 + rounded-lg + 大柔和投影
+ * + py-2；锚定在按钮正下方并右对齐（React `top-full right-0 mt-2`）。focusable=true
+ * 让点外部/返回键触发 [onDismissRequest]。选项点击后不收起（调用方控制 expanded，
+ * 对齐 React 可连续调字段/方向/分组）。
+ */
+@Composable
+private fun AuroraDropdown(
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (!expanded) return
+    val colors = AuroraTheme.colors
+    val density = LocalDensity.current
+    // 锚点 Box 是 40dp 按钮；下移 40dp（按钮高）+ 8dp（mt-2）让面板出现在按钮下方
+    val yOffset = with(density) { 48.dp.roundToPx() }
+    Popup(
+        alignment = Alignment.TopEnd,
+        offset = IntOffset(0, yOffset),
+        onDismissRequest = onDismissRequest,
+        properties = PopupProperties(focusable = true),
+    ) {
+        Column(
+            Modifier
+                .width(192.dp)
+                .shadow(elevation = 12.dp, shape = RoundedCornerShape(8.dp), clip = false)
+                .clip(RoundedCornerShape(8.dp))
+                .background(colors.panel)
+                .border(1.dp, colors.subtle, RoundedCornerShape(8.dp))
+                .padding(vertical = 8.dp),
+            content = content,
+        )
+    }
+}
+
+/** 小节标题（React `px-3 py-1 text-xs font-bold text-gray-400 uppercase`）。 */
+@Composable
+private fun AuroraMenuHeader(text: String) {
+    val colors = AuroraTheme.colors
+    Text(
+        text,
+        Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Bold,
+        color = colors.textSecondary,
+    )
+}
+
+/**
+ * 菜单条目（React `mx-2 px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white`）：
+ * 按压 = 蓝底白字（触屏的 hover 等价物）；[checked] 画选中勾（常规蓝色、按压白色），
+ * [trailing] 是非勾选型尾部图标（如升降序的箭头）。
+ */
+@Composable
+private fun AuroraMenuItem(
+    text: String,
+    onClick: () -> Unit,
+    checked: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val colors = AuroraTheme.colors
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    Row(
+        Modifier
+            .padding(horizontal = 8.dp, vertical = 1.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (pressed) colors.primary else Color.Transparent)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text, fontSize = 14.sp, color = if (pressed) Color.White else colors.textPrimary)
+        when {
+            checked -> Icon(
+                CheckMark,
+                contentDescription = null,
+                tint = if (pressed) Color.White else colors.primary,
+                modifier = Modifier.size(14.dp),
+            )
+            trailing != null -> trailing()
+        }
+    }
+}
+
+/** 分隔线（React `border-t border-black/5 my-1`）。 */
+@Composable
+private fun AuroraMenuDivider() {
+    HorizontalDivider(
+        Modifier.padding(vertical = 4.dp),
+        color = AuroraTheme.colors.subtle,
+    )
+}
+
 /** 搜索胶囊（React 安卓 `isSearchOpen` 时的中央输入；自动聚焦弹键盘，X 关闭并清词）。 */
 @Composable
 private fun SearchPill(
     query: String,
     onQueryChange: (String) -> Unit,
+    placeholder: String,
     onClose: () -> Unit,
 ) {
     val colors = AuroraTheme.colors
@@ -309,6 +430,9 @@ private fun SearchPill(
     LaunchedEffect(Unit) { focusRequester.requestFocus() }
     Row(
         modifier = Modifier
+            // 平板横屏不撑满中栏，对齐 React 桌面搜索框的 `min(100%, 500px)` 封顶
+            //（2026-09-17 用户反馈：横屏上搜索框太长）；窄屏下 fillMaxWidth 自然占满。
+            .widthIn(max = 500.dp)
             .fillMaxWidth()
             .padding(horizontal = 8.dp)
             .height(40.dp)
@@ -335,7 +459,7 @@ private fun SearchPill(
             decorationBox = { inner ->
                 Box(contentAlignment = Alignment.CenterStart) {
                     if (query.isEmpty()) {
-                        Text("搜索图片", color = colors.textSecondary, fontSize = 14.sp)
+                        Text(placeholder, color = colors.textSecondary, fontSize = 14.sp)
                     }
                     inner()
                 }
@@ -446,19 +570,38 @@ private fun DateFilterSheet(
         }
         Spacer(Modifier.height(4.dp))
         val cells = remember(viewYear, viewMonth) { buildMonthCells(viewYear, viewMonth) }
+        // 区间带（对齐 React CalendarWidget）：in-range 格子画**整格宽的方形背景**，
+        // 相邻格子无缝相接；首/尾日在圆点下画半格连接带（50% 硬停渐变，React 的
+        // from-50% to-blue-100 同款）——此前把带圆角的背景画在每个格子自己的 Box 里，
+        // 接缝处有圆角缺口、首尾没有连接，选区看起来断成数截（2026-09-17 用户报障）。
+        val bandColor = colors.primary.copy(alpha = 0.12f)
         for (row in 0 until 6) {
             Row(Modifier.fillMaxWidth()) {
                 cells.drop(row * 7).take(7).forEach { cell ->
                     val selected = cell.epoch == filter.start || cell.epoch == filter.end
                     val inRange = filter.start != null && filter.end != null &&
                         cell.epoch > filter.start && cell.epoch < filter.end
+                    // 起止点与整段区间重合（start==end，同一天点两次）时不画连接带
+                    val isRangeStart = filter.start != null && filter.end != null &&
+                        cell.epoch == filter.start && filter.start != filter.end
+                    val isRangeEnd = filter.start != null && filter.end != null &&
+                        cell.epoch == filter.end && filter.start != filter.end
+                    val bandModifier = when {
+                        inRange -> Modifier.background(bandColor)
+                        isRangeStart -> Modifier.background(
+                            Brush.horizontalGradient(0.5f to Color.Transparent, 0.5f to bandColor),
+                        )
+                        isRangeEnd -> Modifier.background(
+                            Brush.horizontalGradient(0.5f to bandColor, 0.5f to Color.Transparent),
+                        )
+                        else -> Modifier
+                    }
                     Box(
                         Modifier
                             .weight(1f)
                             .height(40.dp)
                             .padding(vertical = 2.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (inRange) colors.primary.copy(alpha = 0.12f) else Color.Transparent)
+                            .then(bandModifier)
                             .clickable {
                                 onFilterChange(
                                     if (filter.start == null || filter.end != null) {
@@ -482,12 +625,11 @@ private fun DateFilterSheet(
                             },
                         contentAlignment = Alignment.Center,
                     ) {
-                        val isSelected = selected
                         Box(
                             Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(if (isSelected) colors.primary else Color.Transparent),
+                                .background(if (selected) colors.primary else Color.Transparent),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
@@ -495,7 +637,7 @@ private fun DateFilterSheet(
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = when {
-                                    isSelected -> Color.White
+                                    selected -> Color.White
                                     cell.monthOffset != 0 -> colors.textSecondary.copy(alpha = 0.45f)
                                     else -> colors.textPrimary
                                 },

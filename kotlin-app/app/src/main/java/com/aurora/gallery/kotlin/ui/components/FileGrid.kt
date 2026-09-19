@@ -3,6 +3,7 @@ package com.aurora.gallery.kotlin.ui.components
 import android.graphics.Outline
 import android.graphics.Rect
 import android.graphics.Typeface
+import android.util.Log
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
@@ -28,6 +29,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import androidx.recyclerview.widget.StaggeredSpanAccess
@@ -41,10 +43,12 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import uniffi.aurora_core.Image
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
-/** 普通可变引用（捏合锚点透传）：变化不需要触发重组，update 里同步读取即可。 */
-private class AnchorOverrideHolder {
+/** 普通可变引用（捏合锚点透传）：变化不需要触发重组，update 里同步读取即可。
+ *  FileGrid 与 FoldersOverview 的落档锚点共用（internal 便于同包的 FoldersOverview 复用）。 */
+internal class AnchorOverrideHolder {
     var value: PinchAnchor? = null
 }
 
@@ -276,9 +280,16 @@ fun FileGrid(
                 // 默认 mCachedViews 容量只有 2，落档时几乎全部掉进回收池 → 新 LM 逐个重绑 →
                 // loadInto 在内存缓存逐出时清空重载，表现为「松手后一些图片刷新一下」。
                 // 提到 48（≥ 最大档位一屏的可见数）后，同位置视图经 mCachedViews 复用、
-                // 完全不重走 bind；高度正确性由 onViewAttachedToWindow 归一兜底（不走 bind
-                // 的复用路径）。
-                setItemViewCacheSize(48)
+                // 完全不重走 bind；高度正确性由 onViewAttachedToWindow 归一兜底（不走
+                // bind 的复用路径）。
+                // 2026-09-17 提到 128（2026-09-17 用户报障「捏合时部分图片闪一下像刷新」）：
+                // 瀑布流/自适应捏合期挂载量达 76~115（下方 1.5 屏 + 上方补铺），48 装不下，
+                // 超出部分掉进回收池被 onViewRecycled 清空位图，同位置重绑时走异步重载
+                // ——捏合开始/落档时的一波可见闪现（日志 [ImgLoad] ASYNC-RELOAD 实证）。
+                // 128 覆盖全部挂载 view → 冷启动/补铺全程 mCachedViews 同位置复用，
+                // 不重绑、不清位图，闪现消失。代价：缓存 view 保留位图（≤128 张缩略图，
+                // ~0.5-1MB/张），adapter 数据变化（notifyDataSetChanged）时缓存整体清空回收。
+                setItemViewCacheSize(128)
                 addItemDecoration(decoration)
                 setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
                 clipToPadding = false
@@ -318,7 +329,35 @@ fun FileGrid(
                         when {
                             currentLayoutMode.value == LayoutMode.GRID &&
                                 currentGroupBy.value == GroupBy.NONE ->
-                                rvHolder.rv?.let { pinchFlip.begin(it, currentGapPx.value) }
+                                rvHolder.rv?.let { rv ->
+                                    pinchFlip.begin(rv, currentGapPx.value)
+                                    // 列表末端缩小时上方目标区域属于已回收 item，预览填不出
+                                    // → 补铺上方若干行（同 FoldersOverview，见 prefillAbove）。
+                                    // 截止位置必须按「收拢目标列数」对齐整行：按旧列数取
+                                    // span*4 会停在目标几何某行的中间，该行左侧缺的列在捏合
+                                    // 后程露在视口顶（2026-09-17 用户复测：左上角 3 格空白，
+                                    // 6→9 列时 until=30 正好卡在目标行 27..35 的中间）。
+                                    // 只有收拢方向需要补铺（展开 delta=0），按 level-1 取目标列数；
+                                    // 手势最终是展开时多铺的部分会在松手后随布局自然回收，无害。
+                                    val lm = rv.layoutManager as? AuroraGridLayoutManager
+                                    val first = (rv.layoutManager as? LinearLayoutManager)
+                                        ?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+                                    if (lm != null && first != RecyclerView.NO_POSITION) {
+                                        val shrinkSpan = targetCols(
+                                            rv.context.pxToDp(rv.width),
+                                            max(0, currentLevel.value - 1),
+                                        )
+                                        lm.prefillAboveUntilPosition =
+                                            max(0, (first / shrinkSpan - 4) * shrinkSpan)
+                                        rv.requestLayout()
+                                    }
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.pinchStart] GRID level=${currentLevel.value} " +
+                                            "beginActive=${pinchFlip.isActive} first=$first " +
+                                            "span=${lm?.spanCount} prefillUntil=${lm?.prefillAboveUntilPosition}",
+                                    )
+                                }
 
                             currentLayoutMode.value == LayoutMode.MASONRY ->
                                 rvHolder.rv?.let {
@@ -329,11 +368,52 @@ fun FileGrid(
                                     // 压缩上移、下方没有 item 可插值，底部露出一大段空白直到
                                     // 松手换档。本轮布局会把预览几何洗掉，由 previewRestorer
                                     // 在同一次布局末尾重放，不会闪回原布局。
+                                    //
+                                    // 上方同理（2026-09-17 用户报障）：末端收拢时钳制位移 δ
+                                    // 把目标几何整体下移（实测 1005~1118px），上方目标区域属于
+                                    // 已回收 item，视口顶露白 ~600px。按 prefillAboveUntilPosition
+                                    // 补铺上方 span*6 个 position（瀑布流无行概念，按列均摊
+                                    // 足够盖住 δ + 视口顶），previewRestorer 连新子项一起重放。
+                                    val lm = it.layoutManager as? AuroraStaggeredLayoutManager
+                                    val first = (it.layoutManager as? StaggeredGridLayoutManager)
+                                        ?.findFirstVisibleItemPositions(null)?.minOrNull()
+                                        ?: RecyclerView.NO_POSITION
+                                    if (lm != null && first != RecyclerView.NO_POSITION) {
+                                        lm.prefillAboveUntilPosition =
+                                            max(0, first - lm.spanCount * 6)
+                                    }
                                     it.requestLayout()
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.pinchStart] MASONRY level=${currentLevel.value} " +
+                                            "beginActive=${masonryPinch.isActive} first=$first " +
+                                            "span=${(it.layoutManager as? StaggeredGridLayoutManager)?.spanCount} " +
+                                            "prefillUntil=${lm?.prefillAboveUntilPosition}",
+                                    )
                                 }
 
                             currentLayoutMode.value == LayoutMode.ADAPTIVE ->
-                                rvHolder.rv?.let { adaptivePinch.begin(it, currentGapPx.value) }
+                                rvHolder.rv?.let {
+                                    adaptivePinch.begin(it, currentGapPx.value)
+                                    // 上方窗口翻倍 + 补一轮布局（2026-09-17 用户报障「自适应
+                                    // 收拢时左上角 1~2 张图位置空白、松手才刷新」）：收拢后目标
+                                    // 行划分变密，挂载窗口边界（按旧行对齐）正好卡在新行中间，
+                                    // 新顶行左侧的 position 没挂载。多探一屏把边界行整体装进
+                                    // 窗口（fillVisible 向上回填按完整行走），previewRestorer
+                                    // 连新挂载子项一起重放预览几何。与 GRID 1b 的
+                                    // prefillUntil 对齐、瀑布流 prefillAbove 同源同理。
+                                    val lm = it.layoutManager as? AuroraAdaptiveLayoutManager
+                                    if (lm != null) {
+                                        lm.pinchExtraAbovePx = it.height
+                                        it.requestLayout()
+                                    }
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.pinchStart] ADAPTIVE level=${currentLevel.value} " +
+                                            "beginActive=${adaptivePinch.isActive} children=${it.childCount} " +
+                                            "extraAbove=${lm?.pinchExtraAbovePx}",
+                                    )
+                                }
                         }
                     },
                     onPinchProgress = { scale, _, _ ->
@@ -377,6 +457,18 @@ fun FileGrid(
                     },
                     onPinchEnd = { scale ->
                         val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                        Log.i(
+                            TAG,
+                            "[FileGrid.pinchEnd] scale=$scale level=${currentLevel.value} " +
+                                "grid=${pinchFlip.isActive} masonry=${masonryPinch.isActive} " +
+                                "adaptive=${adaptivePinch.isActive}",
+                        )
+                        // 捏合结束关闭上方补铺（后续换档布局按默认行为）
+                        (rv.layoutManager as? AuroraGridLayoutManager)?.prefillAboveUntilPosition =
+                            RecyclerView.NO_POSITION
+                        (rv.layoutManager as? AuroraStaggeredLayoutManager)?.prefillAboveUntilPosition =
+                            RecyclerView.NO_POSITION
+                        (rv.layoutManager as? AuroraAdaptiveLayoutManager)?.pinchExtraAbovePx = 0
                         // 落档：收尾只跑剩余那段进度，清捏合状态（保留 transform 供换档 FLIP 从当前位置收尾）
                         fun commitFlip(target: Int, progress: Float) {
                             val remaining = 1f - progress
@@ -406,6 +498,11 @@ fun FileGrid(
                             adaptivePinch.release()
                             // 落档换布局，未决的模式切换收尾 FLIP 一并作废
                             modeFlipEpoch.value++
+                            Log.i(
+                                TAG,
+                                "[FileGrid.commit] target=$target progress=${"%.2f".format(progress)} " +
+                                    "anchor=${pendingPinchAnchor.value?.let { "${it.pos}@${it.top}" }}",
+                            )
                             onLevelChange(target)
                         }
                         when {
@@ -415,6 +512,11 @@ fun FileGrid(
                                 if (pinchFlip.shouldCommit() && target != currentLevel.value) {
                                     commitFlip(target, pinchFlip.currentProgress)
                                 } else {
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.settle] GRID target=$target level=${currentLevel.value} " +
+                                            "shouldCommit=${pinchFlip.shouldCommit()} p=${pinchFlip.currentProgress}",
+                                    )
                                     pinchFlip.settle(rv)
                                 }
                             }
@@ -424,6 +526,11 @@ fun FileGrid(
                                 if (masonryPinch.shouldCommit() && target != currentLevel.value) {
                                     commitFlip(target, masonryPinch.currentProgress)
                                 } else {
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.settle] MASONRY target=$target level=${currentLevel.value} " +
+                                            "shouldCommit=${masonryPinch.shouldCommit()} p=${masonryPinch.currentProgress}",
+                                    )
                                     masonryPinch.settle(rv)
                                 }
                             }
@@ -433,6 +540,11 @@ fun FileGrid(
                                 if (adaptivePinch.shouldCommit() && target != currentLevel.value) {
                                     commitFlip(target, adaptivePinch.currentProgress)
                                 } else {
+                                    Log.i(
+                                        TAG,
+                                        "[FileGrid.settle] ADAPTIVE target=$target level=${currentLevel.value} " +
+                                            "shouldCommit=${adaptivePinch.shouldCommit()} p=${adaptivePinch.currentProgress}",
+                                    )
                                     adaptivePinch.settle(rv)
                                 }
                             }
@@ -709,6 +821,20 @@ internal class AuroraGridLayoutManager(
      *  与 AuroraStaggeredLayoutManager 的 previewRestorer 对称。非捏合期为空操作。 */
     var previewRestorer: (() -> Unit)? = null
 
+    /**
+     * 捏合预览期间，把视口上方补铺到该 position（NO_POSITION = 关闭）。
+     *
+     * 背景（2026-09-17 用户报障）：在列表末端捏合缩小（列数变多）时，目标布局比当前
+     * 短，可见子项的目标行整体上移——上方目标区域属于**已被回收**的更早 item，预览
+     * （手动 measure/layout，只动已挂载子项）无法凭空插值出它们，顶部会留一段空白、
+     * 松手后卡片又被钳回钉底位置（先上后下的两段式观感）。进捏合时由宿主设为本值并
+     * requestLayout，[onLayoutChildren] 末尾手动补铺（整轮 relayout **不消费**
+     * calculateExtraLayoutSpace——它只在滚动增量填充时生效，实测 childCount 不变），
+     * previewRestorer 连新子项一起重放预览几何：顶端被早先的卡片填住、末端钉在视口底，
+     * 捏合全程与落档几何一致。与瀑布流 prefillBelow 完全对称。
+     */
+    var prefillAboveUntilPosition: Int = RecyclerView.NO_POSITION
+
     override fun calculateExtraLayoutSpace(
         state: RecyclerView.State,
         extraLayoutSpace: IntArray,
@@ -722,7 +848,94 @@ internal class AuroraGridLayoutManager(
         state: RecyclerView.State,
     ) {
         super.onLayoutChildren(recycler, state)
+        prefillAbove(recycler)
         previewRestorer?.invoke()
+    }
+
+    /**
+     * 把视口上方直到 [prefillAboveUntilPosition] 的 item 按当前 span 的网格几何补铺
+     * 出来（每列从当前最顶 child 向上按行距 pitch 逐格上移；同列的 left/width 取自
+     * 该列已挂载 child）。补铺只要求「旧布局位置」正确——随后的 previewRestorer 会把
+     * 全部子项（含新补的）按当前进度重放到目标几何。
+     */
+    private fun prefillAbove(recycler: RecyclerView.Recycler) {
+        val until = prefillAboveUntilPosition
+        if (until == RecyclerView.NO_POSITION || childCount == 0) return
+        val span = spanCount
+        val colLeft = IntArray(span)
+        val colWidth = IntArray(span)
+        val colTop = IntArray(span) { Int.MAX_VALUE }
+        var minPos = Int.MAX_VALUE
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)!!
+            val col = getPosition(c) % span
+            if (colWidth[col] == 0) {
+                colLeft[col] = c.left
+                colWidth[col] = c.measuredWidth
+            }
+            if (c.top < colTop[col]) colTop[col] = c.top
+            if (getPosition(c) < minPos) minPos = getPosition(c)
+        }
+        // 行距：同一列**相邻挂载**两个 child 的 top 差（网格各行等高 → 差即行进距）。
+        // 挂载序是 position 升序、同列 child 的 top 随之递增，所以对同列的前后两个
+        // child 取 `c.top - t.top`（正数）即可。旧实现条件写成 `c.top < t.top`（当前
+        // child 在更上方）——升序挂载下该分支永不触发，pitch 恒 0、每轮入口即 ABORT
+        //（2026-09-17 日志 `[PrefillAbove] ABORT pitch=0`：上方补铺从未生效、末端收拢
+        // 露白未修复的直接原因；首版修复只翻转了减法、没动条件，同样无效）。
+        // abs 兜底：底部布局「先向下铺满再向上回填」时，回填段同列 top 递减，取绝对值
+        // 仍等于一个行距。
+        val lastInCol = arrayOfNulls<View>(span)
+        var pitch = 0
+        for (i in 0 until childCount) {
+            val c = getChildAt(i)!!
+            val col = getPosition(c) % span
+            val t = lastInCol[col]
+            if (t != null) {
+                val d = abs(c.top - t.top)
+                if (d > 0 && (pitch == 0 || d < pitch)) pitch = d
+            }
+            lastInCol[col] = c
+        }
+        if (pitch <= 0 || minPos == Int.MAX_VALUE) {
+            // pitch 算不出（可见 child 不足以推出行距）时补铺直接放弃——末端收拢露白的
+            // 候选成因之一，日志保留现场。
+            Log.i(TAG, "[PrefillAbove] ABORT pitch=$pitch minPos=$minPos until=$until childCount=$childCount")
+            return
+        }
+        Log.i(TAG, "[PrefillAbove] 开始 until=$until span=$span minPos=$minPos pitch=$pitch childCount=$childCount")
+        val inner = width - paddingLeft - paddingRight
+        var pos = minPos - 1
+        var added = 0
+        var guard = 0
+        while (pos >= until && pos >= 0 && guard < span * 10) {
+            val col = pos % span
+            if (colWidth[col] == 0) {
+                Log.i(TAG, "[PrefillAbove] 中断 pos=$pos：col=$col 无参照 child")
+                break // 该列没有任何参照 child（不应发生）
+            }
+            val top = colTop[col] - pitch
+            val v = try {
+                recycler.getViewForPosition(pos)
+            } catch (e: Exception) {
+                Log.w(TAG, "[PrefillAbove] getViewForPosition($pos) 抛异常，中断", e)
+                break
+            }
+            addView(v)
+            // 同列等宽：widthUsed = inner - 列宽，使子项量出与该列一致的内容宽
+            measureChildWithMargins(v, inner - colWidth[col], 0)
+            layoutDecorated(v, colLeft[col], top, colLeft[col] + colWidth[col], top + v.measuredHeight)
+            colTop[col] = top
+            pos--
+            added++
+            guard++
+        }
+        // filledDownTo = 本轮实际铺到的最小 position（guard 耗尽时 < until 可辨）；
+        // covTop 取末位 child（addView 尾插，最后补的 position 最小、几何最靠上）
+        Log.i(
+            TAG,
+            "[PrefillAbove] 完成 added=$added filledDownTo=${pos + 1} guard=$guard " +
+                "childCount=$childCount covTop=${getChildAt(childCount - 1)?.top}",
+        )
     }
 }
 
@@ -806,6 +1019,18 @@ internal class AuroraStaggeredLayoutManager(
     var previewRestorer: (() -> Unit)? = null,
 ) : StaggeredGridLayoutManager(spanCount, StaggeredGridLayoutManager.VERTICAL) {
 
+    /**
+     * 捏合预览期间，把视口上方补铺到该 position（NO_POSITION = 关闭）。
+     *
+     * 背景（2026-09-17 用户报障）：列表末端收拢（列数变多）时，捏合模拟的滚动钳制位移
+     * δ 把目标几何整体下移（实测 1005~1118px），上方目标区域属于**已被回收**的更早
+     * item——预览（手动 measure/layout，只动已挂载子项）无法凭空插值它们，视口顶露白
+     * ~600px、松手后卡片又被钳回钉底位置。宿主在进捏合时设为本值并 requestLayout，
+     * [onLayoutChildren] 末尾手动补铺，previewRestorer 连新子项一起重放预览几何。
+     * 与 GRID 的 AuroraGridLayoutManager.prefillAbove / 下方 prefillBelow 完全对称。
+     */
+    var prefillAboveUntilPosition: Int = RecyclerView.NO_POSITION
+
     override fun onLayoutChildren(
         recycler: RecyclerView.Recycler,
         state: RecyclerView.State,
@@ -813,6 +1038,7 @@ internal class AuroraStaggeredLayoutManager(
         stripPrefilled(recycler)
         super.onLayoutChildren(recycler, state)
         prefillBelow(recycler, state.itemCount)
+        prefillAbove(recycler)
         previewRestorer?.invoke()
     }
 
@@ -857,12 +1083,18 @@ internal class AuroraStaggeredLayoutManager(
     }
 
     private fun stripPrefilled(recycler: RecyclerView.Recycler) {
+        var stripped = 0
         for (i in childCount - 1 downTo 0) {
             val c = getChildAt(i) ?: continue
             if (isPrefilled(c)) {
                 removeAndRecycleView(c, recycler)
+                stripped++
             }
         }
+        // 捏合开始的那轮布局会 strip 掉全部预填再重铺：超过 mViewCacheSize(48) 的部分
+        // 掉进回收池、被 onViewRecycled 清空位图，同位置重绑时走异步重载——瀑布流
+        // 「捏合一开始部分图片闪一下」的候选来源，与 [ImgLoad] ASYNC-RELOAD 对照。
+        if (stripped > 0) Log.i(TAG, "[PrefillBelow] strip 回收预填 view n=$stripped")
     }
 
     /** 按最短列优先把视口下方 1.5 屏的 item 补建出来（与 Staggered 分配规则一致）。 */
@@ -900,6 +1132,7 @@ internal class AuroraStaggeredLayoutManager(
 
         val limit = colEnd.max() + height * 3 / 2
         var pos = maxPos + 1
+        var added = 0
         while (pos < itemCount) {
             var best = 0
             for (s in 1 until span) if (colEnd[s] < colEnd[best]) best = s
@@ -907,6 +1140,7 @@ internal class AuroraStaggeredLayoutManager(
             val v = try {
                 recycler.getViewForPosition(pos)
             } catch (e: Exception) {
+                Log.w(TAG, "[PrefillBelow] getViewForPosition($pos) 抛异常，中断", e)
                 return
             }
             // 复用的 view 可能带着上一条生命周期的 span 引用（换 LM 冷启动的整批回收不走
@@ -944,6 +1178,111 @@ internal class AuroraStaggeredLayoutManager(
                 colEnd[best] = line + topInset + v.measuredHeight
             }
             pos++
+            added++
+        }
+        Log.i(
+            TAG,
+            "[PrefillBelow] span=$span maxPos=$maxPos added=$added childCount=$childCount " +
+                "limit=$limit colEndMax=${colEnd.max()}",
+        )
+    }
+
+    /**
+     * 把视口上方直到 [prefillAboveUntilPosition] 的 item 补铺出来（与 GRID 的
+     * prefillAbove、下方 prefillBelow 三方对称）。列选择复刻 1.3.2 LAYOUT_START 的
+     * 向上铺语义（放入顶边最低的列、并列取最右，与 MasonryPinchController 向后模拟
+     * 一致）；补铺只要求旧布局位置近似正确——随后的 previewRestorer 会把全部子项
+     * （含新补的）按当前进度重放到目标几何。
+     *
+     * 必须在 [prefillBelow] **之后**调用：本方法以「span 已记账的真实 child」为列线
+     * 参照，而 prefillBelow 补出的 view 满足 mSpan == null 预填不变量，若先跑上方补铺、
+     * prefillBelow 的列收集读到未记账 view 的 spanIndex 会 NPE。新补 view 同样走
+     * clearSpan 满足不变量，由 stripPrefilled 在下一轮布局/滚动开头回收。
+     */
+    private fun prefillAbove(recycler: RecyclerView.Recycler) {
+        val until = prefillAboveUntilPosition
+        if (until == RecyclerView.NO_POSITION || childCount == 0) return
+        val span = spanCount
+        val inner = width - paddingLeft - paddingRight
+        if (inner <= 0) return
+        val sizePerSpan = inner / span
+
+        // 各列最顶 decorated top（只看 span 已记账的真实 child）
+        val colLine = IntArray(span) { Int.MAX_VALUE }
+        var minPos = Int.MAX_VALUE
+        for (i in 0 until childCount) {
+            val c = getChildAt(i) ?: continue
+            if (isPrefilled(c)) continue
+            val pos = getPosition(c)
+            if (pos == RecyclerView.NO_POSITION) continue
+            if (pos < minPos) minPos = pos
+            val lp = c.layoutParams as? LayoutParams
+            val col = lp?.spanIndex ?: -1
+            if (col !in 0 until span) continue
+            if (getDecoratedTop(c) < colLine[col]) colLine[col] = getDecoratedTop(c)
+        }
+        if (minPos == Int.MAX_VALUE) return
+        var minLine = Int.MAX_VALUE
+        for (s in 0 until span) if (colLine[s] < minLine) minLine = colLine[s]
+        if (minLine == Int.MAX_VALUE) return
+        // 个别列当前没有真实 child 时以最小列线兜底，保证该列继续向上铺
+        for (s in 0 until span) if (colLine[s] == Int.MAX_VALUE) colLine[s] = minLine
+
+        var pos = minPos - 1
+        var added = 0
+        var guard = 0
+        while (pos >= until && pos >= 0 && guard < span * 10) {
+            val v = try {
+                recycler.getViewForPosition(pos)
+            } catch (e: Exception) {
+                Log.w(TAG, "[PrefillAbove] getViewForPosition($pos) 抛异常，中断", e)
+                break
+            }
+            val lp = v.layoutParams as? StaggeredGridLayoutManager.LayoutParams
+            if (lp != null) StaggeredSpanAccess.clearSpan(lp)
+            calculateItemDecorationsForChild(v, Rect())
+            addView(v)
+            if (isFullSpanAt(pos)) {
+                // 满宽 header：压在所有列线最高者上方，头部与下方 item 间留其顶 inset(gap)
+                measureChildWithMargins(v, 0, 0)
+                var line = Int.MAX_VALUE
+                for (s in 0 until span) if (colLine[s] < line) line = colLine[s]
+                val bottom = line - gapPx
+                layoutDecoratedWithMargins(v, paddingLeft, bottom - v.measuredHeight, paddingLeft + inner, bottom)
+                for (s in 0 until span) colLine[s] = bottom - v.measuredHeight
+            } else {
+                // 放入顶边最低的列（并列取最右）：与向后模拟的 LAYOUT_START 同序
+                var best = span - 1
+                for (s in span - 2 downTo 0) if (colLine[s] > colLine[best]) best = s
+                val leftInset = gapPx * best / span
+                val rightInset = gapPx * (span - 1 - best) / span
+                val topInset = if (pos >= span) gapPx else 0
+                // 同列等宽：widthUsed 把差额从总宽里扣掉（与 prefillBelow 同式）
+                measureChildWithMargins(v, inner - (sizePerSpan - leftInset - rightInset), 0)
+                // 与下方 item 的间距 = 它的顶 inset（中段列表恒为 gap；首行特例由
+                // previewRestorer 重放几何吸收，不追求逐位精确）
+                val bottom = colLine[best] - gapPx
+                val top = bottom - topInset - v.measuredHeight
+                // decorated 左右与 prefillBelow 同式（span 几何推导，不用视图实测值）
+                layoutDecoratedWithMargins(
+                    v,
+                    paddingLeft + best * sizePerSpan,
+                    top,
+                    paddingLeft + (best + 1) * sizePerSpan,
+                    bottom,
+                )
+                colLine[best] = top
+            }
+            pos--
+            added++
+            guard++
+        }
+        if (added > 0 || minPos > until) {
+            Log.i(
+                TAG,
+                "[PrefillAbove] until=$until span=$span minPos=$minPos added=$added " +
+                    "childCount=$childCount topLine=${colLine.min()}",
+            )
         }
     }
 }
@@ -1289,6 +1628,7 @@ private class FileGridAdapter(
             }
             return
         }
+        Log.d(TAG, "[Bind] pos=$position 全量重绑（图片会走 loadInto）")
         onBindViewHolder(holder, position)
     }
 
@@ -1364,7 +1704,7 @@ private class FileGridAdapter(
         holder.refs.cover.applyCoverHeight(coverH)
 
         holder.job?.cancel()
-        holder.job = loadInto(holder.refs.cover, image) { holder.bindingAdapterPosition == position }
+        holder.job = loadInto(holder.refs.cover, image, position) { holder.bindingAdapterPosition == position }
     }
 
 
@@ -1372,11 +1712,13 @@ private class FileGridAdapter(
     private fun loadInto(
         cover: ImageView,
         image: Image,
+        pos: Int,
         stillValid: () -> Boolean,
     ): Job {
         val imageId = loader.extractImageId(image.contentUri)
         val cached = loader.peekMemory(imageId)
         if (cached != null) {
+            Log.d(TAG, "[ImgLoad] pos=$pos id=$imageId memCache 同步上屏")
             cover.setImageBitmap(cached)
             cover.tag = imageId
             return Job().apply { complete() }
@@ -1386,8 +1728,12 @@ private class FileGridAdapter(
         // ~12ms/张、并发 4）就是「松手后一片图片刷新」的直接来源。tag 记录该视图当前
         // 应显示的 imageId，drawable 非空即已上屏，直接沿用。
         if (cover.tag == imageId && cover.drawable != null) {
+            Log.d(TAG, "[ImgLoad] pos=$pos id=$imageId sameOnScreen 跳过")
             return Job().apply { complete() }
         }
+        // 走到这里 = 异步重载 = 该图会先空白再弹回（用户感知为「闪一下/刷新了」）。
+        // 典型来源：view 经回收池（onViewRecycled 清了 drawable）后同位置重绑。
+        Log.i(TAG, "[ImgLoad] pos=$pos id=$imageId ASYNC-RELOAD（闪现候选）")
         cover.setImageBitmap(null)
         cover.tag = imageId
         return scope.launch {
@@ -1405,6 +1751,7 @@ private class FileGridAdapter(
     override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
         // 回收时置强制测量标志：经 mCachedViews 复用（不重走 bind）的 view 也必须重测，
         // 否则同样可能带着过期高度混进新一轮布局（见 forceMeasureOnRebind 的说明）。
+        Log.d(TAG, "[Recycle] pos=${holder.bindingAdapterPosition} 进回收池（drawable 将被清空）")
         holder.itemView.forceLayout()
         if (holder is PhotoVH) {
             holder.job?.cancel()

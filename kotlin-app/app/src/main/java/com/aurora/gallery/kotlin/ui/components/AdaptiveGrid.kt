@@ -129,6 +129,21 @@ internal class AuroraAdaptiveLayoutManager(
     private var pendingScrollPos = RecyclerView.NO_POSITION
     private var pendingOffset = 0
 
+    /**
+     * 捏合预览期间上方窗口的额外探出量（px，宿主进捏合时设值、捏合结束复位）。
+     *
+     * 背景（2026-09-17 用户报障）：列表末端收拢时钳制位移 δ 把目标几何整体下移
+     * （实测 ~535px 起），且收拢后目标行划分变密——一行塞更多图，挂载窗口边界
+     * （按**旧**行对齐）正好卡在**新**行中间，新顶行左侧 1~2 个位置没挂载，预览
+     * 后程左上角局部空白、松手才刷新（GRID 1b 的自适应镜像）。进捏合时把上方
+     * 窗口翻倍（[fillVisible] 向上回填按完整行走，多探的一屏把边界行整体装进去），
+     * previewRestorer 连新挂载子项一起重放预览几何。
+     */
+    var pinchExtraAbovePx = 0
+
+    /** fillVisible 补挂了新 child 时的节流日志（滚动帧频高，直接打会刷屏）。 */
+    private val fillLog = PinchLogThrottle()
+
     init {
         isAutoMeasureEnabled = true
     }
@@ -238,6 +253,11 @@ internal class AuroraAdaptiveLayoutManager(
 
         detachAndScrapAttachedViews(recycler)
         fillVisible(recycler, t, count)
+        Log.i(
+            TAG,
+            "[AdaptiveLM.layout] count=$count scrollY=$scrollY maxScroll=$maxScroll " +
+                "childCount=$childCount rowH=$rowHeightPx",
+        )
         previewRestorer?.invoke()
     }
 
@@ -290,7 +310,7 @@ internal class AuroraAdaptiveLayoutManager(
      * 内的行——firstVisible 之上的行（完全在 scrollY 上方）单靠向下填永远不会挂载。
      */
     private fun fillVisible(recycler: RecyclerView.Recycler, t: Table, count: Int) {
-        val aboveExtra = height
+        val aboveExtra = height + pinchExtraAbovePx
         val belowExtra = height * 3 / 2
         val topContent = scrollY - aboveExtra
         val bottomContent = scrollY + height + belowExtra
@@ -304,9 +324,11 @@ internal class AuroraAdaptiveLayoutManager(
 
         var pos = firstVisiblePosition(t, count)
         val first = pos
+        var added = 0
         while (pos < count && t.childTopOf[pos] < bottomContent) {
             if (t.childTopOf[pos] + t.itemHeightOf(pos) >= topContent && pos !in present) {
                 placeChild(recycler, t, pos)
+                added++
             }
             pos++
         }
@@ -316,8 +338,18 @@ internal class AuroraAdaptiveLayoutManager(
         while (up >= 0 && t.childTopOf[up] + t.itemHeightOf(up) >= topContent) {
             if (up !in present) {
                 placeChild(recycler, t, up)
+                added++
             }
             up--
+        }
+        // 只在真补挂了 child 时打（节流）：added>0 说明窗口边缘之外还有内容在被铺，
+        // 捏合末端收拢时若 begin 后从未出现 added>0 的向上回填，上方露白即此因。
+        if (added > 0 && fillLog.allow()) {
+            Log.i(
+                TAG,
+                "[AdaptiveLM.fill] scrollY=$scrollY window=[$topContent,$bottomContent] " +
+                    "first=$first added=$added childCount=$childCount",
+            )
         }
     }
 
@@ -375,8 +407,8 @@ internal class AuroraAdaptiveLayoutManager(
     }
 
     private fun recycleOffscreen(recycler: RecyclerView.Recycler, t: Table) {
-        // 与 fillVisible 的窗口保持一致（上探一整屏），否则刚回填的行会被立刻回收。
-        val aboveExtra = height
+        // 与 fillVisible 的窗口保持一致（含捏合期上方加探），否则刚回填的行会被立刻回收。
+        val aboveExtra = height + pinchExtraAbovePx
         val belowExtra = height * 3 / 2
         val topContent = scrollY - aboveExtra
         val bottomContent = scrollY + height + belowExtra
@@ -459,7 +491,15 @@ internal fun animateAdaptiveRowChange(
         }
     }
     val snap = captureFlip(rv, anchorPos, anchorTop)
-    if (snap == null) return
+    if (snap == null) {
+        Log.w(TAG, "[AdaptiveRowChange] captureFlip 为空（anchorPos=$anchorPos），放弃换档动画")
+        return
+    }
+    Log.i(
+        TAG,
+        "[AdaptiveRowChange] rowH ${oldLm.rowHeightPx}->$newRowHeightPx anchorPos=$anchorPos " +
+            "anchorTop=$anchorTop pinchAnchor=${pinchAnchor != null} children=${rv.childCount}",
+    )
 
     val newLm = AuroraAdaptiveLayoutManager(
         rowHeightPx = newRowHeightPx,
@@ -552,6 +592,9 @@ internal class AdaptivePinchController(
 
     private var settleAnim: ValueAnimator? = null
 
+    /** 高频进度日志节流（2026-09-17 末端收拢露白排查，见 TAG 的说明）。 */
+    private val progressLog = PinchLogThrottle()
+
     val isActive: Boolean get() = active
     val currentProgress: Float get() = progress
     val currentTargetLevel: Int get() = targetLevel
@@ -585,9 +628,15 @@ internal class AdaptivePinchController(
         this.gapPx = gapPx
         headerH = rv.context.dp(HEADER_HEIGHT_DP)
 
-        // 清上一轮 FLIP/settle 残留 transform：origins 必须是未变换的布局位置
+        // 清上一轮 FLIP/settle 残留 transform：origins 必须是未变换的布局位置。
+        // 顺带记录挂载覆盖：adaptive 没有进捏合补铺（fillVisible 的上探窗口只由滚动维护），
+        // cov 与 [PinchAdaptive.tables] 的 δ 对照即可确认末端收拢时上方余量够不够。
+        var covTop = Int.MAX_VALUE
+        var covBottom = Int.MIN_VALUE
         for (i in 0 until rv.childCount) {
             val c = rv.getChildAt(i) ?: continue
+            if (c.top < covTop) covTop = c.top
+            if (c.bottom > covBottom) covBottom = c.bottom
             c.animate().cancel()
             if (c.translationX != 0f || c.translationY != 0f || c.scaleX != 1f || c.scaleY != 1f) {
                 c.translationX = 0f
@@ -629,6 +678,7 @@ internal class AdaptivePinchController(
         anchorTop = if (useFull) fullTop else bestTop
         val view = anchorView
         if (anchorPos == RecyclerView.NO_POSITION || view == null || view.width <= 0) {
+            Log.w(TAG, "[PinchAdaptive.begin] INACTIVE pos=$anchorPos view=$view children=${rv.childCount}")
             active = false
             return
         }
@@ -640,6 +690,12 @@ internal class AdaptivePinchController(
             else -> (view.height - (view.width / ratioAt(bestPos).coerceAtLeast(0.05f)).toInt()).coerceAtLeast(0)
         }
         active = true
+        Log.i(
+            TAG,
+            "[PinchAdaptive.begin] anchor=$anchorPos anchorTop=$anchorTop useFull=$useFull textH=$textHeight " +
+                "viewport=$viewportHeight availW=$availWidth children=${rv.childCount} " +
+                "cov=[$covTop,$covBottom] scrollY=${rv.computeVerticalScrollOffset()}/${rv.computeVerticalScrollRange()}",
+        )
     }
 
     fun update(rv: RecyclerView, newTargetLevel: Int, newTargetRowHeight: Int, newProgress: Float) {
@@ -654,6 +710,7 @@ internal class AdaptivePinchController(
 
     fun settle(rv: RecyclerView, duration: Long = FLIP_DURATION_MS) {
         active = false
+        Log.i(TAG, "[PinchAdaptive.settle] 从 progress=$progress 退回（targetRowHeight=$targetRowHeight）")
         settleAnim?.let {
             val anim = it
             settleAnim = null
@@ -727,11 +784,27 @@ internal class AdaptivePinchController(
         val count = rv.adapter?.itemCount ?: 0
         val t = tablesFor(count) ?: return
         lastTables = t
+        var minTop = Int.MAX_VALUE
+        var maxBottom = Int.MIN_VALUE
+        var firstPos = Int.MAX_VALUE
+        var lastPos = -1
         for (i in 0 until rv.childCount) {
             val child = rv.getChildAt(i)
             val pos = rv.getChildAdapterPosition(child)
             if (pos == RecyclerView.NO_POSITION) continue
             applyChildReal(child, pos, p, t)
+            if (child.top < minTop) minTop = child.top
+            if (child.bottom > maxBottom) maxBottom = child.bottom
+            if (pos < firstPos) firstPos = pos
+            if (pos > lastPos) lastPos = pos
+        }
+        if (progressLog.allow()) {
+            Log.i(
+                TAG,
+                "[PinchAdaptive.progress] p=${"%.2f".format(p)} rowH=$targetRowHeight delta=${t.delta} " +
+                    "children=${rv.childCount} pos=[$firstPos..$lastPos] y=[$minTop,$maxBottom] " +
+                    "viewport=0..${rv.height} pt=${rv.paddingTop} pb=${rv.paddingBottom}",
+            )
         }
     }
 
@@ -831,6 +904,12 @@ internal class AdaptivePinchController(
         if (delta != 0) {
             for (i in 0 until count) contentChildTop[i] += delta
         }
+        Log.i(
+            TAG,
+            "[PinchAdaptive.tables] rowH=$targetRowHeight count=$count shift=$shift " +
+                "content=[$contentTop,$contentBottom] " +
+                "deltaLower=$deltaLower deltaUpper=$deltaUpper -> delta=$delta",
+        )
         return SimTables(count, targetRowHeight, contentChildTop, xOf, widthOf, coverHOf, delta)
     }
 }

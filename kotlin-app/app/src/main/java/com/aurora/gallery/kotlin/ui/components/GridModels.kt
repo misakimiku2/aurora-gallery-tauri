@@ -4,10 +4,18 @@ import com.aurora.gallery.kotlin.state.DateFilter
 import com.aurora.gallery.kotlin.state.DateFilterMode
 import com.aurora.gallery.kotlin.state.SortDirection
 import com.aurora.gallery.kotlin.state.SortOption
+import uniffi.aurora_core.Folder
 import uniffi.aurora_core.Image
 import java.util.Calendar
 import java.util.Locale
 import kotlin.math.max
+
+/**
+ * 根目录散落文件的虚拟文件夹名（MediaStore 的 bucket_display_name 为 NULL 时的兜底名，
+ * 对齐 React 版 `__android_root_images__` 的「根目录图片」）。总览排序与 ViewModel 的
+ * 扫描管道共用同一常量，避免两处字面量漂移。
+ */
+internal const val ROOT_FOLDER_DISPLAY_NAME = "根目录图片"
 
 /**
  * 布局模式。
@@ -78,6 +86,64 @@ fun sortImages(images: List<Image>, sortBy: SortOption, direction: SortDirection
         images.sortedWith(comparator)
     } else {
         images.sortedWith(comparator.reversed())
+    }
+}
+
+/**
+ * 总览文件夹排序（2026-09-17 总览 TopBar 接入排序菜单）。
+ *
+ * 语义对齐 React `FoldersOverview.tsx` 的 `sortedFolderIds` memo：name = 名称小写比较、
+ * size = 图片数（React 用 `imageCount ?? size`）、date = 文件夹创建时间（2026-09-17 起
+ * `Folder.createdAt` = 最早子图创建时间，Rust `list_folders` 提供）。无日期（无图，
+ * createdAt=0）的文件夹**恒排最后**，不随方向翻转。排序稳定，同键保持 `list_folders`
+ * 的原序；「根目录图片」在排序结果之上**恒置顶**（对齐 React 把 `__lan_root_images__`
+ * unshift 到顶部；与 GalleryViewModel.orderFoldersForOverview 同一条规则，双保险）。
+ */
+fun sortFolders(folders: List<Folder>, sortBy: SortOption, direction: SortDirection): List<Folder> {
+    if (folders.size < 2) return folders
+    val sorted = when (sortBy) {
+        SortOption.SIZE -> {
+            val comparator = compareBy<Folder> { it.imageCount }
+            if (direction == SortDirection.ASC) folders.sortedWith(comparator)
+            else folders.sortedWith(comparator.reversed())
+        }
+        SortOption.DATE -> {
+            val comparator = compareBy<Folder> { it.createdAt }
+            val dated = folders.filter { it.createdAt > 0 }
+            val undated = folders.filterNot { it.createdAt > 0 }
+            if (direction == SortDirection.ASC) dated.sortedWith(comparator) + undated
+            else dated.sortedWith(comparator.reversed()) + undated
+        }
+        else -> {
+            val comparator = compareBy<Folder> { it.name.lowercase(Locale.US) }
+            if (direction == SortDirection.ASC) folders.sortedWith(comparator)
+            else folders.sortedWith(comparator.reversed())
+        }
+    }
+    return sorted.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
+}
+
+/**
+ * 总览文件夹过滤（2026-09-17 总览 TopBar 接入搜索/日期筛选）。
+ *
+ * 搜索：文件夹名 contains、大小写不敏感（同 [filterImages] 的文件名分支）。
+ * 日期：**start 与 end 同时存在才生效**（对齐 `useFileSearch:152`）。语义用文件夹的
+ * 代表日期做区间命中——CREATED 用 [Folder.createdAt]（最早子图，「这段时间创建的
+ * 相册」）、UPDATED 用 [Folder.modifiedAt]（最新子图修改，「这段时间有更新的相册」）。
+ * React 是「任一子图命中」（逐子图检查），代表日期是它的近似：CREATED 等价（最早命中
+ * ⟺ 有命中），UPDATED 在「区间后还有更新」的文件夹上会漏选——按「最近更新过」的筛选
+ * 直觉这反而是想要的行为，差异已注明。
+ */
+fun filterFolders(folders: List<Folder>, query: String, dateFilter: DateFilter): List<Folder> {
+    val q = query.trim().lowercase(Locale.US)
+    val dateActive = dateFilter.start != null && dateFilter.end != null
+    if (q.isEmpty() && !dateActive) return folders
+    return folders.filter { f ->
+        (q.isEmpty() || f.name.lowercase(Locale.US).contains(q)) &&
+            (!dateActive || run {
+                val d = if (dateFilter.mode == DateFilterMode.CREATED) f.createdAt else f.modifiedAt
+                d >= dateFilter.start!! && d <= dateFilter.end!!
+            })
     }
 }
 

@@ -90,7 +90,6 @@ export interface Person {
   coverFileId: string;
   count: number;
   description?: string;
-  descriptor?: number[];
   faceBox?: { x: number; y: number; w: number; h: number };
   characterTagName?: string;
   characterTagIndex?: number;
@@ -261,8 +260,6 @@ export interface AIConfig {
   autoTag: boolean;
   autoDescription: boolean;
   enhancePersonDescription: boolean;
-  enableFaceRecognition: boolean;
-  autoAddPeople: boolean;
   enableOCR: boolean;
   enableTranslation: boolean;
   targetLanguage: 'zh' | 'en' | 'ja' | 'ko';

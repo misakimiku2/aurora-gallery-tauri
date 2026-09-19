@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.ViewMode
+import com.aurora.gallery.kotlin.ui.components.ROOT_FOLDER_DISPLAY_NAME
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -185,11 +186,12 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
     /**
      * 总览排序：「根目录图片」虚拟文件夹恒置顶，其余保持 listFolders 的字典序不变
-     * （sortedBy 稳定排序）。以后总览若接入排序菜单，置顶规则也应压在用户排序之上。
+     * （sortedBy 稳定排序）。总览 TopBar 的排序菜单（sortFolders）在其上再排，置顶规则
+     * 两处都做，压在用户排序之上。
      */
     private fun orderFoldersForOverview(list: List<Folder>): List<Folder> =
-        if (list.any { it.name == ROOT_BUCKET_DISPLAY_NAME })
-            list.sortedBy { it.name != ROOT_BUCKET_DISPLAY_NAME }
+        if (list.any { it.name == ROOT_FOLDER_DISPLAY_NAME })
+            list.sortedBy { it.name != ROOT_FOLDER_DISPLAY_NAME }
         else list
 
     /** 停在文件夹内时重查该文件夹（对账后库里内容可能已增删）；在总览则是 no-op。 */
@@ -275,7 +277,7 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
                         // 存储根目录散落文件的 bucket_display_name 为 NULL，兜底成虚拟文件夹名
                         //（对齐 React 版 __android_root_images__ 的「根目录图片」）
                         bucketName = c.getString(bucketNameCol)?.takeUnless { it.isBlank() }
-                            ?: ROOT_BUCKET_DISPLAY_NAME,
+                        ?: ROOT_FOLDER_DISPLAY_NAME,
                     )
                 )
             }
@@ -288,9 +290,6 @@ class GalleryViewModel(app: Application, initialLayout: LayoutVisibility) : View
 
         /** MediaStore 变更通知的防抖窗口：拷入一批文件时通知连发，等平静后再合并成一次重扫。 */
         private const val MEDIA_CHANGE_DEBOUNCE_MS = 1_000L
-
-        /** 根目录散落文件的虚拟文件夹名（MediaStore 的 bucket_display_name 为 NULL，对齐 React 版命名）。 */
-        private const val ROOT_BUCKET_DISPLAY_NAME = "根目录图片"
 
         /**
          * factory 只在 ViewModel 首次创建时求值：旋转重建复用已有实例，不会重跑，

@@ -4,6 +4,7 @@ import android.graphics.Outline
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
+import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -30,6 +31,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.toArgb
@@ -42,6 +44,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.view.doOnLayout
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.aurora.gallery.kotlin.ThumbnailLoader
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
@@ -52,6 +55,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import uniffi.aurora_core.Folder
+import kotlin.math.max
 
 /** 简化文件夹图标（material-icons-core 无 Folder，自行绘制，对齐 lucide Folder）。 */
 private val FolderIcon: ImageVector by lazy {
@@ -102,6 +106,8 @@ fun FoldersOverview(
     initialScrollTop: Int = 0,
     /** 滚动位置上报（每滚动帧调用；宿主用普通字段记录，见 [AppState.overviewScrollTop]）。 */
     onScrollChanged: (Int) -> Unit = {},
+    /** 空态文案：宿主按「有搜索/筛选条件」区分「无匹配文件夹」与「暂无文件夹」。 */
+    emptyText: String = "暂无文件夹",
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -110,6 +116,10 @@ fun FoldersOverview(
     // 必须定义在 gridAdapter 之前——gridAdapter 与下面的 AndroidView 都要用。
     val rvHolder = remember { RvHolder() }
     val pinchFlip = remember { PinchFlipController() }
+    // 捏合换档的锚点透传：onPinchEnd 记录 → update 消费（一次）。落档必须保持同一锚点
+    // 停在同一屏幕位置（含末端钳制位移 δ 后的 commitAnchorTop），预览与收尾 FLIP 才
+    // 无缝衔接——此前没透传，animateSpanChange 退回 firstVisible 锚点，与 FileGrid 不一致。
+    val pendingPinchAnchor = remember { AnchorOverrideHolder() }
     // 收尾动画时长：捏合换档时按剩余进度缩短，用后即复位
     var flipDurationMs by remember { mutableLongStateOf(FLIP_DURATION_MS) }
 
@@ -158,7 +168,7 @@ fun FoldersOverview(
                     modifier = Modifier.size(48.dp),
                 )
                 Text(
-                    text = "暂无文件夹",
+                    text = emptyText,
                     fontSize = 14.sp,
                     color = colors.textSecondary,
                     modifier = Modifier.padding(top = 12.dp),
@@ -178,23 +188,77 @@ fun FoldersOverview(
     val currentGapPx = rememberUpdatedState(gapPx)
     val decoration = remember { GridSpacingDecoration(6, gapPx) }
 
+    // 容器宽度（dp）：doOnLayout 首次布局后写入，强制 update 重跑（对齐 FileGrid 的
+    // 3.2fix——update 在 RV 布局完成前 width=0 提前返回后，必须有下一次重跑的触发源，
+    // 否则 applyCellWidth 永远量不出单元格宽度）。
+    var measuredWidthDp by remember { mutableIntStateOf(0) }
+
     AndroidView(
         factory = { ctx ->
             val initialCols = targetCols(ctx.pxToDp(ctx.resources.displayMetrics.widthPixels), level)
             decoration.spanCount = initialCols
+            // 先建 LM 以便挂 previewRestorer：捏合期间任何布局（如换档）都会把手动的
+            // 预览几何洗掉，必须在布局末尾重放（对齐 FileGrid）
+            val gridLayoutManager = AuroraGridLayoutManager(ctx, initialCols).apply {
+                previewRestorer = { rvHolder.rv?.let { pinchFlip.reapplyPreview(it) } }
+            }
             RecyclerView(ctx).apply {
-                layoutManager = AuroraGridLayoutManager(ctx, initialCols)
+                layoutManager = gridLayoutManager
                 adapter = gridAdapter
                 addItemDecoration(decoration)
                 setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
                 clipToPadding = false
+                // 裁剪双保险（对齐 FileGrid）：滚出 RV 顶边的内容不得画进 TopBar——Compose
+                // interop 链路默认不裁剪，捏合预览的手动 layout 与 FLIP 位移都会把卡片摆到
+                // 负 y（2026-09-17 用户报障：总览滚动/捏合后图片盖住 TopBar）。RV 无背景，
+                // clipToOutline 的 outline 必须显式给 rect，否则 BACKGROUND provider 拿到
+                // null outline、裁剪不生效。
+                clipToOutline = true
+                outlineProvider = object : ViewOutlineProvider() {
+                    override fun getOutline(view: View, outline: Outline) {
+                        outline.setRect(0, 0, view.width, view.height)
+                    }
+                }
+                // 换档时旧 child 尽量走 mCachedViews 同位置复用（不重走 bind → 不闪图）；
+                // 非 bind 复用路径的封面高度由 FolderAdapter.onViewAttachedToWindow 归一兜底。
+                setItemViewCacheSize(48)
                 itemAnimator = null
                 isVerticalScrollBarEnabled = false
                 rvHolder.rv = this
                 // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
                 val pinch = PinchGridSpanListener(
                     context = ctx,
-                    onPinchStart = { _, _ -> rvHolder.rv?.let { pinchFlip.begin(it, currentGapPx.value) } },
+                    onPinchStart = { _, _ ->
+                        rvHolder.rv?.let { rv ->
+                            pinchFlip.begin(rv, currentGapPx.value)
+                            // 列表末端缩小（列数变多）时目标行上移，上方目标区域属于已回收
+                            // 的更早 item——预览只动已挂载子项，不补铺的话顶部会留一段空白、
+                            // 松手后卡片又被钳回钉底位置（先上后下两段式）。
+                            // 截止位置必须按「收拢目标列数」对齐整行：按旧列数取 span*4 会
+                            // 停在目标几何某行的中间，该行左侧缺的列在后程露在视口顶
+                            //（2026-09-17 用户复测：左上角 3 格空白，6→9 列时 until=30 正好
+                            // 卡在目标行 27..35 的中间）。展开方向 delta=0 不需要补铺，
+                            // 多铺的部分松手后自然回收。
+                            val lm = rv.layoutManager as? AuroraGridLayoutManager
+                            val first = (rv.layoutManager as? LinearLayoutManager)
+                                ?.findFirstVisibleItemPosition() ?: RecyclerView.NO_POSITION
+                            if (lm != null && first != RecyclerView.NO_POSITION) {
+                                val shrinkSpan = targetCols(
+                                    rv.context.pxToDp(rv.width),
+                                    max(0, currentLevel.value - 1),
+                                )
+                                lm.prefillAboveUntilPosition =
+                                    max(0, (first / shrinkSpan - 4) * shrinkSpan)
+                                rv.requestLayout()
+                            }
+                            Log.i(
+                                TAG,
+                                "[Overview.pinchStart] level=${currentLevel.value} " +
+                                    "beginActive=${pinchFlip.isActive} first=$first " +
+                                    "span=${lm?.spanCount} prefillUntil=${lm?.prefillAboveUntilPosition}",
+                            )
+                        }
+                    },
                     onPinchProgress = { scale, _, _ ->
                         val rv = rvHolder.rv ?: return@PinchGridSpanListener
                         if (!pinchFlip.isActive) return@PinchGridSpanListener
@@ -217,6 +281,9 @@ fun FoldersOverview(
                     },
                     onPinchEnd = {
                         val rv = rvHolder.rv ?: return@PinchGridSpanListener
+                        // 捏合结束关闭上方补铺（后续换档布局按默认行为）
+                        (rv.layoutManager as? AuroraGridLayoutManager)?.prefillAboveUntilPosition =
+                            RecyclerView.NO_POSITION
                         if (pinchFlip.isActive) {
                             val target = pinchFlip.currentTargetLevel
                             if (pinchFlip.shouldCommit() && target != currentLevel.value) {
@@ -224,9 +291,26 @@ fun FoldersOverview(
                                 val remaining = 1f - pinchFlip.currentProgress
                                 flipDurationMs =
                                     (FLIP_DURATION_MS * remaining).toLong().coerceAtLeast(80L)
+                                // 锚点（含末端钳制位移 δ 的 commitAnchorTop）必须在 release 前
+                                // 取——release 清掉 lastTables 后 commitAnchorTop 会退回原始值
+                                pendingPinchAnchor.value = PinchAnchor(
+                                    pinchFlip.pinchAnchorPos,
+                                    pinchFlip.commitAnchorTop,
+                                )
+                                Log.i(
+                                    TAG,
+                                    "[Overview.commit] target=$target level=${currentLevel.value} " +
+                                        "p=${pinchFlip.currentProgress} " +
+                                        "anchor=${pendingPinchAnchor.value?.let { "${it.pos}@${it.top}" }}",
+                                )
                                 pinchFlip.release()
                                 onLevelChange(target)
                             } else {
+                                Log.i(
+                                    TAG,
+                                    "[Overview.settle] target=$target level=${currentLevel.value} " +
+                                        "shouldCommit=${pinchFlip.shouldCommit()} p=${pinchFlip.currentProgress}",
+                                )
                                 pinchFlip.settle(rv)
                             }
                         }
@@ -234,6 +318,16 @@ fun FoldersOverview(
                 )
                 setOnTouchListener(pinch)
                 addOnItemTouchListener(pinch)
+                // 模拟器/Debug 注入钩子（2026-09-17 补）：此前只有 FileGrid 挂了它，
+                // 总览页 PINCH 广播是空操作，捏合问题只能真机验证
+                pinch.debugAttachRv(this)
+                // 首次布局完成补写量宽 state，强制 update 重跑（update 可能在布局前跑、
+                // width=0 提前返回；教训见 FileGrid factory 的同款注释）
+                doOnLayout { view ->
+                    if (measuredWidthDp == 0 && view.width > 0) {
+                        measuredWidthDp = view.context.pxToDp(view.width)
+                    }
+                }
                 // 滚动位置上报：宿主用普通字段记录（非 Compose state，不触发重组），
                 // 返回总览时作为 initialScrollTop 传回归位
                 addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -247,13 +341,25 @@ fun FoldersOverview(
             val lm = rv.layoutManager as? GridLayoutManager ?: return@AndroidView
             if (rv.width <= 0) return@AndroidView
             val widthDp = rv.context.pxToDp(rv.width)
-            val target = targetCols(widthDp, level)
-            if (target != lm.spanCount) {
-                animateSpanChange(rv, lm, decoration, target, flipDurationMs)
+            if (measuredWidthDp != widthDp) measuredWidthDp = widthDp
+            val span = targetCols(widthDp, level)
+            if (span != lm.spanCount) {
+                // 捏合落档的锚点只消费一次；非捏合换档（anchor=null）退回 firstVisible 锚点
+                val anchor = pendingPinchAnchor.value
+                pendingPinchAnchor.value = null
+                animateSpanChange(rv, lm, decoration, span, flipDurationMs, pinchAnchor = anchor)
                 flipDurationMs = FLIP_DURATION_MS
             }
+            // 封面高度同步（L8 同款，对齐 FileGrid.applyCellWidth）：换档后列宽变化，
+            // 靠 payload 局部刷新把可见卡片封面高度可靠刷成新值。不能直接改
+            // layoutParams + requestLayout（update 落在 layout 阶段时会被 RV 吞掉），
+            // 也不能 notifyDataSetChanged（打回顶部 + 抹掉 FLIP 初始位移）。
+            val gap = currentGapPx.value
+            val cell = ((rv.width - rv.paddingLeft - rv.paddingRight - (span - 1) * gap) / span)
+                .coerceAtLeast(1)
+            gridAdapter.applyCellWidth(cell)
         },
-        modifier = modifier,
+        modifier = modifier.clipToBounds(),
     )
 }
 
@@ -271,6 +377,14 @@ private class FolderAdapter(
     /** 进度驱动 FLIP 控制器；捏合中新绑定的 item 需要补上当前进度的 transform。 */
     var pinchFlip: PinchFlipController? = null
 
+    /** 当前单元格宽度（px）。0 = 尚未量出（封面交回 SquareImageView 的 WRAP_CONTENT 正方形）。 */
+    private var cellWidthPx: Int = 0
+
+    companion object {
+        /** 局部刷新 payload：只更新封面高度，不重新 bind（不重载图片、不动 FLIP transform）。 */
+        private const val PAYLOAD_CELL = "cell"
+    }
+
     fun submit(list: List<Folder>) {
         // 幂等守卫（对齐 FileGrid.submit）：热刷新/回前台兜底会带着相同数据重走一遍
         // LaunchedEffect(folders)，无变化时不必 notifyDataSetChanged 把列表打回顶部
@@ -278,6 +392,27 @@ private class FolderAdapter(
         folders.clear()
         folders.addAll(list)
         notifyDataSetChanged()
+    }
+
+    /**
+     * 更新单元格宽度，**只改可见 item 的封面高度，绝不 notifyDataSetChanged**（L8 同款，
+     * 对齐 FileGridAdapter.applyCellWidth）。换档（列宽变化）后旧 item 是复用不重新 bind 的，
+     * 直接改 layoutParams + requestLayout 会因「update 落在 layout 阶段」被 RV 吞掉——
+     * 封面停在上一档高度（长条/错位，2026-09-17 用户报障），滚走再滚回才恢复。
+     * FolderAdapter 此前完全没有这套机制，而捏合预览（PinchFlipController.applyChildReal）
+     * 会把显式高度写进封面 lp，残留高度在复用中扩散——这就是总览捏合后布局错乱的根源。
+     */
+    fun applyCellWidth(cellPx: Int) {
+        if (cellPx <= 0) return
+        if (cellWidthPx == cellPx) return
+        val wasZero = cellWidthPx <= 0
+        cellWidthPx = cellPx
+        if (wasZero) {
+            // 从「未量出宽度」变为有宽度：已有 item 的封面高度还是默认的，全量刷新一次
+            notifyDataSetChanged()
+            return
+        }
+        notifyItemRangeChanged(0, folders.size, PAYLOAD_CELL)
     }
 
     fun cancel() = scope.cancel()
@@ -374,6 +509,17 @@ private class FolderAdapter(
         return vh
     }
 
+    override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
+        if (payloads.isNotEmpty()) {
+            // 局部刷新（PAYLOAD_CELL）：只改封面高度，不重新 bind、不清 FLIP transform、
+            // 不重载图片（换档 FLIP 的初始位移不能被抹掉）。
+            holder.cover.applyCoverHeight(if (cellWidthPx > 0) cellWidthPx else ViewGroup.LayoutParams.WRAP_CONTENT)
+            forceMeasureOnRebind(holder)
+            return
+        }
+        onBindViewHolder(holder, position)
+    }
+
     override fun onBindViewHolder(holder: VH, position: Int) {
         // 同 FileGrid：清掉 FLIP 动画残留的 transform
         resetFlipTransform(holder.itemView)
@@ -384,6 +530,11 @@ private class FolderAdapter(
         holder.name.text = folder.name
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
+
+        // 封面高度：量出列宽后写显式值（与捏合预览/换档目标一致）；未量出时回退
+        // WRAP_CONTENT 交给 SquareImageView 强制正方形，避免复用的 cover 带着上一条
+        // 生命周期的显式高度（尤其捏合预览写入的插值值）变成非正方形长条。
+        holder.cover.applyCoverHeight(if (cellWidthPx > 0) cellWidthPx else ViewGroup.LayoutParams.WRAP_CONTENT)
 
         val uri = folder.coverUri
         if (uri != null) {
@@ -404,10 +555,39 @@ private class FolderAdapter(
         } else {
             holder.cover.setImageBitmap(null)
         }
+        forceMeasureOnRebind(holder)
+    }
+
+    /**
+     * 重绑/局部刷新后强制重测（对齐 FileGridAdapter.forceMeasureOnRebind）。封面高度在
+     * bind 时只写字段——[SquareImageView] 把内容级 requestLayout 降级为重绘后，没人再
+     * 设置强制测量标志；RV fill 复用 view 时若尺寸 spec 与上次相同，`View.measure` 会跳过
+     * onMeasure，bind 写入的新高度不被消费、渲染沿用上一档位的过期实测高度（长条的
+     * 另一来源）。forceLayout 只置强制标志、不上抛，不会引发整网格重布局风暴。
+     */
+    private fun forceMeasureOnRebind(holder: VH) {
+        holder.itemView.forceLayout()
+        holder.cover.forceLayout()
+        (holder.cover.parent as? View)?.forceLayout()
     }
 
     override fun onViewRecycled(holder: VH) {
         holder.job?.cancel()
         holder.cover.setImageBitmap(null)
+        // 回收时置强制测量标志：经 mCachedViews 复用（不重走 bind）的 view 也必须重测，
+        // 否则可能带着过期高度混进新一轮布局（同 FileGrid.onViewRecycled）
+        holder.itemView.forceLayout()
+        holder.cover.forceLayout()
+    }
+
+    override fun onViewAttachedToWindow(holder: VH) {
+        // 经 mCachedViews 复用的 view（换档后同位置复用等）**不走 onBindViewHolder**，
+        // 封面 lp 高度还带着上一档位的值，fill 会按旧值测量上屏（捏合后错位的残留学徒）。
+        // attach 发生在 fill 测量该 child 之前，这里按当前数据归一，兜住所有不经 bind 的
+        // 复用路径（同 FileGrid.onViewAttachedToWindow）。
+        if (cellWidthPx > 0) {
+            holder.cover.applyCoverHeight(cellWidthPx)
+            holder.itemView.forceLayout()
+        }
     }
 }

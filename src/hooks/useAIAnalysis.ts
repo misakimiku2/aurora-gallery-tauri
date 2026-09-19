@@ -314,9 +314,6 @@ Please output only the summary text without any prefixes.`;
     if (aiConfig.autoTag) {
       promptFields.push(`- tags: string[] (relevant keywords in ${targetLanguage})`);
     }
-    if (aiConfig.enableFaceRecognition) {
-      promptFields.push(`- people: string[] (list of distinct people identified, if any, in ${targetLanguage})`);
-    }
     promptFields.push(`- sceneCategory: string (e.g. landscape, portrait, indoor, etc in ${targetLanguage})`);
     promptFields.push(`- objects: string[] (list of visible objects in ${targetLanguage})`);
 
@@ -517,53 +514,6 @@ Please output only the summary text without any prefixes.`;
         };
 
         let aiData: AiData = { ...baseAiData, faces: [] } as AiData;
-
-        if (aiConfig.enableFaceRecognition) {
-          const imagePath = file.path || '';
-          const settingsWithPeople = { ...settings, people: currentPeople };
-          const { aiData: aiResultData, faceDescriptors } = await aiService.analyzeImage(imagePath, settingsWithPeople, currentPeople);
-
-          aiData = { ...baseAiData, faces: aiResultData.faces || [] } as AiData;
-
-          // 获取 AI 分析识别出的人物列表
-          const aiRecognizedPeople = Array.isArray(result.people) ? result.people : [];
-
-          aiData.faces.forEach((face, index) => {
-            if (face.personId && face.name) {
-              const faceDescriptor = faceDescriptors.find(fd => fd.faceId === face.id);
-              let faceBox: { x: number; y: number; w: number; h: number } | undefined;
-              if (file.meta?.width && file.meta?.height && face.box) {
-                const { x, y, w, h } = face.box;
-                faceBox = {
-                  x: Math.round((x / file.meta.width) * 100),
-                  y: Math.round((y / file.meta.height) * 100),
-                  w: Math.round((w / file.meta.width) * 100),
-                  h: Math.round((h / file.meta.height) * 100)
-                };
-              }
-
-              // 优先使用 AI 分析识别出的人物名称
-              let personName = face.name;
-              if (face.name === '未知人物' && aiRecognizedPeople.length > 0) {
-                // 如果有 AI 识别的人物，使用第一个人物的名称
-                personName = aiRecognizedPeople[index] || aiRecognizedPeople[0];
-                // 更新 face 的显示名称
-                face.name = personName;
-              }
-
-              let person = currentPeople[face.personId];
-              if (!person) {
-                if (settings.ai.autoAddPeople) {
-                  currentPeople[face.personId] = { id: face.personId, name: personName, coverFileId: fileId, count: 1, description: 'Detected by AI face recognition', descriptor: faceDescriptor?.descriptor, faceBox: faceBox };
-                  peopleUpdated = true;
-                }
-              } else {
-                currentPeople[face.personId] = { ...person, count: person.count + 1, descriptor: person.descriptor || faceDescriptor?.descriptor, faceBox: person.faceBox || faceBox };
-                peopleUpdated = true;
-              }
-            }
-          });
-        }
 
         updateTask(taskId, { current: currentStep + 4, currentStep: t('tasks.savingResults') });
         setState(prev => {

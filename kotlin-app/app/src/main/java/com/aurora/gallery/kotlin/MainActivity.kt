@@ -22,7 +22,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import com.aurora.gallery.kotlin.ui.components.FileGrid
 import com.aurora.gallery.kotlin.ui.components.TopBar
+import com.aurora.gallery.kotlin.ui.components.filterFolders
 import com.aurora.gallery.kotlin.ui.components.filterImages
+import com.aurora.gallery.kotlin.ui.components.sortFolders
 import com.aurora.gallery.kotlin.ui.components.sortImages
 import com.aurora.gallery.kotlin.ui.components.FoldersOverview
 import com.aurora.gallery.kotlin.ui.components.PinchGridSpanListener
@@ -30,6 +32,7 @@ import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import com.aurora.gallery.kotlin.state.AppState
 import com.aurora.gallery.kotlin.state.LayoutVisibility
 import com.aurora.gallery.kotlin.state.SortDirection
+import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.state.ViewMode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -170,17 +173,31 @@ fun App(
         return
     }
 
-    // 工具按钮（搜索/排序/视图/日期）只在文件夹内部视图提供（3.2 对齐矩阵 M1 范围；
-    // 总览的文件夹排序/视图切换在 React 里是 folderLayoutMode，Kotlin 总览暂只支持网格）
+    // 工具按钮按视图提供（2026-09-17 起）：文件夹内部 = 搜索/排序/视图/日期全量；
+    // 总览 = 搜索（按文件夹名过滤）+ 排序 + 日期筛选（Folder.createdAt/modifiedAt，
+    // Rust list_folders 子查询提供）。排序字段/方向是应用级状态（对齐 React：总览与
+    // 文件网格共用同一 sortBy/sortDirection）。总览的视图循环（React folderLayoutMode）
+    // 不做——文件夹卡片是等比正方形，adaptive/masonry 视觉与 grid 等价。
     val inBrowser = tab.viewMode == ViewMode.BROWSER && currentFolder != null
+
+    // 总览数据管道：过滤（搜索词/日期）→ 排序（「根目录图片」恒置顶在 sortFolders 内保证）。
+    // remember 键齐备：任一条件变化才重算，文件夹列表量级小、开销可忽略。
+    val displayFolders = remember(folders, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+        filterFolders(
+            sortFolders(folders, state.sortBy, state.sortDirection),
+            tab.searchQuery,
+            tab.dateFilter,
+        )
+    }
 
     Column(Modifier.fillMaxSize()) {
         TopBar(
-            title = if (inBrowser) currentFolder?.name ?: "文件夹" else "文件夹",
+            title = currentFolder?.name ?: "文件夹",
             canBack = tab.history.canBack,
             onBack = { state.goBack() },
             searchQuery = tab.searchQuery,
             onSearchQueryChange = { state.setSearchQuery(it) },
+            searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
             dateFilter = tab.dateFilter,
             onDateFilterChange = { state.setDateFilter(it) },
             sortBy = state.sortBy,
@@ -194,12 +211,16 @@ fun App(
             onGroupByChange = { state.groupBy = it },
             layoutMode = tab.layoutMode,
             onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
-            showBrowserTools = inBrowser,
+            showSearch = true,
+            showSortMenu = true,
+            showViewMode = inBrowser,
+            showDateFilter = true,
+            showGroupBy = inBrowser,
             modifier = Modifier.fillMaxWidth(),
         )
         if (!inBrowser) {
             FoldersOverview(
-                folders = folders,
+                folders = displayFolders,
                 thumbnailLoader = thumbnailLoader,
                 onFolderClick = onFolderClick,
                 level = state.gridLevel,
@@ -207,6 +228,8 @@ fun App(
                 // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
                 initialScrollTop = state.overviewScrollTop,
                 onScrollChanged = { state.overviewScrollTop = it },
+                emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
+                else "暂无文件夹",
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
         } else {

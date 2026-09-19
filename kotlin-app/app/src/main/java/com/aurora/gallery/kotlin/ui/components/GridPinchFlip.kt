@@ -4,10 +4,12 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.graphics.Rect
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.recyclerview.widget.StaggeredGridLayoutManager
 import kotlin.math.roundToInt
@@ -33,8 +35,10 @@ internal const val COMMIT_THRESHOLD = 0.5f
  *    cellPx + 文件名高 + gap（第 r 行的顶 inset 恰好贡献每行一个 gap）；
  *  - 只用于 GRID 且无分组（分组标题占整行，行号公式失效，那条路径走「松手换档」）。
  *
- * **锚点** = 第一个可见 item，全程停在捏合前的位置；列表末端钳制（δ）与瀑布流相同：
- * 真实布局的 scrollY 有界，目标几何越界时整体平移 δ，预览与落档一致。
+ * **锚点** = 第一个可见 item，全程停在捏合前的位置；滚动钳制（δ）与瀑布流相同：
+ * 目标几何越出真实布局可达区间时（列表顶端/末端钉边）整体平移 δ，预览与落档一致。
+ * 末端钳制（缩小后内容够不到视口底）成立的前提是**上方目标行有视图可填**——
+ * AuroraGridLayoutManager.prefillAbove 负责在进捏合时补铺已回收的更早 item。
  */
 internal class PinchFlipController {
 
@@ -82,6 +86,9 @@ internal class PinchFlipController {
 
     /** 退回动画：进度插值回 0 的手动布局重放（结束即恢复原布局，无需 RV 参与）。 */
     private var settleAnim: ValueAnimator? = null
+
+    /** 高频进度日志节流（2026-09-17 末端收拢露白排查，见 TAG 的说明）。 */
+    private val progressLog = PinchLogThrottle()
 
     val isActive: Boolean get() = active
 
@@ -131,8 +138,14 @@ internal class PinchFlipController {
 
         // 终止上一轮 FLIP/退回动画并清掉 transform：origins 必须等于未变换的布局位置
         //（手动布局版预览本身无 transform，这里是清上一轮收尾 FLIP 动画的残留）。
+        // 顺带记录挂载覆盖（minTop/maxBottom）：末端收拢露白排查的关键输入——
+        // begin 时视口上下沿之外还有多少已挂载余量，决定预览上移/下移后有没有 view 可插值。
+        var covTop = Int.MAX_VALUE
+        var covBottom = Int.MIN_VALUE
         for (i in 0 until rv.childCount) {
             val c = rv.getChildAt(i) ?: continue
+            if (c.top < covTop) covTop = c.top
+            if (c.bottom > covBottom) covBottom = c.bottom
             c.animate().cancel()
             if (c.translationX != 0f || c.translationY != 0f || c.scaleX != 1f || c.scaleY != 1f) {
                 c.translationX = 0f
@@ -150,6 +163,11 @@ internal class PinchFlipController {
         }
         if (anchorPos == RecyclerView.NO_POSITION || anchorView == null || anchorView.width <= 0) {
             // 没有锚点就没法对齐，宁可不启用——否则 targetSpan/行号会算出错误位置。
+            Log.w(
+                TAG,
+                "[PinchGrid.begin] INACTIVE pos=$anchorPos view=$anchorView w=${anchorView?.width} " +
+                    "children=${rv.childCount}",
+            )
             active = false
             return
         }
@@ -157,6 +175,14 @@ internal class PinchFlipController {
         // 网格下封面是正方形（= item 宽），剩下的就是文字区
         textHeight = (anchorView.height - anchorView.width).coerceAtLeast(0)
         active = true
+        Log.i(
+            TAG,
+            "[PinchGrid.begin] anchor=$anchorPos anchorTop=$anchorTop textH=$textHeight " +
+                "viewport=$viewportHeight availW=$availWidth gap=$gap children=${rv.childCount} " +
+                "span=${(rv.layoutManager as? GridLayoutManager)?.spanCount} " +
+                "firstPos=$anchorPos cov=[$covTop,$covBottom] " +
+                "scrollY=${rv.computeVerticalScrollOffset()}/${rv.computeVerticalScrollRange()}",
+        )
     }
 
     /**
@@ -181,6 +207,7 @@ internal class PinchFlipController {
      */
     fun settle(rv: RecyclerView, duration: Long = FLIP_DURATION_MS) {
         active = false
+        Log.i(TAG, "[PinchGrid.settle] 从 progress=$progress 退回（targetSpan=$targetSpan）")
         // 防御性清理：先摘牌再取消，onAnimationEnd 不会把待用的 origins/progress 清掉
         settleAnim?.let { anim ->
             settleAnim = null
@@ -260,11 +287,47 @@ internal class PinchFlipController {
         val count = rv.adapter?.itemCount ?: 0
         val t = tablesFor(targetSpan, count) ?: return
         lastTables = t
+        // 日志放在节流窗口内才算附加统计（最顶行完整度），避免每个触摸事件多跑一遍循环
+        val wantLog = progressLog.allow()
+        var minTop = Int.MAX_VALUE
+        var maxBottom = Int.MIN_VALUE
+        var firstPos = Int.MAX_VALUE
+        var lastPos = -1
+        var minTopPos = -1
         for (i in 0 until rv.childCount) {
             val child = rv.getChildAt(i)
             val pos = rv.getChildAdapterPosition(child)
             if (pos == RecyclerView.NO_POSITION) continue
             applyChildReal(child, pos, p, t)
+            if (child.top < minTop) {
+                minTop = child.top
+                minTopPos = pos
+            }
+            if (child.bottom > maxBottom) maxBottom = child.bottom
+            if (pos < firstPos) firstPos = pos
+            if (pos > lastPos) lastPos = pos
+        }
+        // 节流摘要：minTop > paddingTop 即手势中顶部露白，maxBottom < 底沿即底部露白；
+        // topRowMounted < targetSpan = 最顶可见行缺列（左/上角局部空白，2026-09-17
+        // 「左上角 3 格」缺陷的教训：minTop 检测不出行内缺列，必须看行完整度）。
+        if (wantLog) {
+            var topRowMounted = -1
+            var topRow = -1
+            if (minTopPos >= 0 && targetSpan > 0) {
+                topRow = minTopPos / targetSpan
+                val rowStart = topRow * targetSpan
+                for (i in 0 until rv.childCount) {
+                    val pos = rv.getChildAdapterPosition(rv.getChildAt(i))
+                    if (pos in rowStart until rowStart + targetSpan) topRowMounted++
+                }
+            }
+            Log.i(
+                TAG,
+                "[PinchGrid.progress] p=${"%.2f".format(p)} span=$targetSpan delta=${t.delta} " +
+                    "children=${rv.childCount} pos=[$firstPos..$lastPos] y=[$minTop,$maxBottom] " +
+                    "topRow=$topRow:$topRowMounted/$targetSpan " +
+                    "viewport=0..${rv.height} pt=${rv.paddingTop} pb=${rv.paddingBottom}",
+            )
         }
     }
 
@@ -346,10 +409,12 @@ internal class PinchFlipController {
 
         // 滚动可行性钳制（与 MasonryPinchController.buildTables 相同）：
         // 真实布局的 scrollY 夹在 [0, 内容高 - 视口高]，锚点钉在捏合位置越界时，
-        // 真实布局会把列表端钉在视口边缘，预览目标必须做同样的整体平移 δ。
-        val lastRow = (count - 1) / span
+        // 真实布局会把列表端钉在视口边缘，预览与落档一致。
+        // （列表末端缩小够不到视口底的场景，钳制位移 δ 使目标整体下移、末端钉底——
+        // 上方目标区域必须由「补铺的已回收 item」填住，见 AuroraGridLayoutManager
+        // .prefillAbove；否则预览顶部会留一段空白、松手后卡片又要滑回来。）
         val contentTop = seed
-        val contentBottom = seed + lastRow * rowAdvance + cellPx + textHeight
+        val contentBottom = seed + (count - 1) / span * rowAdvance + cellPx + textHeight
         val deltaUpper = paddingTop - contentTop
         val deltaLower = viewportHeight - paddingBottom - contentBottom
         val delta = when {
@@ -360,6 +425,12 @@ internal class PinchFlipController {
         if (delta != 0) {
             for (p in topOf.indices) topOf[p] += delta
         }
+        Log.i(
+            TAG,
+            "[PinchGrid.tables] span=$span count=$count cell=$cellPx rowAdv=$rowAdvance " +
+                "seed=$seed content=[$contentTop,$contentBottom] " +
+                "deltaLower=$deltaLower deltaUpper=$deltaUpper -> delta=$delta",
+        )
         return SimTables(span, topOf, leftOf, widthOf, coverHOf, delta)
     }
 
@@ -514,6 +585,9 @@ internal class MasonryPinchController(
     /** 退回动画：进度插值回 0 的手动布局重放（结束即恢复原布局，无需 RV 参与）。 */
     private var settleAnim: ValueAnimator? = null
 
+    /** 高频进度日志节流（2026-09-17 末端收拢露白排查，见 TAG 的说明）。 */
+    private val progressLog = PinchLogThrottle()
+
     val isActive: Boolean get() = active
     val currentProgress: Float get() = progress
     val currentTargetLevel: Int get() = targetLevel
@@ -561,21 +635,36 @@ internal class MasonryPinchController(
 
         // 终止上一轮 FLIP/退回动画并清掉 transform：origins 必须等于未变换的布局位置，
         // 否则上一轮动画的残留会叠加进本轮插值（收尾动画没跑完就再捏会跳）。
+        // 顺带记录挂载覆盖：瀑布流没有上方补铺，末端收拢时 δ 上方有没有 view 可插值
+        // 全靠 begin 时的余量——cov 与 [PinchMasonry.tables] 的 δ 对照即可确认露白成因。
+        var covTop = Int.MAX_VALUE
+        var covBottom = Int.MIN_VALUE
         for (i in 0 until rv.childCount) {
-            val c = rv.getChildAt(i) ?: continue
-            c.animate().cancel()
-            if (c.translationX != 0f || c.translationY != 0f || c.scaleX != 1f || c.scaleY != 1f) {
-                c.translationX = 0f
-                c.translationY = 0f
-                c.scaleX = 1f
-                c.scaleY = 1f
+            val child = rv.getChildAt(i)
+            if (child.top < covTop) covTop = child.top
+            if (child.bottom > covBottom) covBottom = child.bottom
+            child.animate().cancel()
+            if (child.translationX != 0f || child.translationY != 0f || child.scaleX != 1f || child.scaleY != 1f) {
+                child.translationX = 0f
+                child.translationY = 0f
+                child.scaleX = 1f
+                child.scaleY = 1f
             }
         }
 
-        // 锚点 = top 最小的可见「图片」item（header 不参与：它没有宽高比，不缩放）
+        // 锚点 = 首个「顶边完整可见」（top ≥ 0）的图片；没有（视口内全是跨顶边的行）
+        // 再退回 top 最小的可见图。header 不参与：它没有宽高比，不缩放。
+        // 不能简单取 top 最小的可见图：上方补铺/预填 view 可能整个滚出视口顶几千 px
+        // 仍挂载（长图单张 2000px+），钉它当锚点会把整张预览表钉在视口外——预览把
+        // 已挂载子项全部收缩到视口上方、可插值区域之外的 item 又没挂载，表现为
+        // 「极端全屏白」（2026-09-17 K2.log：anchor=380@-7168，p=1.00 时 y=[-7949,-1815]）。
+        // 与 AdaptivePinchController.begin 的 full/best 策略同源。
         var bestPos = RecyclerView.NO_POSITION
         var bestTop = Int.MAX_VALUE
         var bestView: View? = null
+        var fullPos = RecyclerView.NO_POSITION
+        var fullTop = Int.MAX_VALUE
+        var fullView: View? = null
         for (i in 0 until rv.childCount) {
             val child = rv.getChildAt(i)
             val pos = rv.getChildAdapterPosition(child)
@@ -585,17 +674,24 @@ internal class MasonryPinchController(
                 bestPos = pos
                 bestView = child
             }
+            if (child.top >= 0 && child.top < fullTop) {
+                fullTop = child.top
+                fullPos = pos
+                fullView = child
+            }
         }
-        val view = bestView
-        if (bestPos == RecyclerView.NO_POSITION || view == null || view.width <= 0) {
+        val useFull = fullPos != RecyclerView.NO_POSITION
+        anchorPos = if (useFull) fullPos else bestPos
+        anchorTop = if (useFull) fullTop else bestTop
+        val view = if (useFull) fullView else bestView
+        if (anchorPos == RecyclerView.NO_POSITION || view == null || view.width <= 0) {
+            Log.w(TAG, "[PinchMasonry.begin] INACTIVE pos=$anchorPos view=$view children=${rv.childCount}")
             active = false
             return
         }
-        anchorPos = bestPos
-        anchorTop = bestTop
         // 瀑布流封面高 = item 宽 / 宽高比（bind 时按旧 cellWidth 设置，实测值即旧封面高），
         // 两者相减正好是文字区（单行文件名）的真实高度，新档位沿用。
-        val ratio = ratioAt(bestPos).coerceAtLeast(0.05f)
+        val ratio = ratioAt(anchorPos).coerceAtLeast(0.05f)
         // 文字区高度直接量 name view（item root 的第二个子 view）——不要用
         // 「view.height - 宽/ratio」反推：缓存复用的 view 可能带着上一个档位的封面高度
         //（不走 bind、无人归一时），反推出的 textHeight 会被毒化（实测出现过 0/151/202），
@@ -606,6 +702,12 @@ internal class MasonryPinchController(
             else -> (view.height - (view.width / ratio).toInt()).coerceAtLeast(0)
         }
         active = true
+        Log.i(
+            TAG,
+            "[PinchMasonry.begin] anchor=$anchorPos anchorTop=$anchorTop ratio=$ratio textH=$textHeight " +
+                "viewport=$viewportHeight availW=$availWidth gap=$gap children=${rv.childCount} " +
+                "cov=[$covTop,$covBottom] scrollY=${rv.computeVerticalScrollOffset()}/${rv.computeVerticalScrollRange()}",
+        )
     }
 
     /**
@@ -630,6 +732,7 @@ internal class MasonryPinchController(
      */
     fun settle(rv: RecyclerView, duration: Long = FLIP_DURATION_MS) {
         active = false
+        Log.i(TAG, "[PinchMasonry.settle] 从 progress=$progress 退回（targetSpan=$targetSpan）")
         // 防御性清理：先摘牌再取消，onAnimationEnd 不会把待用的 origins/progress 清掉
         settleAnim?.let { anim ->
             settleAnim = null
@@ -712,11 +815,27 @@ internal class MasonryPinchController(
         val count = rv.adapter?.itemCount ?: 0
         val t = tablesFor(targetSpan, count) ?: return
         lastTables = t
+        var minTop = Int.MAX_VALUE
+        var maxBottom = Int.MIN_VALUE
+        var firstPos = Int.MAX_VALUE
+        var lastPos = -1
         for (i in 0 until rv.childCount) {
             val child = rv.getChildAt(i)
             val pos = rv.getChildAdapterPosition(child)
             if (pos == RecyclerView.NO_POSITION) continue
             applyChildReal(child, pos, p, t)
+            if (child.top < minTop) minTop = child.top
+            if (child.bottom > maxBottom) maxBottom = child.bottom
+            if (pos < firstPos) firstPos = pos
+            if (pos > lastPos) lastPos = pos
+        }
+        if (progressLog.allow()) {
+            Log.i(
+                TAG,
+                "[PinchMasonry.progress] p=${"%.2f".format(p)} span=$targetSpan delta=${t.delta} " +
+                    "children=${rv.childCount} pos=[$firstPos..$lastPos] y=[$minTop,$maxBottom] " +
+                    "viewport=0..${rv.height} pt=${rv.paddingTop} pb=${rv.paddingBottom}",
+            )
         }
     }
 
@@ -886,6 +1005,12 @@ internal class MasonryPinchController(
         if (delta != 0) {
             for (p in topOf.indices) topOf[p] += delta
         }
+        Log.i(
+            TAG,
+            "[PinchMasonry.tables] span=$span count=$count cellW=$cellW seed=$seed " +
+                "content=[$contentTop,$contentBottom] " +
+                "deltaLower=$deltaLower deltaUpper=$deltaUpper -> delta=$delta",
+        )
         return SimTables(span, colOf, topOf, leftOf, widthOf, coverHOf, delta)
     }
 }

@@ -8,7 +8,7 @@ import { debug as logDebug } from './utils/logger';
 import { translations } from './utils/translations';
 import { performanceMonitor } from './utils/performanceMonitor';
 import { saveUserData as tauriSaveUserData, getDefaultPaths as tauriGetDefaultPaths, deleteFile, clearScanCache, getThumbnail, hideWindow, exitApp, pauseColorExtraction, resumeColorExtraction, openPath, dbUpsertFileMetadata, dbGetAllTopics, copyImageToClipboard, setAndroidStatusBar, setAndroidImmersiveMode, androidUpdateTaskNotification, isAndroidPlatformCached, captureWindowSnapshot, subscribeScrollState } from './api/tauri-bridge';
-import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection } from './types';
+import { AppState, FileNode, FileType, TabState, LayoutMode, Person, Topic, GroupByOption, PersonSortOption, PersonGroupByOption, SortDirection, ImageMeta, AndroidClientConnection, SettingsCategory } from './types';
 
 import { isAndroidSync } from './utils/androidPlatform';
 import { generateId } from './utils/pathUtils';
@@ -94,8 +94,6 @@ export const App: React.FC = () => {
         autoTag: false,
         autoDescription: false,
         enhancePersonDescription: false,
-        enableFaceRecognition: false,
-        autoAddPeople: false,
         enableOCR: false,
         enableTranslation: false,
         targetLanguage: 'zh',
@@ -1765,7 +1763,7 @@ export const App: React.FC = () => {
   // （打开瞬间通常尚未滚动设置，短暂实时可接受），缓存由后台预取在关闭设置后补上，
   // 下次打开即为零等待。缓存画面与实际主网格可能有轻微滚动位移——底层是模糊低分辨率
   // 图 + 50% 黑遮罩，位移几乎不可察觉，因此不因「刚滚动」而回退等待。
-  const openSettings = useCallback((category?: string) => {
+  const openSettings = useCallback((category?: SettingsCategory) => {
     setState(s =>
       s.isSettingsOpen
         ? s

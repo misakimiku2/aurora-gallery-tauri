@@ -7,7 +7,8 @@ import {
   FileNode,
   AppSettings,
   UpdateInfo,
-  DownloadProgress
+  DownloadProgress,
+  SettingsCategory
 } from '../types';
 import { Trash2, FilePlus, Merge, AlertTriangle } from 'lucide-react';
 import { setAndroidStatusBar, isAndroidPlatformCached } from '../api/tauri-bridge';
@@ -103,7 +104,7 @@ interface AppModalsProps {
   handleSmartCreateTopic?: (topics: Topic[], people: Person[]) => Promise<void>;
   handleConfirmCreatePerson?: (name: string) => void;
   // 打开设置弹窗（走 App 的统一入口：先截图静态背景再低负载隐藏主网格）
-  onOpenSettings?: (category?: string) => void;
+  onOpenSettings?: (category?: SettingsCategory) => void;
 }
 
 export const AppModals: React.FC<AppModalsProps> = ({

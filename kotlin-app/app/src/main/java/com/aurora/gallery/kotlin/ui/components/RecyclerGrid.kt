@@ -20,7 +20,26 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
-private const val TAG = "AuroraKotlin"
+/**
+ * 捏合链路调试日志统一 tag（logcat 过滤 `AuroraKotlin` 一条链全看到）。
+ * 2026-09-17 排查「列表末端收拢（图标变小）捏合露白、松手才填满」加的一批
+ * [Pinch*]/[Prefill*]/[Flip*]/[FixAnchor] 日志，只读不改任何行为，定位后整体移除。
+ */
+internal const val TAG = "AuroraKotlin"
+
+/**
+ * 手势进行中的高频日志节流阀：applyProgress 每个触摸事件（60~120Hz）都会跑，
+ * 全量打会刷爆 logcat 甚至拖慢预览，按时间窗放行。
+ */
+internal class PinchLogThrottle(private val intervalMs: Long = 100L) {
+    private var last = 0L
+    fun allow(): Boolean {
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - last < intervalMs) return false
+        last = now
+        return true
+    }
+}
 
 /**
  * FLIP 换档动画参数，逐项对齐 React 版 `src/components/FileGrid.tsx` 的捏合换档分支
@@ -192,6 +211,7 @@ class PinchGridSpanListener(
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
             initialSpan = detector.currentSpan
+            Log.i(TAG, "[Pinch] scaleBegin initialSpan=$initialSpan")
             onPinchStart(detector.focusX, detector.focusY)
             return true
         }
@@ -205,7 +225,9 @@ class PinchGridSpanListener(
 
         override fun onScaleEnd(detector: ScaleGestureDetector) {
             if (initialSpan > 0f) {
-                onPinchEnd(detector.currentSpan / initialSpan)
+                val scale = detector.currentSpan / initialSpan
+                Log.i(TAG, "[Pinch] scaleEnd scale=$scale")
+                onPinchEnd(scale)
             }
             initialSpan = 0f
         }
@@ -509,6 +531,7 @@ internal fun runFlipWhenLayoutApplied(
             snap.anchorWidth <= 0 || currentWidth != snap.anchorWidth
         }
         if (applied) {
+            Log.d(TAG, "[FlipWait] $tag 布局已刷新，执行收尾（attempt=$attempt）")
             doFlip()
         } else if (attempt < MAX_LAYOUT_RETRY) {
             // 同步换档那次 requestLayout 可能被吞（update 恰落在 layout 阶段），
@@ -523,6 +546,8 @@ internal fun runFlipWhenLayoutApplied(
 
 /** FLIP 最后一步：二维反向位移 → 240ms / `cubic-bezier(0.22,1,0.36,1)` 动画归位。 */
 internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, durationMs: Long) {
+    var animated = 0
+    var noOldPos = 0
     for (i in 0 until rv.childCount) {
         val child = rv.getChildAt(i)
         val pos = rv.getChildAdapterPosition(child)
@@ -530,6 +555,7 @@ internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duratio
         val oldLeft = snap.oldLefts[pos]
         if (oldTop == null || oldLeft == null) {
             // 换档后新进视口的 item 没有旧位置，正常，不参与动画
+            noOldPos++
             continue
         }
         // 收尾动画的起始 scale = 捕获时视觉宽 / 新布局宽，松手瞬间视觉宽度连续；
@@ -554,7 +580,13 @@ internal fun playFlip(rv: RecyclerView, snap: FlipSnapshot, tag: String, duratio
             .setDuration(durationMs)
             .setInterpolator(FLIP_INTERPOLATOR)
             .start()
+        animated++
     }
+    Log.i(
+        TAG,
+        "[Flip.play] $tag duration=$durationMs animated=$animated noOldPos=$noOldPos " +
+            "children=${rv.childCount} anchorPos=${snap.anchorPos} anchorTop=${snap.anchorTop}",
+    )
 }
 
 /**
@@ -578,9 +610,23 @@ internal fun afterStableLayout(rv: RecyclerView, action: () -> Unit) {
 /** 锚点精确归位：布局后用 `scrollBy` 修正（同步生效，不必再等一帧）。 */
 internal fun fixAnchor(rv: RecyclerView, anchorPos: Int, anchorTop: Int) {
     if (anchorPos == RecyclerView.NO_POSITION) return
-    val view = rv.layoutManager?.findViewByPosition(anchorPos) ?: return
+    val view = rv.layoutManager?.findViewByPosition(anchorPos) ?: run {
+        Log.w(TAG, "[FixAnchor] anchor pos=$anchorPos 不在布局中，无法归位")
+        return
+    }
     val drift = view.top - anchorTop
-    if (drift != 0) rv.scrollBy(0, drift)
+    if (drift != 0) {
+        // 实际位移 < drift 说明被滚动边界钳制（列表末端钉边）——「松手后内容整体
+        // 再滑一下」的直接证据，与捏合预览的 δ 是否一致对照看。
+        val before = rv.computeVerticalScrollOffset()
+        rv.scrollBy(0, drift)
+        val actual = rv.computeVerticalScrollOffset() - before
+        Log.i(
+            TAG,
+            "[FixAnchor] pos=$anchorPos want=$drift actual=$actual top=${view.top}->want=$anchorTop " +
+                "scrollY=${rv.computeVerticalScrollOffset()}",
+        )
+    }
 }
 
 /**
@@ -620,7 +666,15 @@ internal fun animateSpanChange(
     }
     val snap = captureFlip(rv, anchorPos, anchorTop)
 
-    if (snap == null) return
+    if (snap == null) {
+        Log.w(TAG, "[SpanChange] captureFlip 为空（anchorPos=$anchorPos），放弃换档动画")
+        return
+    }
+    Log.i(
+        TAG,
+        "[SpanChange] span ${lm.spanCount}->$newSpan anchorPos=$anchorPos anchorTop=$anchorTop " +
+            "pinchAnchor=${pinchAnchor != null} children=${rv.childCount}",
+    )
 
     // Last：同步换档 + 更新间距，并在同一次 requestLayout 里把锚点粗定位回去。
     // （scrollToPositionWithOffset 只是登记 pending 位置，与本次 layout 一起生效。）
@@ -715,7 +769,15 @@ internal fun animateStaggeredSpanChange(
         }
     }
     val snap = captureFlip(rv, anchorPos, anchorTop)
-    if (snap == null) return
+    if (snap == null) {
+        Log.w(TAG, "[StaggeredSpanChange] captureFlip 为空（anchorPos=$anchorPos），放弃换档动画")
+        return
+    }
+    Log.i(
+        TAG,
+        "[StaggeredSpanChange] span ${oldLm.spanCount}->$newSpan anchorPos=$anchorPos anchorTop=$anchorTop " +
+            "pinchAnchor=${pinchAnchor != null} children=${rv.childCount}",
+    )
 
     // 冷启动：换全新 LM（旧 children 全部回收、span 记账从零开始），锚点经 pending scroll
     // 定位——首个布局从锚点位置起铺满视口，与捏合模拟同构；随后 fixAnchor 精确对齐，
