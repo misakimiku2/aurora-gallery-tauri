@@ -1,5 +1,20 @@
 package com.aurora.gallery.kotlin.ui.components
 
+import android.app.Activity
+import android.app.Dialog
+import android.graphics.Bitmap
+import android.graphics.Outline
+import android.graphics.drawable.ColorDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.view.Gravity
+import android.view.PixelCopy
+import android.view.View
+import android.view.ViewOutlineProvider
+import android.view.ViewGroup
+import android.view.Window
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +30,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,37 +49,51 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Popup
-import androidx.compose.ui.window.PopupProperties
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.findViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.aurora.gallery.kotlin.state.DateFilter
 import com.aurora.gallery.kotlin.state.DateFilterMode
 import com.aurora.gallery.kotlin.state.SortDirection
@@ -71,6 +101,7 @@ import com.aurora.gallery.kotlin.state.SortOption
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
 import java.util.Calendar
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * 顶栏（3.2，对齐 React `TopBar.tsx` 的 `isAndroid` 分支：平板横屏形态）。
@@ -83,7 +114,8 @@ import java.util.Locale
  *  - 搜索：点开替换标题为胶囊（React `isSearchOpen`），关闭时清空 query（对齐 React
  *    `onSetToolbarQuery('')` + close）；M1 只做文件名过滤，scope 下拉随 M2 标签补；
  *  - 排序菜单：排序字段/方向 + 分组方式（React sortMenuOpen 的菜单，选项不点走不收）；
- *  - 视图循环：grid → adaptive → masonry（React `isAndroid` 分支的三档循环，无 list）；
+ *  - 视图排布：三档循环按钮（2026-09-20 用户要求：改回切换式、不弹菜单）——
+ *    grid → adaptive → masonry（模式集合 = React isAndroid 分支，无 list）；
  *  - 日期筛选：底部弹层月历（React 安卓分支的 CalendarWidget bottom sheet），
  *    区间选择语义逐条对齐：首点设 start（清 end）、次点补 end（早于 start 则互换）、
  *    再点重新开始；
@@ -210,7 +242,8 @@ fun TopBar(
             }
         }
         if (showSortMenu) {
-            Box {
+            var sortAnchor by remember { mutableStateOf(Rect.Zero) }
+            Box(Modifier.onGloballyPositioned { sortAnchor = it.boundsInWindow() }) {
                 TopBarButton(
                     highlighted = sortMenuOpen,
                     onClick = { sortMenuOpen = !sortMenuOpen },
@@ -223,9 +256,10 @@ fun TopBar(
                     )
                 }
                 // 桌面同款弹出面板（对齐 React 桌面 sortMenu 的 w-48 + panel/90 + border +
-                // 大柔和投影 + 小节标题 + 蓝底悬停项；2026-09-17 用户要求弹窗风格与桌面一致）
+                // 大柔和投影 + 小节标题 + 蓝底悬停项）；毛玻璃 = 原生小窗口的窗口级背景模糊
                 AuroraDropdown(
                     expanded = sortMenuOpen,
+                    anchorBoundsInWindow = sortAnchor,
                     onDismissRequest = { sortMenuOpen = false },
                 ) {
                     AuroraMenuHeader("排序方式")
@@ -276,7 +310,8 @@ fun TopBar(
         if (showViewMode) {
             TopBarButton(
                 onClick = {
-                    // 安卓端三档循环（React isAndroid 分支）：grid → adaptive → masonry → grid
+                    // 三档循环（2026-09-20 用户要求改回切换式按钮，不弹菜单）：
+                    // grid → adaptive → masonry → grid（模式集合 = React isAndroid 分支）
                     val cycle = LayoutMode.values()
                     onLayoutModeChange(cycle[(cycle.indexOf(layoutMode) + 1) % cycle.size])
                 },
@@ -287,7 +322,7 @@ fun TopBar(
                         LayoutMode.ADAPTIVE -> IconLayoutGrid
                         LayoutMode.MASONRY -> IconLayoutTemplate
                     },
-                    contentDescription = "视图模式",
+                    contentDescription = "视图排布",
                     tint = colors.textSecondary,
                     modifier = Modifier.size(18.dp),
                 )
@@ -354,7 +389,7 @@ fun TopBar(
     }
 }
 
-/** 顶栏圆角按钮（对齐 React 安卓 `w-10 h-10 rounded-xl hover:bg-surface`）。 */
+/** 顶栏圆角按钮（React 安卓 `w-10 h-10 rounded-xl hover:bg-surface`；命中区扩到 48dp 触屏最小目标）。 */
 @Composable
 private fun TopBarButton(
     onClick: () -> Unit,
@@ -366,7 +401,7 @@ private fun TopBarButton(
     val colors = AuroraTheme.colors
     Box(
         modifier = modifier
-            .size(40.dp)
+            .size(48.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(if (highlighted) colors.surface else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick),
@@ -377,39 +412,178 @@ private fun TopBarButton(
 }
 
 /**
- * 桌面同款的弹出菜单容器（2026-09-17，替代 Material DropdownMenu 以对齐 React 桌面
- * sortMenu 观感）：w-48(192dp) + panel 底 + 1dp subtle 描边 + rounded-lg + 大柔和投影
- * + py-2；锚定在按钮正下方并右对齐（React `top-full right-0 mt-2`）。focusable=true
- * 让点外部/返回键触发 [onDismissRequest]。选项点击后不收起（调用方控制 expanded，
- * 对齐 React 可连续调字段/方向/分组）。
+ * 桌面同款弹出菜单容器（毛玻璃，2026-09-20）：w-48(192dp) + 90% 半透明 panel 底 +
+ * subtle 描边 + rounded-lg + 背景实时模糊，锚定在按钮正下方并右对齐
+ * （React `top-full right-0 mt-2`；React 侧 = bg-[#fafafa]/90 + backdrop-blur-md）。
+ *
+ * **实现为什么是原生 `android.app.Dialog` 小窗口 + PixelCopy 快照**：桌面的
+ * backdrop-blur 模糊的是「菜单背后那一块」背景。Compose `Popup` 拿不到背后像素；
+ * 窗口级 FLAG_BLUR_BEHIND 依赖系统的交叉窗口模糊开关（省电模式/关闭动画/部分 OEM
+ * 会禁用，实测用户的平板上不生效）。定稿方案：窗口大小 = 菜单边界，菜单尺寸就绪后
+ * 用 PixelCopy 从**宿主窗口**拷贝菜单正后方的区域（PixelCopy 只拷宿主自己的
+ * surface，不含弹层本身），GPU 模糊后垫在 90% 面板底之下——与桌面观感逐像素等价，
+ * 不依赖任何系统开关；拷贝失败（API<26 等）退化为纯半透明底。
+ *
+ * 弹层是独立组合，ComposeView 挂宿主 ViewTree 的 Lifecycle/SavedState owners；
+ * 内容与关闭回调经 rememberUpdatedState 取最新值。点外部/返回键触发
+ * [onDismissRequest]；选项点击后不收起（调用方控制 expanded，对齐 React 可连续
+ * 调字段/方向/分组）。内容超高时内部滚动（48dp 触控行高下矮屏的安全阀）。
  */
 @Composable
 private fun AuroraDropdown(
     expanded: Boolean,
+    anchorBoundsInWindow: Rect,
     onDismissRequest: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    if (!expanded) return
-    val colors = AuroraTheme.colors
+    val context = LocalContext.current
+    val view = LocalView.current
     val density = LocalDensity.current
-    // 锚点 Box 是 40dp 按钮；下移 40dp（按钮高）+ 8dp（mt-2）让面板出现在按钮下方
-    val yOffset = with(density) { 48.dp.roundToPx() }
-    Popup(
-        alignment = Alignment.TopEnd,
-        offset = IntOffset(0, yOffset),
-        onDismissRequest = onDismissRequest,
-        properties = PopupProperties(focusable = true),
-    ) {
-        Column(
-            Modifier
-                .width(192.dp)
-                .shadow(elevation = 12.dp, shape = RoundedCornerShape(8.dp), clip = false)
-                .clip(RoundedCornerShape(8.dp))
-                .background(colors.panel)
-                .border(1.dp, colors.subtle, RoundedCornerShape(8.dp))
-                .padding(vertical = 8.dp),
-            content = content,
+    val latestOnDismiss by rememberUpdatedState(onDismissRequest)
+    val latestContent by rememberUpdatedState(content)
+    val latestAnchor by rememberUpdatedState(anchorBoundsInWindow)
+    val dialogRef = remember { mutableStateOf<Dialog?>(null) }
+
+    if (!expanded) return
+
+    // show/dismiss 只跟随 [expanded]；锚点经 rememberUpdatedState 在下方
+    // LaunchedEffect 里跟随更新——不作为本 effect 的 key（侧栏开合动画期间锚点
+    // 逐帧变化，作为 key 会让窗口反复重建）
+    DisposableEffect(expanded) {
+        val menuWidth = with(density) { 192.dp.roundToPx() }
+        val gap = with(density) { 8.dp.roundToPx() }
+        val outlineRadius = with(density) { 8.dp.toPx() }
+        val elevation = with(density) { 8.dp.toPx() }
+
+        val dialog = Dialog(context)
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener { latestOnDismiss() }
+
+        val composeView = ComposeView(context).apply {
+            // 弹层是独立组合：挂宿主 Activity 的生命周期/状态注册表，Recomposer 才有宿主
+            // （lifecycle 2.8 起 ViewTreeLifecycleOwner 类为 internal，只能走 ktx 扩展函数）
+            view.findViewTreeLifecycleOwner()?.let { setViewTreeLifecycleOwner(it) }
+            view.findViewTreeSavedStateRegistryOwner()?.let { setViewTreeSavedStateRegistryOwner(it) }
+            setContent {
+                // 与 MainActivity 同款固定浅色：默认参数跟随系统，系统深色下弹层会变
+                // DarkAuroraColors（深色半透明板 + 白字），与浅色主界面不一致
+                AuroraTheme(darkTheme = false) {
+                    var backdrop by remember { mutableStateOf<Bitmap?>(null) }
+                    var menuHeightPx by remember { mutableIntStateOf(0) }
+
+                    // 毛玻璃背景快照：菜单尺寸就绪后拷贝菜单正后方的宿主画面
+                    val activityWindow = (context as? Activity)?.window
+                    LaunchedEffect(menuHeightPx) {
+                        val host = activityWindow ?: return@LaunchedEffect
+                        if (menuHeightPx <= 0 || backdrop != null) return@LaunchedEffect
+                        if (Build.VERSION.SDK_INT < 26) return@LaunchedEffect
+                        val anchor = latestAnchor
+                        val left = (anchor.right - menuWidth).roundToInt().coerceAtLeast(0)
+                        val top = (anchor.bottom.roundToInt() + gap).coerceAtLeast(0)
+                        val decor = host.decorView
+                        val width = minOf(menuWidth, decor.width - left)
+                        val height = minOf(menuHeightPx, decor.height - top)
+                        if (width <= 0 || height <= 0) return@LaunchedEffect
+                        val rect = android.graphics.Rect(left, top, left + width, top + height)
+                        val snapshot = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                        PixelCopy.request(
+                            host,
+                            rect,
+                            snapshot,
+                            { result ->
+                                if (result == PixelCopy.SUCCESS) backdrop = snapshot
+                            },
+                            Handler(Looper.getMainLooper()),
+                        )
+                    }
+
+                    Box(Modifier.width(192.dp)) {
+                        // 模糊后的背景快照垫底；菜单打开期间内容区不可交互，
+                        // 快照与实时画面等价（对齐桌面 backdrop-blur 的静态语义）
+                        backdrop?.let { bmp ->
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier
+                                    .matchParentSize()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .graphicsLayer {
+                                        if (Build.VERSION.SDK_INT >= 31) {
+                                            val r = 12.dp.toPx() // ≈ 桌面 backdrop-blur-md
+                                            renderEffect = BlurEffect(r, r, TileMode.Clamp)
+                                        }
+                                    },
+                            )
+                        }
+                        Column(
+                            Modifier
+                                .onSizeChanged { menuHeightPx = it.height }
+                                .fillMaxWidth()
+                                .heightIn(max = 480.dp)
+                                .verticalScroll(rememberScrollState())
+                                .clip(RoundedCornerShape(8.dp))
+                                // 2026-09-20 用户要求更透：桌面 /90 基础上降到 /75，
+                                // 透出的模糊背景更明显（想再调就改这个 alpha）
+                                .background(AuroraTheme.colors.panel.copy(alpha = 0.75f))
+                                .border(1.dp, AuroraTheme.colors.subtle, RoundedCornerShape(8.dp))
+                                .padding(vertical = 8.dp),
+                            content = { latestContent() },
+                        )
+                    }
+                }
+            }
+        }
+        dialog.setContentView(
+            composeView,
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
+        dialog.window?.let { w ->
+            w.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+            w.setDimAmount(0f)
+            w.setGravity(Gravity.TOP or Gravity.START)
+            // 窗口坐标按整个屏幕计（浮动窗口默认的 TOP 会被状态栏下移）
+            if (Build.VERSION.SDK_INT >= 30) {
+                w.setDecorFitsSystemWindows(false)
+            } else {
+                @Suppress("DEPRECATION")
+                w.decorView.systemUiVisibility =
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            }
+            w.setLayout(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+            )
+            w.attributes.x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
+            w.attributes.y = anchorBoundsInWindow.bottom.roundToInt() + gap
+            // 圆角窗口投影（Compose shadow 会画在窗口外被裁掉，改用窗口级 elevation）
+            w.decorView.outlineProvider = object : ViewOutlineProvider() {
+                override fun getOutline(v: View, outline: Outline) {
+                    outline.setRoundRect(0, 0, v.width, v.height, outlineRadius)
+                }
+            }
+            w.setElevation(elevation)
+        }
+        dialogRef.value = dialog
+        dialog.show()
+
+        onDispose {
+            dialog.dismiss()
+            dialogRef.value = null
+        }
+    }
+
+    // 锚点位移（侧栏开合把按钮推移）时跟随窗口位置
+    LaunchedEffect(anchorBoundsInWindow) {
+        dialogRef.value?.window?.let { w ->
+            val menuWidth = with(density) { 192.dp.roundToPx() }
+            val gap = with(density) { 8.dp.roundToPx() }
+            w.attributes = w.attributes.apply {
+                x = (anchorBoundsInWindow.right - menuWidth).roundToInt()
+                y = anchorBoundsInWindow.bottom.roundToInt() + gap
+            }
+        }
     }
 }
 
@@ -429,7 +603,7 @@ private fun AuroraMenuHeader(text: String) {
 /**
  * 菜单条目（React `mx-2 px-4 py-2 rounded text-sm hover:bg-blue-600 hover:text-white`）：
  * 按压 = 蓝底白字（触屏的 hover 等价物）；[checked] 画选中勾（常规蓝色、按压白色），
- * [trailing] 是非勾选型尾部图标（如升降序的箭头）。
+ * [trailing] 是非勾选型尾部图标（如升降序的箭头）。行高 ≥48dp（触屏最小命中目标）。
  */
 @Composable
 private fun AuroraMenuItem(
@@ -448,7 +622,8 @@ private fun AuroraMenuItem(
             .clip(RoundedCornerShape(4.dp))
             .background(if (pressed) colors.primary else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp)
+            .heightIn(min = 48.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -465,7 +640,7 @@ private fun AuroraMenuItem(
     }
 }
 
-/** 分隔线（React `border-t border-black/5 my-1`）。 */
+/** 分隔线（React `border-t border-black/5 my-1`；subtle = gray-200 观感一致）。 */
 @Composable
 private fun AuroraMenuDivider() {
     HorizontalDivider(
@@ -1132,6 +1307,7 @@ private val IconLayoutGrid: ImageVector by lazy {
     }
 }
 
+/** lucide LayoutTemplate（视图排布按钮的瀑布流档）。 */
 private val IconLayoutTemplate: ImageVector by lazy {
     iconBuilder("LayoutTemplate") {
         roundedRect(3f, 3f, 18f, 18f, 2f)

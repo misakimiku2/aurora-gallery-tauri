@@ -1,7 +1,13 @@
 package com.aurora.gallery.kotlin.ui.components
 
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -18,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -37,13 +45,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aurora.gallery.kotlin.ui.theme.AuroraTheme
@@ -60,15 +74,39 @@ import uniffi.aurora_core.Folder
  * 是两套，勿混用）。进度到 0 时不组合内容，开合结束即释放。
  *
  * [TreeSidebar] = 六 Section 骨架（矩阵表 2：三端全部保留；内容按里程碑逐步填充）：
- * 专题 / 本地相册(文件夹) / 网络 / 人物 / 标签 / 画布，`activeSection` 单一状态**互斥
- * 展开**（对齐 React `setActiveSection(prev => prev === x ? null : x)`，初始展开文件夹）。
+ * 专题 / 本地相册(文件夹) / 网络 / 人物 / 标签 / 画布。
+ *
+ * **展开语义（2026-09-20 用户要求，对齐桌面）**：只有真正有列表内容的 Section 才有
+ * 展开——本地相册 / 人物 / 标签；专题、画布、网络（未连接）**没有展开按钮**（chevron
+ * 用 opacity-0 占位保持对齐，桌面 TopicSection/CanvasSection 同款），行本身也不可点
+ * （桌面点击是导航到对应视图，M1 尚无这些视图）。`activeSection` 互斥展开，初始展开
+ * 文件夹（对齐 React `setActiveSection(prev => prev === x ? null : x)`）。
+ *
+ * **头部点击语义（对齐桌面）**：本地相册头部点击 = 回主界面（React onNavigateHome），
+ * 展开/收起只走 chevron 独立命中区（40×52dp）；人物/标签 M1 无「全部」视图，整行点击
+ * = 展开切换。
+ *
+ * **滚动结构（2026-09-20 用户报障「展开子文件夹能把整个面板都滚走」）**：对齐 React
+ * 版侧栏——外层 Column **不可滚动**（React 根节点 `overflow-hidden`），Section 头恒定
+ * 可见；展开分区的列表自己内部滚动，高度用 `weight(1f, fill = false)` 封顶 = 面板高
+ * − 全部固定 Section 的剩余空间（React 的 listCap 实测逻辑同义），内容不足时只占内容
+ * 高。互斥展开保证任意时刻至多一个加权列表存在。
+ *
  * M1 数据现状与对应展示：
  *  - 本地相册：MediaStore bucket 扁平列表（真实数据），点击进文件夹（复用 openFolder
  *    历史导航），当前文件夹蓝底白字高亮（对齐 React 树节点 `bg-blue-600 text-white`），
- *    头部带名称/时间排序循环（「排序/展开收起保留」，4 态循环对齐 React handleToggleFolderSort）；
- *  - 其余 Section：M1 无数据源（人物/标签 M2、网络 M6、专题/画布 M2），展开显示
- *    空态文案（沿用 zh 文案：暂无专题/未连接/暂无人物/暂无标签）。标签 Section 接受
- *    [groupedTags]，M2 落库后传入即显示标签行，无需改结构。
+ *    选中行文件名超宽时**来回滚动**展示全名（对齐 React MarqueeText，见 [MarqueeText]）；
+ *    **总览态（currentFolderId == null）头部自身高亮**（对齐 React FolderSection 的
+ *    `isSelected = 单根 && currentFolderId === 根`）；头部**不显示计数**（React
+ *    FolderSection 头部本就无计数；人物/标签保留）；
+ *  - 其余 Section：M1 无数据源（人物/标签 M2、网络 M6、专题/画布 M2），人物/标签展开
+ *    显示空态文案。标签 Section 接受 [groupedTags]，M2 落库后传入即显示标签行。
+ *
+ * 视觉参数对齐 React 的 `isAndroid` 分支（WebView 安卓端形态）：Section 头 52dp、
+ * 水平外距 12dp（React `margin: '0 12px'`）+ 圆角 8dp 底、图标 18dp、标题 14sp 粗体
+ * （React `text-sm font-bold`）、Section 间 8dp（React `mt-2`）；灰阶用桌面同款
+ * text-gray-500/600/400 而非全局 token（桌面树文案比 token 更浅，见各常量注释）。
+ * 文件夹行图标缩进 = Section 图标 + 4dp（对齐桌面树节点与头部图标的 +4px 关系）。
  */
 /** 侧栏宽度（React w-64 = 16rem；设计约定无对应 token，直接取同值）。 */
 val SIDEBAR_WIDTH_DP = 256.dp
@@ -133,7 +171,11 @@ fun SidebarPane(
     }
 }
 
-private enum class SidebarSection { TOPIC, FOLDERS, NETWORK, PEOPLE, TAGS, CANVAS }
+/**
+ * 可互斥展开的 Section（2026-09-20 起：专题/网络/画布无列表内容、不参与展开，
+ * 对齐桌面——网络 M6 接入连接态后恢复，专题/画布随对应视图落地恢复）。
+ */
+private enum class SidebarSection { FOLDERS, PEOPLE, TAGS }
 
 /** 文件夹排序（侧栏头部循环切换，4 态对齐 React handleToggleFolderSort 的循环序）。 */
 private enum class FolderSort(val label: String) {
@@ -145,6 +187,7 @@ fun TreeSidebar(
     folders: List<Folder>,
     currentFolderId: String?,
     onFolderClick: (Folder) -> Unit,
+    onNavigateHome: () -> Unit = {},
     groupedTags: Map<String, List<String>> = emptyMap(),
     modifier: Modifier = Modifier,
 ) {
@@ -167,34 +210,38 @@ fun TreeSidebar(
         modifier
             .fillMaxHeight()
             .width(SIDEBAR_WIDTH_DP)
-            .verticalScroll(rememberScrollState())
             .padding(top = 10.dp, bottom = 16.dp),
     ) {
+        // 专题：M2 前仅入口占位，无展开语义（chevron opacity-0 占位，行不可点，对齐桌面）
         SectionHeader(
             title = "专题",
             icon = IconLayout,
             iconTint = SECTION_PINK,
-            expanded = activeSection == SidebarSection.TOPIC,
-            onClick = {
-                activeSection = if (activeSection == SidebarSection.TOPIC) null else SidebarSection.TOPIC
-            },
+            expanded = false,
+            onClick = null,
+            expandable = false,
         )
-        if (activeSection == SidebarSection.TOPIC) {
-            EmptyHint("暂无专题")
-        }
 
+        // React 各 Section 容器 mt-2（首个除外）：Section 间 8dp 空隙
+        Spacer(Modifier.height(8.dp))
         SectionHeader(
             title = "本地相册",
             icon = IconHardDrive,
             iconTint = SECTION_BLUE,
-            count = folders.size,
             expanded = activeSection == SidebarSection.FOLDERS,
-            onClick = {
+            // 总览态（未进任何文件夹）= 桌面的「根目录选中」：头部蓝底白字（React
+            // FolderSection isSelected = 单根 && currentFolderId === 根）
+            selected = currentFolderId == null,
+            // 头部点击 = 回主界面（2026-09-20 用户要求，对齐 React onNavigateHome）；
+            // 展开/收起只走 chevron 独立命中区
+            onClick = onNavigateHome,
+            onChevronClick = {
                 activeSection = if (activeSection == SidebarSection.FOLDERS) null else SidebarSection.FOLDERS
             },
             trailing = {
                 SortCycleButton(
                     sort = folderSort,
+                    selected = currentFolderId == null,
                     onClick = {
                         // 名称升 → 名称降 → 时间降 → 时间升 → 名称升（对齐 React 循环序）
                         folderSort = when (folderSort) {
@@ -211,30 +258,37 @@ fun TreeSidebar(
             if (sortedFolders.isEmpty()) {
                 EmptyHint("暂无文件夹")
             } else {
-                sortedFolders.forEach { folder ->
-                    FolderRow(
-                        folder = folder,
-                        selected = folder.id == currentFolderId,
-                        onClick = { onFolderClick(folder) },
-                    )
+                // 分区内滚动（对齐 React 列表容器的 maxHeight + overflow-y-auto）：
+                // weight(fill=false) 封顶到「面板高 − 其余固定 Section」，内容不足时只占内容高
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .clipToBounds(),
+                ) {
+                    sortedFolders.forEach { folder ->
+                        FolderRow(
+                            folder = folder,
+                            selected = folder.id == currentFolderId,
+                            onClick = { onFolderClick(folder) },
+                        )
+                    }
                 }
             }
         }
 
+        Spacer(Modifier.height(8.dp))
+        // 网络：M1 恒未连接——无展开按钮（用户要求；M6 接入后按 connected 恢复，对齐桌面）
         SectionHeader(
             title = "网络",
             icon = IconWifiOff,
             iconTint = SECTION_GRAY,
-            titleTint = SECTION_GRAY,
-            expanded = activeSection == SidebarSection.NETWORK,
-            onClick = {
-                activeSection = if (activeSection == SidebarSection.NETWORK) null else SidebarSection.NETWORK
-            },
+            expanded = false,
+            onClick = null,
+            expandable = false,
         )
-        if (activeSection == SidebarSection.NETWORK) {
-            EmptyHint("未连接")
-        }
 
+        Spacer(Modifier.height(8.dp))
         SectionHeader(
             title = "人物",
             icon = IconBrain,
@@ -249,6 +303,7 @@ fun TreeSidebar(
             EmptyHint("暂无人物")
         }
 
+        Spacer(Modifier.height(8.dp))
         SectionHeader(
             title = "标签",
             icon = IconTagBadge,
@@ -263,32 +318,46 @@ fun TreeSidebar(
             if (tagNames.isEmpty()) {
                 EmptyHint("暂无标签")
             } else {
-                tagNames.forEach { tag ->
-                    TagRow(tag)
+                Column(
+                    Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .clipToBounds(),
+                ) {
+                    tagNames.forEach { tag ->
+                        TagRow(tag)
+                    }
                 }
             }
         }
 
+        Spacer(Modifier.height(8.dp))
+        // 画布：M2 前仅入口占位，无展开语义（对齐桌面 CanvasSection）
         SectionHeader(
             title = "画布",
             icon = IconScan,
             iconTint = SECTION_EMERALD,
-            expanded = activeSection == SidebarSection.CANVAS,
-            onClick = {
-                activeSection = if (activeSection == SidebarSection.CANVAS) null else SidebarSection.CANVAS
-            },
+            expanded = false,
+            onClick = null,
+            expandable = false,
         )
-        if (activeSection == SidebarSection.CANVAS) {
-            EmptyHint("暂无内容")
-        }
     }
 }
 
 /**
- * Section 头部（React 各 Section 头的通用形制：chevron + 彩色 Section 图标 + 大写粗体
- * 灰字标题 + 计数 + 尾部操作位；图标与配色逐一对应桌面端 TreeSidebar——专题 Layout 粉、
- * 本地相册 HardDrive 蓝、网络 WifiOff 灰（断连态）、人物 Brain 紫、标签 Tag 蓝、
- * 画布 Scan 绿。触控行高 48dp 达触屏最小触控目标）。
+ * Section 头部（React 各 Section 头的通用形制）：水平外距 12dp（React `margin: '0 12px'`）
+ * + 圆角 8dp 可点区（React `rounded-lg`）、高 52dp（触屏；React 安卓分支 55px 同量级）、
+ * chevron + 彩色 Section 图标（18dp）+ 大写粗体灰字标题（14sp）+ 计数 + 尾部操作位。
+ * 图标与配色逐一对应桌面端 TreeSidebar——专题 Layout 粉、本地相册 HardDrive 蓝、
+ * 网络 WifiOff 灰（断连态）、人物 Brain 紫、标签 Tag 蓝、画布 Scan 绿。
+ *
+ * [selected] = 该 Section 处于「根选中」态（React 头部 `bg-blue-600 text-white`）：
+ * 蓝底白字，chevron/图标/标题一并变白（M1 只有本地相册会用到）。
+ *
+ * [expandable] = false 时没有展开语义（专题/画布/未连接的网络，2026-09-20 用户要求）：
+ * chevron 以 opacity-0 占位保持对齐（桌面 TopicSection/CanvasSection 同款）。
+ * [onClick] = 行主体点击（null = 行不可点，无涟漪）；[onChevronClick] 非空时 chevron
+ * 有 40×52dp 独立命中区（桌面 expand-icon 分区点击同款），展开/收起走它而不走行点击。
  */
 @Composable
 private fun SectionHeader(
@@ -296,137 +365,257 @@ private fun SectionHeader(
     icon: ImageVector,
     iconTint: Color,
     expanded: Boolean,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)?,
     count: Int? = null,
-    titleTint: Color? = null,
+    selected: Boolean = false,
+    expandable: Boolean = true,
+    onChevronClick: (() -> Unit)? = null,
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val colors = AuroraTheme.colors
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(48.dp)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = IconChevronDown,
-            contentDescription = null,
-            tint = colors.textSecondary,
-            // 收起 = 朝右（-90°），展开 = 朝下（对齐 React ChevronRight/ChevronDown 切换）
-            modifier = Modifier.size(14.dp).rotate(if (expanded) 0f else -90f),
-        )
-        Spacer(Modifier.size(10.dp))
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = iconTint,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.size(10.dp))
-        Text(
-            title,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-            color = titleTint ?: colors.textSecondary,
-        )
-        if (count != null) {
-            Spacer(Modifier.size(4.dp))
-            Text(
-                "($count)",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = titleTint ?: colors.textSecondary,
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) colors.primary else Color.Transparent)
+                .then(
+                    if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier,
+                )
+                .padding(start = 8.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // chevron 命中区：40×52dp（触屏最小目标），居中放置 18dp 图标——图标起点
+            // 由此落在 8+40 = 48dp，与后续 Section 图标对齐
+            Box(
+                Modifier
+                    .width(40.dp)
+                    .height(52.dp)
+                    .then(
+                        if (expandable && onChevronClick != null) {
+                            Modifier.clickable(onClick = onChevronClick)
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = IconChevronDown,
+                    contentDescription = null,
+                    // 非选中 chevron = React 继承自容器的 text-gray-600；选中态随头部变白
+                    tint = if (selected) Color.White else SIDEBAR_GRAY_600,
+                    // 收起 = 朝右（-90°），展开 = 朝下（对齐 React ChevronRight/ChevronDown 切换）；
+                    // 不可展开的 Section 用 opacity-0 占位（对齐桌面）
+                    modifier = Modifier
+                        .size(18.dp)
+                        .graphicsLayer { alpha = if (expandable) 1f else 0f }
+                        .rotate(if (expanded) 0f else -90f),
+                )
+            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) Color.White else iconTint,
+                modifier = Modifier.size(18.dp),
             )
-        }
-        Spacer(Modifier.weight(1f))
-        if (trailing != null) {
-            trailing()
+            Spacer(Modifier.size(10.dp))
+            Text(
+                title,
+                // React 安卓分支 text-sm font-bold tracking-wider text-gray-500
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                color = if (selected) Color.White else SIDEBAR_GRAY_500,
+            )
+            if (count != null) {
+                Spacer(Modifier.size(4.dp))
+                Text(
+                    "($count)",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (selected) Color.White else SIDEBAR_GRAY_500,
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (trailing != null) {
+                trailing()
+            }
         }
     }
 }
 
-/** 文件夹行（React 树节点：Folder 图标 + 名称；选中 = 蓝底白字圆角；整行 48dp 触控目标）。 */
+/**
+ * 文件夹行（React 树节点：Folder 图标 + 名称；选中 = 蓝底白字圆角，React `bg-blue-600
+ * text-white rounded-lg`；未选中文字 text-gray-600）。缩进：图标起点 = Section 图标
+ * +4dp（对齐桌面树节点与头部图标的 +4px 层级关系），名称与头部标题左缘基本对齐。
+ * 整行 48dp 触控目标。
+ */
 @Composable
 private fun FolderRow(folder: Folder, selected: Boolean, onClick: () -> Unit) {
     val colors = AuroraTheme.colors
-    Row(
-        Modifier
-            .padding(horizontal = 12.dp, vertical = 1.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (selected) colors.primary else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 0.dp)
-            .height(46.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = IconFolder,
-            contentDescription = null,
-            tint = if (selected) Color.White else colors.primary,
-            modifier = Modifier.size(16.dp),
-        )
-        Spacer(Modifier.size(8.dp))
-        Text(
-            folder.name,
-            fontSize = 14.sp,
-            color = if (selected) Color.White else colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+    Row(Modifier.padding(horizontal = 12.dp, vertical = 1.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (selected) colors.primary else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(start = 40.dp, end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IconFolder,
+                contentDescription = null,
+                tint = if (selected) Color.White else colors.primary,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.size(10.dp))
+            MarqueeText(
+                text = folder.name,
+                // 选中行文件名超宽时来回滚动展示全名（React 树节点 MarqueeText active=isSelected）
+                active = selected,
+                color = if (selected) Color.White else SIDEBAR_GRAY_600,
+                fontSize = 14.sp,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
-/** 标签行（M1 骨架占位：Tag 图标 + 名称；点选筛选行为随 M2 接入）。 */
+/**
+ * 侧栏行文本（对齐 React `MarqueeText.tsx`）：
+ *  - 未激活（[active] = false）或未溢出：普通截断显示省略号，零动画开销；
+ *  - 激活且内容超宽：**来回滚动**展示全名——桌面 keyframes 为 ease-in-out alternate、
+ *    两端各驻留 12%、时长 = 溢出量 / 32px·s（clamp 3.5~12s），此处逐项对齐
+ *    （溢出量换算为 dp 后计算，与 CSS px 同尺度）。
+ *
+ * 溢出检测：全名宽度用 **TextMeasurer 无约束测量**——Text 自身会被父容器宽度钳住，
+ * 直接量 Text 得到的恒为容器宽、溢出恒为 0（桌面靠 scrollWidth 拿完整内容宽度，
+ * Compose 等价物就是无约束测量）；容器宽由外层 Box 的 onSizeChanged 上报。
+ * 滚动态的 Text 用 wrapContentWidth(unbounded) 让全名完整排版、由外层 Box 裁剪，
+ * translationX 来回平移。
+ */
+@Composable
+private fun MarqueeText(
+    text: String,
+    active: Boolean,
+    color: Color,
+    fontSize: TextUnit,
+    modifier: Modifier = Modifier,
+) {
+    val density = LocalDensity.current
+    val textMeasurer = rememberTextMeasurer()
+    var containerWidthPx by remember { mutableIntStateOf(0) }
+    val textWidthPx = remember(text, fontSize, textMeasurer) {
+        textMeasurer.measure(
+            text = text,
+            style = TextStyle(fontSize = fontSize),
+            maxLines = 1,
+            softWrap = false,
+            constraints = Constraints(),
+        ).size.width
+    }
+    val overflowPx = textWidthPx - containerWidthPx
+    val scrolling = active && overflowPx > 0
+
+    Box(modifier.clipToBounds().onSizeChanged { containerWidthPx = it.width }) {
+        if (scrolling) {
+            // 溢出 dp / 32px·s，对齐桌面 MarqueeText speed=32、clamp(3.5s, 12s)
+            val durationMs = with(density) {
+                ((overflowPx.toDp().value / 32f).coerceIn(3.5f, 12f) * 1000).toInt()
+            }
+            val target = -overflowPx.toFloat()
+            val shift = rememberInfiniteTransition(label = "marquee").animateFloat(
+                initialValue = 0f,
+                targetValue = target,
+                animationSpec = infiniteRepeatable(
+                    animation = keyframes {
+                        durationMillis = durationMs
+                        0f at 0
+                        // 两端各驻留 12%（桌面 keyframes 的 0%/12% 与 88%/100% 驻留段）
+                        0f at durationMs * 12 / 100
+                        target at durationMs * 88 / 100 using FastOutSlowInEasing
+                        target at durationMs
+                    },
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "marqueeShift",
+            )
+            Text(
+                text,
+                color = color,
+                fontSize = fontSize,
+                maxLines = 1,
+                softWrap = false,
+                // 全名完整排版（实际裁剪由外层 Box 的 clipToBounds 负责）
+                overflow = TextOverflow.Clip,
+                modifier = Modifier
+                    .wrapContentWidth(align = Alignment.Start, unbounded = true)
+                    .graphicsLayer { translationX = shift.value },
+            )
+        } else {
+            Text(
+                text,
+                color = color,
+                fontSize = fontSize,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** 标签行（M1 骨架占位：Tag 图标 + 名称；点选筛选行为随 M2 接入）。缩进对齐 React 标签列表（pl-5 + px-2）。 */
 @Composable
 private fun TagRow(tag: String) {
-    val colors = AuroraTheme.colors
     Row(
         Modifier
-            .padding(horizontal = 16.dp, vertical = 1.dp)
+            .padding(start = 28.dp, top = 1.dp, end = 20.dp, bottom = 1.dp)
             .fillMaxWidth()
-            .height(32.dp),
+            .height(36.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = IconTagSmall,
             contentDescription = null,
-            tint = colors.textSecondary,
+            tint = SIDEBAR_GRAY_600,
             modifier = Modifier.size(12.dp),
         )
         Spacer(Modifier.size(8.dp))
-        Text(tag, fontSize = 13.sp, color = colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(tag, fontSize = 14.sp, color = SIDEBAR_GRAY_600, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
 /** 空态提示（React 各 Section 的 `text-xs text-gray-400 italic`）。 */
 @Composable
 private fun EmptyHint(text: String) {
-    val colors = AuroraTheme.colors
     Text(
         text,
-        Modifier.padding(start = 38.dp, top = 4.dp, bottom = 8.dp),
+        Modifier.padding(start = 40.dp, top = 4.dp, bottom = 8.dp),
         fontSize = 12.sp,
         fontStyle = FontStyle.Italic,
-        color = colors.textSecondary,
+        color = SIDEBAR_GRAY_400,
     )
 }
 
-/** 排序循环按钮（React FolderSection 头部的 ArrowUpDown；图标随方向翻转示意降序）。 */
+/**
+ * 排序循环按钮（React FolderSection 头部的排序图标；图标随方向翻转示意降序）。
+ * 命中区 48dp（行高 52dp 内的触屏最小目标）；[selected] 时图标随头部变白
+ * （React `isSelected ? 'text-white/80' : 'text-gray-400'`）。
+ */
 @Composable
-private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit) {
+private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit, selected: Boolean = false) {
     val colors = AuroraTheme.colors
     val descending = sort == FolderSort.NAME_DESC || sort == FolderSort.DATE_DESC
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     Box(
         Modifier
-            .size(32.dp)
-            .clip(RoundedCornerShape(6.dp))
+            .size(48.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(if (pressed) colors.surface else Color.Transparent)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -434,8 +623,12 @@ private fun SortCycleButton(sort: FolderSort, onClick: () -> Unit) {
         Icon(
             imageVector = IconArrowUpDown,
             contentDescription = "排序：${sort.label}${if (descending) "降序" else "升序"}",
-            tint = colors.textSecondary,
-            modifier = Modifier.size(14.dp).rotate(if (descending) 180f else 0f),
+            tint = when {
+                selected -> Color.White.copy(alpha = 0.8f)
+                pressed -> colors.primary
+                else -> SIDEBAR_GRAY_400
+            },
+            modifier = Modifier.size(18.dp).rotate(if (descending) 180f else 0f),
         )
     }
 }
@@ -449,6 +642,12 @@ private val SECTION_BLUE = Color(0xFF3B82F6)
 private val SECTION_PURPLE = Color(0xFFA855F7)
 private val SECTION_EMERALD = Color(0xFF10B981)
 private val SECTION_GRAY = Color(0xFF9CA3AF)
+
+// 侧栏文字灰阶（对齐 React 侧栏的 tailwind gray 色阶，非全局 token：桌面树文案比
+// token 的 textSecondary #737373 更具层次——标题 gray-500、行文字 gray-600、空态 gray-400）
+private val SIDEBAR_GRAY_500 = Color(0xFF6B7280)
+private val SIDEBAR_GRAY_600 = Color(0xFF4B5563)
+private val SIDEBAR_GRAY_400 = Color(0xFF9CA3AF)
 
 private const val STROKE = 2f
 

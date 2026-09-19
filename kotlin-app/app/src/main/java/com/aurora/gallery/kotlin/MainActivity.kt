@@ -207,6 +207,8 @@ fun App(
                 folders = folders,
                 currentFolderId = tab.folderId,
                 onFolderClick = onFolderClick,
+                // 头部点击 = 回主界面（React onNavigateHome，2026-09-20 用户要求）
+                onNavigateHome = { state.navigateHome() },
                 modifier = Modifier.fillMaxHeight(),
             )
         }

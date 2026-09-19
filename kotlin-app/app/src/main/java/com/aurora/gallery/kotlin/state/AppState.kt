@@ -229,6 +229,15 @@ class AppState(
     /** 历史后退；无可退返回 false（调用方转下一级返回行为，见 4.3 返回链）。 */
     fun goBack(): Boolean = stepHistory(-1)
 
+    /**
+     * 回到主界面（总览 = 历史栈底，folderId = null）。
+     * 对齐 React 侧栏「本地相册」头部点击的 onNavigateHome：无论深处几层，一步回总览
+     * （2026-09-20 用户要求；此前头部点击只做展开切换）。已在总览时为无操作。
+     */
+    fun navigateHome() {
+        stepHistory(-activeTab.history.currentIndex)
+    }
+
     /** 历史前进；无可前进返回 false。 */
     fun goForward(): Boolean = stepHistory(1)
 

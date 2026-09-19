@@ -41,6 +41,8 @@ data class AuroraColorScheme(
 val LightAuroraColors = AuroraColorScheme(
     main = Color(0xFFE5E5E5),
     content = Color(0xFFFFFFFF),
+    // 2026-09-20 曾按用户要求提深到 #E5E5E5，实测观感突兀后用户要求改回
+    // 桌面 bg-panel 同款 #F7F7F7
     panel = Color(0xFFF7F7F7),
     surface = Color(0xFFE5E7EB),
     subtle = Color(0xFFE5E7EB),
