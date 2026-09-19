@@ -26,6 +26,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -39,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -108,6 +110,8 @@ fun FoldersOverview(
     onScrollChanged: (Int) -> Unit = {},
     /** 空态文案：宿主按「有搜索/筛选条件」区分「无匹配文件夹」与「暂无文件夹」。 */
     emptyText: String = "暂无文件夹",
+    /** 3.5 侧栏目标状态：用于开合动画期间的列数预测（同 FileGrid）。 */
+    sidebarVisible: Boolean = false,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -181,6 +185,14 @@ fun FoldersOverview(
     val isTablet = LocalConfiguration.current.screenWidthDp >= 600
     val gapPx = context.dp(if (isTablet) 16 else 10)
     val paddingPx = context.dp(if (isTablet) 24 else 8)
+
+    // 3.5 预测收敛（同 FileGrid）：侧栏开合动画是纯 layout 变化、不触发重组，列数若等
+    // 动画结束才收敛会与面板脱节（卡片突变）。动画进行中（sidebarVisible 与已同步状态
+    // 不一致）按目标状态的最终宽度预测列数，点按瞬间一次收敛、与面板动画同步。
+    val density = LocalDensity.current
+    val currentSidebarVisible = rememberUpdatedState(sidebarVisible)
+    val sidebarSynced = remember { mutableStateOf(sidebarVisible) }
+    val spanSyncTick = remember { mutableIntStateOf(0) }
 
     // 三档捏合：档位是应用级状态（AppState.gridLevel），这里只读参数 + 写回回调
     val currentLevel = rememberUpdatedState(level)
@@ -328,6 +340,26 @@ fun FoldersOverview(
                         measuredWidthDp = view.context.pxToDp(view.width)
                     }
                 }
+                // 宽度变化自愈（对齐 FileGrid factory 的同款监听）：侧栏开合（3.5）逐帧改
+                // 变内容宽度但不触发 Compose 重组。封面已固定 WRAP_CONTENT（按宽自动正方
+                // 形，无滞后无 notify），这里只负责**列数收敛**：宽度稳定 80ms 后写量宽
+                // state → 重组 → update 内 targetCols + animateSpanChange 以 FLIP 动画把
+                // 列数确定性收敛，避免列数停在旧值等某次随机重组才跳变（卡片突然变大、
+                // 与开合脱节）。
+                var pendingSpanSync: Runnable? = null
+                addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+                    val newW = right - left
+                    if (newW <= 0 || newW == oldRight - oldLeft) return@addOnLayoutChangeListener
+                    pendingSpanSync?.let(v::removeCallbacks)
+                    val spanSync = Runnable {
+                        // 宽度已稳定：退场预测（sidebarSynced 对齐目标状态），下一轮重组按
+                        // 实际宽度复算列数/cell（与点按时的预测值通常一致，仅小数舍入差）
+                        sidebarSynced.value = currentSidebarVisible.value
+                        spanSyncTick.value++
+                    }
+                    pendingSpanSync = spanSync
+                    v.postDelayed(spanSync, 80)
+                }
                 // 滚动位置上报：宿主用普通字段记录（非 Compose state，不触发重组），
                 // 返回总览时作为 initialScrollTop 传回归位
                 addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -340,7 +372,12 @@ fun FoldersOverview(
         update = { rv ->
             val lm = rv.layoutManager as? GridLayoutManager ?: return@AndroidView
             if (rv.width <= 0) return@AndroidView
-            val widthDp = rv.context.pxToDp(rv.width)
+            spanSyncTick.value // 订阅：侧栏动画结束后由监听器递增，触发本次收敛重算
+            val predicting = sidebarVisible != sidebarSynced.value
+            val sidebarPx = with(density) { SIDEBAR_WIDTH_DP.roundToPx() }
+            // 预测中 = 动画进行中：宽度取目标状态的最终值（点按瞬间的 rv.width + 全部增量）
+            val widthPx = rv.width + if (predicting) (if (sidebarVisible) -sidebarPx else sidebarPx) else 0
+            val widthDp = rv.context.pxToDp(widthPx)
             if (measuredWidthDp != widthDp) measuredWidthDp = widthDp
             val span = targetCols(widthDp, level)
             if (span != lm.spanCount) {
@@ -350,12 +387,10 @@ fun FoldersOverview(
                 animateSpanChange(rv, lm, decoration, span, flipDurationMs, pinchAnchor = anchor)
                 flipDurationMs = FLIP_DURATION_MS
             }
-            // 封面高度同步（L8 同款，对齐 FileGrid.applyCellWidth）：换档后列宽变化，
-            // 靠 payload 局部刷新把可见卡片封面高度可靠刷成新值。不能直接改
-            // layoutParams + requestLayout（update 落在 layout 阶段时会被 RV 吞掉），
-            // 也不能 notifyDataSetChanged（打回顶部 + 抹掉 FLIP 初始位移）。
+            // 封面高度同步（L8 同款，对齐 FileGrid.applyCellWidth）。cellWidthPx 现仅作
+            // 捏合预览的几何簿记（封面已 WRAP_CONTENT 自动正方形），用预测宽度保持一致。
             val gap = currentGapPx.value
-            val cell = ((rv.width - rv.paddingLeft - rv.paddingRight - (span - 1) * gap) / span)
+            val cell = ((widthPx - rv.paddingLeft - rv.paddingRight - (span - 1) * gap) / span)
                 .coerceAtLeast(1)
             gridAdapter.applyCellWidth(cell)
         },
@@ -511,9 +546,10 @@ private class FolderAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int, payloads: MutableList<Any>) {
         if (payloads.isNotEmpty()) {
-            // 局部刷新（PAYLOAD_CELL）：只改封面高度，不重新 bind、不清 FLIP transform、
-            // 不重载图片（换档 FLIP 的初始位移不能被抹掉）。
-            holder.cover.applyCoverHeight(if (cellWidthPx > 0) cellWidthPx else ViewGroup.LayoutParams.WRAP_CONTENT)
+            // 局部刷新（PAYLOAD_CELL）：封面高度固定 WRAP_CONTENT（SquareImageView 按宽
+            // 自动正方形，见 onBindViewHolder），不重新 bind、不清 FLIP transform、不重载图片。
+            holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
+            holder.name.setCellWidth(cellWidthPx)
             forceMeasureOnRebind(holder)
             return
         }
@@ -531,10 +567,11 @@ private class FolderAdapter(
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
 
-        // 封面高度：量出列宽后写显式值（与捏合预览/换档目标一致）；未量出时回退
-        // WRAP_CONTENT 交给 SquareImageView 强制正方形，避免复用的 cover 带着上一条
-        // 生命周期的显式高度（尤其捏合预览写入的插值值）变成非正方形长条。
-        holder.cover.applyCoverHeight(if (cellWidthPx > 0) cellWidthPx else ViewGroup.LayoutParams.WRAP_CONTENT)
+        // 封面高度固定 WRAP_CONTENT：SquareImageView 在 onMeasure 里按宽定高，高度与宽度
+        // 同一轮测量对齐——侧栏开合逐帧推挤宽度时封面全程正方形、零滞后零 notify
+        //（2026-09-20 抖动修复；显式 cellWidthPx 高度依赖 notify→重绑跟进，滞后一帧微抖）。
+        holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
+        holder.name.setCellWidth(cellWidthPx)
 
         val uri = folder.coverUri
         if (uri != null) {
@@ -582,12 +619,10 @@ private class FolderAdapter(
 
     override fun onViewAttachedToWindow(holder: VH) {
         // 经 mCachedViews 复用的 view（换档后同位置复用等）**不走 onBindViewHolder**，
-        // 封面 lp 高度还带着上一档位的值，fill 会按旧值测量上屏（捏合后错位的残留学徒）。
-        // attach 发生在 fill 测量该 child 之前，这里按当前数据归一，兜住所有不经 bind 的
-        // 复用路径（同 FileGrid.onViewAttachedToWindow）。
-        if (cellWidthPx > 0) {
-            holder.cover.applyCoverHeight(cellWidthPx)
-            holder.itemView.forceLayout()
-        }
+        // 封面 lp 高度可能带着捏合预览写入的插值值。attach 发生在 fill 测量该 child 之前，
+        // 这里归一回 WRAP_CONTENT（按宽自动正方形），兜住所有不经 bind 的复用路径
+        //（同 FileGrid.onViewAttachedToWindow）。
+        holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
+        holder.itemView.forceLayout()
     }
 }

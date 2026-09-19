@@ -37,6 +37,18 @@ internal fun ImageView.applyCoverHeight(height: Int) {
     (parent as? View)?.forceLayout()
 }
 
+/**
+ * 文件名固定宽度（= 列宽）：侧栏开合（3.5）逐帧推挤内容宽度时，name 若用 MATCH_PARENT，
+ * 每帧宽度 spec 都在变 → 全部可见 cell 的 TextView 逐帧重新排版文字（level 0 上百个
+ * 可见 cell，是「最小档位开合掉帧」的主因）。显式宽度在动画期间保持不变 → measure 的
+ * spec 缓存命中、文字排版整体跳过；超宽部分由默认 clipChildren 在 cell 边缘裁掉，
+ * settle 后随 applyCellWidth 刷到新值。[widthPx] ≤ 0 时回退 MATCH_PARENT。
+ */
+internal fun TextView.setCellWidth(widthPx: Int) {
+    val lp = layoutParams as? LinearLayout.LayoutParams ?: return
+    lp.width = if (widthPx > 0) widthPx else ViewGroup.LayoutParams.MATCH_PARENT
+}
+
 /** 图片卡片（三种布局模式一图一项，共用同一结构）：封面 + 文件名 + 选中态（边框 + 角标）。 */
 internal class PhotoRefs(
     val root: View,

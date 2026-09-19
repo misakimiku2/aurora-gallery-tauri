@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -73,26 +75,30 @@ import java.util.Locale
 /**
  * 顶栏（3.2，对齐 React `TopBar.tsx` 的 `isAndroid` 分支：平板横屏形态）。
  *
- * 布局 = [返回] [搜索开关] [标题 / 搜索胶囊] [排序菜单 | 视图循环 | 日期筛选]：
+ * 布局 = [侧栏开关] [返回] [搜索开关] [标题 / 搜索胶囊] [排序菜单 | 视图循环 | 日期筛选 | 标签筛选]：
+ *  - 侧栏开关：3.5 面板开合入口，开启时蓝色高亮（React 同款 PanelLeft 图标置最左）；
  *  - 返回：走页内历史（[com.aurora.gallery.kotlin.state.AppState.goBack]），栈底禁用，
- *    禁用条件对齐 React `history.currentIndex <= 0`；
+ *    禁用条件对齐 React `history.currentIndex <= 0`；总览（主界面）整键隐藏（2026-09-20
+ *    用户要求：主界面不需要返回按键，[showBack] 控制）；
  *  - 搜索：点开替换标题为胶囊（React `isSearchOpen`），关闭时清空 query（对齐 React
  *    `onSetToolbarQuery('')` + close）；M1 只做文件名过滤，scope 下拉随 M2 标签补；
  *  - 排序菜单：排序字段/方向 + 分组方式（React sortMenuOpen 的菜单，选项不点走不收）；
  *  - 视图循环：grid → adaptive → masonry（React `isAndroid` 分支的三档循环，无 list）；
  *  - 日期筛选：底部弹层月历（React 安卓分支的 CalendarWidget bottom sheet），
  *    区间选择语义逐条对齐：首点设 start（清 end）、次点补 end（早于 start 则互换）、
- *    再点重新开始。
+ *    再点重新开始；
+ *  - 标签筛选：底部弹层标签面板（React TagsWidget 的 bottom-sheet 形态）：标题 + 总数
+ *    徽标、搜索框、按首字符分组的 chips；M1 无标签数据（标签体系随 M2 落库）传空
+ *    Map 显示「暂无标签」空态，M2 只需把分组数据传入 [groupedTags]。
  *
- * 与 React 版的差异（均有意为之，见各处注释）：M1 无侧栏（3.4）故无侧栏开关；无色板
- * 搜索（M6）；标签过滤（M2）不提供；手机竖屏的「更多」菜单合并（isPhonePortrait）随手机
- * 适配再做。工具按钮按视图提供（2026-09-17 起）：文件夹内部 = 搜索/排序/视图/日期全量；
- * 总览 = 搜索（按文件夹名过滤，React 总览搜索是全局文件搜索、Kotlin M1 无此管道）+
- * 排序 + 日期筛选（Folder 带 createdAt/modifiedAt 后接入）；总览的视图循环
- * （folderLayoutMode）判定不做——文件夹卡片是等比正方形，adaptive/masonry 视觉与
- * grid 等价，三档捏合已覆盖尺寸调整。
+ * 与 React 版的差异（均有意为之，见各处注释）：无色板搜索（M6）；手机竖屏的「更多」
+ * 菜单合并（isPhonePortrait）随手机适配再做。工具按钮按视图提供（2026-09-17 起）：
+ * 文件夹内部 = 搜索/排序/视图/日期全量；总览 = 搜索（按文件夹名过滤，React 总览搜索
+ * 是全局文件搜索、Kotlin M1 无此管道）+ 排序 + 日期筛选（Folder 带 createdAt/modifiedAt
+ * 后接入）；总览的视图循环（folderLayoutMode）判定不做——文件夹卡片是等比正方形，
+ * adaptive/masonry 视觉与 grid 等价，三档捏合已覆盖尺寸调整。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun TopBar(
     title: String,
@@ -112,6 +118,13 @@ fun TopBar(
     onGroupByChange: (GroupBy) -> Unit,
     layoutMode: LayoutMode,
     onLayoutModeChange: (LayoutMode) -> Unit,
+    /** 侧栏可见性（侧栏开关按钮的高亮态，3.5）。 */
+    sidebarVisible: Boolean,
+    onToggleSidebar: () -> Unit,
+    /** 标签分组数据（key = 分组名/首字符，value = 该组标签）；M1 无标签体系传空。 */
+    groupedTags: Map<String, List<String>> = emptyMap(),
+    /** 是否显示返回键（总览 = false，主界面不提供返回按键）。 */
+    showBack: Boolean = true,
     /** 是否显示搜索开关（文件夹内部与总览都提供；总览按文件夹名过滤）。 */
     showSearch: Boolean,
     /** 是否显示排序菜单（总览也提供，字段经 [sortChoices] 收窄）。 */
@@ -120,6 +133,8 @@ fun TopBar(
     showViewMode: Boolean,
     /** 是否显示日期筛选（2026-09-17 起总览也提供：按 Folder 的代表日期筛文件夹）。 */
     showDateFilter: Boolean,
+    /** 是否显示标签筛选按钮（React 同款默认展示，仅 topics 视图隐藏——Kotlin 无该视图）。 */
+    showTags: Boolean = true,
     /** 排序菜单可选字段。 */
     sortChoices: List<SortOption> = listOf(SortOption.NAME, SortOption.DATE, SortOption.SIZE),
     /** 排序菜单是否含分组小节（总览是文件夹卡片，无分组概念，对齐 React 总览隐藏 groupBy）。 */
@@ -130,6 +145,7 @@ fun TopBar(
     var searchOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
     var dateSheetOpen by remember { mutableStateOf(false) }
+    var tagsSheetOpen by remember { mutableStateOf(false) }
 
     Row(
         modifier = modifier
@@ -139,13 +155,27 @@ fun TopBar(
             .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TopBarButton(enabled = canBack, onClick = onBack) {
+        TopBarButton(
+            highlighted = sidebarVisible,
+            onClick = onToggleSidebar,
+        ) {
             Icon(
-                imageVector = IconChevronLeft,
-                contentDescription = "返回",
-                tint = if (canBack) colors.textPrimary else colors.textSecondary.copy(alpha = 0.4f),
-                modifier = Modifier.size(20.dp),
+                imageVector = IconPanelLeft,
+                contentDescription = "侧栏开关",
+                // 开启时蓝色高亮（对齐 React：isSidebarVisible ? 'text-blue-500' : gray）
+                tint = if (sidebarVisible) colors.primary else colors.textSecondary,
+                modifier = Modifier.size(18.dp),
             )
+        }
+        if (showBack) {
+            TopBarButton(enabled = canBack, onClick = onBack) {
+                Icon(
+                    imageVector = IconChevronLeft,
+                    contentDescription = "返回",
+                    tint = if (canBack) colors.textPrimary else colors.textSecondary.copy(alpha = 0.4f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
         if (showSearch && !searchOpen) {
             TopBarButton(onClick = { searchOpen = true }) {
@@ -277,6 +307,19 @@ fun TopBar(
                 )
             }
         }
+        if (showTags) {
+            TopBarButton(
+                highlighted = tagsSheetOpen,
+                onClick = { tagsSheetOpen = true },
+            ) {
+                Icon(
+                    imageVector = IconTag,
+                    contentDescription = "标签筛选",
+                    tint = if (tagsSheetOpen) colors.primary else colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
     }
 
     if (dateSheetOpen) {
@@ -292,6 +335,20 @@ fun TopBar(
                 filter = dateFilter,
                 onFilterChange = onDateFilterChange,
                 onDone = { dateSheetOpen = false },
+            )
+        }
+    }
+
+    if (tagsSheetOpen) {
+        ModalBottomSheet(
+            onDismissRequest = { tagsSheetOpen = false },
+            containerColor = AuroraTheme.colors.panel,
+            // 同日期弹层的教训：内容型弹层打开即全展，否则横屏下半开锚点截断
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            TagsFilterSheet(
+                groupedTags = groupedTags,
+                onDone = { tagsSheetOpen = false },
             )
         }
     }
@@ -713,6 +770,173 @@ private fun DateModeChip(text: String, selected: Boolean, onClick: () -> Unit, m
     }
 }
 
+/**
+ * 标签筛选底部弹层（React `TagsWidget` 的 bottom-sheet 形态）：标题 + 总数徽标、
+ * 搜索框（大小写不敏感 contains 过滤，X 清词）、按 [groupedTags] 的 key 分组展示
+ * chips（组名字序对齐 React `keys.sort()`），空态「暂无标签」/「未找到标签」。
+ *
+ * M1 无标签体系（标签随 M2 落库），调用方传空 Map 即显示空态；M2 接入时只需把
+ * 分组数据传进 [TopBar] 的 `groupedTags`。点选标签的行为（进入标签视图/多选筛选）
+ * 同样随 M2 决定，当前 chips 仅展示。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TagsFilterSheet(
+    groupedTags: Map<String, List<String>>,
+    onDone: () -> Unit,
+) {
+    val colors = AuroraTheme.colors
+    var query by remember { mutableStateOf("") }
+
+    val filtered = remember(groupedTags, query) {
+        if (query.isBlank()) groupedTags
+        else groupedTags.mapValues { (_, tags) ->
+            tags.filter { it.contains(query, ignoreCase = true) }
+        }.filterValues { it.isNotEmpty() }
+    }
+    val sortedKeys = remember(filtered) { filtered.keys.sorted() }
+    val totalTags = filtered.values.sumOf { it.size }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "所有标签",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                color = colors.textPrimary,
+            )
+            Spacer(Modifier.size(8.dp))
+            Text(
+                totalTags.toString(),
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(colors.surface)
+                    .padding(horizontal = 8.dp, vertical = 1.dp),
+                fontSize = 11.sp,
+                color = colors.textSecondary,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable(onClick = onDone),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = IconX,
+                    contentDescription = "关闭",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        // 搜索框（React TagsWidget 头部的 input；过滤即打即筛）
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .background(colors.surface, RoundedCornerShape(8.dp))
+                .border(1.dp, colors.subtle, RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IconSearch,
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.size(8.dp))
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = TextStyle(color = colors.textPrimary, fontSize = 14.sp),
+                cursorBrush = SolidColor(colors.primary),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    Box(contentAlignment = Alignment.CenterStart) {
+                        if (query.isEmpty()) {
+                            Text("搜索标签", color = colors.textSecondary, fontSize = 14.sp)
+                        }
+                        inner()
+                    }
+                },
+            )
+            if (query.isNotEmpty()) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable { query = "" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = IconX,
+                        contentDescription = "清除搜索",
+                        tint = colors.textSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+        if (sortedKeys.isEmpty()) {
+            Text(
+                if (query.isBlank()) "暂无标签" else "未找到标签",
+                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                textAlign = TextAlign.Center,
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+            )
+        } else {
+            sortedKeys.forEach { key ->
+                Column(Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
+                    Text(
+                        key,
+                        Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = colors.textSecondary,
+                    )
+                    // 底部 1dp 分隔（React 组头的 border-b）
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(colors.subtle))
+                    Spacer(Modifier.height(8.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        filtered[key]?.forEach { tag ->
+                            Text(
+                                tag,
+                                Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(colors.primary.copy(alpha = 0.08f))
+                                    .border(1.dp, colors.primary.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                fontSize = 14.sp,
+                                color = colors.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /** 月历格子：月份偏移（-1 上月 / 0 当月 / +1 下月）+ 当日 12:00 的 epoch 秒。 */
 private data class DayCell(val day: Int, val monthOffset: Int, val epoch: Long)
 
@@ -803,6 +1027,36 @@ private val IconChevronLeft: ImageVector by lazy {
         moveTo(15f, 18f)
         lineTo(9f, 12f)
         lineTo(15f, 6f)
+    }
+}
+
+/** lucide panel-left：面板外框 + 左分隔竖线（侧栏开关，React TopBar 最左按钮同款）。 */
+private val IconPanelLeft: ImageVector by lazy {
+    iconBuilder("PanelLeft") {
+        roundedRect(3f, 3f, 18f, 18f, 2f)
+        moveTo(9f, 3f)
+        lineTo(9f, 21f)
+    }
+}
+
+/** lucide tag：标签牌 + 铆点（标签筛选按钮）。 */
+private val IconTag: ImageVector by lazy {
+    iconBuilder("Tag") {
+        // lucide tag 主路径（圆角五边形斜挂）
+        moveTo(12.586f, 2.586f)
+        arcTo(2f, 2f, 0f, false, false, 11.172f, 2f)
+        lineTo(4f, 2f)
+        arcTo(2f, 2f, 0f, false, false, 2f, 4f)
+        lineTo(2f, 11.172f)
+        arcTo(2f, 2f, 0f, false, false, 2.586f, 12.586f)
+        lineTo(11.29f, 21.29f)
+        arcTo(2.426f, 2.426f, 0f, false, false, 14.71f, 21.29f)
+        lineTo(21.29f, 14.71f)
+        arcTo(2.426f, 2.426f, 0f, false, false, 21.29f, 11.29f)
+        close()
+        // 铆点 circle(7.5, 7.5, r=0.5)：stroke 圆头放大成可见小点
+        moveTo(7.5f, 7.5f)
+        lineTo(7.51f, 7.5f)
     }
 }
 

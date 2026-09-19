@@ -80,6 +80,8 @@ fun FileGrid(
      */
     level: Int = 1,
     onLevelChange: (Int) -> Unit = {},
+    /** 3.5 侧栏目标状态：用于开合动画期间的列数预测（见 update 内的 predicting 注释）。 */
+    sidebarVisible: Boolean = false,
 ) {
     val colors = AuroraTheme.colors
     val context = LocalContext.current
@@ -101,6 +103,14 @@ fun FileGrid(
     val currentLayoutMode = rememberUpdatedState(layoutMode)
     val currentGroupBy = rememberUpdatedState(groupBy)
     val currentGapPx = rememberUpdatedState(gapPx)
+    // 3.5 预测收敛：侧栏开合动画是纯 layout 变化（不触发重组），若列数等动画结束后才
+    // 收敛，会与面板开合脱节（用户感知「两步走」/随机时机卡片突变）。记住「量宽已同步到
+    // 哪个侧栏状态」，未同步（=动画进行中）时 update 按目标状态的**最终宽度**预测列数，
+    // 列数在点按瞬间一次收敛、与面板动画同步（对齐 React 的同步过渡）；动画结束由网格
+    // 的宽度监听器翻转 [sidebarSynced] 退场。
+    val currentSidebarVisible = rememberUpdatedState(sidebarVisible)
+    val sidebarSynced = remember { mutableStateOf(sidebarVisible) }
+    val spanSyncTick = remember { mutableIntStateOf(0) }
     val decoration = remember { GridSpacingDecoration(6, gapPx) }
 
     // 进度驱动 FLIP：捏合手势 = FLIP 动画的进度条（见 PinchFlipController）
@@ -313,6 +323,47 @@ fun FileGrid(
                     if (measuredWidthDp == 0 && view.width > 0) {
                         measuredWidthDp = view.context.pxToDp(view.width)
                     }
+                }
+                // 宽度变化自愈（2026-09-20，侧栏开合把封面拉成长条）：3.5 的推挤动画逐帧改
+                // 变内容宽度，但那是**纯 layout 变化、不触发 Compose 重组** → update 不重跑
+                // → applyCellWidth 不执行，封面高度停在旧档位（展开=竖长条、收起=横长条，
+                // 动画结束后也不恢复）。两层处理：
+                //  ① 每次宽度变化立即按**当前 LM span** 重算单元格宽度、走 applyCellWidth
+                //     局部刷新（payload 只刷封面高度：不重载图片、不清 FLIP transform），
+                //     保证动画全程封面都是正方形；
+                //  ② 宽度稳定 80ms 后写量宽 state 触发重组 → update 内 targetCols 收敛列数
+                //     （animateSpanChange 带 FLIP 动画）。列数若不收敛，会停在旧值直到某次
+                //     随机重组才「啪」地跳变（用户感知：卡片/文件名突然变大，与面板开合脱节）；
+                //     去抖让它成为动画结束后的确定性受控动画。
+                // post/postDelayed 出布局阶段（layout 中的 requestLayout 会被 RV 吞掉，L8 教训）；
+                // applyCellWidth 值相等自动去重。adaptive 不在此处理：行装箱由其 LM 自理。
+                var pendingSpanSync: Runnable? = null
+                addOnLayoutChangeListener { v, left, _, right, _, oldLeft, _, oldRight, _ ->
+                    val newW = right - left
+                    if (newW <= 0 || newW == oldRight - oldLeft) return@addOnLayoutChangeListener
+                    post {
+                        // GRID 封面已是 WRAP_CONTENT 自动正方形（见 coverHeightFor），无需
+                        // 逐帧 notify（最小档位上百可见 cell，逐帧重绑就是掉帧来源）；
+                        // 瀑布流按宽高比需要显式高度，保留逐帧同步
+                        if (currentLayoutMode.value == LayoutMode.GRID) return@post
+                        val span = when (val lm = layoutManager) {
+                            is GridLayoutManager -> lm.spanCount
+                            is StaggeredGridLayoutManager -> lm.spanCount
+                            else -> return@post
+                        }
+                        val inner = v.width - v.paddingLeft - v.paddingRight
+                        val cell = ((inner - (span - 1) * currentGapPx.value) / span).coerceAtLeast(1)
+                        adapter.applyCellWidth(v as RecyclerView, cell)
+                    }
+                    pendingSpanSync?.let(v::removeCallbacks)
+                    val spanSync = Runnable {
+                        // 宽度已稳定：退场预测（sidebarSynced 对齐目标状态），下一轮重组按
+                        // 实际宽度复算列数/cell（与点按时的预测值通常一致，仅小数舍入差）
+                        sidebarSynced.value = currentSidebarVisible.value
+                        spanSyncTick.value++
+                    }
+                    pendingSpanSync = spanSync
+                    v.postDelayed(spanSync, 80)
                 }
                 // 同时挂两条分发路径，覆盖「第一指落在 item 上」与「落在网格间隙上」两种情况
                 val pinch = PinchGridSpanListener(
@@ -572,7 +623,12 @@ fun FileGrid(
         },
         update = { rv ->
             if (rv.width <= 0) return@AndroidView
-            val widthDp = rv.context.pxToDp(rv.width)
+            spanSyncTick.value // 订阅：侧栏动画结束后由监听器递增，触发本次收敛重算
+            val predicting = sidebarVisible != sidebarSynced.value
+            val sidebarPx = (SIDEBAR_WIDTH_DP.value * density).roundToInt()
+            // 预测中 = 动画进行中：宽度取目标状态的最终值（点按瞬间的 rv.width + 全部增量）
+            val widthPx = rv.width + if (predicting) (if (sidebarVisible) -sidebarPx else sidebarPx) else 0
+            val widthDp = rv.context.pxToDp(widthPx)
             if (measuredWidthDp != widthDp) measuredWidthDp = widthDp
             val span = targetCols(widthDp, level)
 
@@ -756,7 +812,8 @@ fun FileGrid(
 
             // 网格（正方形）/瀑布流（按宽高比）用单元格宽度推导封面高度；adaptive 用行高。
             // 走 applyCellWidth（不 notify）而非 submit——见 LaunchedEffect 处的说明。
-            val inner = rv.width - rv.paddingLeft - rv.paddingRight
+            // 用预测宽度 widthPx（非 rv.width）：动画中 cell 与收敛后的 span 保持一致。
+            val inner = widthPx - rv.paddingLeft - rv.paddingRight
             val cell = if (layoutMode == LayoutMode.ADAPTIVE) 0
                 else ((inner - (span - 1) * gapPx) / span).coerceAtLeast(1)
             adapter.applyCellWidth(rv, cell)
@@ -1505,11 +1562,17 @@ private class FileGridAdapter(
         notifyItemRangeChanged(0, items.size, PAYLOAD_CELL)
     }
 
-    /** 封面高度：瀑布流按宽高比，网格用正方形，adaptive 用行高。 */
+    /**
+     * 封面高度：瀑布流按宽高比，adaptive 用行高；**网格交回 SquareImageView 按宽度自动
+     * 正方形（WRAP_CONTENT）**——高度与宽度在同一轮测量对齐，宽度连续变化（侧栏开合的
+     * 逐帧推挤）时零滞后、零 notify，天然免疫容器宽度动画（2026-09-20 抖动修复；此前的
+     * 显式 cellWidthPx 高度依赖 notify→重绑跟进，高度滞后宽度一帧，来回微抖）。
+     * 捏合预览的插值高度由控制器直接写 lp（显式值优先于 WRAP_CONTENT），不受影响。
+     */
     private fun coverHeightFor(image: Image): Int = when (layoutMode) {
         LayoutMode.MASONRY -> (cellWidthPx / aspectRatioOf(image)).toInt()
         LayoutMode.ADAPTIVE -> rowHeightPx
-        else -> cellWidthPx
+        else -> ViewGroup.LayoutParams.WRAP_CONTENT
     }
 
     /**
@@ -1624,6 +1687,7 @@ private class FileGridAdapter(
             if (holder is PhotoVH) {
                 val image = (items.getOrNull(position) as? GridItem.Photo)?.image ?: return
                 holder.refs.cover.applyCoverHeight(coverHeightFor(image))
+                holder.refs.name.setCellWidth(cellWidthPx)
                 forceMeasureOnRebind(holder)
             }
             return
@@ -1702,6 +1766,7 @@ private class FileGridAdapter(
             else -> ViewGroup.LayoutParams.WRAP_CONTENT
         }
         holder.refs.cover.applyCoverHeight(coverH)
+        holder.refs.name.setCellWidth(cellWidthPx)
 
         holder.job?.cancel()
         holder.job = loadInto(holder.refs.cover, image, position) { holder.bindingAdapterPosition == position }
@@ -1771,6 +1836,7 @@ private class FileGridAdapter(
             val image = (items.getOrNull(holder.bindingAdapterPosition) as? GridItem.Photo)?.image
             if (image != null) {
                 holder.refs.cover.applyCoverHeight(coverHeightFor(image))
+                holder.refs.name.setCellWidth(cellWidthPx)
                 holder.itemView.forceLayout()
             }
         }

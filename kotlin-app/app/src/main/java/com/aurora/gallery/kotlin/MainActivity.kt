@@ -17,11 +17,15 @@ import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Text
 import com.aurora.gallery.kotlin.ui.components.FileGrid
+import com.aurora.gallery.kotlin.ui.components.SidebarPane
 import com.aurora.gallery.kotlin.ui.components.TopBar
+import com.aurora.gallery.kotlin.ui.components.TreeSidebar
 import com.aurora.gallery.kotlin.ui.components.filterFolders
 import com.aurora.gallery.kotlin.ui.components.filterImages
 import com.aurora.gallery.kotlin.ui.components.sortFolders
@@ -190,76 +194,100 @@ fun App(
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopBar(
-            title = currentFolder?.name ?: "文件夹",
-            canBack = tab.history.canBack,
-            onBack = { state.goBack() },
-            searchQuery = tab.searchQuery,
-            onSearchQueryChange = { state.setSearchQuery(it) },
-            searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
-            dateFilter = tab.dateFilter,
-            onDateFilterChange = { state.setDateFilter(it) },
-            sortBy = state.sortBy,
-            onSortChange = { state.sortBy = it },
-            sortDirection = state.sortDirection,
-            onSortDirectionToggle = {
-                state.sortDirection =
-                    if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
-            },
-            groupBy = state.groupBy,
-            onGroupByChange = { state.groupBy = it },
-            layoutMode = tab.layoutMode,
-            onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
-            showSearch = true,
-            showSortMenu = true,
-            showViewMode = inBrowser,
-            showDateFilter = true,
-            showGroupBy = inBrowser,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        if (!inBrowser) {
-            FoldersOverview(
-                folders = displayFolders,
-                thumbnailLoader = thumbnailLoader,
+    // 3.5 面板开合：侧栏在左、内容（TopBar + 网格）在右，开关时侧栏宽度收缩把内容
+    // 推挤过去（SidebarPane 内做 300ms ease-out 动画，对齐 React SidebarPane）。
+    Row(Modifier.fillMaxSize()) {
+        SidebarPane(
+            visible = state.layout.isSidebarVisible,
+            modifier = Modifier.fillMaxHeight(),
+        ) {
+            // 侧栏文件夹列表用全量 folders：TopBar 搜索词只过滤总览网格（对齐 React
+            // 侧栏树不被工具栏搜索过滤）
+            TreeSidebar(
+                folders = folders,
+                currentFolderId = tab.folderId,
                 onFolderClick = onFolderClick,
-                level = state.gridLevel,
-                onLevelChange = { state.gridLevel = it },
-                // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
-                initialScrollTop = state.overviewScrollTop,
-                onScrollChanged = { state.overviewScrollTop = it },
-                emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
-                else "暂无文件夹",
-                modifier = Modifier.fillMaxWidth().weight(1f),
+                modifier = Modifier.fillMaxHeight(),
             )
-        } else {
-            // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。
-            // remember 键齐备：任一条件变化才重算，1~2 万条下键入也不卡。
-            val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
-                sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
-            }
-            if (displayImages.isEmpty()) {
-                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                    val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
-                    Text(
-                        if (hasCondition) "无匹配图片" else "文件夹为空",
-                        color = AuroraTheme.colors.textSecondary,
-                    )
-                }
-            } else {
-                FileGrid(
-                    images = displayImages,
-                    selectedIds = tab.selectedFileIds,
+        }
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            TopBar(
+                title = currentFolder?.name ?: "文件夹",
+                canBack = tab.history.canBack,
+                onBack = { state.goBack() },
+                // 主界面（总览）不显示返回键（2026-09-20 用户要求）；进文件夹后才有返回
+                showBack = inBrowser,
+                sidebarVisible = state.layout.isSidebarVisible,
+                onToggleSidebar = { state.toggleSidebar() },
+                searchQuery = tab.searchQuery,
+                onSearchQueryChange = { state.setSearchQuery(it) },
+                searchPlaceholder = if (inBrowser) "搜索图片" else "搜索文件夹",
+                dateFilter = tab.dateFilter,
+                onDateFilterChange = { state.setDateFilter(it) },
+                sortBy = state.sortBy,
+                onSortChange = { state.sortBy = it },
+                sortDirection = state.sortDirection,
+                onSortDirectionToggle = {
+                    state.sortDirection =
+                        if (state.sortDirection == SortDirection.ASC) SortDirection.DESC else SortDirection.ASC
+                },
+                groupBy = state.groupBy,
+                onGroupByChange = { state.groupBy = it },
+                layoutMode = tab.layoutMode,
+                onLayoutModeChange = { mode -> state.updateActiveTab { it.copy(layoutMode = mode) } },
+                showSearch = true,
+                showSortMenu = true,
+                showViewMode = inBrowser,
+                showDateFilter = true,
+                showGroupBy = inBrowser,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (!inBrowser) {
+                FoldersOverview(
+                    folders = displayFolders,
                     thumbnailLoader = thumbnailLoader,
-                    onItemClick = onImageClick,
-                    layoutMode = tab.layoutMode,
-                    groupBy = state.groupBy,
+                    onFolderClick = onFolderClick,
                     level = state.gridLevel,
                     onLevelChange = { state.gridLevel = it },
-                    // weight(1f)：网格只占顶栏之下的剩余空间。fillMaxSize 会把 RecyclerView
-                    // 量成全屏高、内容画进顶栏区域。
+                    // 3.5 列数预测：侧栏开合时按目标状态最终宽度一次性收敛列数
+                    sidebarVisible = state.layout.isSidebarVisible,
+                    // 滚动位置恢复：离开总览（进文件夹）前记录的位置在重建时归位
+                    initialScrollTop = state.overviewScrollTop,
+                    onScrollChanged = { state.overviewScrollTop = it },
+                    emptyText = if (tab.searchQuery.isNotBlank() || tab.dateFilter.start != null) "无匹配文件夹"
+                    else "暂无文件夹",
                     modifier = Modifier.fillMaxWidth().weight(1f),
                 )
+            } else {
+                // 3.2 数据管道：搜索/日期过滤 → 排序（分组在 FileGrid 内部完成）。
+                // remember 键齐备：任一条件变化才重算，1~2 万条下键入也不卡。
+                val displayImages = remember(images, tab.searchQuery, tab.dateFilter, state.sortBy, state.sortDirection) {
+                    sortImages(filterImages(images, tab.searchQuery, tab.dateFilter), state.sortBy, state.sortDirection)
+                }
+                if (displayImages.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                        val hasCondition = tab.searchQuery.isNotBlank() || tab.dateFilter.start != null
+                        Text(
+                            if (hasCondition) "无匹配图片" else "文件夹为空",
+                            color = AuroraTheme.colors.textSecondary,
+                        )
+                    }
+                } else {
+                    FileGrid(
+                        images = displayImages,
+                        selectedIds = tab.selectedFileIds,
+                        thumbnailLoader = thumbnailLoader,
+                        onItemClick = onImageClick,
+                        layoutMode = tab.layoutMode,
+                        groupBy = state.groupBy,
+                        level = state.gridLevel,
+                        onLevelChange = { state.gridLevel = it },
+                        sidebarVisible = state.layout.isSidebarVisible,
+                        // weight(1f)：网格只占顶栏之下的剩余空间。fillMaxSize 会把 RecyclerView
+                        // 量成全屏高、内容画进顶栏区域。
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                    )
+                }
             }
         }
     }

@@ -186,6 +186,16 @@ class AppState(
 
     /** 面板可见性（3.5 在此之上做互斥开合）。 */
     var layout by mutableStateOf(initialLayout)
+        private set
+
+    /**
+     * 侧栏开合（3.5，TopBar 左侧开关按钮消费）。
+     * 对齐 React `App.tsx` toggleSidebar 的安卓分支：开一个面板时收起其余（互斥开合），
+     * 避免两面板同时挤占内容宽度。元数据面板 M2 接入后此语义自然覆盖它。
+     */
+    fun toggleSidebar() {
+        layout = layout.copy(isSidebarVisible = !layout.isSidebarVisible, isMetadataVisible = false)
+    }
 
     // —— 单标签页（D5：移动版不做多标签）——
     // tabs/activeTabId 保留为**单元素**实现：3.x 的状态字段（导航历史/选中/搜索等）
