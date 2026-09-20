@@ -19,9 +19,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
@@ -229,6 +231,9 @@ private const val INDICATOR_SIZE = 40f
 private const val TRACK_RADIUS = 13f
 private const val DOT_RADIUS = 2.2f
 
+/** 落勾底圆半径（React `PullToRefreshIndicator` 的 `r={12}`，40 视口单位）。 */
+private const val CHECK_DISC_RADIUS = 12f
+
 /** React rAF tick 的 `diff * 0.35`（每帧向目标拉距靠拢的比例）。 */
 private const val SMOOTH_FACTOR = 0.35f
 
@@ -237,6 +242,22 @@ private const val SPIN_DURATION_MS = 1400f
 
 /** 首帧没有参照时间时的兜底帧长（60fps）。 */
 private const val DEFAULT_FRAME_MS = 16L
+
+/** 圆点收拢淡出时长（React 完成态 dot transform 250ms，opacity 200ms 取同一条曲线）。 */
+private const val DOT_OUT_MS = 250f
+
+/** 勾弹出（React pull-check-pop）。 */
+private const val CHECK_POP_MS = 350f
+
+/** 弹出关键帧的过冲点：60% 处 scale 1.08 / opacity 到位。 */
+private const val CHECK_POP_PEAK = 0.6f
+
+/** 勾描线（React pull-check-draw）时长与延迟。 */
+private const val CHECK_DRAW_MS = 280f
+private const val CHECK_DRAW_DELAY_MS = 80f
+
+/** CSS `ease-out` 的二次近似。 */
+private fun easeOut(t: Float): Float = 1f - (1f - t) * (1f - t)
 
 /**
  * 下拉指示器：12 圆点环（React `PullToRefreshIndicator` 的移植）——跟随手指
@@ -256,6 +277,8 @@ fun PullToRefreshIndicator(
     val animDistance = remember { mutableFloatStateOf(0f) }
     // 刷新中的轮转相位（单位＝点）：React `pull-dot-fade` + 逐点 stagger 的近似
     val phase = remember { mutableFloatStateOf(0f) }
+    // 进入 isComplete 后经过的毫秒数：驱动圆点收拢 + 勾的弹出/描线（React 的三个 keyframe）
+    val completeElapsed = remember { mutableFloatStateOf(0f) }
 
     // React 的 rAF tick 逐字移植：每帧向原始拉距靠拢 35%、差值不足 0.3px 时对齐后停手。
     // 协程里读 state 不产生订阅，因此跟手期间零重组、零重排（只有 layer/draw 失效）。
@@ -274,10 +297,14 @@ fun PullToRefreshIndicator(
             } else if (cur != target) {
                 animDistance.floatValue = target
             }
-            if (busy) {
+            // 轮转只在刷新中推进：React 进 complete 会撤掉 pull-dot-fade，圆点停在当前
+            // 明暗梯度上再淡出，落勾期间继续转会有「点在跑」的错觉。
+            if (state.isRefreshing) {
                 val p = (phase.floatValue + dtMs * DOT_COUNT / SPIN_DURATION_MS) % DOT_COUNT
                 phase.floatValue = p
             }
+            completeElapsed.floatValue =
+                if (state.isComplete) completeElapsed.floatValue + dtMs else 0f
         }
     }
 
@@ -313,6 +340,9 @@ fun PullToRefreshIndicator(
             val activeDots = ceil(progress * DOT_COUNT).toInt()
             val frac = progress * DOT_COUNT - floor(progress * DOT_COUNT)
             val head = floor(phase.floatValue)
+            val ct = completeElapsed.floatValue
+            // 圆点收拢系数：1→0（React 250ms ease-out）
+            val collapse = 1f - easeOut((ct / DOT_OUT_MS).coerceIn(0f, 1f))
             val trackR = size.minDimension * (TRACK_RADIUS / INDICATOR_SIZE)
             val dotR = size.minDimension * (DOT_RADIUS / INDICATOR_SIZE)
             val center = Offset(size.width / 2f, size.height / 2f)
@@ -323,8 +353,11 @@ fun PullToRefreshIndicator(
                 var scale = 0.7f
                 when {
                     state.isComplete -> {
-                        alpha = 0f
-                        scale = 0f
+                        // 停在刷新时的明暗梯度上，随 collapse 一起淡出 + 缩到 0
+                        //（React：进 complete 撤掉 pull-dot-fade，opacity 200ms / transform 250ms 归零）
+                        val off = ((i - head) % DOT_COUNT + DOT_COUNT) % DOT_COUNT
+                        alpha = (0.25f + 0.75f * (off / (DOT_COUNT - 1))) * collapse
+                        scale = collapse
                     }
 
                     state.isRefreshing -> {
@@ -354,20 +387,40 @@ fun PullToRefreshIndicator(
                 )
             }
             if (state.isComplete) {
-                drawCircle(
-                    color = dotColor.copy(alpha = 0.12f),
-                    radius = trackR,
-                    center = center,
-                )
-                val check = Path()
-                check.moveTo(center.x - trackR * 0.46f, center.y + trackR * 0.04f)
-                check.lineTo(center.x - trackR * 0.12f, center.y + trackR * 0.38f)
-                check.lineTo(center.x + trackR * 0.54f, center.y - trackR * 0.31f)
-                drawPath(
-                    check,
-                    color = dotColor.copy(alpha = 0.9f),
-                    style = Stroke(width = dotR * 1.36f, cap = StrokeCap.Round, join = StrokeJoin.Round),
-                )
+                // React pull-check-pop（350ms cubic-bezier(0.34,1.56,0.64,1)）：
+                // 0% scale .3/opacity 0 → 60% scale 1.08/opacity 1 → 100% scale 1
+                val pop = (ct / CHECK_POP_MS).coerceIn(0f, 1f)
+                val popScale = if (pop < CHECK_POP_PEAK) {
+                    0.3f + 0.78f * easeOut(pop / CHECK_POP_PEAK)
+                } else {
+                    1.08f - 0.08f * easeOut((pop - CHECK_POP_PEAK) / (1f - CHECK_POP_PEAK))
+                }
+                val popAlpha = easeOut((ct / (CHECK_POP_MS * CHECK_POP_PEAK)).coerceIn(0f, 1f))
+                // React pull-check-draw（280ms ease-out，延迟 80ms）：stroke-dashoffset 26→0
+                val draw = easeOut(((ct - CHECK_DRAW_DELAY_MS) / CHECK_DRAW_MS).coerceIn(0f, 1f))
+                scale(popScale, pivot = center) {
+                    drawCircle(
+                        // React 的落勾底圆 r=12（比点环半径 13 小一圈），不复用 trackR
+                        color = dotColor.copy(alpha = 0.12f * popAlpha),
+                        radius = size.minDimension * (CHECK_DISC_RADIUS / INDICATOR_SIZE),
+                        center = center,
+                    )
+                    if (draw > 0f) {
+                        val check = Path()
+                        check.moveTo(center.x - trackR * 0.46f, center.y + trackR * 0.04f)
+                        check.lineTo(center.x - trackR * 0.12f, center.y + trackR * 0.38f)
+                        check.lineTo(center.x + trackR * 0.54f, center.y - trackR * 0.31f)
+                        val pm = PathMeasure().apply { setPath(check, false) }
+                        val partial = if (draw >= 1f) check else Path().also {
+                            pm.getSegment(0f, pm.length * draw, it, true)
+                        }
+                        drawPath(
+                            partial,
+                            color = dotColor.copy(alpha = 0.9f * popAlpha),
+                            style = Stroke(width = dotR * 1.36f, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                        )
+                    }
+                }
             }
         }
     }
