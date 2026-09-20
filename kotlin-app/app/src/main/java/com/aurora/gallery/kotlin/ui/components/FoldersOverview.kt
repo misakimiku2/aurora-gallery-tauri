@@ -648,7 +648,7 @@ private class FolderAdapter(
             val selected = f != null && f.id in selectedIds
             holder.border.visibility = if (selected) View.VISIBLE else View.GONE
             holder.check.visibility = if (selected) View.VISIBLE else View.GONE
-            holder.name.applySelectedName(selected, textPrimaryColor)
+            holder.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
             forceMeasureOnRebind(holder)
             return
         }
@@ -666,17 +666,19 @@ private class FolderAdapter(
         holder.count.text = folder.imageCount.toString()
         holder.count.visibility = if (folder.imageCount > 0) View.VISIBLE else View.GONE
 
-        // 选中态（4.1）：blue-400 描边 + 蓝圆白勾 + 名字胶囊
+        // 选中态（4.1）：blue-400 描边 + 蓝圆白勾
         val selected = folder.id in selectedIds
         holder.border.visibility = if (selected) View.VISIBLE else View.GONE
         holder.check.visibility = if (selected) View.VISIBLE else View.GONE
-        holder.name.applySelectedName(selected, textPrimaryColor)
 
         // 封面高度固定 WRAP_CONTENT：SquareImageView 在 onMeasure 里按宽定高，高度与宽度
         // 同一轮测量对齐——侧栏开合逐帧推挤宽度时封面全程正方形、零滞后零 notify
         //（2026-09-20 抖动修复；显式 cellWidthPx 高度依赖 notify→重绑跟进，滞后一帧微抖）。
         holder.cover.applyCoverHeight(ViewGroup.LayoutParams.WRAP_CONTENT)
         holder.name.setCellWidth(cellWidthPx)
+        // 名字胶囊在 setCellWidth 之后：选中态要把宽度从固定列宽切成 WRAP（胶囊只包住
+        // 文字、水平居中），先切会被 setCellWidth 覆盖回固定宽（退化成整行蓝条）
+        holder.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
 
         val uri = folder.coverUri
         if (uri != null) {
@@ -735,7 +737,7 @@ private class FolderAdapter(
             val selected = folder.id in selectedIds
             holder.border.visibility = if (selected) View.VISIBLE else View.GONE
             holder.check.visibility = if (selected) View.VISIBLE else View.GONE
-            holder.name.applySelectedName(selected, textPrimaryColor)
+            holder.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
         }
         holder.itemView.forceLayout()
     }

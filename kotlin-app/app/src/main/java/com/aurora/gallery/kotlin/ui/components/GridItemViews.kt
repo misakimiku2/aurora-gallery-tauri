@@ -120,18 +120,39 @@ internal fun buildCheckBadge(context: Context): TextView = TextView(context).app
     visibility = View.GONE
 }
 
-/** 选中文件名胶囊（bg-[#2563EB] 白字圆角），未选中回退常规色。 */
-internal fun TextView.applySelectedName(selected: Boolean, normalTextColor: Int) {
-    background = if (selected) {
-        GradientDrawable().apply {
-            shape = GradientDrawable.RECTANGLE
-            setColor(SELECT_PILL_BLUE)
-            cornerRadius = dp(8).toFloat()
+/**
+ * 选中文件名胶囊（桌面 `inline-block self-center`：只包住文字、水平居中、与封面留缝）。
+ *
+ * [cellWidthPx] 是未选中时的固定列宽（v10 性能路径，见 [setCellWidth]）；选中时切到
+ * WRAP + 水平居中让胶囊贴文字（选择是低频操作，单 item 重排可接受），未选中恢复。
+ * 背景用两层 Drawable：顶层 4dp 透明垫高胶囊与封面的间距（背景不参与测量，
+ * 不影响 [AuroraAdaptiveLayoutManager] 依赖的 textHeight 探针），下层才是蓝胶囊。
+ */
+internal fun TextView.applySelectedName(selected: Boolean, normalTextColor: Int, cellWidthPx: Int) {
+    val lp = layoutParams as? LinearLayout.LayoutParams ?: return
+    if (selected) {
+        background = android.graphics.drawable.LayerDrawable(
+            arrayOf(
+                GradientDrawable().apply { setColor(android.graphics.Color.TRANSPARENT) },
+                GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    setColor(SELECT_PILL_BLUE)
+                    cornerRadius = dp(4).toFloat()
+                },
+            ),
+        ).apply {
+            val gap = dp(4)
+            setLayerInset(1, 0, gap, 0, 0)
         }
+        setTextColor(android.graphics.Color.WHITE)
+        lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
+        lp.gravity = Gravity.CENTER_HORIZONTAL
     } else {
-        null
+        background = null
+        setTextColor(normalTextColor)
+        lp.width = if (cellWidthPx > 0) cellWidthPx else ViewGroup.LayoutParams.MATCH_PARENT
+        lp.gravity = Gravity.CENTER_HORIZONTAL
     }
-    setTextColor(if (selected) android.graphics.Color.WHITE else normalTextColor)
 }
 
 private fun android.view.View.dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -186,7 +207,7 @@ internal fun buildPhotoView(
         gravity = Gravity.CENTER
         maxLines = 1
         ellipsize = TextUtils.TruncateAt.END
-        setPadding(context.dp(4), context.dp(6), context.dp(4), 0)
+        setPadding(context.dp(6), context.dp(6), context.dp(6), context.dp(2))
     }
 
     val frame = CoverFrame(context).apply {

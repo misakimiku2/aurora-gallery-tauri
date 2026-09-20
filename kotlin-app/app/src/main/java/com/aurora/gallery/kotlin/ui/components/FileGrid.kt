@@ -214,7 +214,7 @@ fun FileGrid(
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             typeface = Typeface.DEFAULT_BOLD
             maxLines = 1
-            setPadding(context.dp(4), context.dp(6), context.dp(4), 0)
+            setPadding(context.dp(6), context.dp(6), context.dp(6), context.dp(2))
         }.let { probe ->
             probe.measure(
                 View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY),
@@ -1739,7 +1739,7 @@ private class FileGridAdapter(
                 val selected = image.id in selectedIds
                 holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
                 holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
-                holder.refs.name.applySelectedName(selected, textPrimaryColor)
+                holder.refs.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
                 forceMeasureOnRebind(holder)
             }
             return
@@ -1806,8 +1806,6 @@ private class FileGridAdapter(
         val selected = image.id in selectedIds
         holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
         holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
-        // 选中文件名胶囊（对齐桌面 bg-[#2563EB] 白字）
-        holder.refs.name.applySelectedName(selected, textPrimaryColor)
 
         // 瀑布流按宽高比推导封面高度；网格用正方形（React 版 itemHeight = colWidth + 40）；
         // adaptive 用行高（宽度由行装箱给出，LM 测量时约束）。
@@ -1821,6 +1819,10 @@ private class FileGridAdapter(
         }
         holder.refs.cover.applyCoverHeight(coverH)
         holder.refs.name.setCellWidth(cellWidthPx)
+        // 选中文件名胶囊（对齐桌面 bg-[#2563EB] 白字）。必须在 setCellWidth 之后：
+        // 选中态要把名字宽度从固定列宽切成 WRAP（胶囊只包住文字、水平居中），
+        // 先切会被 setCellWidth 覆盖回固定宽，胶囊退化成整行蓝条
+        holder.refs.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
 
         holder.job?.cancel()
         holder.job = loadInto(holder.refs.cover, image, position) { holder.bindingAdapterPosition == position }
@@ -1897,7 +1899,7 @@ private class FileGridAdapter(
                 val selected = image.id in selectedIds
                 holder.refs.border.visibility = if (selected) View.VISIBLE else View.GONE
                 holder.refs.check.visibility = if (selected) View.VISIBLE else View.GONE
-                holder.refs.name.applySelectedName(selected, textPrimaryColor)
+                holder.refs.name.applySelectedName(selected, textPrimaryColor, cellWidthPx)
                 holder.itemView.forceLayout()
             }
         }
