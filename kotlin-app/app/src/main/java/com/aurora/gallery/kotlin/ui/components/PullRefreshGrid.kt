@@ -242,9 +242,13 @@ fun PullToRefreshIndicator(
                 .layout { measurable, _ ->
                     val p = measurable.measure(Constraints.fixed(40.dp.roundToPx(), 40.dp.roundToPx()))
                     val busy = state.isRefreshing || state.isComplete
+                    // 位移语义对齐 React（transform: translateY(...- size/2)，**圆心**定位）：
+                    //  - 拉动中：圆心 = 拉距/2 → 圆从容器上缘被逐渐「拉出来」（顶部先露）；
+                    //  - 刷新/完成：圆心钉在阈值/2（与满拉位置无缝衔接）；
+                    //  - 空闲：整体藏在容器上方。
                     val ty = when {
-                        busy -> thresholdPx / 2f
-                        state.pullDistance > 0f -> state.pullDistance / 2f
+                        busy -> thresholdPx / 2f - p.height / 2f
+                        state.pullDistance > 0f -> state.pullDistance / 2f - p.height / 2f
                         else -> -p.height.toFloat()
                     }
                     layout(p.width, p.height) {
@@ -254,7 +258,12 @@ fun PullToRefreshIndicator(
         ) {
             // 空闲态直接不画：此前藏在上方的画布会从 Box 透出、叠在工具栏上
             //（2026-09-20 用户报障「选择时圆环出现在顶部工具栏中」）
-            if (!(state.isRefreshing || state.isComplete) && state.pullDistance <= 0f) return@Canvas
+            val busy = state.isRefreshing || state.isComplete
+            if (!busy && state.pullDistance <= 0f) return@Canvas
+            // 淡入（React idle→show 的 opacity 200ms 近似）：拉距前 20% 内 0→1，
+            // 消除「圆环在顶边直接弹出」的闪烁感
+            val fade = if (busy) 1f
+            else ((state.pullDistance / (thresholdPx * 0.2f)).coerceIn(0f, 1f))
             val dotColor = colors.primary
             val progress = if (thresholdPx <= 0f) 0f else (state.pullDistance / thresholdPx).coerceIn(0f, 1f)
             val activeDots = ceil(progress * DOT_COUNT)
@@ -292,14 +301,14 @@ fun PullToRefreshIndicator(
                     }
                 }
                 drawCircle(
-                    color = dotColor.copy(alpha = alpha * 0.85f),
+                    color = dotColor.copy(alpha = alpha * 0.85f * fade),
                     radius = dotR * scale,
                     center = pos,
                 )
             }
             if (state.isComplete) {
                 drawCircle(
-                    color = dotColor.copy(alpha = 0.12f),
+                    color = dotColor.copy(alpha = 0.12f * fade),
                     radius = trackR,
                     center = center,
                 )
@@ -309,7 +318,7 @@ fun PullToRefreshIndicator(
                 check.lineTo(center.x + trackR * 0.54f, center.y - trackR * 0.31f)
                 drawPath(
                     check,
-                    color = dotColor.copy(alpha = 0.9f),
+                    color = dotColor.copy(alpha = 0.9f * fade),
                     style = Stroke(width = dotR * 1.36f, cap = StrokeCap.Round, join = StrokeJoin.Round),
                 )
             }
