@@ -786,8 +786,8 @@ class NativeGalleryView @JvmOverloads constructor(
 
         // Section 3: 全览图（用 Coil 加载缩略图或原图）
         val previewUrl = item.thumbnailUrl ?: item.path
-        val req = ImageRequest.Builder(context)
-            .data(if (item.isLan) previewUrl else if (item.contentUri.isNotEmpty()) Uri.parse(item.contentUri) else File(item.path))
+        val previewSrc = if (item.isLan) CoilSource(previewUrl, null, null) else coilSourceOf(item, "preview")
+        val req = coilSource(ImageRequest.Builder(context), previewSrc)
             .target(drawerPreviewImage)
             .precision(Precision.INEXACT)
             .build()
@@ -1448,19 +1448,11 @@ class NativeGalleryView @JvmOverloads constructor(
     }
 
     /**
-     * 解析图片加载的数据源。
-     * LAN 图片用 HTTP URL；本地图片优先用 content:// URI（通过 ContentResolver 读取，
-     * 兼容 Scoped Storage 和华为/荣耀等厂商的文件访问限制），fallback 到 File 路径。
+     * 大图数据源（D8 A 案）。本地 `content://` 一律由宿主开流喂给 Coil，
+     * 不让 URI 进解码器——理由见 [imageSourceFor]。
      */
-    private fun resolveLoadData(item: ImageItem): Any {
-        return if (item.isLan) {
-            item.path
-        } else if (item.contentUri.isNotEmpty()) {
-            Uri.parse(item.contentUri)
-        } else {
-            File(item.path)
-        }
-    }
+    private fun coilSourceOf(item: ImageItem, variant: String = "full"): CoilSource =
+        imageSourceFor(item, context.contentResolver, variant)
 
     private fun loadCurrent(animateIn: Boolean) {
         loadIntoView(activeView, currentIndex)
@@ -1483,8 +1475,7 @@ class NativeGalleryView @JvmOverloads constructor(
             imageLoader.enqueue(thumbRequest)
         }
 
-        val request = ImageRequest.Builder(context)
-            .data(resolveLoadData(item))
+        val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
             .target(
                 onSuccess = { drawable ->
                     if (showProgress) progressBar.visibility = GONE
@@ -1508,8 +1499,7 @@ class NativeGalleryView @JvmOverloads constructor(
             val idx = currentIndex + offset
             if (idx < 0 || idx >= images.size) continue
             val item = images[idx]
-            val request = ImageRequest.Builder(context)
-                .data(resolveLoadData(item))
+            val request = coilSource(ImageRequest.Builder(context), coilSourceOf(item))
                 .precision(Precision.INEXACT)
                 .build()
             imageLoader.enqueue(request)

@@ -70,14 +70,9 @@ class ThumbnailStripAdapter(
         val item = items[position]
         holder.imageView.setImageDrawable(null)
         holder.imageView.setBackgroundColor(placeholderColor)
-        val data: Any = when {
-            !item.thumbnailUrl.isNullOrEmpty() -> item.thumbnailUrl
-            item.isLan -> item.path
-            item.contentUri.isNotEmpty() -> Uri.parse(item.contentUri)
-            else -> File(item.path)
-        }
-        val request = ImageRequest.Builder(context)
-            .data(data)
+        val src = if (!item.thumbnailUrl.isNullOrEmpty()) CoilSource(item.thumbnailUrl!!, null, null)
+            else imageSourceFor(item, context.contentResolver)
+        val request = coilSource(ImageRequest.Builder(context), src)
             .target(holder.imageView)
             .build()
         imageLoader.enqueue(request)
